@@ -1,0 +1,128 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-starchef}
+      POSTGRES_USER: ${POSTGRES_USER:-starchef}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-starchef}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starchef} -d ${POSTGRES_DB:-starchef}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - starchef
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - starchef
+
+  backend:
+    build:
+      context: ./backend
+    command: >
+      sh -c "python manage.py migrate &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python manage.py check --deploy || python manage.py check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - starchef
+
+  celery_worker:
+    build:
+      context: ./backend
+    command: celery -A config worker -l info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    networks:
+      - starchef
+
+  celery_beat:
+    build:
+      context: ./backend
+    command: celery -A config beat -l info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    networks:
+      - starchef
+
+  frontend:
+    build:
+      context: ./frontend
+    command: npm run dev -- --host 0.0.0.0
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - starchef
+
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: ["production"]
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - starchef
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_media:
+
+networks:
+  starchef:
+    driver: bridge

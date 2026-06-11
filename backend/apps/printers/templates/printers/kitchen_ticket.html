@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Kitchen ticket {{ order.sequence }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; width: 280px; margin: 0; }
+    h1, h2, p { margin: 0 0 6px; }
+    .item { border-top: 1px dashed #111; padding: 8px 0; }
+    .note { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>COZINHA</h1>
+  <h2>Pedido {{ order.sequence }}</h2>
+  <p>Mesa: {{ order.table.number|default:"-" }} Comanda: {{ order.command.code|default:"-" }}</p>
+  <p>Tipo: {{ order.order_type }}</p>
+  <p>Entrada: {{ order.opened_at|date:"d/m/Y H:i" }}</p>
+  {% for item in items %}
+    <div class="item">
+      <p><strong>{{ item.quantity }}x {{ item.product.name }}</strong></p>
+      {% if item.customer_note %}<p class="note">{{ item.customer_note }}</p>{% endif %}
+    </div>
+  {% endfor %}
+</body>
+</html>
+

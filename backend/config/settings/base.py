@@ -1,0 +1,284 @@
+import os
+from datetime import timedelta
+from pathlib import Path
+
+from decouple import Csv, config
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+SECRET_KEY = config("DJANGO_SECRET_KEY", default="unsafe-dev-key")
+SETTINGS_MODULE = os.getenv("DJANGO_SETTINGS_MODULE", "")
+DEBUG = config("DJANGO_DEBUG", default=SETTINGS_MODULE.endswith(".development"), cast=bool)
+ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+
+INSTALLED_APPS = [
+    "unfold",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
+    "django_filters",
+    "corsheaders",
+    "drf_spectacular",
+    "channels",
+    "apps.core",
+    "apps.accounts",
+    "apps.restaurants",
+    "apps.customers",
+    "apps.menu",
+    "apps.orders",
+    "apps.kitchen",
+    "apps.payments",
+    "apps.invoices",
+    "apps.stock",
+    "apps.printers",
+    "apps.reports",
+    "apps.integrations",
+]
+
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.middleware.TenantMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.core.middleware.TenantResponseSafetyMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+ASGI_APPLICATION = "config.asgi.application"
+WSGI_APPLICATION = "config.wsgi.application"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    }
+]
+
+USE_SQLITE_DATABASE = config("USE_SQLITE_DATABASE", default=DEBUG, cast=bool)
+
+
+def build_database_settings(use_sqlite):
+    if use_sqlite:
+        return {
+            "DATABASES": {
+                "default": {
+                    "ENGINE": "django.db.backends.sqlite3",
+                    "NAME": config("SQLITE_DB_NAME", default=BASE_DIR / "db.sqlite3"),
+                }
+            }
+        }
+
+    return {
+        "DATABASES": {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": config("POSTGRES_DB", default="starchef"),
+                "USER": config("POSTGRES_USER", default="starchef"),
+                "PASSWORD": config("POSTGRES_PASSWORD", default="starchef"),
+                "HOST": config("POSTGRES_HOST", default="localhost"),
+                "PORT": config("POSTGRES_PORT", default="5432"),
+                "CONN_MAX_AGE": 60,
+            }
+        }
+    }
+
+
+globals().update(build_database_settings(USE_SQLITE_DATABASE))
+
+REDIS_URL = config("REDIS_URL", default="redis://localhost:6379/0")
+USE_LOCAL_MEMORY_SERVICES = config("USE_LOCAL_MEMORY_SERVICES", default=DEBUG, cast=bool)
+
+def build_runtime_service_settings(use_local_memory):
+    if use_local_memory:
+        return {
+            "CACHES": {
+                "default": {
+                    "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                    "LOCATION": "starchef-local-cache",
+                }
+            },
+            "CHANNEL_LAYERS": {
+                "default": {
+                    "BACKEND": "channels.layers.InMemoryChannelLayer",
+                }
+            },
+            "CELERY_BROKER_URL": "memory://",
+            "CELERY_RESULT_BACKEND": "cache+memory://",
+            "CELERY_TASK_ALWAYS_EAGER": True,
+            "CELERY_TASK_EAGER_PROPAGATES": True,
+        }
+
+    return {
+        "CACHES": {
+            "default": {
+                "BACKEND": "django.core.cache.backends.redis.RedisCache",
+                "LOCATION": REDIS_URL,
+            }
+        },
+        "CHANNEL_LAYERS": {
+            "default": {
+                "BACKEND": "channels_redis.core.RedisChannelLayer",
+                "CONFIG": {"hosts": [REDIS_URL]},
+            }
+        },
+        "CELERY_BROKER_URL": config("CELERY_BROKER_URL", default="redis://localhost:6379/1"),
+        "CELERY_RESULT_BACKEND": config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/2"),
+        "CELERY_TASK_ALWAYS_EAGER": False,
+        "CELERY_TASK_EAGER_PROPAGATES": False,
+    }
+
+
+globals().update(build_runtime_service_settings(USE_LOCAL_MEMORY_SERVICES))
+
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "America/Sao_Paulo"
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+        "apps.core.permissions.HasTenantAccess",
+    ),
+    "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.StandardResultsSetPagination",
+    "DEFAULT_FILTER_BACKENDS": (
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",
+}
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "StarChef API",
+    "DESCRIPTION": "API REST versionada para gestao de restaurantes.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+}
+
+CORS_ALLOWED_ORIGINS = config(
+    "DJANGO_CORS_ALLOWED_ORIGINS",
+    default="http://localhost:5173,http://127.0.0.1:5173",
+    cast=Csv(),
+)
+CORS_ALLOW_CREDENTIALS = True
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = "pt-br"
+TIME_ZONE = "America/Sao_Paulo"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+UNFOLD = {
+    "SITE_TITLE": "StarChef Admin",
+    "SITE_HEADER": "StarChef",
+    "SITE_SUBHEADER": "Gestao operacional do restaurante",
+    "SITE_SYMBOL": "restaurant",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
+            {
+                "title": "Operacao",
+                "separator": True,
+                "items": [
+                    {"title": "Pedidos", "icon": "receipt_long", "link": "/admin/orders/order/"},
+                    {"title": "Itens do pedido", "icon": "restaurant_menu", "link": "/admin/orders/orderitem/"},
+                    {"title": "Mesas", "icon": "table_restaurant", "link": "/admin/restaurants/table/"},
+                    {"title": "Caixa", "icon": "point_of_sale", "link": "/admin/payments/cashregister/"},
+                    {"title": "Pagamentos", "icon": "payments", "link": "/admin/payments/payment/"},
+                ],
+            },
+            {
+                "title": "Cadastros",
+                "separator": True,
+                "items": [
+                    {"title": "Restaurantes", "icon": "storefront", "link": "/admin/restaurants/restaurant/"},
+                    {"title": "Filiais", "icon": "store", "link": "/admin/restaurants/branch/"},
+                    {"title": "Usuarios", "icon": "group", "link": "/admin/auth/user/"},
+                    {"title": "Clientes", "icon": "person", "link": "/admin/customers/customer/"},
+                    {"title": "Produtos", "icon": "fastfood", "link": "/admin/menu/product/"},
+                ],
+            },
+            {
+                "title": "Gestao",
+                "separator": True,
+                "items": [
+                    {"title": "Estoque", "icon": "inventory_2", "link": "/admin/stock/stockmovement/"},
+                    {"title": "Impressao", "icon": "print", "link": "/admin/printers/printjob/"},
+                    {"title": "Fiscal", "icon": "description", "link": "/admin/invoices/invoice/"},
+                    {"title": "Auditoria", "icon": "manage_search", "link": "/admin/core/auditlog/"},
+                ],
+            },
+        ],
+    },
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+        }
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
+    },
+}

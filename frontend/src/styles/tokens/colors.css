@@ -1,0 +1,230 @@
+/* ===========================================================================
+   StarChef — Color tokens
+   Warm, appetizing food-service palette. Light theme on warm paper neutrals;
+   dark theme on PrimeVue "zinc" surfaces (per brand request).
+   ===========================================================================*/
+
+:root {
+  /* ---- Brand primary: Saffron / kitchen orange ------------------------- */
+  --orange-50:  #FFF7ED;
+  --orange-100: #FFEDD5;
+  --orange-200: #FED7AA;
+  --orange-300: #FDBA74;
+  --orange-400: #FB923C;
+  --orange-500: #F97316;
+  --orange-600: #EA580C;
+  --orange-700: #C2410C;
+  --orange-800: #9A3412;
+  --orange-900: #7C2D12;
+
+  /* ---- Tomato (danger / accent) --------------------------------------- */
+  --tomato-50:  #FEF2F2;
+  --tomato-100: #FEE2E2;
+  --tomato-300: #FCA5A5;
+  --tomato-500: #EF4444;
+  --tomato-600: #DC2626;
+  --tomato-700: #B91C1C;
+
+  /* ---- Basil (success / fresh) ---------------------------------------- */
+  --basil-50:  #F0FDF4;
+  --basil-100: #DCFCE7;
+  --basil-300: #86EFAC;
+  --basil-500: #22C55E;
+  --basil-600: #16A34A;
+  --basil-700: #15803D;
+
+  /* ---- Honey (warning / pending) -------------------------------------- */
+  --honey-50:  #FFFBEB;
+  --honey-100: #FEF3C7;
+  --honey-300: #FCD34D;
+  --honey-500: #F59E0B;
+  --honey-600: #D97706;
+  --honey-700: #B45309;
+
+  /* ---- Blueberry (info / preparing) ----------------------------------- */
+  --blueberry-50:  #EFF6FF;
+  --blueberry-100: #DBEAFE;
+  --blueberry-300: #93C5FD;
+  --blueberry-500: #3B82F6;
+  --blueberry-600: #2563EB;
+  --blueberry-700: #1D4ED8;
+
+  /* ---- Warm paper neutrals (light theme) ------------------------------ */
+  --stone-0:   #FFFFFF;
+  --stone-50:  #FAF8F5;
+  --stone-100: #F5F1EB;
+  --stone-150: #EFE9E0;
+  --stone-200: #E7DFD3;
+  --stone-300: #D6CCBC;
+  --stone-400: #A99E8D;
+  --stone-500: #7C7264;
+  --stone-600: #5C5346;
+  --stone-700: #433C32;
+  --stone-800: #2B261F;
+  --stone-900: #1A1611;
+
+  /* ---- Zinc neutrals (dark theme — PrimeVue parity) ------------------- */
+  --zinc-50:  #FAFAFA;
+  --zinc-100: #F4F4F5;
+  --zinc-200: #E4E4E7;
+  --zinc-300: #D4D4D8;
+  --zinc-400: #A1A1AA;
+  --zinc-500: #71717A;
+  --zinc-600: #52525B;
+  --zinc-700: #3F3F46;
+  --zinc-800: #27272A;
+  --zinc-850: #1F1F23;
+  --zinc-900: #18181B;
+  --zinc-950: #09090B;
+}
+
+/* =============================================================================
+   SEMANTIC ALIASES — Light theme (default)
+   Consume these in components; never hardcode the scales above.
+   ============================================================================*/
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Brand */
+  --brand:            var(--orange-600);
+  --brand-hover:      var(--orange-700);
+  --brand-active:     var(--orange-800);
+  --brand-subtle:     var(--orange-50);
+  --brand-subtle-2:   var(--orange-100);
+  --brand-border:     var(--orange-200);
+  --on-brand:         #FFFFFF;
+
+  /* Surfaces */
+  --surface-ground:   var(--stone-50);
+  --surface-card:     var(--stone-0);
+  --surface-raised:   var(--stone-0);
+  --surface-sunken:   var(--stone-100);
+  --surface-hover:    var(--stone-100);
+  --surface-active:   var(--stone-150);
+  --surface-inverse:  var(--stone-900);
+
+  /* Sidebar (slightly distinct from ground) */
+  --surface-nav:      var(--stone-0);
+  --nav-item-active:  var(--orange-50);
+  --nav-item-hover:   var(--stone-100);
+
+  /* Text */
+  --text-strong:      var(--stone-900);
+  --text-body:        var(--stone-800);
+  --text-muted:       var(--stone-500);
+  --text-subtle:      var(--stone-400);
+  --text-on-inverse:  var(--stone-50);
+  --text-brand:       var(--orange-700);
+
+  /* Borders & dividers */
+  --border:           var(--stone-200);
+  --border-strong:    var(--stone-300);
+  --border-subtle:    var(--stone-150);
+  --ring:             var(--orange-500);
+
+  /* Status — fill + text + subtle bg (KDS / orders / payments) */
+  --success:          var(--basil-600);
+  --success-text:     var(--basil-700);
+  --success-subtle:   var(--basil-50);
+  --warning:          var(--honey-600);
+  --warning-text:     var(--honey-700);
+  --warning-subtle:   var(--honey-50);
+  --danger:           var(--tomato-600);
+  --danger-text:      var(--tomato-700);
+  --danger-subtle:    var(--tomato-50);
+  --info:             var(--blueberry-600);
+  --info-text:        var(--blueberry-700);
+  --info-subtle:      var(--blueberry-50);
+
+  /* Order lifecycle (KDS columns) */
+  --order-new:        var(--honey-600);
+  --order-new-bg:     var(--honey-50);
+  --order-prep:       var(--blueberry-600);
+  --order-prep-bg:    var(--blueberry-50);
+  --order-ready:      var(--basil-600);
+  --order-ready-bg:   var(--basil-50);
+  --order-done:       var(--stone-500);
+  --order-done-bg:    var(--stone-100);
+
+  /* Shadows */
+  --shadow-xs:  0 1px 2px rgba(26, 22, 17, 0.06);
+  --shadow-sm:  0 1px 3px rgba(26, 22, 17, 0.08), 0 1px 2px rgba(26, 22, 17, 0.04);
+  --shadow-md:  0 4px 12px rgba(26, 22, 17, 0.08), 0 2px 4px rgba(26, 22, 17, 0.04);
+  --shadow-lg:  0 12px 28px rgba(26, 22, 17, 0.12), 0 4px 8px rgba(26, 22, 17, 0.06);
+  --shadow-brand: 0 6px 18px rgba(234, 88, 12, 0.28);
+}
+
+/* =============================================================================
+   SEMANTIC ALIASES — Dark theme (zinc surfaces)
+   ============================================================================*/
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Brand — lift toward orange-500 for contrast on zinc */
+  --brand:            var(--orange-500);
+  --brand-hover:      var(--orange-400);
+  --brand-active:     var(--orange-300);
+  --brand-subtle:     rgba(249, 115, 22, 0.12);
+  --brand-subtle-2:   rgba(249, 115, 22, 0.18);
+  --brand-border:     rgba(249, 115, 22, 0.32);
+  --on-brand:         #1A1006;
+
+  /* Surfaces — zinc ladder */
+  --surface-ground:   var(--zinc-950);
+  --surface-card:     var(--zinc-900);
+  --surface-raised:   var(--zinc-850);
+  --surface-sunken:   var(--zinc-950);
+  --surface-hover:    var(--zinc-800);
+  --surface-active:   var(--zinc-700);
+  --surface-inverse:  var(--zinc-100);
+
+  --surface-nav:      var(--zinc-900);
+  --nav-item-active:  rgba(249, 115, 22, 0.14);
+  --nav-item-hover:   var(--zinc-800);
+
+  /* Text */
+  --text-strong:      var(--zinc-50);
+  --text-body:        var(--zinc-200);
+  --text-muted:       var(--zinc-400);
+  --text-subtle:      var(--zinc-500);
+  --text-on-inverse:  var(--zinc-900);
+  --text-brand:       var(--orange-400);
+
+  /* Borders */
+  --border:           var(--zinc-800);
+  --border-strong:    var(--zinc-700);
+  --border-subtle:    var(--zinc-850);
+  --ring:             var(--orange-500);
+
+  /* Status */
+  --success:          var(--basil-500);
+  --success-text:     var(--basil-300);
+  --success-subtle:   rgba(34, 197, 94, 0.14);
+  --warning:          var(--honey-500);
+  --warning-text:     var(--honey-300);
+  --warning-subtle:   rgba(245, 158, 11, 0.14);
+  --danger:           var(--tomato-500);
+  --danger-text:      var(--tomato-300);
+  --danger-subtle:    rgba(239, 68, 68, 0.14);
+  --info:             var(--blueberry-500);
+  --info-text:        var(--blueberry-300);
+  --info-subtle:      rgba(59, 130, 246, 0.14);
+
+  /* Order lifecycle */
+  --order-new:        var(--honey-500);
+  --order-new-bg:     rgba(245, 158, 11, 0.13);
+  --order-prep:       var(--blueberry-500);
+  --order-prep-bg:    rgba(59, 130, 246, 0.13);
+  --order-ready:      var(--basil-500);
+  --order-ready-bg:   rgba(34, 197, 94, 0.13);
+  --order-done:       var(--zinc-400);
+  --order-done-bg:    var(--zinc-800);
+
+  /* Shadows — deeper on dark */
+  --shadow-xs:  0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-lg:  0 14px 34px rgba(0, 0, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.5);
+  --shadow-brand: 0 6px 20px rgba(249, 115, 22, 0.35);
+}

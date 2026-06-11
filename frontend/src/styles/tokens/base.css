@@ -1,0 +1,45 @@
+/* ===========================================================================
+   StarChef — base reset & element defaults
+   ===========================================================================*/
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font: var(--font-body);
+  color: var(--text-body);
+  background: var(--surface-ground);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6, p { margin: 0; }
+
+a { color: var(--text-brand); text-decoration: none; }
+a:hover { color: var(--brand-hover); }
+
+button { font-family: inherit; }
+
+/* Tabular numbers everywhere prices/totals appear by default in .num */
+.num, .tabular { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+::selection { background: var(--brand-subtle-2); color: var(--text-strong); }
+
+/* Custom scrollbar (subtle, theme-aware) */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--text-subtle); }
+
+/* Shared focus-visible treatment */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--ring-width) solid color-mix(in srgb, var(--ring) 45%, transparent);
+  outline-offset: var(--ring-offset);
+  border-radius: var(--radius-sm);
+}
