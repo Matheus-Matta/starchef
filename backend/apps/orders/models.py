@@ -21,12 +21,8 @@ class Order(TenantModel):
         (TYPE_INTERNAL, "Internal"),
     ]
 
+    # Operational cycle (conta aberta)
     STATUS_OPEN = "open"
-    STATUS_SENT_TO_KITCHEN = "sent_to_kitchen"
-    STATUS_PREPARING = "preparing"
-    STATUS_PARTIALLY_READY = "partially_ready"
-    STATUS_READY = "ready"
-    STATUS_DELIVERED = "delivered"
     STATUS_AWAITING_PAYMENT = "awaiting_payment"
     STATUS_PAID = "paid"
     STATUS_CANCELLED = "cancelled"
@@ -34,17 +30,30 @@ class Order(TenantModel):
 
     STATUS_CHOICES = [
         (STATUS_OPEN, "Open"),
-        (STATUS_SENT_TO_KITCHEN, "Sent to kitchen"),
-        (STATUS_PREPARING, "Preparing"),
-        (STATUS_PARTIALLY_READY, "Partially ready"),
-        (STATUS_READY, "Ready"),
-        (STATUS_DELIVERED, "Delivered"),
         (STATUS_AWAITING_PAYMENT, "Awaiting payment"),
         (STATUS_PAID, "Paid"),
         (STATUS_CANCELLED, "Cancelled"),
         (STATUS_REFUNDED, "Refunded"),
     ]
 
+    # Production cycle (cozinha) — independent of status
+    PROD_IDLE = "idle"
+    PROD_SENT = "sent_to_kitchen"
+    PROD_PREPARING = "preparing"
+    PROD_PARTIALLY_READY = "partially_ready"
+    PROD_READY = "ready"
+    PROD_DELIVERED = "delivered"
+
+    PRODUCTION_STATUS_CHOICES = [
+        (PROD_IDLE, "Idle"),
+        (PROD_SENT, "Sent to kitchen"),
+        (PROD_PREPARING, "Preparing"),
+        (PROD_PARTIALLY_READY, "Partially ready"),
+        (PROD_READY, "Ready"),
+        (PROD_DELIVERED, "Delivered"),
+    ]
+
+    # Payment cycle — independent of status and production_status
     PAYMENT_PENDING = "pending"
     PAYMENT_PARTIAL = "partial"
     PAYMENT_PAID = "paid"
@@ -102,6 +111,12 @@ class Order(TenantModel):
         on_delete=models.SET_NULL,
     )
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_OPEN, db_index=True)
+    production_status = models.CharField(
+        max_length=32,
+        choices=PRODUCTION_STATUS_CHOICES,
+        default=PROD_IDLE,
+        db_index=True,
+    )
     opened_at = models.DateTimeField(auto_now_add=True, db_index=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -138,6 +153,40 @@ class Order(TenantModel):
         return self.status in {self.STATUS_PAID, self.STATUS_CANCELLED, self.STATUS_REFUNDED}
 
 
+class OrderBatch(TenantModel):
+    """Production round — group of items sent to kitchen at once within a single order."""
+
+    STATUS_SENT = "sent"
+    STATUS_DONE = "done"
+
+    STATUS_CHOICES = [
+        (STATUS_SENT, "Sent"),
+        (STATUS_DONE, "Done"),
+    ]
+
+    order = models.ForeignKey(Order, related_name="batches", on_delete=models.CASCADE)
+    batch_number = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SENT)
+    sent_at = models.DateTimeField()
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        related_name="batches_sent",
+        on_delete=models.SET_NULL,
+    )
+    printed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["batch_number"]
+        constraints = [
+            models.UniqueConstraint(fields=["order", "batch_number"], name="unique_batch_number_per_order"),
+        ]
+
+    def __str__(self):
+        return f"Rodada #{self.batch_number} — Pedido {self.order_id}"
+
+
 class OrderItem(TenantModel):
     STATUS_PENDING = "pending"
     STATUS_SENT = "sent"
@@ -145,6 +194,7 @@ class OrderItem(TenantModel):
     STATUS_READY = "ready"
     STATUS_DELIVERED = "delivered"
     STATUS_CANCELLED = "cancelled"
+    STATUS_COMPED = "comped"
 
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
@@ -153,9 +203,17 @@ class OrderItem(TenantModel):
         (STATUS_READY, "Ready"),
         (STATUS_DELIVERED, "Delivered"),
         (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_COMPED, "Comped"),
     ]
 
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
+    batch = models.ForeignKey(
+        OrderBatch,
+        null=True,
+        blank=True,
+        related_name="items",
+        on_delete=models.SET_NULL,
+    )
     product = models.ForeignKey("menu.Product", related_name="order_items", on_delete=models.PROTECT)
     quantity = models.DecimalField(max_digits=12, decimal_places=3, default=1)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
@@ -176,7 +234,7 @@ class OrderItem(TenantModel):
     preparation_started_at = models.DateTimeField(null=True, blank=True)
     ready_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
-    cancel_reason = models.TextField(blank=True)
+    void_reason = models.TextField(blank=True)
 
     class Meta:
         ordering = ["launched_at"]
@@ -198,4 +256,3 @@ class OrderItemAddon(TenantModel):
 
     def __str__(self):
         return f"{self.addon} ({self.item})"
-

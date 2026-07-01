@@ -26,7 +26,12 @@ class TenantModelSerializer(serializers.ModelSerializer):
         if not request or not getattr(request, "account", None):
             return attrs
 
+        from apps.core.access import is_tenant_admin
+
         account_id = request.account.id
+        profile = getattr(request.user, "profile", None)
+        enforce_restaurant = bool(profile and profile.restaurant_id and not is_tenant_admin(request.user))
+        enforce_branch = bool(profile and profile.branch_id and not is_tenant_admin(request.user))
         payload_account_id = self.initial_data.get("account") or self.initial_data.get("account_id")
         if payload_account_id and str(payload_account_id) != str(account_id):
             raise serializers.ValidationError(
@@ -39,6 +44,19 @@ class TenantModelSerializer(serializers.ModelSerializer):
                 related_account_id = getattr(related, "account_id", None)
                 if related_account_id is not None and related_account_id != account_id:
                     errors[field_name] = "Objeto relacionado pertence a outra conta."
+                    break
+                related_restaurant_id = getattr(related, "restaurant_id", None)
+                related_label = related._meta.label if hasattr(related, "_meta") else None
+                if related_restaurant_id is None and related_label == "restaurants.Restaurant":
+                    related_restaurant_id = related.id
+                if enforce_restaurant and related_restaurant_id and related_restaurant_id != profile.restaurant_id:
+                    errors[field_name] = "Objeto relacionado pertence a outro restaurante."
+                    break
+                related_branch_id = getattr(related, "branch_id", None)
+                if related_branch_id is None and related_label == "restaurants.Branch":
+                    related_branch_id = related.id
+                if enforce_branch and related_branch_id and related_branch_id != profile.branch_id:
+                    errors[field_name] = "Objeto relacionado pertence a outra filial."
                     break
 
         if errors:

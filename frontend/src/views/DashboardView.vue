@@ -1,64 +1,91 @@
 <template>
   <div class="dashboard-view">
+    <div v-if="error" class="dashboard-alert">{{ error }}</div>
+
     <div class="responsive-kpi-grid">
-      <StatCard label="Faturamento hoje" value="R$ 16.180" tone="success" delta="12%" delta-dir="up" caption="vs. ontem">
+      <StatCard label="Faturamento hoje" :value="money(summary.total_sold_today)" tone="success" caption="Pedidos pagos">
         <template #icon><AppIcon name="dollar-sign" :size="19" /></template>
       </StatCard>
-      <StatCard label="Pedidos hoje" value="248" tone="brand" delta="8%" delta-dir="up" caption="18 abertos">
+      <StatCard label="Pedidos hoje" :value="String(summary.orders_count || 0)" tone="brand" :caption="`${summary.open_orders || 0} abertos`">
         <template #icon><AppIcon name="receipt-text" :size="19" /></template>
       </StatCard>
-      <StatCard label="Ticket médio" value="R$ 65,20" tone="info" delta="3%" delta-dir="up" caption="vs. semana">
+      <StatCard label="Ticket medio" :value="money(summary.average_ticket)" tone="info" caption="Media dos pagos">
         <template #icon><AppIcon name="trending-up" :size="19" /></template>
       </StatCard>
-      <StatCard label="Tempo médio cozinha" value="14 min" tone="warning" delta="2 min" delta-dir="down" caption="meta: 15 min">
+      <StatCard label="Itens na cozinha" :value="String(summary.kitchen_open_items || 0)" tone="warning" caption="Pendentes ou em preparo">
         <template #icon><AppIcon name="timer" :size="19" /></template>
       </StatCard>
     </div>
 
     <div class="responsive-two-col">
-      <Card title="Faturamento" subtitle="R$ 16.180 hoje · +12% no período">
+      <Card :title="'Faturamento'" :subtitle="chartSubtitle">
         <template #actions>
-          <Tabs
-            v-model="range"
-            size="sm"
-            :items="[
-              { value: 'day', label: 'Dia' },
-              { value: 'week', label: 'Semana' },
-              { value: 'month', label: 'Mês' },
-            ]"
-          />
+          <div class="tabs-sm">
+            <SelectButton v-model="range" :options="rangeItems" option-label="label" option-value="value" :allow-empty="false" />
+          </div>
         </template>
 
-        <div class="dashboard-bars">
-          <div v-for="bar in bars" :key="bar.d" class="dashboard-bars__item">
+        <div class="dashboard-bars" :class="{ 'dashboard-bars--month': range === 'month' }">
+          <div v-for="bar in bars" :key="bar.date" class="dashboard-bars__item">
             <div class="dashboard-bars__bar" :style="barStyle(bar)">
-              <span v-if="bar.v === 100">R$ 3.2k</span>
+              <span v-if="bar.isMax && Number(bar.total || 0) > 0">{{ compactMoney(bar.total) }}</span>
             </div>
-            <span>{{ bar.d }}</span>
+            <span>{{ bar.label }}</span>
           </div>
         </div>
       </Card>
 
-      <Card title="Vendas por canal" subtitle="Hoje">
+      <Card title="Vendas por canal" :subtitle="channelSubtitle">
+        <template #actions>
+          <div class="tabs-sm">
+            <SelectButton v-model="channelRange" :options="rangeItems" option-label="label" option-value="value" :allow-empty="false" />
+          </div>
+        </template>
         <div class="channels">
           <div v-for="channel in channels" :key="channel.label" class="channels__row">
             <div class="channels__meta">
               <span class="channels__label">
                 <span :style="{ background: channel.color }" />{{ channel.label }}
               </span>
-              <span class="num channels__value">{{ channel.value }}</span>
+              <span class="num channels__value">{{ money(channel.total) }}</span>
             </div>
             <div class="channels__track">
               <div :style="{ width: `${channel.pct}%`, background: channel.color }" />
             </div>
           </div>
+          <div v-if="!hasChannelSales" class="empty-state">Sem vendas pagas hoje.</div>
         </div>
       </Card>
     </div>
 
-    <Card title="Pedidos recentes" subtitle="Atualização em tempo real" padding="none">
+    <!-- Alertas de estoque baixo -->
+    <Card v-if="stockAlerts.length" title="Alertas de estoque" :subtitle="`${stockAlerts.length} ingrediente(s) abaixo do minimo`" padding="none">
       <template #actions>
-        <Badge tone="success" dot>Ao vivo</Badge>
+        <span class="stock-alert-badge">{{ stockAlerts.length }}</span>
+      </template>
+      <table class="orders-table">
+        <thead>
+          <tr>
+            <th>Ingrediente</th>
+            <th>Unidade</th>
+            <th class="right">Saldo atual</th>
+            <th class="right">Minimo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="alert in stockAlerts" :key="alert.ingredient_id" class="stock-alert-row">
+            <td class="semibold">{{ alert.ingredient_name }}</td>
+            <td>{{ alert.unit }}</td>
+            <td class="num right danger">{{ Number(alert.balance).toFixed(3) }}</td>
+            <td class="num right muted">{{ Number(alert.minimum_stock).toFixed(3) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </Card>
+
+    <Card title="Pedidos recentes" subtitle="Atualizacao em tempo real" padding="none">
+      <template #actions>
+        <Tag :severity="loading ? 'warning' : 'success'" :value="loading ? 'Atualizando' : 'Ao vivo'" />
       </template>
 
       <div class="orders-table-wrap">
@@ -71,19 +98,22 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="order in orders" :key="order.id">
-              <td class="num strong">{{ order.id }}</td>
-              <td class="semibold">{{ order.tipo }}</td>
-              <td><span class="muted">{{ order.canal }}</span></td>
-              <td class="num right">{{ order.itens }}</td>
-              <td class="num right strong">{{ order.total }}</td>
-              <td><OrderStatusBadge :status="order.status" size="sm" :pulse="order.status === 'new' || order.status === 'late'" /></td>
-              <td class="num" :class="{ danger: order.status === 'late' }">{{ order.t }}</td>
+            <tr v-for="order in recentOrders" :key="order.id">
+              <td class="num strong">#{{ order.sequence }}</td>
+              <td class="semibold">{{ orderMainLabel(order) }}</td>
+              <td><span class="muted">{{ orderType(order.order_type) }}</span></td>
+              <td class="num right">{{ order.items?.length || 0 }}</td>
+              <td class="num right strong">{{ money(order.total) }}</td>
+              <td><Tag :severity="tagSeverity(order.status)" :value="orderStatus(order.status)" rounded /></td>
+              <td class="num">{{ elapsed(order.opened_at) }}</td>
               <td class="right">
                 <button class="orders-table__action" type="button" aria-label="Abrir pedido">
                   <AppIcon name="arrow-right" :size="15" />
                 </button>
               </td>
+            </tr>
+            <tr v-if="!recentOrders.length && !loading">
+              <td colspan="8" class="empty-row">Nenhum pedido encontrado.</td>
             </tr>
           </tbody>
         </table>
@@ -93,47 +123,323 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+
+import SelectButton from "primevue/selectbutton";
+import Tag from "primevue/tag";
 
 import AppIcon from "../components/AppIcon.vue";
-import StatCard from "../components/data/StatCard.vue";
-import Badge from "../components/display/Badge.vue";
 import Card from "../components/display/Card.vue";
-import OrderStatusBadge from "../components/kitchen/OrderStatusBadge.vue";
-import Tabs from "../components/navigation/Tabs.vue";
+import StatCard from "../components/data/StatCard.vue";
+import { api } from "../services/api";
 
+const loading = ref(false);
+const error = ref("");
+const summary = ref({});
+const recentOrders = ref([]);
+const chartOrders = ref([]);
+const stockAlerts = ref([]);
 const range = ref("week");
+const channelRange = ref("day");
 const headers = ["Pedido", "Tipo", "Canal", "Itens", "Total", "Status", "Tempo", ""];
-const bars = [
-  { d: "Seg", v: 62 },
-  { d: "Ter", v: 48 },
-  { d: "Qua", v: 75 },
-  { d: "Qui", v: 58 },
-  { d: "Sex", v: 96 },
-  { d: "Sáb", v: 100 },
-  { d: "Dom", v: 71 },
+const colors = ["var(--brand)", "var(--info)", "var(--success)", "var(--warning)", "var(--danger)"];
+const defaultChannels = ["table", "delivery", "counter", "takeaway"];
+const rangeItems = [
+  { value: "day", label: "Dia" },
+  { value: "week", label: "Semana" },
+  { value: "month", label: "Mes" },
 ];
-const channels = [
-  { label: "Salão", value: "R$ 7.420", pct: 46, color: "var(--brand)" },
-  { label: "Delivery", value: "R$ 4.180", pct: 26, color: "var(--info)" },
-  { label: "Balcão", value: "R$ 2.960", pct: 18, color: "var(--success)" },
-  { label: "Retirada", value: "R$ 1.620", pct: 10, color: "var(--warning)" },
-];
-const orders = [
-  { id: "#1042", tipo: "Mesa 12", canal: "Salão", itens: 4, total: "R$ 184,50", status: "prep", t: "4 min" },
-  { id: "#1041", tipo: "Delivery", canal: "iFood", itens: 2, total: "R$ 76,90", status: "new", t: "1 min" },
-  { id: "#1040", tipo: "Balcão", canal: "Balcão", itens: 1, total: "R$ 28,00", status: "ready", t: "7 min" },
-  { id: "#1039", tipo: "Mesa 04", canal: "Salão", itens: 6, total: "R$ 243,00", status: "prep", t: "12 min" },
-  { id: "#1038", tipo: "Retirada", canal: "Retirada", itens: 3, total: "R$ 119,70", status: "done", t: "18 min" },
-  { id: "#1037", tipo: "Delivery", canal: "WhatsApp", itens: 5, total: "R$ 162,40", status: "late", t: "34 min" },
-];
+
+const chartSubtitle = computed(() => {
+  const labels = { day: "por horario", week: "ultimos 7 dias", month: "dias do mes" };
+  return `${money(chartTotal.value)} ${labels[range.value] || "no periodo"}`;
+});
+
+const channelSubtitle = computed(() => {
+  const labels = { day: "hoje", week: "ultimos 7 dias", month: "este mes" };
+  return labels[channelRange.value] || "hoje";
+});
+
+const chartRows = computed(() => {
+  if (range.value === "day") {
+    return chartSeries(summary.value.sales_today_by_hour, deriveHourlyRows, fallbackHourlyRows);
+  }
+  if (range.value === "month") {
+    return chartSeries(summary.value.sales_current_month, deriveMonthRows, fallbackMonthRows);
+  }
+  return chartSeries(summary.value.sales_last_7_days, deriveDailyRows, fallbackDailyRows);
+});
+
+const chartTotal = computed(() => chartRows.value.reduce((total, row) => total + row.total, 0));
+
+const bars = computed(() => {
+  const rows = chartRows.value;
+  const max = Math.max(...rows.map((row) => row.total), 0);
+  return rows.map((row) => ({
+    ...row,
+    v: max ? Math.max(14, Math.round((row.total / max) * 100)) : 14,
+    isMax: max > 0 && row.total === max,
+  }));
+});
+
+const channels = computed(() => {
+  const paid = paidOrdersForCharts();
+  let rows;
+
+  if (channelRange.value === "day") {
+    const apiRows = Array.isArray(summary.value.sales_by_order_type) ? summary.value.sales_by_order_type : [];
+    if (hasRowsWithSales(apiRows)) return buildChannels(apiRows);
+    const today = dateKey(new Date());
+    rows = aggregateByType(paid.filter((o) => dateKey(o.opened_at) === today));
+  } else if (channelRange.value === "week") {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 6);
+    cutoff.setHours(0, 0, 0, 0);
+    rows = aggregateByType(paid.filter((o) => new Date(o.opened_at) >= cutoff));
+  } else {
+    const now = new Date();
+    rows = aggregateByType(paid.filter((o) => {
+      const d = new Date(o.opened_at);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }));
+  }
+
+  return buildChannels(rows);
+});
+
+const hasChannelSales = computed(() => channels.value.some((channel) => channel.total > 0));
+
+async function loadDashboard() {
+  loading.value = true;
+  error.value = "";
+  try {
+    const [summaryResponse, ordersResponse, alertsResponse] = await Promise.all([
+      api.get("/reports/dashboard/"),
+      api.get("/orders/", { params: { ordering: "-opened_at", page_size: 50 } }),
+      api.get("/stock/alerts/").catch(() => ({ data: { alerts: [] } })),
+    ]);
+    summary.value = summaryResponse.data || {};
+    chartOrders.value = ordersResponse.data.results || ordersResponse.data || [];
+    recentOrders.value = chartOrders.value.slice(0, 8);
+    stockAlerts.value = alertsResponse.data?.alerts || [];
+  } catch {
+    error.value = "Nao foi possivel carregar os dados do painel.";
+  } finally {
+    loading.value = false;
+  }
+}
+
+function chartSeries(apiRows, deriveRows, fallbackRows) {
+  if (hasRowsWithSales(apiRows)) {
+    return normalizeChartRows(apiRows, fallbackRows());
+  }
+  const derivedRows = deriveRows();
+  if (hasRowsWithSales(derivedRows)) {
+    return normalizeChartRows(derivedRows, fallbackRows());
+  }
+  return normalizeChartRows(apiRows, fallbackRows());
+}
+
+function normalizeChartRows(rows, fallbackRows) {
+  const source = Array.isArray(rows) && rows.length ? rows : fallbackRows;
+  return source.map((row, index) => ({
+    date: row.date || row.label || String(index),
+    label: chartLabel(row, index),
+    total: toNumber(row.total),
+  }));
+}
+
+function fallbackHourlyRows() {
+  return ["08h", "10h", "12h", "14h", "16h", "18h", "20h", "22h"].map((label) => ({ label, total: 0 }));
+}
+
+function fallbackDailyRows() {
+  return lastSevenDays().map((date) => ({ date, total: 0 }));
+}
+
+function fallbackMonthRows() {
+  const today = new Date();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const date = new Date(today.getFullYear(), today.getMonth(), index + 1);
+    return { date: dateKey(date), label: String(index + 1).padStart(2, "0"), total: 0 };
+  });
+}
+
+function deriveHourlyRows() {
+  const buckets = fallbackHourlyRows().map((row, index) => ({
+    ...row,
+    start: 8 + index * 2,
+    end: 10 + index * 2,
+  }));
+  paidOrdersForCharts()
+    .filter((order) => dateKey(order.opened_at) === dateKey(new Date()))
+    .forEach((order) => {
+      const hour = new Date(order.opened_at).getHours();
+      const bucket = buckets.find((row) => hour >= row.start && hour < row.end);
+      if (bucket) bucket.total += toNumber(order.total);
+    });
+  return buckets.map(({ start, end, ...row }) => row);
+}
+
+function deriveDailyRows() {
+  const rows = fallbackDailyRows();
+  const totalsByDate = Object.fromEntries(rows.map((row) => [row.date, 0]));
+  paidOrdersForCharts().forEach((order) => {
+    const key = dateKey(order.opened_at);
+    if (key in totalsByDate) totalsByDate[key] += toNumber(order.total);
+  });
+  return rows.map((row) => ({ ...row, total: totalsByDate[row.date] || 0 }));
+}
+
+function deriveMonthRows() {
+  const rows = fallbackMonthRows();
+  const totalsByDate = Object.fromEntries(rows.map((row) => [row.date, 0]));
+  paidOrdersForCharts().forEach((order) => {
+    const key = dateKey(order.opened_at);
+    if (key in totalsByDate) totalsByDate[key] += toNumber(order.total);
+  });
+  return rows.map((row) => ({ ...row, total: totalsByDate[row.date] || 0 }));
+}
+
+function aggregateByType(orders) {
+  const totals = {};
+  orders.forEach((o) => {
+    totals[o.order_type] = (totals[o.order_type] || 0) + toNumber(o.total);
+  });
+  return Object.entries(totals).map(([order_type, total]) => ({ order_type, total }));
+}
+
+function buildChannels(rows) {
+  const rowByType = rows.reduce((acc, row) => {
+    acc[row.order_type] = toNumber(row.total);
+    return acc;
+  }, {});
+  const normalizedRows = [
+    ...defaultChannels.map((t) => ({ order_type: t, total: rowByType[t] || 0 })),
+    ...rows.filter((r) => !defaultChannels.includes(r.order_type)),
+  ].map((r) => ({ ...r, total: toNumber(r.total) }));
+  const max = Math.max(...normalizedRows.map((r) => r.total), 0);
+  return normalizedRows.map((r, i) => ({
+    label: orderType(r.order_type),
+    total: r.total,
+    pct: max && r.total > 0 ? Math.max(8, Math.round((r.total / max) * 100)) : 0,
+    color: colors[i % colors.length],
+  }));
+}
+
+function paidOrdersForCharts() {
+  return chartOrders.value.filter((order) => order.payment_status === "paid" || order.status === "paid");
+}
+
+function hasRowsWithSales(rows) {
+  return Array.isArray(rows) && rows.some((row) => toNumber(row.total) > 0);
+}
+
+function lastSevenDays() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (6 - index));
+    return dateKey(date);
+  });
+}
+
+function dateKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function chartLabel(row, index) {
+  if (range.value === "day") return row.label || String(index + 1);
+  if (range.value === "month") return row.label || row.date || String(index + 1);
+  if (row.date) return dayLabel(row.date);
+  return row.label || String(index + 1);
+}
+
+function dayLabel(date) {
+  return new Date(`${date}T00:00:00`).toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+}
+
+function toNumber(value) {
+  if (typeof value === "number") return value;
+  if (value == null || value === "") return 0;
+  return Number(String(value).replace(",", ".")) || 0;
+}
 
 function barStyle(bar) {
   return {
-    height: `${bar.v}%`,
-    background: bar.v === 100 ? "var(--brand)" : "var(--brand-subtle-2)",
+    height: `${Math.max(0, Math.min(bar.v || 0, 100))}%`,
+    background: bar.isMax ? "var(--brand)" : "var(--brand-subtle-2)",
   };
 }
+
+function money(value) {
+  return Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function compactMoney(value) {
+  return Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    notation: "compact",
+    maximumFractionDigits: 0,
+  });
+}
+
+function orderMainLabel(order) {
+  if (order.table_number) return `Mesa ${order.table_number}`;
+  if (order.customer_name) return order.customer_name;
+  return order.general_notes || orderType(order.order_type);
+}
+
+function orderType(value) {
+  const labels = {
+    table: "Salao",
+    command: "Comanda",
+    counter: "Balcao",
+    delivery: "Delivery",
+    takeaway: "Retirada",
+    internal: "Interno",
+  };
+  return labels[value] || value || "-";
+}
+
+function orderStatus(value) {
+  const labels = {
+    open: "Aberto",
+    sent_to_kitchen: "Cozinha",
+    preparing: "Preparo",
+    partially_ready: "Parcial",
+    ready: "Pronto",
+    delivered: "Entregue",
+    awaiting_payment: "Pagamento",
+    paid: "Pago",
+    cancelled: "Cancelado",
+    refunded: "Estornado",
+  };
+  return labels[value] || value || "-";
+}
+
+function tagSeverity(value) {
+  if (["paid", "delivered", "ready"].includes(value)) return "success";
+  if (["cancelled", "refunded"].includes(value)) return "danger";
+  if (["preparing", "sent_to_kitchen", "awaiting_payment"].includes(value)) return "warning";
+  return "info";
+}
+
+function elapsed(value) {
+  if (!value) return "-";
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+onMounted(loadDashboard);
 </script>
 
 <style scoped>
@@ -143,12 +449,26 @@ function barStyle(bar) {
   gap: 20px;
 }
 
+.dashboard-alert {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--danger-subtle);
+  color: var(--danger-text);
+  font: var(--weight-semibold) 13px/1.4 var(--font-sans);
+}
+
 .dashboard-bars {
   display: flex;
   align-items: flex-end;
   gap: 14px;
   height: 200px;
-  padding-top: 16px;
+  padding-top: 34px;
+}
+
+.dashboard-bars--month {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
 }
 
 .dashboard-bars__item {
@@ -161,6 +481,10 @@ function barStyle(bar) {
   justify-content: flex-end;
 }
 
+.dashboard-bars--month .dashboard-bars__item {
+  flex: 0 0 28px;
+}
+
 .dashboard-bars__bar {
   width: 100%;
   max-width: 38px;
@@ -171,11 +495,19 @@ function barStyle(bar) {
 
 .dashboard-bars__bar span {
   position: absolute;
-  top: -22px;
+  top: -28px;
   left: 50%;
   transform: translateX(-50%);
-  font: var(--weight-bold) 11px/1 var(--font-mono);
+  max-width: 64px;
+  padding: 3px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-xs);
+  font: var(--weight-bold) 10px/1 var(--font-mono);
   color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -233,6 +565,35 @@ function barStyle(bar) {
   border-radius: 999px;
 }
 
+.empty-state,
+.empty-row {
+  color: var(--text-muted);
+  font: var(--weight-medium) 13px/1.5 var(--font-sans);
+  text-align: center;
+}
+
+.stock-alert-badge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: #fee2e2;
+  color: #991b1b;
+  font: var(--weight-bold) 11.5px/1 var(--font-mono);
+}
+
+.stock-alert-row {
+  background: rgba(254, 226, 226, 0.15);
+}
+
+.danger {
+  color: #dc2626;
+  font-weight: var(--weight-bold);
+}
+
 .orders-table-wrap {
   overflow-x: auto;
 }
@@ -280,10 +641,6 @@ function barStyle(bar) {
   color: var(--text-muted);
 }
 
-.orders-table .danger {
-  color: var(--danger-text);
-}
-
 .orders-table__action {
   width: 30px;
   height: 30px;
@@ -295,5 +652,46 @@ function barStyle(bar) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.tabs-sm :deep(.p-selectbutton .p-button) {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+:deep(.p-tag) {
+  border: 1px solid transparent;
+  font: var(--weight-extra) 11px/1 var(--font-sans);
+}
+
+:deep(.p-tag.p-tag-info) {
+  background: #1d4ed8;
+  border-color: #1e40af;
+  color: #fff;
+}
+
+:deep(.p-tag.p-tag-success) {
+  background: #047857;
+  border-color: #065f46;
+  color: #fff;
+}
+
+:deep(.p-tag.p-tag-warning) {
+  background: #b45309;
+  border-color: #92400e;
+  color: #fff;
+}
+
+:deep(.p-tag.p-tag-danger) {
+  background: #b91c1c;
+  border-color: #991b1b;
+  color: #fff;
+}
+
+:deep(.p-tag.p-tag-secondary) {
+  background: #475569;
+  border-color: #334155;
+  color: #fff;
 }
 </style>

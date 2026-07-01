@@ -1,8 +1,15 @@
 from rest_framework import viewsets
 
 from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
-from apps.restaurants.models import Branch, Restaurant, Table, TableSector
-from apps.restaurants.serializers import BranchSerializer, RestaurantSerializer, TableSectorSerializer, TableSerializer
+from apps.restaurants.models import Branch, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
+from apps.restaurants.serializers import (
+    BranchSerializer,
+    DeliveryZoneSerializer,
+    DeliverymanSerializer,
+    RestaurantSerializer,
+    TableSectorSerializer,
+    TableSerializer,
+)
 
 
 class RestaurantViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
@@ -33,3 +40,18 @@ class TableViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
     filterset_fields = ["restaurant", "branch", "sector", "status", "is_active"]
     search_fields = ["number"]
     ordering_fields = ["number", "status", "updated_at"]
+
+
+class DeliveryZoneViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+    serializer_class = DeliveryZoneSerializer
+    queryset = DeliveryZone.objects.select_related("restaurant", "branch").all()
+    filterset_fields = ["restaurant", "branch", "is_active"]
+    search_fields = ["name"]
+    ordering_fields = ["min_radius_km", "delivery_fee"]
+
+
+class DeliverymanViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+    serializer_class = DeliverymanSerializer
+    queryset = Deliveryman.objects.select_related("restaurant", "branch").all()
+    filterset_fields = ["restaurant", "branch", "vehicle_type", "is_active"]
+    search_fields = ["name", "phone"]

@@ -1,0 +1,321 @@
+/* ===========================================================================
+   PrimeVue component token overrides
+   Makes every component respond to [data-theme] automatically.
+   Loaded after the theme CSS so same-specificity rules here win.
+   ===========================================================================*/
+
+/* ── IconField + InputIcon (search inputs com ícone dentro) ─────────────── */
+.p-icon-field {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+}
+
+/*
+ * Usa html como prefixo para superar a especificidade do tema aura
+ * que envolve suas regras em @layer primevue (regras fora de layer vencem,
+ * mas o prefixo garante desempate sem usar !important).
+ */
+html .p-icon-field .p-input-icon {
+  position: absolute;
+  top: 50%;
+  margin-top: 0;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Ícone à esquerda */
+html .p-icon-field-left .p-input-icon {
+  left: 13px;
+}
+html .p-icon-field-left > .p-inputtext {
+  padding-left: 38px;
+}
+
+/* Ícone à direita */
+html .p-icon-field-right .p-input-icon {
+  right: 13px;
+}
+html .p-icon-field-right > .p-inputtext {
+  padding-right: 38px;
+}
+
+/* ── Avatar ─────────────────────────────────────────────────────────────── */
+.p-avatar {
+  background-color: var(--brand);
+  color: var(--on-brand);
+  font-weight: 700;
+}
+
+/* ── SelectButton (usado como tabs / toggle de visão) ───────────────────── */
+html .p-selectbutton .p-button {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-muted);
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+html .p-selectbutton .p-button:not(.p-disabled):not(.p-highlight):hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text-body);
+}
+html .p-selectbutton .p-button.p-highlight,
+html .p-selectbutton .p-button.p-highlight:hover {
+  background: var(--surface-card);
+  border-color: var(--border);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+html[data-theme="dark"] .p-selectbutton .p-button.p-highlight,
+html[data-theme="dark"] .p-selectbutton .p-button.p-highlight:hover {
+  background: var(--surface-inverse);
+  border-color: var(--surface-inverse);
+  color: var(--text-on-inverse);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+.p-toolbar {
+  background: var(--surface-card);
+  border-color: var(--border);
+  color: var(--text-body);
+}
+
+/* ── DataTable ───────────────────────────────────────────────────────────── */
+.p-datatable .p-datatable-thead > tr > th {
+  background: var(--surface-card);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+}
+.p-datatable .p-datatable-tbody > tr {
+  background: var(--surface-card);
+  color: var(--text-body);
+}
+.p-datatable .p-datatable-tbody > tr > td {
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+.p-datatable .p-datatable-tbody > tr:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-datatable .p-sortable-column:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-datatable .p-datatable-loading-overlay {
+  background: color-mix(in srgb, var(--surface-ground) 70%, transparent);
+}
+
+/* ── Dropdown ────────────────────────────────────────────────────────────── */
+/* Outer wrapper */
+.p-dropdown {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.p-dropdown:not(.p-disabled):hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+.p-dropdown:not(.p-disabled).p-focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+/* The label also carries .p-inputtext — force transparent so only the outer bg shows */
+.p-dropdown .p-dropdown-label,
+.p-dropdown .p-dropdown-label.p-inputtext {
+  background: transparent;
+  color: var(--text-body);
+  box-shadow: none;
+  border: none;
+  padding-right: 0;
+}
+.p-dropdown .p-dropdown-label.p-placeholder {
+  color: var(--text-subtle);
+}
+/* Trigger arrow — transparent, no separate box */
+.p-dropdown .p-dropdown-trigger {
+  background: transparent;
+  color: var(--text-muted);
+}
+/* Clear icon */
+.p-dropdown .p-dropdown-clear-icon {
+  color: var(--text-muted);
+}
+
+/* ── Dropdown panel (popup list) ─────────────────────────────────────────── */
+.p-dropdown-panel {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  color: var(--text-body);
+  box-shadow: var(--shadow-lg);
+}
+.p-dropdown-panel .p-dropdown-header {
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 8px;
+}
+.p-dropdown-panel .p-dropdown-filter-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* Ícone de lupa — posicionado à esquerda e centralizado verticalmente */
+html .p-dropdown-panel .p-dropdown-filter-icon {
+  position: absolute;
+  left: 11px;
+  right: auto;
+  top: 50%;
+  margin-top: 0;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+.p-dropdown-panel .p-dropdown-filter {
+  width: 100%;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  /* espaço para o ícone na esquerda */
+  padding-left: 34px;
+  padding-right: 10px;
+}
+.p-dropdown-panel .p-dropdown-filter:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent);
+}
+.p-dropdown-panel .p-dropdown-items-wrapper {
+  background: var(--surface-card);
+}
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item {
+  color: var(--text-body);
+}
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item:not(.p-highlight):not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-dropdown-panel .p-dropdown-items .p-dropdown-item.p-highlight {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+  font-weight: 600;
+}
+
+/* ── Dropdown — dark mode overrides ──────────────────────────────────────── */
+[data-theme="dark"] .p-dropdown {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+}
+[data-theme="dark"] .p-dropdown:not(.p-disabled):hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+}
+[data-theme="dark"] .p-dropdown .p-dropdown-label,
+[data-theme="dark"] .p-dropdown .p-dropdown-label.p-inputtext {
+  background: transparent;
+  color: var(--text-body);
+}
+[data-theme="dark"] .p-dropdown .p-dropdown-label.p-placeholder {
+  color: var(--text-subtle);
+}
+[data-theme="dark"] .p-dropdown .p-dropdown-trigger {
+  color: var(--text-muted);
+}
+[data-theme="dark"] .p-dropdown-panel {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  box-shadow: var(--shadow-lg);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-header {
+  background: var(--surface-raised);
+  border-bottom-color: var(--border);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-filter-icon {
+  color: var(--text-muted);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-filter {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-strong);
+  padding-left: 34px;
+}
+[data-theme="dark"] .p-icon-field .p-input-icon {
+  color: var(--text-muted);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-items-wrapper {
+  background: var(--surface-raised);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-items .p-dropdown-item {
+  color: var(--text-body);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-items .p-dropdown-item:not(.p-highlight):not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+[data-theme="dark"] .p-dropdown-panel .p-dropdown-items .p-dropdown-item.p-highlight {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.p-sidebar {
+  background: var(--surface-card);
+  border-color: var(--border);
+  color: var(--text-body);
+}
+.p-sidebar .p-sidebar-header {
+  background: var(--surface-card);
+  color: var(--text-strong);
+}
+.p-sidebar .p-sidebar-content {
+  background: var(--surface-card);
+}
+
+/* ── InputText ───────────────────────────────────────────────────────────── */
+.p-inputtext {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-strong);
+}
+.p-inputtext:enabled:hover {
+  border-color: var(--border-strong);
+}
+.p-inputtext:enabled:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+.p-password .p-inputtext {
+  width: 100%;
+}
+.p-password-panel {
+  background: var(--surface-card);
+  border-color: var(--border);
+  color: var(--text-body);
+}
+
+/* ── InputSwitch ─────────────────────────────────────────────────────────── */
+.p-inputswitch .p-inputswitch-slider {
+  background: var(--border-strong);
+}
+.p-inputswitch.p-highlight .p-inputswitch-slider,
+.p-inputswitch:not(.p-disabled):hover .p-inputswitch-slider {
+  background: var(--brand);
+}
+
+/* ── Button (secondary/outlined) ─────────────────────────────────────────── */
+.p-button.p-button-secondary.p-button-outlined {
+  border-color: var(--border);
+  color: var(--text-body);
+}
+.p-button.p-button-secondary.p-button-outlined:not(:disabled):hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}

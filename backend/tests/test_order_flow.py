@@ -33,9 +33,11 @@ def test_create_order_and_send_to_kitchen(restaurant, branch, table, product, wa
     order.refresh_from_db()
     table.refresh_from_db()
 
-    assert order.status == Order.STATUS_SENT_TO_KITCHEN
+    assert order.status == Order.STATUS_OPEN
+    assert order.production_status == Order.PROD_SENT
     assert item.status == OrderItem.STATUS_SENT
     assert item.sent_to_kitchen_at is not None
+    assert item.batch is not None
     assert table.status == Table.STATUS_OCCUPIED
 
 
@@ -52,7 +54,7 @@ def test_change_kitchen_item_status(restaurant, branch, table, product, manager_
 
     assert item.status == OrderItem.STATUS_READY
     assert item.ready_at is not None
-    assert order.status == Order.STATUS_READY
+    assert order.production_status == Order.PROD_READY
 
 
 @pytest.mark.django_db

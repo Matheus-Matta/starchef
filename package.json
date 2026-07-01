@@ -1,0 +1,12 @@
+{
+  "name": "starchef",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001",
+    "prod": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001 --skip-frontend --migrate",
+    "migrate": ".venv\\Scripts\\python backend\\manage.py migrate",
+    "seed": ".venv\\Scripts\\python backend\\manage.py seed_demo",
+    "shell": ".venv\\Scripts\\python backend\\manage.py shell"
+  }
+}

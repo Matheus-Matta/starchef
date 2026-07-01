@@ -9,6 +9,11 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+DEFAULT_BACKEND_HOST = "127.0.0.1"
+DEFAULT_BACKEND_PORT = "8000"
+DEFAULT_FRONTEND_HOST = "127.0.0.1"
+DEFAULT_FRONTEND_PORT = "5173"
+
 
 class ManagedProcess:
     def __init__(self, name, command, cwd, env):
@@ -65,10 +70,15 @@ class Command(BaseCommand):
     help = "Run local StarChef services in one terminal and stop all of them on Ctrl+C."
 
     def add_arguments(self, parser):
-        parser.add_argument("--backend-host", default="127.0.0.1")
-        parser.add_argument("--backend-port", default="8000")
-        parser.add_argument("--frontend-host", default="127.0.0.1")
-        parser.add_argument("--frontend-port", default="5173")
+        parser.add_argument(
+            "backend_addrport",
+            nargs="?",
+            help="Optional backend bind address, e.g. 0.0.0.0:8001 or 8001.",
+        )
+        parser.add_argument("--backend-host", default=None)
+        parser.add_argument("--backend-port", default=None)
+        parser.add_argument("--frontend-host", default=DEFAULT_FRONTEND_HOST)
+        parser.add_argument("--frontend-port", default=DEFAULT_FRONTEND_PORT)
         parser.add_argument("--skip-frontend", action="store_true")
         parser.add_argument("--migrate", action="store_true")
 
@@ -76,6 +86,8 @@ class Command(BaseCommand):
         backend_dir = Path(settings.BASE_DIR)
         frontend_dir = backend_dir.parent / "frontend"
         env = self._build_env()
+        backend_host, backend_port = self._resolve_backend_bind(options)
+        frontend_env = self._build_frontend_env(env, backend_host, backend_port)
 
         if options["migrate"]:
             self.stdout.write(self.style.NOTICE("Running migrations before starting services..."))
@@ -89,9 +101,9 @@ class Command(BaseCommand):
                     "-m",
                     "daphne",
                     "-b",
-                    options["backend_host"],
+                    backend_host,
                     "-p",
-                    str(options["backend_port"]),
+                    str(backend_port),
                     "config.asgi:application",
                 ],
                 backend_dir,
@@ -117,7 +129,7 @@ class Command(BaseCommand):
                         str(options["frontend_port"]),
                     ],
                     frontend_dir,
-                    env,
+                    frontend_env,
                 )
             )
 
@@ -160,9 +172,72 @@ class Command(BaseCommand):
             env.setdefault("USE_SQLITE_DATABASE", "True")
         return env
 
+    def _build_frontend_env(self, env, backend_host, backend_port):
+        frontend_env = env.copy()
+        frontend_env.setdefault("VITE_API_BASE_URL", self._frontend_api_base_url(backend_host, backend_port))
+        return frontend_env
+
+    def _frontend_api_base_url(self, backend_host, backend_port):
+        browser_host = backend_host
+        if browser_host in {"0.0.0.0", "::"}:
+            browser_host = "localhost"
+        if ":" in browser_host and not browser_host.startswith("["):
+            browser_host = f"[{browser_host}]"
+        return f"http://{browser_host}:{backend_port}/api/v1"
+
+    def _resolve_backend_bind(self, options):
+        backend_host = DEFAULT_BACKEND_HOST
+        backend_port = DEFAULT_BACKEND_PORT
+
+        if options["backend_addrport"]:
+            backend_host, backend_port = self._parse_backend_addrport(options["backend_addrport"])
+
+        if options["backend_host"] is not None:
+            backend_host = options["backend_host"]
+        if options["backend_port"] is not None:
+            backend_port = options["backend_port"]
+
+        self._validate_port(backend_port)
+        return backend_host, backend_port
+
+    def _parse_backend_addrport(self, value):
+        value = value.strip()
+        if not value:
+            raise CommandError("Backend address cannot be empty.")
+
+        if value.startswith("["):
+            closing_bracket = value.find("]")
+            if closing_bracket == -1 or value[closing_bracket + 1 : closing_bracket + 2] != ":":
+                raise CommandError("Use IPv6 backend addresses in the form [::1]:8001.")
+            backend_host = value[1:closing_bracket]
+            backend_port = value[closing_bracket + 2 :]
+        elif ":" in value:
+            backend_host, backend_port = value.rsplit(":", 1)
+            backend_host = backend_host or DEFAULT_BACKEND_HOST
+        else:
+            backend_host = DEFAULT_BACKEND_HOST
+            backend_port = value
+
+        return backend_host, backend_port
+
+    def _validate_port(self, value):
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            raise CommandError(f"Backend port must be a number: {value}") from None
+
+        if port < 1 or port > 65535:
+            raise CommandError(f"Backend port must be between 1 and 65535: {value}")
+
     def _run_once(self, command, cwd, env):
         result = subprocess.run(command, cwd=cwd, env=env, check=False)
         if result.returncode:
+            if "manage.py" in command and "migrate" in command:
+                raise CommandError(
+                    f"Command failed with exit code {result.returncode}: {' '.join(command)}\n\n"
+                    "If this is a disposable local SQLite database with inconsistent migration history, run: "
+                    "python manage.py seed_demo --reset-sqlite"
+                )
             raise CommandError(f"Command failed with exit code {result.returncode}: {' '.join(command)}")
 
     def _start_and_wait(self, processes):

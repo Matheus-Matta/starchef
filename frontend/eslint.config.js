@@ -20,6 +20,7 @@ export default [
       "vue/max-attributes-per-line": "off",
       "vue/multi-word-component-names": "off",
       "vue/no-v-html": "off",
+      "vue/no-v-model-argument": "off",
       "vue/singleline-html-element-content-newline": "off",
     },
   },

@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission
 
+from apps.core.access import is_tenant_admin
+
 
 class HasTenantAccess(BasePermission):
     message = "Access denied for this account, restaurant or branch."
@@ -7,7 +9,7 @@ class HasTenantAccess(BasePermission):
     def has_permission(self, request, view):
         if not bool(request.user and request.user.is_authenticated):
             return False
-        if request.user.is_superuser:
+        if is_tenant_admin(request.user):
             return True
         return getattr(request, "account", None) is not None
 
@@ -21,11 +23,16 @@ class HasTenantAccess(BasePermission):
         if object_account_id and (not request_account or request_account.id != object_account_id):
             return False
 
+        if is_tenant_admin(user):
+            return True
+
         profile = getattr(user, "profile", None)
         if not profile:
             return False
 
         object_restaurant_id = getattr(obj, "restaurant_id", None)
+        if object_restaurant_id is None and obj._meta.label == "restaurants.Restaurant":
+            object_restaurant_id = obj.id
         object_branch_id = getattr(obj, "branch_id", None)
 
         if object_restaurant_id and profile.restaurant_id != object_restaurant_id:

@@ -87,6 +87,36 @@ cd backend
 python manage.py runservices
 ```
 
+Para trocar o host ou a porta do backend:
+
+```bash
+python manage.py runservices 0.0.0.0:8001
+# ou
+python manage.py runservices --backend-host 0.0.0.0 --backend-port 8001
+```
+
+Para popular uma base local com dados demo:
+
+```bash
+python manage.py seed_demo --migrate
+```
+
+Isso cria a conta `starchef-demo`, restaurante, filial, mesas, cardapio, estoque, formas de pagamento, clientes, pedidos demo e o usuario `admin` com senha `admin12345`.
+
+Se o SQLite local estiver com historico antigo/inconsistente de migrations, recrie a base local mantendo backup automatico:
+
+```bash
+python manage.py seed_demo --reset-sqlite
+```
+
+Para criar ou atualizar um usuario vinculado corretamente ao tenant:
+
+```bash
+python manage.py create_tenant_user --username gerente --email gerente@starchef.test --password gerente123 --profile-type manager --role-code manager
+```
+
+Por padrao esse comando cria superuser com `is_staff=True` e perfil `admin`. Para criar usuario comum, adicione `--profile-type waiter --no-superuser --no-staff`.
+
 Em `DEBUG=True`, o banco usa SQLite local, e cache, Channels e Celery usam memoria local. Nesse modo o Celery executa tarefas em modo eager, sem worker/beat separados. Para aplicar migrations antes de subir:
 
 ```bash
@@ -100,7 +130,9 @@ Endpoints uteis:
 - API: `http://localhost:8000/api/v1/`
 - Swagger: `http://localhost:8000/api/schema/swagger-ui/`
 - Admin Unfold: `http://localhost:8000/admin/`
-- Frontend: `http://localhost:5173/`
+- Frontend: `http://localhost:5173/login`
+
+Ao usar `runservices` com outra porta de backend, por exemplo `python manage.py runservices 0.0.0.0:8001`, o frontend recebe automaticamente `VITE_API_BASE_URL=http://localhost:8001/api/v1`.
 
 ## Roadmap
 

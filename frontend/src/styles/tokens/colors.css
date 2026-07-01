@@ -153,6 +153,31 @@
   --shadow-md:  0 4px 12px rgba(26, 22, 17, 0.08), 0 2px 4px rgba(26, 22, 17, 0.04);
   --shadow-lg:  0 12px 28px rgba(26, 22, 17, 0.12), 0 4px 8px rgba(26, 22, 17, 0.06);
   --shadow-brand: 0 6px 18px rgba(234, 88, 12, 0.28);
+
+  /* ── PrimeVue component tokens — override teal → orange + warm stone ── */
+  --primary-color:        #EA580C;
+  --primary-color-text:   #FFFFFF;
+  --text-color:           #2B261F;
+  --text-color-secondary: #7C7264;
+  --surface-0:            #FFFFFF;
+  --surface-50:           #FAF8F5;
+  --surface-100:          #F5F1EB;
+  --surface-200:          #E7DFD3;
+  --surface-300:          #D6CCBC;
+  --surface-400:          #A99E8D;
+  --surface-500:          #7C7264;
+  --surface-600:          #5C5346;
+  --surface-700:          #433C32;
+  --surface-800:          #2B261F;
+  --surface-900:          #1A1611;
+  --surface-950:          #0D0B09;
+  --surface-section:      #FFFFFF;
+  --surface-card:         #FFFFFF;
+  --surface-overlay:      #FFFFFF;
+  --surface-border:       #E7DFD3;
+  --highlight-bg:         #FFF7ED;
+  --highlight-text-color: #C2410C;
+  --p-focus-ring-color:   #EA580C;
 }
 
 /* =============================================================================
@@ -160,6 +185,33 @@
    ============================================================================*/
 [data-theme="dark"] {
   color-scheme: dark;
+
+  /* ── PrimeVue component tokens — dark zinc surfaces + bright orange ─── */
+  --primary-color:        #F97316;
+  --primary-color-text:   #FFFFFF;
+  --text-color:           #E4E4E7;
+  --text-color-secondary: #A1A1AA;
+  --surface-0:            #18181B;
+  --surface-50:           #27272A;
+  --surface-100:          #3F3F46;
+  --surface-200:          #52525B;
+  --surface-300:          #71717A;
+  --surface-400:          #A1A1AA;
+  --surface-500:          #D4D4D8;
+  --surface-600:          #E4E4E7;
+  --surface-700:          #F4F4F5;
+  --surface-800:          #FAFAFA;
+  --surface-900:          #FFFFFF;
+  --surface-section:      #18181B;
+  --surface-card:         #18181B;
+  --surface-overlay:      #1F1F23;
+  --surface-border:       #27272A;
+  --surface-hover:        rgba(255, 255, 255, 0.04);
+  --surface-ground:       #09090B;
+  --highlight-bg:         rgba(249, 115, 22, 0.16);
+  --highlight-text-color: rgba(255, 255, 255, 0.87);
+  --maskbg:               rgba(0, 0, 0, 0.5);
+  --p-focus-ring-color:   #F97316;
 
   /* Brand — lift toward orange-500 for contrast on zinc */
   --brand:            var(--orange-500);

@@ -169,6 +169,8 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             "account_id": str(account.id) if account else None,
             "account_name": account.name if account else None,
             "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,
+            "restaurant_name": profile.restaurant.trade_name if profile and profile.restaurant_id else None,
             "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
+            "branch_name": profile.branch.name if profile and profile.branch_id else None,
         }
         return data

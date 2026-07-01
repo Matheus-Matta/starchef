@@ -134,3 +134,50 @@ class Command(TenantModel):
 
     def __str__(self):
         return self.code
+
+
+class DeliveryZone(TenantModel):
+    name = models.CharField(max_length=120)
+    min_radius_km = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    max_radius_km = models.DecimalField(max_digits=8, decimal_places=2)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    estimated_minutes = models.PositiveIntegerField(default=45)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["min_radius_km"]
+        constraints = [
+            models.UniqueConstraint(fields=["branch", "name"], name="unique_delivery_zone_by_branch"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} (até {self.max_radius_km}km)"
+
+
+class Deliveryman(TenantModel):
+    VEHICLE_BIKE = "bike"
+    VEHICLE_MOTORCYCLE = "motorcycle"
+    VEHICLE_CAR = "car"
+    VEHICLE_FOOT = "foot"
+
+    VEHICLE_CHOICES = [
+        (VEHICLE_BIKE, "Bike"),
+        (VEHICLE_MOTORCYCLE, "Motorcycle"),
+        (VEHICLE_CAR, "Car"),
+        (VEHICLE_FOOT, "On foot"),
+    ]
+
+    name = models.CharField(max_length=160)
+    phone = models.CharField(max_length=32, blank=True)
+    vehicle_type = models.CharField(max_length=20, choices=VEHICLE_CHOICES, default=VEHICLE_MOTORCYCLE)
+    vehicle_plate = models.CharField(max_length=20, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["branch", "name"], name="unique_deliveryman_by_branch"),
+        ]
+
+    def __str__(self):
+        return self.name

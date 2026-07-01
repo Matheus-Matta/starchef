@@ -9,7 +9,7 @@ from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.orders.events import broadcast_kitchen_event
-from apps.orders.models import Order, OrderItem
+from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.restaurants.models import Table
 
 
@@ -93,7 +93,8 @@ def add_order_item(*, order, product, quantity, user, variations=None, customer_
 def recalculate_order(order):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
-        subtotal = order.items.exclude(status=OrderItem.STATUS_CANCELLED).aggregate(value=Sum("total_price"))["value"]
+        excluded = {OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}
+        subtotal = order.items.exclude(status__in=excluded).aggregate(value=Sum("total_price"))["value"]
         order.subtotal = subtotal or Decimal("0.00")
         order.total = order.subtotal + order.service_fee + order.delivery_fee - order.discount
         if order.total < Decimal("0.00"):
@@ -109,13 +110,33 @@ def send_order_to_kitchen(order, user):
         if order.is_locked:
             raise ValidationError("Locked orders cannot be sent to kitchen.")
 
+        items = list(order.items.filter(status=OrderItem.STATUS_PENDING))
+        if not items:
+            raise ValidationError("No pending items to send to kitchen.")
+
         now = timezone.now()
-        items = order.items.filter(status=OrderItem.STATUS_PENDING)
+
+        # Each send creates a new production round
+        last_batch_number = order.batches.aggregate(value=Max("batch_number"))["value"] or 0
+        batch = OrderBatch.objects.create(
+            account=order.account,
+            restaurant=order.restaurant,
+            branch=order.branch,
+            order=order,
+            batch_number=last_batch_number + 1,
+            status=OrderBatch.STATUS_SENT,
+            sent_at=now,
+            sent_by=user,
+            created_by=user,
+            updated_by=user,
+        )
+
         for item in items:
             item.status = OrderItem.STATUS_SENT
+            item.batch = batch
             item.sent_to_kitchen_at = now
             item.updated_by = user
-            item.save(update_fields=["status", "sent_to_kitchen_at", "updated_by", "updated_at"])
+            item.save(update_fields=["status", "batch", "sent_to_kitchen_at", "updated_by", "updated_at"])
             broadcast_kitchen_event(
                 order.account_id,
                 order.branch_id,
@@ -124,10 +145,10 @@ def send_order_to_kitchen(order, user):
                 serialize_kitchen_item(item),
             )
 
-        order.status = Order.STATUS_SENT_TO_KITCHEN
+        order.production_status = Order.PROD_SENT
         order.updated_by = user
-        order.save(update_fields=["status", "updated_by", "updated_at"])
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "send_to_kitchen"})
+        order.save(update_fields=["production_status", "updated_by", "updated_at"])
+        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "send_to_kitchen", "batch": batch.batch_number})
 
         if order.branch.stock_deduction_timing == "kitchen":
             from apps.stock.services import deduct_order_stock
@@ -138,34 +159,78 @@ def send_order_to_kitchen(order, user):
 
 
 @transaction.atomic
-def update_order_item_status(item, status, user, reason=""):
+def void_order_item(item, user, reason=""):
+    """Cancel a pending item before it is sent to kitchen."""
     with tenant_context(item.account):
         item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
         if item.order.is_locked:
             raise ValidationError("Items from paid, cancelled or refunded orders cannot be changed.")
-        if item.status == OrderItem.STATUS_READY and status != OrderItem.STATUS_DELIVERED:
+        if item.status != OrderItem.STATUS_PENDING:
+            raise ValidationError("Only pending items (not yet sent to kitchen) can be voided. Use comp for items already sent.")
+        item.status = OrderItem.STATUS_CANCELLED
+        item.void_reason = reason
+        item.updated_by = user
+        item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
+        recalculate_order(item.order)
+        record_audit(action=AuditLog.ACTION_CANCELLED, instance=item, actor=user, reason=reason)
+        return item
+
+
+@transaction.atomic
+def comp_order_item(item, user, reason=""):
+    """Mark a sent/in-production item as comped (courtesy) — does not deduct from bill."""
+    with tenant_context(item.account):
+        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        if item.order.is_locked:
+            raise ValidationError("Items from paid, cancelled or refunded orders cannot be changed.")
+        if item.status in {OrderItem.STATUS_PENDING, OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
+            raise ValidationError("Comp can only be applied to items already sent to kitchen. Use void to cancel pending items.")
+
+        profile = getattr(user, "profile", None)
+        if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+            raise ValidationError("Comp requires manager permission.")
+
+        item.status = OrderItem.STATUS_COMPED
+        item.void_reason = reason
+        item.updated_by = user
+        item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
+        recalculate_order(item.order)
+        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"})
+        return item
+
+
+@transaction.atomic
+def update_order_item_status(item, new_status, user, reason=""):
+    with tenant_context(item.account):
+        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        if item.order.is_locked:
+            raise ValidationError("Items from paid, cancelled or refunded orders cannot be changed.")
+
+        # Guard special transitions through dedicated functions
+        if new_status == OrderItem.STATUS_CANCELLED:
+            return void_order_item(item, user, reason)
+        if new_status == OrderItem.STATUS_COMPED:
+            return comp_order_item(item, user, reason)
+
+        if item.status == OrderItem.STATUS_READY and new_status != OrderItem.STATUS_DELIVERED:
             profile = getattr(user, "profile", None)
             if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
                 raise ValidationError("Ready items require manager permission to change.")
-        if status == OrderItem.STATUS_CANCELLED and not reason:
-            raise ValidationError("Cancellation reason is required.")
 
         now = timezone.now()
-        item.status = status
+        item.status = new_status
         item.updated_by = user
-        if status == OrderItem.STATUS_PREPARING:
+        if new_status == OrderItem.STATUS_PREPARING:
             item.preparation_started_at = now
-        elif status == OrderItem.STATUS_READY:
+        elif new_status == OrderItem.STATUS_READY:
             item.ready_at = now
-        elif status == OrderItem.STATUS_DELIVERED:
+        elif new_status == OrderItem.STATUS_DELIVERED:
             item.delivered_at = now
-        elif status == OrderItem.STATUS_CANCELLED:
-            item.cancel_reason = reason
 
         item.save()
         recalculate_order(item.order)
-        sync_order_status_from_items(item.order)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": status})
+        sync_production_status(item.order)
+        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": new_status})
         broadcast_kitchen_event(
             item.account_id,
             item.branch_id,
@@ -214,7 +279,9 @@ def cancel_order(order, user, reason):
         order.cancel_reason = reason
         order.updated_by = user
         order.save(update_fields=["status", "cancel_reason", "updated_by", "updated_at"])
-        order.items.exclude(status=OrderItem.STATUS_CANCELLED).update(status=OrderItem.STATUS_CANCELLED, cancel_reason=reason)
+        order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).update(
+            status=OrderItem.STATUS_CANCELLED, void_reason=reason
+        )
         if order.table_id:
             order.table.status = Table.STATUS_FREE
             order.table.current_order_id = None
@@ -223,19 +290,28 @@ def cancel_order(order, user, reason):
         return order
 
 
-def sync_order_status_from_items(order):
+def sync_production_status(order):
+    """Recalculate order.production_status based on active item statuses."""
     with tenant_context(order.account):
         order = Order.objects.get(pk=order.pk)
-        active_items = list(order.items.exclude(status=OrderItem.STATUS_CANCELLED).values_list("status", flat=True))
-        if not active_items:
+        active_statuses = list(
+            order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list("status", flat=True)
+        )
+        if not active_statuses:
             return order
-        if all(status == OrderItem.STATUS_READY for status in active_items):
-            order.status = Order.STATUS_READY
-        elif any(status == OrderItem.STATUS_READY for status in active_items):
-            order.status = Order.STATUS_PARTIALLY_READY
-        elif any(status == OrderItem.STATUS_PREPARING for status in active_items):
-            order.status = Order.STATUS_PREPARING
-        order.save(update_fields=["status", "updated_at"])
+
+        if all(s == OrderItem.STATUS_DELIVERED for s in active_statuses):
+            order.production_status = Order.PROD_DELIVERED
+        elif all(s == OrderItem.STATUS_READY for s in active_statuses):
+            order.production_status = Order.PROD_READY
+        elif any(s == OrderItem.STATUS_READY for s in active_statuses):
+            order.production_status = Order.PROD_PARTIALLY_READY
+        elif any(s == OrderItem.STATUS_PREPARING for s in active_statuses):
+            order.production_status = Order.PROD_PREPARING
+        elif any(s in {OrderItem.STATUS_SENT, OrderItem.STATUS_PREPARING} for s in active_statuses):
+            order.production_status = Order.PROD_SENT
+
+        order.save(update_fields=["production_status", "updated_at"])
         return order
 
 
@@ -256,6 +332,7 @@ def serialize_kitchen_item(item):
         "variations": item.variations,
         "status": item.status,
         "production_sector": item.production_sector,
+        "batch_number": item.batch.batch_number if item.batch_id else None,
         "sent_to_kitchen_at": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else None,
         "elapsed_from": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else item.launched_at.isoformat(),
     }

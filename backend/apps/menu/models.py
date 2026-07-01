@@ -176,3 +176,52 @@ class RecipeItem(TenantModel):
     def __str__(self):
         return f"{self.recipe} - {self.ingredient}"
 
+
+class Menu(TenantModel):
+    CHANNEL_ALL = "all"
+    CHANNEL_TABLE = "table"
+    CHANNEL_DELIVERY = "delivery"
+    CHANNEL_COUNTER = "counter"
+    CHANNEL_DIGITAL = "digital"
+
+    CHANNEL_CHOICES = [
+        (CHANNEL_ALL, "All channels"),
+        (CHANNEL_TABLE, "Dine-in / Table"),
+        (CHANNEL_DELIVERY, "Delivery"),
+        (CHANNEL_COUNTER, "Counter"),
+        (CHANNEL_DIGITAL, "Digital / QR Code"),
+    ]
+
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=140, unique=True)
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default=CHANNEL_ALL)
+    is_active = models.BooleanField(default=True, db_index=True)
+    available_from = models.TimeField(null=True, blank=True)
+    available_until = models.TimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["branch", "name"], name="unique_menu_name_by_branch"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class MenuItem(TenantModel):
+    menu = models.ForeignKey(Menu, related_name="items", on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, related_name="menu_items", on_delete=models.CASCADE)
+    display_order = models.PositiveIntegerField(default=0)
+    override_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["display_order"]
+        constraints = [
+            models.UniqueConstraint(fields=["menu", "product"], name="unique_product_per_menu"),
+        ]
+
+    def __str__(self):
+        return f"{self.menu} → {self.product}"
+

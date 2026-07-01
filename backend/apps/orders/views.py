@@ -5,15 +5,17 @@ from rest_framework.response import Response
 
 from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
 from apps.menu.models import Product
-from apps.orders.models import Order, OrderItem
-from apps.orders.serializers import OrderItemSerializer, OrderSerializer
+from apps.orders.models import Order, OrderBatch, OrderItem
+from apps.orders.serializers import OrderBatchSerializer, OrderItemSerializer, OrderSerializer
 from apps.orders.services import (
     add_order_item,
     cancel_order,
     close_order,
+    comp_order_item,
     create_order,
     send_order_to_kitchen,
     update_order_item_status,
+    void_order_item,
 )
 
 
@@ -21,10 +23,10 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
     serializer_class = OrderSerializer
     queryset = (
         Order.objects.select_related("restaurant", "branch", "table", "command", "customer", "delivery_address")
-        .prefetch_related("items__product", "items__addons")
+        .prefetch_related("items__product", "items__addons", "items__batch")
         .all()
     )
-    filterset_fields = ["restaurant", "branch", "order_type", "status", "payment_status", "table", "customer"]
+    filterset_fields = ["restaurant", "branch", "order_type", "status", "production_status", "payment_status", "table", "customer"]
     search_fields = ["sequence", "customer__name", "table__number"]
     ordering_fields = ["opened_at", "closed_at", "total", "sequence"]
 
@@ -54,7 +56,7 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
             serializer = OrderItemSerializer(order.items.all(), many=True)
             return Response(serializer.data)
 
-        product = Product.objects.get(pk=request.data["product"])
+        product = Product.objects.get(pk=request.data["product"], restaurant=order.restaurant, branch=order.branch)
         item = add_order_item(
             order=order,
             product=product,
@@ -64,6 +66,38 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
             customer_note=request.data.get("customer_note", ""),
         )
         return Response(OrderItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["delete"], url_path=r"items/(?P<item_pk>[^/.]+)/void")
+    def void_item(self, request, pk=None, item_pk=None):
+        """Void a pending item (cancel before sending to kitchen)."""
+        try:
+            item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
+            item = void_order_item(item, request.user, reason=request.data.get("reason", ""))
+        except OrderItem.DoesNotExist:
+            return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(OrderItemSerializer(item).data)
+
+    @action(detail=True, methods=["post"], url_path=r"items/(?P<item_pk>[^/.]+)/comp")
+    def comp_item(self, request, pk=None, item_pk=None):
+        """Comp an in-production item (courtesy after sending to kitchen)."""
+        try:
+            item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
+            item = comp_order_item(item, request.user, reason=request.data.get("reason", ""))
+        except OrderItem.DoesNotExist:
+            return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(OrderItemSerializer(item).data)
+
+    @action(detail=True, methods=["get"], url_path="batches")
+    def batches(self, request, pk=None):
+        """List all production rounds for an order."""
+        order = self.get_object()
+        batches = OrderBatch.objects.filter(order=order).prefetch_related("items__product")
+        serializer = OrderBatchSerializer(batches, many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=["post"], url_path="send-to-kitchen")
     def send_to_kitchen(self, request, pk=None):
@@ -104,6 +138,15 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["get"], url_path="payments")
+    def payments(self, request, pk=None):
+        from apps.payments.models import Payment
+        from apps.payments.serializers import PaymentSerializer
+
+        order = self.get_object()
+        payments = Payment.objects.filter(order=order).order_by("created_at")
+        return Response(PaymentSerializer(payments, many=True).data)
+
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         try:
@@ -126,7 +169,11 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
 
 class OrderItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
     serializer_class = OrderItemSerializer
-    queryset = OrderItem.objects.select_related("restaurant", "branch", "order", "product").prefetch_related("addons").all()
+    queryset = (
+        OrderItem.objects.select_related("restaurant", "branch", "order__table", "order__command", "product", "batch")
+        .prefetch_related("addons")
+        .all()
+    )
     filterset_fields = ["restaurant", "branch", "order", "production_sector", "status"]
     search_fields = ["product__name", "customer_note"]
     ordering_fields = ["launched_at", "ready_at"]
@@ -143,4 +190,3 @@ class OrderItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.Mod
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(item).data)
-

@@ -5,16 +5,41 @@
       <span v-if="!collapsed" class="sidebar__brand-name">Star<span>Chef</span></span>
     </div>
 
-    <button v-if="!collapsed" class="sidebar__branch" type="button">
-      <span class="sidebar__branch-icon">
-        <AppIcon name="store" :size="16" />
-      </span>
-      <span class="sidebar__branch-text">
-        <span class="sidebar__branch-title">{{ branch }}</span>
-        <span class="sidebar__branch-subtitle">Filial Centro</span>
-      </span>
-      <AppIcon name="chevrons-up-down" :size="15" />
-    </button>
+    <div v-if="!collapsed" class="sidebar__scope-picker">
+      <button class="sidebar__branch" type="button" :aria-expanded="scopeOpen" @click="toggleScope">
+        <span class="sidebar__branch-icon">
+          <AppIcon name="store" :size="16" />
+        </span>
+        <span class="sidebar__branch-text">
+          <span class="sidebar__branch-title">{{ restaurantName }}</span>
+          <span class="sidebar__branch-subtitle">{{ branchName }}</span>
+        </span>
+        <AppIcon v-if="canSeeAllRestaurants" name="chevrons-up-down" :size="15" />
+      </button>
+
+      <div v-if="scopeOpen && canSeeAllRestaurants" class="sidebar__scope-menu">
+        <button
+          type="button"
+          class="sidebar__scope-option"
+          :class="{ 'sidebar__scope-option--active': !selectedRestaurantId }"
+          @click="selectScope('')"
+        >
+          <span>Todos os restaurantes</span>
+          <small>Dados consolidados da conta</small>
+        </button>
+        <button
+          v-for="restaurant in restaurants"
+          :key="restaurant.id"
+          type="button"
+          class="sidebar__scope-option"
+          :class="{ 'sidebar__scope-option--active': selectedRestaurantId === restaurant.id }"
+          @click="selectScope(restaurant.id)"
+        >
+          <span>{{ restaurant.trade_name }}</span>
+          <small>{{ restaurant.city || restaurant.legal_name || "Todas as filiais" }}</small>
+        </button>
+      </div>
+    </div>
 
     <nav class="sidebar__nav">
       <div v-for="group in groups" :key="group.label" class="sidebar__group">
@@ -42,16 +67,16 @@
     </nav>
 
     <div v-if="!collapsed" class="sidebar__footer">
-      <div class="sidebar__help">
-        <AppIcon name="life-buoy" :size="17" />
-        <span>Suporte & ajuda</span>
+      <div class="sidebar__scope">
+        <span>{{ accountName }}</span>
+        <small>{{ accessLabel }}</small>
       </div>
     </div>
   </aside>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 import logoUrl from "../assets/logo-mark.svg";
 import AppIcon from "../components/AppIcon.vue";
@@ -59,39 +84,84 @@ import AppIcon from "../components/AppIcon.vue";
 const props = defineProps({
   active: { type: String, default: "painel" },
   collapsed: { type: Boolean, default: false },
-  branch: { type: String, default: "Cantina da Ana" },
+  user: { type: Object, default: null },
+  stats: { type: Object, default: () => ({}) },
+  restaurants: { type: Array, default: () => [] },
+  selectedRestaurantId: { type: String, default: "" },
+  scope: { type: Object, default: null },
 });
 
-defineEmits(["navigate"]);
+const emit = defineEmits(["navigate", "scope-change"]);
+const scopeOpen = ref(false);
 
-const groups = [
-  {
-    label: "Principal",
-    items: [
-      { id: "painel", label: "Painel", icon: "layout-dashboard" },
-      { id: "pedidos", label: "Pedidos", icon: "receipt-text", badge: "18" },
-      { id: "kds", label: "KDS Cozinha", icon: "soup", badge: "6", badgeTone: "warning" },
-    ],
-  },
-  {
-    label: "Operação",
-    items: [
-      { id: "mesas", label: "Mesas & Comandas", icon: "armchair" },
-      { id: "cardapio", label: "Cardápio", icon: "book-open" },
-      { id: "caixa", label: "Caixa", icon: "wallet" },
-      { id: "clientes", label: "Clientes", icon: "users" },
-    ],
-  },
-  {
-    label: "Gestão",
-    items: [
-      { id: "estoque", label: "Estoque", icon: "package" },
-      { id: "relatorios", label: "Relatórios", icon: "bar-chart-3" },
-      { id: "restaurantes", label: "Restaurantes", icon: "store" },
-      { id: "usuarios", label: "Usuários", icon: "user-cog" },
-    ],
-  },
-];
+const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin"));
+const canManage = computed(() => ["admin", "owner", "manager"].includes(props.user?.profile_type) || props.user?.is_superuser);
+const canUseCash = computed(() => ["admin", "owner", "manager", "cashier"].includes(props.user?.profile_type) || props.user?.is_superuser);
+const accountName = computed(() => props.user?.account_name || "StarChef");
+const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
+const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todas as filiais");
+const accessLabel = computed(() => (canSeeAllRestaurants.value ? "Acesso administrativo" : "Escopo restrito"));
+
+const groups = computed(() =>
+  [
+    {
+      label: "Principal",
+      items: [
+        { id: "painel", label: "Painel", icon: "layout-dashboard" },
+        { id: "pedidos", label: "Pedidos", icon: "receipt-text", badge: formatBadge(props.stats.ordersOpen) },
+        { id: "kds", label: "KDS Cozinha", icon: "soup", badge: formatBadge(props.stats.kitchenOpen), badgeTone: "warning" },
+      ],
+    },
+    {
+      label: "Operacao",
+      items: [
+        { id: "kds-estacoes", label: "Estacoes KDS", icon: "soup" },
+        { id: "mesas", label: "Mesas & Comandas", icon: "armchair" },
+        canUseCash.value ? { id: "caixa", label: "Caixa", icon: "wallet" } : null,
+        { id: "clientes", label: "Clientes", icon: "users" },
+      ].filter(Boolean),
+    },
+    {
+      label: "Cardapio",
+      items: [
+        { id: "cardapio", label: "Produtos", icon: "book-open" },
+        { id: "categorias", label: "Categorias", icon: "tag" },
+        { id: "adicionais", label: "Adicionais", icon: "plus" },
+        canManage.value ? { id: "ingredientes", label: "Ingredientes", icon: "flask" } : null,
+        canManage.value ? { id: "receitas", label: "Receitas", icon: "salad" } : null,
+        canManage.value ? { id: "cardapios", label: "Cardapios digitais", icon: "book-marked" } : null,
+      ].filter(Boolean),
+    },
+    {
+      label: "Delivery",
+      items: [
+        canManage.value ? { id: "zonas-entrega", label: "Zonas de entrega", icon: "map-pin" } : null,
+        canManage.value ? { id: "entregadores", label: "Entregadores", icon: "truck" } : null,
+      ].filter(Boolean),
+    },
+    {
+      label: "Financeiro",
+      items: [
+        canManage.value ? { id: "estoque", label: "Estoque", icon: "package" } : null,
+        canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
+        canUseCash.value ? { id: "formas-pagamento", label: "Formas de pagamento", icon: "wallet" } : null,
+        canManage.value ? { id: "pagamentos", label: "Hist. pagamentos", icon: "dollar-sign" } : null,
+        canManage.value ? { id: "notas-fiscais", label: "Notas fiscais", icon: "shield-check" } : null,
+      ].filter(Boolean),
+    },
+    {
+      label: "Gestao",
+      items: [
+        canManage.value ? { id: "relatorios", label: "Relatorios", icon: "bar-chart-3" } : null,
+        canSeeAllRestaurants.value ? { id: "restaurantes", label: "Restaurantes", icon: "store" } : null,
+        canSeeAllRestaurants.value ? { id: "filiais", label: "Filiais", icon: "map-pin" } : null,
+        canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
+        canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
+        canSeeAllRestaurants.value ? { id: "impressoras", label: "Impressoras", icon: "zap" } : null,
+      ].filter(Boolean),
+    },
+  ].filter((group) => group.items.length),
+);
 
 const brandStyle = computed(() => ({
   padding: props.collapsed ? "0" : "0 20px",
@@ -116,6 +186,21 @@ function badgeStyle(item) {
     color: item.badgeTone === "warning" ? "var(--warning-text)" : on ? "#fff" : "var(--text-muted)",
   };
 }
+
+function formatBadge(value) {
+  if (!Number(value)) return "";
+  return Number(value) > 99 ? "99+" : String(value);
+}
+
+function toggleScope() {
+  if (!canSeeAllRestaurants.value) return;
+  scopeOpen.value = !scopeOpen.value;
+}
+
+function selectScope(restaurantId) {
+  scopeOpen.value = false;
+  emit("scope-change", restaurantId);
+}
 </script>
 
 <style scoped>
@@ -128,6 +213,9 @@ function badgeStyle(item) {
   height: 100vh;
   transition: width var(--dur-base) var(--ease-out);
   overflow: hidden;
+  position: sticky;
+  top: 0;
+  z-index: 35;
 }
 
 .sidebar__brand {
@@ -149,12 +237,17 @@ function badgeStyle(item) {
   color: var(--brand);
 }
 
-.sidebar__branch {
+.sidebar__scope-picker {
+  position: relative;
   margin: 14px 14px 6px;
+}
+
+.sidebar__branch {
   padding: 10px 12px;
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   background: var(--surface-sunken);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -193,6 +286,48 @@ function badgeStyle(item) {
 
 .sidebar__branch-subtitle {
   font: var(--weight-medium) 11px/1 var(--font-sans);
+  color: var(--text-muted);
+}
+
+.sidebar__scope-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 25;
+  padding: 6px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.sidebar__scope-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar__scope-option:hover,
+.sidebar__scope-option--active {
+  background: var(--nav-item-hover);
+}
+
+.sidebar__scope-option span {
+  font: var(--weight-bold) 12.5px/1.15 var(--font-sans);
+  color: var(--text-strong);
+}
+
+.sidebar__scope-option small {
+  font: var(--weight-medium) 11px/1.15 var(--font-sans);
   color: var(--text-muted);
 }
 
@@ -267,15 +402,26 @@ function badgeStyle(item) {
   border-top: 1px solid var(--border-subtle);
 }
 
-.sidebar__help {
+.sidebar__scope {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
-  font: var(--weight-semibold) 12.5px/1 var(--font-sans);
-  color: var(--text-body);
+}
+
+.sidebar__scope span {
+  font: var(--weight-bold) 12.5px/1.15 var(--font-sans);
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar__scope small {
+  font: var(--weight-medium) 11px/1 var(--font-sans);
+  color: var(--text-muted);
 }
 
 @media (max-width: 760px) {

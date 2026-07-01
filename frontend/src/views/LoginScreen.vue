@@ -24,7 +24,7 @@
     </section>
 
     <section class="login-screen__form-panel">
-      <button class="icon-button login-screen__theme" type="button" aria-label="Tema" @click="toggleTheme">
+      <button class="login-screen__theme-btn" type="button" aria-label="Tema" @click="toggleTheme">
         <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="18" />
       </button>
 
@@ -34,30 +34,53 @@
           <p>Entre para acessar o painel da sua filial.</p>
         </div>
 
-        <Input v-model="username" label="Usuário ou e-mail" type="text" placeholder="manager ou voce@restaurante.com" required>
-          <template #icon><AppIcon name="mail" :size="17" /></template>
-        </Input>
+        <div class="login-field">
+          <label for="username" class="login-field__label">Usuário ou e-mail<span>*</span></label>
+          <IconField icon-position="left" class="login-field__control">
+            <InputIcon class="pi pi-envelope" />
+            <InputText
+              id="username"
+              v-model="username"
+              type="text"
+              placeholder="manager ou voce@restaurante.com"
+              required
+              class="w-full"
+            />
+          </IconField>
+        </div>
 
-        <Input v-model="password" label="Senha" :type="showPassword ? 'text' : 'password'" placeholder="••••••••" required>
-          <template #icon><AppIcon name="lock" :size="17" /></template>
-          <template #trailing>
-            <button class="login-screen__password-toggle" type="button" @click="showPassword = !showPassword">
-              <AppIcon :name="showPassword ? 'eye-off' : 'eye'" :size="17" />
-            </button>
-          </template>
-        </Input>
+        <div class="login-field">
+          <label for="password" class="login-field__label">Senha<span>*</span></label>
+          <Password
+            v-model="password"
+            input-id="password"
+            :feedback="false"
+            toggle-mask
+            placeholder="••••••••"
+            class="w-full"
+            input-class="w-full"
+          />
+        </div>
 
         <div class="login-screen__row">
-          <Switch v-model="remember" label="Lembrar-me" size="sm" />
+          <div class="login-switch">
+            <InputSwitch v-model="remember" input-id="remember" />
+            <label for="remember">Lembrar-me</label>
+          </div>
           <a href="#">Esqueci a senha</a>
         </div>
 
         <p v-if="errorMessage" class="login-screen__error">{{ errorMessage }}</p>
 
-        <Button type="submit" full-width size="lg" :loading="auth.loading" :variant="done ? 'success' : 'primary'">
-          <template v-if="done" #icon><AppIcon name="check" :size="18" /></template>
-          {{ done ? "Conectado" : "Entrar" }}
-        </Button>
+        <Button
+          type="submit"
+          :label="done ? 'Conectado' : 'Entrar'"
+          :icon="done ? 'pi pi-check' : 'pi pi-sign-in'"
+          :loading="auth.loading"
+          :severity="done ? 'success' : undefined"
+          class="w-full"
+          size="large"
+        />
 
         <div class="login-screen__divider">
           <span />
@@ -65,10 +88,15 @@
           <span />
         </div>
 
-        <Button variant="secondary" full-width size="lg">
-          <template #icon><AppIcon name="shield-check" :size="18" /></template>
-          Entrar com SSO do restaurante
-        </Button>
+        <Button
+          label="Entrar com SSO do restaurante"
+          icon="pi pi-shield"
+          severity="secondary"
+          outlined
+          class="w-full"
+          size="large"
+          type="button"
+        />
 
         <p class="login-screen__support">
           Problemas para acessar? <a href="#">Fale com o suporte</a>
@@ -79,23 +107,25 @@
 </template>
 
 <script setup>
-import { ref, watchEffect } from "vue";
+import { inject, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import Button from "primevue/button";
+import IconField from "primevue/iconfield";
+import InputIcon from "primevue/inputicon";
+import InputSwitch from "primevue/inputswitch";
+import InputText from "primevue/inputtext";
+import Password from "primevue/password";
 
 import logoUrl from "../assets/logo-mark.svg";
 import AppIcon from "../components/AppIcon.vue";
-import Button from "../components/forms/Button.vue";
-import Input from "../components/forms/Input.vue";
-import Switch from "../components/forms/Switch.vue";
 import { useAuthStore } from "../stores/auth";
 
 const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
-const theme = ref(localStorage.getItem("starchef-theme") || "light");
+const theme = inject("theme");
 const username = ref("");
 const password = ref("");
-const showPassword = ref(false);
 const remember = ref(true);
 const done = ref(false);
 const errorMessage = ref("");
@@ -105,23 +135,14 @@ const features = [
   { icon: "wallet", label: "Caixa & pagamentos" },
 ];
 
-watchEffect(() => {
-  document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem("starchef-theme", theme.value);
-});
-
 function toggleTheme() {
   theme.value = theme.value === "dark" ? "light" : "dark";
 }
 
 async function submit() {
   errorMessage.value = "";
-
   try {
-    await auth.login({
-      username: username.value,
-      password: password.value,
-    });
+    await auth.login({ username: username.value, password: password.value });
     done.value = true;
     const next = typeof route.query.next === "string" ? route.query.next : "/painel";
     await router.replace(next);
@@ -254,11 +275,20 @@ async function submit() {
   padding: 40px;
 }
 
-.login-screen__theme {
+.login-screen__theme-btn {
   position: absolute;
   top: 24px;
   right: 24px;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
+  color: var(--text-body);
+  cursor: pointer;
 }
 
 .login-screen__form {
@@ -266,7 +296,7 @@ async function submit() {
   max-width: 384px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
 }
 
 .login-screen__heading {
@@ -286,12 +316,36 @@ async function submit() {
   color: var(--text-muted);
 }
 
-.login-screen__password-toggle {
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-field__label {
+  font: var(--font-label);
+  color: var(--text-body);
+}
+
+.login-field__label span {
+  color: var(--danger);
+  margin-left: 2px;
+}
+
+.login-field__control {
+  width: 100%;
+  display: flex;
+}
+
+.login-switch {
   display: inline-flex;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-subtle);
+  align-items: center;
+  gap: 10px;
+}
+
+.login-switch label {
+  font: var(--font-body);
+  color: var(--text-body);
   cursor: pointer;
 }
 
@@ -337,6 +391,33 @@ async function submit() {
   text-align: center;
   font: var(--weight-medium) 13px/1.5 var(--font-sans);
   color: var(--text-muted);
+}
+
+:deep(.p-inputtext) {
+  width: 100%;
+  height: 44px;
+  font-family: var(--font-sans);
+}
+
+:deep(.p-password) {
+  width: 100%;
+}
+
+:deep(.p-password .p-inputtext) {
+  width: 100%;
+  height: 44px;
+  font-family: var(--font-sans);
+}
+
+:deep(.p-button) {
+  height: 44px;
+  font-family: var(--font-sans);
+  font-weight: var(--weight-semibold);
+  justify-content: center;
+}
+
+:deep(.p-button.p-button-lg) {
+  font-size: var(--text-md);
 }
 
 @media (max-width: 900px) {

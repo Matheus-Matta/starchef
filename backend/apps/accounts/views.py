@@ -18,6 +18,7 @@ from apps.accounts.serializers import (
     SubscriptionSerializer,
     UserSerializer,
 )
+from apps.core.access import is_tenant_admin
 from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
 
 User = get_user_model()
@@ -58,7 +59,9 @@ class MeView(APIView):
                 "account_id": str(account.id) if account else None,
                 "account_name": account.name if account else None,
                 "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,
+                "restaurant_name": profile.restaurant.trade_name if profile and profile.restaurant_id else None,
                 "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
+                "branch_name": profile.branch.name if profile and profile.branch_id else None,
             }
         )
 
@@ -78,15 +81,27 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         user = self.request.user
         if user.is_superuser:
-            return queryset
+            return self._filter_users_by_selected_scope(queryset)
         profile = getattr(user, "profile", None)
         if not profile or not profile.account_id:
             return queryset.none()
         queryset = queryset.filter(profile__account_id=profile.account_id)
+        if is_tenant_admin(user):
+            return self._filter_users_by_selected_scope(queryset)
         if not profile.restaurant_id:
-            return queryset
+            return queryset.none()
+        queryset = queryset.filter(profile__restaurant_id=profile.restaurant_id)
         if profile.branch_id and profile.profile_type not in {"admin", "owner"}:
             queryset = queryset.filter(profile__branch_id=profile.branch_id)
+        return queryset
+
+    def _filter_users_by_selected_scope(self, queryset):
+        restaurant_id = self.request.query_params.get("restaurant")
+        branch_id = self.request.query_params.get("branch")
+        if restaurant_id:
+            queryset = queryset.filter(profile__restaurant_id=restaurant_id)
+        if branch_id:
+            queryset = queryset.filter(profile__branch_id=branch_id)
         return queryset
 
 

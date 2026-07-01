@@ -3,6 +3,7 @@
 @import url("./styles/tokens/typography.css");
 @import url("./styles/tokens/spacing.css");
 @import url("./styles/tokens/base.css");
+@import url("./styles/primevue-tokens.css");
 
 :root {
   --sidebar-w: 280px;
@@ -16,8 +17,9 @@
 
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
   background: var(--surface-ground);
+  overflow: hidden;
 }
 
 .app-main {
@@ -25,12 +27,15 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .app-content {
   flex: 1;
   padding: 22px;
   overflow: auto;
+  min-height: 0;
 }
 
 .responsive-kpi-grid {

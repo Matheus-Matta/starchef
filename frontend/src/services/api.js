@@ -21,6 +21,7 @@ api.interceptors.request.use((config) => {
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`;
   }
+  applyRestaurantScope(config);
   return config;
 });
 
@@ -50,6 +51,26 @@ api.interceptors.response.use(
 
 function isAuthRefreshRequest(url = "") {
   return url.includes("/auth/refresh/");
+}
+
+function applyRestaurantScope(config) {
+  if (config.skipRestaurantScope || String(config.method || "get").toLowerCase() !== "get") {
+    return;
+  }
+
+  const restaurantId = localStorage.getItem("starchef-restaurant-scope");
+  if (!restaurantId || isAuthRequest(config.url)) {
+    return;
+  }
+
+  config.params = { ...(config.params || {}) };
+  if (!config.params.restaurant) {
+    config.params.restaurant = restaurantId;
+  }
+}
+
+function isAuthRequest(url = "") {
+  return url.includes("/auth/");
 }
 
 export async function refreshAccessToken() {

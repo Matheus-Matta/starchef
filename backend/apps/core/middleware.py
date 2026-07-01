@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 PUBLIC_URL_NAMES = {
+    "api-index",
     "healthcheck",
     "schema",
     "swagger-ui",
