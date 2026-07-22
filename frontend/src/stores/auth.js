@@ -14,6 +14,15 @@ export const useAuthStore = defineStore("auth", {
 
   getters: {
     isAuthenticated: (state) => Boolean(state.accessToken && state.refreshToken),
+    // Modulos habilitados para a conta em sessao (o base e sempre implicito).
+    enabledModules: (state) => state.user?.enabled_modules || ["base"],
+    /** Testa se um modulo esta liberado. Reativo: usado por sidebar e router guard. */
+    hasModule: (state) => (moduleName) => {
+      if (!moduleName || moduleName === "base") return true;
+      // Superadmin (dono da plataforma) sobrepoe o licenciamento: enxerga todos os modulos.
+      if (state.user?.is_superuser) return true;
+      return (state.user?.enabled_modules || []).includes(moduleName);
+    },
   },
 
   actions: {

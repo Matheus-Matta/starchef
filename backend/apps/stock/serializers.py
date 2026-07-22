@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.core.serializers import TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.stock.models import StockLocation, StockMovement
 
@@ -9,7 +9,7 @@ class StockLocationSerializer(TenantModelSerializer):
     class Meta:
         model = StockLocation
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
 class StockMovementSerializer(TenantModelSerializer):
@@ -19,5 +19,5 @@ class StockMovementSerializer(TenantModelSerializer):
     class Meta:
         model = StockMovement
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by", "total_cost"]
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
 

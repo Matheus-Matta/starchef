@@ -16,6 +16,8 @@ export default [
       },
     },
     rules: {
+      // Permite o padrão `const { omit1, omit2, ...rest } = obj` para descartar chaves.
+      "no-unused-vars": ["error", { ignoreRestSiblings: true }],
       "vue/html-self-closing": "off",
       "vue/max-attributes-per-line": "off",
       "vue/multi-word-component-names": "off",

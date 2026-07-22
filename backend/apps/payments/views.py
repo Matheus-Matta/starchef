@@ -1,29 +1,31 @@
 from django.core.exceptions import ValidationError
-from rest_framework import status, viewsets
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.modules import MODULE_FINANCEIRO
+from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
 from apps.payments.models import CashRegister, Payment, PaymentMethod
 from apps.payments.serializers import CashRegisterSerializer, PaymentMethodSerializer, PaymentSerializer
 from apps.payments.services import close_cash_register, open_cash_register
 
 
-class PaymentMethodViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class PaymentMethodViewSet(BaseTenantViewSet):
     serializer_class = PaymentMethodSerializer
     queryset = PaymentMethod.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "method_type", "is_active"]
     search_fields = ["name"]
 
 
-class PaymentViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ReadOnlyModelViewSet):
+class PaymentViewSet(ReadOnlyTenantViewSet):
+    required_module = MODULE_FINANCEIRO  # historico analitico de pagamentos (o recebimento em si e do PDV/base)
     serializer_class = PaymentSerializer
     queryset = Payment.objects.select_related("restaurant", "branch", "order", "payment_method").all()
     filterset_fields = ["restaurant", "branch", "order", "payment_method", "status"]
     ordering_fields = ["paid_at", "amount"]
 
 
-class CashRegisterViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class CashRegisterViewSet(BaseTenantViewSet):
     serializer_class = CashRegisterSerializer
     queryset = CashRegister.objects.select_related("restaurant", "branch", "opened_by", "closed_by").prefetch_related("movements").all()
     filterset_fields = ["restaurant", "branch", "status"]

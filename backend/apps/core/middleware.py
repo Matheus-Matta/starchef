@@ -22,8 +22,12 @@ PUBLIC_URL_NAMES = {
     "token_verify",
 }
 
+# O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin
+# usa all_objects + X-Account-ID). Todo o /admin/ é isento do middleware de tenant
+# — caso contrário, um usuário anônimo recebe 403 em /admin/ antes de o admin
+# conseguir redirecioná-lo para a tela de login.
 PUBLIC_PATH_PREFIXES = (
-    "/admin/login/",
+    "/admin/",
     settings.STATIC_URL,
     settings.MEDIA_URL,
 )

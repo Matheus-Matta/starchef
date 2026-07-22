@@ -15,13 +15,15 @@ from apps.accounts.views import (
     LogoutView,
     MeView,
     PlanViewSet,
+    PermissionViewSet,
     RoleViewSet,
     SubscriptionViewSet,
     UserViewSet,
 )
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
-from apps.invoices.views import InvoiceViewSet
+from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
 from apps.kitchen.views import KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
+from apps.sla.views import ServiceLevelAgreementViewSet
 from apps.menu.views import (
     IngredientViewSet,
     MenuItemViewSet,
@@ -36,7 +38,7 @@ from apps.menu.views import (
 )
 from apps.orders.views import OrderItemViewSet, OrderViewSet
 from apps.payments.views import CashRegisterViewSet, PaymentMethodViewSet, PaymentViewSet
-from apps.printers.views import PrinterViewSet, PrintJobViewSet
+from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.views import DashboardReportView, SalesReportView
 from apps.restaurants.views import (
     BranchViewSet,
@@ -71,6 +73,7 @@ router.register("subscriptions", SubscriptionViewSet, basename="subscriptions")
 router.register("system-config", GlobalSystemConfigViewSet, basename="system-config")
 router.register("users", UserViewSet, basename="users")
 router.register("roles", RoleViewSet, basename="roles")
+router.register("permissions", PermissionViewSet, basename="permissions")
 router.register("restaurants", RestaurantViewSet, basename="restaurants")
 router.register("branches", BranchViewSet, basename="branches")
 router.register("tables/sectors", TableSectorViewSet, basename="table-sectors")
@@ -90,15 +93,20 @@ router.register("menu/menus", MenuViewSet, basename="menus")
 router.register("menu/menu-items", MenuItemViewSet, basename="menu-items")
 router.register("orders/items", OrderItemViewSet, basename="order-items")
 router.register("orders", OrderViewSet, basename="orders")
+router.register("sla", ServiceLevelAgreementViewSet, basename="sla")
 router.register("kitchen/stations", KdsStationViewSet, basename="kds-stations")
 router.register("kitchen/items", KitchenItemViewSet, basename="kitchen-items")
 router.register("kitchen/orders", KitchenOrderViewSet, basename="kitchen-orders")
 router.register("payments/methods", PaymentMethodViewSet, basename="payment-methods")
 router.register("payments", PaymentViewSet, basename="payments")
 router.register("cash-register", CashRegisterViewSet, basename="cash-register")
+router.register("fiscal/config", FiscalConfigViewSet, basename="fiscal-config")
+router.register("fiscal/profiles", FiscalProfileViewSet, basename="fiscal-profiles")
 router.register("invoices", InvoiceViewSet, basename="invoices")
 router.register("printers", PrinterViewSet, basename="printers")
 router.register("print-jobs", PrintJobViewSet, basename="print-jobs")
+router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings")
+router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
 

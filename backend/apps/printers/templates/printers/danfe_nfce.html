@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>DANFE NFC-e {{ invoice.number }}</title>
+  <style>
+    body { font-family: "Courier New", monospace; font-size: 11px; width: 300px; margin: 0; color: #000; }
+    h1, h2, p { margin: 0 0 4px; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .b { font-weight: bold; }
+    .small { font-size: 10px; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 1px 0; vertical-align: top; }
+    .line { border-top: 1px dashed #000; margin: 6px 0; }
+    .box { border: 1px solid #000; padding: 4px; margin: 4px 0; }
+    .warn { border: 1px solid #000; padding: 4px; text-align: center; font-weight: bold; }
+    .key { word-break: break-all; letter-spacing: 1px; }
+    .qr { display: block; margin: 6px auto; width: 130px; height: 130px; }
+  </style>
+</head>
+<body>
+  <!-- Emitente -->
+  <div class="center">
+    <span class="b">{{ config.corporate_name|default:invoice.emitter_name|default:"RAZAO SOCIAL" }}</span><br>
+    <span class="small">CNPJ: {{ invoice.emitter_cnpj|default:"__.___.___/____-__" }}
+      {% if config.ie %}IE: {{ config.ie }}{% endif %}</span><br>
+    <span class="small">{{ config.address_line }}{% if config.city %} - {{ config.city }}/{{ config.uf }}{% endif %}</span>
+  </div>
+  <div class="line"></div>
+
+  <p class="center small b">
+    DANFE NFC-e - Documento Auxiliar da<br>
+    Nota Fiscal de Consumidor Eletronica
+  </p>
+
+  {% if is_homologation %}
+    <div class="warn small">EMITIDA EM AMBIENTE DE HOMOLOGACAO<br>SEM VALOR FISCAL</div>
+  {% endif %}
+
+  <div class="line"></div>
+
+  <!-- Itens -->
+  <table class="small">
+    <tr class="b">
+      <td>#</td><td>COD</td><td>DESCRICAO</td><td class="right">TOTAL</td>
+    </tr>
+    {% for item in items %}
+      <tr>
+        <td>{{ item.line_number }}</td>
+        <td>{{ item.code|default:"-" }}</td>
+        <td>{{ item.description }}</td>
+        <td class="right">{{ item.total_price }}</td>
+      </tr>
+      <tr>
+        <td colspan="4" class="small">
+          {{ item.quantity|floatformat:3 }} {{ item.unit }} x {{ item.unit_price }}
+          {% if item.ncm %}| NCM {{ item.ncm }}{% endif %}
+          {% if item.cfop %}| CFOP {{ item.cfop }}{% endif %}
+          {% if item.csosn %}| CSOSN {{ item.csosn }}{% elif item.cst_icms %}| CST {{ item.cst_icms }}{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <div class="line"></div>
+  <table>
+    <tr><td>Qtd. total de itens</td><td class="right">{{ items|length }}</td></tr>
+    <tr><td>Valor dos produtos</td><td class="right">{{ invoice.products_total }}</td></tr>
+    {% if invoice.discount_total %}<tr><td>Desconto</td><td class="right">{{ invoice.discount_total }}</td></tr>{% endif %}
+    <tr class="b"><td>VALOR A PAGAR R$</td><td class="right">{{ invoice.total_amount }}</td></tr>
+  </table>
+
+  <p class="small">Tributos Totais Incidentes (Lei Fed. 12.741): R$ {{ invoice.tax_approx_total }}</p>
+  <div class="line"></div>
+
+  <!-- Consumidor -->
+  <p class="small">
+    {% if invoice.recipient_cpf %}CONSUMIDOR - CPF: {{ invoice.recipient_cpf }} {{ invoice.recipient_name }}
+    {% else %}CONSUMIDOR NAO IDENTIFICADO{% endif %}
+  </p>
+  <div class="line"></div>
+
+  <!-- Identificacao / consulta -->
+  <p class="center small">
+    NFC-e n. {{ invoice.number }} Serie {{ invoice.series }}<br>
+    Emissao: {{ invoice.issued_at|date:"d/m/Y H:i" }}
+  </p>
+  <p class="center small b">Consulte pela Chave de Acesso em:</p>
+  <p class="center small">{{ config.portal_url|default:"(portal da SEFAZ da UF)" }}</p>
+  <p class="center small key">{{ access_key_fmt|default:"(chave de acesso)" }}</p>
+
+  <!-- Protocolo: PARTE EM BRANCO ate a autorizacao pela SEFAZ -->
+  <div class="box small center">
+    {% if invoice.authorization_protocol %}
+      Protocolo de autorizacao:<br>{{ invoice.authorization_protocol }}<br>{{ invoice.authorized_at|date:"d/m/Y H:i:s" }}
+    {% else %}
+      <span class="b">AGUARDANDO AUTORIZACAO</span><br>
+      (protocolo sera preenchido apos transmissao a SEFAZ)
+    {% endif %}
+  </div>
+
+  <!-- QR Code fiscal -->
+  {% if qr_uri %}
+    <img class="qr" src="{{ qr_uri }}" alt="QR Code NFC-e">
+  {% else %}
+    <p class="center small">[QR Code indisponivel - configure o CSC/URL da NFC-e]</p>
+  {% endif %}
+
+  <p class="center small">Documento emitido por StarChef</p>
+</body>
+</html>

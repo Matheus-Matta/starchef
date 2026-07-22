@@ -1,6 +1,32 @@
 from rest_framework.permissions import BasePermission
 
 from apps.core.access import is_tenant_admin
+from apps.core.modules import MODULE_BASE
+
+
+class HasModulePermission(BasePermission):
+    """Bloqueia o acesso a APIs de modulos que a conta nao tem habilitados.
+
+    A view declara o modulo que exige em `required_module` (default: base).
+    O modulo base e sempre liberado; os opcionais dependem de `Account.enabled_modules`.
+    Superuser (dono da plataforma) tem bypass. Sem licenca -> 403 padronizado.
+    """
+
+    message = "Este modulo nao esta habilitado para a sua conta."
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+
+        required_module = getattr(view, "required_module", MODULE_BASE)
+        if required_module == MODULE_BASE or request.user.is_superuser:
+            return True
+
+        account = getattr(request, "account", None)
+        if account is None:
+            profile = getattr(request.user, "profile", None)
+            account = getattr(profile, "account", None)
+        return bool(account and account.has_module(required_module))
 
 
 class HasTenantAccess(BasePermission):

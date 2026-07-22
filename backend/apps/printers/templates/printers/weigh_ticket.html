@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Nota de pesagem - Pedido {{ order.sequence }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; width: 280px; margin: 0; }
+    h1, h2, p { margin: 0 0 6px; }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 3px 0; vertical-align: top; }
+    .line { border-top: 1px dashed #111; margin: 8px 0; }
+    .big { font-size: 20px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1 class="center">{{ order.restaurant.trade_name }}</h1>
+  <p class="center">NOTA DE PESAGEM</p>
+  <div class="line"></div>
+  <p>Pedido: {{ order.sequence }}</p>
+  <p>Mesa: {{ order.table.number|default:"-" }} Comanda: {{ order.command.code|default:"-" }}</p>
+  <p>Data: {{ item.created_at|date:"d/m/Y H:i" }}</p>
+  <div class="line"></div>
+
+  <p>{{ item.product.name }}</p>
+  <table>
+    <tr>
+      <td>{{ item.quantity|floatformat:3 }} kg x R$ {{ item.unit_price }}/kg</td>
+      <td class="right big">{{ item.total_price }}</td>
+    </tr>
+  </table>
+
+  <div class="line"></div>
+  <table>
+    <tr><td>Subtotal</td><td class="right">{{ order.subtotal }}</td></tr>
+    <tr><td><strong>Total do pedido</strong></td><td class="right"><strong>{{ order.total }}</strong></td></tr>
+  </table>
+  <div class="line"></div>
+  <p class="center">Pague no caixa. Obrigado!</p>
+</body>
+</html>

@@ -51,15 +51,13 @@
               @click="selectedTable = table"
             >
               <span class="pdv__table-top">
-                <span class="pdv__table-icon"><AppIcon name="armchair" :size="15" /></span>
-                <span class="pdv__table-status"><span class="pdv__dot pdv__dot--free" />Livre</span>
+                <strong class="pdv__table-number">{{ table.number }}</strong>
+                <span class="pdv__table-status">Livre</span>
               </span>
-              <strong class="pdv__table-number">{{ table.number }}</strong>
               <span class="pdv__table-meta">
-                <small>{{ table.sector_name || "Mesa" }}</small>
-                <span class="pdv__table-cap"><AppIcon name="users" :size="12" />{{ table.capacity }}</span>
+                <small>{{ table.capacity }} lugares</small>
+                <small>{{ table.sector_name || "Sem setor" }}</small>
               </span>
-              <span v-if="selectedTable?.id === table.id" class="pdv__table-check"><AppIcon name="check" :size="13" /></span>
             </button>
             <div v-if="!freeTables.length" class="pdv__empty">Nenhuma mesa livre no momento.</div>
           </div>
@@ -115,7 +113,9 @@
               :class="{ 'pdv__cat-tab--active': activeCategory === null }"
               type="button"
               @click="activeCategory = null"
-            >Todos</button>
+            >
+              Todos
+            </button>
             <button
               v-for="cat in categories"
               :key="cat.id"
@@ -123,7 +123,9 @@
               :class="{ 'pdv__cat-tab--active': activeCategory === cat.id }"
               type="button"
               @click="activeCategory = cat.id"
-            >{{ cat.name }}</button>
+            >
+              {{ cat.name }}
+            </button>
           </div>
         </div>
 
@@ -148,7 +150,9 @@
               </div>
               <div class="pdv__product-info">
                 <strong>{{ product.name }}</strong>
-                <span class="pdv__product-price">{{ money(product.current_price) }}</span>
+                <span class="pdv__product-price">
+                  {{ money(product.current_price) }}<template v-if="product.pricing_unit === 'kg'">/kg</template>
+                </span>
                 <small v-if="!product.is_active" class="pdv__inactive">Inativo</small>
               </div>
             </button>
@@ -194,7 +198,7 @@
                 </div>
               </div>
               <div class="pdv__cart-item-price">
-                <span>{{ item.quantity }}x {{ money(item.unit_price) }}</span>
+                <span>{{ qtyLabel(item) }} {{ money(item.unit_price) }}{{ item.pricing_unit === 'kg' ? '/kg' : '' }}</span>
                 <strong :class="{ 'pdv__price--comped': item.status === 'comped' }">{{ money(item.total_price) }}</strong>
               </div>
             </div>
@@ -212,7 +216,7 @@
               </div>
               <div class="pdv__cart-item-right">
                 <div class="pdv__cart-item-price">
-                  <span>{{ item.quantity }}x {{ money(item.unit_price) }}</span>
+                  <span>{{ qtyLabel(item) }} {{ money(item.unit_price) }}{{ item.pricing_unit === 'kg' ? '/kg' : '' }}</span>
                   <strong>{{ money(item.total_price) }}</strong>
                 </div>
                 <button class="pdv__void-btn" type="button" title="Cancelar item" @click="voidItem(item)">
@@ -221,6 +225,76 @@
               </div>
             </div>
           </template>
+        </div>
+
+        <!-- Pesagem (produto por kg) -->
+        <div v-if="weighingProduct" class="pdv__overlay" @click.self="weighingProduct = null">
+          <div class="pdv__modal pdv__modal--weigh">
+            <h4>
+              <AppIcon name="scale" :size="16" />
+              {{ weighingProduct.name }} — {{ money(weighingProduct.current_price) }}/kg
+            </h4>
+
+            <div v-if="scales.length > 1" class="pdv__weigh-scale-row">
+              <select v-model="selectedScale" class="pdv__close-input">
+                <option v-for="s in scales" :key="s.id" :value="s">{{ s.name }}</option>
+              </select>
+            </div>
+
+            <div class="pdv__weigh-display" :class="{ 'pdv__weigh-display--ok': weighKg > 0 }">
+              <strong>{{ weighKg > 0 ? weighKg.toFixed(3) : '0.000' }}</strong>
+              <span>kg</span>
+            </div>
+
+            <div class="pdv__weigh-meta">
+              <span v-if="scaleReading">
+                Leitura da balanca{{ scaleReading.is_stable ? '' : ' (instavel)' }}
+                <template v-if="Number(scaleReading.tare_kg) > 0"> — tara {{ Number(scaleReading.tare_kg).toFixed(3) }} kg</template>
+              </span>
+              <span v-else-if="weighKg > 0">Peso digitado manualmente</span>
+              <span v-else>Leia a balanca ou digite o peso</span>
+            </div>
+
+            <div class="pdv__weigh-actions">
+              <button
+                v-if="selectedScale"
+                class="pdv__btn pdv__btn--secondary"
+                type="button"
+                :disabled="readingScale"
+                @click="readScale"
+              >
+                {{ readingScale ? 'Lendo...' : 'Ler balanca' }}
+              </button>
+              <input
+                v-model="manualWeight"
+                type="number"
+                min="0.001"
+                step="0.001"
+                class="pdv__close-input pdv__weigh-manual"
+                placeholder="Peso manual (kg)"
+                @input="scaleReading = null"
+              />
+            </div>
+
+            <div class="pdv__weigh-total">
+              <span>Total</span>
+              <strong>{{ money(weighTotal) }}</strong>
+            </div>
+
+            <p v-if="weighError" class="pdv__weigh-error">{{ weighError }}</p>
+
+            <div class="pdv__modal-actions">
+              <button class="pdv__btn pdv__btn--ghost" type="button" @click="weighingProduct = null">Cancelar</button>
+              <button
+                class="pdv__btn pdv__btn--primary"
+                type="button"
+                :disabled="!weighKg || confirmingWeigh"
+                @click="confirmWeigh"
+              >
+                {{ confirmingWeigh ? 'Lancando...' : 'Adicionar item' }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Nota -->
@@ -300,7 +374,7 @@
                 class="pdv__close-item"
                 :class="{ 'pdv__close-item--comped': item.status === 'comped' }"
               >
-                <span>{{ item.quantity }}x {{ item.product_name }}</span>
+                <span>{{ qtyLabel(item) }} {{ item.product_name }}</span>
                 <strong>{{ item.status === 'comped' ? 'Cortesia' : money(item.total_price) }}</strong>
               </div>
             </div>
@@ -491,6 +565,16 @@ const cancelling = ref(false);
 const addingNoteFor = ref(null);
 const pendingNote = ref("");
 
+// weighing (produtos por kg)
+const weighingProduct = ref(null);
+const scales = ref([]);
+const selectedScale = ref(null);
+const scaleReading = ref(null);
+const manualWeight = ref("");
+const readingScale = ref(false);
+const weighError = ref("");
+const confirmingWeigh = ref(false);
+
 // ── Order types ──────────────────────────────────────────────────
 const orderTypes = [
   { value: "table", label: "Mesa", icon: "pi-th-large", hint: "Atendimento em mesa com comanda" },
@@ -623,12 +707,86 @@ async function searchCustomers() {
 
 async function addItem(product) {
   if (!currentOrder.value) return;
+  if (product.pricing_unit === "kg") {
+    await openWeighModal(product);
+    return;
+  }
   try {
     await api.post(`/orders/${currentOrder.value.id}/items/`, { product: product.id, quantity: 1 });
     await refreshCart();
   } catch (e) {
     alert(e.response?.data?.detail || "Erro ao adicionar item.");
   }
+}
+
+// ── Pesagem (produtos por kg) ────────────────────────────────────
+async function openWeighModal(product) {
+  weighingProduct.value = product;
+  scaleReading.value = null;
+  manualWeight.value = "";
+  weighError.value = "";
+  try {
+    if (!scales.value.length) {
+      const profile = await loadProfile();
+      const res = await api.get("/scales/", { params: { branch: profile.branch_id, is_active: true } });
+      scales.value = res.data.results || res.data;
+    }
+    selectedScale.value = scales.value[0] || null;
+    if (selectedScale.value) await readScale();
+  } catch {
+    selectedScale.value = null;
+  }
+}
+
+async function readScale() {
+  if (!selectedScale.value) return;
+  readingScale.value = true;
+  weighError.value = "";
+  try {
+    const res = await api.get(`/scales/${selectedScale.value.id}/latest-reading/`);
+    scaleReading.value = res.data;
+    manualWeight.value = "";
+  } catch (e) {
+    scaleReading.value = null;
+    weighError.value = e.response?.data?.detail || "Falha ao ler a balanca.";
+  } finally {
+    readingScale.value = false;
+  }
+}
+
+const weighKg = computed(() => {
+  if (scaleReading.value) return Number(scaleReading.value.net_weight_kg ?? scaleReading.value.weight_kg);
+  const manual = parseFloat(String(manualWeight.value).replace(",", "."));
+  return Number.isFinite(manual) && manual > 0 ? manual : 0;
+});
+
+const weighTotal = computed(() => {
+  if (!weighingProduct.value) return 0;
+  return weighKg.value * Number(weighingProduct.value.current_price);
+});
+
+async function confirmWeigh() {
+  if (!weighingProduct.value || !weighKg.value) return;
+  confirmingWeigh.value = true;
+  weighError.value = "";
+  const payload = { product: weighingProduct.value.id };
+  if (scaleReading.value) payload.scale_reading = scaleReading.value.id;
+  else payload.weight_kg = weighKg.value.toFixed(3);
+  try {
+    await api.post(`/orders/${currentOrder.value.id}/items/`, payload);
+    weighingProduct.value = null;
+    await refreshCart();
+  } catch (e) {
+    const data = e.response?.data;
+    weighError.value = data?.detail || (Array.isArray(data) ? data.join(" ") : "Erro ao lancar item pesado.");
+  } finally {
+    confirmingWeigh.value = false;
+  }
+}
+
+function qtyLabel(item) {
+  if (item.pricing_unit === "kg") return `${Number(item.quantity).toFixed(3)} kg`;
+  return `${Number(item.quantity)}x`;
 }
 
 async function voidItem(item) {
@@ -899,11 +1057,11 @@ onMounted(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 6px;
+  padding: 12px 14px;
   background: var(--surface-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
   color: var(--text-body);
@@ -922,26 +1080,14 @@ onMounted(() => {
 
 .pdv__table-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
-.pdv__table-icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  background: var(--brand-subtle);
-  color: var(--text-brand);
-}
-.pdv__table-card--selected .pdv__table-icon { background: var(--brand); color: #fff; }
 
 .pdv__table-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font: var(--weight-bold) 9.5px/1 var(--font-sans);
+  flex-shrink: 0;
+  font: var(--weight-bold) 10px/1 var(--font-sans);
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--success-text);
@@ -955,41 +1101,16 @@ onMounted(() => {
 
 .pdv__table-meta {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
+  flex-direction: column;
+  gap: 2px;
 }
 .pdv__table-meta small {
-  font: var(--weight-semibold) 11.5px/1 var(--font-sans);
+  font: var(--weight-semibold) 11.5px/1.3 var(--font-sans);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pdv__table-cap {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  font: var(--weight-bold) 11.5px/1 var(--font-sans);
-  color: var(--text-subtle);
-}
-
-.pdv__table-check {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--brand);
-  color: #fff;
-}
-.pdv__table-card--selected .pdv__table-status { visibility: hidden; }
 
 /* ── Customer search ─────────────────────────────────────────── */
 .pdv__search-box {
@@ -1314,6 +1435,33 @@ onMounted(() => {
   border: 1px solid var(--border); border-radius: var(--radius-md);
   background: var(--surface-card); color: var(--text-body);
   font: var(--weight-medium) 13.5px/1.5 var(--font-sans); width: 100%; box-sizing: border-box;
+}
+
+/* ── Pesagem ────────────────────────────────────────────────── */
+.pdv__modal--weigh { max-width: 380px; }
+.pdv__modal--weigh h4 { display: flex; align-items: center; gap: 8px; }
+.pdv__weigh-display {
+  display: flex; align-items: baseline; justify-content: center; gap: 8px;
+  padding: 18px 0; border-radius: var(--radius-md);
+  background: var(--surface-ground, #f4f4f5); border: 1px dashed var(--border);
+}
+.pdv__weigh-display strong {
+  font: var(--weight-extra) 40px/1 var(--font-mono, monospace);
+  color: var(--text-muted); letter-spacing: 1px;
+}
+.pdv__weigh-display span { font: var(--weight-bold) 16px/1 var(--font-sans); color: var(--text-muted); }
+.pdv__weigh-display--ok strong { color: var(--text-strong); }
+.pdv__weigh-meta { text-align: center; font: var(--weight-medium) 12px/1.4 var(--font-sans); color: var(--text-muted); }
+.pdv__weigh-actions { display: flex; gap: 10px; align-items: center; }
+.pdv__weigh-manual { flex: 1; }
+.pdv__weigh-total {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 10px; border-top: 1px solid var(--border);
+  font: var(--weight-bold) 15px/1 var(--font-sans); color: var(--text-strong);
+}
+.pdv__weigh-error {
+  padding: 8px 12px; background: #fee2e2; color: #991b1b;
+  border-radius: var(--radius-sm); font: var(--weight-semibold) 12.5px/1.4 var(--font-sans);
 }
 
 /* ── Misc ───────────────────────────────────────────────────── */

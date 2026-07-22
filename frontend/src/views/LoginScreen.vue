@@ -82,22 +82,6 @@
           size="large"
         />
 
-        <div class="login-screen__divider">
-          <span />
-          <small>ou</small>
-          <span />
-        </div>
-
-        <Button
-          label="Entrar com SSO do restaurante"
-          icon="pi pi-shield"
-          severity="secondary"
-          outlined
-          class="w-full"
-          size="large"
-          type="button"
-        />
-
         <p class="login-screen__support">
           Problemas para acessar? <a href="#">Fale com o suporte</a>
         </p>
@@ -370,23 +354,6 @@ async function submit() {
   font: var(--weight-semibold) 13px/1.4 var(--font-sans);
 }
 
-.login-screen__divider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.login-screen__divider span {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-.login-screen__divider small {
-  font: var(--weight-medium) 12px/1 var(--font-sans);
-  color: var(--text-subtle);
-}
-
 .login-screen__support {
   text-align: center;
   font: var(--weight-medium) 13px/1.5 var(--font-sans);
@@ -400,13 +367,39 @@ async function submit() {
 }
 
 :deep(.p-password) {
+  position: relative;
   width: 100%;
+  display: block;
 }
 
 :deep(.p-password .p-inputtext) {
   width: 100%;
   height: 44px;
+  padding-right: 42px; /* espaço para o ícone de olho */
   font-family: var(--font-sans);
+}
+
+/* Ícone de mostrar/ocultar senha (funciona com ícone de fonte OU SVG) */
+:deep(.p-password > i),
+:deep(.p-password > svg),
+:deep(.p-password .p-password-toggle-mask-icon),
+:deep(.p-password [data-pc-section="hideicon"]),
+:deep(.p-password [data-pc-section="showicon"]) {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  margin-top: 0;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 2;
+}
+:deep(.p-password > i:hover),
+:deep(.p-password > svg:hover),
+:deep(.p-password .p-password-toggle-mask-icon:hover) {
+  color: var(--text-body);
 }
 
 :deep(.p-button) {

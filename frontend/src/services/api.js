@@ -40,7 +40,10 @@ api.interceptors.response.use(
       }
     }
 
-    if (status === 401 || status === 403) {
+    // Somente 401 (nao autenticado / token invalido) encerra a sessao.
+    // 403 significa autenticado porem sem permissao (ex.: modulo desabilitado):
+    // isso NAO deve deslogar o usuario — apenas propaga o erro para a tela tratar.
+    if (status === 401) {
       clearTokens();
       window.dispatchEvent(new CustomEvent("auth:unauthorized"));
     }

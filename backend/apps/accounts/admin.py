@@ -4,6 +4,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.models import Group, User
 from unfold.admin import ModelAdmin
 
+from apps.accounts.admin_forms import ACCOUNT_FIELDS, MODULE_FIELDS, AccountChangeForm, AccountCreationForm
 from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
 from apps.core.admin_mixins import TenantModelAdmin
 
@@ -52,9 +53,46 @@ class PlanAdmin(ModelAdmin):
 
 @admin.register(Account)
 class AccountAdmin(ModelAdmin):
-    list_display = ("name", "slug", "status", "subscription_status", "plan", "is_active")
+    list_display = ("name", "slug", "status", "subscription_status", "plan", "modules_summary", "is_active")
     list_filter = ("status", "subscription_status", "plan", "is_active")
     search_fields = ("name", "slug", "document", "email")
+    prepopulated_fields = {"slug": ("name",)}
+
+    _MODULE_FIELD_NAMES = tuple(MODULE_FIELDS.keys())
+
+    @admin.display(description="Modulos")
+    def modules_summary(self, obj):
+        optionals = obj.enabled_modules or []
+        return ", ".join(optionals) if optionals else "— (so base)"
+
+    def get_form(self, request, obj=None, **kwargs):
+        # Add: coleta tambem o primeiro admin da conta. Change: so conta + modulos.
+        kwargs["form"] = AccountChangeForm if obj else AccountCreationForm
+        return super().get_form(request, obj, **kwargs)
+
+    def get_fieldsets(self, request, obj=None):
+        account_section = ("Dados da conta", {"fields": tuple(ACCOUNT_FIELDS)})
+        modules_section = (
+            "Modulos ativos",
+            {"fields": self._MODULE_FIELD_NAMES, "description": "Ative ou desative os modulos opcionais desta conta."},
+        )
+        if obj is None:
+            admin_section = (
+                "Primeiro usuario administrador",
+                {
+                    "fields": ("admin_username", "admin_email", "admin_first_name", "admin_last_name", "admin_password"),
+                    "description": "Usuario admin criado junto com a conta (acesso total no app).",
+                },
+            )
+            return (account_section, admin_section, modules_section)
+        return (account_section, modules_section)
+
+    def save_model(self, request, obj, form, change):
+        # form.save(commit=False) (chamado pelo admin) ja aplicou enabled_modules ao obj.
+        super().save_model(request, obj, form, change)
+        # Ao criar, provisiona o primeiro usuario administrador vinculado a conta.
+        if not change and isinstance(form, AccountCreationForm):
+            form.create_admin_user(obj)
 
 
 @admin.register(Subscription)

@@ -1,11 +1,12 @@
 from django.core.exceptions import ValidationError
-from rest_framework import status, viewsets
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.viewsets import BaseTenantViewSet
 from apps.menu.models import Product
 from apps.orders.models import Order, OrderBatch, OrderItem
+from apps.printers.models import ScaleReading
 from apps.orders.serializers import OrderBatchSerializer, OrderItemSerializer, OrderSerializer
 from apps.orders.services import (
     add_order_item,
@@ -19,7 +20,7 @@ from apps.orders.services import (
 )
 
 
-class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class OrderViewSet(BaseTenantViewSet):
     serializer_class = OrderSerializer
     queryset = (
         Order.objects.select_related("restaurant", "branch", "table", "command", "customer", "delivery_address")
@@ -57,14 +58,28 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
             return Response(serializer.data)
 
         product = Product.objects.get(pk=request.data["product"], restaurant=order.restaurant, branch=order.branch)
-        item = add_order_item(
-            order=order,
-            product=product,
-            quantity=request.data.get("quantity", 1),
-            user=request.user,
-            variations=request.data.get("variations", []),
-            customer_note=request.data.get("customer_note", ""),
-        )
+        scale_reading = None
+        if request.data.get("scale_reading"):
+            try:
+                scale_reading = ScaleReading.objects.select_related("scale").get(
+                    pk=request.data["scale_reading"],
+                    account=order.account,
+                )
+            except ScaleReading.DoesNotExist:
+                return Response({"detail": "Leitura de balanca nao encontrada."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            item = add_order_item(
+                order=order,
+                product=product,
+                quantity=request.data.get("quantity"),
+                user=request.user,
+                variations=request.data.get("variations", []),
+                customer_note=request.data.get("customer_note", ""),
+                scale_reading=scale_reading,
+                weight_kg=request.data.get("weight_kg"),
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["delete"], url_path=r"items/(?P<item_pk>[^/.]+)/void")
@@ -167,7 +182,7 @@ class OrderViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
         return Response({"print_job_id": str(job.id), "html": job.html_content})
 
 
-class OrderItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class OrderItemViewSet(BaseTenantViewSet):
     serializer_class = OrderItemSerializer
     queryset = (
         OrderItem.objects.select_related("restaurant", "branch", "order__table", "order__command", "product", "batch")

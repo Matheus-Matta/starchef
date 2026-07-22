@@ -4,44 +4,52 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
-from apps.core.serializers import TenantModelSerializer
+from apps.core.modules import ALL_MODULES, account_active_modules
+from apps.core.serializers import TIMESTAMP_READ_ONLY_FIELDS, TenantModelSerializer
 
 User = get_user_model()
+
+
+def resolve_enabled_modules(user, account):
+    """Modulos que a UI deve liberar. Superuser (dono da plataforma) enxerga todos."""
+    if user.is_superuser:
+        return list(ALL_MODULES)
+    return account_active_modules(account)
 
 
 class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
         fields = ["id", "code", "name", "description", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
 class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
 class AccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = Account
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subscription
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
 class GlobalSystemConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = GlobalSystemConfig
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
 class RoleSerializer(TenantModelSerializer):
@@ -105,6 +113,17 @@ class UserSerializer(serializers.ModelSerializer):
             "profile",
         ]
         read_only_fields = ["id", "last_login"]
+
+    def validate_email(self, value):
+        # Unicidade case-insensitive, alinhada ao login por email.
+        if not value:
+            return value
+        qs = User.objects.filter(email__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Ja existe um usuario com este email.")
+        return value
 
     def create(self, validated_data):
         profile_data = validated_data.pop("profile", {})
@@ -172,5 +191,6 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             "restaurant_name": profile.restaurant.trade_name if profile and profile.restaurant_id else None,
             "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
             "branch_name": profile.branch.name if profile and profile.branch_id else None,
+            "enabled_modules": resolve_enabled_modules(self.user, account),
         }
         return data

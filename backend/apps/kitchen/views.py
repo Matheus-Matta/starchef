@@ -1,9 +1,9 @@
 from django.core.exceptions import ValidationError
-from rest_framework import mixins, status, viewsets
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
 from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
 from apps.orders.services import update_order_item_status
@@ -23,7 +23,7 @@ _ACTIVE_PRODUCTION_STATUSES = [
 _ACTIVE_ITEM_STATUSES = [OrderItem.STATUS_SENT, OrderItem.STATUS_PREPARING, OrderItem.STATUS_READY]
 
 
-class KitchenOrderViewSet(TenantQuerySetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class KitchenOrderViewSet(ReadOnlyTenantViewSet):
     serializer_class = OrderSerializer
     queryset = (
         Order.objects.select_related("restaurant", "branch", "table", "command", "customer")
@@ -35,7 +35,7 @@ class KitchenOrderViewSet(TenantQuerySetMixin, mixins.ListModelMixin, mixins.Ret
     ordering_fields = ["opened_at", "sequence"]
 
 
-class KitchenItemViewSet(TenantQuerySetMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class KitchenItemViewSet(ReadOnlyTenantViewSet):
     serializer_class = OrderItemSerializer
     queryset = (
         OrderItem.objects.select_related("restaurant", "branch", "order__table", "order__command", "product", "batch")
@@ -62,7 +62,7 @@ class KitchenItemViewSet(TenantQuerySetMixin, mixins.ListModelMixin, mixins.Retr
         return Response(self.get_serializer(item).data)
 
 
-class KdsStationViewSet(TenantQuerySetMixin, AuditCreateUpdateMixin, viewsets.ModelViewSet):
+class KdsStationViewSet(BaseTenantViewSet):
     serializer_class = KdsStationSerializer
     queryset = KdsStation.objects.all()
     filterset_fields = ["restaurant", "branch", "is_active"]

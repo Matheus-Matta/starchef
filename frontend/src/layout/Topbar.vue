@@ -31,10 +31,6 @@
 
     <div class="topbar__user-wrap">
       <button class="topbar__user" type="button" aria-haspopup="menu" :aria-expanded="profileOpen" @click="profileOpen = !profileOpen">
-        <span class="topbar-avatar-wrap">
-          <Avatar :label="avatarInitials(displayName)" size="large" />
-          <span class="topbar-avatar-dot" />
-        </span>
         <span class="topbar__user-text">
           <span>{{ displayName }}</span>
           <small>{{ roleLabel }}</small>
@@ -62,8 +58,6 @@
 
 <script setup>
 import { computed, ref } from "vue";
-
-import Avatar from "primevue/avatar";
 
 import AppIcon from "../components/AppIcon.vue";
 
@@ -110,16 +104,6 @@ const roleLabel = computed(() => {
   };
   return labels[props.user?.profile_type] || (props.user?.is_superuser ? "Superadmin" : "Operador");
 });
-
-function avatarInitials(name) {
-  return (name || "?")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
-}
 
 function logout() {
   profileOpen.value = false;
@@ -233,22 +217,6 @@ function logout() {
   cursor: pointer;
   border-radius: var(--radius-md);
   color: var(--text-body);
-}
-
-.topbar-avatar-wrap {
-  position: relative;
-  display: inline-flex;
-}
-
-.topbar-avatar-dot {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--success);
-  border: 2px solid var(--surface-card);
 }
 
 .topbar__user-wrap {

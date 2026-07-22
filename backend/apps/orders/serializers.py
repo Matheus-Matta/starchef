@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.core.serializers import TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 
@@ -11,11 +11,12 @@ class OrderItemAddonSerializer(TenantModelSerializer):
     class Meta:
         model = OrderItemAddon
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by", "total_price"]
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_price"]
 
 
 class OrderItemSerializer(TenantModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
+    pricing_unit = serializers.CharField(source="product.pricing_unit", read_only=True)
     restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True)
     # Fields for KDS display
     order_sequence = serializers.IntegerField(source="order.sequence", read_only=True)
@@ -61,7 +62,7 @@ class OrderBatchSerializer(TenantModelSerializer):
     class Meta:
         model = OrderBatch
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by", "batch_number", "sent_at"]
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "batch_number", "sent_at"]
 
 
 class OrderSerializer(TenantModelSerializer):

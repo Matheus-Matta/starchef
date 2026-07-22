@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.core.admin_mixins import TenantModelAdmin, TenantTabularInline
-from apps.orders.models import Order, OrderItem, OrderItemAddon
+from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 
 
 class OrderItemInline(TenantTabularInline):
@@ -27,3 +27,9 @@ class OrderItemAdmin(TenantModelAdmin):
 class OrderItemAddonAdmin(TenantModelAdmin):
     list_display = ("item", "account", "addon", "quantity", "total_price")
     list_filter = ("account", "restaurant", "branch")
+
+
+@admin.register(OrderBatch)
+class OrderBatchAdmin(TenantModelAdmin):
+    list_display = ("order", "account", "batch_number", "status", "sent_by", "sent_at", "printed_at")
+    list_filter = ("account", "restaurant", "branch", "status")

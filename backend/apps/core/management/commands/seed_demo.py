@@ -41,7 +41,8 @@ from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen
 from apps.payments.models import CashRegister, Payment, PaymentMethod
 from apps.payments.services import open_cash_register, register_payment
-from apps.printers.models import Printer
+from apps.invoices.models import FiscalConfig, FiscalProfile
+from apps.printers.models import Printer, Scale
 from apps.restaurants.models import Deliveryman, DeliveryZone, Table, TableSector
 from apps.stock.models import StockLocation, StockMovement
 
@@ -236,6 +237,9 @@ class Command(BaseCommand):
         cats = self._seed_categories_burger(account, restaurant, branch, u)
         ingrs = self._seed_ingredients_burger(account, restaurant, branch, u)
         prods = self._seed_products_burger(account, restaurant, branch, cats, u)
+        # Balanca depende do produto por kilo e da impressora, entao vem apos os produtos.
+        self._seed_scales_burger(account, restaurant, branch, prods, u)
+        self._seed_fiscal_burger(account, restaurant, branch, u)
         self._seed_addons_burger(account, restaurant, branch, prods, u)
         self._seed_variations_burger(account, restaurant, branch, prods, u)
         self._seed_recipes_burger(account, restaurant, branch, prods, ingrs, u)
@@ -262,8 +266,61 @@ class Command(BaseCommand):
         return sectors, tables
 
     def _seed_printers_burger(self, account, restaurant, branch, user):
-        for name, sector, auto in [("Cozinha", Product.SECTOR_KITCHEN, True), ("Bar", Product.SECTOR_BAR, True), ("Caixa", "", False)]:
+        # sector agora é FK opcional a TableSector — o demo deixa sem setor.
+        for name, sector, auto in [("Cozinha", None, True), ("Bar", None, True), ("Caixa", None, False)]:
             self._upsert(Printer, {"account": account, "restaurant": restaurant, "branch": branch, "name": name}, {"sector": sector, "driver_type": Printer.DRIVER_BROWSER, "endpoint": "", "auto_print": auto, "is_active": True, "settings": {"demo": True}, "created_by": user, "updated_by": user})
+
+    def _seed_scales_burger(self, account, restaurant, branch, prods, user):
+        caixa_printer = Printer.objects.filter(account=account, branch=branch, name="Caixa").first()
+        self._upsert(
+            Scale,
+            {"account": account, "restaurant": restaurant, "branch": branch, "name": "Balança Caixa"},
+            {
+                "protocol": Scale.PROTOCOL_TOLEDO_PRT2,
+                "port": "COM3",
+                "reading_max_age_seconds": 120,
+                # Preço/kg vem do produto por kilo; nota sai na impressora do caixa.
+                "product": prods.get("BP-KILO"),
+                "printer": caixa_printer,
+                "auto_print": False,
+                "auto_print_delay_seconds": 3,
+                "is_active": True,
+                "settings": {"demo": True, "baudrate": 9600},
+                "created_by": user,
+                "updated_by": user,
+            },
+        )
+
+    def _seed_fiscal_burger(self, account, restaurant, branch, user):
+        # Perfil tributario padrao (Simples Nacional, aliquotas zeradas — configure depois).
+        profile = self._upsert(
+            FiscalProfile,
+            {"account": account, "restaurant": restaurant, "branch": branch, "name": "Alimentacao - Simples Nacional"},
+            {
+                "ncm": "21069090", "cfop": "5102", "origem": "0", "csosn": "102",
+                "icms_rate": Decimal("0"), "pis_rate": Decimal("0"), "cofins_rate": Decimal("0"),
+                "approx_tax_rate": Decimal("0"), "is_default": True, "is_active": True,
+                "created_by": user, "updated_by": user,
+            },
+        )
+        # Config fiscal da filial em HOMOLOGACAO. CSC/certificado ficam EM BRANCO de proposito.
+        self._upsert(
+            FiscalConfig,
+            {"account": account, "restaurant": restaurant, "branch": branch},
+            {
+                "provider": FiscalConfig.PROVIDER_MANUAL,
+                "document_model": FiscalConfig.MODEL_NFCE,
+                "environment": FiscalConfig.ENV_HOMOLOGATION,
+                "crt": FiscalConfig.CRT_SIMPLES,
+                "series": 1, "next_number": 1,
+                "cnpj": "12.345.678/0001-90", "ie": "", "corporate_name": "Burger Palace Alimentos LTDA",
+                "trade_name": "Burger Palace", "address_line": "Av. Atlantica, 1000",
+                "city": "Rio de Janeiro", "uf": "RJ", "city_ibge": "3304557", "zip_code": "22010-000",
+                "csc_id": "", "csc_token": "", "qr_base_url": "", "portal_url": "https://www.nfce.fazenda.rj.gov.br",
+                "certificate_ref": "", "default_profile": profile, "is_active": True,
+                "created_by": user, "updated_by": user,
+            },
+        )
 
     def _seed_delivery_zones_burger(self, account, restaurant, branch, user):
         zones = [
@@ -292,7 +349,7 @@ class Command(BaseCommand):
             )
 
     def _seed_categories_burger(self, account, restaurant, branch, user):
-        cats = [("Burgers", 1), ("Acompanhamentos", 2), ("Bebidas", 3), ("Sobremesas", 4), ("Combos", 5)]
+        cats = [("Burgers", 1), ("Acompanhamentos", 2), ("Bebidas", 3), ("Sobremesas", 4), ("Combos", 5), ("Self-service", 6)]
         return {name: self._upsert(ProductCategory, {"account": account, "restaurant": restaurant, "branch": branch, "name": name, "parent": None}, {"display_order": order, "is_active": True, "created_by": user, "updated_by": user}) for name, order in cats}
 
     def _seed_ingredients_burger(self, account, restaurant, branch, user):
@@ -357,6 +414,32 @@ class Command(BaseCommand):
                     "created_by": user, "updated_by": user,
                 },
             )
+
+        # Produto pesavel: buffet self-service cobrado por kg (sale_price = preco do kilo).
+        products["BP-KILO"] = self._upsert(
+            Product,
+            {"account": account, "restaurant": restaurant, "branch": branch, "internal_code": "BP-KILO"},
+            {
+                "name": "Refeição por Kilo",
+                "description": "Buffet self-service pesado na balança. Preço por kg.",
+                "category": cats["Self-service"],
+                "sale_price": Decimal("69.90"),
+                "estimated_cost": Decimal("28.00"),
+                "margin_percent": Decimal("59.94"),
+                "product_type": Product.TYPE_MEAL,
+                "pricing_unit": Product.PRICING_KG,
+                "average_preparation_time": 0,
+                "production_sector": Product.SECTOR_KITCHEN,
+                "controls_stock": False,
+                "allows_addons": False,
+                "allows_notes": True,
+                "available_for_table": True,
+                "available_for_counter": True,
+                "available_for_delivery": False,
+                "is_active": True,
+                "created_by": user, "updated_by": user,
+            },
+        )
         return products
 
     def _seed_addons_burger(self, account, restaurant, branch, products, user):
@@ -433,7 +516,7 @@ class Command(BaseCommand):
     def _seed_menus_burger(self, account, restaurant, branch, products, user):
         menus_data = [
             ("Cardápio Principal", f"burger-palace-{branch.id}-principal", Menu.CHANNEL_ALL, None, None, list(products.keys())),
-            ("Cardápio Delivery", f"burger-palace-{branch.id}-delivery", Menu.CHANNEL_DELIVERY, None, None, [k for k in products if k not in ("BP-COMBO1", "BP-COMBO2")]),
+            ("Cardápio Delivery", f"burger-palace-{branch.id}-delivery", Menu.CHANNEL_DELIVERY, None, None, [k for k in products if k not in ("BP-COMBO1", "BP-COMBO2", "BP-KILO")]),
             ("Cardápio Digital QR", f"burger-palace-{branch.id}-digital", Menu.CHANNEL_DIGITAL, time(11, 0), time(23, 0), list(products.keys())),
         ]
         for name, slug, channel, avail_from, avail_until, codes in menus_data:
@@ -612,7 +695,8 @@ class Command(BaseCommand):
         return sectors, tables
 
     def _seed_printers_pizza(self, account, restaurant, branch, user):
-        for name, sector, auto in [("Cozinha", Product.SECTOR_KITCHEN, True), ("Bar", Product.SECTOR_BAR, True), ("Caixa", "", False)]:
+        # sector agora é FK opcional a TableSector — o demo deixa sem setor.
+        for name, sector, auto in [("Cozinha", None, True), ("Bar", None, True), ("Caixa", None, False)]:
             self._upsert(Printer, {"account": account, "restaurant": restaurant, "branch": branch, "name": name}, {"sector": sector, "driver_type": Printer.DRIVER_BROWSER, "endpoint": "", "auto_print": auto, "is_active": True, "settings": {"demo": True}, "created_by": user, "updated_by": user})
 
     def _seed_delivery_zones_pizza(self, account, restaurant, branch, user):

@@ -4,6 +4,15 @@ from apps.core.models import TenantModel
 
 
 class ProductCategory(TenantModel):
+    # Categorias são compartilhadas entre restaurantes (reutilizáveis): o vínculo
+    # de restaurante é opcional. Sobrescreve o FK obrigatório do TenantModel.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
     name = models.CharField(max_length=120)
     parent = models.ForeignKey("self", null=True, blank=True, related_name="children", on_delete=models.SET_NULL)
     display_order = models.PositiveIntegerField(default=0)
@@ -46,16 +55,39 @@ class Product(TenantModel):
         (SECTOR_DESSERT, "Dessert"),
     ]
 
+    PRICING_UNIT = "unit"
+    PRICING_KG = "kg"
+
+    PRICING_CHOICES = [
+        (PRICING_UNIT, "Por unidade"),
+        (PRICING_KG, "Por kilo"),
+    ]
+
     name = models.CharField(max_length=180, db_index=True)
     internal_code = models.CharField(max_length=60)
     description = models.TextField(blank=True)
-    category = models.ForeignKey(ProductCategory, related_name="products", on_delete=models.PROTECT)
+    category = models.ForeignKey(
+        ProductCategory,
+        null=True,
+        blank=True,
+        related_name="products",
+        on_delete=models.SET_NULL,
+    )
     image = models.ImageField(upload_to="products/", blank=True)
-    sale_price = models.DecimalField(max_digits=12, decimal_places=2)
+    sale_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Por unidade, ou por kg quando pricing_unit=kg.")
     promotional_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    pricing_unit = models.CharField(max_length=8, choices=PRICING_CHOICES, default=PRICING_UNIT)
     estimated_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     margin_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     product_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_MEAL)
+    # Grupo tributario (CFOP/CSOSN/NCM). Se vazio, usa o perfil padrao da filial.
+    fiscal_profile = models.ForeignKey(
+        "invoices.FiscalProfile",
+        null=True,
+        blank=True,
+        related_name="products",
+        on_delete=models.SET_NULL,
+    )
     average_preparation_time = models.PositiveIntegerField(default=15, help_text="Minutes")
     production_sector = models.CharField(max_length=20, choices=SECTOR_CHOICES, default=SECTOR_KITCHEN)
     controls_stock = models.BooleanField(default=False)
@@ -80,6 +112,10 @@ class Product(TenantModel):
     def current_price(self):
         return self.promotional_price or self.sale_price
 
+    @property
+    def is_weighed(self):
+        return self.pricing_unit == self.PRICING_KG
+
     def __str__(self):
         return self.name
 
@@ -101,6 +137,15 @@ class ProductVariation(TenantModel):
 
 
 class ProductAddon(TenantModel):
+    # Adicionais são compartilhados entre restaurantes (reutilizáveis): o vínculo
+    # de restaurante é opcional. Sobrescreve o FK obrigatório do TenantModel.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
     name = models.CharField(max_length=120)
     products = models.ManyToManyField(Product, blank=True, related_name="addons")
     price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -131,10 +176,21 @@ class Ingredient(TenantModel):
         (UNIT_ML, "ml"),
     ]
 
+    # Ingredientes são compartilhados entre restaurantes (reutilizáveis): o vínculo
+    # de restaurante é opcional. Sobrescreve o FK obrigatório do TenantModel.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
     name = models.CharField(max_length=160)
     unit = models.CharField(max_length=12, choices=UNIT_CHOICES, default=UNIT_UNIT)
     average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
-    minimum_stock = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    # Estoque mínimo é opcional (STC-031): campo do Módulo Logística. Pode ficar
+    # vazio (null) quando a logística não é usada; quando informado, não pode ser negativo.
+    minimum_stock = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:

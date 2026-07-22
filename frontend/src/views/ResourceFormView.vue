@@ -1,24 +1,32 @@
 <template>
-  <div class="rform">
+  <div class="rpage">
+    <!-- Header: breadcrumb + title + actions -->
+    <header class="rpage__head">
+      <div class="rpage__crumbs">
+        <button class="rpage__back" type="button" @click="goToList">
+          <i class="pi pi-arrow-left" />
+          <span>{{ title }}</span>
+        </button>
+        <i class="pi pi-chevron-right rpage__sep" />
+        <span class="rpage__crumb">{{ modeLabel }}</span>
+      </div>
 
-    <!-- Breadcrumb nav -->
-    <nav class="rform__nav">
-      <button class="rform__back" type="button" @click="goBack">
-        <i class="pi pi-arrow-left" />
-        <span>{{ title }}</span>
-      </button>
-      <i class="pi pi-chevron-right rform__sep" />
-      <span class="rform__crumb">{{ isEdit ? "Editar" : "Novo" }}</span>
-    </nav>
+      <div class="rpage__head-actions">
+        <template v-if="isView">
+          <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
+          <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
+        </template>
+      </div>
+    </header>
 
-    <!-- Skeleton while loading record for edit -->
-    <div v-if="fetching" class="rform__card">
-      <div class="rform__card-header">
+    <!-- Loading skeleton -->
+    <div v-if="fetching" class="rpage__card">
+      <div class="rpage__card-head">
         <Skeleton width="240px" height="24px" />
         <Skeleton width="380px" height="16px" />
       </div>
-      <div class="rform__body">
-        <div v-for="i in formFields.length" :key="i" class="rform__field">
+      <div class="rpage__grid">
+        <div v-for="i in skeletonCount" :key="i" class="rpage__field">
           <Skeleton width="110px" height="13px" />
           <Skeleton height="42px" border-radius="8px" />
         </div>
@@ -26,306 +34,504 @@
     </div>
 
     <!-- Fetch error -->
-    <div v-else-if="fetchError" class="rform__alert rform__alert--error">
+    <div v-else-if="fetchError" class="rpage__alert rpage__alert--error">
       <i class="pi pi-exclamation-triangle" /> {{ fetchError }}
     </div>
 
-    <!-- Form card -->
-    <form v-else class="rform__card" novalidate @submit.prevent="submit">
+    <!-- ────────────── VIEW MODE (fallback): recursos sem formFields ────────────── -->
+    <!-- So existe para recursos 100% somente-leitura (sem pagina de edicao); os
+         demais reusam o form abaixo, desabilitado (ver item "unified form"). -->
+    <div v-else-if="isView && record && !formFields" class="rpage__view">
+      <div class="detail-hero" :class="`accent--${detailMeta.accent}`">
+        <span class="detail-hero__avatar"><i :class="`pi ${detailMeta.icon}`" /></span>
+        <div class="detail-hero__headline">
+          <span>{{ detailMeta.eyebrow }}</span>
+          <h2>{{ viewTitle }}</h2>
+          <p v-if="viewSubtitle">{{ viewSubtitle }}</p>
+        </div>
+        <span v-if="heroBadge" class="detail-hero__badge">{{ heroBadge }}</span>
+      </div>
 
-      <div class="rform__card-header">
-        <div class="rform__card-title">
-          <h2>{{ isEdit ? `Editar — ${title}` : `Novo — ${title}` }}</h2>
-          <p>{{ isEdit ? "Altere os campos e salve para confirmar." : "Preencha os campos para criar um novo registro." }}</p>
+      <div v-if="detailMetrics.length" class="detail-metrics">
+        <div v-for="metric in detailMetrics" :key="metric.label" class="detail-metric">
+          <span>{{ metric.label }}</span>
+          <strong>{{ metric.display }}</strong>
         </div>
       </div>
 
-      <div class="rform__body">
-        <div
-          v-for="field in formFields"
-          :key="field.name"
-          class="rform__field"
-          :class="{
-            'rform__field--full': field.full || field.type === 'textarea' || field.type === 'boolean',
-            'rform__field--error': !!fieldErrors[field.name],
-          }"
-        >
-          <label :for="`f-${field.name}`" class="rform__label">
-            {{ field.label }}
-            <span v-if="field.required" class="rform__required" aria-hidden="true">*</span>
-          </label>
-
-          <!-- Toggle switch -->
-          <div v-if="field.type === 'boolean'" class="rform__switch-row">
-            <InputSwitch :id="`f-${field.name}`" v-model="formData[field.name]" />
-            <span class="rform__switch-label">{{ formData[field.name] ? "Ativo" : "Inativo" }}</span>
+      <section class="detail-section">
+        <h3 class="detail-section__title">Informacoes</h3>
+        <div class="detail-fields">
+          <div v-for="field in detailFields" :key="field.key" class="detail-field">
+            <span class="detail-field__label">{{ field.label }}</span>
+            <span v-if="field.type === 'status'" class="status-chip" :data-status="field._value">{{ label(field._value, field.map) }}</span>
+            <Tag
+              v-else-if="field.type === 'boolean'"
+              :value="field._value ? 'Ativo' : 'Inativo'"
+              :severity="field._value ? 'success' : 'danger'"
+              rounded
+            />
+            <strong v-else-if="field.type === 'money'" class="detail-field__money">{{ money(field._value) }}</strong>
+            <span v-else-if="field.type === 'date'" class="detail-field__value">{{ dateTime(field._value) }}</span>
+            <span v-else class="detail-field__value">{{ label(field._value, field.map) }}</span>
           </div>
+        </div>
+      </section>
+    </div>
 
-          <!-- Static dropdown -->
-          <Dropdown
-            v-else-if="field.type === 'dropdown'"
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            :options="field.options"
-            option-label="label"
-            option-value="value"
-            :placeholder="field.placeholder || `Selecionar ${field.label.toLowerCase()}`"
-            :class="['rform__select', { 'p-invalid': !!fieldErrors[field.name] }]"
-            :show-clear="!field.required"
-            filter
-            fluid
-          />
+    <!-- ────────── FORM UNIFICADO: criar / editar / ver (campos desabilitados) ────────── -->
+    <form
+      v-else-if="formFields"
+      class="rpage__card"
+      :class="{ 'rpage__card--readonly': isView }"
+      novalidate
+      @submit.prevent="submit"
+    >
+      <div class="rpage__card-head">
+        <h2>{{ isView ? viewTitle : isEdit ? `Editar ${title}` : `Novo ${title}` }}</h2>
+        <p>
+          {{
+            isView
+              ? 'Somente leitura. Clique em "Editar" para alterar os dados.'
+              : isEdit
+                ? "Altere os campos e salve para confirmar."
+                : "Preencha os campos para criar um novo registro."
+          }}
+        </p>
+      </div>
 
-          <!-- Remote dropdown (options fetched from API) -->
-          <Dropdown
-            v-else-if="field.type === 'remote-dropdown'"
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            :options="remoteOptions[field.name] || []"
-            option-label="label"
-            option-value="value"
-            :placeholder="field.placeholder || `Selecionar ${field.label.toLowerCase()}`"
-            :class="['rform__select', { 'p-invalid': !!fieldErrors[field.name] }]"
-            :show-clear="!field.required"
-            :loading="!remoteOptions[field.name]"
-            filter
-            fluid
-          />
+      <div v-for="group in formSections" :key="group.title || '_default'" class="rpage__section">
+        <h3 v-if="group.title" class="rpage__section-title">{{ group.title }}</h3>
+        <div class="rpage__grid">
+          <div
+            v-for="field in group.fields"
+            :key="field.name"
+            class="rpage__field"
+            :class="{
+              'rpage__field--full': field.full || field.type === 'textarea' || field.type === 'remote-multiselect' || (field.type === 'boolean' && field.name === 'is_active'),
+              'rpage__field--error': !!fieldErrors[field.name],
+            }"
+          >
+            <label :for="`f-${field.name}`" class="rpage__label">
+              {{ field.label }}
+              <span v-if="field.required && !isView" class="rpage__required" aria-hidden="true">*</span>
+            </label>
 
-          <!-- Textarea -->
-          <Textarea
-            v-else-if="field.type === 'textarea'"
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            :placeholder="field.placeholder || field.label"
-            :rows="field.rows || 4"
-            auto-resize
-            :class="['rform__input', { 'p-invalid': !!fieldErrors[field.name] }]"
-          />
+            <div v-if="field.type === 'boolean'" class="rpage__switch-row">
+              <InputSwitch :id="`f-${field.name}`" v-model="formData[field.name]" :disabled="isView" />
+              <span class="rpage__switch-label">{{ formData[field.name] ? "Ativo" : "Inativo" }}</span>
+            </div>
 
-          <!-- Password -->
-          <Password
-            v-else-if="field.type === 'password'"
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            :placeholder="field.placeholder || field.label"
-            :feedback="false"
-            toggle-mask
-            :class="['rform__password', { 'p-invalid': !!fieldErrors[field.name] }]"
-            :input-class="['rform__input', { 'p-invalid': !!fieldErrors[field.name] }]"
-          />
+            <Dropdown
+              v-else-if="field.type === 'dropdown'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :options="field.options"
+              option-label="label"
+              option-value="value"
+              :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+              :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :show-clear="!field.required"
+              :disabled="isView"
+              filter
+              fluid
+            />
 
-          <!-- Number / decimal -->
-          <InputText
-            v-else-if="field.type === 'number' || field.type === 'decimal'"
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            type="number"
-            :step="field.type === 'decimal' ? '0.01' : '1'"
-            :min="field.min ?? '0'"
-            :placeholder="field.placeholder || '0'"
-            :class="['rform__input', { 'p-invalid': !!fieldErrors[field.name] }]"
-          />
+            <Dropdown
+              v-else-if="field.type === 'remote-dropdown'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :options="remoteOptions[field.name] || []"
+              option-label="label"
+              option-value="value"
+              :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+              :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :show-clear="!field.required"
+              :loading="!remoteOptions[field.name]"
+              :disabled="isView"
+              filter
+              fluid
+            />
 
-          <!-- Text / email / url (default) -->
-          <InputText
-            v-else
-            :id="`f-${field.name}`"
-            v-model="formData[field.name]"
-            :type="field.inputType || 'text'"
-            :placeholder="field.placeholder || field.label"
-            :class="['rform__input', { 'p-invalid': !!fieldErrors[field.name] }]"
-          />
+            <MultiSelect
+              v-else-if="field.type === 'remote-multiselect'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :options="remoteOptions[field.name] || []"
+              option-label="label"
+              option-value="value"
+              display="chip"
+              :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+              :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :loading="!remoteOptions[field.name]"
+              :disabled="isView"
+              filter
+              fluid
+            />
 
-          <!-- Per-field error -->
-          <small v-if="fieldErrors[field.name]" class="rform__field-err">
-            <i class="pi pi-exclamation-circle" />
-            {{ fieldErrors[field.name] }}
-          </small>
+            <Textarea
+              v-else-if="field.type === 'textarea'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :placeholder="fieldPlaceholder(field, field.label)"
+              :rows="field.rows || 4"
+              auto-resize
+              :disabled="isView"
+              :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+            />
+
+            <Password
+              v-else-if="field.type === 'password'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :placeholder="fieldPlaceholder(field, field.label)"
+              :feedback="false"
+              toggle-mask
+              :disabled="isView"
+              :class="['rpage__password', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :input-class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+            />
+
+            <InputText
+              v-else-if="field.type === 'number' || field.type === 'decimal'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              type="number"
+              :step="field.type === 'decimal' ? '0.01' : '1'"
+              :min="field.min ?? '0'"
+              :placeholder="fieldPlaceholder(field, '0')"
+              :disabled="isView"
+              :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+            />
+
+            <InputText
+              v-else
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :type="field.inputType || 'text'"
+              :placeholder="fieldPlaceholder(field, field.label)"
+              :disabled="isView"
+              :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+            />
+
+            <small v-if="fieldErrors[field.name]" class="rpage__field-err">
+              <i class="pi pi-exclamation-circle" />
+              {{ fieldErrors[field.name] }}
+            </small>
+          </div>
         </div>
       </div>
 
-      <!-- Save error banner -->
-      <div v-if="saveError" class="rform__alert rform__alert--error rform__alert--inline">
+      <!-- Secoes especificas de produto: variacoes (editaveis) e ficha tecnica (leitura) -->
+      <div v-if="isProduct" class="rpage__extra">
+        <ProductVariationsEditor
+          v-if="recordId"
+          :key="`var-${recordId}-${record ? 'loaded' : 'new'}`"
+          :product-id="recordId"
+          :initial-variations="record?.variations || []"
+          :readonly="isView"
+        />
+        <ProductAddonsEditor
+          v-if="recordId"
+          :key="`add-${recordId}-${record ? 'loaded' : 'new'}`"
+          :product-id="recordId"
+          :initial-addons="record?.addons || []"
+          :readonly="isView"
+        />
+        <p v-else class="rpage__hint">Salve o produto para poder adicionar variacoes e adicionais.</p>
+
+        <section v-if="record?.recipe?.items?.length" class="detail-section">
+          <h3 class="detail-section__title">Ficha tecnica <small>{{ record.recipe.items.length }} ingredientes</small></h3>
+          <div class="detail-list">
+            <div v-for="ingredient in record.recipe.items" :key="ingredient.id" class="detail-list__row">
+              <span>{{ ingredient.ingredient_name }}</span>
+              <strong>{{ quantity(ingredient.quantity) }} {{ ingredient.unit }}</strong>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Ficha tecnica editavel da receita (Sprint 3 · STC-034/035) -->
+      <div v-else-if="isRecipe" class="rpage__extra">
+        <RecipeItemsEditor
+          v-if="recordId"
+          :key="`rec-${recordId}-${record ? 'loaded' : 'new'}`"
+          :recipe-id="recordId"
+          :initial-items="record?.items || []"
+          :readonly="isView"
+        />
+        <p v-else class="rpage__hint">Salve a receita para poder adicionar ingredientes.</p>
+      </div>
+
+      <div v-if="saveError" class="rpage__alert rpage__alert--error rpage__alert--inline">
         <i class="pi pi-exclamation-triangle" /> {{ saveError }}
       </div>
 
-      <div class="rform__footer">
-        <Button type="button" label="Cancelar" severity="secondary" outlined @click="goBack" />
+      <div v-if="!isView" class="rpage__footer">
+        <Button type="button" label="Cancelar" severity="secondary" outlined @click="cancelForm" />
         <Button type="submit" :label="isEdit ? 'Salvar alteracoes' : 'Criar registro'" :loading="saving" icon="pi pi-check" />
       </div>
     </form>
-
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, toRaw, watch } from "vue";
+/**
+ * View (MVP) da pagina unica de recurso: ver / criar / editar.
+ * O estado e as regras vem do presenter `useResourceForm`; a config visual do
+ * modo "ver" vem de `config/detailMeta`. Aqui ficam so o template, a navegacao
+ * e a montagem dos dados de exibicao.
+ */
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
+import MultiSelect from "primevue/multiselect";
 import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
+import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
 
-import { api } from "../services/api";
-
-const remoteOptions = reactive({});
+import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
+import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
+import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
+import { useResourceForm } from "../composables/useResourceForm";
+import { useAuthStore } from "../stores/auth";
+import { ResourceService } from "../services/ResourceService";
+import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
+import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel } from "../utils/format";
+import { getByPath, resolveColumnValue } from "../utils/object";
 
 const props = defineProps({
   endpoint: { type: String, required: true },
   title: { type: String, required: true },
-  formFields: { type: Array, required: true },
+  columns: { type: Array, default: () => [] },
+  formFields: { type: Array, default: null },
   id: { type: String, default: null },
+  mode: { type: String, default: "view" },
   globalScope: { type: Boolean, default: false },
+  // Recurso compartilhado entre restaurantes (categorias, adicionais, etc.):
+  // não injeta o seletor de restaurante e não herda um automaticamente.
+  sharedAcrossRestaurants: { type: Boolean, default: false },
 });
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 
-const isEdit = computed(() => !!(props.id || route.params.id));
 const recordId = computed(() => props.id || route.params.id);
+const baseName = computed(() => String(route.name).replace(/--(?:create|edit|view)$/, ""));
 
-const fetching = ref(false);
-const fetchError = ref("");
-const saving = ref(false);
-const saveError = ref("");
-const fieldErrors = ref({});
+// Seletor de restaurante: em cadastros com escopo por restaurante (não globalScope),
+// sempre exibimos um campo "Restaurante" para vincular o item. O valor padrão é o
+// restaurante selecionado no topo (ou o do perfil); vazio quando o escopo é "Todos".
+const RESTAURANT_SCOPE_KEY = "starchef-restaurant-scope";
+const scopedRestaurantId = localStorage.getItem(RESTAURANT_SCOPE_KEY) || auth.user?.restaurant_id || "";
 
-function buildInitialData() {
-  const d = {};
-  for (const f of props.formFields) {
-    if (f.default !== undefined) {
-      d[f.name] = f.default;
-    } else if (f.type === "boolean") {
-      d[f.name] = true;
-    } else {
-      d[f.name] = "";
-    }
+const augmentedFormFields = computed(() => {
+  const fields = props.formFields || [];
+  // Só injeta quando: é um formulário, tem escopo por restaurante, não é um recurso
+  // compartilhado entre restaurantes e o recurso ainda não define um campo
+  // "restaurant" próprio (ex.: kds-estacoes, filiais).
+  if (
+    !fields.length ||
+    props.globalScope ||
+    props.sharedAcrossRestaurants ||
+    fields.some((field) => field.name === "restaurant")
+  ) {
+    return fields;
   }
-  return d;
-}
-
-const formData = reactive(buildInitialData());
-
-async function fetchRecord() {
-  if (!isEdit.value) return;
-  fetching.value = true;
-  fetchError.value = "";
-  try {
-    const res = await api.get(`${props.endpoint}${recordId.value}/`, { skipRestaurantScope: props.globalScope });
-    for (const f of props.formFields) {
-      if (res.data[f.name] !== undefined) {
-        formData[f.name] = res.data[f.name];
-      }
-    }
-  } catch {
-    fetchError.value = "Nao foi possivel carregar o registro.";
-  } finally {
-    fetching.value = false;
+  const restaurantField = {
+    name: "restaurant",
+    label: "Restaurante",
+    type: "remote-dropdown",
+    endpoint: "/restaurants/",
+    optionLabel: "trade_name",
+    optionValue: "id",
+    required: true,
+    globalScope: true, // opções carregadas sem filtro de escopo (lista todos)
+    default: scopedRestaurantId,
+    section: "Restaurante",
+  };
+  // Em 50% (sem `full`). Posiciona logo acima da seção "Disponibilidade" quando
+  // ela existe (ex.: Produtos); nos demais recursos, vai ao final.
+  const availabilityIndex = fields.findIndex((field) => field.section === "Disponibilidade");
+  if (availabilityIndex >= 0) {
+    return [...fields.slice(0, availabilityIndex), restaurantField, ...fields.slice(availabilityIndex)];
   }
-}
-
-function buildPayload() {
-  const raw = toRaw(formData);
-  const payload = {};
-  for (const f of props.formFields) {
-    let val = raw[f.name];
-    if (f.type === "number" && val !== "" && val !== null && val !== undefined) {
-      val = parseInt(val, 10);
-    } else if (f.type === "decimal" && val !== "" && val !== null && val !== undefined) {
-      val = parseFloat(val);
-    }
-    payload[f.name] = val;
-  }
-  return payload;
-}
-
-async function submit() {
-  saving.value = true;
-  saveError.value = "";
-  fieldErrors.value = {};
-  try {
-    const payload = buildPayload();
-    if (isEdit.value) {
-      await api.patch(`${props.endpoint}${recordId.value}/`, payload);
-    } else {
-      await api.post(props.endpoint, payload);
-    }
-    goBack();
-  } catch (err) {
-    const body = err?.response?.data;
-    // Support both wrapped format {error:{message:{...}}} and flat DRF format {field:[...]}
-    const detail = body?.error?.message ?? body;
-    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-      const errs = {};
-      let hasFieldError = false;
-      for (const [key, val] of Object.entries(detail)) {
-        const msg = Array.isArray(val) ? val.join(" ") : String(val);
-        if (key === "detail" || key === "non_field_errors") {
-          saveError.value = msg;
-        } else {
-          errs[key] = msg;
-          hasFieldError = true;
-        }
-      }
-      fieldErrors.value = errs;
-      if (!saveError.value && hasFieldError) {
-        saveError.value = "Corrija os campos destacados e tente novamente.";
-      }
-    } else {
-      saveError.value = "Erro ao salvar. Tente novamente.";
-    }
-  } finally {
-    saving.value = false;
-  }
-}
-
-function goBack() {
-  router.push({ name: String(route.name).replace(/--(?:novo|editar)$/, "") });
-}
-
-async function loadRemoteOptions() {
-  for (const field of props.formFields) {
-    if (field.type !== "remote-dropdown" || !field.endpoint) continue;
-    try {
-      const res = await api.get(field.endpoint, { params: { page_size: 200 } });
-      const rows = res.data.results || res.data || [];
-      remoteOptions[field.name] = rows.map((row) => ({
-        label: String(row[field.optionLabel ?? "name"] ?? row.id),
-        value: row[field.optionValue ?? "id"],
-      }));
-    } catch {
-      remoteOptions[field.name] = [];
-    }
-  }
-}
-
-onMounted(async () => {
-  await Promise.all([fetchRecord(), loadRemoteOptions()]);
+  return [...fields, restaurantField];
 });
-watch(() => recordId.value, fetchRecord);
+
+// Licenciamento modular: campos atrelados a um modulo que a conta nao tem sao
+// omitidos do formulario (nao apenas no template — nao entram no payload/validacao).
+const visibleFormFields = computed(() => augmentedFormFields.value.filter((field) => auth.hasModule(field.module)));
+
+// Agrupa os campos por `section` preservando a ordem de declaração (STC-021).
+// Sem nenhuma seção declarada, cai em um único grupo sem título (comportamento antigo).
+const formSections = computed(() => {
+  const groups = [];
+  const byTitle = new Map();
+  for (const field of visibleFormFields.value) {
+    const title = field.section || "";
+    if (!byTitle.has(title)) {
+      const group = { title, fields: [] };
+      byTitle.set(title, group);
+      groups.push(group);
+    }
+    byTitle.get(title).fields.push(field);
+  }
+  return groups;
+});
+
+// Edição inline: no modo "ver" os campos ficam desabilitados; o botão "Editar"
+// habilita na mesma página (sem trocar de rota). `effectiveMode` faz o presenter
+// tratar como edição (PATCH) quando o usuário liga o modo de edição a partir do "ver".
+const localEdit = ref(false);
+const effectiveMode = computed(() => (props.mode === "view" && localEdit.value ? "edit" : props.mode));
+
+// Presenter: dados + validacao + salvamento.
+const service = new ResourceService({ endpoint: props.endpoint, globalScope: props.globalScope });
+const { isCreate, isEdit, isView, record, formData, fetching, fetchError, saving, saveError, fieldErrors, remoteOptions, reset, fetchRecord, save, loadRemoteOptions } =
+  useResourceForm({ service, formFields: visibleFormFields.value, mode: effectiveMode, recordId, sharedAcrossRestaurants: props.sharedAcrossRestaurants });
+
+const modeLabel = computed(() => (isCreate.value ? "Novo" : isEdit.value ? "Editar" : "Detalhe"));
+const skeletonCount = computed(() => visibleFormFields.value.length || props.columns.length || 6);
+
+/* ── Navegacao ─────────────────────────────────────────────────────── */
+function goToList() {
+  router.push({ name: baseName.value });
+}
+function goToView(id) {
+  router.push({ name: `${baseName.value}--view`, params: { id } });
+}
+// "Editar" no modo ver: habilita os campos na mesma página (sem navegar).
+function startEdit() {
+  localEdit.value = true;
+}
+function cancelForm() {
+  if (props.mode === "view") {
+    // edição inline: volta ao modo leitura descartando alterações não salvas.
+    localEdit.value = false;
+    reset();
+    reload();
+    return;
+  }
+  if (isEdit.value && recordId.value) goToView(recordId.value);
+  else goToList();
+}
+async function submit() {
+  const saved = await save();
+  if (!saved) return; // erros de validacao ja estao em fieldErrors/saveError
+  if (props.mode === "view") {
+    // edição inline concluída: volta ao modo leitura e recarrega o registro.
+    localEdit.value = false;
+    await reload();
+    return;
+  }
+  const savedId = saved.id || recordId.value;
+  if (savedId) goToView(savedId);
+  else goToList();
+}
+
+/* ── Modo "ver": monta hero, metricas e campos a partir de config/detailMeta ── */
+const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View remonta por :key)
+const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
+const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
+
+function defaultTitle(row) {
+  return row?.name || row?.trade_name || row?.username || row?.number || row?.id || "-";
+}
+const viewTitle = computed(() => {
+  if (!record.value) return "-";
+  return detailMeta.title ? detailMeta.title(record.value) : defaultTitle(record.value);
+});
+const viewSubtitle = computed(() => (record.value && detailMeta.subtitle ? detailMeta.subtitle(record.value) : ""));
+const heroBadge = computed(() => (record.value && detailMeta.badge ? detailMeta.badge(record.value) : null));
+
+const detailMetrics = computed(() => {
+  if (!record.value) return [];
+  return (detailMeta.metrics || []).map((metric) => {
+    let display = formatField(record.value, metric.key, metric.type, metric.map);
+    if (metric.suffix && display !== "-") display = `${display}${metric.suffix}`;
+    return { label: metric.label, display };
+  });
+});
+
+const detailFields = computed(() => {
+  if (!record.value) return [];
+  // Campos ja exibidos como metrica/badge nao se repetem no grid.
+  const excluded = new Set((detailMeta.metrics || []).map((metric) => metric.key));
+  if (detailMeta.badgeKey) excluded.add(detailMeta.badgeKey);
+  return props.columns
+    .filter((column) => !excluded.has(column.key))
+    .map((column) => ({ ...column, _value: resolveColumnValue(record.value, column) }));
+});
+
+/** Formata um valor pontual do registro conforme o tipo declarado na metrica. */
+function formatField(row, key, type, map) {
+  const cellValue = getByPath(row, key);
+  if (type === "money") return formatMoney(cellValue);
+  if (type === "date") return dateTime(cellValue);
+  if (type === "percent") return formatPercent(cellValue);
+  if (type === "boolean") return cellValue ? "Ativo" : "Inativo";
+  if (cellValue == null || cellValue === "") return "-";
+  return map ? map[cellValue] || cellValue : cellValue;
+}
+
+/* ── Helpers de exibicao (delegam aos utils) ─────────────────────────── */
+const label = mapLabel;
+const money = formatMoney;
+const quantity = formatQuantity;
+const dateTime = (value) => formatDateTime(value, { withYear: true });
+
+/**
+ * Placeholder do campo. Em modo "ver" nunca mostra o texto de instrucao
+ * (ex.: "Selecionar categoria") — esse texto e uma orientacao de preenchimento,
+ * nao um dado; um campo vazio em leitura mostra so um travessao.
+ */
+function fieldPlaceholder(field, fallback) {
+  if (isView.value) return "—";
+  return field.placeholder || fallback;
+}
+
+/* ── Ciclo de vida: carrega ao montar e ao trocar de registro/modo ───── */
+async function reload() {
+  await Promise.all([fetchRecord(), loadRemoteOptions()]);
+}
+onMounted(reload);
+watch(() => [recordId.value, props.mode], async () => {
+  reset();
+  await reload();
+});
 </script>
 
 <style scoped>
-/* ── Layout shell ──────────────────────────────────────────── */
-.rform {
+.rpage {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
   width: 100%;
 }
 
-/* ── Breadcrumb nav ────────────────────────────────────────── */
-.rform__nav {
+/* ── Header ─────────────────────────────────────────────────────────── */
+.rpage__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.rpage__crumbs {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
-.rform__back {
+.rpage__back {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -340,28 +546,24 @@ watch(() => recordId.value, fetchRecord);
   transition: background var(--dur-base), color var(--dur-base), border-color var(--dur-base);
 }
 
-.rform__back:hover {
+.rpage__back:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong, var(--border));
   color: var(--text-body);
 }
 
-.rform__back .pi-arrow-left {
-  font-size: 11px;
+.rpage__back .pi-arrow-left { font-size: 11px; }
+.rpage__sep { font-size: 10px; color: var(--text-subtle); }
+.rpage__crumb { color: var(--text-strong); font: var(--weight-bold) 13px/1 var(--font-sans); }
+
+.rpage__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.rform__sep {
-  font-size: 10px;
-  color: var(--text-subtle);
-}
-
-.rform__crumb {
-  color: var(--text-strong);
-  font: var(--weight-bold) 13px/1 var(--font-sans);
-}
-
-/* ── Card ──────────────────────────────────────────────────── */
-.rform__card {
+/* ── Card (form + skeleton) ─────────────────────────────────────────── */
+.rpage__card {
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -372,137 +574,113 @@ watch(() => recordId.value, fetchRecord);
   overflow: hidden;
 }
 
-.rform__card-header {
-  padding: 22px 28px 20px;
+.rpage__card-head {
+  padding: 16px var(--card-pad);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.rform__card-title h2 {
+.rpage__card-head h2 {
   color: var(--text-strong);
   font: var(--weight-extra) 20px/1.2 var(--font-sans);
 }
 
-.rform__card-title p {
+.rpage__card-head p {
   margin-top: 5px;
   color: var(--text-muted);
   font: var(--weight-medium) 13px/1.5 var(--font-sans);
 }
 
-/* ── Fields grid ───────────────────────────────────────────── */
-.rform__body {
+/* ── Fields grid (form) ─────────────────────────────────────────────── */
+.rpage__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 22px 28px;
-  padding: 28px;
+  gap: var(--field-gap-y) var(--field-gap-x);
+  padding: var(--card-pad);
 }
 
-.rform__field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* Seções do formulário (STC-021) */
+.rpage__section { display: flex; flex-direction: column; }
+.rpage__section + .rpage__section { border-top: 1px solid var(--border-subtle); }
+.rpage__section-title {
+  padding: 14px var(--card-pad) 0;
+  color: var(--text-strong);
+  font: var(--weight-extra) 13px/1.2 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
 }
+.rpage__section .rpage__grid { padding-top: 12px; }
 
-.rform__field--full {
-  grid-column: 1 / -1;
-}
-
-.rform__field--error .rform__label {
-  color: #dc2626;
-}
-
-.rform__field--error .rform__input,
-.rform__field--error :deep(.p-inputtext),
-.rform__field--error :deep(.p-dropdown),
-.rform__field--error :deep(.p-textarea) {
+.rpage__field { display: flex; flex-direction: column; gap: var(--field-label-gap); }
+.rpage__field--full { grid-column: 1 / -1; }
+.rpage__field--error .rpage__label { color: #dc2626; }
+.rpage__field--error .rpage__input,
+.rpage__field--error :deep(.p-inputtext),
+.rpage__field--error :deep(.p-dropdown),
+.rpage__field--error :deep(.p-textarea) {
   border-color: #ef4444 !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 12%, transparent) !important;
 }
 
-/* ── Label ─────────────────────────────────────────────────── */
-.rform__label {
-  color: var(--text-strong);
-  font: var(--weight-bold) 12.5px/1.2 var(--font-sans);
-  letter-spacing: 0.01em;
-}
+.rpage__label { color: var(--text-strong); font: var(--weight-bold) 12.5px/1.2 var(--font-sans); letter-spacing: 0.01em; }
+.rpage__required { color: #ef4444; margin-left: 3px; }
 
-.rform__required {
-  color: #ef4444;
-  margin-left: 3px;
-}
-
-/* ── Inputs ────────────────────────────────────────────────── */
-.rform__input {
+.rpage__input {
   width: 100%;
-  height: 42px;
-  padding: 0 13px;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
   color: var(--text-strong);
-  font: var(--weight-medium) 14px/1 var(--font-sans);
+  font: var(--weight-medium) var(--control-font)/1 var(--font-sans);
   transition: border-color 120ms, box-shadow 120ms;
 }
-
-.rform__input:focus {
+.rpage__input:focus {
   outline: none;
   border-color: var(--ring);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 15%, transparent);
 }
+.rpage__input:is(textarea) { height: auto; padding: 11px 13px; resize: vertical; line-height: 1.55; }
+.rpage__select { width: 100%; }
+.rpage__password { width: 100%; }
 
-.rform__input.p-invalid {
-  border-color: #ef4444;
-}
+.rpage__switch-row { display: flex; align-items: center; gap: 12px; height: var(--control-h); }
+.rpage__switch-label { color: var(--text-body); font: var(--weight-semibold) 13.5px/1 var(--font-sans); }
 
-.rform__input.p-invalid:focus {
-  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 15%, transparent);
-}
+.rpage__field-err { display: flex; align-items: center; gap: 6px; color: #ef4444; font: var(--weight-medium) 12px/1.3 var(--font-sans); }
+.rpage__field-err .pi { font-size: 12px; }
 
-/* Textarea: override height */
-.rform__input:is(textarea) {
-  height: auto;
-  padding: 11px 13px;
-  resize: vertical;
-  line-height: 1.55;
-}
+/* ── Modo leitura (view): mesma tela do editar, com os campos desabilitados ──
+   Estilo "ghost/outline": fundo transparente, borda suave e texto legível —
+   sem o cinza opaco padrão de input desabilitado. Ao clicar em "Editar" o modo
+   muda na mesma página e os campos ficam habilitados. */
+.rpage__card--readonly .rpage__label { color: var(--text-muted); }
 
-/* ── Select / Dropdown ─────────────────────────────────────── */
-.rform__select {
-  width: 100%;
-}
-
-/* ── Switch row ─────────────────────────────────────────────── */
-.rform__switch-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 42px;
-}
-
-.rform__switch-label {
+.rpage__card--readonly .rpage__input:disabled,
+.rpage__card--readonly :deep(.p-inputtext:disabled),
+.rpage__card--readonly :deep(.p-inputnumber-input:disabled),
+.rpage__card--readonly :deep(.p-dropdown.p-disabled),
+.rpage__card--readonly :deep(.p-multiselect.p-disabled),
+.rpage__card--readonly :deep(.p-inputtextarea:disabled) {
+  opacity: 1;
+  background: transparent;
+  border-color: var(--border-subtle);
   color: var(--text-body);
-  font: var(--weight-semibold) 13.5px/1 var(--font-sans);
+  cursor: default;
 }
-
-/* ── Password ───────────────────────────────────────────────── */
-.rform__password {
-  width: 100%;
+.rpage__card--readonly :deep(.p-dropdown.p-disabled .p-dropdown-label),
+.rpage__card--readonly :deep(.p-multiselect.p-disabled .p-multiselect-label) {
+  color: var(--text-body);
 }
-
-/* ── Field error ────────────────────────────────────────────── */
-.rform__field-err {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #ef4444;
-  font: var(--weight-medium) 12px/1.3 var(--font-sans);
+/* Esconde seta/limpar dos selects em leitura (não há o que abrir) */
+.rpage__card--readonly :deep(.p-dropdown-trigger),
+.rpage__card--readonly :deep(.p-dropdown-clear-icon),
+.rpage__card--readonly :deep(.p-multiselect-trigger) {
+  opacity: 0.4;
 }
+.rpage__card--readonly :deep(.p-inputswitch.p-disabled) { opacity: 0.7; }
 
-.rform__field-err .pi {
-  font-size: 12px;
-}
-
-/* ── Alert banners ──────────────────────────────────────────── */
-.rform__alert {
+.rpage__alert {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -510,105 +688,200 @@ watch(() => recordId.value, fetchRecord);
   border-radius: var(--radius-md);
   font: var(--weight-semibold) 13px/1.4 var(--font-sans);
 }
-
-.rform__alert--error {
+.rpage__alert--error {
   background: color-mix(in srgb, #ef4444 9%, var(--surface-card));
   border: 1px solid color-mix(in srgb, #ef4444 24%, transparent);
   color: #dc2626;
 }
+.rpage__alert--inline { margin: 0 var(--card-pad); }
 
-.rform__alert--inline {
-  margin: 0 28px;
-  border-radius: var(--radius-md);
-}
-
-/* ── Footer ─────────────────────────────────────────────────── */
-.rform__footer {
+.rpage__footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  padding: 18px 28px;
+  padding: 14px var(--card-pad);
   border-top: 1px solid var(--border-subtle);
-  background: var(--surface-base);
+  background: transparent; /* mesma cor do corpo do formulário (card) */
 }
 
-/* ── PrimeVue structural overrides (dimensionamento apenas) ─── */
+/* ── View mode ──────────────────────────────────────────────────────── */
+.rpage__view { display: flex; flex-direction: column; gap: 16px; }
 
-/* Inputs: garantir largura e altura corretas */
-:deep(.p-inputtext) {
-  width: 100%;
-  height: 42px;
-  padding: 0 13px;
-  font: var(--weight-medium) 14px/1 var(--font-sans);
-}
-
-/* Dropdown: largura + altura; cores vêm do primevue-tokens.css global */
-:deep(.p-dropdown) {
-  width: 100%;
-  height: 42px;
-}
-
-:deep(.p-dropdown-label),
-:deep(.p-dropdown-label.p-inputtext) {
+.detail-hero {
+  position: relative;
   display: flex;
   align-items: center;
-  height: 100%;
-  padding: 0 13px;
-  font: var(--weight-medium) 14px/1 var(--font-sans);
+  gap: 16px;
+  padding: 22px 24px;
+  border-radius: var(--radius-lg);
+  color: #fff;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-
-:deep(.p-dropdown-panel) {
-  z-index: 9999 !important;
-}
-
-/* Textarea */
-:deep(.p-textarea) {
-  width: 100%;
-  padding: 11px 13px;
-  font: var(--weight-medium) 14px/1.55 var(--font-sans);
-  resize: vertical;
-}
-
-/* Password */
-:deep(.p-password) {
-  width: 100%;
-}
-
-:deep(.p-password input) {
-  width: 100%;
-  height: 42px;
-}
-
-/* Button */
-:deep(.p-button) {
-  height: 42px;
-  font: var(--weight-bold) 13px/1 var(--font-sans);
+.detail-hero__avatar {
+  width: 58px; height: 58px; flex-shrink: 0;
+  display: grid; place-items: center;
   border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 25px;
+}
+.detail-hero__headline { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.detail-hero__headline span { font: var(--weight-bold) 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: var(--tracking-caps); opacity: 0.85; }
+.detail-hero__headline h2 { overflow: hidden; font: var(--weight-extra) 24px/1.15 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
+.detail-hero__headline p { font: var(--weight-semibold) 13px/1.3 var(--font-sans); opacity: 0.92; }
+.detail-hero__badge {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  color: #fff;
+  font: var(--weight-extra) 12px/1 var(--font-sans);
+  white-space: nowrap;
 }
 
-/* ── Responsive ─────────────────────────────────────────────── */
-@media (max-width: 720px) {
-  .rform__body {
-    grid-template-columns: 1fr;
-    padding: 20px;
-    gap: 18px;
-  }
+.detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.detail-metric {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 15px 17px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-xs);
+}
+.detail-metric span { color: var(--text-muted); font: var(--weight-bold) 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.detail-metric strong { color: var(--text-strong); font: var(--weight-extra) 20px/1.1 var(--font-sans); }
 
-  .rform__field--full {
-    grid-column: 1;
-  }
+/* Secoes extras dentro do form (ex.: variacoes/ficha tecnica de produto) */
+.rpage__extra {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 28px 28px;
+}
+.rpage__hint {
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font: var(--weight-medium) 13px/1.4 var(--font-sans);
+}
 
-  .rform__card-header {
-    padding: 18px 20px 16px;
-  }
+.detail-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.detail-section__title {
+  display: flex; align-items: center; gap: 8px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-strong);
+  font: var(--weight-extra) 14px/1.2 var(--font-sans);
+}
+.detail-section__title small { color: var(--text-muted); font: var(--weight-semibold) 12px/1 var(--font-sans); }
 
-  .rform__footer {
-    padding: 14px 20px;
-  }
+.detail-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border-subtle);
+}
+.detail-field { display: flex; flex-direction: column; gap: 7px; padding: 14px 18px; background: var(--surface-card); }
+.detail-field__label { color: var(--text-muted); font: var(--weight-bold) 11px/1 var(--font-sans); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.detail-field__value { color: var(--text-strong); font: var(--weight-semibold) 13.5px/1.4 var(--font-sans); word-break: break-word; }
+.detail-field__money { color: var(--success-text); font: var(--weight-extra) 14.5px/1 var(--font-sans); }
 
-  .rform__alert--inline {
-    margin: 0 20px;
-  }
+.detail-list { display: flex; flex-direction: column; }
+.detail-list__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.detail-list__row:last-child { border-bottom: none; }
+.detail-list__row span { min-width: 0; overflow: hidden; color: var(--text-body); font: var(--weight-semibold) 13px/1.25 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
+.detail-list__row strong { flex-shrink: 0; color: var(--text-strong); font: var(--weight-bold) 12.5px/1 var(--font-sans); }
+
+/* Hero accents */
+.accent--violet  { background: linear-gradient(135deg, #7c3aed, #4f46e5); }
+.accent--blue    { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+.accent--green   { background: linear-gradient(135deg, #059669, #047857); }
+.accent--amber   { background: linear-gradient(135deg, #d97706, #b45309); }
+.accent--rose    { background: linear-gradient(135deg, #e11d48, #be123c); }
+.accent--teal    { background: linear-gradient(135deg, #0d9488, #0f766e); }
+.accent--indigo  { background: linear-gradient(135deg, #4338ca, #3730a3); }
+.accent--slate   { background: linear-gradient(135deg, #475569, #334155); }
+
+/* Status chip */
+.status-chip {
+  display: inline-flex; align-items: center; width: fit-content;
+  padding: 3px 9px; border-radius: 99px; border: 1px solid transparent;
+  font: var(--weight-extra) 11px/1 var(--font-sans); white-space: nowrap; color: #fff; background: #475569;
+}
+.status-chip[data-status="open"]             { background: #2563eb; }
+.status-chip[data-status="sent_to_kitchen"]  { background: #7c3aed; }
+.status-chip[data-status="preparing"]        { background: #4338ca; }
+.status-chip[data-status="partially_ready"]  { background: #0891b2; }
+.status-chip[data-status="ready"]            { background: #059669; }
+.status-chip[data-status="delivered"]        { background: #16a34a; }
+.status-chip[data-status="awaiting_payment"] { background: #d97706; }
+.status-chip[data-status="paid"]             { background: #047857; }
+.status-chip[data-status="cancelled"]        { background: #b91c1c; }
+.status-chip[data-status="refunded"]         { background: #be185d; }
+.status-chip[data-status="free"]      { background: #047857; }
+.status-chip[data-status="occupied"]  { background: #b91c1c; }
+.status-chip[data-status="reserved"]  { background: #1d4ed8; }
+.status-chip[data-status="cleaning"]  { background: #b45309; }
+.status-chip[data-status="closed"]    { background: #475569; }
+.status-chip[data-status="issued"]    { background: #047857; }
+.status-chip[data-status="draft"]     { background: #64748b; }
+.status-chip[data-status="error"]     { background: #b91c1c; }
+.status-chip[data-status="in"]          { background: #047857; }
+.status-chip[data-status="out"]         { background: #b91c1c; }
+.status-chip[data-status="adjustment"]  { background: #b45309; }
+.status-chip[data-status="sale"]        { background: #7c3aed; }
+.status-chip[data-status="inventory"]   { background: #475569; }
+.status-chip[data-status="admin"]    { background: #b91c1c; }
+.status-chip[data-status="owner"]    { background: #7c3aed; }
+.status-chip[data-status="manager"]  { background: #1d4ed8; }
+.status-chip[data-status="waiter"]   { background: #0891b2; }
+.status-chip[data-status="kitchen"]  { background: #d97706; }
+.status-chip[data-status="cashier"]  { background: #059669; }
+.status-chip[data-status="driver"]   { background: #475569; }
+
+/* ── PrimeVue structural overrides ──────────────────────────────────── */
+:deep(.p-inputtext) { width: 100%; height: var(--control-h); padding: 0 var(--control-pad-x); font: var(--weight-medium) var(--control-font)/1 var(--font-sans); }
+:deep(.p-dropdown) { width: 100%; height: var(--control-h); }
+:deep(.p-dropdown-label),
+:deep(.p-dropdown-label.p-inputtext) { display: flex; align-items: center; height: 100%; padding: 0 var(--control-pad-x); font: var(--weight-medium) var(--control-font)/1 var(--font-sans); }
+:deep(.p-dropdown-panel) { z-index: 9999 !important; }
+:deep(.p-multiselect) { width: 100%; min-height: var(--control-h); }
+:deep(.p-multiselect-label) { padding: 6px var(--control-pad-x); font: var(--weight-medium) var(--control-font)/1.3 var(--font-sans); }
+:deep(.p-multiselect-panel) { z-index: 9999 !important; }
+:deep(.p-textarea) { width: 100%; padding: 8px var(--control-pad-x); font: var(--weight-medium) var(--control-font)/1.55 var(--font-sans); resize: vertical; }
+:deep(.p-password) { width: 100%; }
+:deep(.p-password input) { width: 100%; height: var(--control-h); }
+:deep(.p-button) { height: var(--control-h); font: var(--weight-bold) var(--control-font)/1 var(--font-sans); border-radius: var(--radius-md); }
+
+:deep(.p-tag) { border: 1px solid transparent; font: var(--weight-extra) 11px/1 var(--font-sans); }
+:deep(.p-tag.p-tag-success) { background: #047857; border-color: #065f46; color: #fff; }
+:deep(.p-tag.p-tag-danger) { background: #b91c1c; border-color: #991b1b; color: #fff; }
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  .rpage__grid { grid-template-columns: 1fr; padding: 20px; gap: 18px; }
+  .rpage__field--full { grid-column: 1; }
+  .rpage__card-head { padding: 18px 20px 16px; }
+  .rpage__footer { padding: 14px 20px; }
+  .rpage__alert--inline { margin: 0 20px; }
+  .rpage__extra { padding: 0 20px 20px; }
+  .detail-fields { grid-template-columns: 1fr; }
 }
 </style>

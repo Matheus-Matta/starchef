@@ -2,8 +2,10 @@
 @import url("./styles/tokens/colors.css");
 @import url("./styles/tokens/typography.css");
 @import url("./styles/tokens/spacing.css");
+@import url("./styles/tokens/density.css");
 @import url("./styles/tokens/base.css");
 @import url("./styles/primevue-tokens.css");
+@import url("./styles/compact.css");
 
 :root {
   --sidebar-w: 280px;
@@ -33,6 +35,9 @@
 
 .app-content {
   flex: 1;
+  width: 100%;
+  max-width: 1280px;      /* não ocupa a tela inteira em telas largas */
+  margin-inline: auto;    /* centraliza o conteúdo */
   padding: 22px;
   overflow: auto;
   min-height: 0;

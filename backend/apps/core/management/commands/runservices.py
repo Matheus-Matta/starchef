@@ -89,23 +89,39 @@ class Command(BaseCommand):
         backend_host, backend_port = self._resolve_backend_bind(options)
         frontend_env = self._build_frontend_env(env, backend_host, backend_port)
 
+        # Libera a porta do backend antes de subir: evita o WinError 10048 ("porta ja em uso")
+        # quando sobra um processo de uma execucao anterior que nao foi encerrado.
+        self._free_port(backend_port)
+
         if options["migrate"]:
             self.stdout.write(self.style.NOTICE("Running migrations before starting services..."))
             self._run_once([sys.executable, "manage.py", "migrate"], backend_dir, env)
 
+        if settings.DEBUG:
+            # Dev: runserver do app daphne (ASGI + WebSocket) COM auto-reload ao salvar.
+            backend_command = [
+                sys.executable,
+                "manage.py",
+                "runserver",
+                f"{backend_host}:{backend_port}",
+            ]
+        else:
+            # Producao: daphne puro, sem auto-reload.
+            backend_command = [
+                sys.executable,
+                "-m",
+                "daphne",
+                "-b",
+                backend_host,
+                "-p",
+                str(backend_port),
+                "config.asgi:application",
+            ]
+
         processes = [
             ManagedProcess(
                 "backend",
-                [
-                    sys.executable,
-                    "-m",
-                    "daphne",
-                    "-b",
-                    backend_host,
-                    "-p",
-                    str(backend_port),
-                    "config.asgi:application",
-                ],
+                backend_command,
                 backend_dir,
                 env,
             )
@@ -265,3 +281,38 @@ class Command(BaseCommand):
 
     def _npm_command(self):
         return "npm.cmd" if os.name == "nt" else "npm"
+
+    def _free_port(self, port):
+        """Encerra qualquer processo que ainda esteja escutando na porta do backend.
+
+        Best-effort: se nada estiver na porta, nao faz nada. Torna o `runservices`
+        idempotente — voce pode reiniciar sem precisar matar o processo antigo na mao.
+        """
+        pids = self._pids_on_port(str(port))
+        if not pids:
+            return
+        self.stdout.write(self.style.WARNING(f"Porta {port} em uso por {', '.join(pids)}; liberando..."))
+        for pid in pids:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            else:
+                subprocess.run(["kill", "-9", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        time.sleep(1)
+
+    def _pids_on_port(self, port):
+        """PIDs escutando na porta (netstat no Windows, lsof no restante)."""
+        try:
+            if os.name == "nt":
+                output = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, check=False).stdout
+                pids = set()
+                for line in output.splitlines():
+                    parts = line.split()
+                    # Ex.: TCP  0.0.0.0:8001  0.0.0.0:0  LISTENING  1234
+                    if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+                        if parts[-1].isdigit() and parts[-1] != "0":
+                            pids.add(parts[-1])
+                return list(pids)
+            result = subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True, check=False)
+            return [pid for pid in result.stdout.split() if pid.isdigit()]
+        except Exception:
+            return []

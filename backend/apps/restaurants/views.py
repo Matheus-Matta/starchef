@@ -1,6 +1,5 @@
-from rest_framework import viewsets
-
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.modules import MODULE_ENTREGA
+from apps.core.viewsets import BaseTenantViewSet
 from apps.restaurants.models import Branch, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
 from apps.restaurants.serializers import (
     BranchSerializer,
@@ -12,14 +11,14 @@ from apps.restaurants.serializers import (
 )
 
 
-class RestaurantViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class RestaurantViewSet(BaseTenantViewSet):
     serializer_class = RestaurantSerializer
     queryset = Restaurant.all_objects.all()
     search_fields = ["trade_name", "legal_name", "cnpj"]
     ordering_fields = ["trade_name", "created_at"]
 
 
-class BranchViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class BranchViewSet(BaseTenantViewSet):
     serializer_class = BranchSerializer
     queryset = Branch.objects.select_related("restaurant").all()
     filterset_fields = ["restaurant", "is_active"]
@@ -27,14 +26,14 @@ class BranchViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelV
     ordering_fields = ["name", "created_at"]
 
 
-class TableSectorViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class TableSectorViewSet(BaseTenantViewSet):
     serializer_class = TableSectorSerializer
     queryset = TableSector.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "is_active"]
     search_fields = ["name"]
 
 
-class TableViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class TableViewSet(BaseTenantViewSet):
     serializer_class = TableSerializer
     queryset = Table.objects.select_related("restaurant", "branch", "sector").all()
     filterset_fields = ["restaurant", "branch", "sector", "status", "is_active"]
@@ -42,7 +41,8 @@ class TableViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelVi
     ordering_fields = ["number", "status", "updated_at"]
 
 
-class DeliveryZoneViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class DeliveryZoneViewSet(BaseTenantViewSet):
+    required_module = MODULE_ENTREGA  # gestao logistica de delivery
     serializer_class = DeliveryZoneSerializer
     queryset = DeliveryZone.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "is_active"]
@@ -50,7 +50,8 @@ class DeliveryZoneViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.
     ordering_fields = ["min_radius_km", "delivery_fee"]
 
 
-class DeliverymanViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class DeliverymanViewSet(BaseTenantViewSet):
+    required_module = MODULE_ENTREGA  # gestao logistica de delivery
     serializer_class = DeliverymanSerializer
     queryset = Deliveryman.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "vehicle_type", "is_active"]

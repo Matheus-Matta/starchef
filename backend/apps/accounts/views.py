@@ -8,18 +8,20 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from apps.accounts.models import Account, GlobalSystemConfig, Plan, Role, Subscription
+from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription
 from apps.accounts.serializers import (
     AccountSerializer,
     GlobalSystemConfigSerializer,
+    PermissionSerializer,
     PlanSerializer,
     RoleSerializer,
     StarChefTokenObtainPairSerializer,
     SubscriptionSerializer,
     UserSerializer,
+    resolve_enabled_modules,
 )
 from apps.core.access import is_tenant_admin
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.viewsets import BaseTenantViewSet
 
 User = get_user_model()
 
@@ -62,6 +64,7 @@ class MeView(APIView):
                 "restaurant_name": profile.restaurant.trade_name if profile and profile.restaurant_id else None,
                 "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
                 "branch_name": profile.branch.name if profile and profile.branch_id else None,
+                "enabled_modules": resolve_enabled_modules(request.user, account),
             }
         )
 
@@ -105,10 +108,24 @@ class UserViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class RoleViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class RoleViewSet(BaseTenantViewSet):
     serializer_class = RoleSerializer
     queryset = Role.all_objects.prefetch_related("permissions").all()
     search_fields = ["code", "name"]
+
+
+class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Lista as permissões de negócio disponíveis (catálogo global, somente leitura).
+
+    Usado para preencher o seletor de permissões na tela de Perfil de acesso.
+    """
+
+    serializer_class = PermissionSerializer
+    queryset = Permission.objects.all()
+    search_fields = ["code", "name"]
+    ordering_fields = ["name", "code"]
+    ordering = ["name"]
+    pagination_class = None  # catálogo pequeno: retorna todas de uma vez
 
 
 class PlanViewSet(viewsets.ModelViewSet):

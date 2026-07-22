@@ -1,0 +1,564 @@
+/**
+ * Schema declarativo de todos os recursos CRUD do sistema.
+ *
+ * Cada entrada descreve uma "model" da API e dirige, sem codigo por tela:
+ *  - a listagem       (`columns`)
+ *  - o formulario      (`formFields`, opcional -> recurso somente-leitura sem ele)
+ *  - as rotas          (geradas em router/index.js a partir de `name`)
+ *  - o detalhe (view)  (colunas + config visual em config/detailMeta.js)
+ *
+ * Campos de coluna:  { key, label, type?, map?, align?, value? }
+ *   type: "status" | "money" | "date" | "boolean" | (texto por padrao)
+ * Campos de formulario: { name, label, type, required?, options?, endpoint?, full?, default? }
+ *   type: text | number | decimal | textarea | password | boolean | dropdown | remote-dropdown
+ */
+import {
+  CHANNEL_OPTIONS,
+  INVOICE_STATUS_LABELS,
+  MENU_CHANNEL_LABELS,
+  MOVEMENT_TYPE_LABELS,
+  ORDER_STATUS_LABELS,
+  ORDER_TYPE_LABELS,
+  PAYMENT_METHOD_TYPE_LABELS,
+  PRICING_OPTIONS,
+  PRINTER_DRIVER_LABELS,
+  PRINTER_DRIVER_OPTIONS,
+  PRODUCT_TYPE_OPTIONS,
+  SLA_PRIORITY_LABELS,
+  SLA_PRIORITY_OPTIONS,
+  SLA_TYPE_LABELS,
+  SLA_TYPE_OPTIONS,
+  PROFILE_TYPE_LABELS,
+  SCALE_PROTOCOL_LABELS,
+  SCALE_PROTOCOL_OPTIONS,
+  SECTOR_OPTIONS,
+  STOCK_TIMING_LABELS,
+  STOCK_TIMING_OPTIONS,
+  TABLE_STATUS_LABELS,
+  UNIT_OPTIONS,
+  VEHICLE_OPTIONS,
+  VEHICLE_TYPE_LABELS,
+} from "./enums";
+
+export const resources = [
+  // ── Operacional ────────────────────────────────────────────────────
+  {
+    name: "pedidos",
+    title: "Pedidos",
+    endpoint: "/orders/",
+    columns: [
+      { key: "sequence", label: "Pedido" },
+      { key: "order_type", label: "Tipo", map: ORDER_TYPE_LABELS },
+      { key: "table_number", label: "Mesa" },
+      { key: "customer_name", label: "Cliente" },
+      { key: "total", label: "Total", type: "money", align: "right" },
+      { key: "status", label: "Status", type: "status", map: ORDER_STATUS_LABELS },
+      { key: "opened_at", label: "Aberto", type: "date" },
+    ],
+  },
+  {
+    name: "sla",
+    title: "SLAs",
+    endpoint: "/sla/",
+    globalScope: true,
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "sla_type", label: "Tipo", type: "status", map: SLA_TYPE_LABELS },
+      { key: "target_minutes", label: "Tempo-alvo (min)", align: "right" },
+      { key: "alert_minutes", label: "Alerta (min)", align: "right" },
+      { key: "priority", label: "Prioridade", map: SLA_PRIORITY_LABELS },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do SLA", type: "text", required: true, full: true, section: "SLA" },
+      { name: "sla_type", label: "Tipo", type: "dropdown", options: SLA_TYPE_OPTIONS, default: "prep", section: "SLA" },
+      { name: "priority", label: "Prioridade", type: "dropdown", options: SLA_PRIORITY_OPTIONS, default: "normal", section: "SLA" },
+      { name: "target_minutes", label: "Tempo-alvo (min)", type: "number", default: 15, section: "Tempos" },
+      { name: "alert_minutes", label: "Limite de alerta (min)", type: "number", default: 10, section: "Tempos" },
+      // Vincula o SLA a vários restaurantes via MultiSelect do PrimeVue (STC-066).
+      { name: "restaurants", label: "Restaurantes vinculados", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", full: true, section: "Abrangência" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "SLA" },
+    ],
+  },
+  {
+    name: "kds-estacoes",
+    title: "Estacoes KDS",
+    endpoint: "/kitchen/stations/",
+    columns: [
+      { key: "name", label: "Estacao" },
+      { key: "restaurant_name", label: "Restaurante" },
+      { key: "branch_name", label: "Filial" },
+      { key: "sla_minutes", label: "SLA (min)", align: "right" },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome da estacao", type: "text", required: true },
+      { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", required: true, globalScope: true },
+      { name: "sla_minutes", label: "SLA em minutos", type: "number", default: 15 },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "mesas",
+    title: "Mesas & Comandas",
+    endpoint: "/tables/",
+    columns: [
+      { key: "number", label: "Mesa" },
+      { key: "sector_name", label: "Setor" },
+      { key: "capacity", label: "Lugares" },
+      { key: "status", label: "Status", type: "status", map: TABLE_STATUS_LABELS },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "number", label: "Numero da mesa", type: "text", required: true },
+      { name: "sector", label: "Setor", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", required: true },
+      { name: "capacity", label: "Capacidade (lugares)", type: "number", default: 4 },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "clientes",
+    title: "Clientes",
+    endpoint: "/customers/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "phone", label: "Telefone" },
+      { key: "email", label: "Email" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome completo", type: "text", required: true, full: true, section: "Dados pessoais" },
+      { name: "document", label: "CPF", type: "text", placeholder: "000.000.000-00", section: "Dados pessoais" },
+      { name: "birth_date", label: "Data de nascimento", type: "text", inputType: "date", section: "Dados pessoais" },
+      { name: "phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Contato" },
+      { name: "email", label: "Email", type: "text", inputType: "email", section: "Contato" },
+      { name: "internal_notes", label: "Observacoes", type: "textarea", full: true, section: "Contato" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Contato" },
+    ],
+  },
+  {
+    name: "caixa",
+    title: "Caixa",
+    endpoint: "/cash-register/",
+    columns: [
+      { key: "status", label: "Status", type: "status", map: { open: "Aberto", closed: "Fechado" } },
+      { key: "opening_amount", label: "Abertura", type: "money", align: "right" },
+      { key: "expected_amount", label: "Esperado", type: "money", align: "right" },
+      { key: "opened_at", label: "Aberto em", type: "date" },
+      { key: "closed_at", label: "Fechado em", type: "date" },
+    ],
+  },
+
+  // ── Cardapio ───────────────────────────────────────────────────────
+  {
+    name: "cardapio",
+    title: "Produtos",
+    endpoint: "/menu/products/",
+    columns: [
+      { key: "internal_code", label: "Codigo" },
+      { key: "name", label: "Produto" },
+      { key: "category_name", label: "Categoria" },
+      { key: "current_price", label: "Preco", type: "money", align: "right" },
+      { key: "production_sector", label: "Setor" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      // Seções (STC-021): informações básicas, preços, classificação, disponibilidade, produção.
+      { name: "name", label: "Nome do produto", type: "text", required: true, full: true, section: "Informações básicas" },
+      { name: "internal_code", label: "Codigo interno", type: "text", section: "Informações básicas" },
+      { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
+      { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
+      { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços" },
+      { name: "pricing_unit", label: "Cobranca", type: "dropdown", options: PRICING_OPTIONS, default: "unit", section: "Preços" },
+      // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
+      { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
+      { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },
+      { name: "production_sector", label: "Setor de producao", type: "dropdown", options: SECTOR_OPTIONS, section: "Produção e logística" },
+      { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
+      // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
+      { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
+      // Switches de disponibilidade — alinhados em grid na seção "Disponibilidade".
+      { name: "available_for_table", label: "Disponivel para mesa", type: "boolean", default: true, section: "Disponibilidade" },
+      { name: "available_for_counter", label: "Disponivel para balcao", type: "boolean", default: true, section: "Disponibilidade" },
+      // Campo do Modulo Entrega: so aparece se a conta tiver o modulo habilitado.
+      { name: "available_for_delivery", label: "Disponivel para delivery", type: "boolean", default: true, module: "entrega", section: "Disponibilidade" },
+      // Switches de permissão — alinhados em grid na seção "Permissões".
+      { name: "allows_addons", label: "Permite adicionais", type: "boolean", default: true, section: "Permissões" },
+      { name: "allows_notes", label: "Permite observacoes", type: "boolean", default: true, section: "Permissões" },
+      // "Ativo" isolado e destacado, em sua própria seção.
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Status" },
+    ],
+  },
+  {
+    name: "categorias",
+    title: "Categorias",
+    endpoint: "/menu/categories/",
+    // Compartilhadas entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "display_order", label: "Ordem" },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "display_order", label: "Ordem de exibicao", type: "number", default: 0 },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "ingredientes",
+    title: "Ingredientes",
+    endpoint: "/menu/ingredients/",
+    // Compartilhados entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
+    sharedAcrossRestaurants: true,
+    // Regra de negocio (Modulo Base): o ingrediente serve para composicao/ficha
+    // tecnica, SEM dados de custo/preco. Custo e estoque sao do Modulo Logistica.
+    columns: [
+      { key: "name", label: "Ingrediente" },
+      { key: "unit", label: "Unidade" },
+      { key: "minimum_stock", label: "Estoque min.", align: "right" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
+      { name: "unit", label: "Unidade de medida", type: "dropdown", options: UNIT_OPTIONS, section: "Identificação" },
+      // Estoque mínimo (STC-031/032): opcional e só aparece com o Módulo Logística.
+      { name: "minimum_stock", label: "Estoque minimo", type: "decimal", module: "logistica", section: "Logística" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
+    ],
+  },
+  {
+    name: "receitas",
+    title: "Receitas",
+    endpoint: "/menu/recipes/",
+    columns: [
+      { key: "product.name", label: "Produto" },
+      { key: "yield_quantity", label: "Rendimento" },
+      { key: "total_cost", label: "Custo total", type: "money", align: "right" },
+      { key: "auto_deduct_stock", label: "Baixa auto.", type: "boolean" },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "product", label: "Produto", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", required: true, section: "Receita" },
+      { name: "yield_quantity", label: "Rendimento (porções)", type: "decimal", default: 1, section: "Receita" },
+      // Baixa automática de estoque é comportamento do Módulo Logística.
+      { name: "auto_deduct_stock", label: "Baixa automática de estoque", type: "boolean", default: true, module: "logistica", section: "Receita" },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true, section: "Receita" },
+    ],
+  },
+  {
+    name: "cardapios",
+    module: "ecommerce",
+    title: "Cardapios",
+    endpoint: "/menu/menus/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "slug", label: "Slug" },
+      { key: "channel", label: "Canal", map: MENU_CHANNEL_LABELS },
+      { key: "available_from", label: "Disponivel de" },
+      { key: "available_until", label: "Disponivel ate" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "slug", label: "Slug (URL)", type: "text", placeholder: "ex: almoco-segunda" },
+      { name: "channel", label: "Canal", type: "dropdown", options: CHANNEL_OPTIONS },
+      { name: "available_from", label: "Disponivel de (HH:MM)", type: "text", placeholder: "08:00" },
+      { name: "available_until", label: "Disponivel ate (HH:MM)", type: "text", placeholder: "22:00" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "adicionais",
+    title: "Adicionais",
+    endpoint: "/menu/addons/",
+    // Compartilhados entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Adicional" },
+      { key: "price", label: "Preco", type: "money", align: "right" },
+      { key: "production_sector", label: "Setor" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "price", label: "Preco (R$)", type: "decimal", required: true },
+      { name: "production_sector", label: "Setor", type: "dropdown", options: SECTOR_OPTIONS },
+      // O vínculo com produtos é gerenciado na edição do PRODUTO (não aqui).
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+
+  // ── Estoque ────────────────────────────────────────────────────────
+  {
+    name: "estoque",
+    module: "logistica",
+    title: "Estoque",
+    endpoint: "/stock/movements/",
+    columns: [
+      { key: "ingredient_name", label: "Ingrediente" },
+      { key: "location_name", label: "Local" },
+      { key: "movement_type", label: "Movimento", type: "status", map: MOVEMENT_TYPE_LABELS },
+      { key: "quantity", label: "Qtd.", align: "right" },
+      { key: "total_cost", label: "Custo", type: "money", align: "right" },
+      { key: "created_at", label: "Data", type: "date" },
+    ],
+  },
+  {
+    name: "locais-estoque",
+    module: "logistica",
+    title: "Locais de Estoque",
+    endpoint: "/stock/locations/",
+    columns: [
+      { key: "name", label: "Local" },
+      { key: "description", label: "Descricao" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do local", type: "text", required: true },
+      { name: "description", label: "Descricao", type: "textarea", full: true },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+
+  // ── Delivery ───────────────────────────────────────────────────────
+  {
+    name: "zonas-entrega",
+    module: "entrega",
+    title: "Zonas de Entrega",
+    endpoint: "/delivery/zones/",
+    columns: [
+      { key: "name", label: "Zona" },
+      { key: "min_radius_km", label: "Raio min. (km)", align: "right" },
+      { key: "max_radius_km", label: "Raio max. (km)", align: "right" },
+      { key: "delivery_fee", label: "Taxa", type: "money", align: "right" },
+      { key: "estimated_minutes", label: "Tempo (min)", align: "right" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome da zona", type: "text", required: true },
+      { name: "min_radius_km", label: "Raio minimo (km)", type: "decimal" },
+      { name: "max_radius_km", label: "Raio maximo (km)", type: "decimal" },
+      { name: "delivery_fee", label: "Taxa de entrega (R$)", type: "decimal" },
+      { name: "estimated_minutes", label: "Tempo estimado (min)", type: "number" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "entregadores",
+    module: "entrega",
+    title: "Entregadores",
+    endpoint: "/delivery/deliverymen/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "phone", label: "Telefone" },
+      { key: "vehicle_type", label: "Veiculo", map: VEHICLE_TYPE_LABELS },
+      { key: "vehicle_plate", label: "Placa" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome completo", type: "text", required: true },
+      { name: "phone", label: "Telefone", type: "text" },
+      { name: "vehicle_type", label: "Tipo de veiculo", type: "dropdown", options: VEHICLE_OPTIONS },
+      { name: "vehicle_plate", label: "Placa", type: "text" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+
+  // ── Pagamentos ─────────────────────────────────────────────────────
+  {
+    // Formas de pagamento são valores controlados pelo sistema — sem CRUD no MVP
+    // (STC-060). Apenas leitura: a tela lista os métodos ativos, sem criar/editar.
+    name: "formas-pagamento",
+    title: "Formas de Pagamento",
+    endpoint: "/payments/methods/",
+    globalScope: true,
+    columns: [
+      { key: "name", label: "Forma" },
+      { key: "method_type", label: "Tipo", map: PAYMENT_METHOD_TYPE_LABELS },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+  },
+  {
+    name: "pagamentos",
+    module: "financeiro",
+    title: "Historico de Pagamentos",
+    endpoint: "/payments/",
+    globalScope: true,
+    columns: [
+      { key: "order", label: "Pedido" },
+      { key: "payment_method_name", label: "Forma" },
+      { key: "amount", label: "Valor", type: "money", align: "right" },
+      { key: "change_amount", label: "Troco", type: "money", align: "right" },
+      { key: "created_at", label: "Data", type: "date" },
+    ],
+  },
+
+  // ── Fiscal ─────────────────────────────────────────────────────────
+  {
+    name: "notas-fiscais",
+    module: "financeiro",
+    title: "Notas Fiscais",
+    endpoint: "/invoices/",
+    globalScope: true,
+    columns: [
+      { key: "number", label: "Numero" },
+      { key: "phase", label: "Tipo" },
+      { key: "status", label: "Status", type: "status", map: INVOICE_STATUS_LABELS },
+      { key: "total_amount", label: "Valor", type: "money", align: "right" },
+      { key: "issued_at", label: "Emissao", type: "date" },
+    ],
+  },
+
+  // ── Impressao ──────────────────────────────────────────────────────
+  {
+    name: "impressoras",
+    title: "Impressoras",
+    endpoint: "/printers/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "sector_name", label: "Setor" },
+      { key: "driver_type", label: "Driver", map: PRINTER_DRIVER_LABELS },
+      { key: "endpoint", label: "Endereco" },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "driver_type", label: "Driver", type: "dropdown", options: PRINTER_DRIVER_OPTIONS, default: "browser" },
+      { name: "sector", label: "Setor (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", placeholder: "Todos os setores" },
+      { name: "endpoint", label: "Endereco (IP:porta ou nome do dispositivo)", type: "text" },
+      { name: "auto_print", label: "Imprimir automaticamente", type: "boolean", default: false },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "balancas",
+    title: "Balancas",
+    endpoint: "/scales/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "sector_name", label: "Setor" },
+      { key: "protocol", label: "Protocolo", map: SCALE_PROTOCOL_LABELS },
+      { key: "port", label: "Porta" },
+      { key: "auto_print", label: "Auto-lancamento", type: "boolean" },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "sector", label: "Setor (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", placeholder: "Todos os setores" },
+      { name: "protocol", label: "Protocolo", type: "dropdown", options: SCALE_PROTOCOL_OPTIONS, default: "generic" },
+      { name: "port", label: "Porta serial (agente local)", type: "text", placeholder: "COM3 ou /dev/ttyUSB0" },
+      { name: "product", label: "Produto por kilo", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum produto vinculado" },
+      { name: "printer", label: "Impressora da nota de pesagem", type: "remote-dropdown", endpoint: "/printers/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma impressora vinculada" },
+      { name: "reading_max_age_seconds", label: "Validade da leitura (segundos)", type: "number", default: 120 },
+      { name: "auto_print", label: "Lancar e imprimir automaticamente ao estabilizar", type: "boolean", default: false },
+      { name: "auto_print_delay_seconds", label: "Atraso antes de imprimir (segundos)", type: "number", default: 3 },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+
+  // ── Gestao ─────────────────────────────────────────────────────────
+  {
+    name: "setores",
+    title: "Setores",
+    endpoint: "/tables/sectors/",
+    columns: [
+      { key: "name", label: "Setor" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do setor", type: "text", required: true },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "restaurantes",
+    title: "Restaurantes",
+    endpoint: "/restaurants/",
+    globalScope: true,
+    columns: [
+      { key: "trade_name", label: "Nome fantasia" },
+      { key: "legal_name", label: "Razao social" },
+      { key: "city", label: "Cidade" },
+      { key: "state", label: "UF" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "trade_name", label: "Nome fantasia", type: "text", required: true },
+      { name: "legal_name", label: "Razao social", type: "text" },
+      { name: "cnpj", label: "CNPJ (opcional)", type: "text", placeholder: "00.000.000/0000-00" },
+      { name: "phone", label: "Telefone", type: "text" },
+      { name: "email", label: "Email", type: "text", inputType: "email" },
+      { name: "address", label: "Endereco", type: "text", full: true },
+      { name: "city", label: "Cidade", type: "text" },
+      { name: "state", label: "UF", type: "text", placeholder: "SP" },
+      { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
+    ],
+  },
+  {
+    name: "filiais",
+    title: "Filiais",
+    endpoint: "/branches/",
+    globalScope: true,
+    columns: [
+      { key: "name", label: "Filial" },
+      { key: "restaurant_name", label: "Restaurante" },
+      { key: "city", label: "Cidade" },
+      { key: "stock_deduction_timing", label: "Baixa estoque", map: STOCK_TIMING_LABELS },
+      { key: "is_active", label: "Ativa", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome da filial", type: "text", required: true },
+      { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", required: true },
+      { name: "phone", label: "Telefone", type: "text" },
+      { name: "email", label: "Email", type: "text", inputType: "email" },
+      { name: "address", label: "Endereco", type: "text", full: true },
+      { name: "city", label: "Cidade", type: "text" },
+      { name: "state", label: "UF", type: "text", placeholder: "SP" },
+      { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
+      { name: "stock_deduction_timing", label: "Baixa de estoque", type: "dropdown", options: STOCK_TIMING_OPTIONS },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "usuarios",
+    title: "Usuarios",
+    endpoint: "/users/",
+    globalScope: true,
+    columns: [
+      { key: "username", label: "Usuario" },
+      { key: "email", label: "Email" },
+      { key: "first_name", label: "Nome" },
+      { key: "profile.profile_type", label: "Perfil", type: "status", map: PROFILE_TYPE_LABELS },
+      { key: "profile.branch_name", label: "Filial" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "username", label: "Nome de usuario", type: "text", required: true },
+      { name: "email", label: "Email", type: "text", inputType: "email", required: true },
+      { name: "first_name", label: "Nome", type: "text" },
+      { name: "last_name", label: "Sobrenome", type: "text" },
+      { name: "password", label: "Senha", type: "password" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    name: "perfis",
+    title: "Perfis de Acesso",
+    endpoint: "/roles/",
+    globalScope: true,
+    columns: [
+      { key: "name", label: "Perfil" },
+      { key: "code", label: "Codigo" },
+      { key: "created_at", label: "Criado em", type: "date" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do perfil", type: "text", required: true, section: "Perfil" },
+      { name: "code", label: "Codigo", type: "text", required: true, placeholder: "ex: gerente-vip", section: "Perfil" },
+      { name: "restaurant", label: "Restaurante (opcional)", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil" },
+      // Permissões de negócio vinculadas ao perfil (M2M).
+      { name: "permissions", label: "Permissões", type: "remote-multiselect", endpoint: "/permissions/", optionLabel: "name", optionValue: "id", full: true, section: "Permissões" },
+    ],
+  },
+];

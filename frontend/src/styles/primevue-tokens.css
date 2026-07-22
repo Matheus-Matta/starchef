@@ -264,6 +264,83 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   color: var(--text-brand);
 }
 
+/* ── MultiSelect (theme-aware, funciona no dark) ─────────────────────────── */
+.p-multiselect {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.p-multiselect:not(.p-disabled):hover {
+  border-color: var(--border-strong);
+}
+.p-multiselect:not(.p-disabled).p-focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+.p-multiselect .p-multiselect-label {
+  color: var(--text-body);
+}
+.p-multiselect .p-multiselect-label.p-placeholder {
+  color: var(--text-subtle);
+}
+.p-multiselect .p-multiselect-trigger {
+  color: var(--text-muted);
+}
+/* Chips selecionados */
+.p-multiselect .p-multiselect-token {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+}
+.p-multiselect .p-multiselect-token .p-multiselect-token-icon {
+  color: var(--text-brand);
+}
+/* Painel (lista) */
+.p-multiselect-panel {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  color: var(--text-body);
+  box-shadow: var(--shadow-lg);
+}
+.p-multiselect-panel .p-multiselect-header {
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-body);
+}
+.p-multiselect-panel .p-multiselect-filter {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+}
+.p-multiselect-panel .p-multiselect-filter:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent);
+}
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item {
+  color: var(--text-body);
+}
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item:not(.p-highlight):not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-multiselect-panel .p-multiselect-items .p-multiselect-item.p-highlight {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+}
+/* Dark: painel em surface-raised (igual ao dropdown) */
+[data-theme="dark"] .p-multiselect-panel {
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+[data-theme="dark"] .p-multiselect-panel .p-multiselect-header {
+  background: var(--surface-raised);
+  border-bottom-color: var(--border);
+}
+[data-theme="dark"] .p-multiselect-panel .p-multiselect-items .p-multiselect-item:not(.p-highlight):not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 .p-sidebar {
   background: var(--surface-card);
@@ -318,4 +395,82 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   background: var(--surface-hover);
   border-color: var(--border-strong);
   color: var(--text-strong);
+}
+
+/* ── Dialog / modal (theme-aware, funciona no dark) ──────────────────────── */
+.p-dialog {
+  background: var(--surface-card);
+  color: var(--text-body);
+  border: 1px solid var(--border);
+}
+.p-dialog .p-dialog-header {
+  background: var(--surface-card);
+  color: var(--text-strong);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.p-dialog .p-dialog-content {
+  background: var(--surface-card);
+  color: var(--text-body);
+}
+.p-dialog .p-dialog-footer {
+  background: var(--surface-card);
+  border-top: 1px solid var(--border-subtle);
+}
+.p-dialog .p-dialog-header .p-dialog-title {
+  color: var(--text-strong);
+}
+.p-dialog .p-dialog-header-icon {
+  color: var(--text-muted);
+}
+.p-dialog .p-dialog-header-icon:enabled:hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-confirm-dialog .p-confirm-dialog-message {
+  color: var(--text-body);
+}
+
+/* ── Paginator (theme-aware, funciona no dark) ───────────────────────────── */
+.p-paginator {
+  background: var(--surface-card);
+  color: var(--text-muted);
+  border: none;
+}
+.p-paginator .p-paginator-first,
+.p-paginator .p-paginator-prev,
+.p-paginator .p-paginator-next,
+.p-paginator .p-paginator-last,
+.p-paginator .p-paginator-page {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+}
+.p-paginator .p-paginator-first:not(.p-disabled):hover,
+.p-paginator .p-paginator-prev:not(.p-disabled):hover,
+.p-paginator .p-paginator-next:not(.p-disabled):hover,
+.p-paginator .p-paginator-last:not(.p-disabled):hover,
+.p-paginator .p-paginator-page:not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--text-body);
+}
+.p-paginator .p-paginator-page.p-highlight {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+}
+.p-paginator .p-paginator-current {
+  color: var(--text-muted);
+}
+.p-paginator .p-dropdown {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+}
+.p-paginator .p-dropdown .p-dropdown-label {
+  color: var(--text-body);
+}
+.p-paginator .p-paginator-first:disabled,
+.p-paginator .p-paginator-prev:disabled,
+.p-paginator .p-paginator-next:disabled,
+.p-paginator .p-paginator-last:disabled {
+  color: var(--text-subtle);
+  opacity: 0.5;
 }

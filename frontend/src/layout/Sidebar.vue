@@ -96,12 +96,24 @@ const scopeOpen = ref(false);
 
 const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin"));
 const canManage = computed(() => ["admin", "owner", "manager"].includes(props.user?.profile_type) || props.user?.is_superuser);
+
+// Licenciamento modular: itens de modulos desabilitados nao sao renderizados.
+// Superadmin (dono da plataforma) sobrepoe o licenciamento e enxerga todos os modulos.
+const enabledModules = computed(() => props.user?.enabled_modules || ["base"]);
+function hasModule(moduleName) {
+  if (!moduleName || moduleName === "base") return true;
+  if (props.user?.is_superuser) return true;
+  return enabledModules.value.includes(moduleName);
+}
 const canUseCash = computed(() => ["admin", "owner", "manager", "cashier"].includes(props.user?.profile_type) || props.user?.is_superuser);
 const accountName = computed(() => props.user?.account_name || "StarChef");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
 const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todas as filiais");
 const accessLabel = computed(() => (canSeeAllRestaurants.value ? "Acesso administrativo" : "Escopo restrito"));
 
+// Secoes da sidebar. As secoes marcadas com `module` pertencem a um Modulo
+// opcional: quando a conta nao tem o modulo, a SECAO INTEIRA some (nao so os itens).
+// As secoes base (sem `module`) contem apenas itens do Modulo Base.
 const groups = computed(() =>
   [
     {
@@ -116,8 +128,10 @@ const groups = computed(() =>
       label: "Operacao",
       items: [
         { id: "kds-estacoes", label: "Estacoes KDS", icon: "soup" },
+        { id: "sla", label: "SLAs", icon: "timer" },
         { id: "mesas", label: "Mesas & Comandas", icon: "armchair" },
         canUseCash.value ? { id: "caixa", label: "Caixa", icon: "wallet" } : null,
+        canUseCash.value ? { id: "formas-pagamento", label: "Formas de pagamento", icon: "credit-card" } : null,
         { id: "clientes", label: "Clientes", icon: "users" },
       ].filter(Boolean),
     },
@@ -129,22 +143,34 @@ const groups = computed(() =>
         { id: "adicionais", label: "Adicionais", icon: "plus" },
         canManage.value ? { id: "ingredientes", label: "Ingredientes", icon: "flask" } : null,
         canManage.value ? { id: "receitas", label: "Receitas", icon: "salad" } : null,
-        canManage.value ? { id: "cardapios", label: "Cardapios digitais", icon: "book-marked" } : null,
       ].filter(Boolean),
     },
+    // ── Secoes de Modulos opcionais (ocultam por completo se o modulo estiver off) ──
     {
-      label: "Delivery",
+      label: "E-commerce",
+      module: "ecommerce",
+      items: [canManage.value ? { id: "cardapios", label: "Cardapios digitais", icon: "book-marked" } : null].filter(Boolean),
+    },
+    {
+      label: "Entrega",
+      module: "entrega",
       items: [
         canManage.value ? { id: "zonas-entrega", label: "Zonas de entrega", icon: "map-pin" } : null,
         canManage.value ? { id: "entregadores", label: "Entregadores", icon: "truck" } : null,
       ].filter(Boolean),
     },
     {
-      label: "Financeiro",
+      label: "Logistica",
+      module: "logistica",
       items: [
         canManage.value ? { id: "estoque", label: "Estoque", icon: "package" } : null,
         canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
-        canUseCash.value ? { id: "formas-pagamento", label: "Formas de pagamento", icon: "wallet" } : null,
+      ].filter(Boolean),
+    },
+    {
+      label: "Financeiro",
+      module: "financeiro",
+      items: [
         canManage.value ? { id: "pagamentos", label: "Hist. pagamentos", icon: "dollar-sign" } : null,
         canManage.value ? { id: "notas-fiscais", label: "Notas fiscais", icon: "shield-check" } : null,
       ].filter(Boolean),
@@ -155,12 +181,20 @@ const groups = computed(() =>
         canManage.value ? { id: "relatorios", label: "Relatorios", icon: "bar-chart-3" } : null,
         canSeeAllRestaurants.value ? { id: "restaurantes", label: "Restaurantes", icon: "store" } : null,
         canSeeAllRestaurants.value ? { id: "filiais", label: "Filiais", icon: "map-pin" } : null,
+        canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
         canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
         canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
         canSeeAllRestaurants.value ? { id: "impressoras", label: "Impressoras", icon: "zap" } : null,
+        canSeeAllRestaurants.value ? { id: "balancas", label: "Balancas", icon: "scale" } : null,
       ].filter(Boolean),
     },
-  ].filter((group) => group.items.length),
+  ]
+    // 1. oculta a SECAO inteira dos modulos que a conta nao tem.
+    .filter((group) => hasModule(group.module))
+    // 2. defensivo: remove itens marcados com modulo desabilitado.
+    .map((group) => ({ ...group, items: group.items.filter((item) => hasModule(item.module)) }))
+    // 3. remove secoes que ficaram vazias (ex.: sem permissao de perfil).
+    .filter((group) => group.items.length),
 );
 
 const brandStyle = computed(() => ({

@@ -1,0 +1,26 @@
+/* ===========================================================================
+   StarChef — Compact density tokens (Sprint 0 · STC-002)
+   Single source of truth for the compact theme. Controls, forms and tables
+   read these tokens so density is tuned in one place, never per-screen.
+   ===========================================================================*/
+:root {
+  /* Compact control heights (inputs, selects, buttons) — tamanho "small" */
+  --control-h-sm: 28px;
+  --control-h:    32px;   /* small default */
+  --control-h-lg: 38px;
+
+  /* Control typography & padding */
+  --control-font:  var(--text-sm);   /* 13px */
+  --control-pad-x: 10px;
+
+  /* Form rhythm */
+  --field-gap-y:   var(--space-4);   /* 16px between rows   */
+  --field-gap-x:   var(--space-5);   /* 20px between cols   */
+  --field-label-gap: 6px;
+  --section-gap:   var(--space-5);   /* 20px between sections */
+  --card-pad:      var(--space-5);   /* 20px inner card padding */
+
+  /* Table density */
+  --table-cell-pad-y: 8px;
+  --table-cell-pad-x: 12px;
+}

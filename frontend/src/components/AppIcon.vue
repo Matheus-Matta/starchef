@@ -1,5 +1,12 @@
 <template>
-  <i :class="iconClass" :style="{ fontSize: `${size}px`, width: `${size}px`, height: `${size}px` }" aria-hidden="true" />
+  <i
+    :class="iconClass"
+    :style="{ fontSize: iconSize, width: iconSize, height: iconSize }"
+    :role="label ? 'img' : undefined"
+    :aria-label="label || undefined"
+    :aria-hidden="label ? undefined : 'true'"
+    :title="label || undefined"
+  />
 </template>
 
 <script setup>
@@ -8,7 +15,16 @@ import { computed } from "vue";
 const props = defineProps({
   name: { type: String, required: true },
   size: { type: Number, default: 18 },
+  // Rótulo acessível: quando informado, o ícone é anunciado por leitores de tela
+  // e ganha tooltip. Sem rótulo, é decorativo (aria-hidden) — o padrão.
+  label: { type: String, default: "" },
 });
+
+// Ícones do frontend limitados a 0,8rem (~12,8px) para um visual mais compacto.
+// O `size` (px) do chamador é respeitado apenas quando menor, então nada aumenta —
+// só reduz os ícones grandes para 0,8rem.
+const MAX_ICON_PX = 12.8; // 0.8rem @ base 16px
+const iconSize = computed(() => `${Math.min(props.size, MAX_ICON_PX)}px`);
 
 const icons = {
   "alert-circle": "pi-exclamation-circle",
@@ -60,6 +76,7 @@ const icons = {
   "receipt-text": "pi-receipt",
   "refresh": "pi-refresh",
   "salad": "pi-palette",
+  "scale": "pi-gauge",
   "save": "pi-save",
   "search": "pi-search",
   "shield-check": "pi-shield",

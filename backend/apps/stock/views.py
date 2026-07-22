@@ -1,25 +1,26 @@
 from decimal import Decimal
 
 from django.db.models import Sum
-from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
 from apps.core.access import is_tenant_admin
-from apps.menu.models import Ingredient
+from apps.core.modules import MODULE_LOGISTICA
+from apps.core.viewsets import BaseTenantViewSet
 from apps.stock.models import StockLocation, StockMovement
 from apps.stock.serializers import StockLocationSerializer, StockMovementSerializer
 
 
-class StockLocationViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class StockLocationViewSet(BaseTenantViewSet):
+    required_module = MODULE_LOGISTICA
     serializer_class = StockLocationSerializer
     queryset = StockLocation.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "is_active"]
     search_fields = ["name"]
 
 
-class StockMovementViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class StockMovementViewSet(BaseTenantViewSet):
+    required_module = MODULE_LOGISTICA
     serializer_class = StockMovementSerializer
     queryset = StockMovement.objects.select_related("restaurant", "branch", "ingredient", "location", "operator").all()
     filterset_fields = ["restaurant", "branch", "ingredient", "location", "movement_type"]
@@ -34,6 +35,8 @@ class StockMovementViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets
 
 class StockAlertView(APIView):
     """Return ingredients whose current stock balance is below their minimum_stock."""
+
+    required_module = MODULE_LOGISTICA
 
     def _tenant_filter(self, request):
         account = getattr(request, "account", None)

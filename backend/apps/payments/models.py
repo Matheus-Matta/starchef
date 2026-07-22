@@ -47,8 +47,18 @@ class Payment(TenantModel):
         (STATUS_REFUNDED, "Refunded"),
     ]
 
+    CARD_DEBIT = "debit"
+    CARD_CREDIT = "credit"
+    CARD_SUBTYPE_CHOICES = [
+        (CARD_DEBIT, "Débito"),
+        (CARD_CREDIT, "Crédito"),
+    ]
+
     order = models.ForeignKey("orders.Order", related_name="payments", on_delete=models.PROTECT)
     payment_method = models.ForeignKey(PaymentMethod, related_name="payments", on_delete=models.PROTECT)
+    # Subtipo do cartão (débito/crédito) — obrigatório apenas quando o método é
+    # cartão; para os demais métodos permanece vazio (STC-061).
+    card_subtype = models.CharField(max_length=12, choices=CARD_SUBTYPE_CHOICES, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     change_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_APPROVED, db_index=True)

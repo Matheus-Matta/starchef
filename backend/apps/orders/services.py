@@ -1,4 +1,5 @@
-from decimal import Decimal
+from datetime import timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -11,6 +12,9 @@ from apps.core.tenant import tenant_context
 from apps.orders.events import broadcast_kitchen_event
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.restaurants.models import Table
+
+TWO_PLACES = Decimal("0.01")
+THREE_PLACES = Decimal("0.001")
 
 
 def next_order_sequence(branch):
@@ -55,8 +59,58 @@ def create_order(*, restaurant, branch, order_type, user, **kwargs):
         return order
 
 
+def _resolve_weighed_quantity(*, order, product, scale_reading=None, weight_kg=None, user=None):
+    """Resolve a quantidade (em kg) de um produto pesavel a partir da balanca ou de peso manual."""
+    from apps.printers.models import ScaleReading
+
+    if scale_reading is not None:
+        if scale_reading.account_id != order.account_id:
+            raise ValidationError("Leitura de balanca pertence a outra conta.")
+        if scale_reading.branch_id and order.branch_id and scale_reading.branch_id != order.branch_id:
+            raise ValidationError("Leitura de balanca pertence a outra filial.")
+        if scale_reading.order_item_id:
+            raise ValidationError("Leitura de balanca ja foi usada em outro item.")
+        max_age = scale_reading.scale.reading_max_age_seconds if scale_reading.scale_id else 120
+        if scale_reading.created_at < timezone.now() - timedelta(seconds=max_age):
+            raise ValidationError("Leitura de balanca expirada. Pese novamente.")
+        net = scale_reading.net_weight_kg
+        if net <= 0:
+            raise ValidationError("Peso liquido invalido na leitura da balanca.")
+        return Decimal(net).quantize(THREE_PLACES), scale_reading
+
+    if weight_kg is not None:
+        weight_kg = Decimal(str(weight_kg)).quantize(THREE_PLACES)
+        if weight_kg <= 0:
+            raise ValidationError("Peso deve ser maior que zero.")
+        # Registra leitura manual para auditoria da pesagem.
+        manual_reading = ScaleReading.objects.create(
+            account=order.account,
+            restaurant=order.restaurant,
+            branch=order.branch,
+            scale=None,
+            weight_kg=weight_kg,
+            tare_kg=Decimal("0"),
+            source=ScaleReading.SOURCE_MANUAL,
+            created_by=user,
+            updated_by=user,
+        )
+        return weight_kg, manual_reading
+
+    raise ValidationError(f"Produto '{product.name}' e vendido por peso: informe a leitura da balanca ou o peso em kg.")
+
+
 @transaction.atomic
-def add_order_item(*, order, product, quantity, user, variations=None, customer_note=""):
+def add_order_item(
+    *,
+    order,
+    product,
+    quantity=None,
+    user,
+    variations=None,
+    customer_note="",
+    scale_reading=None,
+    weight_kg=None,
+):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if product.account_id != order.account_id:
@@ -66,7 +120,22 @@ def add_order_item(*, order, product, quantity, user, variations=None, customer_
         if not product.is_active:
             raise ValidationError("Inactive product cannot be added to an order.")
 
-        quantity = Decimal(str(quantity))
+        reading_to_link = None
+        if product.is_weighed:
+            quantity, reading_to_link = _resolve_weighed_quantity(
+                order=order,
+                product=product,
+                scale_reading=scale_reading,
+                weight_kg=weight_kg,
+                user=user,
+            )
+        else:
+            if scale_reading is not None or weight_kg is not None:
+                raise ValidationError(f"Produto '{product.name}' e vendido por unidade e nao aceita peso.")
+            quantity = Decimal(str(quantity if quantity is not None else 1))
+            if quantity <= 0:
+                raise ValidationError("Quantidade deve ser maior que zero.")
+
         unit_price = product.current_price
         item = OrderItem.objects.create(
             account=order.account,
@@ -76,7 +145,7 @@ def add_order_item(*, order, product, quantity, user, variations=None, customer_
             product=product,
             quantity=quantity,
             unit_price=unit_price,
-            total_price=unit_price * quantity,
+            total_price=(unit_price * quantity).quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
             variations=variations or [],
             customer_note=customer_note,
             production_sector=product.production_sector,
@@ -84,6 +153,9 @@ def add_order_item(*, order, product, quantity, user, variations=None, customer_
             created_by=user,
             updated_by=user,
         )
+        if reading_to_link is not None:
+            reading_to_link.order_item = item
+            reading_to_link.save(update_fields=["order_item", "updated_at"])
         recalculate_order(order)
         record_audit(action=AuditLog.ACTION_CREATED, instance=item, actor=user)
         return item

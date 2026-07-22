@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.core.models import TenantBaseModel, TimeStampedModel
+from apps.core.modules import MODULE_BASE
 
 
 class Plan(TimeStampedModel):
@@ -57,6 +58,9 @@ class Account(TimeStampedModel):
         choices=SUBSCRIPTION_STATUS_CHOICES,
         default=SUBSCRIPTION_TRIAL,
     )
+    # Licenciamento modular: lista de modulos OPCIONAIS habilitados para a conta.
+    # O modulo base e sempre implicito (ver has_module / account_active_modules).
+    enabled_modules = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -68,6 +72,12 @@ class Account(TimeStampedModel):
 
     def __str__(self):
         return self.name
+
+    def has_module(self, module_key):
+        """True se a conta pode acessar o modulo (base sempre liberado)."""
+        if module_key == MODULE_BASE:
+            return True
+        return module_key in (self.enabled_modules or [])
 
 
 class Subscription(TimeStampedModel):

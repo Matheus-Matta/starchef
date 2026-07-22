@@ -6,7 +6,9 @@ from apps.core.models import TenantBaseModel, TenantModel
 class Restaurant(TenantBaseModel):
     legal_name = models.CharField(max_length=180)
     trade_name = models.CharField(max_length=180, db_index=True)
-    cnpj = models.CharField(max_length=18, unique=True)
+    # CNPJ opcional: nulos não conflitam no índice único (vários restaurantes
+    # podem ficar sem CNPJ). Vazio é normalizado para null no serializer.
+    cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
     state_registration = models.CharField(max_length=40, blank=True)
     phone = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)

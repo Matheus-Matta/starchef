@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.core.serializers import TenantModelSerializer
+from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.menu.models import (
     Ingredient,
@@ -16,24 +16,55 @@ from apps.menu.models import (
 
 
 class ProductCategorySerializer(TenantModelSerializer):
+    # A UniqueConstraint (branch, name, parent) faz o DRF gerar um
+    # UniqueTogetherValidator que, por padrão, exigiria `parent` no payload —
+    # a causa do erro silencioso no cadastro de categoria (STC-023). Declarar o
+    # campo com default=None torna a categoria raiz (sem pai) válida.
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=ProductCategory.objects.all(),
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+
     class Meta:
         model = ProductCategory
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Unicidade de nome por filial/pai. O DB trata parent=NULL como distinto
+        # (permitiria categorias-raiz duplicadas), então validamos aqui para dar
+        # um erro claro no campo `name` (STC-023) em vez de duplicar em silêncio.
+        name = attrs.get("name", getattr(self.instance, "name", None))
+        parent = attrs.get("parent", getattr(self.instance, "parent", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if name is None:
+            return attrs
+
+        siblings = ProductCategory.objects.filter(name__iexact=name, parent=parent)
+        if branch is not None:
+            siblings = siblings.filter(branch=branch)
+        if self.instance is not None:
+            siblings = siblings.exclude(pk=self.instance.pk)
+        if siblings.exists():
+            raise serializers.ValidationError({"name": "Já existe uma categoria com este nome."})
+        return attrs
 
 
 class ProductVariationSerializer(TenantModelSerializer):
     class Meta:
         model = ProductVariation
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
 class ProductAddonSerializer(TenantModelSerializer):
     class Meta:
         model = ProductAddon
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
 class RecipeItemSerializer(TenantModelSerializer):
@@ -42,7 +73,13 @@ class RecipeItemSerializer(TenantModelSerializer):
     class Meta:
         model = RecipeItem
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate_quantity(self, value):
+        # Quantidade de ingrediente deve ser maior que zero (STC-034).
+        if value is None or value <= 0:
+            raise serializers.ValidationError("A quantidade deve ser maior que zero.")
+        return value
 
 
 class RecipeSerializer(TenantModelSerializer):
@@ -51,26 +88,55 @@ class RecipeSerializer(TenantModelSerializer):
     class Meta:
         model = Recipe
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by", "total_cost"]
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
 
 
 class ProductSerializer(TenantModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_name = serializers.SerializerMethodField()
     current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     variations = ProductVariationSerializer(many=True, read_only=True)
     recipe = RecipeSerializer(read_only=True)
+    # Adicionais vinculados a este produto (gerenciados na edição do produto).
+    addons = serializers.SerializerMethodField()
+
+    def get_addons(self, obj):
+        return [{"id": addon.id, "name": addon.name, "price": addon.price} for addon in obj.addons.all()]
 
     class Meta:
         model = Product
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category_id else "Sem categoria"
 
 
 class IngredientSerializer(TenantModelSerializer):
     class Meta:
         model = Ingredient
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate_minimum_stock(self, value):
+        # Opcional, mas não pode ser negativo quando informado (STC-031).
+        if value is not None and value < 0:
+            raise serializers.ValidationError("O estoque mínimo não pode ser negativo.")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Nome único por filial — erro claro no campo em vez de 500/duplicidade (STC-033).
+        name = attrs.get("name", getattr(self.instance, "name", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if name is not None:
+            siblings = Ingredient.objects.filter(name__iexact=name)
+            if branch is not None:
+                siblings = siblings.filter(branch=branch)
+            if self.instance is not None:
+                siblings = siblings.exclude(pk=self.instance.pk)
+            if siblings.exists():
+                raise serializers.ValidationError({"name": "Já existe um ingrediente com este nome."})
+        return attrs
 
 
 class MenuItemSerializer(TenantModelSerializer):
@@ -80,7 +146,7 @@ class MenuItemSerializer(TenantModelSerializer):
     class Meta:
         model = MenuItem
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
     def get_effective_price(self, obj):
         return obj.override_price if obj.override_price is not None else obj.product.current_price
@@ -92,7 +158,7 @@ class MenuSerializer(TenantModelSerializer):
     class Meta:
         model = Menu
         fields = "__all__"
-        read_only_fields = ["id", "created_at", "updated_at", "created_by", "updated_by"]
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
 class PublicMenuProductSerializer(serializers.ModelSerializer):

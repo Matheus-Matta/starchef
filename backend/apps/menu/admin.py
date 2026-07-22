@@ -1,7 +1,17 @@
 from django.contrib import admin
 
 from apps.core.admin_mixins import TenantModelAdmin, TenantTabularInline
-from apps.menu.models import Ingredient, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
+from apps.menu.models import (
+    Ingredient,
+    Menu,
+    MenuItem,
+    Product,
+    ProductAddon,
+    ProductCategory,
+    ProductVariation,
+    Recipe,
+    RecipeItem,
+)
 
 
 @admin.register(ProductCategory)
@@ -47,3 +57,23 @@ class RecipeAdmin(TenantModelAdmin):
     list_display = ("product", "account", "yield_quantity", "total_cost", "auto_deduct_stock", "is_active")
     list_filter = ("account", "restaurant", "branch", "is_active")
     inlines = [RecipeItemInline]
+
+
+class MenuItemInline(TenantTabularInline):
+    model = MenuItem
+    extra = 0
+
+
+@admin.register(Menu)
+class MenuAdmin(TenantModelAdmin):
+    list_display = ("name", "account", "branch", "channel", "available_from", "available_until", "is_active")
+    list_filter = ("account", "restaurant", "branch", "channel", "is_active")
+    search_fields = ("name", "slug")
+    prepopulated_fields = {"slug": ("name",)}
+    inlines = [MenuItemInline]
+
+
+@admin.register(MenuItem)
+class MenuItemAdmin(TenantModelAdmin):
+    list_display = ("menu", "account", "product", "display_order", "override_price", "is_active")
+    list_filter = ("account", "restaurant", "branch", "menu", "is_active")

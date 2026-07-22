@@ -25,7 +25,14 @@
   <table>
     {% for item in items %}
       <tr>
-        <td>{{ item.quantity }}x {{ item.product.name }}</td>
+        {% if item.product.is_weighed %}
+          <td>
+            {{ item.product.name }}<br>
+            <small>{{ item.quantity|floatformat:3 }} kg x R$ {{ item.unit_price }}/kg</small>
+          </td>
+        {% else %}
+          <td>{{ item.quantity|floatformat:"-3" }}x {{ item.product.name }}</td>
+        {% endif %}
         <td class="right">{{ item.total_price }}</td>
       </tr>
     {% endfor %}
@@ -38,6 +45,21 @@
     <tr><td>Entrega</td><td class="right">{{ order.delivery_fee }}</td></tr>
     <tr><td><strong>Total</strong></td><td class="right"><strong>{{ order.total }}</strong></td></tr>
   </table>
+  {% if payments %}
+    <div class="line"></div>
+    <p><strong>Pagamentos</strong></p>
+    <table>
+      {% for payment in payments %}
+        <tr>
+          <td>{{ payment.payment_method.name }}</td>
+          <td class="right">{{ payment.amount }}</td>
+        </tr>
+        {% if payment.change_amount and payment.change_amount != 0 %}
+          <tr><td>Troco</td><td class="right">{{ payment.change_amount }}</td></tr>
+        {% endif %}
+      {% endfor %}
+    </table>
+  {% endif %}
   <div class="line"></div>
   <p>Obrigado pela preferencia.</p>
 </body>

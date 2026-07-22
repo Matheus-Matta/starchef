@@ -1,3 +1,9 @@
+"""
+Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
+
+Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
+estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
+"""
 from rest_framework.exceptions import ValidationError
 
 from apps.core.access import is_tenant_admin
@@ -7,10 +13,17 @@ from apps.core.tenant import set_current_account
 
 
 def model_has_field(model, field_name):
+    """True se o model possui um campo concreto com esse nome (sem tocar no banco)."""
     return any(field.name == field_name for field in model._meta.fields)
 
 
 class TenantQuerySetMixin:
+    """Restringe o queryset ao escopo do usuario: conta, e (nao-admin) restaurante/filial.
+
+    Admin/superuser enxerga a conta inteira e pode filtrar por restaurante/filial via
+    query params; demais perfis ficam limitados ao proprio restaurante/filial do perfil.
+    """
+
     tenant_branch_field = "branch"
     tenant_restaurant_field = "restaurant"
 
@@ -90,63 +103,94 @@ class TenantQuerySetMixin:
 
 
 class AuditCreateUpdateMixin:
+    """Injeta conta/autor nos writes, valida o escopo do usuario e grava o AuditLog.
+
+    O cliente nunca define `account` nem os campos de auditoria: eles vem sempre
+    do usuario/contexto autenticado. Restaurante e filial informados sao validados
+    contra o perfil (exceto para admin) e, se omitidos, herdados do perfil.
+    """
+
     def perform_create(self, serializer):
-        extra = {}
         model_fields = {field.name for field in serializer.Meta.model._meta.fields}
         user = self.request.user
         profile = getattr(user, "profile", None)
         account = getattr(self.request, "account", None) or getattr(profile, "account", None)
 
-        if "account" in serializer.validated_data:
-            serializer.validated_data.pop("account")
-        if "account" in model_fields and account:
+        # Conta nunca vem do payload: e sempre a conta autenticada.
+        serializer.validated_data.pop("account", None)
+
+        extra = {}
+        if "account" in model_fields:
+            if not account:
+                raise ValidationError({"account": "Contexto de conta e obrigatorio."})
             extra["account"] = account
-        elif "account" in model_fields:
-            raise ValidationError({"account": "Contexto de conta e obrigatorio."})
+
         if serializer.Meta.model._meta.label == "restaurants.Restaurant" and profile and not is_tenant_admin(user):
             raise ValidationError({"restaurant": "Apenas admin pode criar restaurantes."})
+
+        self._assert_scope_allowed(serializer)
+
         if "created_by" in model_fields:
             extra["created_by"] = user
         if "updated_by" in model_fields:
             extra["updated_by"] = user
-        if "restaurant" in serializer.validated_data and profile and not is_tenant_admin(user):
-            restaurant = serializer.validated_data["restaurant"]
-            if profile.restaurant_id and restaurant and restaurant.id != profile.restaurant_id:
-                raise ValidationError({"restaurant": "Restaurante fora do escopo do usuario."})
-        if "branch" in serializer.validated_data and profile and not is_tenant_admin(user):
-            branch = serializer.validated_data["branch"]
-            if profile.branch_id and branch and branch.id != profile.branch_id:
-                raise ValidationError({"branch": "Filial fora do escopo do usuario."})
-            if profile.restaurant_id and branch and branch.restaurant_id != profile.restaurant_id:
-                raise ValidationError({"branch": "Filial pertence a outro restaurante."})
 
-        if "restaurant" in model_fields and "restaurant" not in serializer.validated_data and profile:
-            extra["restaurant"] = profile.restaurant
-        if "branch" in model_fields and "branch" not in serializer.validated_data and profile:
-            extra["branch"] = profile.branch
+        # Restaurante/filial quando nao informados (ausentes ou null) no payload.
+        model = serializer.Meta.model
+        if "restaurant" in model_fields and not serializer.validated_data.get("restaurant"):
+            restaurant_optional = model._meta.get_field("restaurant").null
+            inherited_restaurant = getattr(profile, "restaurant", None)
+            if not restaurant_optional:
+                # Restaurante obrigatorio: herda do perfil ou devolve erro claro
+                # (em vez de um IntegrityError/409 que nao aponta para nenhum campo).
+                if inherited_restaurant is not None:
+                    extra["restaurant"] = inherited_restaurant
+                else:
+                    raise ValidationError(
+                        {"restaurant": "Selecione um restaurante no seletor do topo antes de cadastrar."}
+                    )
+            # Restaurante opcional (recurso compartilhado, ex.: categorias/adicionais):
+            # fica nulo — pertence a conta (a todos os restaurantes).
+
+        if "branch" in model_fields and not serializer.validated_data.get("branch"):
+            # A filial pertence a um restaurante: so herda quando ha restaurante.
+            has_restaurant = bool(serializer.validated_data.get("restaurant") or extra.get("restaurant"))
+            inherited_branch = getattr(profile, "branch", None)
+            if has_restaurant and inherited_branch is not None:
+                extra["branch"] = inherited_branch
 
         instance = serializer.save(**{k: v for k, v in extra.items() if v is not None})
         record_audit(action=AuditLog.ACTION_CREATED, instance=instance, actor=user, request=self.request)
 
     def perform_update(self, serializer):
-        extra = {}
         model_fields = {field.name for field in serializer.Meta.model._meta.fields}
-        if "account" in serializer.validated_data:
-            serializer.validated_data.pop("account")
-        user = self.request.user
-        profile = getattr(user, "profile", None)
-        if "restaurant" in serializer.validated_data and profile and not is_tenant_admin(user):
-            restaurant = serializer.validated_data["restaurant"]
-            if profile.restaurant_id and restaurant and restaurant.id != profile.restaurant_id:
-                raise ValidationError({"restaurant": "Restaurante fora do escopo do usuario."})
-        if "branch" in serializer.validated_data and profile and not is_tenant_admin(user):
-            branch = serializer.validated_data["branch"]
-            if profile.branch_id and branch and branch.id != profile.branch_id:
-                raise ValidationError({"branch": "Filial fora do escopo do usuario."})
-            if profile.restaurant_id and branch and branch.restaurant_id != profile.restaurant_id:
-                raise ValidationError({"branch": "Filial pertence a outro restaurante."})
+        serializer.validated_data.pop("account", None)
+
+        self._assert_scope_allowed(serializer)
+
+        extra = {}
         if "updated_by" in model_fields:
             extra["updated_by"] = self.request.user
 
         instance = serializer.save(**extra)
         record_audit(action=AuditLog.ACTION_UPDATED, instance=instance, actor=self.request.user, request=self.request)
+
+    def _assert_scope_allowed(self, serializer):
+        """Impede que um usuario nao-admin grave em restaurante/filial fora do seu escopo."""
+        data = serializer.validated_data
+        user = self.request.user
+        profile = getattr(user, "profile", None)
+        if not profile or is_tenant_admin(user):
+            return
+
+        if "restaurant" in data:
+            restaurant = data["restaurant"]
+            if profile.restaurant_id and restaurant and restaurant.id != profile.restaurant_id:
+                raise ValidationError({"restaurant": "Restaurante fora do escopo do usuario."})
+
+        if "branch" in data:
+            branch = data["branch"]
+            if profile.branch_id and branch and branch.id != profile.branch_id:
+                raise ValidationError({"branch": "Filial fora do escopo do usuario."})
+            if profile.restaurant_id and branch and branch.restaurant_id != profile.restaurant_id:
+                raise ValidationError({"branch": "Filial pertence a outro restaurante."})

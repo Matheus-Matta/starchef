@@ -7,7 +7,8 @@ class Customer(TenantModel):
     name = models.CharField(max_length=180)
     phone = models.CharField(max_length=32, db_index=True)
     email = models.EmailField(blank=True)
-    document = models.CharField(max_length=20, blank=True)
+    document = models.CharField(max_length=20, blank=True)  # CPF
+    birth_date = models.DateField(null=True, blank=True)
     internal_notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
 

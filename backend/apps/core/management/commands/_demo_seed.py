@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.accounts.models import Account, Permission, Plan, Role, Subscription, UserProfile
+from apps.core.modules import OPTIONAL_MODULES
 from apps.core.tenant import tenant_context
 from apps.restaurants.models import Branch, Restaurant
 
@@ -65,6 +66,8 @@ def ensure_base_tenant(
             "plan": plan,
             "trial_ends_at": now + timedelta(days=30),
             "subscription_status": Account.SUBSCRIPTION_TRIAL,
+            # Contas demo com todos os modulos opcionais habilitados.
+            "enabled_modules": list(OPTIONAL_MODULES),
             "is_active": True,
         },
     )

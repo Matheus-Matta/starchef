@@ -12,4 +12,7 @@ class KdsStationSerializer(TenantModelSerializer):
     class Meta:
         model = KdsStation
         fields = ["id", "name", "restaurant", "restaurant_name", "branch", "branch_name", "sla_minutes", "sectors", "is_active"]
-        read_only_fields = ["id", "restaurant", "branch", "created_at", "updated_at"]
+        # restaurant/branch precisam ser graváveis: a estação é vinculada ao
+        # restaurante escolhido no formulário (antes eram read-only e o valor
+        # selecionado era ignorado, causando erro de "restaurante obrigatório").
+        read_only_fields = ["id", "created_at", "updated_at"]

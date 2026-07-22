@@ -14,7 +14,14 @@ class Printer(TenantModel):
     ]
 
     name = models.CharField(max_length=120)
-    sector = models.CharField(max_length=24, blank=True)
+    # Setor cadastrado (TableSector) — mesmos setores usados nas mesas/produtos.
+    sector = models.ForeignKey(
+        "restaurants.TableSector",
+        null=True,
+        blank=True,
+        related_name="printers",
+        on_delete=models.SET_NULL,
+    )
     driver_type = models.CharField(max_length=24, choices=DRIVER_CHOICES, default=DRIVER_BROWSER)
     endpoint = models.CharField(max_length=255, blank=True)
     auto_print = models.BooleanField(default=False)
@@ -30,6 +37,121 @@ class Printer(TenantModel):
         return self.name
 
 
+class Scale(TenantModel):
+    """Balanca do caixa/PDV. O agente local le a porta serial/USB e envia leituras para a API."""
+
+    PROTOCOL_GENERIC = "generic"
+    PROTOCOL_TOLEDO_PRT2 = "toledo_prt2"
+    PROTOCOL_FILIZOLA = "filizola"
+    PROTOCOL_URANO = "urano"
+
+    PROTOCOL_CHOICES = [
+        (PROTOCOL_GENERIC, "Generico"),
+        (PROTOCOL_TOLEDO_PRT2, "Toledo PRT2"),
+        (PROTOCOL_FILIZOLA, "Filizola"),
+        (PROTOCOL_URANO, "Urano"),
+    ]
+
+    name = models.CharField(max_length=120)
+    # Setor cadastrado (TableSector) — mesmos setores usados nas mesas/produtos.
+    sector = models.ForeignKey(
+        "restaurants.TableSector",
+        null=True,
+        blank=True,
+        related_name="scales",
+        on_delete=models.SET_NULL,
+    )
+    protocol = models.CharField(max_length=24, choices=PROTOCOL_CHOICES, default=PROTOCOL_GENERIC)
+    port = models.CharField(max_length=64, blank=True, help_text="Porta usada pelo agente local, ex.: COM3 ou /dev/ttyUSB0.")
+    reading_max_age_seconds = models.PositiveIntegerField(
+        default=120,
+        help_text="Idade maxima de uma leitura para ser aceita em um pedido.",
+    )
+
+    # Produto "por kilo" que define o preco/kg da nota gerada nesta balanca.
+    product = models.ForeignKey(
+        "menu.Product",
+        null=True,
+        blank=True,
+        related_name="scales",
+        on_delete=models.SET_NULL,
+        help_text="Produto por kilo usado para precificar a pesagem.",
+    )
+    # Impressora que recebe a nota de pesagem (o agente local faz o polling dela).
+    printer = models.ForeignKey(
+        Printer,
+        null=True,
+        blank=True,
+        related_name="scales",
+        on_delete=models.SET_NULL,
+        help_text="Impressora onde a nota de pesagem sera impressa.",
+    )
+    # Pedido/comanda ao qual as pesagens desta balanca sao lancadas (fluxo automatico).
+    active_order = models.ForeignKey(
+        "orders.Order",
+        null=True,
+        blank=True,
+        related_name="bound_scales",
+        on_delete=models.SET_NULL,
+        help_text="Pedido corrente vinculado a balanca (usado no gatilho automatico).",
+    )
+    # Ao receber uma leitura estavel, lanca o item e gera a nota automaticamente.
+    auto_print = models.BooleanField(default=False)
+    auto_print_delay_seconds = models.PositiveIntegerField(
+        default=3,
+        help_text="Segundos que a balanca deve ficar estavel antes de imprimir (aplicado pelo agente).",
+    )
+    is_active = models.BooleanField(default=True)
+    settings = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["branch", "name"], name="unique_scale_by_branch"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class ScaleReading(TenantModel):
+    """Leitura de peso enviada pelo agente local (ou digitada manualmente no PDV)."""
+
+    SOURCE_AGENT = "agent"
+    SOURCE_MANUAL = "manual"
+
+    SOURCE_CHOICES = [
+        (SOURCE_AGENT, "Agente local"),
+        (SOURCE_MANUAL, "Digitacao manual"),
+    ]
+
+    scale = models.ForeignKey(Scale, null=True, blank=True, related_name="readings", on_delete=models.SET_NULL)
+    weight_kg = models.DecimalField(max_digits=9, decimal_places=3)
+    tare_kg = models.DecimalField(max_digits=9, decimal_places=3, default=0)
+    is_stable = models.BooleanField(default=True)
+    source = models.CharField(max_length=12, choices=SOURCE_CHOICES, default=SOURCE_AGENT)
+    order_item = models.ForeignKey(
+        "orders.OrderItem",
+        null=True,
+        blank=True,
+        related_name="scale_readings",
+        on_delete=models.SET_NULL,
+        help_text="Preenchido quando a leitura vira um item de pedido.",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["scale", "created_at"]),
+        ]
+
+    @property
+    def net_weight_kg(self):
+        return self.weight_kg - self.tare_kg
+
+    def __str__(self):
+        return f"{self.weight_kg} kg ({self.get_source_display()})"
+
+
 class PrintJob(TenantModel):
     TYPE_KITCHEN = "kitchen_ticket"
     TYPE_BAR = "bar_ticket"
@@ -37,6 +159,8 @@ class PrintJob(TenantModel):
     TYPE_RECEIPT = "receipt"
     TYPE_PAYMENT = "payment_receipt"
     TYPE_CASH_CLOSE = "cash_close"
+    TYPE_WEIGH = "weigh_ticket"  # nota de pesagem (balanca por kilo)
+    TYPE_FISCAL = "fiscal_danfe"  # cupom fiscal DANFE NFC-e
 
     STATUS_PENDING = "pending"
     STATUS_RENDERED = "rendered"

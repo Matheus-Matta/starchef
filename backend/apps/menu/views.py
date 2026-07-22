@@ -1,9 +1,12 @@
-from rest_framework import viewsets
+from django.shortcuts import get_object_or_404
+from rest_framework import status
+from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.mixins import AuditCreateUpdateMixin, TenantQuerySetMixin
+from apps.core.modules import MODULE_ECOMMERCE
+from apps.core.viewsets import BaseTenantViewSet
 from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
 from apps.menu.serializers import (
     IngredientSerializer,
@@ -19,15 +22,16 @@ from apps.menu.serializers import (
 )
 
 
-class ProductCategoryViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class ProductCategoryViewSet(BaseTenantViewSet):
     serializer_class = ProductCategorySerializer
     queryset = ProductCategory.objects.select_related("restaurant", "branch", "parent").all()
     filterset_fields = ["restaurant", "branch", "parent", "is_active"]
     search_fields = ["name"]
-    ordering_fields = ["display_order", "name"]
+    ordering_fields = ["display_order", "name", "created_at"]
+    ordering = ["display_order", "name"]
 
 
-class ProductViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
     queryset = Product.objects.select_related("restaurant", "branch", "category").prefetch_related("variations").all()
     filterset_fields = [
@@ -42,43 +46,79 @@ class ProductViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.Model
         "available_for_delivery",
     ]
     search_fields = ["name", "internal_code", "description"]
-    ordering_fields = ["name", "sale_price", "created_at"]
+    ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
+    ordering = ["name"]
+
+    def _get_addon(self, request):
+        # Escopo por tenant: só adicionais da conta (queryset padrão do model).
+        return get_object_or_404(ProductAddon, pk=request.data.get("addon"))
+
+    @action(detail=True, methods=["post"], url_path="link-addon")
+    def link_addon(self, request, pk=None):
+        """Vincula um adicional a este produto (gerenciado na edição do produto)."""
+        product = self.get_object()
+        addon = self._get_addon(request)
+        addon.products.add(product)
+        return Response({"id": addon.id, "name": addon.name, "price": addon.price}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="unlink-addon")
+    def unlink_addon(self, request, pk=None):
+        """Desvincula um adicional deste produto."""
+        product = self.get_object()
+        addon = self._get_addon(request)
+        addon.products.remove(product)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ProductAddonViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class ProductAddonViewSet(BaseTenantViewSet):
     serializer_class = ProductAddonSerializer
     queryset = ProductAddon.objects.select_related("restaurant", "branch").prefetch_related("products").all()
     filterset_fields = ["restaurant", "branch", "production_sector", "is_active"]
     search_fields = ["name"]
+    ordering_fields = ["name", "price", "created_at"]
+    ordering = ["name"]
 
 
-class ProductVariationViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class ProductVariationViewSet(BaseTenantViewSet):
     serializer_class = ProductVariationSerializer
     queryset = ProductVariation.objects.select_related("restaurant", "branch", "product").all()
     filterset_fields = ["restaurant", "branch", "product", "is_active"]
     search_fields = ["name", "product__name"]
 
+    def perform_create(self, serializer):
+        # A variação herda restaurante/filial do produto vinculado — assim não
+        # depende do escopo selecionado no topo (evita "restaurante obrigatório").
+        product = serializer.validated_data.get("product")
+        if product is not None:
+            serializer.validated_data.setdefault("restaurant", product.restaurant)
+            if product.branch_id:
+                serializer.validated_data.setdefault("branch", product.branch)
+        super().perform_create(serializer)
 
-class IngredientViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+
+class IngredientViewSet(BaseTenantViewSet):
     serializer_class = IngredientSerializer
     queryset = Ingredient.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "unit", "is_active"]
     search_fields = ["name"]
+    ordering_fields = ["name", "average_cost", "minimum_stock", "created_at"]
+    ordering = ["name"]
 
 
-class RecipeViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class RecipeViewSet(BaseTenantViewSet):
     serializer_class = RecipeSerializer
     queryset = Recipe.objects.select_related("restaurant", "branch", "product").prefetch_related("items__ingredient").all()
     filterset_fields = ["restaurant", "branch", "product", "is_active", "auto_deduct_stock"]
     search_fields = ["product__name"]
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        # Passa pela injeção de tenant/auditoria da base antes de recalcular.
+        super().perform_update(serializer)
         from apps.menu.services import recalculate_recipe_costs
-        recalculate_recipe_costs(instance)
+        recalculate_recipe_costs(serializer.instance)
 
 
-class RecipeItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class RecipeItemViewSet(BaseTenantViewSet):
     serializer_class = RecipeItemSerializer
     queryset = RecipeItem.objects.select_related("restaurant", "branch", "recipe__product", "ingredient").all()
     filterset_fields = ["restaurant", "branch", "recipe", "ingredient"]
@@ -88,12 +128,19 @@ class RecipeItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.Mo
         recalculate_recipe_costs(recipe)
 
     def perform_create(self, serializer):
-        item = serializer.save()
-        self._recalc(item.recipe)
+        # Herda restaurante/filial da receita (que pertence a um produto/restaurante),
+        # para não depender do escopo selecionado. super() injeta account/auditoria.
+        recipe = serializer.validated_data.get("recipe")
+        if recipe is not None:
+            serializer.validated_data.setdefault("restaurant", recipe.restaurant)
+            if recipe.branch_id:
+                serializer.validated_data.setdefault("branch", recipe.branch)
+        super().perform_create(serializer)
+        self._recalc(serializer.instance.recipe)
 
     def perform_update(self, serializer):
-        item = serializer.save()
-        self._recalc(item.recipe)
+        super().perform_update(serializer)
+        self._recalc(serializer.instance.recipe)
 
     def perform_destroy(self, instance):
         recipe = instance.recipe
@@ -101,14 +148,16 @@ class RecipeItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.Mo
         self._recalc(recipe)
 
 
-class MenuViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class MenuViewSet(BaseTenantViewSet):
+    required_module = MODULE_ECOMMERCE  # cardapio digital
     serializer_class = MenuSerializer
     queryset = Menu.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["restaurant", "branch", "channel", "is_active"]
     search_fields = ["name", "slug"]
 
 
-class MenuItemViewSet(AuditCreateUpdateMixin, TenantQuerySetMixin, viewsets.ModelViewSet):
+class MenuItemViewSet(BaseTenantViewSet):
+    required_module = MODULE_ECOMMERCE  # cardapio digital
     serializer_class = MenuItemSerializer
     queryset = MenuItem.objects.select_related("restaurant", "branch", "menu", "product").all()
     filterset_fields = ["restaurant", "branch", "menu", "product", "is_active"]
