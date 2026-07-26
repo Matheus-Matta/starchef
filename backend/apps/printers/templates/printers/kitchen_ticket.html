@@ -11,8 +11,9 @@
   </style>
 </head>
 <body>
-  <h1>COZINHA</h1>
+  <h1>{{ sector.name|default:"PRODUÇÃO"|upper }}</h1>
   <h2>Pedido {{ order.sequence }}</h2>
+  {% if batch %}<p><strong>Rodada: #{{ batch.batch_number }}</strong></p>{% endif %}
   <p>Mesa: {{ order.table.number|default:"-" }} Comanda: {{ order.command.code|default:"-" }}</p>
   <p>Tipo: {{ order.order_type }}</p>
   <p>Entrada: {{ order.opened_at|date:"d/m/Y H:i" }}</p>
@@ -23,6 +24,12 @@
       {% else %}
         <p><strong>{{ item.quantity|floatformat:"-3" }}x {{ item.product.name }}</strong></p>
       {% endif %}
+      {% for variation in item.variations %}
+        <p>Variação: {{ variation.name|default:variation }}</p>
+      {% endfor %}
+      {% for item_addon in item.addons.all %}
+        <p>+ {{ item_addon.quantity|floatformat:"-3" }}x {{ item_addon.addon.name }}</p>
+      {% endfor %}
       {% if item.customer_note %}<p class="note">{{ item.customer_note }}</p>{% endif %}
     </div>
   {% endfor %}

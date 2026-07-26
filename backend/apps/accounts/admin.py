@@ -53,7 +53,7 @@ class PlanAdmin(ModelAdmin):
 
 @admin.register(Account)
 class AccountAdmin(ModelAdmin):
-    list_display = ("name", "slug", "status", "subscription_status", "plan", "modules_summary", "is_active")
+    list_display = ("name", "slug", "status", "subscription_status", "plan", "max_restaurants", "max_users", "modules_summary", "is_active")
     list_filter = ("status", "subscription_status", "plan", "is_active")
     search_fields = ("name", "slug", "document", "email")
     prepopulated_fields = {"slug": ("name",)}

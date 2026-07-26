@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.accounts.models import Account, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.permission_catalog import iter_permissions
 from apps.core.modules import OPTIONAL_MODULES
 from apps.core.tenant import tenant_context
 from apps.restaurants.models import Branch, Restaurant
@@ -68,6 +69,9 @@ def ensure_base_tenant(
             "subscription_status": Account.SUBSCRIPTION_TRIAL,
             # Contas demo com todos os modulos opcionais habilitados.
             "enabled_modules": list(OPTIONAL_MODULES),
+            # Limites de tenancy da conta demo (0 = ilimitado). Generosos p/ demonstrar.
+            "max_users": plan.max_users,
+            "max_restaurants": 10,
             "is_active": True,
         },
     )
@@ -193,23 +197,10 @@ def ensure_restaurant_in_account(
 
 
 def ensure_permissions():
-    permissions = {
-        "orders.view": "Visualizar pedidos",
-        "orders.manage": "Gerenciar pedidos",
-        "menu.manage": "Gerenciar cardapio",
-        "payments.manage": "Gerenciar pagamentos",
-        "stock.manage": "Gerenciar estoque",
-        "reports.view": "Visualizar relatorios",
-        "users.manage": "Gerenciar usuarios",
-    }
-    result = {}
-    for code, name in permissions.items():
-        permission, _ = Permission.objects.update_or_create(
-            code=code,
-            defaults={"name": name, "description": f"Permissao demo: {name}."},
-        )
-        result[code] = permission
-    return result
+    """Sincroniza o catálogo canônico e devolve um dict code -> Permission."""
+    for code, defaults in iter_permissions():
+        Permission.objects.update_or_create(code=code, defaults=defaults)
+    return {perm.code: perm for perm in Permission.objects.all()}
 
 
 def ensure_role(account, *, code, name, restaurant=None, permissions=None, max_discount_percent=0, is_system=True):
@@ -285,7 +276,13 @@ def ensure_tenant_user(
 
 def ensure_demo_roles(account, restaurant):
     permissions = ensure_permissions()
+
+    def pick(*codes):
+        """Seleciona permissões por código (ignora as ausentes, defensivo)."""
+        return [permissions[code] for code in codes if code in permissions]
+
     roles = {
+        # admin e owner enxergam tudo (todos os itens do catálogo).
         "admin": ensure_role(
             account,
             code="admin",
@@ -302,42 +299,51 @@ def ensure_demo_roles(account, restaurant):
             permissions=permissions.values(),
             max_discount_percent=100,
         ),
+        # Gerente: opera o restaurante inteiro, inclusive todos os caixas.
         "manager": ensure_role(
             account,
             code="manager",
             name="Gerente",
             restaurant=restaurant,
-            permissions=[
-                permissions["orders.manage"],
-                permissions["menu.manage"],
-                permissions["payments.manage"],
-                permissions["stock.manage"],
-                permissions["reports.view"],
-            ],
+            permissions=pick(
+                "orders.view", "orders.manage", "orders.cancel", "orders.discount", "orders.create",
+                "cash.view", "cash.open", "cash.manage", "cash.approve", "cash.withdrawal", "cash.supply",
+                "payments.manage", "menu.manage", "stock.manage", "reports.view", "devices.manage",
+                "users.manage", "tables.manage", "customers.manage", "kitchen.manage",
+            ),
             max_discount_percent=30,
         ),
+        # Garçom: cuida apenas dos próprios pedidos e das mesas/comandas.
         "waiter": ensure_role(
             account,
             code="waiter",
             name="Garcom",
             restaurant=restaurant,
-            permissions=[permissions["orders.view"], permissions["orders.manage"]],
+            permissions=pick(
+                "orders.view.own", "orders.create", "orders.manage",
+                "tables.view", "tables.manage", "menu.view", "customers.view", "kitchen.view",
+            ),
             max_discount_percent=5,
         ),
+        # Cozinha: acompanha e opera o KDS.
         "kitchen": ensure_role(
             account,
             code="kitchen",
             name="Cozinha",
             restaurant=restaurant,
-            permissions=[permissions["orders.view"]],
+            permissions=pick("orders.view", "kitchen.view", "kitchen.manage"),
             max_discount_percent=0,
         ),
+        # Caixa: gerencia SOMENTE o próprio caixa (abrir, fechar, sangria, suprimento).
         "cashier": ensure_role(
             account,
             code="cashier",
             name="Caixa",
             restaurant=restaurant,
-            permissions=[permissions["orders.view"], permissions["payments.manage"]],
+            permissions=pick(
+                "orders.view", "cash.view.own", "cash.open", "cash.close.own", "cash.manage.own",
+                "cash.withdrawal", "cash.supply", "payments.manage", "menu.view",
+            ),
             max_discount_percent=10,
         ),
     }

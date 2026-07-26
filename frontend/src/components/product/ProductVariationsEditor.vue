@@ -15,20 +15,19 @@
 
     <DataTable :value="rows" data-key="id" class="variations__table" :row-hover="false" responsive-layout="scroll">
       <Column field="name" header="Variação">
-        <template #body="{ data }">
-          <div class="variations__name-cell">
-            <strong>{{ data.name }}</strong>
-            <span class="variations__badges">
-              <Tag v-if="data.is_required" value="Obrigatória" severity="info" rounded />
-              <Tag :value="data.is_active ? 'Ativa' : 'Inativa'" :severity="data.is_active ? 'success' : 'danger'" rounded />
-            </span>
-          </div>
-        </template>
+        <template #body="{ data }"><strong class="variations__name">{{ data.name }}</strong></template>
       </Column>
-      <Column header="Ajuste" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '110px' }" :style="{ width: '110px' }">
+      <Column header="Ajuste" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }" :style="{ width: '130px' }">
         <template #body="{ data }">{{ formatDelta(data.price_delta) }}</template>
       </Column>
-      <Column v-if="!readonly" header="" :body-style="{ textAlign: 'right', width: '84px' }" :style="{ width: '84px' }">
+      <Column header="Status" :body-style="{ width: '130px' }" :style="{ width: '130px' }">
+        <template #body="{ data }">
+          <span class="variations__badges">
+            <Tag :value="data.is_active ? 'Ativa' : 'Inativa'" :severity="data.is_active ? 'success' : 'danger'" rounded />
+          </span>
+        </template>
+      </Column>
+      <Column v-if="!readonly" header="" :body-style="{ textAlign: 'right', width: '90px' }" :style="{ width: '90px' }">
         <template #body="{ data }">
           <Button icon="pi pi-pencil" text rounded aria-label="Editar variação" @click="openEdit(data)" />
           <Button icon="pi pi-trash" text rounded severity="danger" aria-label="Remover variação" @click="confirmRemove(data)" />
@@ -62,12 +61,6 @@
           <template #default="{ fieldId, invalid }">
             <InputNumber :id="fieldId" v-model="editing.price_delta" :class="{ 'p-invalid': invalid }" mode="currency" currency="BRL" locale="pt-BR" :min-fraction-digits="2" @update:model-value="dirty = true" />
           </template>
-        </AppFormField>
-        <AppFormField label="Obrigatória">
-          <div class="variations__switch">
-            <InputSwitch v-model="editing.is_required" @update:model-value="dirty = true" />
-            <span>{{ editing.is_required ? "Sim" : "Não" }}</span>
-          </div>
         </AppFormField>
         <AppFormField label="Ativa">
           <div class="variations__switch">
@@ -122,7 +115,6 @@ function toRow(variation) {
     id: variation.id ?? null,
     name: variation.name ?? "",
     price_delta: Number(variation.price_delta ?? 0),
-    is_required: !!variation.is_required,
     is_active: variation.is_active ?? true,
   };
 }
@@ -137,7 +129,7 @@ const fieldErrors = ref({});
 const editing = ref(emptyForm());
 
 function emptyForm() {
-  return { id: null, name: "", price_delta: 0, is_required: false, is_active: true };
+  return { id: null, name: "", price_delta: 0, is_active: true };
 }
 
 function resetForm(data) {
@@ -161,7 +153,6 @@ function buildPayload() {
     product: props.productId,
     name: editing.value.name,
     price_delta: Number(editing.value.price_delta) || 0,
-    is_required: !!editing.value.is_required,
     is_active: !!editing.value.is_active,
   };
 }
@@ -232,7 +223,7 @@ const formatDelta = (value) => {
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface-card);
+  background: var(--surface-sunken); /* card mais escuro para contraste */
   box-shadow: var(--shadow-sm);
 }
 
@@ -242,16 +233,15 @@ const formatDelta = (value) => {
 .variations__empty { color: var(--text-muted); font: var(--weight-medium) 13px/1.5 var(--font-sans); text-align: center; padding: 8px 0; }
 .variations__switch { display: flex; align-items: center; gap: 10px; height: var(--control-h); color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); }
 
-/* Mesmo padrão de exibição dos adicionais: DataTable com linhas em contraste */
-.variations__name-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.variations__name-cell strong { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-table); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* DataTable com linhas mais claras que o card (contraste) */
+.variations__name { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-table); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .variations__badges { display: inline-flex; gap: 6px; flex-shrink: 0; }
 
 .variations__table :deep(.p-datatable-thead > tr > th) {
   padding: 7px 10px;
-  background: var(--surface-sunken);
+  background: transparent;
   color: var(--text-subtle);
-  border-color: var(--border-subtle);
+  border-color: var(--border);
   font: var(--weight-bold) 10.5px/1 var(--font-table);
   text-transform: uppercase;
   letter-spacing: var(--tracking-caps);
@@ -259,15 +249,16 @@ const formatDelta = (value) => {
 .variations__table :deep(.p-datatable-thead > tr > th.dt-col-right .p-column-header-content) {
   justify-content: flex-end;
 }
-.variations__table :deep(.p-datatable-tbody > tr) {
-  background: var(--surface-sunken); /* contraste com o fundo do card */
-}
+/* Linhas como "cartões" separados: gap entre elas + cantos arredondados */
+.variations__table :deep(.p-datatable-table) { border-collapse: separate; border-spacing: 0 6px; }
 .variations__table :deep(.p-datatable-tbody > tr > td) {
-  padding: 7px 10px;
-  border-color: var(--border);
+  padding: 9px 12px;
+  border: none;
+  background: var(--surface-card); /* célula mais clara que o card escuro */
   font: var(--weight-medium) 13.5px/1.3 var(--font-table);
   color: var(--text-body);
-  background: transparent;
 }
+.variations__table :deep(.p-datatable-tbody > tr > td:first-child) { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.variations__table :deep(.p-datatable-tbody > tr > td:last-child) { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
 .variations__table :deep(.p-datatable-emptymessage > td) { border: none; background: transparent; }
 </style>

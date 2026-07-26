@@ -50,12 +50,24 @@
     <p><strong>Pagamentos</strong></p>
     <table>
       {% for payment in payments %}
-        <tr>
-          <td>{{ payment.payment_method.name }}</td>
-          <td class="right">{{ payment.amount }}</td>
-        </tr>
-        {% if payment.change_amount and payment.change_amount != 0 %}
-          <tr><td>Troco</td><td class="right">{{ payment.change_amount }}</td></tr>
+        {% if payment.payment_method.method_type == "cash" %}
+          <tr>
+            <td>{{ payment.payment_method.name }} - recebido</td>
+            <td class="right">R$ {{ payment.metadata.received_amount|default:payment.amount }}</td>
+          </tr>
+          <tr>
+            <td>Valor aplicado</td>
+            <td class="right">R$ {{ payment.amount }}</td>
+          </tr>
+          <tr>
+            <td><strong>Troco</strong></td>
+            <td class="right"><strong>R$ {{ payment.change_amount }}</strong></td>
+          </tr>
+        {% else %}
+          <tr>
+            <td>{{ payment.payment_method.name }}</td>
+            <td class="right">R$ {{ payment.amount }}</td>
+          </tr>
         {% endif %}
       {% endfor %}
     </table>

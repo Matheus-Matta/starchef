@@ -20,7 +20,7 @@ def resolve_enabled_modules(user, account):
 class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
-        fields = ["id", "code", "name", "description", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "description", "group", "module", "sort_order", "created_at", "updated_at"]
         read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
 
 
@@ -97,7 +97,8 @@ class UserProfileSerializer(TenantModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer()
-    password = serializers.CharField(write_only=True, required=True, min_length=8)
+    # Obrigatória só na criação (validada no create). Na edição, em branco = manter.
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, min_length=8)
 
     class Meta:
         model = User
@@ -127,7 +128,9 @@ class UserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         profile_data = validated_data.pop("profile", {})
-        password = validated_data.pop("password")
+        password = validated_data.pop("password", "")
+        if not password:
+            raise serializers.ValidationError({"password": "Informe uma senha para criar o usuário."})
         request = self.context.get("request")
         account = getattr(request, "account", None) if request else None
         if account:
@@ -184,6 +187,7 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             "username": self.user.username,
             "email": self.user.email,
             "name": self.user.get_full_name(),
+            "is_superuser": self.user.is_superuser,
             "profile_type": profile.profile_type if profile else None,
             "account_id": str(account.id) if account else None,
             "account_name": account.name if account else None,
@@ -192,5 +196,11 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
             "branch_name": profile.branch.name if profile and profile.branch_id else None,
             "enabled_modules": resolve_enabled_modules(self.user, account),
+            "permissions": self._permission_codes(),
         }
         return data
+
+    def _permission_codes(self):
+        from apps.core.permissions import effective_permission_codes
+
+        return sorted(effective_permission_codes(self.user))

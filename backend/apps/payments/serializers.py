@@ -1,8 +1,60 @@
 from rest_framework import serializers
+from django.db.models import Sum
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.payments.models import CashMovement, CashRegister, Payment, PaymentMethod
+from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+
+
+class CashStationSerializer(TenantModelSerializer):
+    operator_names = serializers.SerializerMethodField()
+    current_session = serializers.SerializerMethodField()
+    recent_sessions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CashStation
+        fields = "__all__"
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def get_operator_names(self, obj):
+        return [user.get_full_name() or user.username for user in obj.operators.all()]
+
+    def validate_operators(self, operators):
+        if not operators:
+            raise serializers.ValidationError("Vincule pelo menos um usuário ao caixa.")
+        request = self.context.get("request")
+        account = getattr(request, "account", None)
+        invalid = [user for user in operators if getattr(getattr(user, "profile", None), "account_id", None) != getattr(account, "id", None)]
+        if invalid:
+            raise serializers.ValidationError("Selecione somente usuários vinculados a esta conta.")
+        # Cada usuário só pode estar vinculado a um caixa ativo por vez.
+        conflicts = []
+        for user in operators:
+            others = user.cash_stations.filter(is_active=True)
+            if self.instance is not None:
+                others = others.exclude(pk=self.instance.pk)
+            other = others.first()
+            if other is not None:
+                conflicts.append(f"{user.get_full_name() or user.username} (já em {other.name})")
+        if conflicts:
+            raise serializers.ValidationError(
+                "Cada usuário só pode estar vinculado a um caixa por vez. " + "; ".join(conflicts) + "."
+            )
+        return operators
+
+    def _session_data(self, session):
+        if not session:
+            return None
+        return {"id": session.id, "status": session.status, "operator": session.opened_by.get_full_name() or session.opened_by.username,
+                "opened_at": session.opened_at, "closed_at": session.closed_at, "opening_amount": session.opening_amount,
+                "actual_amount": session.actual_amount, "difference_amount": session.difference_amount}
+
+    def get_current_session(self, obj):
+        session = obj.sessions.exclude(status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]).select_related("opened_by").order_by("-opened_at").first()
+        return self._session_data(session)
+
+    def get_recent_sessions(self, obj):
+        return [self._session_data(session) for session in obj.sessions.select_related("opened_by").order_by("-opened_at")[:10]]
 
 
 class PaymentMethodSerializer(TenantModelSerializer):
@@ -44,6 +96,7 @@ class CashMovementSerializer(TenantModelSerializer):
 
 class CashRegisterSerializer(TenantModelSerializer):
     movements = CashMovementSerializer(many=True, read_only=True)
+    current_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = CashRegister
@@ -59,4 +112,13 @@ class CashRegisterSerializer(TenantModelSerializer):
             "expected_amount",
             "difference_amount",
         ]
+
+    def get_current_balance(self, obj):
+        return (
+            obj.movements.filter(status="approved").aggregate(
+                value=Sum("amount")
+            )["value"]
+            or 0
+        )
+
 

@@ -64,4 +64,10 @@ export class ResourceService {
   async remove(id) {
     await api.delete(`${this.endpoint}${id}/`);
   }
+
+  /** GET de uma sub-acao de detalhe (ex.: `/commands/{id}/codes/`). */
+  async detailAction(id, actionPath) {
+    const { data } = await api.get(`${this.endpoint}${id}/${actionPath}/`, this.requestConfig);
+    return data;
+  }
 }

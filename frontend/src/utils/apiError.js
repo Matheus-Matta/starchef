@@ -79,7 +79,7 @@ export function normalizeApiError(err) {
   const hasFieldErrors = Object.keys(fieldErrors).length > 0;
   if (!generalMessage) {
     generalMessage = hasFieldErrors
-      ? "Corrija os campos destacados e tente novamente."
+      ? [...new Set(Object.values(fieldErrors).filter(Boolean))].join(" ")
       : STATUS_MESSAGES[status] || "Não foi possível concluir a operação.";
   }
 

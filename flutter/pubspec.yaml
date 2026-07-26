@@ -37,6 +37,9 @@ dependencies:
   http: ^1.6.0
   flutter_secure_storage: ^10.3.1
   flutter_svg: ^2.3.0
+  window_manager: ^0.5.2
+  # Verificação offline da senha do caixa (PBKDF2-HMAC-SHA256, formato do Django).
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

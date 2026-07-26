@@ -1,20 +1,19 @@
-const ACCESS_TOKEN_KEY = "starchef.access";
-const REFRESH_TOKEN_KEY = "starchef.refresh";
+// Os tokens JWT ficam em cookies httpOnly (não legíveis por JS, por segurança).
+// O JS só enxerga a flag `sc_session` (legível) que sinaliza sessão ativa.
+const SESSION_FLAG = "sc_session";
 
-export function getAccessToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+export function getCookie(name) {
+  const escaped = name.replace(/([.$?*|{}()[\]\\/+^])/g, "\\$1");
+  const match = document.cookie.match(new RegExp("(?:^|; )" + escaped + "=([^;]*)"));
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+/** Há sessão ativa? (flag legível gravada pelo backend no login). */
+export function hasSession() {
+  return Boolean(getCookie(SESSION_FLAG));
 }
 
-export function setTokens({ access, refresh }) {
-  if (access) localStorage.setItem(ACCESS_TOKEN_KEY, access);
-  if (refresh) localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
-}
-
-export function clearTokens() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+/** Remove a flag de sessão localmente (os cookies httpOnly o backend limpa no logout). */
+export function clearSession() {
+  document.cookie = `${SESSION_FLAG}=; Max-Age=0; path=/`;
 }

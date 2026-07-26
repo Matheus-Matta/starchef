@@ -93,6 +93,7 @@ class RecipeSerializer(TenantModelSerializer):
 
 class ProductSerializer(TenantModelSerializer):
     category_name = serializers.SerializerMethodField()
+    sector_name = serializers.CharField(source="sector.name", read_only=True, default=None)
     current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     variations = ProductVariationSerializer(many=True, read_only=True)
     recipe = RecipeSerializer(read_only=True)
@@ -100,7 +101,10 @@ class ProductSerializer(TenantModelSerializer):
     addons = serializers.SerializerMethodField()
 
     def get_addons(self, obj):
-        return [{"id": addon.id, "name": addon.name, "price": addon.price} for addon in obj.addons.all()]
+        return [
+            {"id": addon.id, "name": addon.name, "price": addon.price, "is_active": addon.is_active}
+            for addon in obj.addons.all()
+        ]
 
     class Meta:
         model = Product
@@ -109,6 +113,11 @@ class ProductSerializer(TenantModelSerializer):
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category_id else "Sem categoria"
+
+    def validate_sector(self, value):
+        if value and self.instance and value.branch_id != self.instance.branch_id:
+            raise serializers.ValidationError("O setor deve pertencer à mesma filial do produto.")
+        return value
 
 
 class IngredientSerializer(TenantModelSerializer):
@@ -168,7 +177,7 @@ class PublicMenuProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "name", "description", "image", "category", "category_name", "current_price", "variations", "allows_addons", "allows_notes"]
+        fields = ["id", "name", "description", "image", "category", "category_name", "current_price", "variations", "allows_addons", "allows_notes", "requires_variation"]
 
 
 class PublicMenuItemSerializer(serializers.ModelSerializer):

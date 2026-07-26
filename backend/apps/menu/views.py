@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.core.modules import MODULE_ECOMMERCE
@@ -25,7 +26,7 @@ from apps.menu.serializers import (
 class ProductCategoryViewSet(BaseTenantViewSet):
     serializer_class = ProductCategorySerializer
     queryset = ProductCategory.objects.select_related("restaurant", "branch", "parent").all()
-    filterset_fields = ["restaurant", "branch", "parent", "is_active"]
+    filterset_fields = ["parent", "is_active"]
     search_fields = ["name"]
     ordering_fields = ["display_order", "name", "created_at"]
     ordering = ["display_order", "name"]
@@ -33,13 +34,11 @@ class ProductCategoryViewSet(BaseTenantViewSet):
 
 class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
-    queryset = Product.objects.select_related("restaurant", "branch", "category").prefetch_related("variations").all()
+    queryset = Product.objects.select_related("restaurant", "branch", "category", "sector").prefetch_related("variations").all()
     filterset_fields = [
-        "restaurant",
-        "branch",
         "category",
         "product_type",
-        "production_sector",
+        "production_sector", "sector",
         "is_active",
         "available_for_table",
         "available_for_counter",
@@ -59,7 +58,10 @@ class ProductViewSet(BaseTenantViewSet):
         product = self.get_object()
         addon = self._get_addon(request)
         addon.products.add(product)
-        return Response({"id": addon.id, "name": addon.name, "price": addon.price}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"id": addon.id, "name": addon.name, "price": addon.price, "is_active": addon.is_active},
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=["post"], url_path="unlink-addon")
     def unlink_addon(self, request, pk=None):
@@ -73,7 +75,7 @@ class ProductViewSet(BaseTenantViewSet):
 class ProductAddonViewSet(BaseTenantViewSet):
     serializer_class = ProductAddonSerializer
     queryset = ProductAddon.objects.select_related("restaurant", "branch").prefetch_related("products").all()
-    filterset_fields = ["restaurant", "branch", "production_sector", "is_active"]
+    filterset_fields = ["production_sector", "is_active"]
     search_fields = ["name"]
     ordering_fields = ["name", "price", "created_at"]
     ordering = ["name"]
@@ -82,7 +84,7 @@ class ProductAddonViewSet(BaseTenantViewSet):
 class ProductVariationViewSet(BaseTenantViewSet):
     serializer_class = ProductVariationSerializer
     queryset = ProductVariation.objects.select_related("restaurant", "branch", "product").all()
-    filterset_fields = ["restaurant", "branch", "product", "is_active"]
+    filterset_fields = ["product", "is_active"]
     search_fields = ["name", "product__name"]
 
     def perform_create(self, serializer):
@@ -99,7 +101,7 @@ class ProductVariationViewSet(BaseTenantViewSet):
 class IngredientViewSet(BaseTenantViewSet):
     serializer_class = IngredientSerializer
     queryset = Ingredient.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["restaurant", "branch", "unit", "is_active"]
+    filterset_fields = ["unit", "is_active"]
     search_fields = ["name"]
     ordering_fields = ["name", "average_cost", "minimum_stock", "created_at"]
     ordering = ["name"]
@@ -108,7 +110,7 @@ class IngredientViewSet(BaseTenantViewSet):
 class RecipeViewSet(BaseTenantViewSet):
     serializer_class = RecipeSerializer
     queryset = Recipe.objects.select_related("restaurant", "branch", "product").prefetch_related("items__ingredient").all()
-    filterset_fields = ["restaurant", "branch", "product", "is_active", "auto_deduct_stock"]
+    filterset_fields = ["product", "is_active", "auto_deduct_stock"]
     search_fields = ["product__name"]
 
     def perform_update(self, serializer):
@@ -121,7 +123,7 @@ class RecipeViewSet(BaseTenantViewSet):
 class RecipeItemViewSet(BaseTenantViewSet):
     serializer_class = RecipeItemSerializer
     queryset = RecipeItem.objects.select_related("restaurant", "branch", "recipe__product", "ingredient").all()
-    filterset_fields = ["restaurant", "branch", "recipe", "ingredient"]
+    filterset_fields = ["recipe", "ingredient"]
 
     def _recalc(self, recipe):
         from apps.menu.services import recalculate_recipe_costs
@@ -152,7 +154,7 @@ class MenuViewSet(BaseTenantViewSet):
     required_module = MODULE_ECOMMERCE  # cardapio digital
     serializer_class = MenuSerializer
     queryset = Menu.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["restaurant", "branch", "channel", "is_active"]
+    filterset_fields = ["channel", "is_active"]
     search_fields = ["name", "slug"]
 
 
@@ -160,18 +162,23 @@ class MenuItemViewSet(BaseTenantViewSet):
     required_module = MODULE_ECOMMERCE  # cardapio digital
     serializer_class = MenuItemSerializer
     queryset = MenuItem.objects.select_related("restaurant", "branch", "menu", "product").all()
-    filterset_fields = ["restaurant", "branch", "menu", "product", "is_active"]
+    filterset_fields = ["menu", "product", "is_active"]
     ordering_fields = ["display_order"]
 
 
 class PublicMenuView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    # Cardápio público: dezenas de clientes de um restaurante saem pelo mesmo IP
+    # (WiFi/NAT), então o limite global `anon` (60/min) os bloquearia. Escopo
+    # próprio, bem mais generoso.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "public_menu"
 
     def get(self, request, slug):
         try:
             menu = Menu.objects.get(slug=slug, is_active=True)
         except Menu.DoesNotExist:
-            return Response({"detail": "Menu not found."}, status=404)
+            return Response({"detail": "Cardápio não encontrado."}, status=404)
         return Response(PublicMenuSerializer(menu).data)
 

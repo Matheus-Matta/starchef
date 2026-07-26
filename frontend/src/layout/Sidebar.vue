@@ -1,8 +1,11 @@
 <template>
-  <aside class="sidebar" :style="{ width: collapsed ? 'var(--sidebar-w-mini)' : 'var(--sidebar-w)' }">
+  <aside class="sidebar" :class="{ 'sidebar--mobile-open': mobileOpen }" :style="{ width: collapsed ? 'var(--sidebar-w-mini)' : 'var(--sidebar-w)' }">
     <div class="sidebar__brand" :style="brandStyle">
       <img :src="logoUrl" width="34" height="34" alt="StarChef" />
       <span v-if="!collapsed" class="sidebar__brand-name">Star<span>Chef</span></span>
+      <button class="sidebar__close" type="button" aria-label="Fechar menu" @click="$emit('close')">
+        <AppIcon name="x" :size="20" />
+      </button>
     </div>
 
     <div v-if="!collapsed" class="sidebar__scope-picker">
@@ -71,6 +74,25 @@
         <span>{{ accountName }}</span>
         <small>{{ accessLabel }}</small>
       </div>
+      <div class="sidebar__mobile-profile">
+        <div class="sidebar__mobile-user">
+          <span class="sidebar__mobile-avatar">{{ userInitial }}</span>
+          <span class="sidebar__mobile-user-copy">
+            <strong>{{ displayName }}</strong>
+            <small>{{ user?.email || user?.username }}</small>
+          </span>
+        </div>
+        <div class="sidebar__mobile-profile-actions">
+          <button type="button" @click="$emit('toggle-theme')">
+            <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="17" />
+            {{ theme === "dark" ? "Tema claro" : "Tema escuro" }}
+          </button>
+          <button class="sidebar__mobile-logout" type="button" @click="$emit('logout')">
+            <AppIcon name="log-out" :size="17" />
+            Sair
+          </button>
+        </div>
+      </div>
     </div>
   </aside>
 </template>
@@ -78,8 +100,9 @@
 <script setup>
 import { computed, ref } from "vue";
 
-import logoUrl from "../assets/logo-mark.svg";
 import AppIcon from "../components/AppIcon.vue";
+
+const logoUrl = "/logoicon.png";
 
 const props = defineProps({
   active: { type: String, default: "painel" },
@@ -89,9 +112,11 @@ const props = defineProps({
   restaurants: { type: Array, default: () => [] },
   selectedRestaurantId: { type: String, default: "" },
   scope: { type: Object, default: null },
+  mobileOpen: { type: Boolean, default: false },
+  theme: { type: String, default: "light" },
 });
 
-const emit = defineEmits(["navigate", "scope-change"]);
+const emit = defineEmits(["navigate", "scope-change", "close", "toggle-theme", "logout"]);
 const scopeOpen = ref(false);
 
 const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin"));
@@ -110,6 +135,8 @@ const accountName = computed(() => props.user?.account_name || "StarChef");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
 const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todas as filiais");
 const accessLabel = computed(() => (canSeeAllRestaurants.value ? "Acesso administrativo" : "Escopo restrito"));
+const displayName = computed(() => props.user?.name || props.user?.username || "Operador");
+const userInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || "U");
 
 // Secoes da sidebar. As secoes marcadas com `module` pertencem a um Modulo
 // opcional: quando a conta nao tem o modulo, a SECAO INTEIRA some (nao so os itens).
@@ -119,7 +146,8 @@ const groups = computed(() =>
     {
       label: "Principal",
       items: [
-        { id: "painel", label: "Painel", icon: "layout-dashboard" },
+        { id: "painel", label: "Home", icon: "home" },
+        { id: "relatorio-geral", label: "Relatório geral", icon: "layout-dashboard" },
         { id: "pedidos", label: "Pedidos", icon: "receipt-text", badge: formatBadge(props.stats.ordersOpen) },
         { id: "kds", label: "KDS Cozinha", icon: "soup", badge: formatBadge(props.stats.kitchenOpen), badgeTone: "warning" },
       ],
@@ -129,7 +157,8 @@ const groups = computed(() =>
       items: [
         { id: "kds-estacoes", label: "Estacoes KDS", icon: "soup" },
         { id: "sla", label: "SLAs", icon: "timer" },
-        { id: "mesas", label: "Mesas & Comandas", icon: "armchair" },
+        { id: "mesas", label: "Mesas", icon: "armchair" },
+        { id: "comandas", label: "Comandas", icon: "receipt" },
         canUseCash.value ? { id: "caixa", label: "Caixa", icon: "wallet" } : null,
         canUseCash.value ? { id: "formas-pagamento", label: "Formas de pagamento", icon: "credit-card" } : null,
         { id: "clientes", label: "Clientes", icon: "users" },
@@ -180,7 +209,6 @@ const groups = computed(() =>
       items: [
         canManage.value ? { id: "relatorios", label: "Relatorios", icon: "bar-chart-3" } : null,
         canSeeAllRestaurants.value ? { id: "restaurantes", label: "Restaurantes", icon: "store" } : null,
-        canSeeAllRestaurants.value ? { id: "filiais", label: "Filiais", icon: "map-pin" } : null,
         canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
         canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
         canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
@@ -458,9 +486,73 @@ function selectScope(restaurantId) {
   color: var(--text-muted);
 }
 
-@media (max-width: 760px) {
+.sidebar__mobile-profile {
+  display: none;
+}
+
+/* Botão de fechar o drawer — só aparece no modo mobile (media query abaixo). */
+.sidebar__close {
+  display: none;
+  margin-left: auto;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar__close:hover {
+  background: var(--nav-item-hover);
+  color: var(--text-strong);
+}
+
+/* ── Mobile / tablet-retrato: sidebar vira um drawer off-canvas ──────────────
+   Fica fora do fluxo (position: fixed) e desliza da esquerda. O AppLayout
+   controla a abertura (mobileOpen) e renderiza o backdrop. */
+@media (max-width: 900px) {
   .sidebar {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100dvh;
+    width: min(86vw, 320px) !important;
+    transform: translateX(-100%);
+    transition: transform var(--dur-base) var(--ease-out);
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
   }
+
+  .sidebar--mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar__close {
+    display: inline-flex;
+  }
+
+  .sidebar__footer { display: flex; flex-direction: column; gap: 10px; }
+  .sidebar__mobile-profile { display: flex; flex-direction: column; gap: 10px; }
+  .sidebar__mobile-user { display: flex; align-items: center; gap: 10px; padding: 4px 2px; min-width: 0; }
+  .sidebar__mobile-avatar {
+    width: 38px; height: 38px; flex-shrink: 0; display: grid; place-items: center;
+    border-radius: 50%; background: var(--brand); color: #fff;
+    font: var(--weight-extra) 14px/1 var(--font-sans);
+  }
+  .sidebar__mobile-user-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .sidebar__mobile-user-copy strong { color: var(--text-strong); font-size: 13px; }
+  .sidebar__mobile-user-copy small { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar__mobile-profile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .sidebar__mobile-profile-actions button {
+    height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface-card); color: var(--text-body);
+    font: var(--weight-bold) 12px/1 var(--font-sans);
+  }
+  .sidebar__mobile-profile-actions .sidebar__mobile-logout { color: var(--danger-text); background: var(--danger-subtle); }
 }
 </style>

@@ -66,6 +66,19 @@ class Order(TenantModel):
         (PAYMENT_REFUNDED, "Refunded"),
     ]
 
+    # Delivery cycle — só relevante para pedidos de entrega (módulo Entrega).
+    DELIVERY_PENDING = "pending"
+    DELIVERY_OUT = "out_for_delivery"
+    DELIVERY_DELIVERED = "delivered"
+    DELIVERY_FAILED = "failed"
+
+    DELIVERY_STATUS_CHOICES = [
+        (DELIVERY_PENDING, "Pending"),
+        (DELIVERY_OUT, "Out for delivery"),
+        (DELIVERY_DELIVERED, "Delivered"),
+        (DELIVERY_FAILED, "Failed"),
+    ]
+
     sequence = models.PositiveIntegerField()
     order_type = models.CharField(max_length=24, choices=TYPE_CHOICES)
     table = models.ForeignKey(
@@ -128,6 +141,12 @@ class Order(TenantModel):
         max_length=20,
         choices=PAYMENT_STATUS_CHOICES,
         default=PAYMENT_PENDING,
+        db_index=True,
+    )
+    delivery_status = models.CharField(
+        max_length=24,
+        choices=DELIVERY_STATUS_CHOICES,
+        default=DELIVERY_PENDING,
         db_index=True,
     )
     general_notes = models.TextField(blank=True)
@@ -222,6 +241,16 @@ class OrderItem(TenantModel):
     customer_note = models.TextField(blank=True)
     production_sector = models.CharField(max_length=20, db_index=True)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    # Coluna atual no quadro do KDS (Kanban). Nulo = ainda não posicionado
+    # (o card aparece na coluna de entrada da estação). Ref. por string p/ evitar
+    # ciclo de import entre orders <-> kitchen.
+    kds_column = models.ForeignKey(
+        "kitchen.KdsColumn",
+        null=True,
+        blank=True,
+        related_name="order_items",
+        on_delete=models.SET_NULL,
+    )
     launched_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

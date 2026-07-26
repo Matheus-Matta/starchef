@@ -13,21 +13,28 @@
       />
     </div>
 
-    <p v-if="!rows.length" class="ritems__empty">
-      {{ readonly ? "Nenhum ingrediente cadastrado." : "Nenhum ingrediente ainda. Clique em \"Adicionar ingrediente\"." }}
-    </p>
-
-    <ul v-else class="ritems__list">
-      <li v-for="row in rows" :key="row.id" class="ritems__item">
-        <span class="ritems__name">{{ row.ingredient_name || ingredientLabel(row.ingredient) }}</span>
-        <span class="ritems__qty">{{ formatQuantity(row.quantity) }} {{ row.unit }}</span>
-        <strong class="ritems__cost">{{ money(row.total_cost) }}</strong>
-        <div v-if="!readonly" class="ritems__actions">
-          <Button icon="pi pi-pencil" text rounded aria-label="Editar item" @click="openEdit(row)" />
-          <Button icon="pi pi-trash" text rounded severity="danger" aria-label="Remover item" @click="confirmRemove(row)" />
+    <DataTable :value="rows" data-key="id" class="ritems__table" :row-hover="false" responsive-layout="scroll">
+      <Column field="ingredient" header="Ingrediente">
+        <template #body="{ data }"><strong class="ritems__name">{{ data.ingredient_name || ingredientLabel(data.ingredient) }}</strong></template>
+      </Column>
+      <Column header="Quantidade" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }" :style="{ width: '130px' }">
+        <template #body="{ data }">{{ formatQuantity(data.quantity) }} {{ data.unit }}</template>
+      </Column>
+      <Column header="Custo" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }" :style="{ width: '130px' }">
+        <template #body="{ data }">{{ money(data.total_cost) }}</template>
+      </Column>
+      <Column v-if="!readonly" header="" :body-style="{ textAlign: 'right', width: '90px' }" :style="{ width: '90px' }">
+        <template #body="{ data }">
+          <Button icon="pi pi-pencil" text rounded aria-label="Editar item" @click="openEdit(data)" />
+          <Button icon="pi pi-trash" text rounded severity="danger" aria-label="Remover item" @click="confirmRemove(data)" />
+        </template>
+      </Column>
+      <template #empty>
+        <div class="ritems__empty">
+          {{ readonly ? "Nenhum ingrediente cadastrado." : "Nenhum ingrediente ainda. Clique em \"Adicionar ingrediente\"." }}
         </div>
-      </li>
-    </ul>
+      </template>
+    </DataTable>
 
     <div v-if="rows.length" class="ritems__total">
       <span>Custo estimado</span>
@@ -89,6 +96,8 @@ import { computed, onMounted, ref } from "vue";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
 import InputNumber from "primevue/inputnumber";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
 import { useConfirm } from "primevue/useconfirm";
 import { useToast } from "primevue/usetoast";
 
@@ -247,25 +256,38 @@ onMounted(loadIngredients);
 </script>
 
 <style scoped>
-.ritems { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.ritems { display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-sunken); box-shadow: var(--shadow-sm); }
 .ritems__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ritems__head h3 { display: flex; align-items: center; gap: 8px; color: var(--text-strong); font: var(--weight-extra) 14px/1.2 var(--font-sans); }
 .ritems__head small { color: var(--text-muted); font: var(--weight-semibold) 12px/1 var(--font-sans); }
-.ritems__empty { color: var(--text-muted); font: var(--weight-medium) 13px/1.5 var(--font-sans); }
+.ritems__empty { color: var(--text-muted); font: var(--weight-medium) 13px/1.5 var(--font-sans); text-align: center; padding: 8px 0; }
+.ritems__name { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-table); }
 
-.ritems__list { display: flex; flex-direction: column; }
-.ritems__item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-subtle); }
-.ritems__item:first-child { border-top: none; }
-.ritems__name { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ritems__qty { color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); white-space: nowrap; }
-.ritems__cost { color: var(--success-text); font: var(--weight-bold) 13px/1 var(--font-sans); white-space: nowrap; }
-.ritems__actions { display: flex; align-items: center; gap: 2px; }
+/* Mesmo layout das variações/adicionais: DataTable com linhas mais claras */
+.ritems__table :deep(.p-datatable-thead > tr > th) {
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--text-subtle);
+  border-color: var(--border);
+  font: var(--weight-bold) 10.5px/1 var(--font-table);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+.ritems__table :deep(.p-datatable-thead > tr > th.dt-col-right .p-column-header-content) { justify-content: flex-end; }
+/* Linhas como "cartões" separados: gap entre elas + cantos arredondados */
+.ritems__table :deep(.p-datatable-table) { border-collapse: separate; border-spacing: 0 6px; }
+.ritems__table :deep(.p-datatable-tbody > tr > td) {
+  padding: 9px 12px;
+  border: none;
+  background: var(--surface-card);
+  font: var(--weight-medium) 13.5px/1.3 var(--font-table);
+  color: var(--text-body);
+}
+.ritems__table :deep(.p-datatable-tbody > tr > td:first-child) { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.ritems__table :deep(.p-datatable-tbody > tr > td:last-child) { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+.ritems__table :deep(.p-datatable-emptymessage > td) { border: none; background: transparent; }
 
 .ritems__total { display: flex; align-items: center; justify-content: space-between; padding-top: 12px; border-top: 2px solid var(--border); }
 .ritems__total span { color: var(--text-muted); font: var(--weight-bold) 12px/1 var(--font-sans); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .ritems__total strong { color: var(--text-strong); font: var(--weight-extra) 16px/1 var(--font-sans); }
-
-@media (max-width: 760px) {
-  .ritems__item { grid-template-columns: 1fr auto; }
-}
 </style>

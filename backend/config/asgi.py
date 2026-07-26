@@ -10,6 +10,7 @@ configure_django_settings()
 django.setup()
 
 from apps.core.jwt_middleware import JwtAuthMiddlewareStack  # noqa: E402
+from apps.core.ws_origin import build_ws_origin_validator  # noqa: E402
 from config.routing import websocket_urlpatterns  # noqa: E402
 
 django_asgi_app = get_asgi_application()
@@ -19,6 +20,10 @@ if settings.DEBUG:
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": JwtAuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+        # Web: valida Origin contra ALLOWED_HOSTS (bloqueia CSWSH). Nativo (sem
+        # Origin, ex.: desktop Flutter): permitido, autentica por token.
+        "websocket": build_ws_origin_validator(
+            JwtAuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+        ),
     }
 )

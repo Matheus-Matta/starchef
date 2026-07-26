@@ -18,6 +18,7 @@ class CustomerAddressSerializer(TenantModelSerializer):
 
 class CustomerSerializer(TenantModelSerializer):
     addresses = CustomerAddressSerializer(many=True, read_only=True)
+    address = serializers.DictField(write_only=True, required=False)
 
     class Meta:
         model = Customer
@@ -33,6 +34,23 @@ class CustomerSerializer(TenantModelSerializer):
         return format_cpf(value)
 
     def validate(self, attrs):
+        address = attrs.get("address")
+        address_fields = {"street", "number", "complement", "district", "city", "state", "zip_code", "reference"}
+        has_address = bool(address and any(str(address.get(key, "")).strip() for key in address_fields))
+        if has_address:
+            required = {"street": "Rua", "city": "Cidade", "state": "UF"}
+            errors = {
+                key: f"{label} é obrigatório."
+                for key, label in required.items()
+                if not str(address.get(key, "")).strip()
+            }
+            state = str(address.get("state", "")).strip()
+            if state and len(state) != 2:
+                errors["state"] = "Informe a UF com 2 letras."
+            if errors:
+                raise serializers.ValidationError({"address": errors})
+        elif address is not None:
+            attrs.pop("address")
         attrs = super().validate(attrs)
         # CPF único por conta quando informado (evita duplicidade silenciosa).
         document = attrs.get("document")
@@ -43,6 +61,39 @@ class CustomerSerializer(TenantModelSerializer):
                 if strip_cpf(other.document) == digits and (self.instance is None or other.pk != self.instance.pk):
                     raise serializers.ValidationError({"document": "Já existe um cliente com este CPF."})
         return attrs
+
+    def _save_primary_address(self, customer, address):
+        if not address:
+            return
+        address = dict(address)
+        address["state"] = str(address.get("state", "")).strip().upper()
+        address.setdefault("label", "Principal")
+        address["is_default"] = True
+        defaults = {
+            **address,
+            "account": customer.account,
+            "restaurant": customer.restaurant,
+            "branch": customer.branch,
+        }
+        current = customer.addresses.filter(is_default=True).first() or customer.addresses.first()
+        if current:
+            for key, value in defaults.items():
+                setattr(current, key, value)
+            current.save()
+        else:
+            CustomerAddress.objects.create(customer=customer, **defaults)
+
+    def create(self, validated_data):
+        address = validated_data.pop("address", None)
+        customer = super().create(validated_data)
+        self._save_primary_address(customer, address)
+        return customer
+
+    def update(self, instance, validated_data):
+        address = validated_data.pop("address", None)
+        customer = super().update(instance, validated_data)
+        self._save_primary_address(customer, address)
+        return customer
 
     def _can_view_sensitive(self):
         request = self.context.get("request")
@@ -56,6 +107,8 @@ class CustomerSerializer(TenantModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        primary = instance.addresses.filter(is_default=True).first() or instance.addresses.first()
+        data["address"] = CustomerAddressSerializer(primary, context=self.context).data if primary else None
         # Mascara CPF/telefone nas LISTAGENS quando o perfil não tem permissão
         # de dados sensíveis (STC-044). No detalhe/edição os dados são exibidos.
         view = self.context.get("view")

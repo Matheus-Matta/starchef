@@ -30,11 +30,43 @@ export const ORDER_STATUS_LABELS = {
   refunded: "Estornado",
 };
 
+// Status de preparação (cozinha) — Order.production_status.
+export const PRODUCTION_STATUS_LABELS = {
+  idle: "Aguardando",
+  sent_to_kitchen: "Na cozinha",
+  preparing: "Preparando",
+  partially_ready: "Parcial",
+  ready: "Pronto",
+  delivered: "Entregue",
+};
+
+// Status de pagamento — Order.payment_status.
+export const PAYMENT_STATUS_LABELS = {
+  pending: "Pendente",
+  partial: "Parcial",
+  paid: "Pago",
+  refunded: "Estornado",
+};
+
+// Status de entrega — Order.delivery_status (só com módulo de entrega).
+export const DELIVERY_STATUS_LABELS = {
+  pending: "Aguardando",
+  out_for_delivery: "A caminho",
+  delivered: "Entregue",
+  failed: "Falhou",
+};
+
 export const TABLE_STATUS_LABELS = {
   free: "Livre",
   occupied: "Ocupada",
   reserved: "Reservada",
   cleaning: "Limpeza",
+};
+
+// Status da comanda reutilizavel — Command.status.
+export const COMMAND_STATUS_LABELS = {
+  free: "Livre",
+  occupied: "Em uso",
 };
 
 export const PROFILE_TYPE_LABELS = {
@@ -46,6 +78,10 @@ export const PROFILE_TYPE_LABELS = {
   cashier: "Caixa",
   driver: "Entregador",
 };
+
+export const PROFILE_TYPE_OPTIONS = Object.entries(PROFILE_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
 
 export const MOVEMENT_TYPE_LABELS = {
   in: "Entrada",
@@ -84,6 +120,12 @@ export const STOCK_TIMING_LABELS = { payment: "No pagamento", kitchen: "Na cozin
 // Espelham PaymentMethod.TYPE_CHOICES / Printer.DRIVER_CHOICES do backend.
 export const PAYMENT_METHOD_TYPE_LABELS = { cash: "Dinheiro", card: "Cartao", pix: "PIX", voucher: "Voucher", other: "Outro" };
 export const PRINTER_DRIVER_LABELS = { browser: "Navegador", escpos: "ESC/POS" };
+export const PRINTER_CONNECTION_OPTIONS = [
+  { label: "Windows / USB", value: "windows" },
+  { label: "Rede TCP/IP", value: "network" },
+  { label: "Porta serial", value: "serial" },
+];
+export const PRINTER_CONNECTION_LABELS = Object.fromEntries(PRINTER_CONNECTION_OPTIONS.map((o) => [o.value, o.label]));
 
 /* ── Listas de opcoes para formularios ───────────────────────────────── */
 export const SECTOR_OPTIONS = [

@@ -1,7 +1,15 @@
 from django.contrib import admin
 
 from apps.core.admin_mixins import TenantModelAdmin, TenantTabularInline
-from apps.payments.models import CashMovement, CashRegister, Payment, PaymentMethod
+from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+
+
+@admin.register(CashStation)
+class CashStationAdmin(TenantModelAdmin):
+    list_display = ("name", "code", "restaurant", "is_active", "cash_limit")
+    list_filter = ("account", "restaurant", "is_active")
+    search_fields = ("name", "code")
+    filter_horizontal = ("operators",)
 
 
 @admin.register(PaymentMethod)
@@ -23,7 +31,7 @@ class CashMovementInline(TenantTabularInline):
 
 @admin.register(CashRegister)
 class CashRegisterAdmin(TenantModelAdmin):
-    list_display = ("branch", "account", "status", "opened_by", "opened_at", "expected_amount", "actual_amount")
+    list_display = ("cash_station", "restaurant", "status", "opened_by", "opened_at", "expected_amount", "actual_amount")
     list_filter = ("account", "restaurant", "branch", "status")
     inlines = [CashMovementInline]
 

@@ -14,6 +14,7 @@ class AuthController extends ChangeNotifier {
   String? errorMessage;
 
   bool get isAuthenticated => session != null;
+  AuthRepository get repository => _repository;
 
   Future<void> initialize() async {
     session = await _repository.restoreSession();

@@ -1,0 +1,970 @@
+<template>
+  <div class="rpro">
+    <!-- ── Cabeçalho: título + ações (Export / Import / ação primária) ── -->
+    <header class="rpro__head">
+      <div class="rpro__head-copy">
+        <h1>{{ title }}</h1>
+        <p>{{ total }} {{ total === 1 ? "registro" : "registros" }}</p>
+      </div>
+      <div class="rpro__head-actions">
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Exportar')">
+          <i class="pi pi-upload" /> Export
+        </button>
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Importar')">
+          <i class="pi pi-download" /> Import
+        </button>
+        <button
+          v-for="headerAction in headerActions"
+          :key="headerAction.key"
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          @click="runHeaderAction(headerAction)"
+        >
+          <i :class="headerAction.icon || 'pi pi-bolt'" /> {{ headerAction.label }}
+        </button>
+        <button v-if="primaryAction" class="rpro-btn rpro-btn--primary" type="button" @click="runPrimary">
+          <i :class="primaryAction.icon || 'pi pi-plus'" /> {{ primaryAction.label }}
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Toolbar: busca + período · mais filtros + engrenagem ───────── -->
+    <button class="rpro__mobile-filter-trigger" type="button" @click="mobileFiltersOpen = true">
+      <i class="pi pi-sliders-h" />
+      <span>Filtros e opções</span>
+      <small v-if="activeFilterCount">{{ activeFilterCount }}</small>
+    </button>
+
+    <div class="rpro__toolbar" :class="{ 'rpro__toolbar--mobile-open': mobileFiltersOpen }">
+      <div class="rpro__mobile-drawer-head">
+        <div><span>Organizar tabela</span><h2>Filtros e opções</h2></div>
+        <button type="button" aria-label="Fechar filtros" @click="mobileFiltersOpen = false"><i class="pi pi-times" /></button>
+      </div>
+      <div class="rpro__toolbar-left">
+        <IconField icon-position="left" class="rpro__search">
+          <InputIcon class="pi pi-search" />
+          <InputText v-model="search" :placeholder="`Buscar em ${title.toLowerCase()}...`" @keyup.enter="loadRows" />
+        </IconField>
+        <Calendar
+          v-if="dateField"
+          :model-value="dateRange"
+          class="rpro__daterange"
+          selection-mode="range"
+          date-format="dd/mm/yy"
+          :manual-input="false"
+          show-icon
+          icon-display="input"
+          :placeholder="dateField.label || 'Período'"
+          @update:model-value="onDateRange"
+        />
+      </div>
+      <div class="rpro__toolbar-right">
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Mais filtros')">
+          <i class="pi pi-sliders-h" /> Mais filtros
+        </button>
+        <button class="rpro-btn rpro-btn--icon" type="button" aria-label="Configurar colunas" @click="soon('Configurações da tabela')">
+          <i class="pi pi-cog" />
+        </button>
+      </div>
+      <div class="rpro__mobile-file-actions">
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Exportar')"><i class="pi pi-upload" /> Exportar</button>
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Importar')"><i class="pi pi-download" /> Importar</button>
+        <button
+          v-for="headerAction in headerActions"
+          :key="`mobile-${headerAction.key}`"
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          @click="runHeaderAction(headerAction)"
+        >
+          <i :class="headerAction.icon || 'pi pi-bolt'" /> {{ headerAction.label }}
+        </button>
+      </div>
+      <div class="rpro__mobile-drawer-footer">
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="clearMobileFilters">Limpar</button>
+        <button class="rpro-btn rpro-btn--primary" type="button" @click="applyMobileFilters">Aplicar filtros</button>
+      </div>
+    </div>
+
+    <div v-if="error" class="rpro__error"><i class="pi pi-exclamation-triangle" /> {{ error }}</div>
+
+    <!-- ── Painel da tabela ───────────────────────────────────────────── -->
+    <section class="rpro__panel">
+      <!-- Barra de ações em massa (aparece quando há seleção) -->
+      <div v-if="selection.length && bulkActions.length" class="rpro__bulkbar">
+        <span class="rpro__bulkbar-count">
+          <i class="pi pi-check-circle" /> {{ selection.length }} {{ selection.length === 1 ? "selecionada" : "selecionadas" }}
+          <button
+            v-if="selection.length < total"
+            class="rpro__bulkbar-all"
+            type="button"
+            :disabled="selectingAll"
+            @click="selectAllMatching"
+          >
+            {{ selectingAll ? "Selecionando..." : `Selecionar todos os ${total}` }}
+          </button>
+        </span>
+        <div class="rpro__bulkbar-actions">
+          <button
+            v-for="bulkAction in bulkActions"
+            :key="bulkAction.key"
+            class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+            type="button"
+            @click="runBulkAction(bulkAction)"
+          >
+            <i :class="bulkAction.icon || 'pi pi-bolt'" /> {{ bulkAction.label }}
+          </button>
+          <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="selection = []">Limpar</button>
+        </div>
+      </div>
+
+      <DataTable
+        v-model:selection="selection"
+        :value="rows"
+        data-key="id"
+        class="rpro__table"
+        :loading="loading"
+        :row-hover="true"
+        scrollable
+        scroll-height="flex"
+        removable-sort
+        :sort-field="sortField"
+        :sort-order="sortOrder"
+        @sort="onSort"
+        @row-click="onRowClick"
+        @dblclick="onTableDblClick"
+      >
+        <Column selection-mode="multiple" :header-style="{ width: '46px' }" :body-style="{ width: '46px' }" />
+
+        <Column
+          v-for="column in visibleColumns"
+          :key="column.key"
+          :field="column.key"
+          :header="column.label"
+          :sortable="column.sortable !== false"
+          :body-style="columnBodyStyle(column)"
+          :header-class="column.align === 'right' ? 'dt-col-right' : undefined"
+        >
+          <template #body="{ data }">
+            <span v-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+            <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
+            <span v-else-if="column.type === 'date'" class="rpro-muted">{{ dateTime(value(data, column)) }}</span>
+            <span v-else-if="column.type === 'boolean'" class="rpro-chip" :data-tone="value(data, column) ? 'success' : 'danger'">{{ value(data, column) ? "Ativo" : "Inativo" }}</span>
+            <span v-else class="rpro-cell">{{ label(value(data, column), column.map) }}</span>
+          </template>
+        </Column>
+
+        <Column :header-style="{ width: '64px' }" :body-style="{ width: '64px', textAlign: 'right' }" :sortable="false">
+          <template #body="{ data }">
+            <div class="rpro__row-actions">
+              <button class="rpro__row-btn" type="button" aria-label="Ações" aria-haspopup="true" @click.stop="openRowMenu($event, data)">
+                <i class="pi pi-ellipsis-h" />
+              </button>
+            </div>
+          </template>
+        </Column>
+
+        <template #empty>
+          <div class="rpro__empty">
+            <i class="pi pi-inbox" />
+            <strong>Nenhum registro encontrado</strong>
+            <span>Ajuste a busca, o período ou os cartões acima.</span>
+          </div>
+        </template>
+      </DataTable>
+
+      <Menu ref="rowMenu" :model="rowMenuItems" :popup="true" />
+
+      <Dialog v-model:visible="codesVisible" modal :header="`Códigos ${codesTitle}`" :style="{ width: '360px' }">
+        <div v-if="codesLoading" class="rpro__codes rpro__codes--loading">
+          <i class="pi pi-spin pi-spinner" /> Gerando códigos…
+        </div>
+        <div v-else-if="codesData" class="rpro__codes">
+          <div class="rpro__codes-value">{{ codesData.code }}</div>
+          <img v-if="codesData.barcode_uri" :src="codesData.barcode_uri" alt="Código de barras" class="rpro__codes-barcode" />
+          <img v-if="codesData.qr_uri" :src="codesData.qr_uri" alt="QR Code" width="160" height="160" />
+          <div v-if="!codesData.barcode_uri && !codesData.qr_uri" class="rpro-muted">Sem código definido.</div>
+          <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="printCodes">
+            <i class="pi pi-print" /> Imprimir
+          </button>
+        </div>
+      </Dialog>
+
+      <Dialog v-model:visible="bulkVisible" modal header="Criar comandas em lote" :style="{ width: '420px' }">
+        <div class="rpro__bulk">
+          <label class="rpro__bulk-field">
+            <span>Restaurante</span>
+            <Dropdown
+              v-model="bulkForm.restaurant"
+              :options="bulkRestaurants"
+              option-label="trade_name"
+              option-value="id"
+              placeholder="Selecione o restaurante"
+              :loading="bulkRestaurantsLoading"
+              filter
+            />
+          </label>
+          <div class="rpro__bulk-row">
+            <label class="rpro__bulk-field">
+              <span>Número inicial</span>
+              <InputText v-model.number="bulkForm.from_number" type="number" min="1" placeholder="auto (próximo)" />
+            </label>
+            <label class="rpro__bulk-field">
+              <span>Número final</span>
+              <InputText v-model.number="bulkForm.to_number" type="number" min="1" placeholder="ex.: 200" />
+            </label>
+          </div>
+          <p class="rpro-muted rpro__bulk-hint">
+            Deixe o número inicial vazio para começar do próximo disponível. Números já existentes são pulados.
+          </p>
+        </div>
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="bulkSubmitting" @click="bulkVisible = false">
+            Cancelar
+          </button>
+          <button class="rpro-btn rpro-btn--primary" type="button" :disabled="bulkSubmitting" @click="submitBulk">
+            <i :class="bulkSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Criar
+          </button>
+        </template>
+      </Dialog>
+
+      <Dialog v-model:visible="labelsVisible" modal header="Imprimir etiquetas" :style="{ width: '380px' }">
+        <div class="rpro__labels">
+          <p class="rpro-muted">{{ selection.length }} {{ selection.length === 1 ? "item selecionado" : "itens selecionados" }}.</p>
+
+          <div class="rpro__labels-group">
+            <span class="rpro__labels-label">Tipo de código</span>
+            <div class="rpro__labels-kinds">
+              <button class="rpro-btn" :class="labelKind === 'qr' ? 'rpro-btn--primary' : 'rpro-btn--ghost'" type="button" @click="labelKind = 'qr'">
+                <i class="pi pi-qrcode" /> QR Code
+              </button>
+              <button class="rpro-btn" :class="labelKind === 'barcode' ? 'rpro-btn--primary' : 'rpro-btn--ghost'" type="button" @click="labelKind = 'barcode'">
+                <i class="pi pi-align-justify" /> Código de barras
+              </button>
+            </div>
+          </div>
+
+          <div class="rpro__labels-group">
+            <span class="rpro__labels-label">Disposição</span>
+            <div class="rpro__labels-kinds">
+              <button class="rpro-btn" :class="labelLayout === 'sheet' ? 'rpro-btn--primary' : 'rpro-btn--ghost'" type="button" @click="labelLayout = 'sheet'">
+                <i class="pi pi-th-large" /> Vários por folha
+              </button>
+              <button class="rpro-btn" :class="labelLayout === 'single' ? 'rpro-btn--primary' : 'rpro-btn--ghost'" type="button" @click="labelLayout = 'single'">
+                <i class="pi pi-file" /> Um por página
+              </button>
+            </div>
+          </div>
+
+          <label class="rpro__labels-check">
+            <input v-model="labelCutlines" type="checkbox" />
+            <span>Linhas de corte (pontilhado)</span>
+          </label>
+        </div>
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="labelsLoading" @click="labelsVisible = false">
+            Cancelar
+          </button>
+          <button class="rpro-btn rpro-btn--primary" type="button" :disabled="labelsLoading" @click="printLabels">
+            <i :class="labelsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-print'" /> Imprimir
+          </button>
+        </template>
+      </Dialog>
+
+      <!-- Paginação enxuta (Anterior · Página X de Y · Próxima) -->
+      <div class="rpro__pager">
+        <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" :disabled="page <= 1 || loading" @click="goToPage(page - 1)">
+          Anterior
+        </button>
+        <span class="rpro__pager-info">Página {{ page }} de {{ totalPages }} · {{ total }} {{ total === 1 ? "item" : "itens" }}</span>
+        <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" :disabled="page >= totalPages || loading" @click="goToPage(page + 1)">
+          Próxima
+        </button>
+      </div>
+    </section>
+  </div>
+</template>
+
+<script setup>
+/**
+ * Variante "Pro" da listagem (tela-piloto do novo padrão de tabela — mockup).
+ * Reaproveita todo o presenter `useResourceList` + `ResourceService`; só muda a
+ * apresentação: cabeçalho com ações, cartões de resumo, filtro de período,
+ * seleção em massa e paginação enxuta. Import/Export são visuais por enquanto.
+ */
+import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import Calendar from "primevue/calendar";
+import Column from "primevue/column";
+import DataTable from "primevue/datatable";
+import Dialog from "primevue/dialog";
+import Dropdown from "primevue/dropdown";
+import IconField from "primevue/iconfield";
+import InputIcon from "primevue/inputicon";
+import InputText from "primevue/inputtext";
+import Menu from "primevue/menu";
+import { useToast } from "primevue/usetoast";
+import { useConfirm } from "primevue/useconfirm";
+
+import { useResourceList } from "../composables/useResourceList";
+import { api } from "../services/api";
+import { ResourceService } from "../services/ResourceService";
+import { formatDateTime, formatMoney, mapLabel } from "../utils/format";
+import { resolveColumnValue } from "../utils/object";
+import { normalizeApiError } from "../utils/apiError";
+import { useAuthStore } from "../stores/auth";
+
+const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
+const toast = useToast();
+const confirm = useConfirm();
+
+const props = defineProps({
+  title: { type: String, required: true },
+  subtitle: { type: String, default: "" },
+  endpoint: { type: String, required: true },
+  columns: { type: Array, required: true },
+  defaultParams: { type: Object, default: () => ({}) },
+  formEnabled: { type: Boolean, default: false },
+  globalScope: { type: Boolean, default: false },
+  pro: { type: Object, default: () => ({}) },
+});
+
+const proCfg = computed(() => props.pro || {});
+const dateField = computed(() => proCfg.value.dateField || null);
+// Ação primária: explícita no config, senão "Novo" quando o recurso tem formulário.
+const primaryAction = computed(() => {
+  if (proCfg.value.primaryAction) return proCfg.value.primaryAction;
+  if (props.formEnabled) return { label: "Novo", icon: "pi pi-plus" };
+  return null;
+});
+
+// Colunas atreladas a um módulo só aparecem se a conta tem o módulo.
+const visibleColumns = computed(() => props.columns.filter((column) => auth.hasModule(column.module)));
+
+// ── Estado local dos filtros "pro" ──────────────────────────────────
+const dateRange = ref(null);
+const selection = ref([]);
+const mobileFiltersOpen = ref(false);
+
+function ymd(date) {
+  if (!(date instanceof Date)) return "";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Params de data → `<param>_after` / `<param>_before` (backend). */
+function dateParams() {
+  if (!dateField.value || !Array.isArray(dateRange.value)) return {};
+  const [start, end] = dateRange.value;
+  const params = {};
+  if (start) params[`${dateField.value.param}_after`] = ymd(start);
+  if (end) params[`${dateField.value.param}_before`] = ymd(end);
+  return params;
+}
+
+/** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
+function buildProParams() {
+  return dateParams();
+}
+
+// Presenter genérico: estado + busca + paginação server-side.
+const service = new ResourceService({ endpoint: props.endpoint, globalScope: props.globalScope });
+const {
+  rows, total, page, rowsPerPage, ordering, loading, error, search,
+  reload, goToPage, setSort,
+} = useResourceList({
+  service,
+  defaultParams: props.defaultParams,
+  buildParams: buildProParams,
+  pageSize: proCfg.value.pageSize || 25,
+});
+const loadRows = reload;
+const activeFilterCount = computed(() => Number(Boolean(search.value?.trim())) + Number(Boolean(dateRange.value?.length)));
+
+const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (rowsPerPage.value || 1))));
+
+/* ── Ordenação server-side ─────────────────────────────────────────── */
+const sortField = computed(() => (ordering.value ? ordering.value.replace(/^-/, "") : null));
+const sortOrder = computed(() => (ordering.value ? (ordering.value.startsWith("-") ? -1 : 1) : null));
+function onSort(event) {
+  setSort(event.sortField, event.sortOrder);
+}
+
+function onDateRange(value) {
+  dateRange.value = value;
+  // Aguarda a segunda data do intervalo antes de recarregar.
+  if (Array.isArray(value) && value[0] && !value[1]) return;
+  selection.value = [];
+  reload();
+}
+
+function applyMobileFilters() {
+  reload();
+  mobileFiltersOpen.value = false;
+}
+
+function clearMobileFilters() {
+  search.value = "";
+  dateRange.value = null;
+  selection.value = [];
+  reload();
+}
+
+/* ── Navegação ─────────────────────────────────────────────────────── */
+function openDetail(row) {
+  if (!row?.id) return;
+  router.push({ name: `${route.name}--view`, params: { id: row.id } });
+}
+function onRowClick(event) {
+  const target = event.originalEvent?.target;
+  // Não navega ao clicar no checkbox de seleção ou nos botões de ação.
+  if (target && target.closest(".p-checkbox, .p-selection-column, .rpro__row-actions")) return;
+  openDetail(event.data);
+}
+function runPrimary() {
+  const action = primaryAction.value;
+  if (!action) return;
+  if (action.route) router.push({ name: action.route });
+  else if (props.formEnabled) router.push({ name: `${route.name}--create` });
+}
+
+// ── Ações do cabeçalho (config `pro.headerActions`) ───────────────────
+const headerActions = computed(() => proCfg.value.headerActions || []);
+function runHeaderAction(headerAction) {
+  if (headerAction.type === "bulk-commands") openBulk();
+}
+
+// ── Ações em massa (config `pro.bulkActions`) ─────────────────────────
+const bulkActions = computed(() => proCfg.value.bulkActions || []);
+function runBulkAction(bulkAction) {
+  if (bulkAction.type === "print-codes") openLabels();
+}
+
+// Duplo clique no checkbox do CABEÇALHO → seleciona TODOS os itens do filtro
+// atual (todas as páginas), não só os da página visível.
+const selectingAll = ref(false);
+function onTableDblClick(event) {
+  const target = event.target;
+  if (!target || selectingAll.value) return;
+  if (target.closest(".p-datatable-thead") && target.closest(".p-checkbox")) {
+    selectAllMatching();
+  }
+}
+async function selectAllMatching() {
+  selectingAll.value = true;
+  try {
+    const baseParams = { ...props.defaultParams, ...buildProParams() };
+    if (search.value) baseParams.search = search.value;
+    if (ordering.value) baseParams.ordering = ordering.value;
+    const all = [];
+    let pageNum = 1;
+    // Backend limita page_size a 100 → pagina até cobrir o total.
+    for (;;) {
+      const data = await service.list({ ...baseParams, page: pageNum, page_size: 100 });
+      const results = data.results || data || [];
+      all.push(...results);
+      const count = data.count ?? all.length;
+      if (all.length >= count || results.length === 0) break;
+      pageNum += 1;
+      if (pageNum > 200) break; // trava de segurança (20k itens)
+    }
+    selection.value = all;
+    toast.add({
+      severity: "success",
+      summary: `${all.length} ${all.length === 1 ? "item selecionado" : "itens selecionados"}`,
+      detail: "Todos os itens do filtro atual (todas as páginas).",
+      life: 3000,
+    });
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível selecionar todos", detail: normalizeApiError(error).message, life: 4000 });
+  } finally {
+    selectingAll.value = false;
+  }
+}
+
+// Impressão em lote das etiquetas (QR ou código de barras) dos selecionados.
+const labelsVisible = ref(false);
+const labelsLoading = ref(false);
+const labelKind = ref("qr");
+const labelLayout = ref("sheet"); // "sheet" (vários/folha, flui p/ próxima) | "single" (um por página)
+const labelCutlines = ref(true); // linhas de corte pontilhadas
+function openLabels() {
+  if (!selection.value.length) return;
+  labelKind.value = "qr";
+  labelsVisible.value = true;
+}
+async function printLabels() {
+  if (!selection.value.length) return;
+  labelsLoading.value = true;
+  try {
+    const ids = selection.value.map((row) => row.id);
+    const { data } = await api.post(`${props.endpoint}codes-batch/`, { ids, kind: labelKind.value });
+    renderLabelsSheet(data.items || [], data.kind, { layout: labelLayout.value, cutlines: labelCutlines.value });
+    labelsVisible.value = false;
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível gerar as etiquetas", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    labelsLoading.value = false;
+  }
+}
+function renderLabelsSheet(items, kind, { layout = "sheet", cutlines = true } = {}) {
+  const win = window.open("", "_blank", "width=820,height=920");
+  if (!win) {
+    toast.add({ severity: "warn", summary: "Permita pop-ups", detail: "Libere pop-ups para imprimir as etiquetas.", life: 4000 });
+    return;
+  }
+  const single = layout === "single";
+  // Um por página → código maior; vários por folha → tamanho compacto.
+  const imgHeight = single ? (kind === "barcode" ? "120px" : "300px") : kind === "barcode" ? "48px" : "112px";
+  const border = cutlines ? "1px dashed #999" : "none";
+
+  const cards = items
+    .map(
+      (it) => `<div class="lbl">
+        <div class="lbl-n">${it.number}</div>
+        ${it.uri ? `<img class="lbl-img" src="${it.uri}"/>` : `<div class="lbl-empty">sem código</div>`}
+        <div class="lbl-c">${it.code || ""}</div>
+      </div>`,
+    )
+    .join("");
+
+  // sheet: grade que flui para a próxima página quando não cabe (page-break-inside
+  // evita cortar uma etiqueta ao meio). single: cada etiqueta ocupa uma página.
+  const layoutCss = single
+    ? `.sheet{display:block}
+       .lbl{min-height:calc(100vh - 24px);display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-after:always}
+       .lbl:last-child{page-break-after:auto}
+       .lbl-n{font-size:40px}
+       .lbl-c{font-size:16px}`
+    : `.sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+       .lbl{page-break-inside:avoid}
+       .lbl-n{font-size:18px}
+       .lbl-c{font-size:11px}`;
+
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:system-ui,sans-serif;margin:12px}
+      .lbl{border:${border};border-radius:8px;padding:10px 8px;text-align:center}
+      .lbl-n{font-weight:800;line-height:1.1}
+      .lbl-img{max-width:100%;height:${imgHeight};object-fit:contain;margin:6px 0}
+      .lbl-empty{color:#999;font-size:12px;margin:14px 0}
+      .lbl-c{font-family:ui-monospace,monospace;color:#555;letter-spacing:1px}
+      ${layoutCss}
+      @media print{@page{margin:8mm}}
+    </style></head><body>
+    <div class="sheet">${cards}</div>
+    <script>window.onload=function(){window.focus();window.print();}\x3C/script>
+    </body></html>`);
+  win.document.close();
+}
+
+// ── Diálogo "Criar em lote" (comandas) ────────────────────────────────
+const bulkVisible = ref(false);
+const bulkSubmitting = ref(false);
+const bulkRestaurants = ref([]);
+const bulkRestaurantsLoading = ref(false);
+const bulkForm = ref({ restaurant: null, from_number: null, to_number: null });
+
+async function openBulk() {
+  bulkForm.value = {
+    // Default = restaurante do seletor de topo (escopo atual), se houver.
+    restaurant: localStorage.getItem("starchef-restaurant-scope") || null,
+    from_number: null,
+    to_number: null,
+  };
+  bulkVisible.value = true;
+  if (bulkRestaurants.value.length) return;
+  bulkRestaurantsLoading.value = true;
+  try {
+    const { data } = await api.get("/restaurants/", { skipRestaurantScope: true });
+    bulkRestaurants.value = data.results || data || [];
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar os restaurantes", detail: normalizeApiError(error).message, life: 4000 });
+  } finally {
+    bulkRestaurantsLoading.value = false;
+  }
+}
+
+async function submitBulk() {
+  const { restaurant, from_number, to_number } = bulkForm.value;
+  if (!restaurant) {
+    toast.add({ severity: "warn", summary: "Selecione o restaurante", life: 3000 });
+    return;
+  }
+  if (!to_number || to_number < 1) {
+    toast.add({ severity: "warn", summary: "Informe o número final", life: 3000 });
+    return;
+  }
+  bulkSubmitting.value = true;
+  try {
+    const payload = { restaurant, to_number };
+    if (from_number) payload.from_number = from_number;
+    const { data } = await api.post(`${props.endpoint}bulk-create/`, payload);
+    toast.add({
+      severity: "success",
+      summary: "Comandas criadas",
+      detail: `${data.created} criadas${data.skipped ? `, ${data.skipped} já existiam` : ""}.`,
+      life: 4000,
+    });
+    bulkVisible.value = false;
+    reload();
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível criar em lote", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    bulkSubmitting.value = false;
+  }
+}
+
+function soon(what) {
+  toast.add({ severity: "info", summary: what, detail: "Disponível em breve.", life: 2600 });
+}
+
+/* ── Menu de ações da linha (3 pontinhos) ──────────────────────────── */
+const rowMenu = ref(null);
+const menuRow = ref(null);
+const rowMenuItems = computed(() => {
+  const items = [{ label: "Ver detalhe", icon: "pi pi-eye", command: () => openDetail(menuRow.value) }];
+  // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos".
+  for (const rowAction of proCfg.value.rowActions || []) {
+    items.push({ label: rowAction.label, icon: rowAction.icon, command: () => runRowAction(rowAction, menuRow.value) });
+  }
+  if (props.formEnabled) {
+    items.push({ label: "Editar", icon: "pi pi-pencil", command: () => goToEdit(menuRow.value) });
+    items.push({ separator: true });
+    items.push({ label: "Remover", icon: "pi pi-trash", class: "rpro-menu-danger", command: () => confirmDelete(menuRow.value) });
+  }
+  return items;
+});
+
+// ── Diálogo "Ver códigos" (QR + código de barras) ─────────────────────
+const codesVisible = ref(false);
+const codesLoading = ref(false);
+const codesData = ref(null);
+const codesTitle = ref("");
+
+async function runRowAction(rowAction, row) {
+  if (rowAction.type === "codes") return openCodes(row);
+}
+
+async function openCodes(row) {
+  codesTitle.value = row?.number ? `#${row.number}` : rowLabel(row);
+  codesData.value = null;
+  codesVisible.value = true;
+  codesLoading.value = true;
+  try {
+    codesData.value = await service.detailAction(row.id, "codes");
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar os códigos", detail: normalizeApiError(error).message, life: 4000 });
+    codesVisible.value = false;
+  } finally {
+    codesLoading.value = false;
+  }
+}
+
+function printCodes() {
+  const win = window.open("", "_blank", "width=420,height=560");
+  if (!win || !codesData.value) return;
+  const { qr_uri, barcode_uri, code } = codesData.value;
+  win.document.write(`<!doctype html><title>${codesTitle.value}</title>
+    <div style="font-family:sans-serif;text-align:center;padding:24px">
+      <h2 style="margin:0 0 4px">${codesTitle.value}</h2>
+      <div style="color:#666;margin-bottom:16px">${code || ""}</div>
+      ${barcode_uri ? `<img src="${barcode_uri}" style="max-width:100%"/>` : ""}
+      <div style="height:16px"></div>
+      ${qr_uri ? `<img src="${qr_uri}" width="180" height="180"/>` : ""}
+    </div>`);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+function openRowMenu(event, row) {
+  menuRow.value = row;
+  rowMenu.value.toggle(event);
+}
+function goToEdit(row) {
+  if (row?.id) router.push({ name: `${route.name}--edit`, params: { id: row.id } });
+}
+function rowLabel(row) {
+  return row.name || row.trade_name || row.username || row.number || `#${row.id}`;
+}
+function confirmDelete(row) {
+  if (!row?.id) return;
+  confirm.require({
+    header: "Excluir registro?",
+    message: `Tem certeza que deseja excluir "${rowLabel(row)}"? Esta ação não pode ser desfeita.`,
+    icon: "pi pi-exclamation-triangle",
+    acceptLabel: "Excluir",
+    rejectLabel: "Cancelar",
+    acceptClass: "p-button-danger",
+    accept: () => removeRow(row),
+  });
+}
+async function removeRow(row) {
+  try {
+    await service.remove(row.id);
+    toast.add({ severity: "success", summary: "Registro excluído", life: 2500 });
+    // Se a página ficou vazia após excluir, recua uma página.
+    if (rows.value.length === 1 && page.value > 1) goToPage(page.value - 1);
+    else reload();
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Não foi possível excluir", detail: normalizeApiError(err).message, life: 5000 });
+  }
+}
+
+/* ── Helpers de exibição ───────────────────────────────────────────── */
+const value = resolveColumnValue;
+const label = mapLabel;
+const money = formatMoney;
+const dateTime = formatDateTime;
+
+function columnBodyStyle(column) {
+  return { textAlign: column.align === "right" ? "right" : "left", whiteSpace: "nowrap" };
+}
+
+// Tom (cor) de cada status — subtil, funciona bem no dark.
+const STATUS_TONE = {
+  paid: "success", ready: "success", delivered: "success", issued: "success", in: "success", free: "success",
+  pending: "warning", awaiting_payment: "warning", cleaning: "warning", adjustment: "warning",
+  partial: "info", partially_ready: "info", open: "info", preparing: "info", sent_to_kitchen: "info", out_for_delivery: "info", reserved: "info",
+  refunded: "danger", cancelled: "danger", failed: "danger", error: "danger", occupied: "danger", out: "danger",
+  idle: "neutral", draft: "neutral", closed: "neutral",
+};
+function statusTone(v) {
+  return STATUS_TONE[v] || "neutral";
+}
+
+onMounted(loadRows);
+</script>
+
+<style scoped>
+.rpro {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Cabeçalho ──────────────────────────────────────────────────────── */
+.rpro__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.rpro__head-copy h1 { margin: 0; color: var(--text-strong); font: var(--weight-extra) 26px/1.15 var(--font-sans); }
+.rpro__head-copy p { margin: 4px 0 0; color: var(--text-muted); font: var(--weight-medium) 13px/1 var(--font-sans); }
+.rpro__head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── Botões ─────────────────────────────────────────────────────────── */
+.rpro-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-card); color: var(--text-body);
+  font: var(--weight-semibold) 13px/1 var(--font-sans); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.rpro-btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text-strong); }
+.rpro-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.rpro-btn .pi { font-size: 14px; }
+.rpro-btn--primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.rpro-btn--primary:hover:not(:disabled) { background: var(--brand-hover); border-color: var(--brand-hover); color: var(--on-brand); }
+.rpro-btn--ghost { background: var(--surface-card); }
+.rpro-btn--icon { width: 38px; padding: 0; }
+.rpro-btn--sm { height: 32px; padding: 0 12px; font-size: 12.5px; }
+
+/* ── Toolbar ────────────────────────────────────────────────────────── */
+.rpro__toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.rpro__toolbar-left { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; flex-wrap: wrap; }
+.rpro__toolbar-right { display: flex; align-items: center; gap: 8px; }
+.rpro__mobile-filter-trigger,
+.rpro__mobile-drawer-head,
+.rpro__mobile-file-actions,
+.rpro__mobile-drawer-footer { display: none; }
+/* Busca ocupa todo o espaço livre; período fica ao lado direito (gap de 4px). */
+.rpro__search { flex: 1 1 220px; min-width: 0; }
+.rpro__search :deep(.p-inputtext) { width: 100%; height: var(--control-h); border-radius: 4px; }
+.rpro__daterange { flex: 0 0 auto; width: 232px; }
+.rpro__daterange :deep(.p-inputtext) { height: var(--control-h); border-radius: 4px; }
+
+/* ── Erro ───────────────────────────────────────────────────────────── */
+.rpro__error {
+  display: flex; align-items: center; gap: 9px; padding: 12px 14px;
+  color: var(--danger-text); background: var(--danger-subtle);
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent); border-radius: var(--radius-md);
+  font: var(--weight-semibold) 13px/1.4 var(--font-sans);
+}
+
+/* ── Painel + tabela ────────────────────────────────────────────────── */
+.rpro__panel {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--surface-card); box-shadow: var(--shadow-sm);
+}
+
+.rpro__table { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rpro__table :deep(.p-datatable-wrapper) { flex: 1; min-height: 0; }
+.rpro__table :deep(.p-datatable-thead > tr > th) {
+  padding: 11px 12px;
+  border-color: var(--border-subtle);
+  color: var(--text-subtle);
+  background: var(--surface-sunken);
+  font: var(--weight-bold) 11.5px/1 var(--font-table);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+.rpro__table :deep(.p-datatable-tbody > tr) { background: var(--surface-card); color: var(--text-body); cursor: pointer; }
+.rpro__table :deep(.p-datatable-tbody > tr > td) {
+  padding: 11px 12px; border-color: var(--border-subtle);
+  font: var(--weight-regular) 14px/1.35 var(--font-table); color: var(--text-body);
+}
+.rpro__table :deep(.p-datatable-tbody > tr:hover) { background: var(--surface-hover); }
+.rpro__table :deep(.p-datatable-tbody > tr.p-highlight) { background: var(--brand-subtle); }
+.rpro__table :deep(.p-datatable-tbody > tr.p-datatable-emptymessage > td),
+.rpro__table :deep(.p-datatable-tbody > tr.p-datatable-emptymessage:hover) { border: none; cursor: default; background: var(--surface-card); }
+.rpro__table :deep(.dt-col-right .p-column-header-content) { justify-content: flex-end; }
+.rpro__table :deep(.p-sortable-column .p-sortable-column-icon) { width: 11px; height: 11px; font-size: 11px; margin-left: 4px; }
+
+.rpro-num { color: var(--text-strong); font-weight: var(--weight-bold); }
+.rpro-muted { color: var(--text-muted); }
+.rpro-cell { max-width: 260px; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+
+/* Status pill — subtil (tint + texto colorido), legível no light e no dark */
+.rpro-chip {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 99px;
+  border: 1px solid transparent;
+  font: var(--weight-bold) 11px/1.35 var(--font-sans); white-space: nowrap;
+  background: var(--surface-sunken); color: var(--text-muted);
+}
+.rpro-chip[data-tone="success"] { background: var(--success-subtle); color: var(--success-text); border-color: color-mix(in srgb, var(--success) 26%, transparent); }
+.rpro-chip[data-tone="warning"] { background: var(--warning-subtle); color: var(--warning-text); border-color: color-mix(in srgb, var(--warning) 26%, transparent); }
+.rpro-chip[data-tone="info"]    { background: var(--info-subtle);    color: var(--info-text);    border-color: color-mix(in srgb, var(--info) 26%, transparent); }
+.rpro-chip[data-tone="danger"]  { background: var(--danger-subtle);  color: var(--danger-text);  border-color: color-mix(in srgb, var(--danger) 26%, transparent); }
+.rpro-chip[data-tone="neutral"] { background: var(--surface-sunken);  color: var(--text-muted);   border-color: var(--border); }
+
+.rpro__row-actions { display: inline-flex; justify-content: flex-end; }
+.rpro__row-btn {
+  width: 30px; height: 30px; display: inline-grid; place-items: center;
+  border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.rpro__row-btn:hover { background: var(--surface-hover); color: var(--text-strong); }
+
+/* ── Diálogo de códigos (QR + barcode) ──────────────────────────────── */
+.rpro__codes { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 4px 0; }
+.rpro__codes--loading { flex-direction: row; color: var(--text-muted); padding: 20px; }
+.rpro__codes-value { font: var(--weight-semibold) 14px/1 var(--font-mono, monospace); color: var(--text-strong); letter-spacing: 1px; }
+.rpro__codes-barcode { max-width: 100%; height: auto; }
+
+/* ── Barra de ações em massa ────────────────────────────────────────── */
+.rpro__bulkbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+.rpro__bulkbar-count { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font: var(--weight-semibold) 13px/1 var(--font-sans); }
+.rpro__bulkbar-all {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--text-brand); font: var(--weight-bold) 12.5px/1 var(--font-sans);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.rpro__bulkbar-all:disabled { opacity: 0.6; cursor: default; }
+.rpro__bulkbar-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Diálogo de etiquetas ───────────────────────────────────────────── */
+.rpro__labels { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+.rpro__labels-group { display: flex; flex-direction: column; gap: 6px; }
+.rpro__labels-label { font: var(--weight-semibold) 12.5px/1 var(--font-sans); color: var(--text-muted); }
+.rpro__labels-kinds { display: flex; gap: 10px; }
+.rpro__labels-kinds .rpro-btn { flex: 1; justify-content: center; }
+.rpro__labels-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font: var(--weight-medium) 13px/1 var(--font-sans); color: var(--text-body); }
+.rpro__labels-check input { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+
+/* ── Diálogo criar em lote ──────────────────────────────────────────── */
+.rpro__bulk { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+.rpro__bulk-row { display: flex; gap: 12px; }
+.rpro__bulk-field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.rpro__bulk-field > span { font: var(--weight-semibold) 12.5px/1 var(--font-sans); color: var(--text-muted); }
+.rpro__bulk-hint { margin: 0; font-size: 12.5px; }
+
+/* ── Paginação ──────────────────────────────────────────────────────── */
+.rpro__pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border-top: 1px solid var(--border-subtle); flex-shrink: 0;
+}
+.rpro__pager-info { color: var(--text-muted); font: var(--weight-semibold) 12.5px/1 var(--font-sans); }
+
+/* ── Estado vazio ───────────────────────────────────────────────────── */
+.rpro__empty {
+  min-height: 200px; display: grid; place-items: center; align-content: center; gap: 8px;
+  padding: 28px; color: var(--text-muted); text-align: center;
+}
+.rpro__empty i { color: var(--text-subtle); font-size: 28px; }
+.rpro__empty strong { color: var(--text-strong); font: var(--weight-bold) 15px/1.2 var(--font-sans); }
+.rpro__empty span { font: var(--weight-medium) 13px/1.4 var(--font-sans); }
+
+@media (max-width: 720px) {
+  .rpro__toolbar-left { flex: 1 1 100%; gap: 8px; }
+  .rpro__search, .rpro__daterange { flex: 1 1 100%; width: 100%; }
+  .rpro__toolbar-right { width: 100%; justify-content: space-between; }
+}
+
+@media (max-width: 900px) {
+  .rpro { gap: 10px; }
+  .rpro__head { align-items: center; }
+  .rpro__head-copy h1 { font-size: 20px; }
+  .rpro__head-actions { display: none; }
+  .rpro__mobile-filter-trigger {
+    width: 100%; height: 42px; padding: 0 14px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface-card); color: var(--text-body);
+    font: var(--weight-bold) 13px/1 var(--font-sans);
+  }
+  .rpro__mobile-filter-trigger small {
+    min-width: 20px; height: 20px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 99px; background: var(--brand); color: #fff; font-size: 10px;
+  }
+  .rpro__toolbar {
+    position: fixed; inset: 0; z-index: 140;
+    display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 18px;
+    padding: max(18px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto; background: var(--surface-card);
+    visibility: hidden; opacity: 0; transform: translateY(100%);
+    transition: transform .22s var(--ease-out), opacity .18s ease, visibility 0s linear .22s;
+  }
+  .rpro__toolbar--mobile-open {
+    visibility: visible; opacity: 1; transform: translateY(0); transition-delay: 0s;
+  }
+  .rpro__mobile-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .rpro__mobile-drawer-head > div { display: flex; flex-direction: column; gap: 4px; }
+  .rpro__mobile-drawer-head span { color: var(--text-muted); font: var(--weight-bold) 10px/1 var(--font-sans); text-transform: uppercase; letter-spacing: .08em; }
+  .rpro__mobile-drawer-head h2 { margin: 0; color: var(--text-strong); font: var(--weight-extra) 21px/1.1 var(--font-sans); }
+  .rpro__mobile-drawer-head > button {
+    width: 40px; height: 40px; display: grid; place-items: center;
+    border: 0; border-radius: 50%; background: var(--surface-sunken); color: var(--text-body);
+  }
+  .rpro__toolbar-left { width: 100%; flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+  .rpro__search, .rpro__daterange { width: 100%; flex: none; }
+  .rpro__search :deep(.p-inputtext), .rpro__daterange :deep(.p-inputtext) { height: 48px; }
+  .rpro__toolbar-right { width: 100%; display: grid; grid-template-columns: 1fr 48px; gap: 10px; }
+  .rpro__toolbar-right .rpro-btn { height: 46px; }
+  .rpro__toolbar-right .rpro-btn--icon { width: 48px; }
+  .rpro__mobile-file-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+  .rpro__mobile-file-actions .rpro-btn { height: 46px; }
+  .rpro__mobile-drawer-footer {
+    margin-top: auto; display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px;
+    position: sticky; bottom: 0; padding-top: 14px; background: var(--surface-card);
+  }
+  .rpro__mobile-drawer-footer .rpro-btn { height: 48px; }
+}
+</style>

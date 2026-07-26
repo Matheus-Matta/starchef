@@ -64,13 +64,30 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       const data = await service.retrieve(id);
       record.value = data;
       for (const field of formFields) {
-        if (data[field.name] !== undefined) formData[field.name] = data[field.name];
+        const value = field.name.includes(".") ? getDeep(data, field.name) : data[field.name];
+        if (value !== undefined) formData[field.name] = value;
       }
     } catch {
       fetchError.value = "Nao foi possivel carregar o registro.";
     } finally {
       fetching.value = false;
     }
+  }
+
+  /** Grava `value` em `target` no caminho `a.b.c` (aninha objetos quando há ponto). */
+  function setDeep(target, path, value) {
+    const parts = path.split(".");
+    let node = target;
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      if (typeof node[parts[i]] !== "object" || node[parts[i]] === null) node[parts[i]] = {};
+      node = node[parts[i]];
+    }
+    node[parts[parts.length - 1]] = value;
+  }
+
+  /** Lê um caminho `a.b.c` de um objeto (undefined se algum nível faltar). */
+  function getDeep(source, path) {
+    return path.split(".").reduce((acc, key) => (acc == null ? undefined : acc[key]), source);
   }
 
   /** Converte o formulario no payload, aplicando os casts numericos declarados. */
@@ -81,10 +98,22 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       const filled = value !== "" && value !== null && value !== undefined;
       if (field.type === "number" && filled) value = parseInt(value, 10);
       else if (field.type === "decimal" && filled) value = parseFloat(value);
+      else if (field.type === "json") {
+        if (!filled) value = {};
+        else if (typeof value === "string") {
+          try {
+            value = JSON.parse(value);
+          } catch {
+            fieldErrors.value[field.name] = "Informe um JSON válido.";
+            throw new Error(`JSON inválido em ${field.label}`);
+          }
+        }
+      }
       // FK vazio vai como null (e não ""), para o backend limpar o vínculo
       // (ex.: categoria "Sem categoria") ou preencher no servidor (restaurante).
       else if (field.type === "remote-dropdown" && !filled) value = null;
-      payload[field.name] = value;
+      // Nomes com ponto (ex.: "profile.profile_type") viram objeto aninhado.
+      setDeep(payload, field.name, value);
     }
     return payload;
   }
@@ -98,7 +127,13 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     saveError.value = "";
     fieldErrors.value = {};
     try {
-      const payload = buildPayload();
+      let payload;
+      try {
+        payload = buildPayload();
+      } catch {
+        saveError.value = "Revise as configurações avançadas antes de salvar.";
+        return null;
+      }
       // Recursos compartilhados não recebem restaurante/filial automáticos —
       // pertencem à conta (a todos os restaurantes).
       if (isCreate.value && !sharedAcrossRestaurants) {
@@ -169,6 +204,9 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
         remoteOptions[field.name] = rows.map((row) => ({
           label: String(row[field.optionLabel ?? "name"] ?? row.id),
           value: row[field.optionValue ?? "id"],
+          // Rótulo do grupo (usado por campos `grouped`, ex.: catálogo de permissões).
+          group: row[field.optionGroup ?? "group"] ?? "",
+          description: String(row.description ?? ""),
         }));
       } catch {
         remoteOptions[field.name] = [];

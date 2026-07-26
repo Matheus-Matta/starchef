@@ -3,11 +3,57 @@ import logging
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
 logger = logging.getLogger("api.errors")
+
+
+class LimitReached(APIException):
+    """Limite de tenancy atingido (ex.: nº de usuários/restaurantes do plano).
+
+    Usa 409 (conflito com o estado atual da conta) e um `default_code` próprio
+    para que o frontend possa reconhecer o caso e exibir a mensagem personalizada.
+    A mensagem é passada na criação da exceção e chega ao usuário via envelope.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Limite do plano atingido."
+    default_code = "limit_reached"
+
+
+STANDARD_MESSAGES_PT_BR = {
+    "Authentication credentials were not provided.": "As credenciais de autenticação não foram fornecidas.",
+    "Invalid token.": "Token inválido.",
+    "Token is invalid or expired": "O token é inválido ou expirou.",
+    "You do not have permission to perform this action.": "Você não tem permissão para realizar esta ação.",
+    "Not found.": "Não encontrado.",
+    "Method not allowed.": "Método não permitido.",
+    "Unsupported media type.": "Tipo de conteúdo não suportado.",
+    "Request was throttled.": "Limite de requisições excedido. Tente novamente mais tarde.",
+    "This field is required.": "Este campo é obrigatório.",
+    "This field may not be null.": "Este campo não pode ser nulo.",
+    "This field may not be blank.": "Este campo não pode ficar em branco.",
+    "A valid number is required.": "Informe um número válido.",
+    "A valid integer is required.": "Informe um número inteiro válido.",
+    "Enter a valid email address.": "Informe um endereço de e-mail válido.",
+    "Invalid pk": "Identificador inválido",
+}
+
+
+def _translate_detail(value):
+    """Traduz recursivamente mensagens padrão que ainda chegarem em inglês."""
+    if isinstance(value, dict):
+        return {key: _translate_detail(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_translate_detail(item) for item in value]
+    text = str(value)
+    if text in STANDARD_MESSAGES_PT_BR:
+        return STANDARD_MESSAGES_PT_BR[text]
+    if text.startswith("Invalid pk"):
+        return text.replace("Invalid pk", "Identificador inválido", 1)
+    return text
 
 
 def _django_validation_detail(exc):
@@ -74,7 +120,7 @@ def api_exception_handler(exc, context):
         else:
             logger.error("API error: %s", exc, extra=log_data)
 
-    detail = response.data
+    detail = _translate_detail(response.data)
     response.data = {
         "success": False,
         "status_code": response.status_code,

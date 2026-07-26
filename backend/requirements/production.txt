@@ -1,4 +1,8 @@
 -r base.txt
 gunicorn>=22.0,<23.0
+# Worker ASGI para o gunicorn: serve HTTP e WebSocket (Channels) no mesmo processo.
+uvicorn[standard]>=0.30,<0.35
 sentry-sdk>=2.5,<3.0
+# Servir estáticos coletados direto do app (sem depender do nginx para /static).
+whitenoise>=6.6,<7.0
 

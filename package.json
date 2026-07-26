@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001",
-    "dev:backend": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001 --skip-frontend",
+    "dev:backend": ".venv\\Scripts\\python backend\\manage.py runserver 0.0.0.0:8001 --noreload",
     "dev:frontend": "npm --prefix frontend run dev",
+    "dev:flutter": "cd flutter && flutter run -d windows",
     "prod": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001 --skip-frontend --migrate",
     "migrate": ".venv\\Scripts\\python backend\\manage.py migrate",
     "seed": ".venv\\Scripts\\python backend\\manage.py seed_demo",

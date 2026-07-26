@@ -1,0 +1,26 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv/core/config/app_config.dart';
+
+void main() {
+  test('lê variáveis, comentários, export e valores entre aspas', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef_env_test',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}${Platform.pathSeparator}.env');
+    await file.writeAsString('''
+# configuração compartilhada
+export VITE_API_BASE_URL="https://api.starchef.test/api/v1"
+IGNORED_LINE
+EMPTY=
+''');
+
+    final values = await EnvFileLoader.read(file);
+
+    expect(values['VITE_API_BASE_URL'], 'https://api.starchef.test/api/v1');
+    expect(values['EMPTY'], isEmpty);
+    expect(values.containsKey('IGNORED_LINE'), isFalse);
+  });
+}

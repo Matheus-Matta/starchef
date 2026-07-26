@@ -4,6 +4,9 @@ from apps.core.models import TenantBaseModel, TenantModel
 
 
 class Restaurant(TenantBaseModel):
+    STOCK_DEDUCTION_PAYMENT = "payment"
+    STOCK_DEDUCTION_KITCHEN = "kitchen"
+    STOCK_DEDUCTION_CHOICES = [(STOCK_DEDUCTION_PAYMENT, "No pagamento"), (STOCK_DEDUCTION_KITCHEN, "No envio à cozinha")]
     legal_name = models.CharField(max_length=180)
     trade_name = models.CharField(max_length=180, db_index=True)
     # CNPJ opcional: nulos não conflitam no índice único (vários restaurantes
@@ -18,6 +21,12 @@ class Restaurant(TenantBaseModel):
     zip_code = models.CharField(max_length=16, blank=True)
     logo = models.ImageField(upload_to="restaurants/logos/", blank=True)
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
+    require_open_cash_register = models.BooleanField(default=True)
+    # Senha de autorização de ações do caixa (ex.: aprovar sangria/divergência).
+    # Armazenada como HASH (make_password) — nunca em texto puro nem exposta na API.
+    # Será usada pelo app (Flutter) para autorização offline no futuro.
+    cash_action_password = models.CharField(max_length=255, blank=True, default="")
+    stock_deduction_timing = models.CharField(max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT)
     operational_settings = models.JSONField(default=dict, blank=True)
     fiscal_settings = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)
@@ -104,6 +113,9 @@ class Table(TenantModel):
 
     sector = models.ForeignKey(TableSector, related_name="tables", on_delete=models.PROTECT)
     number = models.CharField(max_length=20)
+    # Payload escaneavel no PDV (codigo de barras + QR codificam isto). Auto = number
+    # quando vazio (definido no serializer). Unico por filial, como o number.
+    code = models.CharField(max_length=40, blank=True)
     capacity = models.PositiveIntegerField(default=4)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_FREE, db_index=True)
     current_order_id = models.UUIDField(null=True, blank=True, db_index=True)
@@ -114,28 +126,81 @@ class Table(TenantModel):
         ordering = ["sector__display_order", "number"]
         constraints = [
             models.UniqueConstraint(fields=["branch", "number"], name="unique_table_number_by_branch"),
+            models.UniqueConstraint(
+                fields=["branch", "code"],
+                condition=models.Q(code__gt=""),
+                name="unique_table_code_by_branch",
+            ),
         ]
         indexes = [
             models.Index(fields=["branch", "status"]),
         ]
+
+    def save(self, *args, **kwargs):
+        # Code escaneavel padrao = numero da mesa quando nao informado.
+        if not self.code and self.number:
+            self.code = str(self.number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Table {self.number}"
 
 
 class Command(TenantModel):
-    code = models.CharField(max_length=40)
+    """Comanda reutilizavel (padrao self-service / Graal).
+
+    Cartao fisico numerado com codigo de barras + QR. O `number` e o identificador
+    humano impresso (unico POR RESTAURANTE — pode ir 1..N em cada restaurante),
+    distinto do `id` (UUID). O `code` e o payload escaneavel (barcode/QR codificam
+    isto). Enquanto vinculada a um pedido aberto fica OCCUPIED; ao pagar, e zerada
+    e volta a FREE para reuso.
+    """
+
+    STATUS_FREE = "free"
+    STATUS_OCCUPIED = "occupied"
+
+    STATUS_CHOICES = [
+        (STATUS_FREE, "Free"),
+        (STATUS_OCCUPIED, "Occupied"),
+    ]
+
+    number = models.PositiveIntegerField()
+    code = models.CharField(max_length=40, blank=True)
     customer_name = models.CharField(max_length=120, blank=True)
-    status = models.CharField(max_length=24, default="open", db_index=True)
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_FREE, db_index=True)
+    current_order_id = models.UUIDField(null=True, blank=True, db_index=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        ordering = ["number"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "code"], name="unique_command_code_by_branch"),
+            models.UniqueConstraint(fields=["restaurant", "number"], name="unique_command_number_by_restaurant"),
+            models.UniqueConstraint(
+                fields=["restaurant", "code"],
+                condition=models.Q(code__gt=""),
+                name="unique_command_code_by_restaurant",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["restaurant", "status"]),
         ]
 
+    def save(self, *args, **kwargs):
+        # Numero auto (sequencial por restaurante) e code escaneavel padrao quando
+        # nao informados — cobre API, admin e criacao em lote. Import tardio evita
+        # ciclo models <-> services.
+        if not self.number and self.restaurant_id:
+            from apps.restaurants.services import next_command_number
+
+            self.number = next_command_number(self.restaurant)
+        if not self.code and self.number:
+            from apps.restaurants.services import default_command_code
+
+            self.code = default_command_code(self.number)
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.code
+        return f"Comanda {self.number}"
 
 
 class DeliveryZone(TenantModel):

@@ -90,9 +90,11 @@ services:
       - starchef
 
   frontend:
-    build:
-      context: ./frontend
-    command: npm run dev -- --host 0.0.0.0
+    # Dev: Vite dev server direto do node (o frontend/Dockerfile é só para o build
+    # de produção — usá-lo aqui rodaria a imagem nginx e quebraria o `npm run dev`).
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     env_file:
       - .env
     volumes:

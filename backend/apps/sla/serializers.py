@@ -7,6 +7,8 @@ from apps.sla.models import ServiceLevelAgreement
 
 class ServiceLevelAgreementSerializer(TenantModelSerializer):
     restaurant_names = serializers.SerializerMethodField()
+    station_names = serializers.SerializerMethodField()
+    column_labels = serializers.SerializerMethodField()
 
     class Meta:
         model = ServiceLevelAgreement
@@ -15,6 +17,12 @@ class ServiceLevelAgreementSerializer(TenantModelSerializer):
 
     def get_restaurant_names(self, obj):
         return [r.trade_name for r in obj.restaurants.all()]
+
+    def get_station_names(self, obj):
+        return [s.name for s in obj.stations.all()]
+
+    def get_column_labels(self, obj):
+        return [f"{c.station.name} · {c.name}" for c in obj.columns.select_related("station").all()]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

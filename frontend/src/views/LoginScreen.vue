@@ -100,9 +100,10 @@ import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
 import Password from "primevue/password";
 
-import logoUrl from "../assets/logo-mark.svg";
 import AppIcon from "../components/AppIcon.vue";
 import { useAuthStore } from "../stores/auth";
+
+const logoUrl = "/logoicon.png";
 
 const auth = useAuthStore();
 const route = useRoute();

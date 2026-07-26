@@ -61,6 +61,10 @@ class Account(TimeStampedModel):
     # Licenciamento modular: lista de modulos OPCIONAIS habilitados para a conta.
     # O modulo base e sempre implicito (ver has_module / account_active_modules).
     enabled_modules = models.JSONField(default=list, blank=True)
+    # Limites de tenancy — definidos POR CONTA (o superadmin ajusta conforme o plano).
+    # Convenção: 0 = ilimitado. O limite é aplicado no cadastro (ver apps.accounts.limits).
+    max_users = models.PositiveIntegerField(default=0, help_text="Máximo de usuários da conta (0 = ilimitado).")
+    max_restaurants = models.PositiveIntegerField(default=0, help_text="Máximo de restaurantes da conta (0 = ilimitado).")
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -106,9 +110,13 @@ class Permission(TimeStampedModel):
     code = models.CharField(max_length=120, unique=True)
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
+    # Agrupamento/ordem do catálogo (ver apps.accounts.permission_catalog).
+    group = models.CharField(max_length=80, blank=True)
+    module = models.CharField(max_length=40, default="base")
+    sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        ordering = ["code"]
+        ordering = ["module", "sort_order", "name"]
 
     def __str__(self):
         return self.code

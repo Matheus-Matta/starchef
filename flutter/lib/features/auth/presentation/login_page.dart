@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_text_field.dart';
 import 'auth_controller.dart';
 
@@ -188,12 +189,23 @@ class _LoginForm extends StatelessWidget {
               color: Theme.of(context).colorScheme.errorContainer,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(
-              controller.errorMessage!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-                fontWeight: FontWeight.w600,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: SelectableText(
+                    controller.errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copiar erro',
+                  onPressed: () => copyError(context, controller.errorMessage!),
+                  icon: const Icon(Icons.copy_outlined),
+                ),
+              ],
             ),
           ),
         ],

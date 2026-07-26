@@ -73,7 +73,11 @@ class TenantModelSerializer(serializers.ModelSerializer):
         # (vale inclusive para admin). Compartilhados (restaurant=None) não afetam.
         own_restaurant = attrs.get("restaurant") or getattr(self.instance, "restaurant", None)
         own_restaurant_id = getattr(own_restaurant, "id", None)
-        payload_account_id = self.initial_data.get("account") or self.initial_data.get("account_id")
+        # `initial_data` só existe no serializer raiz; quando este serializer roda
+        # ANINHADO (ex.: o profile dentro do usuário), ele não existe — e a conta
+        # nunca vem no payload aninhado, então tratamos como ausente.
+        initial = getattr(self, "initial_data", None) or {}
+        payload_account_id = initial.get("account") or initial.get("account_id")
         if payload_account_id and str(payload_account_id) != str(account_id):
             raise serializers.ValidationError(
                 {"account_id": "Nao e permitido informar uma conta diferente da conta autenticada."}

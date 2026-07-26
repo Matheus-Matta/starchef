@@ -44,6 +44,27 @@ html .p-icon-field-right > .p-inputtext {
   padding-right: 38px;
 }
 
+/* No Password o ícone à direita é uma ação, não um elemento decorativo.
+   A regra geral acima usa pointer-events:none para lupas/envelopes; aqui
+   restauramos o clique que alterna entre password e text em todo o sistema. */
+html .p-password.p-icon-field-right .p-input-icon {
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 7px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 2;
+}
+
+html .p-password.p-icon-field-right .p-input-icon:hover {
+  color: var(--text-strong);
+}
+
 /* ── Avatar ─────────────────────────────────────────────────────────────── */
 .p-avatar {
   background-color: var(--brand);
@@ -386,6 +407,36 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   background: var(--brand);
 }
 
+/* ── Checkbox (theme-aware; sem isto o quadrado fica branco no dark) ──────── */
+.p-checkbox .p-checkbox-box {
+  background: var(--surface-card);
+  border-color: var(--border-strong);
+  color: var(--on-brand);
+}
+.p-checkbox:not(.p-checkbox-disabled) .p-checkbox-box:hover {
+  border-color: var(--brand);
+}
+/* No PrimeVue 3.53 a classe `p-highlight` fica na RAIZ `.p-checkbox` (não no box),
+   então o box marcado precisa ser estilizado como descendente. Mantemos também o
+   seletor antigo (box.p-highlight) por compatibilidade. */
+.p-checkbox.p-highlight .p-checkbox-box,
+.p-checkbox .p-checkbox-box.p-highlight {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.p-checkbox.p-highlight:hover .p-checkbox-box,
+.p-checkbox .p-checkbox-box.p-highlight:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+.p-checkbox .p-checkbox-box .p-checkbox-icon {
+  color: var(--on-brand);
+}
+.p-checkbox .p-checkbox-box.p-focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+
 /* ── Button (secondary/outlined) ─────────────────────────────────────────── */
 .p-button.p-button-secondary.p-button-outlined {
   border-color: var(--border);
@@ -415,6 +466,11 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
 .p-dialog .p-dialog-footer {
   background: var(--surface-card);
   border-top: 1px solid var(--border-subtle);
+  padding-top: 18px; /* respiro entre a linha separadora e os botões */
+  padding-bottom: 18px;
+}
+.p-dialog .p-dialog-content {
+  padding-bottom: 18px;
 }
 .p-dialog .p-dialog-header .p-dialog-title {
   color: var(--text-strong);
@@ -436,6 +492,10 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   color: var(--text-muted);
   border: none;
 }
+.p-paginator {
+  padding: 0.25rem 0.5rem;
+  min-height: 2rem;
+}
 .p-paginator .p-paginator-first,
 .p-paginator .p-paginator-prev,
 .p-paginator .p-paginator-next,
@@ -444,6 +504,18 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   background: transparent;
   border: none;
   color: var(--text-muted);
+  height: 2rem;
+  min-width: 2rem;
+}
+.p-paginator .p-dropdown {
+  height: 2rem;
+  align-items: center;
+}
+.p-paginator .p-dropdown .p-dropdown-label {
+  padding-top: 0;
+  padding-bottom: 0;
+  display: flex;
+  align-items: center;
 }
 .p-paginator .p-paginator-first:not(.p-disabled):hover,
 .p-paginator .p-paginator-prev:not(.p-disabled):hover,
@@ -473,4 +545,94 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
 .p-paginator .p-paginator-last:disabled {
   color: var(--text-subtle);
   opacity: 0.5;
+}
+
+/* ── Menu (popup de ações da linha — editar/remover) ─────────────────────── */
+.p-menu {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  color: var(--text-body);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+}
+.p-menu .p-menuitem-link {
+  color: var(--text-body);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.p-menu .p-menuitem-link .p-menuitem-icon,
+.p-menu .p-menuitem-link .p-menuitem-text {
+  color: inherit;
+}
+.p-menu .p-menuitem-link:not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+.p-menu .p-menuitem-separator {
+  border-top: 1px solid var(--border-subtle);
+  margin: 4px 0;
+}
+.p-menu .rpro-menu-danger .p-menuitem-link,
+.p-menu .rpro-menu-danger .p-menuitem-link .p-menuitem-icon {
+  color: var(--danger-text);
+}
+.p-menu .rpro-menu-danger .p-menuitem-link:not(.p-disabled):hover {
+  background: var(--danger-subtle);
+  color: var(--danger-text);
+}
+[data-theme="dark"] .p-menu {
+  background: var(--surface-raised);
+  border-color: var(--border);
+}
+
+/* ── Ícones PrimeIcons: padrão de 1rem → 0.8rem ──────────────────────────────
+   Alinha os ícones "crus" do PrimeIcons (botões PrimeVue, menus, <i class="pi">)
+   com o AppIcon, que já limita tudo a 0,8rem. Ícones com tamanho explícito no
+   componente (ex.: teclado do PDV) têm maior especificidade e não são afetados. */
+.pi {
+  font-size: 0.8rem;
+}
+.p-button .p-button-icon,
+.p-menuitem-link .p-menuitem-icon,
+.p-dropdown .p-dropdown-trigger-icon,
+.p-multiselect .p-multiselect-trigger-icon {
+  font-size: 0.8rem;
+}
+
+/* ── Message (avisos) — tons suaves e theme-aware (evita azul claro no dark) ── */
+.p-message {
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+.p-message.p-message-info {
+  background: var(--info-subtle);
+  border-color: color-mix(in srgb, var(--info) 30%, transparent);
+}
+.p-message.p-message-info .p-message-icon,
+.p-message.p-message-info .p-message-text {
+  color: var(--info-text);
+}
+.p-message.p-message-success {
+  background: var(--success-subtle);
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+}
+.p-message.p-message-success .p-message-icon,
+.p-message.p-message-success .p-message-text {
+  color: var(--success-text);
+}
+.p-message.p-message-warn {
+  background: var(--warning-subtle);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+.p-message.p-message-warn .p-message-icon,
+.p-message.p-message-warn .p-message-text {
+  color: var(--warning-text);
+}
+.p-message.p-message-error {
+  background: var(--danger-subtle);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.p-message.p-message-error .p-message-icon,
+.p-message.p-message-error .p-message-text {
+  color: var(--danger-text);
 }

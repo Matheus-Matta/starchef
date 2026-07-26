@@ -9,7 +9,7 @@ propositalmente em branco ate a configuracao.
 Referencias: Manual de Orientacao do Contribuinte (MOC) NF-e/NFC-e.
 """
 import hashlib
-import random
+import secrets
 from decimal import ROUND_HALF_UP, Decimal
 
 # Codigo IBGE da UF (cUF) — usado no inicio da chave de acesso.
@@ -38,7 +38,7 @@ def dv_mod11(key43):
 
 def random_numeric_code(length=8):
     """cNF: codigo numerico aleatorio que compoe a chave (anti-fraude)."""
-    return "".join(str(random.randint(0, 9)) for _ in range(length))
+    return "".join(str(secrets.randbelow(10)) for _ in range(length))
 
 
 def build_access_key(*, uf, emission_date, cnpj, model, series, number, numeric_code=None, emission_type="1"):
@@ -68,7 +68,12 @@ def build_nfce_qrcode(*, access_key, environment, csc_id, csc_token, base_url, v
     branco — a estrutura ja fica correta e o hash passa a valer quando o CSC entrar.
     """
     params = f"{access_key}|{version}|{environment}|{csc_id or ''}"
-    digest = hashlib.sha1(f"{params}|{csc_token or ''}".encode()).hexdigest().upper()
+    # SHA-1 é obrigatório no leiaute 2.00 do QR Code NFC-e. O parâmetro deixa
+    # explícito que ele não está sendo usado como primitiva de segurança geral.
+    digest = hashlib.sha1(
+        f"{params}|{csc_token or ''}".encode(),
+        usedforsecurity=False,
+    ).hexdigest().upper()
     data = f"{params}|{digest}"
     qr_content = f"{base_url}?p={data}" if base_url else f"?p={data}"
     return qr_content

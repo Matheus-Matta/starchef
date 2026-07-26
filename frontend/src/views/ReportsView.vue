@@ -69,7 +69,6 @@ import AppIcon from "../components/AppIcon.vue";
 import StatCard from "../components/data/StatCard.vue";
 import Card from "../components/display/Card.vue";
 import { api, API_BASE_URL } from "../services/api";
-import { getAccessToken } from "../services/tokenStorage";
 
 const today = new Date().toISOString().slice(0, 10);
 const dateFrom = ref(today);
@@ -190,43 +189,25 @@ async function loadReport() {
   }
 }
 
-function exportCsv() {
-  const token = getAccessToken();
-  const base = API_BASE_URL;
+async function exportCsv() {
   const params = new URLSearchParams({
     date_from: dateFrom.value,
     date_to: dateTo.value,
     export: "csv",
   });
-  const url = `${base}/reports/sales/?${params}`;
+  const url = `${API_BASE_URL}/reports/sales/?${params}`;
+  // Autenticação vai pelo cookie httpOnly (credentials: "include").
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
+  a.href = blobUrl;
   a.setAttribute("download", `vendas_${dateFrom.value}_${dateTo.value}.csv`);
-  // Pass token via URL is not ideal, so open in new tab and let the browser handle it
-  const win = window.open("", "_blank");
-  if (win) {
-    const form = win.document.createElement("form");
-    form.method = "GET";
-    form.action = url;
-    const tokenInput = win.document.createElement("input");
-    tokenInput.type = "hidden";
-    tokenInput.name = "Authorization";
-    tokenInput.value = `Bearer ${token}`;
-    form.appendChild(tokenInput);
-    win.document.body.appendChild(form);
-    // Use fetch to download
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => res.blob())
-      .then((blob) => {
-        const blobUrl = URL.createObjectURL(blob);
-        a.href = blobUrl;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(blobUrl);
-        win.close();
-      });
-  }
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(blobUrl);
 }
 
 function money(value) {

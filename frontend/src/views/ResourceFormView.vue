@@ -14,6 +14,8 @@
       <div class="rpage__head-actions">
         <template v-if="isView">
           <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
+          <Button v-if="isOrder" label="Imprimir nota" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
+          <Button v-if="isOrder" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
           <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
         </template>
       </div>
@@ -76,6 +78,28 @@
             <span v-else class="detail-field__value">{{ label(field._value, field.map) }}</span>
           </div>
         </div>
+      </section>
+
+      <!-- Itens do pedido — mesma exibição em DataTable das variações/adicionais -->
+      <section v-if="isOrder && record?.items?.length" class="detail-section detail-section--items">
+        <h3 class="detail-section__title">Itens do pedido <small>{{ record.items.length }}</small></h3>
+        <DataTable :value="record.items" data-key="id" class="order-items" :row-hover="false" responsive-layout="scroll">
+          <Column header="Produto">
+            <template #body="{ data }">
+              <div class="order-items__product">
+                <strong>{{ data.product_name }}</strong>
+                <small v-if="itemExtras(data)">{{ itemExtras(data) }}</small>
+                <small v-if="data.customer_note" class="order-items__note">Obs.: {{ data.customer_note }}</small>
+              </div>
+            </template>
+          </Column>
+          <Column header="Qtd" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '80px' }" :style="{ width: '80px' }">
+            <template #body="{ data }">{{ quantity(data.quantity) }}</template>
+          </Column>
+          <Column header="Total" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '110px' }" :style="{ width: '110px' }">
+            <template #body="{ data }">{{ money(data.total_price) }}</template>
+          </Column>
+        </DataTable>
       </section>
     </div>
 
@@ -153,6 +177,31 @@
               fluid
             />
 
+            <PermissionAccordion
+              v-else-if="field.type === 'remote-multiselect' && field.grouped && field.name === 'permissions'"
+              v-model="formData[field.name]"
+              :groups="groupedOptions(field.name)"
+              :disabled="isView"
+            />
+
+            <MultiSelect
+              v-else-if="field.type === 'remote-multiselect' && field.grouped"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :options="groupedOptions(field.name)"
+              option-label="label"
+              option-value="value"
+              option-group-label="label"
+              option-group-children="items"
+              display="chip"
+              :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+              :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :loading="!remoteOptions[field.name]"
+              :disabled="isView"
+              filter
+              fluid
+            />
+
             <MultiSelect
               v-else-if="field.type === 'remote-multiselect'"
               :id="`f-${field.name}`"
@@ -170,14 +219,16 @@
             />
 
             <Textarea
-              v-else-if="field.type === 'textarea'"
+              v-else-if="field.type === 'textarea' || field.type === 'json'"
               :id="`f-${field.name}`"
-              v-model="formData[field.name]"
+              :model-value="field.type === 'json' && typeof formData[field.name] !== 'string' ? JSON.stringify(formData[field.name] || {}, null, 2) : formData[field.name]"
               :placeholder="fieldPlaceholder(field, field.label)"
+              :maxlength="field.maxlength"
               :rows="field.rows || 4"
               auto-resize
               :disabled="isView"
               :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+              @update:model-value="formData[field.name] = $event"
             />
 
             <Password
@@ -210,6 +261,7 @@
               v-model="formData[field.name]"
               :type="field.inputType || 'text'"
               :placeholder="fieldPlaceholder(field, field.label)"
+              :maxlength="field.maxlength"
               :disabled="isView"
               :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
             />
@@ -218,6 +270,7 @@
               <i class="pi pi-exclamation-circle" />
               {{ fieldErrors[field.name] }}
             </small>
+            <small v-else-if="field.hint && !isView" class="rpage__field-hint">{{ field.hint }}</small>
           </div>
         </div>
       </div>
@@ -240,15 +293,14 @@
         />
         <p v-else class="rpage__hint">Salve o produto para poder adicionar variacoes e adicionais.</p>
 
-        <section v-if="record?.recipe?.items?.length" class="detail-section">
-          <h3 class="detail-section__title">Ficha tecnica <small>{{ record.recipe.items.length }} ingredientes</small></h3>
-          <div class="detail-list">
-            <div v-for="ingredient in record.recipe.items" :key="ingredient.id" class="detail-list__row">
-              <span>{{ ingredient.ingredient_name }}</span>
-              <strong>{{ quantity(ingredient.quantity) }} {{ ingredient.unit }}</strong>
-            </div>
-          </div>
-        </section>
+        <!-- Ficha técnica (leitura) — mesmo layout das variações/adicionais -->
+        <RecipeItemsEditor
+          v-if="record?.recipe?.id"
+          :key="`ptech-${record.recipe.id}`"
+          :recipe-id="record.recipe.id"
+          :initial-items="record.recipe.items || []"
+          readonly
+        />
       </div>
 
       <!-- Ficha tecnica editavel da receita (Sprint 3 · STC-034/035) -->
@@ -293,13 +345,19 @@ import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
 
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
 import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
+import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
+import { api } from "../services/api";
+import { normalizeApiError } from "../utils/apiError";
+import { useToast } from "primevue/usetoast";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
 import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel } from "../utils/format";
 import { getByPath, resolveColumnValue } from "../utils/object";
@@ -439,6 +497,43 @@ async function submit() {
 const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View remonta por :key)
 const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
+const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
+const printing = ref(false);
+const toast = useToast();
+
+/** Gera a nota (PrintJob) e abre a janela de impressão com o HTML retornado. */
+async function printOrder() {
+  printing.value = true;
+  try {
+    const { data } = await api.post(`/orders/${recordId.value}/print/`, { job_type: "receipt" });
+    const win = window.open("", "_blank", "width=380,height=640");
+    if (win) {
+      win.document.write(data.html || "<p>Sem conteúdo para impressão.</p>");
+      win.document.close();
+      win.focus();
+      win.print();
+    } else {
+      toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir.", life: 4000 });
+    }
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao imprimir", detail: normalizeApiError(err).message, life: 5000 });
+  } finally {
+    printing.value = false;
+  }
+}
+
+/** Abre o pedido no PDV para edição (adicionar/remover itens). */
+function editOrder() {
+  router.push({ name: "pedido-editar-itens", params: { id: recordId.value } });
+}
+
+/** Junta variações + adicionais de um item do pedido numa linha de texto. */
+function itemExtras(item) {
+  const parts = [];
+  for (const v of item.variations || []) parts.push(typeof v === "string" ? v : v?.name || "");
+  for (const a of item.addons || []) parts.push(a.addon_name || a.name || "");
+  return parts.filter(Boolean).join(" · ");
+}
 
 function defaultTitle(row) {
   return row?.name || row?.trade_name || row?.username || row?.number || row?.id || "-";
@@ -494,6 +589,26 @@ const dateTime = (value) => formatDateTime(value, { withYear: true });
 function fieldPlaceholder(field, fallback) {
   if (isView.value) return "—";
   return field.placeholder || fallback;
+}
+
+/* Agrupa as opções remotas (que já vêm com `group`) no formato que o MultiSelect
+ * espera para option groups: [{ label, items: [{ label, value }] }]. A ordem dos
+ * grupos segue a primeira ocorrência (o backend já entrega ordenado). */
+function groupedOptions(name) {
+  const options = remoteOptions[name] || [];
+  const buckets = new Map();
+  const groups = [];
+  for (const option of options) {
+    const groupLabel = option.group || "Outros";
+    let bucket = buckets.get(groupLabel);
+    if (!bucket) {
+      bucket = { label: groupLabel, items: [] };
+      buckets.set(groupLabel, bucket);
+      groups.push(bucket);
+    }
+    bucket.items.push(option);
+  }
+  return groups;
 }
 
 /* ── Ciclo de vida: carrega ao montar e ao trocar de registro/modo ───── */
@@ -649,6 +764,7 @@ watch(() => [recordId.value, props.mode], async () => {
 
 .rpage__field-err { display: flex; align-items: center; gap: 6px; color: #ef4444; font: var(--weight-medium) 12px/1.3 var(--font-sans); }
 .rpage__field-err .pi { font-size: 12px; }
+.rpage__field-hint { color: var(--text-muted); font: var(--weight-medium) 12px/1.4 var(--font-sans); }
 
 /* ── Modo leitura (view): mesma tela do editar, com os campos desabilitados ──
    Estilo "ghost/outline": fundo transparente, borda suave e texto legível —
@@ -762,7 +878,7 @@ watch(() => [recordId.value, props.mode], async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 0 28px 28px;
+  padding: 0 var(--card-pad) var(--card-pad); /* mesmo padding das demais seções */
 }
 .rpage__hint {
   padding: 14px 16px;
@@ -808,6 +924,31 @@ watch(() => [recordId.value, props.mode], async () => {
 .detail-list__row:last-child { border-bottom: none; }
 .detail-list__row span { min-width: 0; overflow: hidden; color: var(--text-body); font: var(--weight-semibold) 13px/1.25 var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
 .detail-list__row strong { flex-shrink: 0; color: var(--text-strong); font: var(--weight-bold) 12.5px/1 var(--font-sans); }
+
+/* Itens do pedido — DataTable no mesmo padrão das variações/adicionais */
+.order-items { padding: 0 6px 8px; }
+.order-items :deep(.p-datatable-thead > tr > th) {
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--text-subtle);
+  border-color: var(--border-subtle);
+  font: var(--weight-bold) 10.5px/1 var(--font-table);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+}
+.order-items :deep(.p-datatable-thead > tr > th.dt-col-right .p-column-header-content) { justify-content: flex-end; }
+.order-items :deep(.p-datatable-tbody > tr) { background: var(--surface-sunken); }
+.order-items :deep(.p-datatable-tbody > tr > td) {
+  padding: 8px 12px;
+  border-color: var(--border-subtle);
+  font: var(--weight-medium) 13.5px/1.3 var(--font-table);
+  color: var(--text-body);
+  background: transparent;
+}
+.order-items__product { display: flex; flex-direction: column; gap: 2px; }
+.order-items__product strong { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-table); }
+.order-items__product small { color: var(--text-muted); font: var(--weight-medium) 11.5px/1.3 var(--font-sans); }
+.order-items__note { color: var(--warning-text); }
 
 /* Hero accents */
 .accent--violet  { background: linear-gradient(135deg, #7c3aed, #4f46e5); }

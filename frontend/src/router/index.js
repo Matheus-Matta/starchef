@@ -4,12 +4,16 @@ import { resources } from "../config/resources";
 import AppLayout from "../layout/AppLayout.vue";
 import { useAuthStore } from "../stores/auth";
 import DashboardView from "../views/DashboardView.vue";
+import HomeView from "../views/HomeView.vue";
 import KdsView from "../views/KdsView.vue";
 import LoginScreen from "../views/LoginScreen.vue";
 import PdvView from "../views/PdvView.vue";
+import OrderEditView from "../views/OrderEditView.vue";
+import CashRegisterView from "../views/CashRegisterView.vue";
 import ReportsView from "../views/ReportsView.vue";
+import KdsStationsView from "../views/KdsStationsView.vue";
 import ResourceFormView from "../views/ResourceFormView.vue";
-import ResourceListView from "../views/ResourceListView.vue";
+import ResourceListViewPro from "../views/ResourceListViewPro.vue";
 
 /**
  * Gera as rotas de um recurso a partir do seu schema (config/resources.js):
@@ -37,7 +41,8 @@ function buildResourceRoutes(resource) {
     {
       path: resource.name,
       name: resource.name,
-      component: ResourceListView,
+      // Todas as listagens usam o novo padrão de tabela (Pro).
+      component: ResourceListViewPro,
       props: { ...resource, subtitle: "API REST", formEnabled: !!resource.formFields },
       meta: meta(resource.title),
     },
@@ -73,7 +78,9 @@ function buildResourceRoutes(resource) {
   return routes;
 }
 
-const resourceRoutes = resources.flatMap(buildResourceRoutes);
+// "caixa" e "kds-estacoes" têm telas próprias (não usam o CRUD genérico).
+const CUSTOM_RESOURCES = new Set(["caixa", "kds-estacoes"]);
+const resourceRoutes = resources.filter((resource) => !CUSTOM_RESOURCES.has(resource.name)).flatMap(buildResourceRoutes);
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -85,9 +92,13 @@ export const router = createRouter({
       meta: { requiresAuth: true },
       children: [
         { path: "", redirect: { name: "painel" } },
-        { path: "painel", name: "painel", component: DashboardView, meta: { requiresAuth: true, title: "Painel operacional", nav: "painel" } },
+        { path: "home", name: "painel", component: HomeView, meta: { requiresAuth: true, title: "Home", nav: "painel" } },
+        { path: "relatorio-geral", name: "relatorio-geral", component: DashboardView, meta: { requiresAuth: true, title: "Relatório geral", nav: "relatorio-geral" } },
         { path: "pdv", name: "pdv", component: PdvView, meta: { requiresAuth: true, title: "PDV — Ponto de Venda", nav: "pdv" } },
-        { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds" } },
+        { path: "caixa", name: "caixa", component: CashRegisterView, meta: { requiresAuth: true, title: "Controle de caixa", nav: "caixa" } },
+        { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
+        { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds", fullWidth: true } },
+        { path: "kds-estacoes", name: "kds-estacoes", component: KdsStationsView, meta: { requiresAuth: true, title: "Estações KDS", nav: "kds-estacoes" } },
         { path: "relatorios", name: "relatorios", component: ReportsView, meta: { requiresAuth: true, title: "Relatorios", nav: "relatorios" } },
         ...resourceRoutes,
       ],
@@ -108,7 +119,13 @@ router.beforeEach(async (to) => {
   }
 
   if (to.matched.some((record) => record.meta.requiresAuth)) {
-    const valid = await auth.validateSession();
+    // Depois da validação inicial, a troca entre páginas é local e imediata.
+    // As chamadas da própria tela continuam validando o cookie e o interceptor
+    // encerra a sessão caso o servidor responda 401.
+    const valid =
+      auth.initialized && auth.isAuthenticated && auth.user
+        ? true
+        : await auth.validateSession();
     if (!valid) {
       return { name: "login", query: { next: to.fullPath } };
     }

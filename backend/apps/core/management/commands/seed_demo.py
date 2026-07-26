@@ -39,7 +39,7 @@ from apps.menu.models import (
 )
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen
-from apps.payments.models import CashRegister, Payment, PaymentMethod
+from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
 from apps.payments.services import open_cash_register, register_payment
 from apps.invoices.models import FiscalConfig, FiscalProfile
 from apps.printers.models import Printer, Scale
@@ -247,8 +247,9 @@ class Command(BaseCommand):
         customers = self._seed_customers_burger(account, restaurant, branch, u)
         self._seed_stock_movements(account, restaurant, branch, ingrs, stock_loc, u)
         if not skip_orders:
-            self._seed_cash_register(branch, u)
+            cash_register = self._seed_cash_register(branch, caixa, extra_operators=[admin])
             self._seed_orders_burger(branch, tables, prods, customers, pms, admin, garcom, caixa)
+            self._seed_current_cash_movements(cash_register, caixa)
 
     def _seed_tables_burger(self, account, restaurant, branch, user):
         sectors = {
@@ -471,7 +472,7 @@ class Command(BaseCommand):
                 self._upsert(
                     ProductVariation,
                     {"account": account, "restaurant": restaurant, "branch": branch, "product": products[code], "name": vname},
-                    {"price_delta": Decimal(delta), "is_required": False, "is_active": True, "created_by": user, "updated_by": user},
+                    {"price_delta": Decimal(delta), "is_active": True, "created_by": user, "updated_by": user},
                 )
 
     def _seed_recipes_burger(self, account, restaurant, branch, products, ingredients, user):
@@ -679,8 +680,9 @@ class Command(BaseCommand):
         customers = self._seed_customers_pizza(account, restaurant, branch, u)
         self._seed_stock_movements(account, restaurant, branch, ingrs, stock_loc, u)
         if not skip_orders:
-            self._seed_cash_register(branch, u)
+            cash_register = self._seed_cash_register(branch, u)
             self._seed_orders_pizza(branch, tables, prods, customers, pms, u)
+            self._seed_current_cash_movements(cash_register, u)
 
     def _seed_tables_pizza(self, account, restaurant, branch, user):
         sectors = {
@@ -864,8 +866,9 @@ class Command(BaseCommand):
         customers = self._seed_customers_trattoria(account, restaurant, branch, u)
         self._seed_stock_movements(account, restaurant, branch, ingrs, stock_loc, u)
         if not skip_orders:
-            self._seed_cash_register(branch, u)
+            cash_register = self._seed_cash_register(branch, u)
             self._seed_orders_trattoria(branch, tables, prods, customers, pms, u)
+            self._seed_current_cash_movements(cash_register, u)
 
     def _seed_tables_trattoria(self, account, restaurant, branch, user):
         sector = self._upsert(TableSector, {"account": account, "restaurant": restaurant, "branch": branch, "name": "Salão"}, {"display_order": 1, "is_active": True, "created_by": user, "updated_by": user})
@@ -1022,13 +1025,177 @@ class Command(BaseCommand):
                 created_by=user, updated_by=user,
             )
 
-    def _seed_cash_register(self, branch, user):
-        if CashRegister.all_objects.filter(branch=branch, status=CashRegister.STATUS_OPEN).exists():
-            return
+    def _seed_cash_register(self, branch, user, extra_operators=None):
+        restaurant = branch.restaurant
+        station, _ = CashStation.all_objects.update_or_create(
+            account=restaurant.account,
+            restaurant=restaurant,
+            code="CX-01",
+            defaults={
+                "name": "Caixa Principal",
+                "cash_limit": Decimal("2500.00"),
+                "is_active": True,
+                "deleted_at": None,
+                "settings": {"seed_demo": True},
+                "created_by": user,
+                "updated_by": user,
+            },
+        )
+        # Um usuário só pode estar vinculado a um caixa por vez: o operador fica
+        # no caixa principal e os operadores extras vão para o caixa de delivery.
+        station.operators.set([user])
+
+        secondary = None
+        if extra_operators:
+            secondary, _ = CashStation.all_objects.update_or_create(
+                account=restaurant.account,
+                restaurant=restaurant,
+                code="CX-02",
+                defaults={
+                    "name": "Caixa Delivery",
+                    "cash_limit": Decimal("1200.00"),
+                    "is_active": True,
+                    "deleted_at": None,
+                    "settings": {"seed_demo": True},
+                    "created_by": user,
+                    "updated_by": user,
+                },
+            )
+            secondary.operators.set(list(extra_operators))
+
+        self._seed_closed_cash_session(branch, station, user)
+
+        active_statuses = [
+            CashRegister.STATUS_OPEN,
+            CashRegister.STATUS_PENDING_OPENING,
+            CashRegister.STATUS_PENDING_APPROVAL,
+            CashRegister.STATUS_PENDING_CLOSING,
+            CashRegister.STATUS_BLOCKED,
+        ]
+        register = CashRegister.all_objects.filter(
+            restaurant=restaurant,
+            opened_by=user,
+            status__in=active_statuses,
+        ).order_by("-opened_at").first()
+        if register:
+            if register.cash_station_id is None:
+                register.cash_station = station
+                register.station = station.name
+                register.save(update_fields=["cash_station", "station", "updated_at"])
+            return register
+        station_in_use = CashRegister.all_objects.filter(
+            restaurant=restaurant,
+            cash_station=station,
+            status__in=active_statuses,
+        ).exists()
+        operating_station = secondary if station_in_use and secondary is not None else station
         try:
-            open_cash_register(branch=branch, user=user, opening_amount=Decimal("300.00"), notes="Seed demo")
+            return open_cash_register(
+                restaurant=restaurant,
+                cash_station=operating_station,
+                user=user,
+                opening_amount=Decimal("920.00"),
+                notes="seed:cash:current",
+            )
         except ValidationError:
+            return CashRegister.all_objects.filter(
+                restaurant=restaurant,
+                cash_station=operating_station,
+                status__in=active_statuses,
+            ).order_by("-opened_at").first()
+
+    def _seed_closed_cash_session(self, branch, station, user):
+        register = CashRegister.all_objects.filter(
+            cash_station=station,
+            notes="seed:cash:closed",
+        ).first()
+        closed_at = timezone.now() - timedelta(days=1, hours=2)
+        opened_at = closed_at - timedelta(hours=8)
+        if register is None:
+            register = CashRegister.all_objects.create(
+                account=station.account,
+                restaurant=station.restaurant,
+                branch=branch,
+                cash_station=station,
+                opened_by=user,
+                closed_by=user,
+                status=CashRegister.STATUS_CLOSED_DIFFERENCE,
+                opening_amount=Decimal("300.00"),
+                expected_amount=Decimal("925.00"),
+                actual_amount=Decimal("920.00"),
+                difference_amount=Decimal("-5.00"),
+                station=station.name,
+                notes="seed:cash:closed",
+                opening_is_initial=False,
+                approval_reason="Diferença de demonstração aprovada pelo gerente.",
+                approved_by=user,
+                approved_at=closed_at,
+                created_by=user,
+                updated_by=user,
+            )
+            CashRegister.all_objects.filter(pk=register.pk).update(
+                opened_at=opened_at,
+                closed_at=closed_at,
+                created_at=opened_at,
+                updated_at=closed_at,
+            )
+        rows = [
+            ("seed-opening", CashMovement.TYPE_OPENING, Decimal("300.00"), "Abertura do caixa"),
+            ("seed-sale", CashMovement.TYPE_SALE, Decimal("700.00"), "Vendas em dinheiro do período"),
+            ("seed-supply", CashMovement.TYPE_SUPPLY, Decimal("100.00"), "Reforço de troco"),
+            ("seed-withdrawal", CashMovement.TYPE_WITHDRAWAL, Decimal("-175.00"), "Sangria para o cofre"),
+            ("seed-closing", CashMovement.TYPE_CLOSING, Decimal("0.00"), "Fechamento do caixa"),
+        ]
+        for index, (key, movement_type, amount, reason) in enumerate(rows):
+            movement, _ = CashMovement.all_objects.update_or_create(
+                account=station.account,
+                cash_register=register,
+                metadata__seed_key=key,
+                defaults={
+                    "restaurant": station.restaurant,
+                    "branch": branch,
+                    "operator": user,
+                    "movement_type": movement_type,
+                    "amount": amount,
+                    "reason": reason,
+                    "destination": "Cofre" if movement_type == CashMovement.TYPE_WITHDRAWAL else "",
+                    "status": "approved",
+                    "authorized_by": user if movement_type == CashMovement.TYPE_WITHDRAWAL else None,
+                    "approved_at": opened_at + timedelta(hours=index + 1),
+                    "metadata": {"seed_key": key, "source": "seed_demo"},
+                    "created_by": user,
+                    "updated_by": user,
+                },
+            )
+            movement_time = opened_at + timedelta(hours=index + 1)
+            CashMovement.all_objects.filter(pk=movement.pk).update(created_at=movement_time, updated_at=movement_time)
+
+    def _seed_current_cash_movements(self, register, user):
+        if register is None or register.status != CashRegister.STATUS_OPEN:
             return
+        rows = [
+            ("current-supply", CashMovement.TYPE_SUPPLY, Decimal("80.00"), "Suprimento para troco", "approved"),
+            ("current-withdrawal", CashMovement.TYPE_WITHDRAWAL, Decimal("-120.00"), "Sangria aguardando gerente", "pending"),
+        ]
+        for key, movement_type, amount, reason, movement_status in rows:
+            CashMovement.all_objects.update_or_create(
+                account=register.account,
+                cash_register=register,
+                metadata__seed_key=key,
+                defaults={
+                    "restaurant": register.restaurant,
+                    "branch": register.branch,
+                    "operator": user,
+                    "movement_type": movement_type,
+                    "amount": amount,
+                    "reason": reason,
+                    "destination": "Cofre" if movement_type == CashMovement.TYPE_WITHDRAWAL else "",
+                    "status": movement_status,
+                    "metadata": {"seed_key": key, "source": "seed_demo"},
+                    "created_by": user,
+                    "updated_by": user,
+                },
+            )
 
     def _build_recipes(self, account, restaurant, branch, products, ingredients, recipes_data, user):
         for code, rows in recipes_data.items():
@@ -1076,6 +1243,7 @@ class Command(BaseCommand):
             production_status=Order.PROD_DELIVERED,
         )
         Payment.all_objects.filter(pk=payment.pk).update(paid_at=closed_at, created_at=closed_at, updated_at=closed_at)
+        CashMovement.all_objects.filter(payment=payment).update(created_at=closed_at, updated_at=closed_at)
         OrderItem.all_objects.filter(order=order).update(status=OrderItem.STATUS_DELIVERED, delivered_at=closed_at, updated_at=closed_at)
 
     def _upsert(self, model, lookup, defaults):

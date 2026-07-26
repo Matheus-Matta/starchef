@@ -57,6 +57,7 @@ const icons = {
   "flask": "pi-filter-fill",
   "hash": "pi-hashtag",
   "hourglass": "pi-hourglass",
+  "home": "pi-home",
   "layers": "pi-clone",
   "layout-dashboard": "pi-chart-pie",
   "life-buoy": "pi-question-circle",

@@ -5,6 +5,16 @@ from apps.core.models import TenantModel
 
 
 class Printer(TenantModel):
+    CONNECTION_WINDOWS = "windows"
+    CONNECTION_NETWORK = "network"
+    CONNECTION_SERIAL = "serial"
+
+    CONNECTION_CHOICES = [
+        (CONNECTION_WINDOWS, "Windows / USB"),
+        (CONNECTION_NETWORK, "TCP/IP"),
+        (CONNECTION_SERIAL, "Serial"),
+    ]
+
     DRIVER_BROWSER = "browser"
     DRIVER_ESCPOS = "escpos"
 
@@ -23,7 +33,15 @@ class Printer(TenantModel):
         on_delete=models.SET_NULL,
     )
     driver_type = models.CharField(max_length=24, choices=DRIVER_CHOICES, default=DRIVER_BROWSER)
+    connection_type = models.CharField(
+        max_length=16,
+        choices=CONNECTION_CHOICES,
+        default=CONNECTION_WINDOWS,
+    )
     endpoint = models.CharField(max_length=255, blank=True)
+    host = models.GenericIPAddressField(null=True, blank=True)
+    port = models.PositiveIntegerField(default=9100)
+    timeout_seconds = models.PositiveIntegerField(default=10)
     auto_print = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     settings = models.JSONField(default=dict, blank=True)
@@ -100,6 +118,16 @@ class Scale(TenantModel):
     auto_print_delay_seconds = models.PositiveIntegerField(
         default=3,
         help_text="Segundos que a balanca deve ficar estavel antes de imprimir (aplicado pelo agente).",
+    )
+    agent_instance_id = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Identificador do PDV Desktop que possui a leitura exclusiva da balanca.",
+    )
+    agent_lease_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Validade da posse exclusiva da balanca pelo agente local.",
     )
     is_active = models.BooleanField(default=True)
     settings = models.JSONField(default=dict, blank=True)

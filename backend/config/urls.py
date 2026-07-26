@@ -6,10 +6,11 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
+from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.accounts.views import (
     AccountViewSet,
+    CookieTokenRefreshView,
     GlobalSystemConfigViewSet,
     LoginView,
     LogoutView,
@@ -22,7 +23,7 @@ from apps.accounts.views import (
 )
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
-from apps.kitchen.views import KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
+from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
 from apps.sla.views import ServiceLevelAgreementViewSet
 from apps.menu.views import (
     IngredientViewSet,
@@ -36,12 +37,14 @@ from apps.menu.views import (
     RecipeItemViewSet,
     RecipeViewSet,
 )
+from apps.notifications.views import NotificationViewSet
 from apps.orders.views import OrderItemViewSet, OrderViewSet
-from apps.payments.views import CashRegisterViewSet, PaymentMethodViewSet, PaymentViewSet
+from apps.payments.views import CashRegisterViewSet, CashStationViewSet, PaymentMethodViewSet, PaymentViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.views import DashboardReportView, SalesReportView
 from apps.restaurants.views import (
     BranchViewSet,
+    CommandViewSet,
     DeliverymanViewSet,
     DeliveryZoneViewSet,
     RestaurantViewSet,
@@ -78,6 +81,7 @@ router.register("restaurants", RestaurantViewSet, basename="restaurants")
 router.register("branches", BranchViewSet, basename="branches")
 router.register("tables/sectors", TableSectorViewSet, basename="table-sectors")
 router.register("tables", TableViewSet, basename="tables")
+router.register("commands", CommandViewSet, basename="commands")
 router.register("delivery/zones", DeliveryZoneViewSet, basename="delivery-zones")
 router.register("delivery/deliverymen", DeliverymanViewSet, basename="deliverymen")
 router.register("customers/addresses", CustomerAddressViewSet, basename="customer-addresses")
@@ -95,11 +99,13 @@ router.register("orders/items", OrderItemViewSet, basename="order-items")
 router.register("orders", OrderViewSet, basename="orders")
 router.register("sla", ServiceLevelAgreementViewSet, basename="sla")
 router.register("kitchen/stations", KdsStationViewSet, basename="kds-stations")
+router.register("kitchen/columns", KdsColumnViewSet, basename="kds-columns")
 router.register("kitchen/items", KitchenItemViewSet, basename="kitchen-items")
 router.register("kitchen/orders", KitchenOrderViewSet, basename="kitchen-orders")
 router.register("payments/methods", PaymentMethodViewSet, basename="payment-methods")
 router.register("payments", PaymentViewSet, basename="payments")
 router.register("cash-register", CashRegisterViewSet, basename="cash-register")
+router.register("cash-stations", CashStationViewSet, basename="cash-stations")
 router.register("fiscal/config", FiscalConfigViewSet, basename="fiscal-config")
 router.register("fiscal/profiles", FiscalProfileViewSet, basename="fiscal-profiles")
 router.register("invoices", InvoiceViewSet, basename="invoices")
@@ -109,6 +115,7 @@ router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings
 router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
+router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
     path("", api_index, name="api-index"),
@@ -117,7 +124,7 @@ urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/schema/swagger-ui/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/v1/auth/login/", LoginView.as_view(), name="token_obtain_pair"),
-    path("api/v1/auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/v1/auth/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("api/v1/auth/me/", MeView.as_view(), name="auth_me"),
     path("api/v1/auth/logout/", LogoutView.as_view(), name="logout"),
@@ -129,5 +136,24 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
+    # Em dev o Django serve estáticos e media diretamente.
     urlpatterns += staticfiles_urlpatterns()
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    # Em produção:
+    #  - estáticos são servidos pelo WhiteNoise (middleware, hasheados/comprimidos);
+    #  - media (uploads dinâmicos) é servida pelo nginx (`location /media/`). O
+    #    WhiteNoise NÃO serve media, pois indexa arquivos só no boot e uploads
+    #    posteriores não apareceriam. Este re_path é um fallback para quando o app
+    #    roda sem nginx na frente (o nginx intercepta /media/ antes de chegar aqui).
+    from django.urls import re_path
+    from django.views.static import serve as media_serve
+
+    media_prefix = settings.MEDIA_URL.lstrip("/")
+    urlpatterns += [
+        re_path(
+            rf"^{media_prefix}(?P<path>.*)$",
+            media_serve,
+            {"document_root": settings.MEDIA_ROOT},
+        ),
+    ]

@@ -11,7 +11,7 @@ User = get_user_model()
 
 
 @pytest.mark.django_db
-def test_user_only_lists_orders_from_own_branch(api_client, account, restaurant, branch, table, manager_user):
+def test_user_lists_orders_from_own_restaurant(api_client, account, restaurant, branch, table, manager_user):
     other_branch = Branch.objects.create(account=account, restaurant=restaurant, name="Outra filial")
     other_user = User.objects.create_user("other", password="secret123")
     UserProfile.objects.create(
@@ -31,7 +31,7 @@ def test_user_only_lists_orders_from_own_branch(api_client, account, restaurant,
     assert response.status_code == 200
     ids = {row["id"] for row in response.data["results"]}
     assert str(own_order.id) in ids
-    assert len(ids) == 1
+    assert len(ids) == 2
 
 
 @pytest.mark.django_db

@@ -68,9 +68,6 @@ class TenantQuerySetMixin:
                 filters["id"] = profile.restaurant_id
             elif model_has_field(queryset.model, self.tenant_restaurant_field):
                 filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
-        if profile.branch_id and model_has_field(queryset.model, self.tenant_branch_field):
-            filters[f"{self.tenant_branch_field}_id"] = profile.branch_id
-
         return queryset.filter(**filters) if filters else queryset
 
     def get_object(self):

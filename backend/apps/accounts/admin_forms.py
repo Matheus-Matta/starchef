@@ -30,6 +30,9 @@ ACCOUNT_FIELDS = [
     "plan",
     "timezone",
     "default_currency",
+    # Limites de tenancy da conta (0 = ilimitado). Aplicados no cadastro.
+    "max_restaurants",
+    "max_users",
     "status",
     "subscription_status",
     "is_active",

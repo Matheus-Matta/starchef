@@ -4,6 +4,20 @@ from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_BASE
 
 
+def effective_permission_codes(user):
+    if not user or not user.is_authenticated:
+        return set()
+    if user.is_superuser:
+        return {"*"}
+    profile = getattr(user, "profile", None)
+    if not profile:
+        return set()
+    codes = set(profile.specific_permissions.values_list("code", flat=True))
+    if profile.role_id:
+        codes.update(profile.role.permissions.values_list("code", flat=True))
+    return codes
+
+
 class HasModulePermission(BasePermission):
     """Bloqueia o acesso a APIs de modulos que a conta nao tem habilitados.
 
@@ -92,3 +106,18 @@ class CanAuthorizeDiscount(BasePermission):
     def has_permission(self, request, view):
         profile = getattr(request.user, "profile", None)
         return bool(profile and profile.profile_type in {"admin", "owner", "manager"})
+
+
+class CanUseOrManageDevices(BasePermission):
+    message = "Você não tem permissão para acessar a configuração de equipamentos."
+
+    def has_permission(self, request, view):
+        profile = getattr(request.user, "profile", None)
+        if request.user.is_superuser or getattr(profile, "profile_type", None) in {"admin", "owner"}:
+            return True
+        codes = effective_permission_codes(request.user)
+        if "*" in codes or "devices.manage" in codes:
+            return True
+        return request.method in {"GET", "HEAD", "OPTIONS"} and bool(
+            {"orders.view", "orders.manage", "payments.manage"} & codes
+        )

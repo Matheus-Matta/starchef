@@ -10,6 +10,7 @@ backend/makemigrations-trace.txt
 backend/media/
 backend/staticfiles/
 backend/db.sqlite3
+backend/db*.sqlite3
 backend/test.sqlite3
 test.sqlite3
 
@@ -20,6 +21,7 @@ postgres_data/
 redis_data/
 backups/*.sql
 backups/*.dump
+artifacts/
 
 .DS_Store
 Thumbs.db

@@ -74,6 +74,35 @@ def test_customer_with_address(api_client, restaurant, branch):
     assert addr_resp.status_code == 201, addr_resp.data
 
 
+def test_create_and_update_customer_with_nested_primary_address(api_client, restaurant, branch):
+    payload = customer_payload(
+        restaurant,
+        branch,
+        address={
+            "label": "Casa",
+            "street": "Rua das Flores",
+            "number": "42",
+            "district": "Centro",
+            "city": "São Paulo",
+            "state": "sp",
+            "zip_code": "01000-000",
+        },
+    )
+    created = api_client.post("/api/v1/customers/", payload, format="json")
+    assert created.status_code == 201, created.data
+    assert created.data["address"]["street"] == "Rua das Flores"
+    assert created.data["address"]["state"] == "SP"
+
+    updated = api_client.patch(
+        f"/api/v1/customers/{created.data['id']}/",
+        {"address": {**payload["address"], "number": "99"}},
+        format="json",
+    )
+    assert updated.status_code == 200, updated.data
+    assert updated.data["address"]["number"] == "99"
+    assert len(updated.data["addresses"]) == 1
+
+
 # ── Mascaramento na listagem (STC-044) ───────────────────────────────────
 def test_sensitive_data_masked_for_unprivileged_profile(account, restaurant, branch):
     Customer.objects.create(

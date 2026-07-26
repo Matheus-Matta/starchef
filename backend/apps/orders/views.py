@@ -1,3 +1,4 @@
+import django_filters
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import action
@@ -18,6 +19,20 @@ from apps.orders.services import (
     update_order_item_status,
     void_order_item,
 )
+from apps.restaurants.models import Command, Table
+
+
+class OrderFilterSet(django_filters.FilterSet):
+    # Intervalo de datas por "aberto em" — comparação por data, inclusiva nas duas pontas.
+    opened_after = django_filters.DateFilter(field_name="opened_at", lookup_expr="date__gte")
+    opened_before = django_filters.DateFilter(field_name="opened_at", lookup_expr="date__lte")
+
+    class Meta:
+        model = Order
+        # restaurant/branch NÃO entram aqui: o escopo por tenant já os resolve
+        # (TenantQuerySetMixin). Declará-los como filtro faz o django-filter validar
+        # o UUID fora do contexto de tenant e devolver 400 "Faça uma escolha válida".
+        fields = ["order_type", "status", "production_status", "payment_status", "table", "customer"]
 
 
 class OrderViewSet(BaseTenantViewSet):
@@ -27,15 +42,131 @@ class OrderViewSet(BaseTenantViewSet):
         .prefetch_related("items__product", "items__addons", "items__batch")
         .all()
     )
-    filterset_fields = ["restaurant", "branch", "order_type", "status", "production_status", "payment_status", "table", "customer"]
+    filterset_class = OrderFilterSet
     search_fields = ["sequence", "customer__name", "table__number"]
     ordering_fields = ["opened_at", "closed_at", "total", "sequence"]
+
+    @action(detail=False, methods=["post"], url_path="open-table")
+    def open_table(self, request):
+        table_id = request.data.get("table")
+        if not table_id:
+            return Response(
+                {"detail": "Selecione uma mesa para abrir o pedido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        table = (
+            Table.objects.select_related("restaurant")
+            .filter(
+                pk=table_id,
+                account=getattr(request, "account", None),
+                is_active=True,
+            )
+            .first()
+        )
+        if table is None:
+            return Response(
+                {"detail": "A mesa selecionada não existe ou está inativa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile = getattr(request.user, "profile", None)
+        from apps.core.access import is_tenant_admin
+
+        if (
+            not is_tenant_admin(request.user)
+            and getattr(profile, "restaurant_id", None) != table.restaurant_id
+        ):
+            return Response(
+                {"detail": "A mesa selecionada pertence a outro restaurante."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if table.current_order_id:
+            existing = Order.objects.filter(
+                pk=table.current_order_id,
+                account=getattr(request, "account", None),
+                restaurant=table.restaurant,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).first()
+            if existing:
+                return Response(self.get_serializer(existing).data)
+
+        try:
+            order = create_order(
+                restaurant=table.restaurant,
+                branch=None,
+                order_type=Order.TYPE_TABLE,
+                table=table,
+                user=request.user,
+            )
+        except ValidationError as exc:
+            return Response(
+                {"detail": exc.messages},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            self.get_serializer(order).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=["post"], url_path="open-command")
+    def open_command(self, request):
+        """Abre (ou retoma) o pedido de uma comanda. Espelha `open_table`.
+
+        Comanda livre → cria pedido (201). Comanda em uso → retoma o pedido aberto
+        (200). Resolve o restaurante pela própria comanda (sem filtros).
+        """
+        command_id = request.data.get("command")
+        if not command_id:
+            return Response(
+                {"detail": "Selecione uma comanda para abrir o pedido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        command = (
+            Command.objects.select_related("restaurant")
+            .filter(pk=command_id, account=getattr(request, "account", None), is_active=True)
+            .first()
+        )
+        if command is None:
+            return Response(
+                {"detail": "A comanda selecionada não existe ou está inativa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        profile = getattr(request.user, "profile", None)
+        from apps.core.access import is_tenant_admin
+
+        if not is_tenant_admin(request.user) and getattr(profile, "restaurant_id", None) != command.restaurant_id:
+            return Response(
+                {"detail": "A comanda selecionada pertence a outro restaurante."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if command.current_order_id:
+            existing = Order.objects.filter(
+                pk=command.current_order_id,
+                account=getattr(request, "account", None),
+                restaurant=command.restaurant,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).first()
+            if existing:
+                return Response(self.get_serializer(existing).data)
+
+        try:
+            order = create_order(
+                restaurant=command.restaurant,
+                branch=None,
+                order_type=Order.TYPE_COMMAND,
+                command=command,
+                user=request.user,
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         user = self.request.user
         profile = getattr(user, "profile", None)
         restaurant = serializer.validated_data.get("restaurant") or profile.restaurant
-        branch = serializer.validated_data.get("branch") or profile.branch
+        branch = None
         order = create_order(
             restaurant=restaurant,
             branch=branch,
@@ -57,7 +188,7 @@ class OrderViewSet(BaseTenantViewSet):
             serializer = OrderItemSerializer(order.items.all(), many=True)
             return Response(serializer.data)
 
-        product = Product.objects.get(pk=request.data["product"], restaurant=order.restaurant, branch=order.branch)
+        product = Product.objects.get(pk=request.data["product"], restaurant=order.restaurant)
         scale_reading = None
         if request.data.get("scale_reading"):
             try:
@@ -74,6 +205,7 @@ class OrderViewSet(BaseTenantViewSet):
                 quantity=request.data.get("quantity"),
                 user=request.user,
                 variations=request.data.get("variations", []),
+                addons=request.data.get("addons", []),
                 customer_note=request.data.get("customer_note", ""),
                 scale_reading=scale_reading,
                 weight_kg=request.data.get("weight_kg"),
@@ -89,7 +221,7 @@ class OrderViewSet(BaseTenantViewSet):
             item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
             item = void_order_item(item, request.user, reason=request.data.get("reason", ""))
         except OrderItem.DoesNotExist:
-            return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data)
@@ -101,7 +233,7 @@ class OrderViewSet(BaseTenantViewSet):
             item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
             item = comp_order_item(item, request.user, reason=request.data.get("reason", ""))
         except OrderItem.DoesNotExist:
-            return Response({"detail": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data)
@@ -159,8 +291,27 @@ class OrderViewSet(BaseTenantViewSet):
         from apps.payments.serializers import PaymentSerializer
 
         order = self.get_object()
-        payments = Payment.objects.filter(order=order).order_by("created_at")
+        payments = Payment.objects.filter(order=order, status=Payment.STATUS_APPROVED).order_by("created_at")
         return Response(PaymentSerializer(payments, many=True).data)
+
+    @action(detail=True, methods=["delete"], url_path=r"payments/(?P<payment_pk>[^/.]+)")
+    def delete_payment(self, request, pk=None, payment_pk=None):
+        from apps.payments.models import Payment
+        from apps.payments.serializers import PaymentSerializer
+        from apps.payments.services import cancel_payment
+
+        payment = Payment.objects.filter(
+            pk=payment_pk,
+            order=self.get_object(),
+            status=Payment.STATUS_APPROVED,
+        ).first()
+        if payment is None:
+            return Response({"detail": "Pagamento não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            payment = cancel_payment(payment=payment, user=request.user)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(PaymentSerializer(payment).data)
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
@@ -172,14 +323,56 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="print")
     def print_order(self, request, pk=None):
+        from apps.printers.models import Printer
         from apps.printers.services import register_print_job
 
+        order = self.get_object()
+        printer = None
+        printer_id = request.data.get("printer")
+        if printer_id:
+            printer = Printer.objects.filter(
+                pk=printer_id,
+                account=order.account,
+                restaurant=order.restaurant,
+                is_active=True,
+            ).first()
+            if printer is None:
+                return Response(
+                    {"detail": "A impressora selecionada não existe, está inativa ou pertence a outro restaurante."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         job = register_print_job(
-            order=self.get_object(),
+            order=order,
             user=request.user,
             job_type=request.data.get("job_type", "receipt"),
+            printer=printer,
+            manual_only=bool(request.data.get("manual_only", False)),
         )
-        return Response({"print_job_id": str(job.id), "html": job.html_content})
+        printer = job.printer
+        return Response(
+            {
+                "print_job_id": str(job.id),
+                "html": job.html_content,
+                "status": job.status,
+                "printer": (
+                    {
+                        "id": str(printer.id),
+                        "name": printer.name,
+                        "endpoint": printer.endpoint,
+                        "connection_type": printer.connection_type,
+                        "host": printer.host,
+                        "port": printer.port,
+                        "timeout_seconds": printer.timeout_seconds,
+                        "driver_type": printer.driver_type,
+                        "settings": printer.settings,
+                        "auto_print": printer.auto_print,
+                        "is_active": printer.is_active,
+                    }
+                    if printer
+                    else None
+                ),
+            }
+        )
 
 
 class OrderItemViewSet(BaseTenantViewSet):
@@ -189,7 +382,7 @@ class OrderItemViewSet(BaseTenantViewSet):
         .prefetch_related("addons")
         .all()
     )
-    filterset_fields = ["restaurant", "branch", "order", "production_sector", "status"]
+    filterset_fields = ["order", "production_sector", "status"]
     search_fields = ["product__name", "customer_note"]
     ordering_fields = ["launched_at", "ready_at"]
 

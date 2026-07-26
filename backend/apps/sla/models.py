@@ -44,6 +44,12 @@ class ServiceLevelAgreement(TenantBaseModel):
     priority = models.CharField(max_length=12, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL)
     is_active = models.BooleanField(default=True, db_index=True)
     restaurants = models.ManyToManyField("restaurants.Restaurant", blank=True, related_name="slas")
+    # Um SLA é REUTILIZÁVEL: pode ser aplicado a vários quadros (estações) e/ou a
+    # várias colunas específicas. O KDS resolve o tempo-alvo de um card assim:
+    # coluna do card em `columns` → senão estação do card em `stations` → senão
+    # o sla_minutes da estação → senão o padrão do app.
+    stations = models.ManyToManyField("kitchen.KdsStation", blank=True, related_name="slas")
+    columns = models.ManyToManyField("kitchen.KdsColumn", blank=True, related_name="slas")
 
     class Meta:
         ordering = ["name"]

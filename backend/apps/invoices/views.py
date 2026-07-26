@@ -16,7 +16,7 @@ class FiscalProfileViewSet(BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = FiscalProfileSerializer
     queryset = FiscalProfile.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["restaurant", "branch", "is_active", "is_default"]
+    filterset_fields = ["is_active", "is_default"]
     search_fields = ["name", "ncm", "cfop"]
 
 
@@ -26,14 +26,14 @@ class FiscalConfigViewSet(BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = FiscalConfigSerializer
     queryset = FiscalConfig.objects.select_related("restaurant", "branch", "default_profile").all()
-    filterset_fields = ["restaurant", "branch", "is_active", "document_model"]
+    filterset_fields = ["is_active", "document_model"]
 
 
 class InvoiceViewSet(BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = InvoiceSerializer
     queryset = Invoice.objects.select_related("restaurant", "branch", "order").prefetch_related("items").all()
-    filterset_fields = ["restaurant", "branch", "status", "phase", "document_model"]
+    filterset_fields = ["status", "phase", "document_model"]
     search_fields = ["number", "provider", "access_key"]
 
     def _account(self):

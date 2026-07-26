@@ -4,8 +4,8 @@ import logging
 from django.conf import settings
 from django.http import Http404, JsonResponse
 from django.urls import resolve
-from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from apps.core.authentication import CookieJWTAuthentication
 from apps.accounts.models import Account
 from apps.core.tenant import clear_current_account, set_current_account
 
@@ -36,7 +36,8 @@ PUBLIC_PATH_PREFIXES = (
 class TenantMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
-        self.jwt_authentication = JWTAuthentication()
+        # Lê o JWT do header Authorization OU do cookie httpOnly.
+        self.jwt_authentication = CookieJWTAuthentication()
 
     def __call__(self, request):
         try:
@@ -48,9 +49,9 @@ class TenantMiddleware:
                     if user and user.is_authenticated and user.is_superuser:
                         request.account = None
                         return self.get_response(request)
-                    return JsonResponse({"detail": "Account context is required."}, status=403)
+                    return JsonResponse({"detail": "O contexto da conta é obrigatório."}, status=403)
                 if not account.is_active or account.status != Account.STATUS_ACTIVE:
-                    return JsonResponse({"detail": "Account is not active."}, status=403)
+                    return JsonResponse({"detail": "A conta não está ativa."}, status=403)
 
                 request.account = account
                 set_current_account(account)
@@ -111,7 +112,7 @@ class TenantResponseSafetyMiddleware:
         sanitized, blocked = self.sanitize_payload(payload, str(account.id))
         if blocked:
             logger.critical("Tenant response leak blocked", extra={"account_id": str(account.id), "path": request.path})
-            return JsonResponse({"detail": "Not found."}, status=404)
+            return JsonResponse({"detail": "Não encontrado."}, status=404)
 
         if sanitized is not payload:
             response.content = json.dumps(sanitized).encode(response.charset or "utf-8")

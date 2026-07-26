@@ -8,7 +8,7 @@ from apps.accounts.models import Account, UserProfile
 from apps.core.tenant import tenant_context
 from apps.menu.models import Ingredient, Product, ProductCategory, Recipe, RecipeItem
 from apps.payments.models import PaymentMethod
-from apps.restaurants.models import Branch, Restaurant, Table, TableSector
+from apps.restaurants.models import Branch, Command, Restaurant, Table, TableSector
 
 User = get_user_model()
 
@@ -82,6 +82,12 @@ def waiter_user(db, account, restaurant, branch):
 def table(account, restaurant, branch):
     sector = TableSector.objects.create(account=account, restaurant=restaurant, branch=branch, name="Salao")
     return Table.objects.create(account=account, restaurant=restaurant, branch=branch, sector=sector, number="1", capacity=4)
+
+
+@pytest.fixture
+def command(account, restaurant, branch):
+    # number/code auto-atribuídos pelo Command.save().
+    return Command.objects.create(account=account, restaurant=restaurant, branch=branch)
 
 
 @pytest.fixture

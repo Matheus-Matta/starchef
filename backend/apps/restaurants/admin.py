@@ -26,15 +26,17 @@ class TableSectorAdmin(TenantModelAdmin):
 
 @admin.register(Table)
 class TableAdmin(TenantModelAdmin):
-    list_display = ("number", "account", "sector", "branch", "capacity", "status")
+    list_display = ("number", "code", "account", "sector", "branch", "capacity", "status")
     list_filter = ("account", "branch", "status")
-    search_fields = ("number",)
+    search_fields = ("number", "code")
 
 
 @admin.register(Command)
 class CommandAdmin(TenantModelAdmin):
-    list_display = ("code", "account", "branch", "customer_name", "status", "is_active")
-    list_filter = ("account", "branch", "status", "is_active")
+    list_display = ("number", "code", "account", "restaurant", "customer_name", "status", "is_active")
+    list_filter = ("account", "restaurant", "status", "is_active")
+    search_fields = ("number", "code", "customer_name")
+    ordering = ("restaurant", "number")
 
 
 @admin.register(DeliveryZone)

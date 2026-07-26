@@ -118,14 +118,13 @@ class Command(BaseCommand):
                 "config.asgi:application",
             ]
 
-        processes = [
-            ManagedProcess(
-                "backend",
-                backend_command,
-                backend_dir,
-                env,
-            )
-        ]
+        backend_process = ManagedProcess(
+            "backend",
+            backend_command,
+            backend_dir,
+            env,
+        )
+        processes = []
 
         if not options["skip_frontend"]:
             if not frontend_dir.exists():
@@ -173,7 +172,13 @@ class Command(BaseCommand):
                 ]
             )
 
-        self._start_and_wait(processes)
+        if settings.DEBUG:
+            self._run_dev_backend_in_foreground(
+                backend_process,
+                processes,
+            )
+        else:
+            self._start_and_wait([backend_process, *processes])
 
     def _build_env(self):
         env = os.environ.copy()
@@ -274,6 +279,39 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("\nStopping services..."))
             self._stop_all(processes)
             self.stdout.write(self.style.SUCCESS("All services stopped."))
+
+    def _run_dev_backend_in_foreground(self, backend, auxiliary_processes):
+        """Mantem o Django preso ao terminal no desenvolvimento.
+
+        O backend nao usa Popen nem um grupo de processo independente. Assim,
+        fechar com Ctrl+C encerra o servidor e evita deixar a porta ocupada por
+        um Daphne orfao no Windows.
+        """
+        self.stdout.write(
+            self.style.SUCCESS(
+                "Starting development services. The backend is running in the foreground; "
+                "press Ctrl+C to stop."
+            )
+        )
+        for process in auxiliary_processes:
+            self.stdout.write(f"Starting {process.name}: {' '.join(process.command)}")
+            process.start()
+
+        self.stdout.write(f"Starting backend in foreground: {' '.join(backend.command)}")
+        try:
+            result = subprocess.run(
+                backend.command,
+                cwd=backend.cwd,
+                env=backend.env,
+                check=False,
+            )
+            if result.returncode not in {0, 130, 3221225786}:
+                raise CommandError(f"backend exited with code {result.returncode}")
+        except KeyboardInterrupt:
+            self.stdout.write(self.style.WARNING("\nStopping development services..."))
+        finally:
+            self._stop_all(auxiliary_processes)
+            self.stdout.write(self.style.SUCCESS("All development services stopped."))
 
     def _stop_all(self, processes):
         for process in processes:

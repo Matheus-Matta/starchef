@@ -30,7 +30,7 @@ class ProductAdmin(TenantModelAdmin):
 
 @admin.register(ProductVariation)
 class ProductVariationAdmin(TenantModelAdmin):
-    list_display = ("name", "account", "product", "price_delta", "is_required", "is_active")
+    list_display = ("name", "account", "product", "price_delta", "is_active")
     list_filter = ("account", "restaurant", "branch", "is_active")
 
 

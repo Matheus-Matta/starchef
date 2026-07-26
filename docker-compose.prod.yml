@@ -1,0 +1,141 @@
+# Produção (VPS): imagem imutável (sem bind-mount de código), settings de produção,
+# gunicorn+UvicornWorker, nginx na borda com TLS/rate-limit e estáticos servidos
+# direto. Suba com:  docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-starchef}
+      POSTGRES_USER: ${POSTGRES_USER:-starchef}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD é obrigatório em produção}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    # Sem portas expostas ao host: só acessível na rede interna do compose.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starchef} -d ${POSTGRES_DB:-starchef}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - starchef
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - starchef
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        REQUIREMENTS: production
+    restart: unless-stopped
+    user: "1000:1000"
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.asgi:application -c gunicorn.conf.py"
+    env_file:
+      - .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_DEBUG: "False"
+    volumes:
+      - backend_media:/app/media
+      - backend_static:/app/staticfiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - starchef
+
+  celery_worker:
+    build:
+      context: ./backend
+      args:
+        REQUIREMENTS: production
+    restart: unless-stopped
+    user: "1000:1000"
+    command: celery -A config worker -l info --concurrency=${CELERY_CONCURRENCY:-4}
+    env_file:
+      - .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_DEBUG: "False"
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    networks:
+      - starchef
+
+  celery_beat:
+    build:
+      context: ./backend
+      args:
+        REQUIREMENTS: production
+    restart: unless-stopped
+    user: "1000:1000"
+    command: celery -A config beat -l info
+    env_file:
+      - .env.production
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_DEBUG: "False"
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    networks:
+      - starchef
+
+  # Borda: nginx com o SPA (Vue) já compilado dentro da imagem (build do frontend)
+  # + proxy de /api e /ws para o backend. A config e os certificados são montados.
+  nginx:
+    build:
+      context: ./frontend
+      args:
+        # Same-origin por padrão: SPA e API na mesma origem (sem CORS).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - backend_static:/var/www/static:ro
+      - backend_media:/var/www/media:ro
+      # Certificados TLS (ex.: via certbot/host). Ajuste o caminho conforme seu setup.
+      - ./infra/certs:/etc/nginx/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    networks:
+      - starchef
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_media:
+  backend_static:
+
+networks:
+  starchef:
+    driver: bridge

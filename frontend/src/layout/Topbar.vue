@@ -1,7 +1,10 @@
 <template>
   <header class="topbar">
-    <button class="icon-button" type="button" aria-label="Menu" @click="$emit('toggle-sidebar')">
+    <button class="icon-button topbar__menu-trigger" type="button" aria-label="Menu" @click="$emit('toggle-sidebar')">
       <AppIcon name="panel-left" :size="19" />
+    </button>
+    <button class="topbar__mobile-back" type="button" aria-label="Voltar" @click="goBack">
+      <AppIcon name="arrow-left" :size="19" />
     </button>
 
     <div class="topbar__title">
@@ -9,25 +12,14 @@
       <span>{{ contextLine }}</span>
     </div>
 
-    <div class="topbar__search">
-      <AppIcon name="search" :size="17" />
-      <input class="plain-input" placeholder="Buscar pedido, mesa, cliente..." />
-      <kbd>Ctrl K</kbd>
-    </div>
-
-    <button v-if="canCreateOrder" class="topbar__primary" type="button" @click="$emit('new-order')">
-      <AppIcon name="plus" :size="17" /> Novo pedido
-    </button>
+    <GlobalSearch />
 
     <div class="topbar__divider" />
 
     <button class="icon-button" type="button" aria-label="Tema" @click="$emit('toggle-theme')">
       <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="18" />
     </button>
-    <button class="icon-button topbar__notification" type="button" :aria-label="notificationLabel">
-      <AppIcon name="bell" :size="18" />
-      <span v-if="hasOpenWork" />
-    </button>
+    <NotificationBell />
 
     <div class="topbar__user-wrap">
       <button class="topbar__user" type="button" aria-haspopup="menu" :aria-expanded="profileOpen" @click="profileOpen = !profileOpen">
@@ -45,7 +37,6 @@
         </div>
         <div class="topbar__profile-scope">
           <span>{{ restaurantName }}</span>
-          <small>{{ branchName }}</small>
         </div>
         <button type="button" role="menuitem" @click="logout">
           <AppIcon name="log-out" :size="16" />
@@ -58,8 +49,11 @@
 
 <script setup>
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import AppIcon from "../components/AppIcon.vue";
+import GlobalSearch from "../components/GlobalSearch.vue";
+import NotificationBell from "../components/NotificationBell.vue";
 
 const props = defineProps({
   title: { type: String, default: "Painel" },
@@ -69,7 +63,8 @@ const props = defineProps({
   scope: { type: Object, default: null },
 });
 
-const emit = defineEmits(["toggle-sidebar", "toggle-theme", "new-order", "logout"]);
+const emit = defineEmits(["toggle-sidebar", "toggle-theme", "logout"]);
+const router = useRouter();
 const profileOpen = ref(false);
 
 const today = computed(() =>
@@ -82,16 +77,7 @@ const today = computed(() =>
 
 const displayName = computed(() => props.user?.name || props.user?.username || "Usuario");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
-const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todas as filiais");
-const contextLine = computed(() => `${restaurantName.value} - ${branchName.value} - ${today.value}`);
-const hasOpenWork = computed(() => Number(props.stats.ordersOpen || 0) > 0 || Number(props.stats.kitchenOpen || 0) > 0);
-const canCreateOrder = computed(
-  () => props.user?.is_superuser || ["admin", "owner", "manager", "waiter", "cashier"].includes(props.user?.profile_type),
-);
-const notificationLabel = computed(() => {
-  if (!hasOpenWork.value) return "Sem alertas operacionais";
-  return `${props.stats.ordersOpen || 0} pedidos abertos, ${props.stats.kitchenOpen || 0} itens na cozinha`;
-});
+const contextLine = computed(() => `${restaurantName.value} - ${today.value}`);
 const roleLabel = computed(() => {
   const labels = {
     admin: "Administrador",
@@ -108,6 +94,11 @@ const roleLabel = computed(() => {
 function logout() {
   profileOpen.value = false;
   emit("logout");
+}
+
+function goBack() {
+  if (window.history.length > 1) router.back();
+  else router.push({ name: "painel" });
 }
 </script>
 
@@ -146,64 +137,10 @@ function logout() {
   color: var(--text-muted);
 }
 
-.topbar__search {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 40px;
-  width: 280px;
-  padding: 0 12px;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-subtle);
-}
-
-.topbar__search kbd {
-  font: var(--weight-semibold) 10px/1 var(--font-mono);
-  color: var(--text-subtle);
-  background: var(--surface-card);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 5px;
-}
-
-.topbar__primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 16px;
-  background: var(--brand);
-  color: var(--on-brand);
-  border: none;
-  cursor: pointer;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-brand);
-  font: var(--weight-bold) 13.5px/1 var(--font-sans);
-  white-space: nowrap;
-}
-
 .topbar__divider {
   width: 1px;
   height: 28px;
   background: var(--border);
-}
-
-.topbar__notification {
-  position: relative;
-}
-
-.topbar__notification span {
-  position: absolute;
-  top: 7px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--brand);
-  border: 2px solid var(--surface-card);
 }
 
 .topbar__user {
@@ -301,21 +238,62 @@ function logout() {
 }
 
 @media (max-width: 980px) {
-  .topbar__search,
   .topbar__user-text,
   .topbar__divider {
     display: none;
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
+  /* Libera espaço no mobile: a linha de contexto (restaurante · data) some;
+     o título da página já identifica a tela. */
+  .topbar__title span {
+    display: none;
+  }
+  .topbar__title h1 {
+    font-size: 17px;
+  }
+}
+
+.topbar__mobile-back {
+  display: none;
+}
+
+@media (max-width: 900px) {
   .topbar {
-    padding: 0 12px;
-    gap: 10px;
+    height: 52px;
+    padding: 0 14px;
+    gap: 8px;
   }
 
-  .topbar__primary {
+  .topbar__menu-trigger,
+  .topbar :deep(.gsearch),
+  .topbar__divider,
+  .topbar > .icon-button:not(.topbar__menu-trigger) {
     display: none;
+  }
+
+  .topbar__title { flex: 1; }
+  .topbar__mobile-back {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    background: var(--surface-sunken);
+    color: var(--text-strong);
+  }
+  .topbar__title h1 { font-size: 15px; }
+  .topbar__title span { display: none; }
+  .topbar__user-wrap { display: none; }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    padding-inline: 12px;
   }
 }
 </style>

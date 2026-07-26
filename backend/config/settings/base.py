@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.reports",
     "apps.integrations",
     "apps.sla",
+    "apps.notifications",
 ]
 
 MIDDLEWARE = [
@@ -173,7 +174,8 @@ CELERY_TIMEZONE = "America/Sao_Paulo"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # Lê o JWT do header Authorization (compat) OU do cookie httpOnly.
+        "apps.core.authentication.CookieJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -188,6 +190,23 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",
+    # Rate limiting global: toda requisição passa por Anon/UserRateThrottle. Os
+    # limites vêm de env (default: 60/min anônimo, 2000/h por usuário) para poder
+    # ajustar em produção sem redeploy. Escopos sensíveis (login, refresh de token,
+    # aprovação de caixa) têm limites próprios definidos nas views.
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": config("THROTTLE_RATE_ANON", default="60/min"),
+        "user": config("THROTTLE_RATE_USER", default="2000/hour"),
+        "login": config("THROTTLE_RATE_LOGIN", default="10/min"),
+        "token_refresh": config("THROTTLE_RATE_TOKEN_REFRESH", default="30/min"),
+        "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
+        # Cardápio público: IP compartilhado por muitos clientes (WiFi do restaurante).
+        "public_menu": config("THROTTLE_RATE_PUBLIC_MENU", default="600/min"),
+    },
 }
 
 SIMPLE_JWT = {
@@ -211,6 +230,28 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+# Necessário para o Django aceitar mutações vindas do front (cookies) cross-origin.
+CSRF_TRUSTED_ORIGINS = config(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    default=",".join(CORS_ALLOWED_ORIGINS),
+    cast=Csv(),
+)
+
+# ── Cookies de autenticação (tokens JWT em httpOnly) ─────────────────────────
+# Access/refresh vivem em cookies httpOnly (não expostos ao JS). `sc_session` é
+# uma flag legível que sinaliza sessão ativa. Em prod use HTTPS (Secure=True).
+JWT_AUTH_COOKIE = config("DJANGO_JWT_AUTH_COOKIE", default="sc_access")
+JWT_AUTH_REFRESH_COOKIE = config("DJANGO_JWT_REFRESH_COOKIE", default="sc_refresh")
+AUTH_SESSION_COOKIE = "sc_session"
+AUTH_COOKIE_SECURE = config("DJANGO_AUTH_COOKIE_SECURE", default=not DEBUG, cast=bool)
+AUTH_COOKIE_SAMESITE = config("DJANGO_AUTH_COOKIE_SAMESITE", default="Lax")
+AUTH_COOKIE_DOMAIN = config("DJANGO_AUTH_COOKIE_DOMAIN", default="")  # "" -> host-only
+
+# Cookies do Django (sessão/CSRF) seguros em produção.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

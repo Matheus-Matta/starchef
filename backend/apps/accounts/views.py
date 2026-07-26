@@ -1,13 +1,19 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
+from apps.core.permissions import effective_permission_codes
 from rest_framework.views import APIView
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from apps.core.cookies import clear_auth_cookies, set_auth_cookies
+
+from apps.accounts.limits import assert_can_create_user
 from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription
 from apps.accounts.serializers import (
     AccountSerializer,
@@ -28,20 +34,59 @@ User = get_user_model()
 
 class LoginView(TokenObtainPairView):
     serializer_class = StarChefTokenObtainPairSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        # Grava os tokens em cookies httpOnly — salvo em login "temporário"
+        # (ex.: autorização gerencial no caixa), que não deve mexer na sessão.
+        if response.status_code == status.HTTP_200_OK and not request.data.get("no_cookie"):
+            set_auth_cookies(response, access=response.data.get("access"), refresh=response.data.get("refresh"))
+        return response
+
+
+class CookieTokenRefreshView(TokenRefreshView):
+    """Renova o access token lendo o refresh do cookie (fallback: corpo)."""
+
+    # O refresh é anônimo (sem access válido), então o UserRateThrottle global não
+    # o cobre bem. Escopo próprio evita abuso de rotação de tokens.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "token_refresh"
+
+    def post(self, request, *args, **kwargs):
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        if not data.get("refresh"):
+            cookie_refresh = request.COOKIES.get(settings.JWT_AUTH_REFRESH_COOKIE)
+            if cookie_refresh:
+                data["refresh"] = cookie_refresh
+
+        serializer = self.get_serializer(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as exc:
+            raise InvalidToken(exc.args[0])
+
+        response = Response(serializer.validated_data, status=status.HTTP_200_OK)
+        set_auth_cookies(response, access=serializer.validated_data.get("access"), refresh=serializer.validated_data.get("refresh"))
+        return response
 
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        refresh = request.data.get("refresh")
+        refresh = request.data.get("refresh") or request.COOKIES.get(settings.JWT_AUTH_REFRESH_COOKIE)
         if refresh:
             try:
-                token = RefreshToken(refresh)
-                token.blacklist()
+                RefreshToken(refresh).blacklist()
             except TokenError:
-                return Response({"detail": "Refresh token invalido."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+                pass  # já inválido/expirado — encerrar a sessão mesmo assim
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+        # A sessão temporária (gerente) não deve limpar os cookies do operador.
+        if not request.data.get("no_cookie"):
+            clear_auth_cookies(response)
+        return response
 
 
 class MeView(APIView):
@@ -65,6 +110,7 @@ class MeView(APIView):
                 "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
                 "branch_name": profile.branch.name if profile and profile.branch_id else None,
                 "enabled_modules": resolve_enabled_modules(request.user, account),
+                "permissions": sorted(effective_permission_codes(request.user)),
             }
         )
 
@@ -107,6 +153,12 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(profile__branch_id=branch_id)
         return queryset
 
+    def perform_create(self, serializer):
+        # Aplica o limite de usuários da conta antes de criar (superadmin isento).
+        if not self.request.user.is_superuser:
+            assert_can_create_user(getattr(self.request, "account", None))
+        super().perform_create(serializer)
+
 
 class RoleViewSet(BaseTenantViewSet):
     serializer_class = RoleSerializer
@@ -122,9 +174,9 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
 
     serializer_class = PermissionSerializer
     queryset = Permission.objects.all()
-    search_fields = ["code", "name"]
-    ordering_fields = ["name", "code"]
-    ordering = ["name"]
+    search_fields = ["code", "name", "group"]
+    ordering_fields = ["name", "code", "group", "sort_order"]
+    ordering = ["module", "sort_order", "name"]  # agrupado e na ordem do catálogo
     pagination_class = None  # catálogo pequeno: retorna todas de uma vez
 
 

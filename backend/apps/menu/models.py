@@ -80,6 +80,13 @@ class Product(TenantModel):
     estimated_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     margin_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     product_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_MEAL)
+    sector = models.ForeignKey(
+        "restaurants.TableSector",
+        null=True,
+        blank=True,
+        related_name="products",
+        on_delete=models.SET_NULL,
+    )
     # Grupo tributario (CFOP/CSOSN/NCM). Se vazio, usa o perfil padrao da filial.
     fiscal_profile = models.ForeignKey(
         "invoices.FiscalProfile",
@@ -93,6 +100,10 @@ class Product(TenantModel):
     controls_stock = models.BooleanField(default=False)
     allows_addons = models.BooleanField(default=True)
     allows_notes = models.BooleanField(default=True)
+    requires_variation = models.BooleanField(
+        default=False,
+        help_text="Exige que o operador escolha uma das variacoes ativas antes de adicionar o produto ao pedido.",
+    )
     available_for_table = models.BooleanField(default=True)
     available_for_counter = models.BooleanField(default=True)
     available_for_delivery = models.BooleanField(default=True)
@@ -124,7 +135,6 @@ class ProductVariation(TenantModel):
     product = models.ForeignKey(Product, related_name="variations", on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
     price_delta = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    is_required = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:
