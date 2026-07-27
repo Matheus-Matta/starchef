@@ -12,7 +12,21 @@ import ToastService from "primevue/toastservice";
 import App from "./App.vue";
 import { router } from "./router";
 
-createApp(App)
+const app = createApp(App);
+
+app.config.errorHandler = (error, instance, info) => {
+  window.dispatchEvent(
+    new CustomEvent("app:unhandled-error", {
+      detail: { error, component: instance?.$options?.name, info },
+    }),
+  );
+
+  if (import.meta.env.DEV) {
+    console.error(error, info);
+  }
+};
+
+app
   .use(PrimeVue, { ripple: true })
   .use(ConfirmationService)
   .use(ToastService)

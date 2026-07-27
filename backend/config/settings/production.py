@@ -8,8 +8,10 @@ USE_LOCAL_MEMORY_SERVICES = False
 globals().update(build_database_settings(USE_SQLITE_DATABASE))  # noqa: F405
 globals().update(build_runtime_service_settings(USE_LOCAL_MEMORY_SERVICES))  # noqa: F405
 
-if SECRET_KEY == "unsafe-dev-key":  # noqa: F405
-    raise ImproperlyConfigured("DJANGO_SECRET_KEY deve ser definido em produção.")
+if SECRET_KEY == "unsafe-dev-key" or len(SECRET_KEY) < 50 or len(set(SECRET_KEY)) < 5:  # noqa: F405
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY deve ter pelo menos 50 caracteres e entropia adequada em produção."
+    )
 if DATABASES["default"].get("PASSWORD") in {"", "starchef"}:  # noqa: F405
     raise ImproperlyConfigured("POSTGRES_PASSWORD deve ser definido com um valor seguro em produção.")
 

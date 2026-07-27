@@ -104,6 +104,11 @@ PERMISSION_GROUPS = [
         MODULE_BASE,
         [
             ("devices.manage", "Impressoras e balanças", "Configurar impressoras e balanças."),
+            (
+                "topology.manage",
+                "Rede local de caixas",
+                "Configurar o papel Principal/Cliente e as credenciais da rede local.",
+            ),
         ],
     ),
     # ── Módulos opcionais: mantidos para preservar códigos já em uso ──────────

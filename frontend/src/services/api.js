@@ -5,7 +5,10 @@ import { clearSession, hasSession } from "./tokenStorage";
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
 // cookies httpOnly de auth funcionarem (inclusive por trás de devtunnel).
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+export const API_BASE_URL =
+  window.RUNTIME_CONFIG?.API_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "/api/v1";
 
 // `withCredentials: true` → o navegador envia/recebe os cookies httpOnly de auth.
 const authClient = axios.create({
@@ -112,6 +115,18 @@ export async function refreshAccessToken() {
  */
 export async function loginRequest(credentials, { temporary = false } = {}) {
   return authClient.post("/auth/login/", { ...credentials, ...(temporary ? { no_cookie: true } : {}) });
+}
+
+export async function requestPasswordReset(email) {
+  return authClient.post("/auth/password-reset/", { email });
+}
+
+export async function confirmPasswordReset(token, password, passwordConfirm) {
+  return authClient.post("/auth/password-reset/confirm/", {
+    token,
+    password,
+    password_confirm: passwordConfirm,
+  });
 }
 
 export async function temporaryAuthenticatedPost(path, payload, access) {

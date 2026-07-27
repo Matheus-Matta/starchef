@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import TenantBaseModel, TimeStampedModel
 from apps.core.modules import MODULE_BASE
@@ -82,6 +83,40 @@ class Account(TimeStampedModel):
         if module_key == MODULE_BASE:
             return True
         return module_key in (self.enabled_modules or [])
+
+
+class FirstAccessState(models.Model):
+    """Marcador permanente que impede reabrir o bootstrap administrativo."""
+
+    singleton = models.BooleanField(default=True, unique=True, editable=False)
+    completed_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    class Meta:
+        verbose_name = "estado do primeiro acesso"
+        verbose_name_plural = "estado do primeiro acesso"
+
+
+class PasswordResetRequest(models.Model):
+    """Token de redefinicao: somente o hash e persistido."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="password_reset_requests",
+        on_delete=models.CASCADE,
+    )
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["user", "used_at", "expires_at"],
+                name="accounts_pa_user_id_dfb792_idx",
+            )
+        ]
 
 
 class Subscription(TimeStampedModel):

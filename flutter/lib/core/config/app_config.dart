@@ -33,13 +33,34 @@ class AppConfig {
 
     final values = await EnvFileLoader.read(
       envFile,
-      allowedKeys: const {'VITE_API_BASE_URL', 'API_BASE_URL'},
+      allowedKeys: const {
+        'VITE_API_BASE_URL',
+        'VITE_BACKEND_TARGET',
+        'API_BASE_URL',
+      },
     );
-    final apiUrl = values['VITE_API_BASE_URL'] ?? values['API_BASE_URL'];
+    final explicitApiUrl = values['API_BASE_URL'];
+    final viteApiUrl = values['VITE_API_BASE_URL'];
+    final backendTarget = values['VITE_BACKEND_TARGET'];
+    final apiUrl = _absoluteHttpUrl(explicitApiUrl)
+        ? explicitApiUrl
+        : _absoluteHttpUrl(viteApiUrl)
+        ? viteApiUrl
+        : _absoluteHttpUrl(backendTarget)
+        ? '${_normalizeUrl(backendTarget!)}/api/v1'
+        : _fallbackApiUrl;
     return AppConfig(
-      apiBaseUrl: _normalizeUrl(apiUrl ?? _fallbackApiUrl),
+      apiBaseUrl: _normalizeUrl(apiUrl!),
       envFilePath: envFile.path,
     );
+  }
+
+  static bool _absoluteHttpUrl(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    final uri = Uri.tryParse(value.trim());
+    return uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty;
   }
 
   static String _normalizeUrl(String value) =>

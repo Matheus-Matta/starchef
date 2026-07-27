@@ -1,19 +1,21 @@
 import { createRouter, createWebHistory } from "vue-router";
 
 import { resources } from "../config/resources";
-import AppLayout from "../layout/AppLayout.vue";
 import { useAuthStore } from "../stores/auth";
-import DashboardView from "../views/DashboardView.vue";
-import HomeView from "../views/HomeView.vue";
-import KdsView from "../views/KdsView.vue";
-import LoginScreen from "../views/LoginScreen.vue";
-import PdvView from "../views/PdvView.vue";
-import OrderEditView from "../views/OrderEditView.vue";
-import CashRegisterView from "../views/CashRegisterView.vue";
-import ReportsView from "../views/ReportsView.vue";
-import KdsStationsView from "../views/KdsStationsView.vue";
-import ResourceFormView from "../views/ResourceFormView.vue";
-import ResourceListViewPro from "../views/ResourceListViewPro.vue";
+
+const AppLayout = () => import("../layout/AppLayout.vue");
+const DashboardView = () => import("../views/DashboardView.vue");
+const HomeView = () => import("../views/HomeView.vue");
+const KdsView = () => import("../views/KdsView.vue");
+const LoginScreen = () => import("../views/LoginScreen.vue");
+const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
+const PdvView = () => import("../views/PdvView.vue");
+const OrderEditView = () => import("../views/OrderEditView.vue");
+const CashRegisterView = () => import("../views/CashRegisterView.vue");
+const ReportsView = () => import("../views/ReportsView.vue");
+const KdsStationsView = () => import("../views/KdsStationsView.vue");
+const ResourceFormView = () => import("../views/ResourceFormView.vue");
+const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 
 /**
  * Gera as rotas de um recurso a partir do seu schema (config/resources.js):
@@ -86,6 +88,8 @@ export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/login", name: "login", component: LoginScreen, meta: { public: true, title: "Login" } },
+    { path: "/esqueci-senha", name: "forgot-password", component: PasswordRecoveryView, meta: { public: true, title: "Esqueci minha senha" } },
+    { path: "/redefinir-senha", name: "reset-password", component: PasswordRecoveryView, meta: { public: true, title: "Redefinir senha" } },
     {
       path: "/",
       component: AppLayout,

@@ -1,4 +1,5 @@
 from django.core.exceptions import ValidationError
+from django.db.models import Prefetch
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -35,7 +36,14 @@ class PaymentViewSet(ReadOnlyTenantViewSet):
 
 class CashStationViewSet(BaseTenantViewSet):
     serializer_class = CashStationSerializer
-    queryset = CashStation.objects.select_related("restaurant").prefetch_related("operators", "sessions__opened_by").all()
+    queryset = CashStation.objects.select_related("restaurant").prefetch_related(
+        "operators",
+        Prefetch(
+            "sessions",
+            queryset=CashRegister.objects.select_related("opened_by").order_by("-opened_at"),
+            to_attr="prefetched_sessions",
+        ),
+    ).all()
     filterset_fields = ["is_active"]
     search_fields = ["name", "code"]
     ordering_fields = ["name", "code", "created_at"]

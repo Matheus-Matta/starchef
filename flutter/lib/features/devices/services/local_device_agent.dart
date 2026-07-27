@@ -3,11 +3,101 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
 import 'print_template_cache.dart';
 
 class LocalDeviceAgent {
   LocalDeviceAgent({required this.api}) {
     _instanceIdFuture = _loadInstanceId();
+  }
+
+  static String? code128ValueFromPayload(Map<String, dynamic> payload) {
+    final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
+    if (payloadVersion != 2) return null;
+
+    final rawBarcode = payload['barcode'];
+    if (rawBarcode is! Map) return null;
+    final symbology = '${rawBarcode['symbology'] ?? ''}'.trim().toUpperCase();
+    final value = '${rawBarcode['value'] ?? ''}'.trim();
+    if (symbology != 'CODE128' || value.isEmpty) return null;
+    return value;
+  }
+
+  /// Produces an ESC/POS `GS k` Code128 command using code set B.
+  ///
+  /// Code set B is deliberately limited to printable ASCII. Values outside
+  /// that range stay available through the explicit text fallback instead of
+  /// sending a malformed barcode to the printer.
+  static List<int>? escPosCode128Bytes(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return null;
+
+    final data = <int>[0x7b, 0x42]; // `{B`: select Code128 set B.
+    for (final rune in normalized.runes) {
+      if (rune < 0x20 || rune > 0x7e) return null;
+      if (rune == 0x7b) {
+        data.add(0x7b); // A literal `{` is escaped as `{{` in ESC/POS.
+      }
+      data.add(rune);
+    }
+    if (data.length > 255) return null;
+
+    return <int>[
+      0x0a,
+      0x0a,
+      0x1b,
+      0x61,
+      0x01, // ESC a: center.
+      0x1d,
+      0x48,
+      0x02, // GS H: human-readable value below the bars.
+      0x1d,
+      0x68,
+      0x50, // GS h: 80-dot height.
+      0x1d,
+      0x77,
+      0x02, // GS w: module width 2.
+      0x1d,
+      0x6b,
+      0x49,
+      data.length,
+      ...data,
+      0x0a,
+      0x1b,
+      0x61,
+      0x00, // Restore left alignment for following output.
+    ];
+  }
+
+  static String textWithBarcodeFallback(String content, String? value) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty) return content;
+    final alreadyExplicit =
+        content.toUpperCase().contains('CODE128') &&
+        content.contains(normalized);
+    if (alreadyExplicit) return content;
+
+    final separator = content.endsWith('\n') ? '\n' : '\n\n';
+    return '$content${separator}COMANDA - CODE128 (TEXTO)\n$normalized';
+  }
+
+  /// Builds the exact byte stream sent through raw network or serial links.
+  static List<int> rawTransportBytes(
+    String content, {
+    required bool isEscPos,
+    String? barcodeValue,
+  }) {
+    final barcodeBytes = isEscPos && barcodeValue != null
+        ? escPosCode128Bytes(barcodeValue)
+        : null;
+    final printableContent = barcodeBytes == null
+        ? textWithBarcodeFallback(content, barcodeValue)
+        : content;
+    return <int>[
+      ...utf8.encode(printableContent),
+      ...?barcodeBytes,
+      if (isEscPos) ...const [10, 10, 10, 29, 86, 0],
+    ];
   }
 
   final ApiClient api;
@@ -18,6 +108,8 @@ class LocalDeviceAgent {
   String? _restaurantId;
   DateTime? _lastTemplateSync;
   DateTime? _lastDeviceSync;
+  DateTime? _backoffUntil;
+  Future<void>? _deviceSyncInFlight;
   List<Map<String, dynamic>> _printers = const [];
   List<Map<String, dynamic>> _scales = const [];
   final Map<String, String> _lastScaleValue = {};
@@ -25,10 +117,14 @@ class LocalDeviceAgent {
   final Set<String> _armedScales = {};
 
   void start({required String token, required String restaurantId}) {
+    if (_timer != null && _token == token && _restaurantId == restaurantId) {
+      return;
+    }
     _token = token;
     _restaurantId = restaurantId;
     _lastTemplateSync = null;
     _lastDeviceSync = null;
+    _backoffUntil = null;
     _timer?.cancel();
     if (!Platform.isWindows) return;
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _tick());
@@ -46,6 +142,8 @@ class LocalDeviceAgent {
     _restaurantId = null;
     _lastTemplateSync = null;
     _lastDeviceSync = null;
+    _backoffUntil = null;
+    _deviceSyncInFlight = null;
     _printers = const [];
     _scales = const [];
     _lastScaleValue.clear();
@@ -55,6 +153,10 @@ class LocalDeviceAgent {
 
   Future<void> _tick() async {
     if (_running || _token == null || _restaurantId == null) return;
+    if (_backoffUntil case final backoff?
+        when DateTime.now().isBefore(backoff)) {
+      return;
+    }
     _running = true;
     try {
       final shouldSyncTemplates =
@@ -66,6 +168,16 @@ class LocalDeviceAgent {
         _readScales(),
         if (shouldSyncTemplates) _syncTemplates(),
       ]);
+    } on ApiException catch (error) {
+      if (error.statusCode == 429) {
+        final match = RegExp(
+          r'available in (\d+) seconds',
+          caseSensitive: false,
+        ).firstMatch(error.message);
+        final seconds = int.tryParse(match?.group(1) ?? '') ?? 60;
+        _backoffUntil = DateTime.now().add(Duration(seconds: seconds + 1));
+      }
+      // O agente tenta novamente depois do intervalo permitido pela API.
     } catch (_) {
       // O agente é tolerante a falhas: a próxima rodada tenta novamente.
     } finally {
@@ -134,7 +246,11 @@ class LocalDeviceAgent {
           if (text.trim().isEmpty) {
             throw const FormatException('O trabalho não possui conteúdo.');
           }
-          await printForPrinter(printer, text);
+          await printForPrinter(
+            printer,
+            text,
+            barcodeValue: code128ValueFromPayload(payload),
+          );
           await api.post(
             '/print-jobs/${job['id']}/mark-printed/',
             body: const {},
@@ -163,7 +279,11 @@ class LocalDeviceAgent {
     if (jobId.isEmpty) {
       throw StateError('Trabalho de impressão inválido.');
     }
-    final readyText = '${job['payload']?['text_content'] ?? ''}'.trim();
+    final rawPayload = job['payload'];
+    final payload = rawPayload is Map<String, dynamic>
+        ? rawPayload
+        : const <String, dynamic>{};
+    final readyText = '${payload['text_content'] ?? ''}'.trim();
     final text = readyText.isNotEmpty
         ? readyText
         : _htmlToText('${job['html'] ?? job['html_content'] ?? ''}');
@@ -171,7 +291,11 @@ class LocalDeviceAgent {
       throw StateError('O trabalho não possui conteúdo para impressão.');
     }
     try {
-      await printForPrinter(printer, text);
+      await printForPrinter(
+        printer,
+        text,
+        barcodeValue: code128ValueFromPayload(payload),
+      );
       await api.post(
         '/print-jobs/$jobId/mark-printed/',
         body: const {},
@@ -216,11 +340,22 @@ class LocalDeviceAgent {
 
   Future<void> printForPrinter(
     Map<String, dynamic> printer,
-    String content,
-  ) async {
+    String content, {
+    String? barcodeValue,
+  }) async {
     final settings = printer['settings'] as Map<String, dynamic>? ?? const {};
     final connectionType =
         '${settings['connection_type'] ?? printer['connection_type'] ?? 'windows'}';
+    final isEscPos =
+        '${printer['driver_type'] ?? settings['driver_type'] ?? ''}'
+            .trim()
+            .toLowerCase() ==
+        'escpos';
+    final printBytes = rawTransportBytes(
+      content,
+      isEscPos: isEscPos,
+      barcodeValue: barcodeValue,
+    );
     final timeout = Duration(
       seconds:
           int.tryParse(
@@ -238,10 +373,7 @@ class LocalDeviceAgent {
       }
       final socket = await Socket.connect(host, port, timeout: timeout);
       try {
-        socket.add(utf8.encode(content));
-        if ('${printer['driver_type']}' == 'escpos') {
-          socket.add(const [10, 10, 10, 29, 86, 0]);
-        }
+        socket.add(printBytes);
         await socket.flush();
       } finally {
         await socket.close();
@@ -255,7 +387,7 @@ class LocalDeviceAgent {
       }
       final baudRate = int.tryParse('${settings['baudrate'] ?? 9600}') ?? 9600;
       final safePort = port.replaceAll("'", "''");
-      final base64 = base64Encode(utf8.encode(content));
+      final base64 = base64Encode(printBytes);
       final command =
           "\$p = [System.IO.Ports.SerialPort]::new('$safePort', $baudRate); "
           "\$p.WriteTimeout = ${timeout.inMilliseconds}; "
@@ -283,13 +415,12 @@ class LocalDeviceAgent {
     if (endpoint.isEmpty) {
       throw StateError('A impressora do Windows não foi configurada.');
     }
-    await printText(endpoint, content);
+    await printText(endpoint, textWithBarcodeFallback(content, barcodeValue));
   }
 
   Future<void> _readScales() async {
     await _syncDevicesIfNeeded();
     for (final scale in _scales) {
-      if (scale['auto_print'] != true) continue;
       final port = '${scale['port'] ?? ''}'.trim();
       if (port.isEmpty) continue;
       try {
@@ -355,27 +486,42 @@ class LocalDeviceAgent {
         now.difference(_lastDeviceSync!) < const Duration(seconds: 30)) {
       return;
     }
-    final devices = await Future.wait([
-      _list(
-        '/printers/',
-        query: {
-          'restaurant': _restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
-      ),
-      _list(
-        '/scales/',
-        query: {
-          'restaurant': _restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
-      ),
-    ]);
-    _printers = devices[0];
-    _scales = devices[1];
-    _lastDeviceSync = now;
+    final existing = _deviceSyncInFlight;
+    if (existing != null) return existing;
+
+    final sync =
+        Future.wait([
+          _list(
+            '/printers/',
+            query: {
+              'restaurant': _restaurantId,
+              'is_active': true,
+              'page_size': 100,
+            },
+          ),
+          _list(
+            '/scales/',
+            query: {
+              'restaurant': _restaurantId,
+              'is_active': true,
+              'page_size': 100,
+            },
+          ),
+        ]).then((devices) {
+          _printers = devices[0];
+          _scales = devices[1];
+        });
+    _deviceSyncInFlight = sync;
+    try {
+      await sync;
+    } finally {
+      // Registra também tentativas com falha para evitar uma tempestade
+      // de quatro chamadas a cada ciclo de três segundos.
+      _lastDeviceSync = DateTime.now();
+      if (identical(_deviceSyncInFlight, sync)) {
+        _deviceSyncInFlight = null;
+      }
+    }
   }
 
   Future<bool> _claimScale(String scaleId) async {

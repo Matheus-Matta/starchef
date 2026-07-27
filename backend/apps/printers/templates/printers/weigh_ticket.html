@@ -12,6 +12,9 @@
     td { padding: 3px 0; vertical-align: top; }
     .line { border-top: 1px dashed #111; margin: 8px 0; }
     .big { font-size: 20px; font-weight: bold; }
+    .barcode { margin-top: 12px; text-align: center; }
+    .barcode img { display: block; max-width: 100%; height: 54px; margin: 0 auto 4px; }
+    .barcode-label { font-family: monospace; letter-spacing: 1px; }
   </style>
 </head>
 <body>
@@ -23,12 +26,20 @@
   <p>Data: {{ item.created_at|date:"d/m/Y H:i" }}</p>
   <div class="line"></div>
 
-  <p>{{ item.product.name }}</p>
   <table>
+    {% for ticket_item in items %}
     <tr>
-      <td>{{ item.quantity|floatformat:3 }} kg x R$ {{ item.unit_price }}/kg</td>
-      <td class="right big">{{ item.total_price }}</td>
+      <td>
+        <strong>{{ ticket_item.product.name }}</strong><br>
+        {% if ticket_item.product.is_weighed %}
+          {{ ticket_item.quantity|floatformat:3 }} kg x R$ {{ ticket_item.unit_price }}/kg
+        {% else %}
+          {{ ticket_item.quantity|floatformat:"-3" }} un x R$ {{ ticket_item.unit_price }}
+        {% endif %}
+      </td>
+      <td class="right">R$ {{ ticket_item.total_price }}</td>
     </tr>
+    {% endfor %}
   </table>
 
   <div class="line"></div>
@@ -37,6 +48,16 @@
     <tr><td><strong>Total do pedido</strong></td><td class="right"><strong>{{ order.total }}</strong></td></tr>
   </table>
   <div class="line"></div>
+  {% if barcode.value %}
+    <div class="barcode" data-symbology="{{ barcode.symbology }}">
+      {% if barcode.data_uri %}
+        <img src="{{ barcode.data_uri }}" alt="Codigo de barras Code128 da comanda {{ barcode.value }}">
+      {% endif %}
+      <p>Comanda · {{ barcode.symbology }}</p>
+      <p class="barcode-label">{{ barcode.value }}</p>
+    </div>
+    <div class="line"></div>
+  {% endif %}
   <p class="center">Pague no caixa. Obrigado!</p>
 </body>
 </html>

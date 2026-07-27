@@ -121,3 +121,21 @@ class CanUseOrManageDevices(BasePermission):
         return request.method in {"GET", "HEAD", "OPTIONS"} and bool(
             {"orders.view", "orders.manage", "payments.manage"} & codes
         )
+
+
+class CanOperateScale(BasePermission):
+    message = "Você não tem permissão para operar a estação de balança."
+
+    def has_permission(self, request, view):
+        profile = getattr(request.user, "profile", None)
+        if request.user.is_superuser or getattr(profile, "profile_type", None) in {
+            "admin",
+            "owner",
+            "manager",
+            "cashier",
+        }:
+            return True
+        codes = effective_permission_codes(request.user)
+        return "*" in codes or bool(
+            {"orders.manage", "payments.manage", "devices.manage"} & codes
+        )

@@ -38,6 +38,17 @@
         <div class="topbar__profile-scope">
           <span>{{ restaurantName }}</span>
         </div>
+        <a
+          class="topbar__help"
+          href="https://wa.me/5521966621486?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20StarChef."
+          target="_blank"
+          rel="noopener noreferrer"
+          role="menuitem"
+          @click="profileOpen = false"
+        >
+          <AppIcon name="life-buoy" :size="16" />
+          Ajuda pelo WhatsApp
+        </a>
         <button type="button" role="menuitem" @click="logout">
           <AppIcon name="log-out" :size="16" />
           Sair
@@ -216,7 +227,8 @@ function goBack() {
   text-overflow: ellipsis;
 }
 
-.topbar__profile-menu button {
+.topbar__profile-menu button,
+.topbar__help {
   width: 100%;
   height: 38px;
   display: flex;
@@ -231,6 +243,15 @@ function goBack() {
   cursor: pointer;
   font: var(--weight-bold) 13px/1 var(--font-sans);
   text-align: left;
+  text-decoration: none;
+}
+
+.topbar__help {
+  color: var(--text-body);
+}
+
+.topbar__help:hover {
+  background: var(--surface-sunken);
 }
 
 .topbar__profile-menu button:hover {

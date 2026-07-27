@@ -22,7 +22,7 @@ class ServiceLevelAgreementSerializer(TenantModelSerializer):
         return [s.name for s in obj.stations.all()]
 
     def get_column_labels(self, obj):
-        return [f"{c.station.name} · {c.name}" for c in obj.columns.select_related("station").all()]
+        return [f"{c.station.name} · {c.name}" for c in obj.columns.all()]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

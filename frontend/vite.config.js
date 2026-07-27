@@ -2,6 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, loadEnv } from 'vite'
+import compression from 'vite-plugin-compression'
 
 // Carrega os .env da RAIZ do monorepo (D:\projetos\starchef\.env), nao da pasta frontend/.
 // Assim ha um unico .env para backend e frontend. A Vite so expoe variaveis com prefixo VITE_.
@@ -18,7 +19,11 @@ export default defineConfig(({ mode }) => {
   const isProd = mode === 'production'
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      compression({ algorithm: 'gzip', ext: '.gz', threshold: 1024 }),
+      compression({ algorithm: 'brotliCompress', ext: '.br', threshold: 1024 }),
+    ],
     envDir,
     // Remove console.* e debugger do bundle de produção.
     esbuild: isProd ? { drop: ['console', 'debugger'] } : {},
@@ -44,6 +49,7 @@ export default defineConfig(({ mode }) => {
             if (!id.includes('node_modules')) return
             if (/[\\/]node_modules[\\/](primevue|primeicons)[\\/]/.test(id)) return 'primevue'
             if (/[\\/]node_modules[\\/](vue|vue-router|pinia|@vue)[\\/]/.test(id)) return 'vue'
+            if (/[\\/]node_modules[\\/]axios[\\/]/.test(id)) return 'axios'
           },
         },
       },

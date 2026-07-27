@@ -69,11 +69,13 @@ class TableSectorSerializer(TenantModelSerializer):
 
 class TableSerializer(TenantModelSerializer):
     sector_name = serializers.CharField(source="sector.name", read_only=True)
+    code = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
 
     class Meta:
         model = Table
         fields = "__all__"
-        read_only_fields = AUDIT_READ_ONLY_FIELDS
+        # Estado e vinculo com pedido pertencem ao fluxo transacional, nao ao CRUD.
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id"]
 
 
 class CommandSerializer(TenantModelSerializer):

@@ -21,6 +21,8 @@ from apps.accounts.views import (
     SubscriptionViewSet,
     UserViewSet,
 )
+from apps.accounts.first_access import admin_login_or_first_access
+from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
@@ -119,6 +121,7 @@ router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
     path("", api_index, name="api-index"),
+    path("admin/login/", admin_login_or_first_access, name="admin-first-access"),
     path("admin/", admin.site.urls),
     path("health/", healthcheck, name="healthcheck"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -128,6 +131,8 @@ urlpatterns = [
     path("api/v1/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("api/v1/auth/me/", MeView.as_view(), name="auth_me"),
     path("api/v1/auth/logout/", LogoutView.as_view(), name="logout"),
+    path("api/v1/auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
+    path("api/v1/auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("api/v1/reports/sales/", SalesReportView.as_view(), name="sales-report"),
     path("api/v1/reports/dashboard/", DashboardReportView.as_view(), name="dashboard-report"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),

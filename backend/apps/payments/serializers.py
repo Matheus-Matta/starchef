@@ -50,10 +50,21 @@ class CashStationSerializer(TenantModelSerializer):
                 "actual_amount": session.actual_amount, "difference_amount": session.difference_amount}
 
     def get_current_session(self, obj):
+        if hasattr(obj, "prefetched_sessions"):
+            closed_statuses = {
+                CashRegister.STATUS_CLOSED,
+                CashRegister.STATUS_CLOSED_DIFFERENCE,
+                CashRegister.STATUS_CANCELLED,
+            }
+            return self._session_data(
+                next((item for item in obj.prefetched_sessions if item.status not in closed_statuses), None)
+            )
         session = obj.sessions.exclude(status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]).select_related("opened_by").order_by("-opened_at").first()
         return self._session_data(session)
 
     def get_recent_sessions(self, obj):
+        if hasattr(obj, "prefetched_sessions"):
+            return [self._session_data(session) for session in obj.prefetched_sessions[:10]]
         return [self._session_data(session) for session in obj.sessions.select_related("opened_by").order_by("-opened_at")[:10]]
 
 
@@ -114,6 +125,9 @@ class CashRegisterSerializer(TenantModelSerializer):
         ]
 
     def get_current_balance(self, obj):
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("movements")
+        if prefetched is not None:
+            return sum((movement.amount for movement in prefetched if movement.status == "approved"), 0)
         return (
             obj.movements.filter(status="approved").aggregate(
                 value=Sum("amount")

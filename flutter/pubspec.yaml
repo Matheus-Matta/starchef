@@ -36,10 +36,11 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   flutter_secure_storage: ^10.3.1
-  flutter_svg: ^2.3.0
   window_manager: ^0.5.2
   # Verificação offline da senha do caixa (PBKDF2-HMAC-SHA256, formato do Django).
   crypto: ^3.0.6
+  sqlite_async: 0.14.4
+  flutter_libserialport: 0.6.0
 
 dev_dependencies:
   flutter_test:
@@ -63,7 +64,7 @@ flutter:
   # the material Icons class.
   uses-material-design: true
   assets:
-    - assets/logo-mark.svg
+    - assets/logoicon.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

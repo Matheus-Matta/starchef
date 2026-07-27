@@ -97,6 +97,27 @@ def api_exception_handler(exc, context):
         setattr(exc, "default_code", "invalid")
 
     if response is None:
+        request = context.get("request")
+        view = context.get("view")
+        logger.exception(
+            "Unhandled API error",
+            extra={
+                "view": type(view).__name__ if view else "unknown",
+                "method": request.method if request else "?",
+                "path": request.path if request else "?",
+            },
+        )
+        response = Response(
+            {
+                "success": False,
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "error": {
+                    "code": "internal_error",
+                    "message": "Ocorreu um erro interno. Tente novamente mais tarde.",
+                },
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
         return response
 
     request = context.get("request")

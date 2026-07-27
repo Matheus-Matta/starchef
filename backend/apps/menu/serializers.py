@@ -200,6 +200,8 @@ class PublicMenuSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "slug", "channel", "available_from", "available_until", "items"]
 
     def get_items(self, obj):
+        if hasattr(obj, "active_items"):
+            return PublicMenuItemSerializer(obj.active_items, many=True).data
         active_items = obj.items.filter(is_active=True).select_related("product__category").prefetch_related("product__variations")
         return PublicMenuItemSerializer(active_items, many=True).data
 

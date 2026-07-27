@@ -14,8 +14,15 @@ import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/order_cart_panel.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
+import '../../scale/presentation/scale_workstation_page.dart';
+import '../../scale/services/scale_window_launcher.dart';
+import '../../topology/domain/local_topology_config.dart';
+import '../../topology/presentation/local_topology_dialog.dart';
+import '../../topology/services/local_topology_service.dart';
 import '../data/pdv_repository.dart';
+import 'pdv_navigation_shell.dart';
 import 'pdv_presenter.dart';
+import 'product_catalog_panel.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -77,16 +84,24 @@ class _HomePageState extends State<HomePage> {
   late final LocalDeviceAgent deviceAgent;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
-  StreamSubscription<bool>? connectivitySubscription;
+  StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
+  LocalTopologyService? topologyService;
+  NetworkSyncStatus networkStatus = const NetworkSyncStatus(
+    phase: NetworkSyncPhase.unknown,
+  );
   bool offlineMode = false;
   int offlinePendingCount = 0;
+  bool sidebarExpanded = true;
 
   List<Map<String, dynamic>> get visibleProducts => products.where((product) {
     final matchesCategory =
         category == null || '${product['category']}' == category;
     final term = search.trim().toLowerCase();
     return matchesCategory &&
-        (term.isEmpty || '${product['name']}'.toLowerCase().contains(term));
+        (term.isEmpty ||
+            '${product['name']}'.toLowerCase().contains(term) ||
+            '${product['internal_code'] ?? ''}'.toLowerCase().contains(term) ||
+            '${product['category_name'] ?? ''}'.toLowerCase().contains(term));
   }).toList();
 
   double get paidTotal => registeredPayments.fold(
@@ -133,16 +148,18 @@ class _HomePageState extends State<HomePage> {
     deviceAgent = LocalDeviceAgent(api: api);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
-    connectivitySubscription = api.connectivityChanges.listen((online) async {
-      final pending = await api.pendingOperations();
+    networkStatus = api.syncStatus;
+    syncStatusSubscription = api.syncStatusChanges.listen((status) {
       if (!mounted) return;
+      final online = status.hasConnection;
       final shouldReload =
           online &&
           ((offlineMode && !loading) ||
-              (offlinePendingCount > 0 && pending == 0));
+              (offlinePendingCount > 0 && status.total == 0));
       setState(() {
+        networkStatus = status;
         offlineMode = !online;
-        offlinePendingCount = pending;
+        offlinePendingCount = status.total;
       });
       if (shouldReload) unawaited(_load());
     });
@@ -154,6 +171,53 @@ class _HomePageState extends State<HomePage> {
     Map<String, dynamic>? query,
   }) async {
     return repository.list(path, query: query);
+  }
+
+  Future<void> _ensureTopology() async {
+    final selected = restaurantId;
+    final accountId = widget.controller.session!.user.accountId;
+    if (selected == null || accountId == null || accountId.trim().isEmpty) {
+      return;
+    }
+    final existing = topologyService;
+    if (existing != null) {
+      existing.updateRestaurant(selected);
+      return;
+    }
+    final service = LocalTopologyService(
+      api: api,
+      accessToken: token,
+      accountId: accountId,
+      actorId: widget.controller.session!.user.id,
+      restaurantId: selected,
+    );
+    try {
+      await service.start();
+      if (!mounted) {
+        await service.shutdown();
+        return;
+      }
+      topologyService = service;
+      service.addListener(_onTopologyChanged);
+      _onTopologyChanged();
+    } catch (_) {
+      await service.shutdown();
+      rethrow;
+    }
+  }
+
+  void _onTopologyChanged() {
+    final service = topologyService;
+    if (service == null || !mounted) return;
+    final config = service.config;
+    if (service.status.phase == LocalTopologyPhase.starting ||
+        config == null ||
+        config.mode == LocalTopologyMode.client) {
+      deviceAgent.stop();
+    } else if (restaurantId != null) {
+      deviceAgent.start(token: token, restaurantId: restaurantId!);
+    }
+    setState(() {});
   }
 
   Future<void> _load() async {
@@ -177,6 +241,19 @@ class _HomePageState extends State<HomePage> {
       products = catalog.products;
       categories = catalog.categories;
       tables = catalog.tables;
+      try {
+        await _ensureTopology();
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'O PDV foi carregado, mas a rede local não iniciou: $error',
+              ),
+            ),
+          );
+        }
+      }
       try {
         final currentSession = await api.get(
           '/cash-register/current/',
@@ -212,7 +289,8 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) {
         setState(() => loading = false);
-        if (restaurantId != null) {
+        if (restaurantId != null &&
+            topologyService?.config?.mode != LocalTopologyMode.client) {
           deviceAgent.start(token: token, restaurantId: restaurantId!);
         }
         if (hasCashDivergence) {
@@ -243,6 +321,44 @@ class _HomePageState extends State<HomePage> {
       flowStep = 'type';
     });
     await _load();
+  }
+
+  Future<void> _changeScaleRestaurant(String value) async {
+    await _changeRestaurant(value);
+    if (mounted) setState(() => flowStep = 'scale-workstation');
+  }
+
+  Future<void> _openScaleWindow() async {
+    try {
+      await widget.controller.repository.sessionStore.save(
+        widget.controller.session!,
+      );
+      final opened = await ScaleWindowLauncher.open(
+        restaurantId: restaurantId,
+      );
+      if (!mounted) return;
+      if (opened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Balança Rápida aberta em uma janela independente.',
+            ),
+          ),
+        );
+        return;
+      }
+    } catch (_) {
+      // O fallback embutido mantém a operação disponível em plataformas sem
+      // suporte a processos desktop ou quando o cofre local está indisponível.
+    }
+    if (mounted) setState(() => flowStep = 'scale-workstation');
+  }
+
+  Future<void> _syncNow() async {
+    await api.syncPendingNow();
+    final pending = await api.pendingOperations();
+    if (!mounted) return;
+    setState(() => offlinePendingCount = pending);
   }
 
   Future<void> _openOrders() async {
@@ -313,6 +429,308 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  PdvDestination get _selectedDestination {
+    if (flowStep == 'scale-workstation') return PdvDestination.scale;
+    if (flowStep == 'orders') return PdvDestination.orders;
+    if (flowStep == 'context' || orderType == 'table') {
+      return PdvDestination.tables;
+    }
+    if (orderType == 'delivery') return PdvDestination.delivery;
+    return PdvDestination.menu;
+  }
+
+  Future<void> _navigateTo(PdvDestination destination) async {
+    switch (destination) {
+      case PdvDestination.menu:
+        if (activeOrder != null) {
+          setState(() => flowStep = 'order');
+        } else {
+          await _goHome();
+        }
+        return;
+      case PdvDestination.tables:
+        setState(() {
+          activeOrder = null;
+          selectedTable = null;
+          selectedCustomer = null;
+          orderItems = [];
+          registeredPayments = [];
+          orderType = 'table';
+          flowStep = 'context';
+        });
+        return;
+      case PdvDestination.delivery:
+        await _selectOrderType('delivery');
+        return;
+      case PdvDestination.orders:
+        await _openOrders();
+        return;
+      case PdvDestination.finance:
+        await _openCashCenter();
+        return;
+      case PdvDestination.scale:
+        await _openScaleWindow();
+        return;
+      case PdvDestination.settings:
+        await _openSettingsCenter();
+        return;
+    }
+  }
+
+  Future<void> _openCashCenter() async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        final scheme = Theme.of(dialogContext).colorScheme;
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.account_balance_wallet_outlined),
+              SizedBox(width: 10),
+              Text('Financeiro do caixa'),
+            ],
+          ),
+          content: SizedBox(
+            width: 480,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        cashSession == null ? 'Caixa fechado' : 'Caixa aberto',
+                        style: TextStyle(
+                          color: cashSession == null
+                              ? scheme.error
+                              : const Color(0xFF167A3E),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        cashSession == null
+                            ? 'Abra uma sessão para iniciar as vendas.'
+                            : _money(cashBalance),
+                        style: TextStyle(
+                          fontSize: cashSession == null ? 16 : 30,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (cashSession != null)
+                        Text(
+                          '${cashSession!['station'] ?? 'Estação atual'}',
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                if (cashSession == null)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.pop(dialogContext, 'open'),
+                      icon: const Icon(Icons.lock_open),
+                      label: const Text('Abrir caixa'),
+                    ),
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, 'supply'),
+                          icon: const Icon(Icons.add_circle_outline),
+                          label: const Text('Suprimento'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, 'withdrawal'),
+                          icon: const Icon(Icons.remove_circle_outline),
+                          label: const Text('Sangria'),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            if (cashSession != null)
+              TextButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'close'),
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Fechar caixa'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Voltar'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+    if (action == 'open') await _openCash();
+    if (action == 'supply' || action == 'withdrawal') {
+      await _cashMovement(action);
+    }
+    if (action == 'close') await _closeCash();
+  }
+
+  Future<void> _openSettingsCenter() async {
+    final selection = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        scrollable: true,
+        title: const Row(
+          children: [
+            Icon(Icons.settings_outlined),
+            SizedBox(width: 10),
+            Text('Configurações do PDV'),
+          ],
+        ),
+        content: SizedBox(
+          width: 460,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.controller.session!.user.canManageDevices) ...[
+                ListTile(
+                  leading: const Icon(Icons.print_outlined),
+                  title: const Text('Impressoras'),
+                  subtitle: const Text('Conexão, driver e testes de impressão'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pop(dialogContext, 'printer'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.scale_outlined),
+                  title: const Text('Balanças'),
+                  subtitle: const Text(
+                    'Porta, protocolo e impressora vinculada',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.pop(dialogContext, 'scale'),
+                ),
+                const Divider(),
+              ],
+              ListTile(
+                leading: const Icon(Icons.hub_outlined),
+                title: const Text('Rede local de caixas'),
+                subtitle: Text(
+                  topologyService?.status.message ??
+                      'Entre novamente para habilitar a identidade deste caixa.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pop(dialogContext, 'topology'),
+              ),
+              const Divider(),
+              SwitchListTile(
+                secondary: Icon(
+                  widget.isDark
+                      ? Icons.dark_mode_outlined
+                      : Icons.light_mode_outlined,
+                ),
+                title: const Text('Tema escuro'),
+                subtitle: const Text('Ajuste visual desta estação'),
+                value: widget.isDark,
+                onChanged: (_) {
+                  Navigator.pop(dialogContext, 'theme');
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  widget.isFullScreen
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
+                ),
+                title: Text(
+                  widget.isFullScreen
+                      ? 'Sair da tela cheia'
+                      : 'Usar tela cheia',
+                ),
+                subtitle: const Text('Atalho: F11'),
+                onTap: () => Navigator.pop(dialogContext, 'fullscreen'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selection == null) return;
+    if (selection == 'printer') _openDeviceSettings(DeviceKind.printer);
+    if (selection == 'scale') _openDeviceSettings(DeviceKind.scale);
+    if (selection == 'topology') await _openTopologySettings();
+    if (selection == 'theme') widget.onToggleTheme();
+    if (selection == 'fullscreen') widget.onToggleFullScreen();
+  }
+
+  Future<void> _openTopologySettings() async {
+    final service = topologyService;
+    final current = service?.config;
+    if (service == null || current == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'A sessão restaurada não contém a identidade da conta. '
+            'Saia e entre novamente antes de configurar a rede local.',
+          ),
+        ),
+      );
+      return;
+    }
+    final candidate = await showLocalTopologyDialog(
+      context: context,
+      config: current,
+      status: service.status,
+      canEdit: widget.controller.session!.user.canManageTopology,
+    );
+    if (!mounted || candidate == null) return;
+    setState(() => busy = true);
+    try {
+      await service.reconfigure(candidate);
+      if (!mounted) return;
+      _onTopologyChanged();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            candidate.mode == LocalTopologyMode.client &&
+                    !service.status.ready
+                ? 'Modo Cliente salvo, mas o Caixa Principal está indisponível.'
+                : candidate.mode == LocalTopologyMode.client
+                ? 'Modo Cliente salvo. O agente físico local foi pausado.'
+                : 'Configuração da rede local aplicada.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) _error(error);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   Future<void> _goHome() async {
@@ -637,7 +1055,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     deviceAgent.stop();
-    connectivitySubscription?.cancel();
+    syncStatusSubscription?.cancel();
+    topologyService?.removeListener(_onTopologyChanged);
+    topologyService?.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
     super.dispose();
@@ -2301,6 +2721,9 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final windowWidth = MediaQuery.sizeOf(context).width;
+    final compactHeader = windowWidth < 1320;
+    final sidebarIsExpanded = sidebarExpanded && windowWidth >= 1180;
     if (loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -2373,367 +2796,345 @@ class _HomePageState extends State<HomePage> {
       );
     }
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 20,
-        title: Row(
-          children: [
-            Icon(Icons.restaurant_menu, color: scheme.primary),
-            const SizedBox(width: 10),
-            const Text(
-              'StarChef PDV',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(width: 18),
-            if (restaurants.length > 1)
-              ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 180, maxWidth: 280),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: selectedRestaurantId,
-                    isExpanded: true,
-                    borderRadius: BorderRadius.circular(12),
-                    icon: const Icon(Icons.expand_more),
-                    items: restaurants
-                        .map(
-                          (item) => DropdownMenuItem(
-                            value: '${item['id']}',
-                            child: Text(
-                              '${item['trade_name'] ?? item['name']}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: busy
-                        ? null
-                        : (value) {
-                            if (value != null) _changeRestaurant(value);
-                          },
-                  ),
-                ),
-              )
-            else
-              Text(
-                '${restaurants.first['trade_name'] ?? restaurants.first['name']}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-          ],
-        ),
-        actions: [
-          if (offlineMode || offlinePendingCount > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-              child: Tooltip(
-                message: offlineMode
-                    ? 'Sem conexão. As alterações serão sincronizadas automaticamente.'
-                    : '$offlinePendingCount alteração(ões) aguardando sincronização.',
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 11),
-                  decoration: BoxDecoration(
-                    color: offlineMode
-                        ? scheme.errorContainer
-                        : scheme.tertiaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        offlineMode ? Icons.cloud_off : Icons.cloud_sync,
-                        size: 17,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        offlineMode
-                            ? 'Modo offline'
-                            : 'Sincronizando $offlinePendingCount',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          if (flowStep != 'type' || activeOrder != null)
-            IconButton(
-              tooltip: 'Voltar',
-              onPressed: _goBack,
-              icon: const Icon(Icons.arrow_back),
-            ),
-          IconButton(
-            tooltip: 'Ir para o início',
-            onPressed: _goHome,
-            icon: const Icon(Icons.home_outlined),
-          ),
-          if (cashSession == null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: FilledButton.icon(
-                onPressed: _openCash,
-                icon: const Icon(Icons.lock_open),
-                label: const Text('Abrir caixa'),
-              ),
-            )
-          else
-            PopupMenuButton<String>(
-              tooltip: 'Ações do caixa',
-              onSelected: (value) {
-                if (value == 'supply' || value == 'withdrawal') {
-                  _cashMovement(value);
-                }
-                if (value == 'close') _closeCash();
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'supply',
-                  child: ListTile(
-                    leading: Icon(Icons.add_circle_outline),
-                    title: Text('Suprimento'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'withdrawal',
-                  child: ListTile(
-                    leading: Icon(Icons.remove_circle_outline),
-                    title: Text('Sangria'),
-                  ),
-                ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'close',
-                  child: ListTile(
-                    leading: Icon(Icons.lock),
-                    title: Text('Fechar caixa'),
-                  ),
-                ),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.point_of_sale,
-                        size: 18,
-                        color: Colors.white,
-                      ),
-                      const SizedBox(width: 8),
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Caixa aberto · ${cashSession!['station']}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              height: 1,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            'Saldo ${_money(cashBalance)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              height: 1,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.expand_more,
-                        size: 18,
-                        color: Colors.white,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Atualizar',
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-          ),
-          if (widget.controller.session!.user.canViewOrders)
-            IconButton(
-              tooltip: 'Ver pedidos',
-              onPressed: _openOrders,
-              icon: const Icon(Icons.receipt_long_outlined),
-            ),
-          if (widget.controller.session!.user.canManageDevices)
-            PopupMenuButton<DeviceKind>(
-              tooltip: 'Configurar equipamentos',
-              icon: const Icon(Icons.settings_outlined),
-              onSelected: _openDeviceSettings,
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: DeviceKind.printer,
-                  child: ListTile(
-                    leading: Icon(Icons.print_outlined),
-                    title: Text('Impressoras'),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: DeviceKind.scale,
-                  child: ListTile(
-                    leading: Icon(Icons.scale_outlined),
-                    title: Text('Balanças'),
-                  ),
-                ),
-              ],
-            ),
-          IconButton(
-            tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
-            onPressed: widget.onToggleTheme,
-            icon: Icon(
-              widget.isDark
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
-            ),
-          ),
-          IconButton(
-            tooltip: widget.isFullScreen
-                ? 'Sair da tela cheia (F11)'
-                : 'Usar tela cheia (F11)',
-            onPressed: widget.onToggleFullScreen,
-            icon: Icon(
-              widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Sair',
-            onPressed: widget.controller.logout,
-            icon: const Icon(Icons.logout),
-          ),
-          const SizedBox(width: 10),
-        ],
-      ),
-      body: Stack(
+      body: Row(
         children: [
-          if (flowStep == 'orders')
-            _ordersPage()
-          else if (activeOrder == null && flowStep == 'type')
-            _startPanel()
-          else if (activeOrder == null && flowStep == 'context')
-            _tableContextPanel()
-          else if (flowStep == 'payment')
-            _paymentPage()
-          else
-            Row(
-              children: [
-                Expanded(flex: 5, child: _catalog()),
-                SizedBox(width: 420, child: _cart()),
-              ],
-            ),
-          if (cashSession == null)
-            Positioned.fill(
-              child: ColoredBox(
-                color: scheme.surface.withValues(alpha: .94),
-                child: Center(
-                  child: SizedBox(
-                    width: 460,
-                    child: Card(
+          PdvSidebar(
+            expanded: sidebarIsExpanded,
+            selected: _selectedDestination,
+            onToggle: () => setState(() => sidebarExpanded = !sidebarExpanded),
+            onSelected: (destination) => unawaited(_navigateTo(destination)),
+            userName: widget.controller.session!.user.name.trim().isEmpty
+                ? widget.controller.session!.user.username
+                : widget.controller.session!.user.name,
+            restaurantName:
+                '${restaurants.firstWhere((item) => '${item['id']}' == selectedRestaurantId, orElse: () => restaurants.first)['trade_name'] ?? restaurants.first['name']}',
+            onLogout: widget.controller.logout,
+            showOrders: widget.controller.session!.user.canViewOrders,
+            showScale:
+                widget.controller.session!.user.canManageOrders ||
+                widget.controller.session!.user.canProcessPayments,
+            showSettings: true,
+          ),
+          Expanded(
+            child: Scaffold(
+              appBar: AppBar(
+                titleSpacing: 20,
+                title: Row(
+                  children: [
+                    Icon(Icons.restaurant_menu, color: scheme.primary),
+                    if (!compactHeader) ...[
+                      const SizedBox(width: 10),
+                      const Text(
+                        'StarChef PDV',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                    const SizedBox(width: 12),
+                    if (restaurants.length > 1)
+                      Expanded(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: selectedRestaurantId,
+                            isExpanded: true,
+                            borderRadius: BorderRadius.circular(12),
+                            icon: const Icon(Icons.expand_more),
+                            items: restaurants
+                                .map(
+                                  (item) => DropdownMenuItem(
+                                    value: '${item['id']}',
+                                    child: Text(
+                                      '${item['trade_name'] ?? item['name']}',
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: busy
+                                ? null
+                                : (value) {
+                                    if (value != null) _changeRestaurant(value);
+                                  },
+                          ),
+                        ),
+                      )
+                    else
+                      Expanded(
+                        child: Text(
+                          '${restaurants.first['trade_name'] ?? restaurants.first['name']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                  ],
+                ),
+                actions: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 6,
+                    ),
+                    child: PdvConnectionBadge(
+                      status: networkStatus,
+                      onPressed: offlinePendingCount > 0 && !offlineMode
+                          ? () => unawaited(_syncNow())
+                          : null,
+                    ),
+                  ),
+                  if (flowStep != 'type' || activeOrder != null)
+                    IconButton(
+                      tooltip: 'Voltar',
+                      onPressed: _goBack,
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                  IconButton(
+                    tooltip: 'Ir para o início',
+                    onPressed: _goHome,
+                    icon: const Icon(Icons.home_outlined),
+                  ),
+                  if (cashSession == null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: FilledButton.icon(
+                        onPressed: _openCash,
+                        icon: const Icon(Icons.lock_open),
+                        label: const Text('Abrir caixa'),
+                      ),
+                    )
+                  else
+                    PopupMenuButton<String>(
+                      tooltip: 'Ações do caixa',
+                      onSelected: (value) {
+                        if (value == 'supply' || value == 'withdrawal') {
+                          _cashMovement(value);
+                        }
+                        if (value == 'close') _closeCash();
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'supply',
+                          child: ListTile(
+                            leading: Icon(Icons.add_circle_outline),
+                            title: Text('Suprimento'),
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'withdrawal',
+                          child: ListTile(
+                            leading: Icon(Icons.remove_circle_outline),
+                            title: Text('Sangria'),
+                          ),
+                        ),
+                        PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: 'close',
+                          child: ListTile(
+                            leading: Icon(Icons.lock),
+                            title: Text('Fechar caixa'),
+                          ),
+                        ),
+                      ],
                       child: Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        child: Container(
+                          height: 40,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.point_of_sale,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Caixa aberto · ${cashSession!['station']}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      height: 1,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    'Saldo ${_money(cashBalance)}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      height: 1,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(
+                                Icons.expand_more,
+                                size: 18,
+                                color: Colors.white,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: 'Atualizar',
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+              ),
+              body: Stack(
+                children: [
+                  if (flowStep == 'scale-workstation')
+                    ScaleWorkstationPage(
+                      api: api,
+                      accessToken: token,
+                      restaurants: restaurants,
+                      restaurantId: restaurantId,
+                      products: products,
+                      onRestaurantChanged: _changeScaleRestaurant,
+                    )
+                  else if (flowStep == 'orders')
+                    _ordersPage()
+                  else if (activeOrder == null && flowStep == 'type')
+                    _startPanel()
+                  else if (activeOrder == null && flowStep == 'context')
+                    _tableContextPanel()
+                  else if (flowStep == 'payment')
+                    _paymentPage()
+                  else
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final cartWidth = constraints.maxWidth < 980
+                            ? 350.0
+                            : constraints.maxWidth >= 1500
+                            ? 420.0
+                            : 380.0;
+                        return Row(
                           children: [
-                            Icon(
-                              Icons.lock_outline,
-                              size: 58,
-                              color: scheme.primary,
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Abra o caixa para iniciar',
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w800,
+                            Expanded(child: _catalog()),
+                            SizedBox(width: cartWidth, child: _cart()),
+                          ],
+                        );
+                      },
+                    ),
+                  if (cashSession == null)
+                    Positioned.fill(
+                      child: ColoredBox(
+                        color: scheme.surface.withValues(alpha: .94),
+                        child: Center(
+                          child: SizedBox(
+                            width: 460,
+                            child: Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.lock_outline,
+                                      size: 58,
+                                      color: scheme.primary,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Text(
+                                      'Abra o caixa para iniciar',
+                                      style: TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'O PDV só pode registrar pedidos quando o operador possui um caixa vinculado e uma sessão aberta.',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: 22),
+                                    FilledButton.icon(
+                                      onPressed: _openCash,
+                                      icon: const Icon(Icons.lock_open),
+                                      label: const Text('Abrir caixa'),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'O PDV só pode registrar pedidos quando o operador possui um caixa vinculado e uma sessão aberta.',
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 22),
-                            FilledButton.icon(
-                              onPressed: _openCash,
-                              icon: const Icon(Icons.lock_open),
-                              label: const Text('Abrir caixa'),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ),
-            ),
-          if (pendingCashMovement != null && !hasCashDivergence)
-            Positioned(
-              top: 12,
-              left: 24,
-              right: 24,
-              child: Material(
-                color: Colors.orange.shade50,
-                elevation: 3,
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: _showMovementApproval,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 13,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.warning_amber_rounded,
-                          color: Colors.orange.shade900,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            '${pendingCashMovement!['movement_type'] == 'withdrawal' ? 'Sangria' : 'Suprimento'} de ${_money(_number(pendingCashMovement!['amount']).abs())} aguardando autorização gerencial.',
-                            style: TextStyle(
-                              color: Colors.orange.shade900,
-                              fontWeight: FontWeight.w800,
+                  if (pendingCashMovement != null && !hasCashDivergence)
+                    Positioned(
+                      top: 12,
+                      left: 24,
+                      right: 24,
+                      child: Material(
+                        color: Colors.orange.shade50,
+                        elevation: 3,
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: _showMovementApproval,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 13,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Colors.orange.shade900,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    '${pendingCashMovement!['movement_type'] == 'withdrawal' ? 'Sangria' : 'Suprimento'} de ${_money(_number(pendingCashMovement!['amount']).abs())} aguardando autorização gerencial.',
+                                    style: TextStyle(
+                                      color: Colors.orange.shade900,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                                const Text(
+                                  'Resolver agora',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.chevron_right),
+                              ],
                             ),
                           ),
                         ),
-                        const Text(
-                          'Resolver agora',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(width: 6),
-                        const Icon(Icons.chevron_right),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
+                  if (busy)
+                    const Positioned.fill(
+                      child: ColoredBox(
+                        color: Color(0x33000000),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                ],
               ),
             ),
-          if (busy)
-            const Positioned.fill(
-              child: ColoredBox(
-                color: Color(0x33000000),
-                child: Center(child: CircularProgressIndicator()),
-              ),
-            ),
+          ),
         ],
       ),
     );
@@ -3430,138 +3831,41 @@ class _HomePageState extends State<HomePage> {
     ),
   );
 
-  Widget _catalog() => Padding(
-    padding: const EdgeInsets.fromLTRB(22, 18, 18, 18),
-    child: Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                onChanged: (value) => setState(() => search = value),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Buscar produto...',
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 220,
-              child: DropdownButtonFormField<String?>(
-                initialValue: category,
-                decoration: const InputDecoration(labelText: 'Categoria'),
-                items: [
-                  const DropdownMenuItem(
-                    value: null,
-                    child: Text('Todas as categorias'),
-                  ),
-                  ...categories.map(
-                    (item) => DropdownMenuItem(
-                      value: '${item['id']}',
-                      child: Text(
-                        '${item['name']}',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ],
-                onChanged: (value) => setState(() => category = value),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Expanded(
-          child: GridView.builder(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 260,
-              mainAxisExtent: 150,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-            ),
-            itemCount: visibleProducts.length,
-            itemBuilder: (_, index) {
-              final product = visibleProducts[index];
-              return Card(
-                elevation: 0,
-                clipBehavior: Clip.antiAlias,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(13),
-                  side: BorderSide(color: Theme.of(context).dividerColor),
-                ),
-                child: InkWell(
-                  onTap: () => _configureProduct(product),
-                  child: Padding(
-                    padding: const EdgeInsets.all(15),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${product['name']}',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ),
-                            Icon(
-                              Icons.add_circle,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ],
-                        ),
-                        const Spacer(),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                '${product['category_name'] ?? ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _money(product['current_price']),
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.primary,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    ),
-  );
+  Widget _catalog() {
+    final filteredProducts = visibleProducts;
+    return ProductCatalogPanel(
+      products: filteredProducts,
+      allProducts: products,
+      categories: categories,
+      selectedCategory: category,
+      search: search,
+      money: _money,
+      imageUrlFor: _productImageUrl,
+      onSearchChanged: (value) => setState(() => search = value),
+      onCategoryChanged: (value) => setState(() => category = value),
+      onProductPressed: _configureProduct,
+    );
+  }
+
+  String? _productImageUrl(Map<String, dynamic> product) {
+    final raw = '${product['image'] ?? ''}'.trim();
+    if (raw.isEmpty) return null;
+    final parsed = Uri.tryParse(raw);
+    if (parsed != null && parsed.hasScheme) return parsed.toString();
+    final base = Uri.tryParse(api.baseUrl);
+    if (base == null) return raw;
+    final normalized = raw.startsWith('/') ? raw : '/$raw';
+    return base.resolve(normalized).toString();
+  }
 
   Widget _cart() => OrderCartPanel(
     order: activeOrder,
     table: selectedTable,
     customer: selectedCustomer,
     items: orderItems,
+    products: products,
     money: _money,
+    imageUrlFor: _productImageUrl,
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,

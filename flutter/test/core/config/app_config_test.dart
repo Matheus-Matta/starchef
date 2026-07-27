@@ -23,4 +23,29 @@ EMPTY=
     expect(values['EMPTY'], isEmpty);
     expect(values.containsKey('IGNORED_LINE'), isFalse);
   });
+
+  test(
+    'app nativo ignora URL relativa do Vite e usa o backend absoluto',
+    () async {
+      final originalDirectory = Directory.current;
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef_config_',
+      );
+      addTearDown(() {
+        Directory.current = originalDirectory;
+        return directory.delete(recursive: true);
+      });
+      await File(
+        '${directory.path}${Platform.pathSeparator}.env',
+      ).writeAsString('''
+VITE_API_BASE_URL=/api/v1
+VITE_BACKEND_TARGET=https://backend.starchef.test
+''');
+      Directory.current = directory;
+
+      final config = await AppConfig.load();
+
+      expect(config.apiBaseUrl, 'https://backend.starchef.test/api/v1');
+    },
+  );
 }

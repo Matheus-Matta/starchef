@@ -21,6 +21,7 @@ class AuthUser {
     required this.id,
     required this.username,
     required this.name,
+    this.accountId,
     this.branchName,
     this.restaurantName,
     this.restaurantId,
@@ -32,6 +33,7 @@ class AuthUser {
   final String id;
   final String username;
   final String name;
+  final String? accountId;
   final String? branchName;
   final String? restaurantName;
   final String? restaurantId;
@@ -45,6 +47,13 @@ class AuthUser {
       profileType == 'owner' ||
       permissions.contains('*') ||
       permissions.contains('devices.manage');
+
+  bool get canManageTopology =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      permissions.contains('topology.manage');
 
   bool get canViewOrders =>
       isSuperuser ||
@@ -73,6 +82,7 @@ class AuthUser {
     id: json['id'] as String,
     username: json['username'] as String,
     name: (json['name'] as String?)?.trim() ?? '',
+    accountId: json['account_id'] as String?,
     branchName: json['branch_name'] as String?,
     restaurantName: json['restaurant_name'] as String?,
     restaurantId: json['restaurant_id'] as String?,
@@ -87,6 +97,7 @@ class AuthUser {
     'id': id,
     'username': username,
     'name': name,
+    'account_id': accountId,
     'branch_name': branchName,
     'restaurant_name': restaurantName,
     'restaurant_id': restaurantId,

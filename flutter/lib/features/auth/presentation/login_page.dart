@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/copyable_error.dart';
@@ -254,7 +253,12 @@ class _BrandPanel extends StatelessWidget {
       children: [
         Row(
           children: [
-            SvgPicture.asset('assets/logo-mark.svg', width: 46, height: 46),
+            Image.asset(
+              'assets/logoicon.png',
+              width: 46,
+              height: 46,
+              filterQuality: FilterQuality.high,
+            ),
             const SizedBox(width: 12),
             const Text(
               'StarChef',

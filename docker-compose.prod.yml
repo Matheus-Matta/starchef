@@ -112,9 +112,9 @@ services:
   nginx:
     build:
       context: ./frontend
-      args:
-        # Same-origin por padrão: SPA e API na mesma origem (sem CORS).
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    environment:
+      # Gerada em runtime; a mesma imagem pode ser promovida entre ambientes.
+      API_URL: ${API_URL:-/api/v1}
     restart: unless-stopped
     volumes:
       - ./infra/nginx.prod.conf:/etc/nginx/nginx.conf:ro

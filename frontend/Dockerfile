@@ -15,12 +15,13 @@ COPY . .
 
 # URL da API no bundle. Same-origin por padrão (/api/v1): o nginx serve o SPA e
 # faz proxy do /api na mesma origem — sem CORS e compatível com cookies SameSite=Lax.
-ARG VITE_API_BASE_URL=/api/v1
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 # ── Stage 2: runtime (nginx) ─────────────────────────────────────────────────
 FROM nginx:1.27-alpine
 # Apenas os estáticos compilados; a config do nginx é montada pelo compose.
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY runtime-config.js.template /etc/nginx/templates/runtime-config.js.template
+ENV API_URL=/api/v1
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/usr/share/nginx/html
 EXPOSE 80 443

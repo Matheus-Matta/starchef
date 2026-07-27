@@ -65,6 +65,18 @@ WSGI_APPLICATION = "config.wsgi.application"
 # que nao existe e retornava "pagina nao encontrada".
 LOGIN_REDIRECT_URL = "/admin/"
 LOGIN_URL = "/admin/login/"
+FIRST_ACCESS_TOKEN = config("DJANGO_FIRST_ACCESS_TOKEN", default="")
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173").rstrip("/")
+
+EMAIL_BACKEND = config("DJANGO_EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("DJANGO_EMAIL_HOST", default="localhost")
+EMAIL_PORT = config("DJANGO_EMAIL_PORT", default=587, cast=int)
+EMAIL_HOST_USER = config("DJANGO_EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("DJANGO_EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("DJANGO_EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_USE_SSL = config("DJANGO_EMAIL_USE_SSL", default=False, cast=bool)
+DEFAULT_FROM_EMAIL = config("DJANGO_DEFAULT_FROM_EMAIL", default="StarChef <no-reply@localhost>")
+PASSWORD_RESET_TIMEOUT_MINUTES = config("PASSWORD_RESET_TIMEOUT_MINUTES", default=30, cast=int)
 
 TEMPLATES = [
     {
@@ -112,7 +124,8 @@ def build_database_settings(use_sqlite):
                 "PASSWORD": config("POSTGRES_PASSWORD", default="starchef"),
                 "HOST": config("POSTGRES_HOST", default="localhost"),
                 "PORT": config("POSTGRES_PORT", default="5432"),
-                "CONN_MAX_AGE": 60,
+                "CONN_MAX_AGE": config("POSTGRES_CONN_MAX_AGE", default=60, cast=int),
+                "CONN_HEALTH_CHECKS": config("POSTGRES_CONN_HEALTH_CHECKS", default=True, cast=bool),
             }
         }
     }
@@ -203,6 +216,9 @@ REST_FRAMEWORK = {
         "user": config("THROTTLE_RATE_USER", default="2000/hour"),
         "login": config("THROTTLE_RATE_LOGIN", default="10/min"),
         "token_refresh": config("THROTTLE_RATE_TOKEN_REFRESH", default="30/min"),
+        "password_reset": config("THROTTLE_RATE_PASSWORD_RESET", default="5/min"),
+        "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
+        "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
         # Cardápio público: IP compartilhado por muitos clientes (WiFi do restaurante).
         "public_menu": config("THROTTLE_RATE_PUBLIC_MENU", default="600/min"),
@@ -215,6 +231,8 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
+    # Trocar a senha invalida imediatamente access/refresh tokens anteriores.
+    "CHECK_REVOKE_TOKEN": True,
 }
 
 SPECTACULAR_SETTINGS = {

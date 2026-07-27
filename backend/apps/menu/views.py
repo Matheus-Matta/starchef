@@ -1,3 +1,4 @@
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
@@ -177,7 +178,15 @@ class PublicMenuView(APIView):
 
     def get(self, request, slug):
         try:
-            menu = Menu.objects.get(slug=slug, is_active=True)
+            menu = Menu.objects.prefetch_related(
+                Prefetch(
+                    "items",
+                    queryset=MenuItem.objects.filter(is_active=True)
+                    .select_related("product__category")
+                    .prefetch_related("product__variations"),
+                    to_attr="active_items",
+                )
+            ).get(slug=slug, is_active=True)
         except Menu.DoesNotExist:
             return Response({"detail": "Cardápio não encontrado."}, status=404)
         return Response(PublicMenuSerializer(menu).data)

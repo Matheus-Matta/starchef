@@ -1,154 +1,156 @@
 # StarChef
 
-Monorepo para um MVP de gestao de restaurante com Django REST Framework no backend e Vue 3 no frontend.
+Plataforma multi-tenant para a operação de restaurantes, com retaguarda web, PDV, KDS, caixa, impressão e integrações com dispositivos locais.
 
-## Visao geral
+## Estado atual
 
-StarChef foi organizado para operar restaurante, lanchonete, pizzaria, hamburgueria, delivery, retirada, atendimento de balcao, mesas e comandas. O MVP prioriza fluxo diario:
+A versão atual reúne três aplicações no mesmo repositório:
 
-1. login JWT;
-2. selecao de restaurante/filial por perfil;
-3. abertura de pedido por mesa, comanda, balcao, retirada ou delivery;
-4. envio de itens para cozinha via WebSocket;
-5. painel KDS em tempo real;
-6. fechamento de conta, pagamento, caixa e recibo simples;
-7. auditoria basica e dashboard operacional.
+- **Backend Django/DRF:** API REST, autenticação, regras de negócio, WebSockets e tarefas assíncronas.
+- **Retaguarda Vue 3:** cadastros, dashboard, PDV web, caixa, pedidos, relatórios e KDS.
+- **PDV Flutter para Windows:** operação de balcão, leitura offline da configuração, autenticação de caixa e agente local de impressoras/balanças.
 
-O desenho ja separa dados por restaurante e filial para evoluir para SaaS multi-restaurante e multi-filial.
+Os dados são isolados por conta, restaurante e filial. Limites de restaurantes e usuários podem ser definidos por plano e sobrescritos na conta.
 
-## Diagrama textual
+## Principais recursos
+
+- login JWT com access token em memória e refresh token em cookie `HttpOnly`;
+- usuários, papéis, permissões granulares e módulos habilitados;
+- restaurantes, filiais, setores, mesas e comandas reutilizáveis com código de barras/QR;
+- cardápio, variações obrigatórias, adicionais, ingredientes e fichas técnicas;
+- pedidos de mesa, comanda, balcão, retirada e delivery;
+- rodadas de produção, cancelamento/cortesia de itens, pagamento parcial e estorno;
+- KDS em tempo real, com estações e colunas configuráveis por templates;
+- caixa por estação, sangria, suprimento, fechamento e aprovação gerencial;
+- recibos, estrutura fiscal, filas de impressão e integração com impressoras e balanças;
+- notificações persistidas e entregues por WebSocket;
+- dashboard, relatórios de vendas, alertas de estoque, SLA e trilha de auditoria;
+- menu público por slug.
+
+## Arquitetura
 
 ```text
-Browser/PWA futuro
-  |-- Vue 3 + PrimeVue + Pinia + Router
-  |-- Axios REST /api/v1
-  |-- WebSocket /ws/kitchen/{branch_id}/{sector}/
-        |
-        v
-Nginx (producao)
-  |-- frontend estatico
-  |-- reverse proxy HTTP -> Django ASGI
-  |-- reverse proxy WS   -> Django ASGI
-        |
-        v
-Django ASGI
-  |-- DRF + JWT + OpenAPI
-  |-- Channels consumers KDS
-  |-- Apps de dominio: orders, menu, payments, stock, printers
-        |
-        |-- PostgreSQL: dados transacionais
-        |-- Redis: cache, channel layer, broker Celery
-        |-- Celery worker: tarefas async, impressao, relatorios
-        |-- Celery beat: tarefas agendadas, backups, health routines
+Retaguarda Vue 3 ─┐
+PDV Flutter/Win ──┼── REST /api/v1 + WebSocket /ws ── Django ASGI
+Menu público ─────┘                                      │
+                                      ┌──────────────────┼──────────────┐
+                                  PostgreSQL           Redis          Celery
+                                  transações      cache/channels    jobs/beat
 ```
+
+Em desenvolvimento, o backend pode usar SQLite, cache e Channels em memória e Celery em modo eager. Em produção, o Compose usa PostgreSQL, Redis, Gunicorn com worker Uvicorn, Celery e Nginx.
 
 ## Estrutura
 
 ```text
 backend/
   apps/
-    accounts/      perfis, papeis e permissoes
-    core/          base models, auditoria, permissoes, paginacao
-    customers/     clientes e enderecos
-    invoices/      recibo nao fiscal e arquitetura fiscal futura
-    kitchen/       endpoints do KDS
-    menu/          cardapio, produtos, adicionais e ficha tecnica
-    orders/        pedidos, itens, lifecycle e websocket
-    payments/      caixa, pagamentos e movimentacoes
-    printers/      impressoras, print jobs e templates
-    reports/       dashboard e relatorios
-    restaurants/   restaurantes, filiais, mesas e comandas
-    stock/         locais e movimentacoes de estoque
-  config/          settings por ambiente, urls, asgi, celery
-  tests/           exemplos pytest
-
-frontend/
-  src/
-    components/    componentes reutilizaveis
-    composables/   websocket, permissao, toast e impressao
-    layouts/       Auth, App e PDV
-    router/        rotas e guards
-    services/      Axios e servicos por dominio
-    stores/        Pinia
-    views/         telas MVP
+    accounts/       contas, planos, usuários, papéis e permissões
+    core/           tenancy, autenticação, auditoria e infraestrutura comum
+    restaurants/    restaurantes, filiais, mesas, comandas e delivery
+    menu/           cardápio, produtos, variações, adicionais e receitas
+    orders/         pedidos, itens, rodadas e fluxo de pagamento
+    kitchen/        estações, colunas e consultas do KDS
+    payments/       métodos, estações de caixa, sessões e movimentos
+    printers/       impressoras, balanças e jobs de impressão
+    notifications/  notificações persistidas e WebSocket
+    customers/ invoices/ stock/ reports/ sla/ integrations/
+  config/           settings, URLs, ASGI, WSGI e Celery
+  tests/            testes de integração
+frontend/           SPA Vue 3 + PrimeVue + Pinia + Vite
+flutter/            PDV Flutter desktop para Windows
+infra/              configuração Nginx de produção
+docs/               documentação complementar
+DOC.md              referência técnica da versão atual
 ```
 
-## Comandos de desenvolvimento
+## Início rápido local
+
+Pré-requisitos: Python, Node.js/npm e, para o PDV desktop, Flutter com suporte a Windows.
+
+```powershell
+Copy-Item .env.example .env
+python -m venv .venv
+.\.venv\Scripts\pip install -r backend\requirements\development.txt
+npm --prefix frontend install
+npm run migrate
+npm run seed
+npm run dev
+```
+
+`npm run dev` inicia o backend em `http://localhost:8001` e o Vite em `http://localhost:5173`. Também é possível iniciar os processos separadamente:
+
+```powershell
+npm run dev:backend
+npm run dev:frontend
+npm run dev:flutter
+```
+
+O seed cria a conta de demonstração, restaurante, filial e dados operacionais. Credenciais locais:
+
+```text
+usuário: admin
+senha:   admin12345
+```
+
+Para reconstruir um SQLite local inconsistente, mantendo backup automático:
+
+```powershell
+.\.venv\Scripts\python backend\manage.py seed_demo --reset-sqlite
+```
+
+## Docker
+
+Desenvolvimento completo com PostgreSQL, Redis, backend, workers e frontend:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-Para rodar backend ASGI e frontend no mesmo terminal, com encerramento conjunto no `Ctrl+C`:
+Produção:
 
 ```bash
-cd backend
-python manage.py runservices
+cp .env.production.example .env.production
+# preencha segredos, domínio, origens confiáveis e certificados
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
-Para trocar o host ou a porta do backend:
+O Compose de produção não publica PostgreSQL nem Redis, executa migrations e `collectstatic`, mantém imagens sem bind mount de código e expõe somente Nginx em `80/443`.
 
-```bash
-python manage.py runservices 0.0.0.0:8001
-# ou
-python manage.py runservices --backend-host 0.0.0.0 --backend-port 8001
+## URLs úteis
+
+- retaguarda: `http://localhost:5173/`
+- API: `http://localhost:8001/api/v1/`
+- Swagger: `http://localhost:8001/api/schema/swagger-ui/`
+- Django Admin: `http://localhost:8001/admin/`
+- health check: `http://localhost:8001/health/`
+
+No Docker de desenvolvimento, o backend é publicado em `http://localhost:8000`.
+
+## Qualidade e testes
+
+```powershell
+.\.venv\Scripts\python backend\manage.py check
+.\.venv\Scripts\pytest backend
+npm --prefix frontend run lint
+npm --prefix frontend run build
+Push-Location flutter; flutter analyze; flutter test; Pop-Location
 ```
 
-Para popular uma base local com dados demo:
+## Comando administrativo
 
-```bash
-python manage.py seed_demo --migrate
+```powershell
+# Sincroniza o catálogo de permissões e papéis padrão
+.\.venv\Scripts\python backend\manage.py sync_permissions
 ```
 
-Isso cria a conta `starchef-demo`, restaurante, filial, mesas, cardapio, estoque, formas de pagamento, clientes, pedidos demo e o usuario `admin` com senha `admin12345`.
+Usuários e seus vínculos de tenant podem ser administrados pela retaguarda ou pelo Django Admin.
 
-Se o SQLite local estiver com historico antigo/inconsistente de migrations, recrie a base local mantendo backup automatico:
+Consulte [DOC.md](DOC.md) para arquitetura, domínios, API, segurança, configuração e fluxos operacionais.
 
-```bash
-python manage.py seed_demo --reset-sqlite
-```
+## Licença
 
-Para criar ou atualizar um usuario vinculado corretamente ao tenant:
+Este é um software proprietário, com todos os direitos reservados. Cópia, redistribuição, sublicenciamento, oferta como serviço e revenda são proibidos sem autorização prévia e expressa do titular.
 
-```bash
-python manage.py create_tenant_user --username gerente --email gerente@starchef.test --password gerente123 --profile-type manager --role-code manager
-```
-
-Por padrao esse comando cria superuser com `is_staff=True` e perfil `admin`. Para criar usuario comum, adicione `--profile-type waiter --no-superuser --no-staff`.
-
-Em `DEBUG=True`, o banco usa SQLite local, e cache, Channels e Celery usam memoria local. Nesse modo o Celery executa tarefas em modo eager, sem worker/beat separados. Para aplicar migrations antes de subir:
-
-```bash
-python manage.py runservices --migrate
-```
-
-O settings do Django e escolhido automaticamente: `DJANGO_DEBUG=True` usa `config.settings.development`; `DJANGO_DEBUG=False` usa `config.settings.production`. `DJANGO_SETTINGS_MODULE` continua opcional para sobrescrever manualmente quando necessario.
-
-Endpoints uteis:
-
-- API: `http://localhost:8000/api/v1/`
-- Swagger: `http://localhost:8000/api/schema/swagger-ui/`
-- Admin Unfold: `http://localhost:8000/admin/`
-- Frontend: `http://localhost:5173/login`
-
-Ao usar `runservices` com outra porta de backend, por exemplo `python manage.py runservices 0.0.0.0:8001`, o frontend recebe automaticamente `VITE_API_BASE_URL=http://localhost:8001/api/v1`.
-
-## Roadmap
-
-MVP:
-
-- autenticacao JWT, restaurante/filial, usuarios e permissoes;
-- mesas/comandas, cardapio, abertura de pedidos e envio para cozinha;
-- KDS em tempo real, fechamento de conta, pagamentos, caixa e recibo;
-- dashboard inicial, auditoria basica e OpenAPI.
-
-Versao 2:
-
-- estoque com ficha tecnica completa, delivery completo, relatorios avancados;
-- impressora termica ESC/POS, promocoes, combos e controle de entregadores.
-
-Versao 3:
-
-- NFC-e/NF-e, gateways de pagamento, WhatsApp, iFood/marketplaces;
-- PWA offline parcial e SaaS multi-restaurante com cobranca por plano.
+Consulte o arquivo [LICENSE](LICENSE). A presença do código neste repositório não concede uma licença open source.

@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:window_manager/window_manager.dart';
 
 class AppWindowFrame extends StatelessWidget {
-  const AppWindowFrame({super.key, required this.child});
+  const AppWindowFrame({
+    super.key,
+    required this.child,
+    this.title = 'StarChef PDV',
+  });
 
   final Widget child;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -31,14 +35,15 @@ class AppWindowFrame extends StatelessWidget {
                 title: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SvgPicture.asset(
-                      'assets/logo-mark.svg',
+                    Image.asset(
+                      'assets/logoicon.png',
                       width: 20,
                       height: 20,
+                      filterQuality: FilterQuality.high,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'StarChef PDV',
+                      title,
                       style: TextStyle(
                         color: dark ? Colors.white : const Color(0xFF2B261F),
                         fontSize: 12.5,

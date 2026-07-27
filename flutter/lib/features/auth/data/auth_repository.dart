@@ -68,6 +68,7 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
+    await apiClient.clearSession();
     await sessionStore.clear();
     await cashAuth?.clear();
   }

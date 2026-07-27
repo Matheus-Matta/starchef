@@ -3,15 +3,17 @@ from hashlib import sha256
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.template.loader import get_template
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 
 from apps.core.viewsets import BaseTenantViewSet
-from apps.core.permissions import CanUseOrManageDevices
+from apps.core.permissions import CanOperateScale, CanUseOrManageDevices
 from apps.orders.serializers import OrderItemSerializer
 from apps.printers.models import Printer, PrintJob, Scale, ScaleReading
 from apps.printers.serializers import (
@@ -21,6 +23,10 @@ from apps.printers.serializers import (
     ScaleSerializer,
 )
 from apps.printers.services import weigh_to_order
+
+
+class DevicePollingRateThrottle(UserRateThrottle):
+    scope = "device_poll"
 
 
 class PrinterViewSet(BaseTenantViewSet):
@@ -92,9 +98,16 @@ class ScaleViewSet(BaseTenantViewSet):
     search_fields = ["name", "port"]
 
     def get_permissions(self):
+        if self.action == "checkout_command":
+            return [CanOperateScale()]
         if self.action in {"claim_agent", "release_agent"}:
             return [IsAuthenticated()]
         return super().get_permissions()
+
+    def get_throttles(self):
+        if self.action in {"latest_reading", "claim_agent", "release_agent"}:
+            return [DevicePollingRateThrottle()]
+        return super().get_throttles()
 
     @action(detail=True, methods=["post"], url_path="claim-agent")
     def claim_agent(self, request, pk=None):
@@ -228,6 +241,142 @@ class ScaleViewSet(BaseTenantViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=True, methods=["post"], url_path="checkout-command")
+    def checkout_command(self, request, pk=None):
+        """Finaliza uma pesagem na comanda e inclui extras em uma transacao."""
+        from apps.menu.models import Product
+        from apps.orders.models import Order
+        from apps.orders.serializers import OrderSerializer
+        from apps.orders.services import add_order_item, create_order, recalculate_order
+        from apps.printers.services import register_weigh_print
+        from apps.restaurants.models import Command
+
+        command_code = str(request.data.get("command_code", "")).strip()
+        reading_id = request.data.get("scale_reading")
+        extras = request.data.get("extras") or []
+        if not command_code:
+            return Response({"detail": "Leia ou informe o codigo da comanda."}, status=status.HTTP_400_BAD_REQUEST)
+        if not reading_id:
+            return Response({"detail": "A leitura da balanca e obrigatoria."}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(extras, list) or len(extras) > 20:
+            return Response({"detail": "Informe no maximo 20 produtos adicionais."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                scale = Scale.objects.select_for_update().select_related("product").get(pk=self.get_object().pk)
+                command_lookup = Q(code=command_code)
+                if command_code.isdigit():
+                    command_lookup |= Q(number=int(command_code))
+                command = (
+                    Command.objects.select_for_update()
+                    .select_related("restaurant")
+                    .filter(
+                        command_lookup,
+                        account=scale.account,
+                        restaurant=scale.restaurant,
+                        is_active=True,
+                    )
+                    .first()
+                )
+                if command is None:
+                    raise ValidationError("Comanda nao encontrada para o restaurante selecionado.")
+
+                order = None
+                if command.current_order_id:
+                    order = Order.objects.filter(
+                        pk=command.current_order_id,
+                        account=scale.account,
+                        restaurant=scale.restaurant,
+                        status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+                    ).first()
+                if order is None:
+                    order = create_order(
+                        restaurant=scale.restaurant,
+                        branch=None,
+                        order_type=Order.TYPE_COMMAND,
+                        command=command,
+                        user=request.user,
+                    )
+
+                reading = (
+                    ScaleReading.objects.select_for_update()
+                    .filter(
+                        pk=reading_id,
+                        account=scale.account,
+                        scale=scale,
+                        is_stable=True,
+                        order_item__isnull=True,
+                    )
+                    .first()
+                )
+                if reading is None:
+                    raise ValidationError("Leitura invalida, instavel ou ja utilizada.")
+
+                weighed_item, _ = weigh_to_order(
+                    scale=scale,
+                    order=order,
+                    user=request.user,
+                    scale_reading=reading,
+                    do_print=False,
+                )
+
+                extra_items = []
+                for entry in extras:
+                    if not isinstance(entry, dict):
+                        raise ValidationError("Produto adicional invalido.")
+                    try:
+                        quantity = int(entry.get("quantity", 1))
+                    except (TypeError, ValueError) as exc:
+                        raise ValidationError("Quantidade adicional invalida.") from exc
+                    if quantity < 1 or quantity > 99:
+                        raise ValidationError("A quantidade adicional deve ficar entre 1 e 99.")
+                    product = Product.objects.filter(
+                        pk=entry.get("product"),
+                        account=scale.account,
+                        restaurant=scale.restaurant,
+                        is_active=True,
+                    ).first()
+                    if product is None or product.is_weighed:
+                        raise ValidationError("Produto adicional inexistente ou vendido por peso.")
+                    extra_items.append(
+                        add_order_item(
+                            order=order,
+                            product=product,
+                            quantity=quantity,
+                            user=request.user,
+                        )
+                    )
+
+                # A nota deve ser um snapshot do pedido final, depois do item
+                # pesado, dos extras e do recálculo explícito dos totais.
+                order = recalculate_order(order)
+                print_job = (
+                    register_weigh_print(
+                        order=order,
+                        item=weighed_item,
+                        scale=scale,
+                        user=request.user,
+                    )
+                    if request.data.get("print", True)
+                    else None
+                )
+                order = self._resolve_order(scale, order.id)
+                return Response(
+                    {
+                        "order": OrderSerializer(order).data,
+                        "weighed_item": OrderItemSerializer(weighed_item).data,
+                        "extra_items": OrderItemSerializer(extra_items, many=True).data,
+                        "print_job": (
+                            PrintJobSerializer(print_job, context={"request": request}).data
+                            if print_job
+                            else None
+                        ),
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class ScaleReadingViewSet(BaseTenantViewSet):
     """POST usado pelo agente local para enviar leituras da balanca."""
@@ -292,6 +441,11 @@ class PrintJobViewSet(BaseTenantViewSet):
     queryset = PrintJob.objects.select_related("restaurant", "branch", "printer", "order", "printed_by").all()
     filterset_fields = ["restaurant", "printer", "job_type", "status"]
     ordering_fields = ["created_at", "printed_at"]
+
+    def get_throttles(self):
+        if self.action == "list":
+            return [DevicePollingRateThrottle()]
+        return super().get_throttles()
 
     @action(detail=True, methods=["post"], url_path="mark-printed")
     def mark_printed(self, request, pk=None):

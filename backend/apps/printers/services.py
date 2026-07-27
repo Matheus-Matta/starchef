@@ -1,10 +1,12 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from apps.core.audit import record_audit
+from apps.core.codes import barcode_data_uri
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.printers.models import Printer, PrintJob
@@ -309,37 +311,209 @@ def register_printer_test_job(*, printer, user):
 
 
 # ── Nota de pesagem (balanca por kilo) ─────────────────────────────────────
-def _weigh_ticket_text(order, item, scale):
+def _resolve_weigh_printer(*, order, scale):
+    """Resolve somente uma impressora explicitamente configurada na balanca.
+
+    ``Printer`` ainda nao possui campo/constraint de impressora padrao. Escolher
+    a primeira impressora ativa do restaurante seria ambiguo e poderia enviar a
+    nota para outro caixa ou setor.
+    """
+    if scale is None or not scale.printer_id:
+        raise ValidationError(
+            "Balanca sem impressora ativa configurada; o modelo atual nao define "
+            "uma impressora padrao segura para fallback."
+        )
+
+    printer = Printer.objects.filter(
+        pk=scale.printer_id,
+        account=order.account,
+        restaurant=order.restaurant,
+        is_active=True,
+    ).first()
+    same_branch = not (
+        printer
+        and scale.branch_id
+        and printer.branch_id
+        and printer.branch_id != scale.branch_id
+    )
+    if printer is None or not same_branch:
+        raise ValidationError(
+            "A impressora configurada na balanca esta inativa ou fora do mesmo "
+            "restaurante/filial."
+        )
+    return printer
+
+
+def _weigh_ticket_items(order):
+    excluded = {"cancelled", "comped"}
+    return list(
+        order.items.select_related("product")
+        .exclude(status__in=excluded)
+        .order_by("launched_at", "id")
+    )
+
+
+def _weigh_ticket_barcode(order):
+    value = ""
+    if order.command_id:
+        value = str(order.command.code or order.command.number or "")
+    return {
+        "symbology": "CODE128",
+        "value": value,
+        "data_uri": barcode_data_uri(value),
+    }
+
+
+def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
+    command = None
+    if order.command_id:
+        command = {
+            "id": str(order.command_id),
+            "number": order.command.number,
+            "code": order.command.code,
+        }
+
+    serialized_items = [
+        {
+            "id": str(ticket_item.id),
+            "product_id": str(ticket_item.product_id),
+            "name": ticket_item.product.name,
+            "pricing_unit": ticket_item.product.pricing_unit,
+            "is_weighed": ticket_item.product.is_weighed,
+            "quantity": str(ticket_item.quantity),
+            "unit_price": str(ticket_item.unit_price),
+            "total": str(ticket_item.total_price),
+        }
+        for ticket_item in items
+    ]
+    return {
+        "payload_version": 2,
+        # Campos legados do item pesado, preservados para agentes ja instalados.
+        "order_id": str(order.id),
+        "item_id": str(weighed_item.id),
+        "sequence": order.sequence,
+        "weight_kg": str(weighed_item.quantity),
+        "unit_price": str(weighed_item.unit_price),
+        "total": str(weighed_item.total_price),
+        "item_total": str(weighed_item.total_price),
+        # Snapshot completo e autocontido da nota.
+        "restaurant": {
+            "id": str(order.restaurant_id),
+            "trade_name": order.restaurant.trade_name,
+            "legal_name": order.restaurant.legal_name,
+            "cnpj": order.restaurant.cnpj,
+        },
+        "order": {
+            "id": str(order.id),
+            "sequence": order.sequence,
+            "type": order.order_type,
+            "command": command,
+            "subtotal": str(order.subtotal),
+            "total": str(order.total),
+        },
+        "command": command,
+        "items": serialized_items,
+        "subtotal": str(order.subtotal),
+        "order_total": str(order.total),
+        "barcode": {
+            "symbology": barcode["symbology"],
+            "value": barcode["value"],
+        },
+    }
+
+
+def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     """Versao texto (monospace) da nota, enviada pelo agente para impressoras ESC/POS."""
     restaurant = order.restaurant.trade_name if order.restaurant_id else "Restaurante"
-    where = f"Mesa {order.table.number}" if order.table_id else (f"Comanda {order.command.code}" if order.command_id else "Balcao")
+    where = (
+        f"Mesa {order.table.number}"
+        if order.table_id
+        else (
+            f"Comanda {order.command.code}"
+            if order.command_id
+            else "Balcao"
+        )
+    )
     lines = [
         restaurant.center(32),
         "NOTA DE PESAGEM".center(32),
         "-" * 32,
         f"Pedido #{order.sequence}  {where}",
-        timezone.localtime(item.created_at).strftime("%d/%m/%Y %H:%M"),
+        timezone.localtime(weighed_item.created_at).strftime("%d/%m/%Y %H:%M"),
         "-" * 32,
-        item.product.name[:32],
-        f"{Decimal(item.quantity):.3f} kg x R$ {item.unit_price}/kg",
-        f"{'VALOR'.ljust(20)}{('R$ ' + str(item.total_price)).rjust(12)}",
-        "-" * 32,
-        f"{'TOTAL DO PEDIDO'.ljust(18)}{('R$ ' + str(order.total)).rjust(14)}",
-        "",
-        "Pague no caixa. Obrigado!".center(32),
     ]
+    for ticket_item in items:
+        lines.append(ticket_item.product.name[:32])
+        if ticket_item.product.is_weighed:
+            lines.append(
+                f"{Decimal(ticket_item.quantity):.3f} kg x "
+                f"R$ {ticket_item.unit_price}/kg"
+            )
+        else:
+            lines.append(
+                f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}"
+            )
+        lines.append(
+            f"{'VALOR'.ljust(20)}"
+            f"{('R$ ' + str(ticket_item.total_price)).rjust(12)}"
+        )
+        lines.append("-" * 32)
+    lines.append(
+        f"{'TOTAL DO PEDIDO'.ljust(18)}"
+        f"{('R$ ' + str(order.total)).rjust(14)}"
+    )
+    if barcode["value"]:
+        lines.extend(
+            [
+                "",
+                "COMANDA - CODE128".center(32),
+                barcode["value"].center(32),
+            ]
+        )
+    lines.extend(["", "Pague no caixa. Obrigado!".center(32)])
     return "\n".join(lines)
 
 
 def register_weigh_print(*, order, item, scale, user=None):
     """Gera a nota de pesagem (HTML + texto) como PrintJob PENDENTE na impressora da balanca.
 
-    Fica pendente ate o agente local imprimir e chamar mark-printed. Sem impressora
-    configurada, ainda registra o job (util para reimpressao/navegador).
+    Fica pendente ate o agente local imprimir e chamar mark-printed. Como o modelo
+    nao identifica uma impressora padrao, exige uma impressora ativa configurada
+    explicitamente na balanca.
     """
     with tenant_context(order.account):
-        printer = scale.printer if scale and scale.printer_id else None
-        html = render_print_html(order, PrintJob.TYPE_WEIGH, item=item, scale=scale)
+        printer = _resolve_weigh_printer(order=order, scale=scale)
+        order.refresh_from_db(
+            fields=[
+                "subtotal",
+                "service_fee",
+                "discount",
+                "delivery_fee",
+                "total",
+            ]
+        )
+        items = _weigh_ticket_items(order)
+        barcode = _weigh_ticket_barcode(order)
+        payload = _weigh_ticket_payload(
+            order=order,
+            weighed_item=item,
+            items=items,
+            barcode=barcode,
+        )
+        payload["text_content"] = _weigh_ticket_text(
+            order=order,
+            weighed_item=item,
+            items=items,
+            barcode=barcode,
+        )
+        html = render_print_html(
+            order,
+            PrintJob.TYPE_WEIGH,
+            item=item,
+            scale=scale,
+            items=items,
+            barcode=barcode,
+        )
         job = PrintJob.objects.create(
             account=order.account,
             restaurant=order.restaurant,
@@ -348,16 +522,7 @@ def register_weigh_print(*, order, item, scale, user=None):
             order=order,
             job_type=PrintJob.TYPE_WEIGH,
             status=PrintJob.STATUS_PENDING,
-            payload={
-                "order_id": str(order.id),
-                "item_id": str(item.id),
-                "sequence": order.sequence,
-                "weight_kg": str(item.quantity),
-                "unit_price": str(item.unit_price),
-                "total": str(item.total_price),
-                # Texto pronto para a impressora termica (agente imprime este campo).
-                "text_content": _weigh_ticket_text(order, item, scale),
-            },
+            payload=payload,
             html_content=html,
             printed_by=user,
             created_by=user,
@@ -367,6 +532,7 @@ def register_weigh_print(*, order, item, scale, user=None):
         return job
 
 
+@transaction.atomic
 def weigh_to_order(*, scale, order, user, scale_reading=None, weight_kg=None, do_print=True):
     """Fluxo principal: pesa -> lanca item por kg no pedido -> gera a nota de pesagem.
 
@@ -379,6 +545,12 @@ def weigh_to_order(*, scale, order, user, scale_reading=None, weight_kg=None, do
         raise ValidationError("Balanca sem produto por kilo configurado.")
     if order.account_id != scale.account_id:
         raise ValidationError("Pedido e balanca pertencem a contas diferentes.")
+    if order.restaurant_id != scale.restaurant_id:
+        raise ValidationError("Pedido e balanca pertencem a restaurantes diferentes.")
+    if do_print:
+        # Falha antes de consumir a leitura/criar o item. A transacao tambem
+        # protege contra qualquer erro posterior durante a renderizacao do job.
+        _resolve_weigh_printer(order=order, scale=scale)
 
     item = add_order_item(
         order=order,

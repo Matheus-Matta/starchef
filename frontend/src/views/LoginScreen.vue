@@ -67,7 +67,7 @@
             <InputSwitch v-model="remember" input-id="remember" />
             <label for="remember">Lembrar-me</label>
           </div>
-          <a href="#">Esqueci a senha</a>
+          <RouterLink :to="{ name: 'forgot-password' }">Esqueci a senha</RouterLink>
         </div>
 
         <p v-if="errorMessage" class="login-screen__error">{{ errorMessage }}</p>
@@ -83,7 +83,12 @@
         />
 
         <p class="login-screen__support">
-          Problemas para acessar? <a href="#">Fale com o suporte</a>
+          Problemas para acessar?
+          <a
+            href="https://wa.me/5521966621486?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20StarChef."
+            target="_blank"
+            rel="noopener noreferrer"
+          >Fale com o suporte</a>
         </p>
       </form>
     </section>
@@ -93,6 +98,7 @@
 <script setup>
 import { inject, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { RouterLink } from "vue-router";
 import Button from "primevue/button";
 import IconField from "primevue/iconfield";
 import InputIcon from "primevue/inputicon";

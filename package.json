@@ -2,6 +2,7 @@
   "name": "starchef",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "scripts": {
     "dev": ".venv\\Scripts\\python backend\\manage.py runservices 0.0.0.0:8001",
     "dev:backend": ".venv\\Scripts\\python backend\\manage.py runserver 0.0.0.0:8001 --noreload",

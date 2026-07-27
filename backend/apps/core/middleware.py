@@ -20,6 +20,8 @@ PUBLIC_URL_NAMES = {
     "token_obtain_pair",
     "token_refresh",
     "token_verify",
+    "password-reset",
+    "password-reset-confirm",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin
