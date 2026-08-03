@@ -4,7 +4,8 @@
 # backend (config em infra/nginx.prod.conf, montada em runtime).
 
 # ── Stage 1: build ───────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+# jsdom 30/vitest 4 exigem Node >=22 (mesma razão do bump em .github/workflows/frontend.yml).
+FROM node:24-alpine AS build
 WORKDIR /app
 
 # Instala deps a partir do lockfile (build reproduzível).
