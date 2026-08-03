@@ -169,9 +169,9 @@ Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.productio
 
 `npm run test` (Vitest + jsdom): hoje cobre `utils/apiError.js` (todos os casos de status HTTP) e `components/AppIcon.vue` (smoke de render). `.github/workflows/frontend.yml` roda o job `build` em push/PR tocando `frontend/**`: `npm ci` → `lint` → `test` → `build` → `npm audit --production`.
 
-**Imagem de produção**: depois do `build` passar, o job `build-and-push-image` builda `frontend/` e publica em `ghcr.io/<owner>/starchef-frontend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem build args/secrets — a mesma imagem serve qualquer ambiente (§11 acima).
+**Imagem de produção**: depois do `build` passar, o job `build-and-push-image` builda `frontend/` e publica em `ghcr.io/<owner>/starchef-frontend`. Roda **só em tag `vX.Y.Z`** (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) — nunca em PR nem em commit direto na `main`, pra backend/frontend/flutter saírem sempre com a mesma versão sem duplicar build a cada push. Sai `sha-<curto>` + `X.Y.Z` + `X.Y` + `latest`. Sem build args/secrets — a mesma imagem serve qualquer ambiente (§11 acima).
 
-**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões antigas (`dataaxiom/ghcr-cleanup-action`) — mantém as 10 versões com tag mais recentes e apaga manifests sem tag, mas nunca apaga `latest` nem qualquer tag semver (`exclude-tags: latest,*.*`), então releases nunca somem, só o acúmulo de `sha-*` de commits antigos.
+**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões por idade (`dataaxiom/ghcr-cleanup-action`, `older-than: 1 year`) — qualquer versão (com tag ou não) com mais de 1 ano é apagada, exceto a que estiver marcada `latest` no momento (protegida sempre, não importa a idade).
 
 ## 14. Referências
 

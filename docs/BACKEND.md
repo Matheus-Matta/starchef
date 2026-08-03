@@ -213,9 +213,9 @@ pytest --cov=apps --cov-report=term-missing
 
 O `ruff` está configurado (`backend/pyproject.toml`) só com a regra `F` (pyflakes — bugs reais: import/variável não usada, nome indefinido) por enquanto; `E501`/`I001` (linha longa/ordem de import) ficam de fora até uma passada dedicada de formatação, pra não gerar um diff gigante fora de contexto.
 
-**Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env.production`.
+**Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda **só em tag `vX.Y.Z`** (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) — nunca em PR nem em commit direto na `main`, pra backend/frontend/flutter saírem sempre com a mesma versão sem duplicar build a cada push. Sai `sha-<curto>` + `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env.production`.
 
-**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões antigas (`dataaxiom/ghcr-cleanup-action`) — mantém as 10 versões com tag mais recentes e apaga manifests sem tag, mas nunca apaga `latest` nem qualquer tag semver (`exclude-tags: latest,*.*`), então releases nunca somem, só o acúmulo de `sha-*` de commits antigos.
+**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões por idade (`dataaxiom/ghcr-cleanup-action`, `older-than: 1 year`) — qualquer versão (com tag ou não) com mais de 1 ano é apagada, exceto a que estiver marcada `latest` no momento (protegida sempre, não importa a idade).
 
 ## 13. Testes
 

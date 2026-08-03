@@ -52,13 +52,13 @@ jobs:
       - name: Testes
         run: flutter test
 
-  # Só roda em push na main ou disparo manual (nunca em PR) e só depois do
-  # job `test` passar. Combinado com o `paths:` do gatilho acima, o instalador
-  # só é gerado quando flutter/** muda — sem build/instalador por alteração
-  # em backend/ ou frontend/.
+  # Só roda em tag vX.Y.Z ou disparo manual (nunca em PR nem em push direto
+  # na main) e só depois do job `test` passar. Commit direto na main nunca
+  # gera instalador — só a tag de release builda, pra backend/frontend/flutter
+  # saírem sempre com a MESMA versão sem duplicar build a cada commit.
   build-installer:
     needs: test
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
     runs-on: windows-latest
     permissions:
       contents: write

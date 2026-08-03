@@ -47,12 +47,13 @@ jobs:
           DJANGO_SETTINGS_MODULE: config.settings.test
         run: pytest --cov=apps --cov-report=term-missing
 
-  # Só roda em push na main (nunca em PR) e só depois do job `test` passar.
-  # Combinado com o `paths:` do gatilho acima, a imagem só é gerada quando
-  # backend/** muda — sem imagem nova por alteração em frontend/ ou flutter/.
+  # Só roda em tag vX.Y.Z (nunca em push direto na main nem em PR) e só depois
+  # do job `test` passar. Commit direto na main nunca gera imagem — só a tag
+  # de release builda e publica, pra backend/frontend/flutter saírem sempre
+  # com a MESMA versão sem duplicar build a cada commit.
   build-and-push-image:
     needs: test
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,9 +70,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest` é sempre a tag atual: em push na main (edge) ou em QUALQUER
-      # tag vX.Y.Z (release) — sem depender de comparação semver, a tag que
-      # acabou de ser processada é sempre a mais atual.
+      # Esse job só roda em tag, então `latest` sempre acompanha a tag atual
+      # sem precisar de condição extra.
       - name: Metadados da imagem
         id: meta
         uses: docker/metadata-action@v5
@@ -83,8 +83,7 @@ jobs:
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest
 
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
       # lidos em runtime pelo container via .env.production (docker-compose.prod.yml).
@@ -100,13 +99,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Poda o GHCR: mantém as 10 versões com tag mais recentes (as sha-* de
-  # commits antigos viram lixo a cada push) e nunca apaga `latest` nem
-  # versões semver (release) — essas ficam protegidas por `exclude-tags`
-  # independente de idade/posição no ranking.
+  # Poda o GHCR por idade: qualquer versão (tag ou sem tag) com mais de 1 ano
+  # vira lixo e é apagada, MENOS a que estiver com a tag `latest` no momento —
+  # essa fica protegida sempre, não importa a idade.
   cleanup-old-images:
     needs: build-and-push-image
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -114,6 +112,6 @@ jobs:
       - uses: dataaxiom/ghcr-cleanup-action@v1
         with:
           packages: starchef-backend
-          keep-n-tagged: 10
-          exclude-tags: "latest,*.*"
+          older-than: 1 year
+          exclude-tags: latest
           delete-untagged: true
