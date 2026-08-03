@@ -69,19 +69,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest=auto`: marca `latest` em push na main (edge) e também na tag
-      # semver mais recente (release) — sem duplicar a lógica manualmente.
+      # `latest` é sempre a tag atual: em push na main (edge) ou em QUALQUER
+      # tag vX.Y.Z (release) — sem depender de comparação semver, a tag que
+      # acabou de ser processada é sempre a mais atual.
       - name: Metadados da imagem
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/starchef-backend
           flavor: |
-            latest=auto
+            latest=false
           tags: |
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
       # lidos em runtime pelo container via .env.production (docker-compose.prod.yml).
