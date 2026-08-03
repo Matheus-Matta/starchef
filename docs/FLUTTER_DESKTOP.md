@@ -135,7 +135,7 @@ flutter build windows --release
 .\windows\installer\build_installer.ps1
 ```
 
-`build_installer.ps1` lê a versão de `pubspec.yaml` (`version: X.Y.Z+N`, usa só `X.Y.Z`) e passa como `/DAppVersion` ao `ISCC.exe` (Inno Setup 6) — assim a versão só existe em um lugar, não duplicada entre `pubspec.yaml` e `starchef_pdv.iss`. Requer Inno Setup 6 instalado (`ISCC.exe` no PATH ou em `Program Files (x86)\Inno Setup 6`). Saída em `artifacts/StarChef-PDV-Setup-<versão>-offline.exe`.
+`build_installer.ps1` lê a versão de `pubspec.yaml` (`version: X.Y.Z+N`, usa só `X.Y.Z`) e passa como `/DAppVersion` ao `ISCC.exe` (Inno Setup 6) — assim a versão só existe em um lugar, não duplicada entre `pubspec.yaml` e `starchef_pdv.iss`. Requer Inno Setup 6 instalado (`ISCC.exe` no PATH ou em `Program Files (x86)\Inno Setup 6`). Saída em `artifacts/starchef-pdv.exe` (a versão fica em `AppVersion` dentro do instalador, não no nome do arquivo).
 
 **Sem assinatura de código** hoje — o Windows SmartScreen pode alertar o usuário na instalação; assinar exige um certificado de code signing, ainda não incorporado ao processo. **Sem auto-update** — a distribuição do binário para os terminais é manual.
 
