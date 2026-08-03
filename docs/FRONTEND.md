@@ -167,7 +167,9 @@ Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.productio
 
 ## 13. Testes e CI
 
-`npm run test` (Vitest + jsdom): hoje cobre `utils/apiError.js` (todos os casos de status HTTP) e `components/AppIcon.vue` (smoke de render). `.github/workflows/frontend.yml` roda em push/PR tocando `frontend/**`: `npm ci` → `lint` → `test` → `build` → `npm audit --production`.
+`npm run test` (Vitest + jsdom): hoje cobre `utils/apiError.js` (todos os casos de status HTTP) e `components/AppIcon.vue` (smoke de render). `.github/workflows/frontend.yml` roda o job `build` em push/PR tocando `frontend/**`: `npm ci` → `lint` → `test` → `build` → `npm audit --production`.
+
+**Imagem de produção**: depois do `build` passar, o job `build-and-push-image` builda `frontend/` e publica em `ghcr.io/<owner>/starchef-frontend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem build args/secrets — a mesma imagem serve qualquer ambiente (§11 acima).
 
 ## 14. Referências
 

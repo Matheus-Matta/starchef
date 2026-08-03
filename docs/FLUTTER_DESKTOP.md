@@ -139,6 +139,15 @@ flutter build windows --release
 
 **Sem assinatura de código** hoje — o Windows SmartScreen pode alertar o usuário na instalação; assinar exige um certificado de code signing, ainda não incorporado ao processo. **Sem auto-update** — a distribuição do binário para os terminais é manual.
 
+### Cortando um release
+
+1. Bump `version:` em `pubspec.yaml` (ex.: `1.4.0+7`) e mergeie na `main`.
+2. `git tag v1.4.0 && git push origin v1.4.0`.
+
+Isso dispara `.github/workflows/flutter.yml` (job `build-installer`): confere que a tag bate com o `pubspec.yaml` (falha o build se alguém esqueceu de bumpar a versão antes de taguear), builda com `API_BASE_URL`/`PDV_SENTRY_DSN` vindos da variável/secret do repositório, gera o instalador e publica (ou atualiza, se já existir) um **GitHub Release** `vX.Y.Z` com o `.exe` anexado e notas geradas a partir dos commits. O mesmo pipeline também roda em todo push na `main` que tocar `flutter/**` (sem tag/Release, só o artefato do workflow) e pode ser disparado manualmente (`workflow_dispatch`) com `api_base_url`/`sentry_dsn` customizados.
+
+A mesma tag `vX.Y.Z` também dispara os workflows de `backend`/`frontend`, publicando imagens `ghcr.io/<owner>/starchef-{backend,frontend}:X.Y.Z` (+ `X.Y` + `latest`) — um único release versiona os três.
+
 ## 13. Testes e CI
 
 236 testes (`flutter test`), organizados espelhando `lib/` sob `test/`. Distribuição deliberada: profundidade em regra pura e protocolo de hardware, testes de widget só onde há risco real de regressão. Os mais importantes:
@@ -151,7 +160,7 @@ flutter build windows --release
 | `features/topology/services/probe_interval_test.dart` | Principal e secundário reais em `127.0.0.1`: handshake assinado, leitura mediada pelo principal, ritmo do probe mudando com o estado |
 | `core/security/cash_password_test.dart` | Valida senha de caixa contra hash PBKDF2 gerado pelo Django |
 
-`.github/workflows/flutter.yml` roda em `windows-latest` (necessário — `window_manager`, `sqlite_async` e paths do Windows não se comportam igual em outro SO) em push/PR tocando `flutter/**`: `flutter pub get` → `flutter analyze` → `flutter test`.
+`.github/workflows/flutter.yml` roda o job `test` em `windows-latest` (necessário — `window_manager`, `sqlite_async` e paths do Windows não se comportam igual em outro SO) em push/PR tocando `flutter/**`: `flutter pub get` → `flutter analyze` → `flutter test`. Ver §12 acima para o job `build-installer` (build + instalador + release).
 
 `flutter analyze` está limpo hoje (1 único aviso de nível "info", pré-existente e sem risco).
 

@@ -3,6 +3,10 @@ name: backend
 on:
   push:
     branches: [main]
+    # Tag de release (ex.: v1.4.0) — numa criação de tag o GitHub não tem um
+    # "before" sha significativo pra comparar, então o `paths:` abaixo não
+    # filtra nada: toda tag de release builda a imagem, ponto de corte oficial.
+    tags: ["v*.*.*"]
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
@@ -65,14 +69,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # `latest=auto`: marca `latest` em push na main (edge) e também na tag
+      # semver mais recente (release) — sem duplicar a lógica manualmente.
       - name: Metadados da imagem
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/starchef-backend
+          flavor: |
+            latest=auto
           tags: |
             type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
       # lidos em runtime pelo container via .env.production (docker-compose.prod.yml).

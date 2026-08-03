@@ -3,6 +3,10 @@ name: flutter
 on:
   push:
     branches: [main]
+    # Tag de release (ex.: v1.4.0) — numa criação de tag o GitHub não tem um
+    # "before" sha significativo pra comparar, então o `paths:` abaixo não
+    # filtra nada: toda tag de release gera o instalador, ponto de corte oficial.
+    tags: ["v*.*.*"]
     paths:
       - "flutter/**"
       - ".github/workflows/flutter.yml"
@@ -56,6 +60,8 @@ jobs:
     needs: test
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    permissions:
+      contents: write
     env:
       API_BASE_URL: ${{ inputs.api_base_url || vars.PDV_API_BASE_URL }}
       PDV_SENTRY_DSN: ${{ inputs.sentry_dsn || secrets.PDV_SENTRY_DSN }}
@@ -68,6 +74,21 @@ jobs:
 
       - name: Instalar dependências
         run: flutter pub get
+
+      # A tag é a fonte da verdade da versão do release (build_installer.ps1
+      # lê pubspec.yaml) — se alguém esquecer de bumpar o pubspec antes de
+      # taguear, o instalador sairia com o número errado sem ninguém notar.
+      - name: Conferir tag x versão do pubspec.yaml
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $tagVersion = $tag -replace '^v', ''
+          $versionLine = Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1
+          $pubspecVersion = $versionLine.Matches[0].Groups[1].Value.Split('+')[0]
+          if ($tagVersion -ne $pubspecVersion) {
+            throw "Tag $tag (versao $tagVersion) nao bate com pubspec.yaml (versao $pubspecVersion). Atualize o pubspec.yaml antes de taguear."
+          }
 
       # API_BASE_URL é embutida no .exe via --dart-define (ver core/config/app_config.dart)
       # — sem ela o app cairia no fallback de localhost em produção, então falha
@@ -95,3 +116,12 @@ jobs:
           name: starchef-pdv-installer
           path: artifacts/StarChef-PDV-Setup-*-offline.exe
           if-no-files-found: error
+
+      # Só em tag de release: publica (ou atualiza, se já existir) o Release do
+      # GitHub com o instalador anexado e notas geradas a partir dos commits.
+      - name: Publicar GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/StarChef-PDV-Setup-*-offline.exe

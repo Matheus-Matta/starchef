@@ -203,7 +203,7 @@ HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`
 
 ## 12. CI/CD
 
-`.github/workflows/backend.yml` roda em push/PR que tocam `backend/**`:
+`.github/workflows/backend.yml` roda o job `test` em push/PR que tocam `backend/**`:
 
 ```
 ruff check .
@@ -212,6 +212,8 @@ pytest --cov=apps --cov-report=term-missing
 ```
 
 O `ruff` está configurado (`backend/pyproject.toml`) só com a regra `F` (pyflakes — bugs reais: import/variável não usada, nome indefinido) por enquanto; `E501`/`I001` (linha longa/ordem de import) ficam de fora até uma passada dedicada de formatação, pra não gerar um diff gigante fora de contexto.
+
+**Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env.production`.
 
 ## 13. Testes
 
