@@ -140,7 +140,7 @@ Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado f
 
 ## 8. Celery
 
-Configurado (`config/celery.py`), com Redis como broker/result backend em produção e `CELERY_TASK_ALWAYS_EAGER=True` em dev/test (roda síncrono, sem precisar de worker nem Redis). **Nenhuma task assíncrona está definida hoje** além do helper de contexto `celery_tenant_context` em `apps/core/tasks.py` — a infraestrutura (worker + beat, subidos pelo `runservices` e pelo `docker-compose.prod.yml`) está pronta e conectada, mas não há jobs de fato agendados/enfileirados ainda.
+Configurado (`config/celery.py`), com Redis como broker/result backend em produção e `CELERY_TASK_ALWAYS_EAGER=True` em dev/test (roda síncrono, sem precisar de worker nem Redis). **Nenhuma task assíncrona está definida hoje** além do helper de contexto `celery_tenant_context` em `apps/core/tasks.py` — a infraestrutura (worker + beat, subidos pelo `runservices` e pelo `docker-compose.yml`) está pronta e conectada, mas não há jobs de fato agendados/enfileirados ainda.
 
 ## 9. Superfície da API
 
@@ -155,7 +155,7 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 
 ## 10. Configuração / variáveis de ambiente
 
-Documentadas na íntegra em `.env.example` (dev) e `.env.production.example` (produção), na raiz do monorepo — copie um deles para `.env`/`.env.production` antes de rodar. Os grupos principais:
+Documentadas na íntegra em `.env.example` (produção — é o que `docker-compose.yml` lê via `.env`), na raiz do monorepo. Os grupos principais:
 
 - **Django core**: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CORS_ALLOWED_ORIGINS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_FIRST_ACCESS_TOKEN`.
 - **Cookies/TLS**: `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_AUTH_COOKIE_SECURE`, `DJANGO_AUTH_COOKIE_SAMESITE`, `DJANGO_AUTH_COOKIE_DOMAIN`.
@@ -170,7 +170,7 @@ Documentadas na íntegra em `.env.example` (dev) e `.env.production.example` (pr
 
 ## 11. Produção
 
-### O que roda (`docker-compose.prod.yml`)
+### O que roda (`docker-compose.yml`)
 
 ```
 postgres          — Postgres 16, sem porta exposta ao host, healthcheck
@@ -184,11 +184,11 @@ frontend          — nginx com o SPA (Vue) já embutido na imagem, serve estát
 `backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)) — nada é buildado no host. Subir:
 
 ```
-docker compose -f docker-compose.prod.yml --env-file .env.production pull
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+docker compose pull
+docker compose up -d
 ```
 
-Pinar uma versão específica em vez de `latest`: `BACKEND_IMAGE_TAG`/`FRONTEND_IMAGE_TAG` no `.env.production` (ex.: `BACKEND_IMAGE_TAG=1.4.0`).
+Pinar uma versão específica em vez de `latest`: `BACKEND_IMAGE_TAG`/`FRONTEND_IMAGE_TAG` no `.env` (ex.: `BACKEND_IMAGE_TAG=1.4.0`).
 
 Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000).
 
@@ -219,7 +219,7 @@ pytest --cov=apps --cov-report=term-missing
 
 O `ruff` está configurado (`backend/pyproject.toml`) só com a regra `F` (pyflakes — bugs reais: import/variável não usada, nome indefinido) por enquanto; `E501`/`I001` (linha longa/ordem de import) ficam de fora até uma passada dedicada de formatação, pra não gerar um diff gigante fora de contexto.
 
-**Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda **só em tag `vX.Y.Z`** (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) — nunca em PR nem em commit direto na `main`, pra backend/frontend/flutter saírem sempre com a mesma versão sem duplicar build a cada push. Sai `sha-<curto>` + `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env.production`.
+**Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda **só em tag `vX.Y.Z`** (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) — nunca em PR nem em commit direto na `main`, pra backend/frontend/flutter saírem sempre com a mesma versão sem duplicar build a cada push. Sai `sha-<curto>` + `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env`.
 
 **Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões por idade (`dataaxiom/ghcr-cleanup-action`, `older-than: 1 year`) — qualquer versão (com tag ou não) com mais de 1 ano é apagada, exceto a que estiver marcada `latest` no momento (protegida sempre, não importa a idade).
 

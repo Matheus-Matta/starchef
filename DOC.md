@@ -297,7 +297,7 @@ VITE_API_BASE_URL
 THROTTLE_RATE_*
 ```
 
-Produção deve partir de `.env.production.example`, que também documenta TLS/proxy, cookies seguros, Sentry, Gunicorn e origens confiáveis. Não versionar `.env` nem `.env.production`.
+`.env.example` documenta as variáveis de produção (TLS/proxy, cookies seguros, Sentry, Gunicorn, origens confiáveis, tags de imagem) — é o que `docker-compose.yml` lê via `.env`. Nunca versionar o `.env` real.
 
 ## 12. Instalação e comandos
 
@@ -327,14 +327,15 @@ Atalhos na raiz:
 
 `seed_demo --migrate` aplica migrations antes do seed. `seed_demo --reset-sqlite` cria backup e refaz a base local.
 
-### Docker
+### Docker (produção)
 
 ```bash
-docker compose up --build
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+cp .env.example .env
+docker compose pull
+docker compose up -d
 ```
 
-Produção exige preencher `.env.production`, configurar domínio/origens e fornecer certificados em `infra/certs`.
+`docker-compose.yml` só sobe as imagens publicadas pelo CI (`ghcr.io`) — exige preencher o `.env`, configurar domínio/origens e fornecer certificados em `infra/certs`.
 
 ## 13. Testes e validação
 
@@ -353,9 +354,9 @@ Os testes backend cobrem tenancy, permissões, autenticação/autorização de c
 
 ## 14. Implantação
 
-O `docker-compose.prod.yml`:
+O `docker-compose.yml`:
 
-- constrói imagens imutáveis;
+- puxa as imagens imutáveis publicadas pelo CI (`ghcr.io`, uma tag de release por vez — nada builda no host);
 - executa migrations e coleta de estáticos;
 - inicia backend ASGI com Gunicorn/Uvicorn;
 - inicia worker e beat do Celery;
@@ -364,7 +365,7 @@ O `docker-compose.prod.yml`:
 - publica apenas `80` e `443`;
 - usa volumes para banco, Redis, mídia e estáticos.
 
-Antes de publicar, execute testes/builds, troque todas as credenciais, configure backup do PostgreSQL e valide `/health/`, login, WebSockets, impressão e restauração de backup.
+Antes de publicar, execute testes/builds, troque todas as credenciais e valide `/health/`, login, WebSockets e impressão. Backup do PostgreSQL não roda automático por padrão — ver `infra/scripts/backup_postgres.sh`.
 
 ## 15. Escopo futuro
 

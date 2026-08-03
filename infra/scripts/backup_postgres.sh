@@ -1,7 +1,9 @@
 #!/bin/sh
 # Backup diário do Postgres de produção + limpeza de backups antigos.
-# Roda em loop dentro do serviço `postgres_backup` do docker-compose.prod.yml
-# (mesma imagem postgres:16-alpine já usada pelo banco — sem dependência nova).
+# Não está mais ligado por padrão no docker-compose.yml (produção ficou
+# restrita a postgres/redis/backend/frontend + celery) — rode via cron do
+# host (ex.: `docker compose exec postgres sh /scripts/backup_postgres.sh`)
+# ou reintroduza como serviço próprio se quiser automação embutida.
 set -eu
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"

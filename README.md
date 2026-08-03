@@ -99,24 +99,18 @@ Para reconstruir um SQLite local inconsistente, mantendo backup automático:
 .\.venv\Scripts\python backend\manage.py seed_demo --reset-sqlite
 ```
 
-## Docker
+## Docker (produção)
 
-Desenvolvimento completo com PostgreSQL, Redis, backend, workers e frontend:
+`docker-compose.yml` sobe PostgreSQL, Redis, backend, workers Celery e frontend a partir das imagens publicadas pelo CI em `ghcr.io` (nada builda no host — ver [`.github/workflows/backend.yml`](.github/workflows/backend.yml) e [`frontend.yml`](.github/workflows/frontend.yml), que só publicam em tag de release):
 
 ```bash
 cp .env.example .env
-docker compose up --build
-```
-
-Produção:
-
-```bash
-cp .env.production.example .env.production
 # preencha segredos, domínio, origens confiáveis e certificados
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-O Compose de produção não publica PostgreSQL nem Redis, executa migrations e `collectstatic`, mantém imagens sem bind mount de código e expõe somente Nginx em `80/443`.
+Não publica PostgreSQL nem Redis para fora, executa migrations e `collectstatic` no start, roda com usuário não-root, e expõe só o `frontend` (nginx) em `80/443`.
 
 ## URLs úteis
 

@@ -86,7 +86,7 @@ jobs:
             type=raw,value=latest
 
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
-      # lidos em runtime pelo container via .env.production (docker-compose.prod.yml).
+      # lidos em runtime pelo container via .env (docker-compose.yml).
       - name: Build e push
         uses: docker/build-push-action@v6
         with:

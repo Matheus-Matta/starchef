@@ -123,7 +123,7 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 - **`utils/apiError.js`** normaliza qualquer erro do axios/DRF: distingue rede/400/401/403/404/409/422/500+, separa erros de campo (`fieldErrors`) da mensagem geral, sempre devolve uma mensagem compreensível.
 - **Handler global**: `main.js` define `app.config.errorHandler`, que despacha um `CustomEvent("app:unhandled-error")`. `App.vue` usa `composables/useGlobalErrorHandler.js` para escutar esse evento e mostrar um Toast — sem isso, um erro não tratado em qualquer componente quebrava a tela em silêncio.
-- **Sentry** (`src/sentry.js`): só inicializa se `VITE_SENTRY_DSN` estiver definido (`.env`/`.env.production`) — sem DSN, zero overhead, comportamento idêntico a hoje.
+- **Sentry** (`src/sentry.js`): só inicializa se `VITE_SENTRY_DSN` estiver definido (`.env`) — sem DSN, zero overhead, comportamento idêntico a hoje.
 
 ## 9. Tema e design tokens
 
@@ -146,10 +146,10 @@ npm run preview               # serve o build localmente
 
 ## 11. Configuração / variáveis de ambiente
 
-Vem do mesmo `.env`/`.env.production` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--variáveis-de-ambiente) (raiz do monorepo). As relevantes para o frontend:
+Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--variáveis-de-ambiente) (raiz do monorepo). As relevantes para o frontend:
 
 - `VITE_BACKEND_TARGET` — alvo do proxy do Vite em dev.
-- `API_URL` — usado no build de produção (`docker-compose.prod.yml`), normalmente `/api/v1` (same-origin, sem CORS).
+- `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 
 Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `envsubst` do nginx no start do container (`window.RUNTIME_CONFIG = { API_URL: "..." }`), permitindo promover a mesma imagem entre ambientes sem rebuild.
@@ -161,9 +161,9 @@ Em produção, a URL da API não é fixada no build: `runtime-config.js.template
 1. `node:24-alpine` — `npm ci` + `npm run build` (sourcemaps desligados, `console`/`debugger` removidos pelo esbuild, chunks separados por vendor: `primevue`, `vue`, `axios`).
 2. `nginx:1.27-alpine` — copia só `dist/` + o template de runtime-config.
 
-**Serving** (`infra/nginx.prod.conf`, montado pelo `docker-compose.prod.yml`): nginx serve o SPA (`/`, `/assets/` com cache longo e imutável, `index.html`/`runtime-config.js` sem cache), e faz proxy reverso de `/api/`, `/ws/`, `/health/`, `/admin/` para o container `backend` (gunicorn) — mesma origem, sem CORS, cookies `SameSite=Lax` funcionam. Rate limiting por IP na borda (mais rígido em `/auth/login`, `/auth/refresh`, `/auth/password-reset`, `/admin/login/`), compressão gzip, headers de segurança incluindo `Content-Security-Policy` (`default-src 'self'; connect-src 'self' wss:; style-src 'self' 'unsafe-inline'` — o `unsafe-inline` de estilo é necessário porque o PrimeVue injeta estilo inline via JS).
+**Serving** (`infra/nginx.prod.conf`, montado pelo `docker-compose.yml`): nginx serve o SPA (`/`, `/assets/` com cache longo e imutável, `index.html`/`runtime-config.js` sem cache), e faz proxy reverso de `/api/`, `/ws/`, `/health/`, `/admin/` para o container `backend` (gunicorn) — mesma origem, sem CORS, cookies `SameSite=Lax` funcionam. Rate limiting por IP na borda (mais rígido em `/auth/login`, `/auth/refresh`, `/auth/password-reset`, `/admin/login/`), compressão gzip, headers de segurança incluindo `Content-Security-Policy` (`default-src 'self'; connect-src 'self' wss:; style-src 'self' 'unsafe-inline'` — o `unsafe-inline` de estilo é necessário porque o PrimeVue injeta estilo inline via JS).
 
-Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.production pull && docker compose -f docker-compose.prod.yml --env-file .env.production up -d` (baixa as imagens publicadas de backend/frontend, nada é buildado no host; ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe).
+Subir tudo: `docker compose pull && docker compose up -d` (baixa as imagens publicadas de backend/frontend, nada é buildado no host; ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe).
 
 ## 13. Testes e CI
 
