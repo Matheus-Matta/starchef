@@ -181,14 +181,12 @@ celery_beat       — agendador Celery
 frontend          — nginx com o SPA (Vue) já embutido na imagem, serve estático + faz proxy de /api, /ws, /admin, /health para o backend
 ```
 
-`backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)) — nada é buildado no host. Subir:
+`backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)), sempre fixas em `:latest` (a última tag de release publicada) — nada é buildado no host. Subir:
 
 ```
 docker compose pull
 docker compose up -d
 ```
-
-Pinar uma versão específica em vez de `latest`: `BACKEND_IMAGE_TAG`/`FRONTEND_IMAGE_TAG` no `.env` (ex.: `BACKEND_IMAGE_TAG=1.4.0`).
 
 Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000).
 

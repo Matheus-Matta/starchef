@@ -4,9 +4,8 @@
 # direto. `.env` na raiz é lido automaticamente pelo Compose. Suba com:
 #   docker compose pull
 #   docker compose up -d
-# BACKEND_IMAGE_TAG e FRONTEND_IMAGE_TAG são obrigatórios no `.env` (sem
-# fallback pra `latest` — deploy tem que dizer explicitamente qual versão
-# sobe). Use `latest` de propósito, ou pin uma tag exata (ex.: 1.4.0).
+# Imagens fixas em `:latest` (backend e frontend) — sempre a última tag de
+# release publicada pelo CI.
 #
 # Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
 # via env se o servidor tiver mais recursos) — sem eles, um vazamento em
@@ -57,7 +56,7 @@ services:
       - starchef
 
   backend:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
+    image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
@@ -88,7 +87,7 @@ services:
       - starchef
 
   celery_worker:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
+    image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
@@ -107,7 +106,7 @@ services:
       - starchef
 
   celery_beat:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
+    image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
@@ -128,7 +127,7 @@ services:
   # Borda: nginx com o SPA (Vue) já compilado dentro da imagem + proxy de /api e
   # /ws para o backend. A config e os certificados são montados por fora.
   frontend:
-    image: ghcr.io/matheus-matta/starchef-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG é obrigatório}
+    image: ghcr.io/matheus-matta/starchef-frontend:latest
     environment:
       # Injetada pelo nginx no start do container (runtime-config.js via
       # envsubst — a mesma imagem serve qualquer ambiente sem rebuild), mas o
