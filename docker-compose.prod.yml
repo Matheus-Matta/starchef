@@ -1,6 +1,11 @@
-# Produção (VPS): imagem imutável (sem bind-mount de código), settings de produção,
-# gunicorn+UvicornWorker, nginx na borda com TLS/rate-limit e estáticos servidos
-# direto. Suba com:  docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Produção (VPS): imagens publicadas pelo CI em ghcr.io (backend/frontend só saem
+# em tag de release — ver .github/workflows/{backend,frontend}.yml), settings de
+# produção, gunicorn+UvicornWorker, nginx na borda com TLS/rate-limit e estáticos
+# servidos direto. Suba com:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production pull
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# Pinar uma versão específica (em vez de `latest`): defina BACKEND_IMAGE_TAG e
+# FRONTEND_IMAGE_TAG no .env.production (ex.: BACKEND_IMAGE_TAG=1.4.0).
 #
 # Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
 # via env se o servidor tiver mais recursos) — sem eles, um vazamento em
@@ -25,37 +30,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD é obrigatório em produção}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backups:/backups
     # Sem portas expostas ao host: só acessível na rede interna do compose.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starchef} -d ${POSTGRES_DB:-starchef}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - starchef
-
-  # Dump diário (pg_dump) + retenção configurável — sem depender de cron externo
-  # no host nem de uma imagem de terceiros: reusa a mesma imagem do postgres.
-  postgres_backup:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    mem_limit: 256m
-    logging: *default-logging
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-starchef}
-      POSTGRES_USER: ${POSTGRES_USER:-starchef}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD é obrigatório em produção}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
-    entrypoint: ["/bin/sh", "/scripts/backup_postgres.sh"]
-    volumes:
-      - ./backups:/backups
-      - ./infra/scripts/backup_postgres.sh:/scripts/backup_postgres.sh:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - starchef
 
@@ -76,10 +56,7 @@ services:
       - starchef
 
   backend:
-    build:
-      context: ./backend
-      args:
-        REQUIREMENTS: production
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
@@ -110,10 +87,7 @@ services:
       - starchef
 
   celery_worker:
-    build:
-      context: ./backend
-      args:
-        REQUIREMENTS: production
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
@@ -132,10 +106,7 @@ services:
       - starchef
 
   celery_beat:
-    build:
-      context: ./backend
-      args:
-        REQUIREMENTS: production
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
@@ -153,11 +124,10 @@ services:
     networks:
       - starchef
 
-  # Borda: nginx com o SPA (Vue) já compilado dentro da imagem (build do frontend)
-  # + proxy de /api e /ws para o backend. A config e os certificados são montados.
-  nginx:
-    build:
-      context: ./frontend
+  # Borda: nginx com o SPA (Vue) já compilado dentro da imagem + proxy de /api e
+  # /ws para o backend. A config e os certificados são montados por fora.
+  frontend:
+    image: ghcr.io/matheus-matta/starchef-frontend:${FRONTEND_IMAGE_TAG:-latest}
     environment:
       # Gerada em runtime; a mesma imagem pode ser promovida entre ambientes.
       API_URL: ${API_URL:-/api/v1}

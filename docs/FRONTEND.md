@@ -158,12 +158,12 @@ Em produção, a URL da API não é fixada no build: `runtime-config.js.template
 
 **Build** (`frontend/Dockerfile`, multi-stage):
 
-1. `node:20-alpine` — `npm ci` + `npm run build` (sourcemaps desligados, `console`/`debugger` removidos pelo esbuild, chunks separados por vendor: `primevue`, `vue`, `axios`).
+1. `node:24-alpine` — `npm ci` + `npm run build` (sourcemaps desligados, `console`/`debugger` removidos pelo esbuild, chunks separados por vendor: `primevue`, `vue`, `axios`).
 2. `nginx:1.27-alpine` — copia só `dist/` + o template de runtime-config.
 
 **Serving** (`infra/nginx.prod.conf`, montado pelo `docker-compose.prod.yml`): nginx serve o SPA (`/`, `/assets/` com cache longo e imutável, `index.html`/`runtime-config.js` sem cache), e faz proxy reverso de `/api/`, `/ws/`, `/health/`, `/admin/` para o container `backend` (gunicorn) — mesma origem, sem CORS, cookies `SameSite=Lax` funcionam. Rate limiting por IP na borda (mais rígido em `/auth/login`, `/auth/refresh`, `/auth/password-reset`, `/admin/login/`), compressão gzip, headers de segurança incluindo `Content-Security-Policy` (`default-src 'self'; connect-src 'self' wss:; style-src 'self' 'unsafe-inline'` — o `unsafe-inline` de estilo é necessário porque o PrimeVue injeta estilo inline via JS).
 
-Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build` (builda backend e frontend juntos; ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe).
+Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.production pull && docker compose -f docker-compose.prod.yml --env-file .env.production up -d` (baixa as imagens publicadas de backend/frontend, nada é buildado no host; ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe).
 
 ## 13. Testes e CI
 

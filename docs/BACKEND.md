@@ -174,15 +174,21 @@ Documentadas na íntegra em `.env.example` (dev) e `.env.production.example` (pr
 
 ```
 postgres          — Postgres 16, sem porta exposta ao host, healthcheck
-postgres_backup   — dump diário (pg_dump | gzip) + retenção configurável (infra/scripts/backup_postgres.sh)
 redis             — cache + Channels layer + broker/result Celery
 backend           — gunicorn + UvicornWorker (ASGI), roda migrate + collectstatic no start
 celery_worker     — processa tasks (hoje, infraestrutura pronta sem jobs definidos)
 celery_beat       — agendador Celery
-nginx             — builda o frontend (Vue) e serve estático + faz proxy de /api, /ws, /admin, /health para o backend
+frontend          — nginx com o SPA (Vue) já embutido na imagem, serve estático + faz proxy de /api, /ws, /admin, /health para o backend
 ```
 
-Subir: `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`.
+`backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)) — nada é buildado no host. Subir:
+
+```
+docker compose -f docker-compose.prod.yml --env-file .env.production pull
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+```
+
+Pinar uma versão específica em vez de `latest`: `BACKEND_IMAGE_TAG`/`FRONTEND_IMAGE_TAG` no `.env.production` (ex.: `BACKEND_IMAGE_TAG=1.4.0`).
 
 Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000).
 
@@ -199,7 +205,7 @@ HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`
 
 ### Backup
 
-`postgres_backup` (mesma imagem `postgres:16-alpine`, sem dependência de terceiros) roda `pg_dump` diário comprimido em `./backups`, com limpeza automática de backups mais antigos que `BACKUP_RETENTION_DAYS` (default 14 dias).
+Não roda mais como serviço do compose (produção ficou restrita a `postgres`/`redis`/`backend`/`frontend` + Celery). `infra/scripts/backup_postgres.sh` continua no repo pra quem quiser rodar `pg_dump` diário via cron do host ou reintroduzir como serviço — só não está mais ligado por padrão.
 
 ## 12. CI/CD
 
