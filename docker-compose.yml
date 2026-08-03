@@ -130,8 +130,10 @@ services:
   frontend:
     image: ghcr.io/matheus-matta/starchef-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG é obrigatório}
     environment:
-      # Gerada em runtime; a mesma imagem pode ser promovida entre ambientes.
-      API_URL: ${API_URL:-/api/v1}
+      # Injetada pelo nginx no start do container (runtime-config.js via
+      # envsubst — a mesma imagem serve qualquer ambiente sem rebuild), mas o
+      # valor tem que vir do `.env` explicitamente, sem fallback silencioso.
+      API_URL: ${API_URL:?API_URL é obrigatório}
     restart: unless-stopped
     mem_limit: ${NGINX_MEM_LIMIT:-256m}
     logging: *default-logging
