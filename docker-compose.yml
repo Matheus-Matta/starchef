@@ -4,8 +4,9 @@
 # direto. `.env` na raiz é lido automaticamente pelo Compose. Suba com:
 #   docker compose pull
 #   docker compose up -d
-# Pinar uma versão específica (em vez de `latest`): defina BACKEND_IMAGE_TAG e
-# FRONTEND_IMAGE_TAG no `.env` (ex.: BACKEND_IMAGE_TAG=1.4.0).
+# BACKEND_IMAGE_TAG e FRONTEND_IMAGE_TAG são obrigatórios no `.env` (sem
+# fallback pra `latest` — deploy tem que dizer explicitamente qual versão
+# sobe). Use `latest` de propósito, ou pin uma tag exata (ex.: 1.4.0).
 #
 # Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
 # via env se o servidor tiver mais recursos) — sem eles, um vazamento em
@@ -56,7 +57,7 @@ services:
       - starchef
 
   backend:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
@@ -87,7 +88,7 @@ services:
       - starchef
 
   celery_worker:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
@@ -106,7 +107,7 @@ services:
       - starchef
 
   celery_beat:
-    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:-latest}
+    image: ghcr.io/matheus-matta/starchef-backend:${BACKEND_IMAGE_TAG:?BACKEND_IMAGE_TAG é obrigatório}
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
@@ -127,7 +128,7 @@ services:
   # Borda: nginx com o SPA (Vue) já compilado dentro da imagem + proxy de /api e
   # /ws para o backend. A config e os certificados são montados por fora.
   frontend:
-    image: ghcr.io/matheus-matta/starchef-frontend:${FRONTEND_IMAGE_TAG:-latest}
+    image: ghcr.io/matheus-matta/starchef-frontend:${FRONTEND_IMAGE_TAG:?FRONTEND_IMAGE_TAG é obrigatório}
     environment:
       # Gerada em runtime; a mesma imagem pode ser promovida entre ambientes.
       API_URL: ${API_URL:-/api/v1}
