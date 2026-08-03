@@ -217,9 +217,12 @@ function setRestaurantScope(restaurantId) {
   loadDashboardSummary();
 }
 
-async function logout() {
+function logout() {
   notifications.reset();
-  await auth.logout();
+  // Não espera o POST pro backend: `auth.logout()` já limpa a sessão local de
+  // forma síncrona antes de chamar a API, então a navegação pode acontecer na
+  // hora — sem travar o clique em "Sair" esperando a rede.
+  auth.logout();
   router.push({ name: "login" });
 }
 

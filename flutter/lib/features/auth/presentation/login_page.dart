@@ -305,12 +305,12 @@ class _BrandPanel extends StatelessWidget {
                     label: 'Pedidos & comandas',
                   ),
                   _Feature(
-                    icon: Icons.print_outlined,
-                    label: 'Impressão local',
+                    icon: Icons.desktop_windows_outlined,
+                    label: 'KDS ao vivo',
                   ),
                   _Feature(
-                    icon: Icons.scale_outlined,
-                    label: 'Balanças integradas',
+                    icon: Icons.payments_outlined,
+                    label: 'Caixa & pagamentos',
                   ),
                 ],
               ),

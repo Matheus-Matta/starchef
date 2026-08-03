@@ -235,6 +235,8 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100px;
+  flex: 0 0 100px;
 }
 
 .login-screen__features span {
@@ -249,7 +251,6 @@ async function submit() {
 
 .login-screen__features strong {
   font: var(--weight-semibold) 12.5px/1.3 var(--font-sans);
-  max-width: 92px;
 }
 
 .login-screen__footer {

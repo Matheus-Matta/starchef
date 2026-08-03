@@ -56,9 +56,9 @@ function toggleTheme() {
 .auth-layout__copy h2 { font:var(--weight-extra) 38px/1.1 var(--font-sans); letter-spacing:-.03em; }
 .auth-layout__copy p { font:var(--weight-medium) 15px/1.6 var(--font-sans); color:rgba(255,255,255,.86); }
 .auth-layout__features { display:flex; gap:28px; margin-top:6px; }
-.auth-layout__features div { display:flex; flex-direction:column; gap:8px; }
+.auth-layout__features div { display:flex; flex-direction:column; gap:8px; width:100px; flex:0 0 100px; }
 .auth-layout__features span { width:40px; height:40px; border-radius:12px; background:rgba(255,255,255,.16); display:inline-flex; align-items:center; justify-content:center; }
-.auth-layout__features strong { font:var(--weight-semibold) 12.5px/1.3 var(--font-sans); max-width:92px; }
+.auth-layout__features strong { font:var(--weight-semibold) 12.5px/1.3 var(--font-sans); }
 .auth-layout__footer { position:relative; font:var(--weight-medium) 12.5px/1 var(--font-sans); color:rgba(255,255,255,.7); }
 .auth-layout__form-panel { position:relative; display:flex; align-items:center; justify-content:center; padding:40px; }
 .auth-layout__theme-btn { position:absolute; top:24px; right:24px; width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-card); color:var(--text-body); cursor:pointer; }

@@ -97,10 +97,15 @@ export const useAuthStore = defineStore("auth", {
     },
 
     async logout() {
+      // Limpa local ANTES de avisar o servidor: o guard de rota do /login lê
+      // `isAuthenticated` de imediato, então se o POST ainda estivesse em voo
+      // (rede lenta) o guard podia ver a sessão como válida e mandar de volta
+      // pro painel — clareando antes, a navegação para /login nunca corre risco.
+      this.clearLocal();
       try {
         await api.post("/auth/logout/", {});
-      } finally {
-        this.clearLocal();
+      } catch {
+        // Sessão já foi limpa localmente — falha aqui não deve impedir o logout.
       }
     },
   },
