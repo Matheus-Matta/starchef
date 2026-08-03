@@ -159,7 +159,7 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
                       ),
                       const SizedBox(height: 8),
                     ],
-                    if (mode != LocalTopologyMode.standalone) ...[
+                    ...[
                       const SizedBox(height: 12),
                       if (mode == LocalTopologyMode.client) ...[
                         TextField(
@@ -455,17 +455,13 @@ class _ModeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final (icon, description) = switch (mode) {
-      LocalTopologyMode.standalone => (
-        Icons.computer_outlined,
-        'Usa a fila offline desta própria estação.',
-      ),
       LocalTopologyMode.principal => (
         Icons.dns_outlined,
-        'Recebe pedidos dos clientes e centraliza o reenvio.',
+        'Guarda os dados da loja e é quem sincroniza com a nuvem.',
       ),
       LocalTopologyMode.client => (
         Icons.point_of_sale_outlined,
-        'Entrega pedidos ao Principal quando a nuvem cai.',
+        'Lê e grava no Caixa Principal, que cuida da nuvem.',
       ),
     };
     return Material(

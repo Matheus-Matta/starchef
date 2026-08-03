@@ -78,6 +78,62 @@ def test_automatic_scale_creates_pending_counter_order_item_and_print_job(
 
 
 @pytest.mark.django_db
+def test_automatic_scale_reading_succeeds_without_agent_claim(
+    api_client,
+    manager_user,
+    account,
+    restaurant,
+    branch,
+    product,
+):
+    # O PDV lê a balança direto pela porta serial (SerialScaleReader) e nunca
+    # chama claim-agent nem manda agent_instance_id — a exclusividade é local
+    # (SO + trava de arquivo), não um lease no servidor. Uma balança com
+    # auto_print precisa aceitar a leitura mesmo sem reserva nenhuma, senão
+    # nenhum fechamento automático de comanda funciona.
+    api_client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}"
+    )
+    product.pricing_unit = Product.PRICING_KG
+    product.sale_price = Decimal("79.90")
+    product.save(update_fields=["pricing_unit", "sale_price", "updated_at"])
+    printer = Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Etiqueta balanca",
+        endpoint="Teste",
+        auto_print=True,
+    )
+    scale = Scale.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Balanca buffet",
+        port="COM2",
+        product=product,
+        printer=printer,
+        auto_print=True,
+    )
+
+    response = api_client.post(
+        "/api/v1/scales/readings/",
+        {
+            "scale": str(scale.id),
+            "weight_kg": "0.750",
+            "tare_kg": "0.000",
+            "is_stable": True,
+            "source": "agent",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    reading = ScaleReading.all_objects.get(pk=response.data["id"])
+    assert reading.order_item is not None
+
+
+@pytest.mark.django_db
 def test_automatic_scale_rejects_second_pdv_while_lease_is_active(
     api_client,
     manager_user,

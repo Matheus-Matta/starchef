@@ -1,0 +1,97 @@
+name: flutter
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flutter/**"
+      - ".github/workflows/flutter.yml"
+  pull_request:
+    paths:
+      - "flutter/**"
+      - ".github/workflows/flutter.yml"
+  # Permite gerar o instalador sob demanda (ex.: apontando pra uma API diferente
+  # da variável PDV_API_BASE_URL do repositório) sem precisar alterar código.
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "API_BASE_URL a embutir no build (vazio = usa a variável de repositório PDV_API_BASE_URL)"
+        required: false
+        type: string
+      sentry_dsn:
+        description: "PDV_SENTRY_DSN a embutir no build (vazio = usa o secret PDV_SENTRY_DSN do repositório)"
+        required: false
+        type: string
+
+defaults:
+  run:
+    working-directory: flutter
+
+jobs:
+  test:
+    # windows-latest porque é um app desktop Windows (window_manager, sqlite_async
+    # com paths do Windows) — analyze/test em outro OS não pega tudo que importa aqui.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Testes
+        run: flutter test
+
+  # Só roda em push na main ou disparo manual (nunca em PR) e só depois do
+  # job `test` passar. Combinado com o `paths:` do gatilho acima, o instalador
+  # só é gerado quando flutter/** muda — sem build/instalador por alteração
+  # em backend/ ou frontend/.
+  build-installer:
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url || vars.PDV_API_BASE_URL }}
+      PDV_SENTRY_DSN: ${{ inputs.sentry_dsn || secrets.PDV_SENTRY_DSN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências
+        run: flutter pub get
+
+      # API_BASE_URL é embutida no .exe via --dart-define (ver core/config/app_config.dart)
+      # — sem ela o app cairia no fallback de localhost em produção, então falha
+      # cedo em vez de gerar um instalador silenciosamente quebrado.
+      - name: Build Windows (release)
+        shell: pwsh
+        run: |
+          if (-not $env:API_BASE_URL) {
+            throw "API_BASE_URL nao definido. Configure a variavel de repositorio PDV_API_BASE_URL ou informe api_base_url no 'Run workflow'."
+          }
+          $defines = @("--dart-define=API_BASE_URL=$env:API_BASE_URL")
+          if ($env:PDV_SENTRY_DSN) {
+            $defines += "--dart-define=PDV_SENTRY_DSN=$env:PDV_SENTRY_DSN"
+          }
+          flutter build windows --release @defines
+          if ($LASTEXITCODE -ne 0) { throw "flutter build windows falhou com codigo $LASTEXITCODE" }
+
+      - name: Gerar instalador (Inno Setup)
+        shell: pwsh
+        run: .\windows\installer\build_installer.ps1
+
+      - name: Upload do instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-pdv-installer
+          path: artifacts/StarChef-PDV-Setup-*-offline.exe
+          if-no-files-found: error

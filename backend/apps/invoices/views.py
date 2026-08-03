@@ -33,7 +33,7 @@ class InvoiceViewSet(BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = InvoiceSerializer
     queryset = Invoice.objects.select_related("restaurant", "branch", "order").prefetch_related("items").all()
-    filterset_fields = ["status", "phase", "document_model"]
+    filterset_fields = ["status", "phase", "document_model", "order"]
     search_fields = ["number", "provider", "access_key"]
 
     def _account(self):

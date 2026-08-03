@@ -7,10 +7,10 @@
         <p>{{ total }} {{ total === 1 ? "registro" : "registros" }}</p>
       </div>
       <div class="rpro__head-actions">
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Exportar')">
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="exchangeLoading" @click="exportRows">
           <i class="pi pi-upload" /> Export
         </button>
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Importar')">
+        <button v-if="formEnabled" class="rpro-btn rpro-btn--ghost" type="button" @click="importVisible = true">
           <i class="pi pi-download" /> Import
         </button>
         <button
@@ -45,30 +45,22 @@
           <InputIcon class="pi pi-search" />
           <InputText v-model="search" :placeholder="`Buscar em ${title.toLowerCase()}...`" @keyup.enter="loadRows" />
         </IconField>
-        <Calendar
+        <AppDateRange
           v-if="dateField"
-          :model-value="dateRange"
+          v-model="dateRange"
           class="rpro__daterange"
-          selection-mode="range"
-          date-format="dd/mm/yy"
-          :manual-input="false"
-          show-icon
-          icon-display="input"
           :placeholder="dateField.label || 'Período'"
-          @update:model-value="onDateRange"
+          @change="onDateRange"
         />
       </div>
       <div class="rpro__toolbar-right">
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Mais filtros')">
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="advancedFiltersVisible = true">
           <i class="pi pi-sliders-h" /> Mais filtros
-        </button>
-        <button class="rpro-btn rpro-btn--icon" type="button" aria-label="Configurar colunas" @click="soon('Configurações da tabela')">
-          <i class="pi pi-cog" />
         </button>
       </div>
       <div class="rpro__mobile-file-actions">
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Exportar')"><i class="pi pi-upload" /> Exportar</button>
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="soon('Importar')"><i class="pi pi-download" /> Importar</button>
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="exportRows"><i class="pi pi-upload" /> Exportar</button>
+        <button v-if="formEnabled" class="rpro-btn rpro-btn--ghost" type="button" @click="importVisible = true"><i class="pi pi-download" /> Importar</button>
         <button
           v-for="headerAction in headerActions"
           :key="`mobile-${headerAction.key}`"
@@ -281,6 +273,42 @@
         </button>
       </div>
     </section>
+
+    <Dialog v-model:visible="advancedFiltersVisible" modal header="Filtros avançados" :style="{ width: 'min(620px, 94vw)' }">
+      <div class="rpro__advanced-grid">
+        <label v-for="field in advancedFilterFields" :key="field.name">
+          <span>{{ field.label }}</span>
+          <select v-if="field.options?.length" v-model="advancedFilters[field.name]">
+            <option value="">Todos</option>
+            <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <select v-else-if="field.type === 'boolean'" v-model="advancedFilters[field.name]">
+            <option value="">Todos</option>
+            <option value="true">Sim</option>
+            <option value="false">Não</option>
+          </select>
+          <InputText v-else v-model="advancedFilters[field.name]" :type="field.type === 'number' || field.type === 'decimal' ? 'number' : 'text'" />
+        </label>
+      </div>
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" @click="clearAdvancedFilters">Limpar</button>
+        <button class="rpro-btn rpro-btn--primary" type="button" @click="applyAdvancedFilters">Aplicar filtros</button>
+      </template>
+    </Dialog>
+
+    <Dialog v-model:visible="importVisible" modal :header="`Importar ${title}`" :style="{ width: 'min(560px, 94vw)' }">
+      <div class="rpro__import">
+        <p>Use CSV UTF-8. As colunas aceitas são: <strong>{{ importFieldLabels }}</strong>.</p>
+        <input type="file" accept=".csv,text/csv" @change="onImportFile" />
+        <small v-if="importFile">{{ importFile.name }}</small>
+      </div>
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="exchangeLoading" @click="importVisible = false">Cancelar</button>
+        <button class="rpro-btn rpro-btn--primary" type="button" :disabled="!importFile || exchangeLoading" @click="importRows">
+          <i :class="exchangeLoading ? 'pi pi-spin pi-spinner' : 'pi pi-download'" /> Importar
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -289,11 +317,10 @@
  * Variante "Pro" da listagem (tela-piloto do novo padrão de tabela — mockup).
  * Reaproveita todo o presenter `useResourceList` + `ResourceService`; só muda a
  * apresentação: cabeçalho com ações, cartões de resumo, filtro de período,
- * seleção em massa e paginação enxuta. Import/Export são visuais por enquanto.
+ * seleção em massa, filtros avançados, importação/exportação e paginação enxuta.
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import Calendar from "primevue/calendar";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
@@ -308,10 +335,13 @@ import { useConfirm } from "primevue/useconfirm";
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
+import { dataExchangeService } from "../services/dataExchangeService";
 import { formatDateTime, formatMoney, mapLabel } from "../utils/format";
 import { resolveColumnValue } from "../utils/object";
 import { normalizeApiError } from "../utils/apiError";
 import { useAuthStore } from "../stores/auth";
+import { useRealtimeResource } from "../composables/useRealtimeResource";
+import AppDateRange from "../components/form/AppDateRange.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -324,6 +354,7 @@ const props = defineProps({
   subtitle: { type: String, default: "" },
   endpoint: { type: String, required: true },
   columns: { type: Array, required: true },
+  formFields: { type: Array, default: () => [] },
   defaultParams: { type: Object, default: () => ({}) },
   formEnabled: { type: Boolean, default: false },
   globalScope: { type: Boolean, default: false },
@@ -346,6 +377,11 @@ const visibleColumns = computed(() => props.columns.filter((column) => auth.hasM
 const dateRange = ref(null);
 const selection = ref([]);
 const mobileFiltersOpen = ref(false);
+const advancedFiltersVisible = ref(false);
+const advancedFilters = reactive({});
+const importVisible = ref(false);
+const importFile = ref(null);
+const exchangeLoading = ref(false);
 
 function ymd(date) {
   if (!(date instanceof Date)) return "";
@@ -366,7 +402,14 @@ function dateParams() {
 
 /** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
 function buildProParams() {
-  return dateParams();
+  return {
+    ...dateParams(),
+    ...Object.fromEntries(
+      Object.entries(advancedFilters)
+        .filter(([, value]) => value !== "" && value != null)
+        .map(([key, value]) => [`filter__${key}`, value]),
+    ),
+  };
 }
 
 // Presenter genérico: estado + busca + paginação server-side.
@@ -381,7 +424,49 @@ const {
   pageSize: proCfg.value.pageSize || 25,
 });
 const loadRows = reload;
-const activeFilterCount = computed(() => Number(Boolean(search.value?.trim())) + Number(Boolean(dateRange.value?.length)));
+const realtimeModelByEndpoint = {
+  "/orders/": "orders.order",
+  "/tables/": "restaurants.table",
+  "/commands/": "restaurants.command",
+  "/customers/": "customers.customer",
+  "/payments/": "payments.payment",
+  "/payments/methods/": "payments.paymentmethod",
+  "/menu/products/": "menu.product",
+  "/menu/categories/": "menu.productcategory",
+  "/menu/addons/": "menu.addon",
+  "/stock/items/": "stock.stockitem",
+};
+useRealtimeResource(realtimeModelByEndpoint[props.endpoint] || "*", (payload) => {
+  // Unknown endpoint mappings still remain live; mapped lists only react to their model.
+  if (realtimeModelByEndpoint[props.endpoint] || payload.resource) reload();
+}, { debounce: 180 });
+const activeFilterCount = computed(() =>
+  Number(Boolean(search.value?.trim()))
+  + Number(Boolean(dateRange.value?.length))
+  + Object.values(advancedFilters).filter((value) => value !== "" && value != null).length,
+);
+
+const advancedFilterFields = computed(() => {
+  const excluded = new Set(["textarea", "password", "json", "remote-multiselect"]);
+  const fields = (props.formFields || [])
+    .filter((field) => !excluded.has(field.type) && field.name !== "restaurants")
+    .map((field) => ({ ...field }));
+  for (const quick of proCfg.value.quickFilters || []) {
+    const [name] = Object.keys(quick.filter || {});
+    if (!name) continue;
+    let field = fields.find((candidate) => candidate.name === name);
+    if (!field) {
+      const column = props.columns.find((candidate) => candidate.key === name);
+      field = { name, label: column?.label || name, options: [] };
+      fields.push(field);
+    }
+    field.options ||= [];
+    if (!field.options.some((option) => option.value === quick.filter[name])) {
+      field.options.push({ label: quick.label, value: quick.filter[name] });
+    }
+  }
+  return fields;
+});
 
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / (rowsPerPage.value || 1))));
 
@@ -408,8 +493,20 @@ function applyMobileFilters() {
 function clearMobileFilters() {
   search.value = "";
   dateRange.value = null;
+  for (const key of Object.keys(advancedFilters)) advancedFilters[key] = "";
   selection.value = [];
   reload();
+}
+
+function applyAdvancedFilters() {
+  selection.value = [];
+  advancedFiltersVisible.value = false;
+  reload();
+}
+
+function clearAdvancedFilters() {
+  for (const field of advancedFilterFields.value) advancedFilters[field.name] = "";
+  applyAdvancedFilters();
 }
 
 /* ── Navegação ─────────────────────────────────────────────────────── */
@@ -437,9 +534,53 @@ function runHeaderAction(headerAction) {
 }
 
 // ── Ações em massa (config `pro.bulkActions`) ─────────────────────────
-const bulkActions = computed(() => proCfg.value.bulkActions || []);
+const hasActiveField = computed(() => props.formFields.some((field) => field.name === "is_active"));
+const bulkActions = computed(() => {
+  const actions = [...(proCfg.value.bulkActions || [])];
+  if (props.formEnabled && hasActiveField.value) {
+    actions.push(
+      { key: "activate", label: "Ativar", icon: "pi pi-check", type: "patch", payload: { is_active: true } },
+      { key: "deactivate", label: "Desativar", icon: "pi pi-ban", type: "patch", payload: { is_active: false } },
+    );
+  }
+  if (props.formEnabled) actions.push({ key: "delete", label: "Excluir", icon: "pi pi-trash", type: "delete" });
+  return actions;
+});
 function runBulkAction(bulkAction) {
   if (bulkAction.type === "print-codes") openLabels();
+  else if (bulkAction.type === "patch") executeBulkMutation(bulkAction);
+  else if (bulkAction.type === "delete") {
+    confirm.require({
+      message: `Excluir ${selection.value.length} itens selecionados?`,
+      header: "Confirmar exclusão em massa",
+      icon: "pi pi-exclamation-triangle",
+      acceptLabel: "Excluir",
+      rejectLabel: "Cancelar",
+      accept: () => executeBulkMutation(bulkAction),
+    });
+  }
+}
+
+async function executeBulkMutation(action) {
+  const selected = [...selection.value];
+  if (!selected.length) return;
+  exchangeLoading.value = true;
+  let success = 0;
+  for (let index = 0; index < selected.length; index += 10) {
+    const batch = selected.slice(index, index + 10);
+    const results = await Promise.allSettled(batch.map((row) =>
+      action.type === "delete" ? service.remove(row.id) : service.update(row.id, action.payload),
+    ));
+    success += results.filter((result) => result.status === "fulfilled").length;
+  }
+  selection.value = [];
+  exchangeLoading.value = false;
+  toast.add({
+    severity: success === selected.length ? "success" : "warn",
+    summary: `${success} de ${selected.length} itens processados`,
+    life: 4000,
+  });
+  reload();
 }
 
 // Duplo clique no checkbox do CABEÇALHO → seleciona TODOS os itens do filtro
@@ -485,6 +626,106 @@ async function selectAllMatching() {
 }
 
 // Impressão em lote das etiquetas (QR ou código de barras) dos selecionados.
+async function fetchAllMatching() {
+  const params = { ...props.defaultParams, ...buildProParams() };
+  if (search.value) params.search = search.value;
+  if (ordering.value) params.ordering = ordering.value;
+  const all = [];
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+    const data = await service.list({ ...params, page: pageNumber, page_size: 100 });
+    const results = data.results || data || [];
+    all.push(...results);
+    if (all.length >= (data.count ?? all.length) || !results.length) return all;
+  }
+  throw new Error("O limite de exportação é de 10.000 registros.");
+}
+
+const exchangeFields = computed(() => (props.formFields || [])
+  .filter((field) => !["password", "json"].includes(field.type))
+  .map((field) => ({ ...field, key: field.name })));
+const exportColumns = computed(() => (
+  exchangeFields.value.length ? exchangeFields.value : visibleColumns.value
+).map((field) => ({ key: field.key, label: field.label })));
+const importFieldLabels = computed(() => exchangeFields.value.map((field) => field.label).join(", "));
+
+async function exportRows() {
+  exchangeLoading.value = true;
+  try {
+    const exportableRows = selection.value.length ? selection.value : await fetchAllMatching();
+    const filename = `${String(route.name || "dados").replaceAll("/", "-")}.csv`;
+    await dataExchangeService.exportCsv({ filename, columns: exportColumns.value, rows: exportableRows });
+    toast.add({ severity: "success", summary: `${exportableRows.length} itens exportados`, life: 3000 });
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível exportar", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    exchangeLoading.value = false;
+  }
+}
+
+function onImportFile(event) {
+  [importFile.value] = event.target.files || [];
+}
+
+function castImportedValue(value, field) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (field.type === "number") return Number.parseInt(text, 10);
+  if (field.type === "decimal") return Number(text.replace(",", "."));
+  if (field.type === "boolean") return ["1", "true", "sim", "yes"].includes(text.toLowerCase());
+  if (field.type === "remote-multiselect") return text.split("|").map((item) => item.trim()).filter(Boolean);
+  if (field.options?.length) {
+    const option = field.options.find((item) =>
+      String(item.value) === text || String(item.label).toLowerCase() === text.toLowerCase());
+    return option ? option.value : text;
+  }
+  return text;
+}
+
+async function importRows() {
+  if (!importFile.value) return;
+  exchangeLoading.value = true;
+  try {
+    const parsed = await dataExchangeService.parseCsv(importFile.value);
+    const fieldByHeader = new Map();
+    for (const field of exchangeFields.value) {
+      fieldByHeader.set(field.name.toLowerCase(), field);
+      fieldByHeader.set(String(field.label).toLowerCase(), field);
+    }
+    const payloads = parsed.rows.map((row) => Object.fromEntries(
+      Object.entries(row)
+        .map(([header, value]) => [fieldByHeader.get(header.trim().toLowerCase()), value])
+        .filter(([field, value]) => field && String(value ?? "").trim() !== "")
+        .map(([field, value]) => [field.name, castImportedValue(value, field)]),
+    )).filter((payload) => Object.keys(payload).length);
+
+    let imported = 0;
+    const errors = [];
+    for (const payload of payloads) {
+      try {
+        await service.create(payload);
+        imported += 1;
+      } catch (error) {
+        errors.push(normalizeApiError(error).message);
+      }
+    }
+    toast.add({
+      severity: errors.length ? "warn" : "success",
+      summary: `${imported} de ${payloads.length} itens importados`,
+      detail: errors[0] || undefined,
+      life: 5000,
+    });
+    if (!errors.length) {
+      importVisible.value = false;
+      importFile.value = null;
+    }
+    reload();
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível importar", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    exchangeLoading.value = false;
+  }
+}
+
 const labelsVisible = ref(false);
 const labelsLoading = ref(false);
 const labelKind = ref("qr");
@@ -618,10 +859,6 @@ async function submitBulk() {
   }
 }
 
-function soon(what) {
-  toast.add({ severity: "info", summary: what, detail: "Disponível em breve.", life: 2600 });
-}
-
 /* ── Menu de ações da linha (3 pontinhos) ──────────────────────────── */
 const rowMenu = ref(null);
 const menuRow = ref(null);
@@ -747,6 +984,29 @@ onMounted(loadRows);
   flex-direction: column;
   gap: 16px;
 }
+
+.rpro__head,
+.rpro__toolbar,
+.rpro__panel { animation: soft-pop var(--motion-slow) var(--motion-spring) both; }
+.rpro__toolbar { animation-delay: 45ms; }
+.rpro__panel { animation-delay: 90ms; }
+
+:deep(.p-datatable-loading-overlay) {
+  background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+  backdrop-filter: blur(2px);
+  animation: soft-pop var(--motion-base) ease both;
+}
+
+:deep(.p-datatable-loading-icon) {
+  color: var(--brand);
+  filter: drop-shadow(0 3px 8px color-mix(in srgb, var(--brand) 24%, transparent));
+}
+
+:deep(.p-datatable-tbody > tr) {
+  transition: background-color var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring);
+}
+
+:deep(.p-datatable-tbody > tr:hover) { transform: translateX(2px); }
 
 /* ── Cabeçalho ──────────────────────────────────────────────────────── */
 .rpro__head {
@@ -896,6 +1156,36 @@ onMounted(loadRows);
 .rpro__bulk-field > span { font: var(--weight-semibold) 12.5px/1 var(--font-sans); color: var(--text-muted); }
 .rpro__bulk-hint { margin: 0; font-size: 12.5px; }
 
+.rpro__advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.rpro__advanced-grid label,
+.rpro__import { display: flex; flex-direction: column; gap: 7px; }
+.rpro__advanced-grid label > span {
+  color: var(--text-muted);
+  font: var(--weight-semibold) 12.5px/1 var(--font-sans);
+}
+.rpro__advanced-grid select,
+.rpro__advanced-grid :deep(.p-inputtext) {
+  width: 100%;
+  min-height: 40px;
+  padding-inline: 12px 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-body);
+  background-color: var(--surface-card);
+}
+.rpro__import p { margin: 0; color: var(--text-body); line-height: 1.5; }
+.rpro__import input[type="file"] {
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-body);
+}
+
 /* ── Paginação ──────────────────────────────────────────────────────── */
 .rpro__pager {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -913,6 +1203,7 @@ onMounted(loadRows);
 .rpro__empty span { font: var(--weight-medium) 13px/1.4 var(--font-sans); }
 
 @media (max-width: 720px) {
+  .rpro__advanced-grid { grid-template-columns: 1fr; }
   .rpro__toolbar-left { flex: 1 1 100%; gap: 8px; }
   .rpro__search, .rpro__daterange { flex: 1 1 100%; width: 100%; }
   .rpro__toolbar-right { width: 100%; justify-content: space-between; }

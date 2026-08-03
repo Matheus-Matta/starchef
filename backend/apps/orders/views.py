@@ -1,5 +1,7 @@
 import django_filters
 from django.core.exceptions import ValidationError
+from django.db.models import CharField, Q
+from django.db.models.functions import Cast
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -43,8 +45,23 @@ class OrderViewSet(BaseTenantViewSet):
         .all()
     )
     filterset_class = OrderFilterSet
-    search_fields = ["sequence", "customer__name", "table__number"]
+    search_fields = [
+        "sequence_text",
+        "customer__name",
+        "table__number",
+        "command__code",
+        "command_number_text",
+    ]
     ordering_fields = ["opened_at", "closed_at", "total", "sequence"]
+
+    def get_queryset(self):
+        # A anotacao precisa ser aplicada aqui, e nao no `queryset` da classe:
+        # o mixin de tenant remonta a consulta a partir do model e descartaria
+        # qualquer annotate declarado la em cima.
+        return super().get_queryset().annotate(
+            sequence_text=Cast("sequence", CharField()),
+            command_number_text=Cast("command__number", CharField()),
+        )
 
     @action(detail=False, methods=["post"], url_path="open-table")
     def open_table(self, request):
@@ -188,7 +205,10 @@ class OrderViewSet(BaseTenantViewSet):
             serializer = OrderItemSerializer(order.items.all(), many=True)
             return Response(serializer.data)
 
-        product = Product.objects.get(pk=request.data["product"], restaurant=order.restaurant)
+        product = Product.objects.get(
+            Q(restaurants=order.restaurant),
+            pk=request.data["product"],
+        )
         scale_reading = None
         if request.data.get("scale_reading"):
             try:

@@ -8,7 +8,6 @@ from django.core.cache import cache
 from django.db import transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
-from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters

@@ -376,7 +376,7 @@
                   <option :value="null">{{ loadingScales ? "Buscando balanças..." : "Selecione a balança" }}</option>
                   <option v-for="s in scales" :key="s.id" :value="s">{{ scaleLabel(s) }}</option>
                 </select>
-                <small v-if="!loadingScales && !scales.length">Nenhuma balança ativa cadastrada nesta filial.</small>
+                <small v-if="!loadingScales && !scales.length">Nenhuma balança ativa cadastrada neste restaurante.</small>
               </div>
 
               <div class="pdv__weigh-display" :class="{ 'pdv__weigh-display--ok': weighKg > 0 }">
@@ -654,10 +654,38 @@
           <span>Troco para o cliente</span>
           <strong>{{ money(totalChange) }}</strong>
         </div>
+
+        <div v-if="fiscalInvoice" class="pdv__success-summary">
+          <span>
+            <template v-if="fiscalInvoice.emission_type === '9'">NFC-e em contingência</template>
+            <template v-else-if="fiscalInvoice.status === 'issued'">NFC-e autorizada</template>
+            <template v-else>NFC-e aguardando autorização</template>
+          </span>
+          <strong class="pdv__fiscal-key">{{ fiscalInvoice.access_key_formatted }}</strong>
+        </div>
+
+        <!-- Imprimir pedido/comanda: comprovante interno, sem valor fiscal. -->
+        <button
+          class="pdv__btn pdv__btn--secondary pdv__success-fiscal"
+          type="button"
+          :disabled="printingOrder"
+          @click="showReceipt"
+        >
+          <i class="pi pi-file" /> {{ printingOrder ? "Abrindo nota..." : "Imprimir pedido/comanda" }}
+        </button>
+
+        <!-- Finalizar venda e emitir NFC-e: operação fiscal separada — só imprime o DANFE depois do retorno. -->
+        <button
+          class="pdv__btn pdv__btn--secondary pdv__success-fiscal"
+          type="button"
+          :disabled="emittingInvoice || !!fiscalInvoice"
+          @click="emitFiscalInvoice"
+        >
+          <i class="pi pi-receipt" />
+          {{ emittingInvoice ? "Emitindo NFC-e..." : fiscalInvoice ? "NFC-e já emitida" : "Finalizar venda e emitir NFC-e" }}
+        </button>
+
         <div class="pdv__success-actions">
-          <button class="pdv__btn pdv__btn--secondary" type="button" :disabled="printingOrder" @click="showReceipt">
-            <i class="pi pi-file" /> {{ printingOrder ? "Abrindo nota..." : "Exibir nota" }}
-          </button>
           <button class="pdv__btn pdv__btn--primary" type="button" @click="newOrder">
             <i class="pi pi-plus" /> Novo pedido
           </button>
@@ -711,7 +739,43 @@
       </div>
     </div>
 
-    <!-- Modal cancelar -->
+    <!-- Modal cancelar item -->
+    <div v-if="itemToVoid" class="pdv__overlay" @click.self="closeVoidItemDialog">
+      <div class="pdv__modal">
+        <h3>Excluir item do pedido?</h3>
+        <p>Informe o motivo. A exclusão ficará registrada na auditoria.</p>
+        <div class="pdv__reason-options" role="group" aria-label="Motivos rápidos">
+          <button
+            v-for="reason in ITEM_VOID_REASONS"
+            :key="reason"
+            type="button"
+            class="pdv__reason-option"
+            :class="{ 'pdv__reason-option--selected': itemVoidReason === reason }"
+            @click="itemVoidReason = reason"
+          >
+            {{ reason }}
+          </button>
+        </div>
+        <label class="pdv__reason-label" for="item-void-reason">Outro motivo ou observação</label>
+        <textarea
+          id="item-void-reason"
+          v-model="itemVoidReason"
+          class="pdv__note-input"
+          rows="3"
+          autofocus
+          placeholder="Ex: cliente desistiu do item..."
+          @keydown.esc="closeVoidItemDialog"
+        />
+        <div class="pdv__modal-actions">
+          <button class="pdv__btn pdv__btn--ghost" type="button" :disabled="voidingItem" @click="closeVoidItemDialog">Voltar</button>
+          <button class="pdv__btn pdv__btn--danger" type="button" :disabled="!itemVoidReason.trim() || voidingItem" @click="confirmVoidItem">
+            {{ voidingItem ? "Excluindo..." : "Excluir item" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal cancelar pedido -->
     <div v-if="showCancelModal" class="pdv__overlay" @click.self="showCancelModal = false">
       <div class="pdv__modal">
         <h3>Cancelar pedido?</h3>
@@ -734,6 +798,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
 import AppIcon from "../components/AppIcon.vue";
 import { api } from "../services/api";
+import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
 
@@ -835,7 +900,20 @@ const creatingOrder = ref(false);
 const showCancelModal = ref(false);
 const cancelReason = ref("");
 const cancelling = ref(false);
+const itemToVoid = ref(null);
+const itemVoidReason = ref("");
+const voidingItem = ref(false);
+const ITEM_VOID_REASONS = [
+  "Cliente desistiu do item",
+  "Item lançado por engano",
+  "Produto indisponível",
+  "Pedido duplicado",
+  "Erro na quantidade",
+  "Troca solicitada pelo cliente",
+];
 const printingOrder = ref(false);
+const emittingInvoice = ref(false);
+const fiscalInvoice = ref(null);
 const addingNoteFor = ref(null);
 const pendingNote = ref("");
 const configuringProduct = ref(null);
@@ -1292,7 +1370,7 @@ async function openWeighModal(product) {
   } catch {
     scales.value = [];
     selectedScale.value = null;
-    weighError.value = "Não foi possível buscar as balanças desta filial.";
+    weighError.value = "Não foi possível buscar as balanças deste restaurante.";
   } finally {
     loadingScales.value = false;
   }
@@ -1379,13 +1457,42 @@ function itemExtras(item) {
 
 
 async function voidItem(item) {
+  itemToVoid.value = item;
+  itemVoidReason.value = "";
+}
+
+function closeVoidItemDialog() {
+  if (voidingItem.value) return;
+  itemToVoid.value = null;
+  itemVoidReason.value = "";
+}
+
+async function confirmVoidItem() {
+  if (!itemToVoid.value || !itemVoidReason.value.trim()) return;
+  voidingItem.value = true;
   try {
-    await api.delete(`/orders/${currentOrder.value.id}/items/${item.id}/void/`);
+    await api.delete(`/orders/${currentOrder.value.id}/items/${itemToVoid.value.id}/void/`, {
+      data: { reason: itemVoidReason.value.trim() },
+    });
+    voidingItem.value = false;
+    closeVoidItemDialog();
     await refreshCart();
   } catch (e) {
     pdvError(e, "Erro ao cancelar item");
+  } finally {
+    voidingItem.value = false;
   }
 }
+
+useRealtimeResource(
+  ["orders.order", "orders.orderitem", "restaurants.table", "restaurants.command"],
+  async (payload) => {
+    if (payload.resource === "restaurants.table") return loadTables();
+    if (payload.resource === "restaurants.command") return loadCommands();
+    if (currentOrder.value?.id) await refreshCart();
+  },
+  { debounce: 160 },
+);
 
 async function refreshCart() {
   const [itemsRes, orderRes] = await Promise.all([
@@ -1517,6 +1624,60 @@ async function showReceipt() {
   }
 }
 
+/**
+ * Fluxo fiscal: emite a NFC-e do pedido (POST /invoices/emit) e, se conseguir,
+ * imprime o DANFE (POST /invoices/{id}/print) — ação separada de "Exibir nota"
+ * (que só mostra o comprovante interno, sem valor fiscal).
+ */
+async function emitFiscalInvoice() {
+  if (!currentOrder.value || emittingInvoice.value) return;
+  emittingInvoice.value = true;
+  try {
+    const { data: invoice } = await api.post("/invoices/emit/", {
+      order: currentOrder.value.id,
+      cpf: selectedCustomer.value?.document || undefined,
+      cpf_name: selectedCustomer.value?.name || undefined,
+    });
+    fiscalInvoice.value = invoice;
+
+    const danfeWindow = window.open("", "_blank", "width=420,height=720");
+    try {
+      const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
+      if (danfeWindow) {
+        danfeWindow.document.open();
+        danfeWindow.document.write(printJob.html || "<p>DANFE indisponível.</p>");
+        danfeWindow.document.close();
+        danfeWindow.focus();
+      }
+    } catch (printErr) {
+      danfeWindow?.close();
+      pdvError(printErr, "NFC-e emitida, mas o DANFE não pôde ser exibido");
+    }
+
+    if (invoice.emission_type === "9") {
+      toast.add({
+        severity: "warn",
+        summary: "NFC-e emitida em contingência",
+        detail: "A transmissão à SEFAZ falhou — o DANFE saiu com o aviso de contingência e será retransmitido depois.",
+        life: 8000,
+      });
+    } else if (invoice.status === "issued") {
+      toast.add({ severity: "success", summary: "NFC-e autorizada", life: 4000 });
+    } else {
+      toast.add({
+        severity: "info",
+        summary: "NFC-e emitida",
+        detail: "Documento montado, aguardando autorização.",
+        life: 5000,
+      });
+    }
+  } catch (e) {
+    pdvError(e, "Não foi possível emitir a NFC-e");
+  } finally {
+    emittingInvoice.value = false;
+  }
+}
+
 async function cancelOrder() {
   if (!cancelReason.value) return;
   cancelling.value = true;
@@ -1539,6 +1700,7 @@ function newOrder() {
   commandSearch.value = "";
   selectedCustomer.value = null;
   currentOrder.value = null;
+  fiscalInvoice.value = null;
   cartItems.value = [];
   discount.value = 0;
   discountInput.value = "0.00";
@@ -2290,7 +2452,9 @@ onMounted(async () => {
 .pdv__success-summary strong { color: var(--text-strong); font-size: 20px; }
 .pdv__success-summary--change { border-color: var(--success); background: var(--success-subtle); }
 .pdv__success-summary--change strong { color: var(--success-text); }
-.pdv__success-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pdv__fiscal-key { font-size: 13px !important; font-family: var(--font-mono, monospace); letter-spacing: 0.5px; }
+.pdv__success-fiscal { width: 100%; }
+.pdv__success-actions { width: 100%; display: grid; grid-template-columns: 1fr; gap: 10px; }
 
 /* ── Buttons ────────────────────────────────────────────────── */
 .pdv__btn {
@@ -2321,6 +2485,15 @@ onMounted(async () => {
 .pdv__modal h3 { font: var(--weight-extra) 18px/1.2 var(--font-sans); color: var(--text-strong); margin: 0; }
 .pdv__modal h4 { font: var(--weight-bold) 14px/1.2 var(--font-sans); color: var(--text-strong); margin: 0; }
 .pdv__modal p { font: var(--weight-medium) 13.5px/1.5 var(--font-sans); color: var(--text-muted); margin: 0; }
+.pdv__reason-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.pdv__reason-option {
+  min-height: 34px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--surface-sunken); color: var(--text-body); cursor: pointer;
+  font: var(--weight-semibold) 12px/1.2 var(--font-sans);
+}
+.pdv__reason-option:hover { border-color: var(--brand); color: var(--text-brand); }
+.pdv__reason-option--selected { border-color: var(--brand); background: var(--brand-subtle); color: var(--text-brand); }
+.pdv__reason-label { color: var(--text-muted); font: var(--weight-semibold) 12px/1 var(--font-sans); }
 .pdv__modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .pdv__modal--options { max-width: 480px; max-height: calc(100vh - 48px); overflow-y: auto; }
 .pdv__option-group { display: flex; flex-direction: column; gap: 7px; }

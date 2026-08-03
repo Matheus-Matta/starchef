@@ -95,19 +95,28 @@ function go(name) { router.push({ name }); }
 .mobile-home__welcome h1 { margin: 5px 0 3px; color: var(--text-strong); font: var(--weight-extra) 25px/1 var(--font-sans); }
 .mobile-home__welcome p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .mobile-home__highlights { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.mobile-home__highlights > button { min-height: 132px; padding: 15px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; text-align: left; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-card); box-shadow: var(--shadow-sm); }
-.mobile-home__shortcut-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; color: var(--brand); background: var(--brand-subtle); }
+.mobile-home__highlights > button { min-height: 132px; padding: 15px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; text-align: left; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-card); box-shadow: var(--shadow-sm); cursor: pointer; animation: soft-pop var(--motion-slow) var(--motion-spring) both; }
+.mobile-home__highlights > button:nth-child(2) { animation-delay: 45ms; }
+.mobile-home__highlights > button:nth-child(3) { animation-delay: 90ms; }
+.mobile-home__highlights > button:nth-child(4) { animation-delay: 135ms; }
+.mobile-home__highlights > button:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--brand) 30%, var(--border)); box-shadow: var(--shadow-md); }
+.mobile-home__highlights > button:hover .mobile-home__shortcut-icon { transform: rotate(-3deg) scale(1.08); }
+.mobile-home__shortcut-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; color: var(--brand); background: var(--brand-subtle); transition: transform var(--motion-base) var(--motion-spring); }
 .mobile-home__shortcut-icon[data-tone="warning"] { color: var(--warning-text); background: var(--warning-subtle); }
 .mobile-home__shortcut-icon[data-tone="success"] { color: var(--success-text); background: var(--success-subtle); }
 .mobile-home__shortcut-icon[data-tone="info"] { color: var(--info-text); background: var(--info-subtle); }
 .mobile-home__highlights strong { margin-top: auto; color: var(--text-strong); font-size: 14px; }
 .mobile-home__highlights small { color: var(--text-muted); line-height: 1.3; }
-.mobile-home__group { display: flex; flex-direction: column; gap: 10px; }
+.mobile-home__group { display: flex; flex-direction: column; gap: 10px; animation: soft-pop var(--motion-slow) var(--motion-spring) both; }
+.mobile-home__group:nth-of-type(3) { animation-delay: 70ms; }
+.mobile-home__group:nth-of-type(4) { animation-delay: 120ms; }
+.mobile-home__group:nth-of-type(5) { animation-delay: 170ms; }
 .mobile-home__group-head { display: flex; align-items: end; justify-content: space-between; }
 .mobile-home__group-head h2 { margin: 0; color: var(--text-strong); font-size: 15px; }
 .mobile-home__group-head span { color: var(--text-muted); font-size: 10px; }
 .mobile-home__links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: var(--surface-card); }
-.mobile-home__links button { min-width: 0; height: 58px; padding: 0 14px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent; color: var(--text-muted); text-align: left; }
+.mobile-home__links button { min-width: 0; height: 58px; padding: 0 14px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent; color: var(--text-muted); text-align: left; cursor: pointer; }
+.mobile-home__links button:hover { background: var(--surface-hover); padding-left: 17px; }
 .mobile-home__links button:nth-child(odd) { border-right: 1px solid var(--border-subtle); }
 .mobile-home__links button strong { overflow: hidden; color: var(--text-body); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .mobile-home__links button > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--surface-sunken); color: var(--text-brand); }

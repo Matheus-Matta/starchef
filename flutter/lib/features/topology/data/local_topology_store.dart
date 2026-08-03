@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sqlite_async/sqlite_async.dart';
 
+import '../../../core/storage/app_paths.dart';
 import '../domain/local_topology_config.dart';
 
 abstract interface class TopologySecretStorage {
@@ -36,7 +38,7 @@ class LocalTopologyStore {
     _ready = _initialize();
   }
 
-  static const _schemaVersion = 1;
+  static const _schemaVersion = 2;
 
   final File _file;
   final TopologySecretStorage _secretStorage;
@@ -45,14 +47,7 @@ class LocalTopologyStore {
   bool _closed = false;
 
   static File _defaultFile() {
-    final configured = Platform.environment['LOCALAPPDATA'];
-    final base = configured == null || configured.trim().isEmpty
-        ? Directory.systemTemp.path
-        : configured;
-    return File(
-      '$base${Platform.pathSeparator}StarChef'
-      '${Platform.pathSeparator}local_topology.sqlite',
-    );
+    return AppPaths.dataFile('local_topology.sqlite');
   }
 
   static String generateNodeId() => _randomToken(12);
@@ -69,8 +64,25 @@ class LocalTopologyStore {
     await _file.parent.create(recursive: true);
     final migrations = SqliteMigrations()
       ..createDatabase = SqliteMigration(_schemaVersion, _createSchema)
-      ..add(SqliteMigration(_schemaVersion, _createSchema));
+      ..add(SqliteMigration(1, _createSchema))
+      ..add(SqliteMigration(2, _promoteStandaloneToPrincipal));
     await migrations.migrate(_database);
+  }
+
+  /// Instalações antigas em `standalone` viram Caixa Principal ativo.
+  ///
+  /// Naquele modo os campos de rede nem apareciam na tela, então
+  /// `trusted_network = 0` ali significa "nunca configurado", e não "o
+  /// operador desligou". Sem isso, quem já usava o PDV viraria um principal
+  /// que não atende ninguém — e os secundários não teriam a quem se ligar.
+  static Future<void> _promoteStandaloneToPrincipal(
+    SqliteWriteContext tx,
+  ) async {
+    await tx.execute('''
+      UPDATE local_topology_config
+      SET mode = 'principal', trusted_network = 1
+      WHERE singleton_id = 1 AND mode = 'standalone'
+    ''');
   }
 
   static Future<void> _createSchema(SqliteWriteContext tx) async {
@@ -117,12 +129,26 @@ class LocalTopologyStore {
       'SELECT * FROM local_topology_config WHERE singleton_id = 1',
     );
     if (row == null) {
+      // Instalação nova nasce **secundária**, sem principal definido.
+      //
+      // Ser o principal é uma decisão da loja, não um acidente da instalação:
+      // se todo terminal novo já subisse como principal, o segundo caixa
+      // instalado viraria um segundo principal sincronizando por conta
+      // própria com a nuvem — a divergência que a topologia existe para
+      // impedir. Assim, o terminal fica bloqueado para escrita até alguém
+      // dizer qual é o seu papel, e essa escolha é consciente.
+      //
+      // `trusted_network = 1` já vem marcado porque, quando este terminal for
+      // promovido a principal, a porta não é aberta "sem proteção": ela só
+      // aceita requisições assinadas com a chave de pareamento, vindas da
+      // rede local, com nonce contra repetição.
       final nodeId = generateNodeId();
       await _database.execute(
         '''
         INSERT INTO local_topology_config(
-          singleton_id, mode, node_id, principal_host, port, updated_at
-        ) VALUES (1, 'standalone', ?, '', ?, ?)
+          singleton_id, mode, node_id, principal_host, port, trusted_network,
+          updated_at
+        ) VALUES (1, 'client', ?, '', ?, 1, ?)
         ON CONFLICT(singleton_id) DO NOTHING
         ''',
         [
@@ -135,7 +161,14 @@ class LocalTopologyStore {
         'SELECT * FROM local_topology_config WHERE singleton_id = 1',
       );
     }
-    final secret = await _secretStorage.read() ?? '';
+    // Uma chave forte gerada sozinha é sempre melhor do que nenhuma: sem ela o
+    // principal não atenderia ninguém, e pedir ao operador para clicar em
+    // "gerar" não acrescenta segurança alguma.
+    var secret = await _secretStorage.read() ?? '';
+    if (secret.trim().isEmpty) {
+      secret = generatePairingSecret();
+      await _secretStorage.write(secret);
+    }
     return LocalTopologyConfig(
       mode: LocalTopologyConfig.modeFrom(row?['mode']?.toString()),
       nodeId: '${row?['node_id'] ?? generateNodeId()}',
@@ -208,15 +241,31 @@ class LocalTopologyStore {
     return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
   }
 
+  /// Quanto tempo um recibo continua valendo.
+  ///
+  /// O recibo é o que impede o principal de executar duas vezes a mesma
+  /// operação de um caixa cliente. Apagá-lo cedo demais reabre essa janela,
+  /// então a retenção precisa cobrir com folga o pior caso realista: um
+  /// terminal que ficou dias sem falar com o principal e volta com a fila
+  /// cheia. Uma semana cobre um fim de semana prolongado e ainda mantém a
+  /// tabela pequena em um balcão movimentado.
+  static const receiptRetention = Duration(days: 7);
+
   Future<void> saveReceipt({
     required String accountId,
     required String nodeId,
     required String operationId,
     required String requestHash,
     required Map<String, dynamic> response,
+    @visibleForTesting DateTime? at,
   }) async {
     await _ready;
+    final now = at ?? DateTime.now();
     await _database.writeTransaction((tx) async {
+      await tx.execute(
+        'DELETE FROM local_relay_receipts WHERE created_at < ?',
+        [now.subtract(receiptRetention).millisecondsSinceEpoch],
+      );
       await tx.execute(
         '''
         INSERT INTO local_relay_receipts(
@@ -231,7 +280,7 @@ class LocalTopologyStore {
           operationId,
           requestHash,
           jsonEncode(response),
-          DateTime.now().millisecondsSinceEpoch,
+          now.millisecondsSinceEpoch,
         ],
       );
     });

@@ -75,7 +75,7 @@ function applyRestaurantScope(config) {
   }
 
   config.params = { ...(config.params || {}) };
-  if (!config.params.restaurant) {
+  if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
     config.params.restaurant = restaurantId;
   }
 }

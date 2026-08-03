@@ -331,19 +331,29 @@ class ScaleViewSet(BaseTenantViewSet):
                     if quantity < 1 or quantity > 99:
                         raise ValidationError("A quantidade adicional deve ficar entre 1 e 99.")
                     product = Product.objects.filter(
+                        Q(restaurants=scale.restaurant),
                         pk=entry.get("product"),
                         account=scale.account,
-                        restaurant=scale.restaurant,
                         is_active=True,
                     ).first()
                     if product is None or product.is_weighed:
                         raise ValidationError("Produto adicional inexistente ou vendido por peso.")
+                    variations = entry.get("variations") or []
+                    if not isinstance(variations, list):
+                        raise ValidationError("Variacao do adicional invalida.")
+                    addons = entry.get("addons") or []
+                    if not isinstance(addons, list):
+                        raise ValidationError("Lista de adicionais invalida.")
+                    customer_note = str(entry.get("customer_note") or "")
                     extra_items.append(
                         add_order_item(
                             order=order,
                             product=product,
                             quantity=quantity,
                             user=request.user,
+                            variations=variations,
+                            addons=addons,
+                            customer_note=customer_note,
                         )
                     )
 
@@ -467,3 +477,28 @@ class PrintJobViewSet(BaseTenantViewSet):
         job.save(update_fields=["status", "error_message", "updated_at"])
         return Response(PrintJobSerializer(job, context={"request": request}).data)
 
+    @action(detail=True, methods=["post"], url_path="requeue")
+    def requeue(self, request, pk=None):
+        """Reimprime este mesmo trabalho, sem criar outro pedido.
+
+        Reenfileirar preserva o conteudo original — inclusive o layout da nota
+        de pesagem e o Code 128 da comanda —, o que gerar um novo trabalho a
+        partir do pedido nao faria. Nenhum item e recalculado nem duplicado:
+        apenas o estado volta para `rendered` e o agente local imprime de novo.
+        """
+        with transaction.atomic():
+            job = PrintJob.objects.select_for_update().get(pk=self.get_object().pk)
+            # O agente local consome `pending` e `rendered`. Reenfileirar um
+            # trabalho que ainda esta na fila produziria uma segunda impressao
+            # silenciosa, entao so `printed` e `failed` podem ser repetidos.
+            if job.status in {PrintJob.STATUS_PENDING, PrintJob.STATUS_RENDERED}:
+                return Response(
+                    {"detail": "Este cupom ainda esta aguardando impressao."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            job.status = PrintJob.STATUS_RENDERED
+            job.error_message = ""
+            job.printed_at = None
+            job.updated_by = request.user
+            job.save(update_fields=["status", "error_message", "printed_at", "updated_by", "updated_at"])
+        return Response(PrintJobSerializer(job, context={"request": request}).data)

@@ -783,7 +783,6 @@ class Command(BaseCommand):
     def _seed_orders_pizza(self, branch, tables, products, customers, pms, gerente):
         TYPE_TABLE = Order.TYPE_TABLE
         TYPE_DELIVERY = Order.TYPE_DELIVERY
-        TYPE_COUNTER = Order.TYPE_COUNTER
         P = products
         C = customers
         today = timezone.localdate()

@@ -389,6 +389,114 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   border-color: var(--ring);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
 }
+
+/* ── PrimeVue Calendar / DateRange ──────────────────────────────────────── */
+.p-calendar {
+  border-radius: var(--radius-md);
+}
+.p-calendar .p-inputtext {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-strong);
+}
+.p-calendar:not(.p-calendar-disabled):hover .p-inputtext {
+  border-color: var(--border-strong);
+}
+.p-calendar .p-datepicker-trigger {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--on-brand);
+}
+.p-calendar .p-datepicker-trigger:not(:disabled):hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+
+/* O popup é anexado ao body pelo PrimeVue, portanto precisa ser global. */
+.p-datepicker {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text-body);
+  box-shadow: var(--shadow-lg);
+}
+.p-datepicker:not(.p-datepicker-inline) {
+  border-radius: var(--radius-lg);
+}
+.p-datepicker .p-datepicker-header {
+  background: var(--surface-raised);
+  border-bottom-color: var(--border);
+  color: var(--text-strong);
+}
+.p-datepicker .p-datepicker-title,
+.p-datepicker .p-datepicker-title .p-datepicker-month,
+.p-datepicker .p-datepicker-title .p-datepicker-year {
+  color: var(--text-strong);
+}
+.p-datepicker .p-datepicker-header .p-datepicker-prev,
+.p-datepicker .p-datepicker-header .p-datepicker-next {
+  color: var(--text-muted);
+}
+.p-datepicker .p-datepicker-header .p-datepicker-prev:enabled:hover,
+.p-datepicker .p-datepicker-header .p-datepicker-next:enabled:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+.p-datepicker table th {
+  color: var(--text-muted);
+}
+.p-datepicker table td > span {
+  color: var(--text-body);
+  border-radius: var(--radius-sm);
+}
+.p-datepicker table td > span:not(.p-highlight):not(.p-disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+.p-datepicker table td > span.p-highlight {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+.p-datepicker table td.p-datepicker-today > span:not(.p-highlight) {
+  background: var(--brand-subtle);
+  color: var(--text-brand);
+  border-color: var(--brand);
+}
+.p-datepicker table td.p-datepicker-other-month > span {
+  color: var(--text-subtle);
+}
+.p-datepicker .p-datepicker-buttonbar {
+  border-top-color: var(--border);
+}
+.p-datepicker .p-datepicker-buttonbar .p-button {
+  color: var(--text-brand);
+}
+.p-datepicker .p-monthpicker .p-monthpicker-month,
+.p-datepicker .p-yearpicker .p-yearpicker-year {
+  color: var(--text-body);
+}
+.p-datepicker .p-monthpicker .p-monthpicker-month:not(.p-disabled):not(.p-highlight):hover,
+.p-datepicker .p-yearpicker .p-yearpicker-year:not(.p-disabled):not(.p-highlight):hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+.p-datepicker .p-monthpicker .p-monthpicker-month.p-highlight,
+.p-datepicker .p-yearpicker .p-yearpicker-year.p-highlight {
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+[data-theme="dark"] .p-datepicker {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+[data-theme="dark"] .p-datepicker .p-datepicker-header {
+  background: var(--surface-raised);
+  border-bottom-color: var(--border);
+}
+[data-theme="dark"] .p-calendar .p-inputtext {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+}
 .p-password .p-inputtext {
   width: 100%;
 }
@@ -484,6 +592,35 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
 }
 .p-confirm-dialog .p-confirm-dialog-message {
   color: var(--text-body);
+}
+
+@media (max-width: 560px) {
+  .p-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 24px);
+    margin: 12px;
+    border-radius: var(--radius-lg);
+  }
+  .p-dialog .p-dialog-header { padding: 16px; }
+  .p-dialog .p-dialog-content { padding: 14px 16px 18px; overflow-y: auto; }
+  .p-dialog .p-dialog-footer {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+  }
+  .p-dialog .p-dialog-footer > button { flex: 1; justify-content: center; min-height: 42px; }
+  .p-confirm-dialog .p-confirm-dialog-message { margin-left: 10px; line-height: 1.45; }
+  .p-datepicker:not(.p-datepicker-inline) { width: calc(100vw - 24px); max-width: 360px; }
+  .p-datepicker table { font-size: 13px; }
+  .p-datepicker table td { padding: 2px; }
+  .p-dropdown-panel,
+  .p-multiselect-panel { max-width: calc(100vw - 24px); }
+  .p-toast {
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+  }
 }
 
 /* ── Paginator (theme-aware, funciona no dark) ───────────────────────────── */

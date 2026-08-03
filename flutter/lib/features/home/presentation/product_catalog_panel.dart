@@ -9,7 +9,6 @@ class ProductCatalogPanel extends StatelessWidget {
     required this.selectedCategory,
     required this.search,
     required this.money,
-    required this.imageUrlFor,
     required this.onSearchChanged,
     required this.onCategoryChanged,
     required this.onProductPressed,
@@ -21,7 +20,6 @@ class ProductCatalogPanel extends StatelessWidget {
   final String? selectedCategory;
   final String search;
   final String Function(dynamic) money;
-  final String? Function(Map<String, dynamic>) imageUrlFor;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Map<String, dynamic>> onProductPressed;
@@ -44,15 +42,54 @@ class ProductCatalogPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Busca e filtro lado a lado, como no frontend web. A faixa
+            // horizontal de categorias saiu: com muitas categorias ela exigia
+            // rolagem lateral para achar a última, e ocupava 70 px de altura
+            // que agora são do cardápio.
             Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: TextField(
                     onChanged: onSearchChanged,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search_rounded),
                       hintText: 'Buscar produto, código ou categoria...',
                     ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<String?>(
+                    key: ValueKey(
+                      'category-$selectedCategory-${categories.length}',
+                    ),
+                    initialValue: selectedCategory,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.filter_list_rounded),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: null,
+                        child: Text(
+                          'Todas as categorias · ${allProducts.length}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      ...categories.map((item) {
+                        final id = '${item['id']}';
+                        return DropdownMenuItem(
+                          value: id,
+                          child: Text(
+                            '${item['name']} · ${counts[id] ?? 0}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: onCategoryChanged,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -86,32 +123,6 @@ class ProductCatalogPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            SizedBox(
-              height: 70,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _CategoryButton(
-                    label: 'Todos',
-                    count: allProducts.length,
-                    icon: Icons.grid_view_rounded,
-                    selected: selectedCategory == null,
-                    onPressed: () => onCategoryChanged(null),
-                  ),
-                  ...categories.map((item) {
-                    final id = '${item['id']}';
-                    return _CategoryButton(
-                      label: '${item['name']}',
-                      count: counts[id] ?? 0,
-                      icon: _categoryIcon('${item['name']}'),
-                      selected: selectedCategory == id,
-                      onPressed: () => onCategoryChanged(id),
-                    );
-                  }),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
             Expanded(
               child: products.isEmpty
                   ? _EmptyCatalog(search: search)
@@ -121,7 +132,7 @@ class ProductCatalogPanel extends StatelessWidget {
                       gridDelegate:
                           const SliverGridDelegateWithMaxCrossAxisExtent(
                             maxCrossAxisExtent: 244,
-                            mainAxisExtent: 250,
+                            mainAxisExtent: 120,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                           ),
@@ -131,7 +142,6 @@ class ProductCatalogPanel extends StatelessWidget {
                         return _ProductCard(
                           product: product,
                           money: money,
-                          imageUrl: imageUrlFor(product),
                           onPressed: () => onProductPressed(product),
                         );
                       },
@@ -142,126 +152,17 @@ class ProductCatalogPanel extends StatelessWidget {
       ),
     );
   }
-
-  static IconData _categoryIcon(String name) {
-    final normalized = name.toLowerCase();
-    if (normalized.contains('beb') ||
-        normalized.contains('drink') ||
-        normalized.contains('suco')) {
-      return Icons.local_drink_outlined;
-    }
-    if (normalized.contains('sobrem') ||
-        normalized.contains('doce') ||
-        normalized.contains('dessert')) {
-      return Icons.icecream_outlined;
-    }
-    if (normalized.contains('lanche') ||
-        normalized.contains('burger') ||
-        normalized.contains('hamb')) {
-      return Icons.lunch_dining_outlined;
-    }
-    if (normalized.contains('pizza')) return Icons.local_pizza_outlined;
-    if (normalized.contains('café') || normalized.contains('cafe')) {
-      return Icons.coffee_outlined;
-    }
-    return Icons.restaurant_outlined;
-  }
-}
-
-class _CategoryButton extends StatelessWidget {
-  const _CategoryButton({
-    required this.label,
-    required this.count,
-    required this.icon,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final String label;
-  final int count;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(right: 9),
-      child: Material(
-        color: selected ? scheme.primaryContainer : scheme.surface,
-        borderRadius: BorderRadius.circular(11),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(11),
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 112),
-            padding: const EdgeInsets.symmetric(horizontal: 13),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(
-                color: selected ? scheme.primary : scheme.outlineVariant,
-                width: selected ? 1.5 : 1,
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  size: 22,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 9),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 112),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: selected
-                              ? scheme.onPrimaryContainer
-                              : scheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$count ${count == 1 ? 'item' : 'itens'}',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ProductCard extends StatelessWidget {
   const _ProductCard({
     required this.product,
     required this.money,
-    required this.imageUrl,
     required this.onPressed,
   });
 
   final Map<String, dynamic> product;
   final String Function(dynamic) money;
-  final String? imageUrl;
   final VoidCallback onPressed;
 
   @override
@@ -270,162 +171,107 @@ class _ProductCard extends StatelessWidget {
     final promotional = product['promotional_price'] != null;
     final weighed =
         product['pricing_unit'] == 'kg' || product['is_weighed'] == true;
+    final code = '${product['internal_code'] ?? ''}'.trim();
 
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onPressed,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 116,
-              width: double.infinity,
-              child: _ProductImage(
-                imageUrl: imageUrl,
-                category: '${product['category_name'] ?? ''}',
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(13, 11, 11, 11),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text.rich(
+                TextSpan(
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.18,
+                    fontWeight: FontWeight.w800,
+                    color: scheme.onSurface,
+                  ),
                   children: [
-                    Text(
-                      '${product['name']}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        height: 1.18,
-                        fontWeight: FontWeight.w800,
+                    if (code.isNotEmpty)
+                      TextSpan(
+                        text: '#$code  ',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${product['category_name'] ?? 'Sem categoria'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.end,
-                            spacing: 5,
-                            children: [
-                              Text(
-                                money(product['current_price']),
-                                style: TextStyle(
-                                  color: scheme.primary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              if (weighed)
-                                Text(
-                                  '/ kg',
-                                  style: TextStyle(
-                                    color: scheme.onSurfaceVariant,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              if (promotional &&
-                                  product['sale_price'] !=
-                                      product['promotional_price'])
-                                Text(
-                                  money(product['sale_price']),
-                                  style: TextStyle(
-                                    color: scheme.onSurfaceVariant,
-                                    fontSize: 10,
-                                    decoration: TextDecoration.lineThrough,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: scheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Icon(
-                            Icons.add_rounded,
-                            size: 20,
-                            color: scheme.primary,
-                          ),
-                        ),
-                      ],
-                    ),
+                    TextSpan(text: '${product['name']}'),
                   ],
                 ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProductImage extends StatelessWidget {
-  const _ProductImage({required this.imageUrl, required this.category});
-
-  final String? imageUrl;
-  final String category;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final fallback = ColoredBox(
-      color: scheme.primaryContainer,
-      child: Center(
-        child: Icon(
-          ProductCatalogPanel._categoryIcon(category),
-          size: 40,
-          color: scheme.primary.withValues(alpha: .72),
-        ),
-      ),
-    );
-    if (imageUrl == null) return fallback;
-    return Image.network(
-      imageUrl!,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (_, _, _) => fallback,
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            fallback,
-            Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  value: progress.expectedTotalBytes == null
-                      ? null
-                      : progress.cumulativeBytesLoaded /
-                            progress.expectedTotalBytes!,
+              const SizedBox(height: 4),
+              Text(
+                '${product['category_name'] ?? 'Sem categoria'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-          ],
-        );
-      },
+              const Spacer(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.end,
+                      spacing: 5,
+                      children: [
+                        Text(
+                          money(product['current_price']),
+                          style: TextStyle(
+                            color: scheme.primary,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (weighed)
+                          Text(
+                            '/ kg',
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        if (promotional &&
+                            product['sale_price'] !=
+                                product['promotional_price'])
+                          Text(
+                            money(product['sale_price']),
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 10,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: Icon(
+                      Icons.add_rounded,
+                      size: 20,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

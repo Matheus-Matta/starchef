@@ -1,15 +1,35 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/realtime_client.dart';
+import '../domain/printer_endpoint.dart';
 import 'print_template_cache.dart';
 
+/// Agente local de impressão do processo principal.
+///
+/// Ele processa a fila de trabalhos de impressão do restaurante e mantém os
+/// modelos em cache. A leitura da balança **não** passa mais por aqui: quem lê
+/// o equipamento é a própria janela que vai usá-lo, abrindo a porta serial
+/// diretamente ([SerialScaleReader]). Isso eliminou o lease remoto
+/// (`claim-agent`), a consulta periódica de peso pela API e a disputa entre
+/// este agente e a janela pela mesma COM.
+///
+/// A fila de impressão não é mais varrida por polling: o backend já publica
+/// `model.updated`/`model.created` para qualquer `PrintJob` da conta em
+/// `/ws/realtime/` (todo `TenantModel` ganha isso de graça — ver
+/// `apps/realtime/signals.py`). O agente assina esse evento e só consulta
+/// `/print-jobs/` quando um deles chega, mais uma verificação pontual ao
+/// conectar/reconectar o WS, para cobrir o que foi perdido enquanto a conexão
+/// estava caída. Modelos de impressão seguem a mesma regra: sem timer,
+/// sincroniza no início e a cada reconexão.
 class LocalDeviceAgent {
-  LocalDeviceAgent({required this.api}) {
-    _instanceIdFuture = _loadInstanceId();
-  }
+  LocalDeviceAgent({required this.api});
 
   static String? code128ValueFromPayload(Map<String, dynamic> payload) {
     final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
@@ -69,6 +89,53 @@ class LocalDeviceAgent {
     ];
   }
 
+  /// Extracts the NFC-e QR Code payload (fiscal DANFE print jobs only).
+  ///
+  /// Mirrors [code128ValueFromPayload]'s payload_version gate — same contract,
+  /// different key (`qr_data` instead of a nested `barcode` map), because a
+  /// DANFE fiscal job carries a QR Code, not a Code128 barcode.
+  static String? qrValueFromPayload(Map<String, dynamic> payload) {
+    final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
+    if (payloadVersion != 2) return null;
+    final value = '${payload['qr_data'] ?? ''}'.trim();
+    return value.isEmpty ? null : value;
+  }
+
+  /// Produces an ESC/POS `GS ( k` 2D symbol (QR Code) command sequence.
+  ///
+  /// Standard Epson ESC/POS "Function 165" sequence, supported by the large
+  /// majority of ESC/POS-compatible thermal printers (Epson TM series and
+  /// most clones — Bematech, Elgin, Daruma etc. implement the same command
+  /// set). Model 2, module size 6 dots, error correction level M (recovers
+  /// up to ~15% damage) — a reasonable default for a NFC-e DANFE, where the
+  /// QR needs to stay scannable on thermal paper that can fade/crease.
+  static List<int>? escPosQrCodeBytes(String data) {
+    final bytes = utf8.encode(data.trim());
+    if (bytes.isEmpty || bytes.length > 700) return null;
+
+    final storeLength = 3 + bytes.length; // cn + fn + m + data
+    final pL = storeLength & 0xff;
+    final pH = (storeLength >> 8) & 0xff;
+
+    return <int>[
+      0x0a,
+      0x1b, 0x61, 0x01, // ESC a: center.
+      // Select the model: cn=49('1') fn=65('A') n1=model2(50) n2=0.
+      0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
+      // Set module size: cn=49 fn=67('C') n=6.
+      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,
+      // Set error correction level: cn=49 fn=69('E') n=49 (level M).
+      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,
+      // Store the data: cn=49 fn=80('P') m=48('0') + payload.
+      0x1d, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30,
+      ...bytes,
+      // Print the symbol: cn=49 fn=81('Q') m=48('0').
+      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,
+      0x0a,
+      0x1b, 0x61, 0x00, // Restore left alignment.
+    ];
+  }
+
   static String textWithBarcodeFallback(String content, String? value) {
     final normalized = value?.trim() ?? '';
     if (normalized.isEmpty) return content;
@@ -82,27 +149,36 @@ class LocalDeviceAgent {
   }
 
   /// Builds the exact byte stream sent through raw network or serial links.
+  ///
+  /// [qrValue] is exclusive to fiscal DANFE jobs (NFC-e QR Code) — a job never
+  /// carries both a barcode and a QR value, but both parameters are accepted
+  /// independently to keep this a plain byte-stream builder, not a job-type
+  /// switch.
   static List<int> rawTransportBytes(
     String content, {
     required bool isEscPos,
     String? barcodeValue,
+    String? qrValue,
   }) {
     final barcodeBytes = isEscPos && barcodeValue != null
         ? escPosCode128Bytes(barcodeValue)
         : null;
+    final qrBytes = isEscPos && qrValue != null ? escPosQrCodeBytes(qrValue) : null;
     final printableContent = barcodeBytes == null
         ? textWithBarcodeFallback(content, barcodeValue)
         : content;
     return <int>[
       ...utf8.encode(printableContent),
       ...?barcodeBytes,
+      ...?qrBytes,
       if (isEscPos) ...const [10, 10, 10, 29, 86, 0],
     ];
   }
 
   final ApiClient api;
-  late final Future<String> _instanceIdFuture;
-  Timer? _timer;
+  RealtimeClient? _realtime;
+  StreamSubscription<RealtimeEvent>? _eventSubscription;
+  StreamSubscription<void>? _connectedSubscription;
   bool _running = false;
   String? _token;
   String? _restaurantId;
@@ -111,13 +187,9 @@ class LocalDeviceAgent {
   DateTime? _backoffUntil;
   Future<void>? _deviceSyncInFlight;
   List<Map<String, dynamic>> _printers = const [];
-  List<Map<String, dynamic>> _scales = const [];
-  final Map<String, String> _lastScaleValue = {};
-  final Map<String, DateTime> _scaleStableSince = {};
-  final Set<String> _armedScales = {};
 
   void start({required String token, required String restaurantId}) {
-    if (_timer != null && _token == token && _restaurantId == restaurantId) {
+    if (_realtime != null && _token == token && _restaurantId == restaurantId) {
       return;
     }
     _token = token;
@@ -125,19 +197,23 @@ class LocalDeviceAgent {
     _lastTemplateSync = null;
     _lastDeviceSync = null;
     _backoffUntil = null;
-    _timer?.cancel();
+    _stopRealtime();
     if (!Platform.isWindows) return;
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _tick());
-    unawaited(_tick());
+    final realtime = RealtimeClient(
+      urlBuilder: () => api.realtimeSocketUrl(_token!),
+    );
+    _realtime = realtime;
+    // Ao (re)conectar, uma verificação pontual cobre o que pode ter mudado
+    // enquanto a conexão estava caída — nunca um timer recorrente.
+    _connectedSubscription = realtime.onConnected.listen((_) => _onConnected());
+    _eventSubscription = realtime.events
+        .where((event) => isPrintJobEvent(event, _restaurantId))
+        .listen((_) => _onPrintJobEvent());
+    realtime.start();
   }
 
   void stop() {
-    final token = _token;
-    if (token != null) {
-      unawaited(_releaseClaimedScales(token));
-    }
-    _timer?.cancel();
-    _timer = null;
+    _stopRealtime();
     _token = null;
     _restaurantId = null;
     _lastTemplateSync = null;
@@ -145,13 +221,42 @@ class LocalDeviceAgent {
     _backoffUntil = null;
     _deviceSyncInFlight = null;
     _printers = const [];
-    _scales = const [];
-    _lastScaleValue.clear();
-    _scaleStableSince.clear();
-    _armedScales.clear();
   }
 
-  Future<void> _tick() async {
+  void _stopRealtime() {
+    unawaited(_eventSubscription?.cancel());
+    _eventSubscription = null;
+    unawaited(_connectedSubscription?.cancel());
+    _connectedSubscription = null;
+    _realtime?.dispose();
+    _realtime = null;
+  }
+
+  /// Um `PrintJob` de outro restaurante da mesma conta não interessa a este
+  /// agente: o grupo do WS é por conta, não por restaurante.
+  static bool isPrintJobEvent(RealtimeEvent event, String? restaurantId) {
+    if (event.payload['resource'] != 'printers.printjob') return false;
+    final eventRestaurantId = '${event.payload['restaurant_id'] ?? ''}';
+    return eventRestaurantId.isEmpty || eventRestaurantId == restaurantId;
+  }
+
+  Future<void> _onConnected() => _guarded(() {
+    // Reconexões instáveis não devem virar rajadas contra o servidor de
+    // modelos: uma janela mínima entre sincronizações basta, já que nada
+    // muda um template com essa frequência.
+    final shouldSyncTemplates =
+        _lastTemplateSync == null ||
+        DateTime.now().difference(_lastTemplateSync!) >
+            const Duration(minutes: 1);
+    return Future.wait([
+      _processPrintJobs(),
+      if (shouldSyncTemplates) _syncTemplates(),
+    ]);
+  });
+
+  Future<void> _onPrintJobEvent() => _guarded(_processPrintJobs);
+
+  Future<void> _guarded(Future<void> Function() action) async {
     if (_running || _token == null || _restaurantId == null) return;
     if (_backoffUntil case final backoff?
         when DateTime.now().isBefore(backoff)) {
@@ -159,15 +264,7 @@ class LocalDeviceAgent {
     }
     _running = true;
     try {
-      final shouldSyncTemplates =
-          _lastTemplateSync == null ||
-          DateTime.now().difference(_lastTemplateSync!) >
-              const Duration(minutes: 5);
-      await Future.wait([
-        _processPrintJobs(),
-        _readScales(),
-        if (shouldSyncTemplates) _syncTemplates(),
-      ]);
+      await action();
     } on ApiException catch (error) {
       if (error.statusCode == 429) {
         final match = RegExp(
@@ -177,9 +274,10 @@ class LocalDeviceAgent {
         final seconds = int.tryParse(match?.group(1) ?? '') ?? 60;
         _backoffUntil = DateTime.now().add(Duration(seconds: seconds + 1));
       }
-      // O agente tenta novamente depois do intervalo permitido pela API.
+      // O agente tenta novamente no próximo evento, depois do intervalo
+      // permitido pela API.
     } catch (_) {
-      // O agente é tolerante a falhas: a próxima rodada tenta novamente.
+      // O agente é tolerante a falhas: o próximo evento tenta de novo.
     } finally {
       _running = false;
     }
@@ -205,19 +303,11 @@ class LocalDeviceAgent {
 
   Future<void> _processPrintJobs() async {
     await _syncDevicesIfNeeded();
-    final availablePrinters = <String, Map<String, dynamic>>{};
-    for (final printer in _printers) {
-      final settings = printer['settings'] as Map<String, dynamic>? ?? const {};
-      final endpoint = '${printer['endpoint'] ?? ''}'.trim();
-      final host = '${printer['host'] ?? settings['host'] ?? ''}'.trim();
-      final connectionType =
-          '${settings['connection_type'] ?? printer['connection_type'] ?? 'windows'}';
-      final hasConnection = connectionType == 'network'
-          ? host.isNotEmpty
-          : endpoint.isNotEmpty;
-      if (!hasConnection) continue;
-      availablePrinters['${printer['id']}'] = printer;
-    }
+    final availablePrinters = <String, Map<String, dynamic>>{
+      for (final printer in _printers)
+        if (PrinterEndpoint.fromJson(printer).isAddressable)
+          '${printer['id']}': printer,
+    };
 
     for (final status in ['pending', 'rendered']) {
       final jobs = await _list(
@@ -250,6 +340,7 @@ class LocalDeviceAgent {
             printer,
             text,
             barcodeValue: code128ValueFromPayload(payload),
+            qrValue: qrValueFromPayload(payload),
           );
           await api.post(
             '/print-jobs/${job['id']}/mark-printed/',
@@ -295,6 +386,7 @@ class LocalDeviceAgent {
         printer,
         text,
         barcodeValue: code128ValueFromPayload(payload),
+        qrValue: qrValueFromPayload(payload),
       );
       await api.post(
         '/print-jobs/$jobId/mark-printed/',
@@ -311,25 +403,46 @@ class LocalDeviceAgent {
     }
   }
 
+  /// Envia texto para a fila de impressão do sistema operacional.
+  ///
+  /// Esta é a única rota que ainda depende de ferramenta externa, porque não
+  /// existe API de spool portátil: Windows usa `Out-Printer` do PowerShell e
+  /// Linux/macOS usam `lp` do CUPS.
   Future<void> printText(String printerName, String content) async {
     final temp = File(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}starchef-${DateTime.now().microsecondsSinceEpoch}.txt',
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'starchef-${DateTime.now().microsecondsSinceEpoch}.txt',
     );
     await temp.writeAsString(content, encoding: utf8, flush: true);
-    final safePath = temp.path.replaceAll("'", "''");
-    final safePrinter = printerName.replaceAll("'", "''");
     try {
-      final result = await Process.run('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        "Get-Content -LiteralPath '$safePath' -Raw | Out-Printer -Name '$safePrinter'",
-      ]).timeout(const Duration(seconds: 20));
+      final ProcessResult result;
+      if (Platform.isWindows) {
+        final safePath = temp.path.replaceAll("'", "''");
+        final safePrinter = printerName.replaceAll("'", "''");
+        result = await Process.run('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "Get-Content -LiteralPath '$safePath' -Raw | "
+              "Out-Printer -Name '$safePrinter'",
+        ]).timeout(const Duration(seconds: 20));
+      } else {
+        // `--` encerra as opções para que um nome iniciado por `-` não vire
+        // outra flag do `lp`.
+        result = await Process.run('lp', [
+          '-d',
+          printerName,
+          '--',
+          temp.path,
+        ]).timeout(const Duration(seconds: 20));
+      }
       if (result.exitCode != 0) {
         throw ProcessException(
-          'powershell.exe',
+          Platform.isWindows ? 'powershell.exe' : 'lp',
           const [],
-          '${result.stderr}',
+          '${result.stderr}'.trim().isEmpty
+              ? 'A fila de impressão recusou o trabalho.'
+              : '${result.stderr}',
           result.exitCode,
         );
       }
@@ -338,40 +451,43 @@ class LocalDeviceAgent {
     }
   }
 
+  /// Entrega o conteúdo pela via configurada na impressora.
+  ///
+  /// Rede e serial escrevem os bytes diretamente e funcionam igual em Windows
+  /// e Linux; só a fila do sistema depende do utilitário de cada plataforma.
   Future<void> printForPrinter(
     Map<String, dynamic> printer,
     String content, {
     String? barcodeValue,
+    String? qrValue,
   }) async {
-    final settings = printer['settings'] as Map<String, dynamic>? ?? const {};
-    final connectionType =
-        '${settings['connection_type'] ?? printer['connection_type'] ?? 'windows'}';
-    final isEscPos =
-        '${printer['driver_type'] ?? settings['driver_type'] ?? ''}'
-            .trim()
-            .toLowerCase() ==
-        'escpos';
+    final target = PrinterEndpoint.fromJson(printer);
+    final missing = target.missingConfiguration;
+    if (missing != null) throw StateError(missing);
+
+    if (target.connection == PrinterConnection.spool) {
+      // O spool recebe texto puro (Out-Printer/lp não renderizam imagem) — o
+      // QR não sai escaneável por essa via, mesma limitação que o Code128 já
+      // tem hoje aqui; o texto ainda traz a chave de acesso pra consulta manual.
+      await printText(
+        target.endpoint,
+        textWithBarcodeFallback(content, barcodeValue),
+      );
+      return;
+    }
+
     final printBytes = rawTransportBytes(
       content,
-      isEscPos: isEscPos,
+      isEscPos: target.isEscPos,
       barcodeValue: barcodeValue,
+      qrValue: qrValue,
     );
-    final timeout = Duration(
-      seconds:
-          int.tryParse(
-            '${printer['timeout_seconds'] ?? settings['timeout_seconds'] ?? 10}',
-          ) ??
-          10,
-    );
-    if (connectionType == 'network') {
-      final host = '${printer['host'] ?? settings['host'] ?? ''}'.trim();
-      final port =
-          int.tryParse('${printer['port'] ?? settings['port'] ?? 9100}') ??
-          9100;
-      if (host.isEmpty) {
-        throw StateError('O endereço IP da impressora não foi configurado.');
-      }
-      final socket = await Socket.connect(host, port, timeout: timeout);
+    if (target.connection == PrinterConnection.network) {
+      final socket = await Socket.connect(
+        target.host,
+        target.port,
+        timeout: target.timeout,
+      );
       try {
         socket.add(printBytes);
         await socket.flush();
@@ -380,103 +496,50 @@ class LocalDeviceAgent {
       }
       return;
     }
-    if (connectionType == 'serial') {
-      final port = '${printer['endpoint'] ?? ''}'.trim();
-      if (port.isEmpty) {
-        throw StateError('A porta serial da impressora não foi configurada.');
-      }
-      final baudRate = int.tryParse('${settings['baudrate'] ?? 9600}') ?? 9600;
-      final safePort = port.replaceAll("'", "''");
-      final base64 = base64Encode(printBytes);
-      final command =
-          "\$p = [System.IO.Ports.SerialPort]::new('$safePort', $baudRate); "
-          "\$p.WriteTimeout = ${timeout.inMilliseconds}; "
-          "try { \$p.Open(); "
-          "\$b = [Convert]::FromBase64String('$base64'); "
-          "\$p.Write(\$b, 0, \$b.Length) "
-          "} finally { if (\$p.IsOpen) { \$p.Close() }; \$p.Dispose() }";
-      final result = await Process.run('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        command,
-      ]).timeout(timeout);
-      if (result.exitCode != 0) {
-        throw ProcessException(
-          'powershell.exe',
-          const [],
-          '${result.stderr}',
-          result.exitCode,
-        );
-      }
-      return;
-    }
-    final endpoint = '${printer['endpoint'] ?? ''}'.trim();
-    if (endpoint.isEmpty) {
-      throw StateError('A impressora do Windows não foi configurada.');
-    }
-    await printText(endpoint, textWithBarcodeFallback(content, barcodeValue));
+    await _writeToSerialPrinter(target, printBytes);
   }
 
-  Future<void> _readScales() async {
-    await _syncDevicesIfNeeded();
-    for (final scale in _scales) {
-      final port = '${scale['port'] ?? ''}'.trim();
-      if (port.isEmpty) continue;
-      try {
-        final scaleId = '${scale['id']}';
-        if (!await _claimScale(scaleId)) continue;
-        final settings = scale['settings'] as Map<String, dynamic>? ?? const {};
-        final baudRate =
-            int.tryParse('${settings['baudrate'] ?? 9600}') ?? 9600;
-        final output = await _readSerialLine(port, baudRate);
-        final weight = _parseWeight(output);
-        if (weight == null) continue;
-        final zeroThreshold =
-            double.tryParse('${settings['zero_threshold_kg'] ?? 0.005}') ??
-            0.005;
-        if (weight <= zeroThreshold) {
-          _armedScales.add(scaleId);
-          _lastScaleValue.remove(scaleId);
-          _scaleStableSince.remove(scaleId);
-          continue;
-        }
-
-        final signature = weight.toStringAsFixed(3);
-        if (_lastScaleValue[scaleId] != signature) {
-          _lastScaleValue[scaleId] = signature;
-          _scaleStableSince[scaleId] = DateTime.now();
-          continue;
-        }
-        final stableSince = _scaleStableSince[scaleId] ?? DateTime.now();
-        final delaySeconds =
-            int.tryParse('${scale['auto_print_delay_seconds'] ?? 3}') ?? 3;
-        if (DateTime.now().difference(stableSince) <
-            Duration(seconds: delaySeconds)) {
-          continue;
-        }
-
-        // A balanca precisa ter passado por zero antes de cada disparo. Isso
-        // impede duplicidade inclusive quando o aplicativo e reiniciado com
-        // um prato ainda apoiado.
-        if (!_armedScales.contains(scaleId)) continue;
-        _armedScales.remove(scaleId);
-        await api.post(
-          '/scales/readings/',
-          body: {
-            'scale': scale['id'],
-            'agent_instance_id': await _instanceIdFuture,
-            'weight_kg': signature,
-            'tare_kg': '0.000',
-            'is_stable': true,
-            'source': 'agent',
-          },
-          accessToken: _token,
+  /// Escreve na impressora serial pela biblioteca nativa.
+  ///
+  /// Antes isso passava por um `SerialPort` do .NET via PowerShell, o que
+  /// prendia a impressão serial ao Windows e ainda embutia os bytes em uma
+  /// linha de comando. `flutter_libserialport` já é usado pela balança e pelo
+  /// leitor, então a mesma via serve para a impressora nos dois sistemas.
+  Future<void> _writeToSerialPrinter(
+    PrinterEndpoint target,
+    List<int> bytes,
+  ) async {
+    final port = SerialPort(target.endpoint);
+    try {
+      if (!port.openWrite()) {
+        throw StateError(
+          'Não foi possível abrir ${target.endpoint}: '
+          '${SerialPort.lastError?.message ?? 'porta ocupada ou inexistente'}.',
         );
-        _scaleStableSince.remove(scaleId);
-      } catch (_) {
-        // Uma balança desconectada não interrompe impressoras ou outras balanças.
       }
+      port.config = SerialPortConfig()
+        ..baudRate = target.baudRate
+        ..bits = 8
+        ..parity = SerialPortParity.none
+        ..stopBits = 1;
+      final written = port.write(
+        Uint8List.fromList(bytes),
+        timeout: target.timeout.inMilliseconds,
+      );
+      if (written < bytes.length) {
+        throw StateError(
+          'A impressora aceitou apenas $written de ${bytes.length} bytes '
+          'em ${target.endpoint}.',
+        );
+      }
+      port.drain();
+    } on SerialPortError catch (error) {
+      throw StateError(
+        'Falha na porta ${target.endpoint}: ${error.message}',
+      );
+    } finally {
+      if (port.isOpen) port.close();
+      port.dispose();
     }
   }
 
@@ -489,28 +552,14 @@ class LocalDeviceAgent {
     final existing = _deviceSyncInFlight;
     if (existing != null) return existing;
 
-    final sync =
-        Future.wait([
-          _list(
-            '/printers/',
-            query: {
-              'restaurant': _restaurantId,
-              'is_active': true,
-              'page_size': 100,
-            },
-          ),
-          _list(
-            '/scales/',
-            query: {
-              'restaurant': _restaurantId,
-              'is_active': true,
-              'page_size': 100,
-            },
-          ),
-        ]).then((devices) {
-          _printers = devices[0];
-          _scales = devices[1];
-        });
+    final sync = _list(
+      '/printers/',
+      query: {
+        'restaurant': _restaurantId,
+        'is_active': true,
+        'page_size': 100,
+      },
+    ).then((printers) => _printers = printers);
     _deviceSyncInFlight = sync;
     try {
       await sync;
@@ -522,100 +571,6 @@ class LocalDeviceAgent {
         _deviceSyncInFlight = null;
       }
     }
-  }
-
-  Future<bool> _claimScale(String scaleId) async {
-    try {
-      final response = await api.post(
-        '/scales/$scaleId/claim-agent/',
-        body: {'instance_id': await _instanceIdFuture},
-        accessToken: _token,
-      );
-      return response['claimed'] == true;
-    } catch (_) {
-      // Conflito significa que outro PDV ainda possui a balanca. Falhas de
-      // rede tambem impedem a leitura, evitando operar sem a trava central.
-      return false;
-    }
-  }
-
-  Future<void> _releaseClaimedScales(String token) async {
-    final instanceId = await _instanceIdFuture;
-    final scaleIds = <String>{
-      ..._lastScaleValue.keys,
-      ..._armedScales,
-      ..._scaleStableSince.keys,
-    };
-    for (final scaleId in scaleIds) {
-      try {
-        await api.post(
-          '/scales/$scaleId/release-agent/',
-          body: {'instance_id': instanceId},
-          accessToken: token,
-        );
-      } catch (_) {
-        // A concessao expira sozinha caso o encerramento esteja sem rede.
-      }
-    }
-  }
-
-  Future<String> _loadInstanceId() async {
-    final localAppData = Platform.environment['LOCALAPPDATA']?.trim();
-    final base = localAppData == null || localAppData.isEmpty
-        ? Directory.systemTemp
-        : Directory(localAppData);
-    final directory = Directory(
-      '${base.path}${Platform.pathSeparator}StarChef',
-    );
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}device_agent_id.txt',
-    );
-    try {
-      if (await file.exists()) {
-        final existing = (await file.readAsString()).trim();
-        if (existing.isNotEmpty) return existing;
-      }
-      await directory.create(recursive: true);
-      final generated =
-          '${Platform.localHostname}-${DateTime.now().microsecondsSinceEpoch}';
-      await file.writeAsString(generated, flush: true);
-      return generated;
-    } catch (_) {
-      return '${Platform.localHostname}-${DateTime.now().microsecondsSinceEpoch}';
-    }
-  }
-
-  Future<String> _readSerialLine(String port, int baudRate) async {
-    final safePort = port.replaceAll("'", "''");
-    final command =
-        "\$p = [System.IO.Ports.SerialPort]::new('$safePort', $baudRate); "
-        "\$p.ReadTimeout = 900; "
-        "try { \$p.Open(); \$p.ReadLine() } finally { if (\$p.IsOpen) { \$p.Close() }; \$p.Dispose() }";
-    final result = await Process.run('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      command,
-    ]).timeout(const Duration(seconds: 3));
-    if (result.exitCode != 0) {
-      throw ProcessException(
-        'powershell.exe',
-        const [],
-        '${result.stderr}',
-        result.exitCode,
-      );
-    }
-    return '${result.stdout}'.trim();
-  }
-
-  double? _parseWeight(String raw) {
-    final matches = RegExp(r'-?\d+(?:[.,]\d+)?').allMatches(raw).toList();
-    if (matches.isEmpty) return null;
-    final value = matches.last.group(0)!.replaceAll(',', '.');
-    var weight = double.tryParse(value);
-    if (weight == null) return null;
-    if (!value.contains('.') && weight > 100) weight /= 1000;
-    return weight;
   }
 
   String _htmlToText(String html) => html

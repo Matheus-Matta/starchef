@@ -45,6 +45,7 @@ class _PrinterSelectionDialogState extends State<PrinterSelectionDialog> {
             const SizedBox(height: 18),
             DropdownButtonFormField<String>(
               initialValue: selectedId,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Impressora',
                 helperText: 'Selecione o equipamento que receberá a nota.',

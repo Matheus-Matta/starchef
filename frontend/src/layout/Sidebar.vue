@@ -48,23 +48,37 @@
       <div v-for="group in groups" :key="group.label" class="sidebar__group">
         <div v-if="!collapsed" class="sidebar__group-label">{{ group.label }}</div>
         <div class="sidebar__items">
-          <button
-            v-for="item in group.items"
-            :key="item.id"
-            type="button"
-            class="sidebar__item"
-            :class="{ 'sidebar__item--active': active === item.id }"
-            :title="item.label"
-            :style="itemStyle(item.id)"
-            @click="$emit('navigate', item.id)"
-          >
-            <span v-if="active === item.id" class="sidebar__active-bar" />
-            <AppIcon :name="item.icon" :size="18" />
-            <span v-if="!collapsed" class="sidebar__item-label">{{ item.label }}</span>
-            <span v-if="!collapsed && item.badge" class="sidebar__badge" :style="badgeStyle(item)">
-              {{ item.badge }}
-            </span>
-          </button>
+          <template v-for="item in group.items" :key="item.id">
+            <button
+              type="button"
+              class="sidebar__item"
+              :class="{ 'sidebar__item--active': isItemActive(item) }"
+              :title="item.label"
+              :style="itemStyle(item.id)"
+              :aria-expanded="item.children ? reportsOpen : undefined"
+              @click="navigateItem(item)"
+            >
+              <span v-if="isItemActive(item)" class="sidebar__active-bar" />
+              <AppIcon :name="item.icon" :size="18" />
+              <span v-if="!collapsed" class="sidebar__item-label">{{ item.label }}</span>
+              <span v-if="!collapsed && item.badge" class="sidebar__badge" :style="badgeStyle(item)">
+                {{ item.badge }}
+              </span>
+              <AppIcon v-if="!collapsed && item.children" :name="reportsOpen ? 'chevron-down' : 'chevron-right'" :size="14" />
+            </button>
+            <div v-if="!collapsed && item.children && reportsOpen" class="sidebar__submenu">
+              <button
+                v-for="child in item.children"
+                :key="child.id"
+                type="button"
+                class="sidebar__subitem"
+                :class="{ 'sidebar__subitem--active': active === child.id }"
+                @click="$emit('navigate', child.id)"
+              >
+                {{ child.label }}
+              </button>
+            </div>
+          </template>
         </div>
       </div>
     </nav>
@@ -98,7 +112,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import AppIcon from "../components/AppIcon.vue";
 
@@ -118,6 +132,10 @@ const props = defineProps({
 
 const emit = defineEmits(["navigate", "scope-change", "close", "toggle-theme", "logout"]);
 const scopeOpen = ref(false);
+const reportsOpen = ref(String(props.active).startsWith("relatorio"));
+watch(() => props.active, (value) => {
+  if (String(value).startsWith("relatorio")) reportsOpen.value = true;
+});
 
 const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin"));
 const canManage = computed(() => ["admin", "owner", "manager"].includes(props.user?.profile_type) || props.user?.is_superuser);
@@ -133,7 +151,7 @@ function hasModule(moduleName) {
 const canUseCash = computed(() => ["admin", "owner", "manager", "cashier"].includes(props.user?.profile_type) || props.user?.is_superuser);
 const accountName = computed(() => props.user?.account_name || "StarChef");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
-const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todas as filiais");
+const branchName = computed(() => props.scope?.branchName || props.user?.branch_name || "Todos os restaurantes");
 const accessLabel = computed(() => (canSeeAllRestaurants.value ? "Acesso administrativo" : "Escopo restrito"));
 const displayName = computed(() => props.user?.name || props.user?.username || "Operador");
 const userInitial = computed(() => displayName.value.trim().charAt(0).toUpperCase() || "U");
@@ -147,7 +165,6 @@ const groups = computed(() =>
       label: "Principal",
       items: [
         { id: "painel", label: "Home", icon: "home" },
-        { id: "relatorio-geral", label: "Relatório geral", icon: "layout-dashboard" },
         { id: "pedidos", label: "Pedidos", icon: "receipt-text", badge: formatBadge(props.stats.ordersOpen) },
         { id: "kds", label: "KDS Cozinha", icon: "soup", badge: formatBadge(props.stats.kitchenOpen), badgeTone: "warning" },
       ],
@@ -207,7 +224,20 @@ const groups = computed(() =>
     {
       label: "Gestao",
       items: [
-        canManage.value ? { id: "relatorios", label: "Relatorios", icon: "bar-chart-3" } : null,
+        canManage.value ? {
+          id: "relatorios",
+          label: "Relatórios",
+          icon: "bar-chart-3",
+          children: [
+            { id: "relatorio-geral", label: "Visão geral" },
+            { id: "relatorio-vendas", label: "Vendas" },
+            { id: "relatorio-pedidos", label: "Pedidos" },
+            { id: "relatorio-produtos", label: "Produtos" },
+            { id: "relatorio-pagamentos", label: "Pagamentos" },
+            { id: "relatorio-garcons", label: "Garçons" },
+            { id: "relatorio-restaurantes", label: "Restaurantes" },
+          ],
+        } : null,
         canSeeAllRestaurants.value ? { id: "restaurantes", label: "Restaurantes", icon: "store" } : null,
         canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
         canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
@@ -231,7 +261,8 @@ const brandStyle = computed(() => ({
 }));
 
 function itemStyle(id) {
-  const on = props.active === id;
+  const item = groups.value.flatMap((group) => group.items).find((candidate) => candidate.id === id);
+  const on = isItemActive(item || { id });
   return {
     padding: props.collapsed ? "0" : "0 10px",
     justifyContent: props.collapsed ? "center" : "flex-start",
@@ -239,6 +270,18 @@ function itemStyle(id) {
     color: on ? "var(--text-brand)" : "var(--text-body)",
     font: `${on ? "var(--weight-bold)" : "var(--weight-medium)"} 13.5px/1 var(--font-sans)`,
   };
+}
+
+function isItemActive(item) {
+  return props.active === item.id || Boolean(item.children?.some((child) => child.id === props.active));
+}
+
+function navigateItem(item) {
+  if (item.children) {
+    reportsOpen.value = !reportsOpen.value;
+    return;
+  }
+  emit("navigate", item.id);
 }
 
 function badgeStyle(item) {
@@ -458,6 +501,31 @@ function selectScope(restaurantId) {
   border-radius: var(--radius-pill);
   font: var(--weight-bold) 11px/1 var(--font-mono);
 }
+
+.sidebar__submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 6px 28px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  animation: soft-pop var(--motion-base) var(--motion-spring) both;
+}
+
+.sidebar__subitem {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  font: var(--weight-medium) 12.5px/1.2 var(--font-sans);
+}
+
+.sidebar__subitem:hover { background: var(--nav-item-hover); color: var(--text-body); }
+.sidebar__subitem--active { background: var(--nav-item-active); color: var(--text-brand); font-weight: var(--weight-bold); }
 
 .sidebar__footer {
   padding: 14px;

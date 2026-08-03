@@ -4,14 +4,12 @@ Testes de Clientes e Endereços (Sprint 4 · STC-042/043/044/045).
 Cobre: CPF válido/inválido/duplicado, telefone, cliente com endereço,
 mascaramento de dados sensíveis na listagem e isolamento por conta.
 """
-import uuid
 
 import pytest
 
-from apps.accounts.models import Account, UserProfile
+from apps.accounts.models import UserProfile
 from apps.customers.models import Customer
 from apps.customers.validators import is_valid_cpf
-from apps.restaurants.models import Branch, Restaurant
 
 pytestmark = pytest.mark.django_db
 

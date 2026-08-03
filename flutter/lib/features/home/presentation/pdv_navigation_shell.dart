@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 
-enum PdvDestination { menu, tables, delivery, orders, finance, scale, settings }
+/// Destinos da barra lateral.
+///
+/// Delivery não está aqui de propósito: ele deixou de ser um módulo próprio e
+/// passou a existir apenas como tipo de pedido dentro do fluxo de Pedidos.
+enum PdvDestination { menu, tables, orders, finance, scale, settings }
 
 class PdvSidebar extends StatelessWidget {
   const PdvSidebar({
@@ -43,11 +47,6 @@ class PdvSidebar extends StatelessWidget {
         destination: PdvDestination.tables,
         label: 'Mesas',
         icon: Icons.table_restaurant_outlined,
-      ),
-      const _SidebarEntry(
-        destination: PdvDestination.delivery,
-        label: 'Delivery',
-        icon: Icons.delivery_dining_outlined,
       ),
       if (showOrders)
         const _SidebarEntry(
@@ -334,6 +333,87 @@ class PdvConnectionBadge extends StatelessWidget {
           ? '${status.total} operação(ões) aguardando confirmação do servidor.'
           : status.lastError ??
                 'Conectado ao servidor e sem operações pendentes.',
+      child: onPressed == null
+          ? content
+          : InkWell(
+              onTap: onPressed,
+              borderRadius: BorderRadius.circular(10),
+              child: content,
+            ),
+    );
+  }
+}
+
+/// Estado da ligação deste caixa secundário com o Caixa Principal.
+///
+/// Fica visível o tempo todo porque, sem o principal, o secundário **não
+/// grava**. Deixar isso aparecer só na hora do erro faria o operador montar um
+/// pedido inteiro para descobrir no fim que não dava para lançar.
+class PdvPrincipalBadge extends StatelessWidget {
+  const PdvPrincipalBadge({
+    super.key,
+    required this.connected,
+    required this.detail,
+    this.onPressed,
+    this.compact = false,
+  });
+
+  final bool connected;
+  final String detail;
+  final VoidCallback? onPressed;
+
+  /// Só o ícone, para caber no cabeçalho estreito sem empurrar o resto.
+  /// A explicação continua disponível no tooltip.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (label, icon, foreground, background) = connected
+        ? (
+            'Principal',
+            Icons.lan_outlined,
+            const Color(0xFF167A3E),
+            const Color(0xFFE8F7EE),
+          )
+        : (
+            'Sem o Principal',
+            Icons.lan_outlined,
+            scheme.error,
+            scheme.errorContainer,
+          );
+
+    final content = Container(
+      height: 38,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: foreground.withValues(alpha: .18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 17, color: foreground),
+          if (!compact) ...[
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+    return Tooltip(
+      message: connected
+          ? 'Conectado ao Caixa Principal. $detail'
+          : 'Este caixa é secundário e não altera pedidos sem o Caixa '
+                'Principal, para não gerar divergência. $detail',
       child: onPressed == null
           ? content
           : InkWell(

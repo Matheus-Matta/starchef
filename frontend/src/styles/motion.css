@@ -1,0 +1,140 @@
+:root {
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-slow: 420ms;
+  --motion-spring: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Feedback comum para elementos interativos. */
+button,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:not(:disabled) {
+  transition:
+    transform var(--motion-fast) var(--motion-spring),
+    box-shadow var(--motion-base) ease,
+    background-color var(--motion-base) ease,
+    border-color var(--motion-base) ease,
+    color var(--motion-base) ease;
+}
+
+button:not(:disabled):active {
+  transform: scale(.975);
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: wait;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.pdv__overlay,
+.kds-modal {
+  animation: motion-fade-in var(--motion-base) ease both;
+}
+
+.pdv__modal,
+.kds-modal__box,
+.p-dialog {
+  animation: motion-dialog-in var(--motion-base) var(--motion-spring) both;
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 180ms ease, transform 220ms var(--motion-spring);
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(7px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+
+.app-route-progress {
+  position: fixed;
+  z-index: 9999;
+  top: 0;
+  left: 0;
+  width: 38%;
+  height: 3px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, var(--brand), var(--info, #38bdf8));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--brand) 55%, transparent);
+  transform-origin: left;
+  animation: route-progress 900ms ease-in-out infinite;
+}
+
+.route-progress-enter-active,
+.route-progress-leave-active { transition: opacity 160ms ease; }
+.route-progress-enter-from,
+.route-progress-leave-to { opacity: 0; }
+
+.app-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.app-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface-card) 72%, transparent), transparent);
+  animation: skeleton-shimmer 1.35s infinite;
+}
+
+@keyframes route-progress {
+  0% { transform: translateX(-100%) scaleX(.45); }
+  55% { transform: translateX(115%) scaleX(1.3); }
+  100% { transform: translateX(265%) scaleX(.55); }
+}
+
+@keyframes skeleton-shimmer {
+  100% { transform: translateX(100%); }
+}
+
+@keyframes soft-pop {
+  from { opacity: 0; transform: translateY(8px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes motion-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(.975); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 42%, transparent); }
+  50% { box-shadow: 0 0 0 5px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

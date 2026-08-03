@@ -199,3 +199,40 @@ class AuditLog(TenantBaseModel):
 
     def __str__(self):
         return f"{self.action} {self.entity} {self.object_id}"
+
+
+class IdempotencyRecord(models.Model):
+    """Resposta já produzida para uma chave de idempotência.
+
+    O PDV desktop guarda mutações em uma fila local quando está sem rede e as
+    reenvia depois. Um reenvio pode acontecer mesmo quando o servidor já
+    processou a operação — por exemplo, se a resposta se perdeu no caminho.
+    Sem esta tabela, esse reenvio criaria uma segunda venda, um segundo
+    pagamento ou um segundo envio para a cozinha.
+
+    O registro é gravado dentro da mesma transação da operação, então ou os
+    dois existem, ou nenhum dos dois.
+    """
+
+    key = models.CharField(max_length=200)
+    account = models.ForeignKey(
+        "accounts.Account",
+        on_delete=models.CASCADE,
+        related_name="idempotency_records",
+    )
+    method = models.CharField(max_length=10)
+    path = models.CharField(max_length=500)
+    # Impede que a mesma chave seja reaproveitada para outra requisição.
+    request_fingerprint = models.CharField(max_length=64)
+    status_code = models.PositiveSmallIntegerField()
+    response_body = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["account", "key"], name="idempotency_unique_key_per_account"),
+        ]
+        indexes = [models.Index(fields=["created_at"])]
+
+    def __str__(self):
+        return f"{self.method} {self.path} ({self.key})"

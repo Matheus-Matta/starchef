@@ -15,6 +15,7 @@
 import {
   CHANNEL_OPTIONS,
   COMMAND_STATUS_LABELS,
+  EMISSION_TYPE_LABELS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
   MOVEMENT_TYPE_LABELS,
@@ -223,6 +224,7 @@ export const resources = [
     columns: [
       { key: "internal_code", label: "Codigo" },
       { key: "name", label: "Produto" },
+      { key: "restaurant_names", label: "Restaurantes", sortable: false },
       { key: "category_name", label: "Categoria" },
       { key: "current_price", label: "Preco", type: "money", align: "right" },
       { key: "sector_name", label: "Setor" },
@@ -231,15 +233,18 @@ export const resources = [
     formFields: [
       // Seções (STC-021): informações básicas, preços, classificação, disponibilidade, produção.
       { name: "name", label: "Nome do produto", type: "text", required: true, full: true, section: "Informações básicas" },
+      { name: "restaurants", label: "Restaurantes que utilizam o produto", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, full: true, section: "Informações básicas", hint: "Disponibilize o mesmo produto em vários restaurantes da franquia." },
       { name: "internal_code", label: "Codigo interno", type: "text", section: "Informações básicas" },
       { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
-      { name: "sector", label: "Setor", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", required: true, section: "Informações básicas" },
+      { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
       { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
       { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços" },
       { name: "pricing_unit", label: "Cobranca", type: "dropdown", options: PRICING_OPTIONS, default: "unit", section: "Preços" },
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
       { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },
+      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e; sem ele, usa o perfil padrão da filial.
+      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Usar perfil padrão da filial", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile" },
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
       // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
       { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
@@ -473,8 +478,9 @@ export const resources = [
       { key: "number", label: "Numero" },
       { key: "phase", label: "Tipo" },
       { key: "status", label: "Status", type: "status", map: INVOICE_STATUS_LABELS },
+      { key: "emission_type", label: "Emissao", type: "status", map: EMISSION_TYPE_LABELS },
       { key: "total_amount", label: "Valor", type: "money", align: "right" },
-      { key: "issued_at", label: "Emissao", type: "date" },
+      { key: "issued_at", label: "Emissao em", type: "date" },
     ],
   },
 

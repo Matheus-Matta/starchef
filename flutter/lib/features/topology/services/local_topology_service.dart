@@ -5,15 +5,21 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/mutation_relay.dart';
+import '../../../core/network/offline_mutations.dart';
 import '../data/local_topology_store.dart';
 import '../domain/local_topology_config.dart';
 
 enum LocalTopologyPhase {
   starting,
-  standalone,
+
+  /// Principal operando sozinho: sincroniza com a nuvem, mas ainda não abriu
+  /// a porta para outros caixas.
+  principalLocalOnly,
+
   principalReady,
   clientReady,
   unavailable,
@@ -124,20 +130,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (server != null) await server.close(force: false);
     _config = next;
 
-    if (next.mode == LocalTopologyMode.standalone) {
-      _setStatus(
-        const LocalTopologyStatus(
-          phase: LocalTopologyPhase.standalone,
-          message: 'Este caixa usa sua própria fila offline.',
-        ),
-      );
-      return;
-    }
-    if (next.validate().isNotEmpty) {
+    final errors = next.validate();
+    if (errors.isNotEmpty) {
+      // Um secundário mal configurado precisa continuar **bloqueado para
+      // escrita**, não virar um caixa solto. Sem o relay anexado o ApiClient
+      // trataria este terminal como principal e mandaria vendas direto para a
+      // nuvem — exatamente o que a topologia existe para impedir.
+      if (next.mode == LocalTopologyMode.client) {
+        api.attachMutationRelay(this);
+      }
       _setStatus(
         LocalTopologyStatus(
           phase: LocalTopologyPhase.error,
-          message: next.validate().join(' '),
+          message: next.principalHost.trim().isEmpty
+              ? 'Defina a função deste caixa em Configurações → Rede local: '
+                    'ele é o Caixa Principal da loja, ou informe o IP e a '
+                    'chave do principal para operar como secundário.'
+              : errors.join(' '),
         ),
       );
       return;
@@ -145,6 +154,9 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (accountId.trim().isEmpty ||
         actorId.trim().isEmpty ||
         _restaurantId.trim().isEmpty) {
+      if (next.mode == LocalTopologyMode.client) {
+        api.attachMutationRelay(this);
+      }
       _setStatus(
         const LocalTopologyStatus(
           phase: LocalTopologyPhase.error,
@@ -157,6 +169,21 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
 
     if (next.mode == LocalTopologyMode.principal) {
+      // Um caixa sozinho é o principal da própria loja: ele opera e sincroniza
+      // com a nuvem sem precisar configurar pareamento. A porta na rede só é
+      // aberta quando alguém de fato vai se conectar a ela.
+      final sharing = next.lanSharingErrors();
+      if (sharing.isNotEmpty) {
+        _setStatus(
+          LocalTopologyStatus(
+            phase: LocalTopologyPhase.principalLocalOnly,
+            message:
+                'Caixa Principal operando sozinho e sincronizando com a nuvem. '
+                'Para conectar outros caixas: ${sharing.join(' ')}',
+          ),
+        );
+        return;
+      }
       try {
         final bound = await HttpServer.bind(
           InternetAddress.anyIPv4,
@@ -202,8 +229,30 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
 
     api.attachMutationRelay(this);
     await probe();
-    _clientMonitor = Timer.periodic(const Duration(seconds: 15), (_) {
-      unawaited(probe());
+    _scheduleProbe();
+  }
+
+  /// Intervalo até o próximo teste de conexão com o principal.
+  ///
+  /// Assimétrico de propósito. Com o principal respondendo, nada urgente
+  /// depende do teste: uma queda que aconteça entre dois deles é detectada na
+  /// hora da gravação, pelo teste sob demanda. Com o principal fora, o
+  /// operador está impedido de lançar e esperando — aí vale insistir, porque
+  /// cada segundo é caixa parado. O custo é desprezível: um GET assinado de
+  /// poucas centenas de bytes na rede local.
+  Duration get probeInterval =>
+      _status.phase == LocalTopologyPhase.clientReady
+      ? const Duration(seconds: 15)
+      : const Duration(seconds: 3);
+
+  void _scheduleProbe() {
+    _clientMonitor?.cancel();
+    if (_closed || _config?.mode != LocalTopologyMode.client) return;
+    _clientMonitor = Timer(probeInterval, () async {
+      await probe();
+      // Reagenda com o intervalo do estado novo: uma queda acelera o ritmo,
+      // e a recuperação o desacelera de volta sozinha.
+      _scheduleProbe();
     });
   }
 
@@ -281,6 +330,95 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         'foi duplicada localmente; consulte o principal antes de repetir.',
       );
     }
+  }
+
+  @override
+  Future<Map<String, dynamic>> read(RelayRead request) async {
+    final current = _config;
+    if (_closed || current?.mode != LocalTopologyMode.client) {
+      throw const MutationRelayUnavailable(
+        'O relay local não está configurado como cliente.',
+      );
+    }
+    final recentlyHealthy =
+        _lastHealthyAt != null &&
+        DateTime.now().difference(_lastHealthyAt!) <= _healthFreshness;
+    if (!recentlyHealthy && !await probe()) {
+      throw const MutationRelayUnavailable(
+        'O Caixa Principal não respondeu ao teste de conexão.',
+      );
+    }
+    try {
+      final envelope = await _signedRequest(
+        'POST',
+        '/v1/read',
+        body: request.toJson(),
+      );
+      final result = envelope['result'];
+      if (envelope['ok'] != true || result is! Map) {
+        throw const FormatException('Resposta de leitura inválida.');
+      }
+      _lastHealthyAt = DateTime.now();
+      return Map<String, dynamic>.from(result);
+    } on ApiException {
+      rethrow;
+    } on MutationRelayUnavailable {
+      rethrow;
+    } catch (error) {
+      // Uma leitura pode ser repetida à vontade: não há risco de duplicar
+      // nada, então uma falha aqui simplesmente devolve o problema ao
+      // chamador, que cai para a cópia local.
+      throw MutationRelayUnavailable(
+        'Não foi possível ler pelo Caixa Principal: $error',
+      );
+    }
+  }
+
+  /// Responde uma leitura pedida por um caixa secundário.
+  ///
+  /// O principal serve do próprio `ApiClient`: se ele tiver rede, a resposta
+  /// é fresca e o cache dele se atualiza no caminho; se não tiver, sai do
+  /// cache dele. Nos dois casos os dois caixas enxergam a mesma coisa, que é
+  /// o ponto de existir um principal.
+  Future<Map<String, dynamic>> _serveRead(RelayRead request) async {
+    if (!_validReadPath(request.path)) {
+      throw const ApiException(
+        'Leitura não autorizada no relay local.',
+        statusCode: 400,
+      );
+    }
+    return api.get(
+      request.path,
+      query: request.query,
+      accessToken: accessToken,
+    );
+  }
+
+  /// Só rotas de leitura conhecidas, e sem travessia de caminho.
+  static bool _validReadPath(String path) {
+    final uri = Uri.tryParse(path);
+    if (uri == null ||
+        uri.hasScheme ||
+        uri.hasAuthority ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        uri.path != path ||
+        uri.pathSegments.contains('..') ||
+        path.length > 500) {
+      return false;
+    }
+    return const [
+      '/orders/',
+      '/restaurants/',
+      '/menu/',
+      '/tables/',
+      '/customers/',
+      '/payments/methods/',
+      '/cash-stations/',
+      '/cash-register/',
+      '/printers/',
+      '/scales/',
+    ].any(path.startsWith);
   }
 
   Future<Map<String, dynamic>?> _recoverReceipt(
@@ -401,7 +539,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
 
   Future<void> _handleServerRequest(HttpRequest request) async {
     try {
-      if (!_isPrivateAddress(request.connectionInfo?.remoteAddress)) {
+      final origin = request.connectionInfo?.remoteAddress;
+      if (!isLocalNetworkAddress(origin)) {
+        // Uma tentativa de fora da loja é a única coisa aqui que merece
+        // atenção humana: sem registro, ela sumiria em silêncio.
+        AppLogger.instance.warning(
+          'relay_origem_externa_recusada',
+          data: {
+            'address': origin?.address ?? 'desconhecido',
+            'path': request.uri.path,
+          },
+        );
         await _respond(
           request,
           HttpStatus.forbidden,
@@ -453,6 +601,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           'ok': true,
           'result': receipt,
         });
+        return;
+      }
+      if (request.method == 'POST' && path == '/v1/read') {
+        final decoded = jsonDecode(body);
+        if (decoded is! Map) {
+          throw const FormatException('Payload de leitura inválido.');
+        }
+        final payload = Map<String, dynamic>.from(decoded);
+        final result = await _serveRead(
+          RelayRead(
+            path: '${payload['path'] ?? ''}',
+            query: payload['query'] is Map
+                ? Map<String, dynamic>.from(payload['query'] as Map)
+                : null,
+          ),
+        );
+        await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
         return;
       }
       if (request.method != 'POST' || path != '/v1/relay') {
@@ -646,22 +811,15 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         uri.pathSegments.contains('..')) {
       return false;
     }
-    final id = r'[A-Za-z0-9_-]{8,160}';
-    final orderCreate =
-        mutation.method == 'POST' &&
-        {"/orders/", "/orders/open-table/"}.contains(mutation.path);
-    final itemCreate =
-        mutation.method == 'POST' &&
-        RegExp('^/orders/$id/items/\$').hasMatch(mutation.path);
-    final itemVoid =
-        mutation.method == 'DELETE' &&
-        RegExp('^/orders/$id/items/$id/void/\$').hasMatch(mutation.path);
+    // A lista de operações vive em `OfflineMutations`, compartilhada com a
+    // fila do `ApiClient`. Enquanto ela era duplicada aqui, as duas
+    // divergiram e fechar/pagar passaram a contornar o principal.
     final bodyRestaurant = '${mutation.body?['restaurant'] ?? ''}';
     final queryRestaurant = '${mutation.query?['restaurant'] ?? ''}';
     final restaurantMatches =
         (bodyRestaurant.isEmpty || bodyRestaurant == _restaurantId) &&
         (queryRestaurant.isEmpty || queryRestaurant == _restaurantId);
-    return (orderCreate || itemCreate || itemVoid) &&
+    return OfflineMutations.isRelayable(mutation.method, mutation.path) &&
         restaurantMatches &&
         mutation.path.length <= 500 &&
         RegExp(r'^[A-Za-z0-9._:-]{8,160}$').hasMatch(mutation.operationId);
@@ -711,7 +869,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     return value;
   }
 
-  static bool _isPrivateAddress(InternetAddress? address) {
+  /// O endereço pertence à rede local desta loja?
+  ///
+  /// O Caixa Principal só conversa com quem está na mesma rede: qualquer
+  /// origem fora das faixas privadas é recusada antes mesmo da verificação de
+  /// assinatura.
+  ///
+  /// Loopback passa em qualquer família, porque é o próprio terminal. Fora
+  /// dele, só IPv4 privado: a topologia é IPv4 — o socket nem escuta em IPv6 —
+  /// e aceitar uma família que ninguém usa só ampliaria a superfície.
+  ///
+  /// O socket é aberto em todas as interfaces de propósito. Amarrá-lo a um IP
+  /// específico deixaria o principal inalcançável depois de uma troca de IP
+  /// pelo DHCP — uma falha silenciosa, com o terminal parecendo no ar — e
+  /// quebraria máquinas com mais de uma placa de rede. A proteção real é este
+  /// filtro somado à assinatura HMAC, que uma origem externa não teria como
+  /// produzir.
+  static bool isLocalNetworkAddress(InternetAddress? address) {
     if (address == null) return false;
     if (address.isLoopback) return true;
     final bytes = address.rawAddress;
@@ -771,7 +945,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         host,
         type: InternetAddressType.IPv4,
       ).timeout(const Duration(seconds: 2));
-      if (addresses.isEmpty || addresses.any((item) => !_isPrivateAddress(item))) {
+      if (addresses.isEmpty || addresses.any((item) => !isLocalNetworkAddress(item))) {
         throw const MutationRelayUnavailable(
           'O Caixa Principal precisa estar em uma rede IPv4 privada.',
         );

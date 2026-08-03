@@ -38,9 +38,11 @@ INSTALLED_APPS = [
     "apps.stock",
     "apps.printers",
     "apps.reports",
+    "apps.data_exchange",
     "apps.integrations",
     "apps.sla",
     "apps.notifications",
+    "apps.realtime",
 ]
 
 MIDDLEWARE = [
@@ -51,6 +53,9 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.core.middleware.TenantMiddleware",
+    # Depois do tenant: a deduplicação é por conta, então precisa da conta já
+    # resolvida em `request.account`.
+    "apps.core.idempotency.IdempotencyMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.TenantResponseSafetyMiddleware",
@@ -198,6 +203,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.StandardResultsSetPagination",
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
+        "apps.data_exchange.filters.AdvancedFieldFilterBackend",
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ),

@@ -6,10 +6,16 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'api_exception.dart';
+import 'data_signals.dart';
 import 'mutation_relay.dart';
+import 'offline_mutations.dart';
 import 'offline_store.dart';
 
 enum NetworkSyncPhase { unknown, online, offline, syncing, degraded, blocked }
+
+/// Renova o access token e devolve o novo valor, ou `null` quando a sessão
+/// não pode mais ser recuperada.
+typedef AccessTokenRefresher = Future<String?> Function();
 
 class NetworkSyncStatus {
   const NetworkSyncStatus({
@@ -85,6 +91,11 @@ class ApiClient {
     phase: NetworkSyncPhase.unknown,
   );
   MutationRelay? _mutationRelay;
+  AccessTokenRefresher? _tokenRefresher;
+  Future<String?>? _refreshInFlight;
+
+  /// Avisos de dados atualizados, para as telas relerem sem esperar a rede.
+  final DataSignals signals = DataSignals();
 
   Stream<bool> get connectivityChanges => _connectivityController.stream;
   Stream<NetworkSyncStatus> get syncStatusChanges =>
@@ -93,6 +104,47 @@ class ApiClient {
 
   void attachMutationRelay(MutationRelay? relay) {
     _mutationRelay = relay;
+  }
+
+  /// Registra quem sabe trocar o refresh token por um novo access token.
+  void attachTokenRefresher(AccessTokenRefresher? refresher) {
+    _tokenRefresher = refresher;
+  }
+
+  /// Namespace da sessão atual (servidor + conta do token).
+  ///
+  /// Quem guarda dados locais por sessão usa o mesmo valor do cache e da fila,
+  /// para que duas contas no mesmo terminal nunca enxerguem os dados uma da
+  /// outra. `null` antes do primeiro request autenticado.
+  String? get sessionScope => _activeScope;
+
+  /// Endpoint de saúde do servidor, fora do prefixo versionado da API.
+  String get healthEndpoint =>
+      '${baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '')}/health/';
+
+  /// WS de eventos em tempo real (criação/atualização/remoção de qualquer
+  /// modelo da conta). O app nativo autentica pelo token na query — não há
+  /// cookie nem Origin de navegador aqui.
+  String realtimeSocketUrl(String accessToken) {
+    final httpBase = baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
+    final wsBase = httpBase.replaceFirst(RegExp(r'^http'), 'ws');
+    return '$wsBase/ws/realtime/?token=${Uri.encodeComponent(accessToken)}';
+  }
+
+  /// Verifica se a API está acessível antes de gastar tentativas da fila.
+  ///
+  /// Sem esta checagem, cada ciclo com o servidor fora do ar incrementaria o
+  /// `attempt_count` das operações e empurraria o backoff para o teto, mesmo
+  /// quando o problema é simplesmente falta de rede.
+  Future<bool> ping({Duration timeout = const Duration(seconds: 4)}) async {
+    try {
+      final response = await _client
+          .get(Uri.parse(healthEndpoint))
+          .timeout(timeout);
+      return response.statusCode >= 200 && response.statusCode < 500;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<Map<String, dynamic>> get(
@@ -162,9 +214,47 @@ class ApiClient {
     // LAN would be ambiguous when the backend committed but its response was
     // lost. A definitively unavailable principal may still fall through to
     // the cloud and, if needed, to this station's own outbox.
-    var relayWasUnavailable = false;
+    // Em modo cliente, ler pelo principal é o caminho normal: é ele que tem a
+    // verdade da loja. Com a nuvem fora e a rede local de pé, esta é a única
+    // forma de o secundário enxergar um pedido aberto em outro caixa.
+    final readRelay = _mutationRelay;
+    if (method == 'GET' && readRelay != null) {
+      try {
+        final decoded = await readRelay.read(
+          RelayRead(path: path, query: query),
+        );
+        await _publishStatus(NetworkSyncPhase.online);
+        if (_canCache(path)) {
+          await _offlineStore.cache(cacheKey, decoded);
+          _signal(path);
+        }
+        _scheduleFlush();
+        return {...decoded, '_from_principal': true};
+      } on MutationRelayUnavailable {
+        // Principal fora: segue para a nuvem e, se ela também estiver fora,
+        // para o cache local.
+      } on ApiException {
+        // O principal alcançou o servidor e ele recusou; repetir pela nuvem
+        // daria o mesmo resultado.
+        rethrow;
+      }
+    }
+
+    // Um caixa secundário nunca grava por conta própria.
+    //
+    // Se o principal estiver fora, a operação é recusada aqui mesmo: nem pela
+    // nuvem, nem na fila local. Escrever direto deixaria o principal com um
+    // estado que ele não conhece, e é ele quem os outros caixas leem — o
+    // problema só apareceria depois, como pedido divergente ou cobrança
+    // repetida. Preferimos recusar agora, com o motivo na tela.
     final preferredRelay = _mutationRelay;
-    if (queueableMutation && preferredRelay != null) {
+    if (method != 'GET' && preferredRelay != null) {
+      if (!queueableMutation) {
+        throw ApiException(
+          'Esta operação precisa do servidor e este caixa é secundário. '
+          'Ela é concluída pelo Caixa Principal.',
+        );
+      }
       try {
         return await _relayMutation(
           preferredRelay,
@@ -174,15 +264,19 @@ class ApiClient {
           query: query,
           body: body,
         );
-      } on MutationRelayUnavailable {
-        relayWasUnavailable = true;
+      } on MutationRelayUnavailable catch (error) {
+        throw ApiException(
+          'O Caixa Principal está indisponível e este caixa é secundário. '
+          'Para não gerar divergência, nada é alterado sem ele. '
+          '${error.message}',
+        );
       } on MutationRelayUncertain catch (error) {
         throw ApiException(error.message);
       }
     }
 
     try {
-      final decoded = await _requestOnline(
+      final decoded = await _requestWithSessionRecovery(
         method,
         path,
         query: query,
@@ -194,7 +288,9 @@ class ApiClient {
       await _publishStatus(NetworkSyncPhase.online);
       if (method == 'GET' && _canCache(path)) {
         await _offlineStore.cache(cacheKey, decoded);
+        _signal(path);
       }
+      if (method != 'GET') _signal(path);
       _scheduleFlush();
       return decoded;
     } on _NetworkUnavailable catch (error) {
@@ -210,24 +306,12 @@ class ApiClient {
           return {...cached, '_offline_cache': true};
         }
       }
-      if (method != 'GET' && _canQueue(method, path, body)) {
-        final relay = _mutationRelay;
-        if (relay != null && !relayWasUnavailable) {
-          try {
-            return await _relayMutation(
-              relay,
-              method: method,
-              path: path,
-              operationId: operationId!,
-              query: query,
-              body: body,
-            );
-          } on MutationRelayUnavailable {
-            // A entrega não começou; a outbox desta estação é um fallback seguro.
-          } on MutationRelayUncertain catch (relayError) {
-            throw ApiException(relayError.message);
-          }
-        }
+      // Um secundário já teria sido atendido — ou recusado — pelo principal
+      // acima. Chegar aqui com relay significa que a nuvem caiu numa operação
+      // que não passa pelo principal, e a fila local continua fora de questão.
+      if (method != 'GET' &&
+          _mutationRelay == null &&
+          _canQueue(method, path, body)) {
         final queued = await _queueMutation(
           method: method,
           path: path,
@@ -245,8 +329,80 @@ class ApiClient {
         _requiresOnline(path)
             ? 'Esta operação exige conexão com o servidor. ${error.message}'
             : error.message,
+        isConnectivity: true,
       );
     }
+  }
+
+  /// Envia a requisição e, diante de um 401, renova o token uma única vez.
+  ///
+  /// O retry usa a mesma `Idempotency-Key` da tentativa original: se o servidor
+  /// tiver processado a escrita antes de recusar por token vencido, a segunda
+  /// chamada é reconhecida como repetição em vez de criar uma venda nova.
+  Future<Map<String, dynamic>> _requestWithSessionRecovery(
+    String method,
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? body,
+    String? accessToken,
+    String? operationId,
+  }) async {
+    try {
+      return await _requestOnline(
+        method,
+        path,
+        query: query,
+        body: body,
+        accessToken: accessToken,
+        operationId: operationId,
+      );
+    } on ApiException catch (error) {
+      final recoverable =
+          error.statusCode == 401 &&
+          accessToken != null &&
+          _tokenRefresher != null &&
+          // O próprio login/refresh devolvendo 401 significa credencial
+          // inválida; insistir aqui geraria um laço.
+          !path.startsWith('/auth/');
+      if (!recoverable) rethrow;
+
+      // Um `null` aqui pode significar credencial recusada ou apenas rede
+      // indisponível no instante da renovação. Quem sabe distinguir os dois é
+      // quem detém a sessão, então a decisão de encerrá-la fica lá — encerrar
+      // por uma queda de rede deslogaria o operador no meio de um turno
+      // offline.
+      final renewed = await _refreshAccessToken();
+      if (renewed == null) rethrow;
+      return _requestOnline(
+        method,
+        path,
+        query: query,
+        body: body,
+        accessToken: renewed,
+        operationId: operationId,
+      );
+    }
+  }
+
+  /// Renova o token em uma única chamada compartilhada.
+  ///
+  /// Várias requisições podem receber 401 ao mesmo tempo; sem este
+  /// single-flight cada uma tentaria rotacionar o refresh token e todas menos
+  /// a primeira seriam recusadas.
+  Future<String?> _refreshAccessToken() {
+    final running = _refreshInFlight;
+    if (running != null) return running;
+    final refresher = _tokenRefresher;
+    if (refresher == null) return Future.value(null);
+
+    final attempt = refresher()
+        .then((token) {
+          if (token != null && token.isNotEmpty) _rememberSession(token);
+          return token;
+        })
+        .catchError((Object _) => null)
+        .whenComplete(() => _refreshInFlight = null);
+    return _refreshInFlight = attempt;
   }
 
   Future<Map<String, dynamic>> _requestOnline(
@@ -356,6 +512,7 @@ class ApiClient {
       cacheScope: _cacheNamespace(accessToken),
     );
     await _publishStatus(failurePhase, error: 'Operação salva localmente.');
+    _signal(path);
     return optimistic;
   }
 
@@ -395,7 +552,6 @@ class ApiClient {
       );
     }
     _rememberSession(accessToken);
-    final scope = _outboxScope(accessToken);
     if (_containsPrincipalTemporaryId(
       mutation.path,
       mutation.query,
@@ -415,7 +571,7 @@ class ApiClient {
       return queued;
     }
     try {
-      final response = await _requestOnline(
+      final response = await _requestWithSessionRecovery(
         mutation.method,
         mutation.path,
         query: mutation.query,
@@ -452,6 +608,20 @@ class ApiClient {
     var processed = 0;
     try {
       var summary = await _offlineStore.summary(scope: scope);
+
+      // Antes de tocar na fila, confirma que o servidor responde. Sem isso um
+      // ciclo com a rede caída consumiria o `attempt_count` de cada operação e
+      // levaria o backoff ao teto sem nenhuma chance real de entrega.
+      final hasWork = summary.pending > 0 || summary.retrying > 0;
+      if (hasWork && !_syncStatus.hasConnection && !await ping()) {
+        await _publishStatus(
+          NetworkSyncPhase.offline,
+          error: 'O servidor não respondeu à verificação de saúde.',
+        );
+        _scheduleRetry();
+        return;
+      }
+
       if (summary.blocked > 0) {
         await _publishStatus(
           NetworkSyncPhase.blocked,
@@ -493,18 +663,17 @@ class ApiClient {
                 query: query,
                 body: body,
               );
-            } on MutationRelayUnavailable {
-              response = await _requestOnline(
-                method,
-                path,
-                query: query,
-                body: body,
-                accessToken: token,
-                operationId: '${item['idempotency_key']}',
+            } on MutationRelayUnavailable catch (error) {
+              // Um secundário não entrega pela nuvem nem para esvaziar a
+              // própria fila: o principal precisa registrar a operação, senão
+              // ele fica sem saber de uma venda que os outros caixas leem
+              // dele. A operação espera o principal voltar.
+              throw _NetworkUnavailable(
+                'O Caixa Principal está indisponível. ${error.message}',
               );
             }
           } else {
-            response = await _requestOnline(
+            response = await _requestWithSessionRecovery(
               method,
               path,
               query: query,
@@ -523,6 +692,7 @@ class ApiClient {
             );
           }
           await _offlineStore.remove(queueId);
+          _signal(path);
           _retryAttempt = 0;
           processed += 1;
         } on _NetworkUnavailable catch (error) {
@@ -630,6 +800,12 @@ class ApiClient {
     }
   }
 
+  /// Avisa que o assunto daquela rota mudou localmente.
+  void _signal(String path) {
+    final topic = DataSignals.topicFor(path);
+    if (topic != null) signals.emit(topic);
+  }
+
   void _rememberSession(String? accessToken) {
     if (accessToken == null) return;
     _lastAccessToken = accessToken;
@@ -637,7 +813,16 @@ class ApiClient {
   }
 
   bool _canCache(String path) {
+    // A sessão de caixa aberta é lida do cache para que um terminal reiniciado
+    // sem rede consiga voltar a vender. Abrir, fechar e movimentar o caixa
+    // continuam exigindo servidor, então a cópia local só informa em qual
+    // sessão os pedidos entram — ela nunca autoriza uma operação financeira.
+    if (path == '/cash-register/current/') return true;
     if (_requiresOnline(path)) return false;
+    // Pedidos entram no cache para que o operador consiga abrir, conferir e
+    // continuar um pedido já lançado com a rede fora. Sem isso a tela de
+    // Pedidos ficava vazia offline e não havia como voltar a um atendimento.
+    if (path == '/orders/' || _isOrderScopedRead(path)) return true;
     return const [
       '/restaurants/',
       '/menu/',
@@ -650,23 +835,20 @@ class ApiClient {
     ].any(path.startsWith);
   }
 
+  /// Leitura de um pedido específico ou de uma coleção dentro dele.
+  static bool _isOrderScopedRead(String path) =>
+      RegExp(r'^/orders/[^/]+/(payments/)?$').hasMatch(path);
+
   bool _canQueue(String method, String path, Map<String, dynamic>? body) {
     if (_requiresOnline(path)) return false;
+    // Uma leitura física não pode ser reenviada depois: o peso descreve um
+    // instante que já passou.
     if (body?['scale_reading'] != null ||
         body?['weight_kg'] != null ||
         body?['tare_kg'] != null) {
       return false;
     }
-    if (path == '/customers/' && method == 'POST') return true;
-    if (path.startsWith('/customers/') && method == 'PATCH') return true;
-    if (path == '/orders/' && method == 'POST') return true;
-    if (path == '/orders/open-table/' && method == 'POST') return true;
-    final orderItem = RegExp(r'^/orders/[^/]+/items/$').hasMatch(path);
-    if (orderItem && method == 'POST') return true;
-    final voidItem = RegExp(
-      r'^/orders/[^/]+/items/[^/]+/void/$',
-    ).hasMatch(path);
-    return voidItem && method == 'DELETE';
+    return OfflineMutations.isQueueable(method, path);
   }
 
   bool _containsPrincipalTemporaryId(
@@ -681,13 +863,8 @@ class ApiClient {
     return body != null && jsonEncode(body).contains('offline-relay-');
   }
 
-  bool _createsResource(String method, String path) {
-    if (method != 'POST') return false;
-    return path == '/customers/' ||
-        path == '/orders/' ||
-        path == '/orders/open-table/' ||
-        RegExp(r'^/orders/[^/]+/items/$').hasMatch(path);
-  }
+  bool _createsResource(String method, String path) =>
+      OfflineMutations.createsResource(method, path);
 
   bool _requiresOnline(String path) => [
     '/auth/',
@@ -703,10 +880,11 @@ class ApiClient {
     'mark-failed',
     'test-connection',
     '/print/',
-    '/pay/',
-    '/send-to-kitchen/',
-    '/close/',
     '/approve/',
+    // Emissão fiscal (NFC-e) exige a SEFAZ/integrador de verdade — enfileirar
+    // "silenciosamente" daria uma falsa sensação de nota emitida offline, o
+    // que não existe: sem conexão, o operador recebe o erro na hora.
+    '/invoices/',
   ].any(path.contains);
 
   bool _isRetryableStatus(int status) =>
@@ -846,6 +1024,31 @@ class ApiClient {
   Future<int> pendingOperations() async =>
       (await _offlineStore.summary(scope: _activeScope)).total;
 
+  /// Operações da sessão atual, para a tela de revisão da fila.
+  Future<List<Map<String, dynamic>>> outboxOperations({
+    bool onlyBlocked = false,
+  }) async {
+    final scope = _activeScope;
+    if (scope == null) return const [];
+    final items = await _offlineStore.pending(scope: scope, limit: 200);
+    if (!onlyBlocked) return items;
+    return items.where((item) => item['state'] == 'blocked').toList();
+  }
+
+  /// Recoloca uma operação bloqueada na fila após o operador corrigir a causa.
+  Future<void> retryBlockedOperation(String queueId) async {
+    await _offlineStore.unblock(queueId);
+    await _publishStatus(_syncStatus.phase);
+    _scheduleFlush();
+  }
+
+  /// Descarta uma operação bloqueada. A remoção é definitiva e registrada.
+  Future<bool> discardBlockedOperation(String queueId) async {
+    final removed = await _offlineStore.discardBlocked(queueId);
+    if (removed) await _publishStatus(_syncStatus.phase);
+    return removed;
+  }
+
   Future<void> clearSession() async {
     _retryTimer?.cancel();
     _debounceTimer?.cancel();
@@ -864,6 +1067,7 @@ class ApiClient {
     await _offlineStore.close();
     await _connectivityController.close();
     await _syncStatusController.close();
+    await signals.close();
   }
 }
 

@@ -2,15 +2,17 @@ import csv
 from calendar import monthrange
 from datetime import timedelta
 
-from django.db.models import Avg, Count, Sum
+from django.db.models import Avg, Count, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
+from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.access import is_tenant_admin
-from apps.menu.models import Ingredient
 from apps.orders.models import Order, OrderItem
+from apps.payments.models import Payment
 from apps.stock.models import StockMovement
 
 
@@ -169,24 +171,55 @@ class DashboardReportView(TenantReportMixin, APIView):
 
 
 class SalesReportView(TenantReportMixin, APIView):
+    report_section = "sales"
+
     def get(self, request):
         filters = self.tenant_filter()
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
         export = request.query_params.get("export")
 
-        queryset = self.tenant_manager(Order).filter(payment_status=Order.PAYMENT_PAID, **filters)
+        parsed_from = parse_date(date_from) if date_from else None
+        parsed_to = parse_date(date_to) if date_to else None
+        if (date_from and not parsed_from) or (date_to and not parsed_to):
+            return Response({"detail": "Período inválido. Use datas no formato AAAA-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        if parsed_from and parsed_to and parsed_from > parsed_to:
+            return Response({"detail": "A data inicial não pode ser posterior à data final."}, status=status.HTTP_400_BAD_REQUEST)
+
+        all_orders = self.tenant_manager(Order).filter(**filters)
         if date_from:
-            queryset = queryset.filter(opened_at__date__gte=date_from)
+            all_orders = all_orders.filter(opened_at__date__gte=parsed_from)
         if date_to:
-            queryset = queryset.filter(opened_at__date__lte=date_to)
+            all_orders = all_orders.filter(opened_at__date__lte=parsed_to)
+        # Imports and older integrations may close an order without mirroring
+        # payment_status. A completed order must still appear in revenue reports.
+        queryset = all_orders.filter(
+            Q(payment_status=Order.PAYMENT_PAID) | Q(status=Order.STATUS_PAID)
+        ).distinct()
+
+        payments = self.tenant_manager(Payment).filter(**filters)
+        if parsed_from:
+            payments = payments.filter(paid_at__date__gte=parsed_from)
+        if parsed_to:
+            payments = payments.filter(paid_at__date__lte=parsed_to)
+        approved_payments = payments.filter(status=Payment.STATUS_APPROVED)
 
         by_payment = (
-            queryset.values("payments__payment_method__name")
-            .annotate(total=Sum("payments__amount"), count=Count("payments"))
+            # O cadastro da mesma forma pode existir separadamente em vários
+            # restaurantes (e até com tipos internos legados diferentes).
+            # Para o relatório consolidado, o nome exibido é a chave: valores
+            # de todos os restaurantes devem formar uma única linha.
+            approved_payments.values("payment_method__name")
+            .annotate(total=Sum("amount"), count=Count("id"))
             .order_by("-total")
         )
-        by_branch = queryset.values("branch__name").annotate(total=Sum("total"), count=Count("id")).order_by("-total")
+        by_restaurant = (
+            queryset.values("restaurant__trade_name")
+            # Declare Avg before the "total" annotation alias so Django resolves
+            # Order.total instead of trying to average the aggregate alias.
+            .annotate(average_ticket=Avg("total"), total=Sum("total"), count=Count("id"))
+            .order_by("-total")
+        )
         by_waiter = (
             queryset.values(
                 "responsible_user__id",
@@ -197,31 +230,179 @@ class SalesReportView(TenantReportMixin, APIView):
             .annotate(total=Sum("total"), count=Count("id"))
             .order_by("-total")
         )
+        item_filters = {
+            key: value
+            for key, value in filters.items()
+            if key in {"account_id", "restaurant_id", "branch_id"}
+        }
+        product_dimension_filters = {
+            key: value
+            for key, value in {
+                "product__category_id": request.query_params.get("category"),
+                "product__sector_id": request.query_params.get("sector"),
+                "product__product_type": request.query_params.get("product_type"),
+                "product__production_sector": request.query_params.get("production_sector"),
+            }.items()
+            if value
+        }
         by_product = (
             self.tenant_manager(OrderItem)
-            .filter(order__payment_status=Order.PAYMENT_PAID, **filters)
-            .filter(
-                **({} if not date_from else {"order__opened_at__date__gte": date_from}),
-                **({} if not date_to else {"order__opened_at__date__lte": date_to}),
-            )
-            .values("product__id", "product__name", "product__sale_price")
-            .annotate(quantity=Sum("quantity"), total=Sum("total_price"))
+            .filter(order__in=queryset, **product_dimension_filters)
+            .exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED])
+            .values("product__name")
+            .annotate(quantity=Sum("quantity"), total=Sum("total_price"), average_unit_price=Avg("unit_price"))
             .order_by("-total")
+        )
+        by_status = (
+            all_orders.values("status")
+            .annotate(count=Count("id"), total=Sum("total"))
+            .order_by("-count")
+        )
+        by_order_type = (
+            all_orders.values("order_type")
+            .annotate(count=Count("id"), total=Sum("total"))
+            .order_by("-count")
+        )
+        order_cancellation_reasons = (
+            all_orders.filter(status=Order.STATUS_CANCELLED)
+            .values("cancel_reason")
+            .annotate(count=Count("id"), value=Sum("total"))
+            .order_by("-count")
+        )
+        cancelled_items = (
+            self.tenant_manager(OrderItem)
+            .filter(
+                **item_filters,
+                status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED],
+            )
+            .filter(
+                **({} if not parsed_from else {"order__opened_at__date__gte": parsed_from}),
+                **({} if not parsed_to else {"order__opened_at__date__lte": parsed_to}),
+            )
+            .values("status", "void_reason")
+            .annotate(count=Count("id"), value=Sum("total_price"))
+            .order_by("-count")
+        )
+        cancellation_reasons = [
+            {
+                "source": "order",
+                "kind": "Cancelamento do pedido",
+                "reason": row["cancel_reason"] or "Motivo não informado",
+                "count": row["count"],
+                "value": row["value"] or 0,
+            }
+            for row in order_cancellation_reasons
+        ]
+        cancellation_reasons.extend(
+            {
+                "source": "item",
+                "kind": "Cortesia" if row["status"] == OrderItem.STATUS_COMPED else "Desistência de item",
+                "reason": row["void_reason"] or "Motivo não informado",
+                "count": row["count"],
+                "value": row["value"] or 0,
+            }
+            for row in cancelled_items
+        )
+        cancellation_reasons.sort(key=lambda row: row["count"], reverse=True)
+        paid_totals = queryset.aggregate(
+            gross_total=Sum("total"),
+            subtotal=Sum("subtotal"),
+            discount=Sum("discount"),
+            service_fee=Sum("service_fee"),
+            delivery_fee=Sum("delivery_fee"),
+            average_ticket=Avg("total"),
+        )
+        product_totals = (
+            self.tenant_manager(OrderItem)
+            .filter(order__in=queryset, **product_dimension_filters)
+            .exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED])
+            .aggregate(quantity=Sum("quantity"), total=Sum("total_price"))
         )
 
         data = {
-            "total": queryset.aggregate(value=Sum("total"))["value"] or 0,
+            "total": paid_totals["gross_total"] or 0,
+            "subtotal": paid_totals["subtotal"] or 0,
+            "discount": paid_totals["discount"] or 0,
+            "service_fee": paid_totals["service_fee"] or 0,
+            "delivery_fee": paid_totals["delivery_fee"] or 0,
+            "average_ticket": paid_totals["average_ticket"] or 0,
             "orders": queryset.count(),
+            "orders_total": all_orders.count(),
+            "orders_open": all_orders.filter(status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]).count(),
+            "orders_cancelled": all_orders.filter(status=Order.STATUS_CANCELLED).count(),
+            "payments_total": approved_payments.aggregate(value=Sum("amount"))["value"] or 0,
+            "payments_count": approved_payments.count(),
+            "payments_refunded": payments.filter(status=Payment.STATUS_REFUNDED).aggregate(
+                total=Sum("amount"), count=Count("id")
+            ),
+            "items_quantity": product_totals["quantity"] or 0,
+            "items_total": product_totals["total"] or 0,
             "by_payment_method": list(by_payment),
-            "by_branch": list(by_branch),
+            "by_restaurant": list(by_restaurant),
             "by_waiter": list(by_waiter),
             "by_product": list(by_product),
+            "by_status": list(by_status),
+            "by_order_type": list(by_order_type),
+            "by_cancellation_reason": cancellation_reasons,
         }
 
         if export == "csv":
             return self._csv_response(data, date_from, date_to)
 
-        return Response(data)
+        return Response(self._section_response(data, request))
+
+    def _section_response(self, data, request):
+        section_keys = {
+            "sales": (
+                "by_payment_method", "by_restaurant", "by_waiter", "by_product",
+                "by_status", "by_order_type", "by_cancellation_reason",
+            ),
+            "orders": ("by_status", "by_order_type", "by_cancellation_reason"),
+            "products": ("by_product",),
+            "payments": ("by_payment_method",),
+            "waiters": ("by_waiter",),
+            "restaurants": ("by_restaurant",),
+        }
+        keys = section_keys.get(self.report_section, section_keys["sales"])
+        page = self._positive_int(request.query_params.get("page"), 1)
+        page_size = min(self._positive_int(request.query_params.get("page_size"), 10), 100)
+        pagination = {}
+
+        for key in section_keys["sales"]:
+            if key not in keys:
+                data.pop(key, None)
+
+        for key in keys:
+            rows = data.get(key, [])
+            count = len(rows)
+            start = (page - 1) * page_size
+            data[key] = rows[start:start + page_size]
+            pagination[key] = {
+                "page": page,
+                "page_size": page_size,
+                "count": count,
+                "pages": max(1, (count + page_size - 1) // page_size),
+            }
+
+        data["pagination"] = pagination
+        data["filters"] = {
+            "date_from": request.query_params.get("date_from"),
+            "date_to": request.query_params.get("date_to"),
+            "restaurant": request.query_params.get("restaurant"),
+            "category": request.query_params.get("category"),
+            "sector": request.query_params.get("sector"),
+            "product_type": request.query_params.get("product_type"),
+            "production_sector": request.query_params.get("production_sector"),
+        }
+        return data
+
+    @staticmethod
+    def _positive_int(value, default):
+        try:
+            parsed = int(value)
+            return parsed if parsed > 0 else default
+        except (TypeError, ValueError):
+            return default
 
     def _csv_response(self, data, date_from, date_to):
         response = HttpResponse(content_type="text/csv; charset=utf-8")
@@ -237,13 +418,13 @@ class SalesReportView(TenantReportMixin, APIView):
         writer.writerow(["By Payment Method"])
         writer.writerow(["Method", "Total", "Transactions"])
         for row in data["by_payment_method"]:
-            writer.writerow([row.get("payments__payment_method__name") or "—", row["total"], row["count"]])
+            writer.writerow([row.get("payment_method__name") or "—", row["total"], row["count"]])
         writer.writerow([])
 
-        writer.writerow(["By Branch"])
-        writer.writerow(["Branch", "Total", "Orders"])
-        for row in data["by_branch"]:
-            writer.writerow([row["branch__name"], row["total"], row["count"]])
+        writer.writerow(["By Restaurant"])
+        writer.writerow(["Restaurant", "Total", "Orders"])
+        for row in data["by_restaurant"]:
+            writer.writerow([row["restaurant__trade_name"] or "—", row["total"], row["count"]])
         writer.writerow([])
 
         writer.writerow(["By Waiter"])
@@ -259,3 +440,23 @@ class SalesReportView(TenantReportMixin, APIView):
             writer.writerow([row["product__name"], row["quantity"], row["total"]])
 
         return response
+
+
+class OrdersReportView(SalesReportView):
+    report_section = "orders"
+
+
+class ProductsReportView(SalesReportView):
+    report_section = "products"
+
+
+class PaymentsReportView(SalesReportView):
+    report_section = "payments"
+
+
+class WaitersReportView(SalesReportView):
+    report_section = "waiters"
+
+
+class RestaurantsReportView(SalesReportView):
+    report_section = "restaurants"

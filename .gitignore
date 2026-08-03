@@ -5,6 +5,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 backend/makemigrations-trace.txt
 
 backend/media/
@@ -27,3 +29,8 @@ artifacts/
 Thumbs.db
 
 afazer/
+
+infra/simuladores/impressoes/
+infra/simuladores/logs/
+
+logs/

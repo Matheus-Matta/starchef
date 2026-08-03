@@ -42,9 +42,11 @@
             {{ opt.label }}
           </button>
           <template v-if="dateFilter === 'custom'">
-            <input v-model="customStart" type="date" class="kds-dr__date" @change="dateFilter = 'custom'" />
-            <span class="kds-dr__sep">→</span>
-            <input v-model="customEnd" type="date" class="kds-dr__date" @change="dateFilter = 'custom'" />
+            <AppDateRange
+              v-model="customPeriod"
+              class="kds-dr__range"
+              placeholder="Período personalizado"
+            />
           </template>
         </div>
 
@@ -74,6 +76,13 @@
       <h2>Este quadro não tem colunas</h2>
       <p>Adicione colunas em "Estações KDS" — o quadro começa vazio de propósito.</p>
       <button class="kds-blank__btn" type="button" @click="goToStations">Criar colunas</button>
+    </div>
+
+    <div v-else-if="refreshing && !items.length" class="kds-board kds-board--loading" aria-label="Carregando pedidos da cozinha">
+      <section v-for="column in Math.max(boardColumns.length, 3)" :key="column" class="kds-col kds-col--skeleton">
+        <div class="app-skeleton kds-skeleton__title" />
+        <div v-for="card in 3" :key="card" class="app-skeleton kds-skeleton__card" />
+      </section>
     </div>
 
     <!-- ── Quadro (Kanban) ────────────────────────────────────── -->
@@ -211,12 +220,16 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import AppIcon from "../components/AppIcon.vue";
+import AppDateRange from "../components/form/AppDateRange.vue";
 import { api } from "../services/api";
+import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { normalizeApiError } from "../utils/apiError";
+import { currentMonthRange } from "../utils/dateRange";
 
 const DEFAULT_SLA = 15;
 const PAGE = 20; // cards renderizados por coluna antes de "carregar mais" no scroll
 const router = useRouter();
+useRealtimeResource("orders.orderitem", () => loadItems());
 
 /* ── Filtro de datas (default: Hoje) ─────────────────────────── */
 const DATE_OPTIONS = [
@@ -226,8 +239,7 @@ const DATE_OPTIONS = [
   { key: "custom", label: "Personalizado" },
 ];
 const dateFilter = ref("today");
-const customStart = ref(ymdLocal(new Date()));
-const customEnd = ref(ymdLocal(new Date()));
+const customPeriod = ref(currentMonthRange());
 
 function ymdLocal(d) {
   const p = (n) => String(n).padStart(2, "0");
@@ -246,7 +258,12 @@ const dateRange = computed(() => {
     return { after: ymdLocal(new Date(today.getFullYear(), today.getMonth(), 1)), before: end };
   }
   if (dateFilter.value === "custom") {
-    return { after: customStart.value || end, before: customEnd.value || end };
+    const start = customPeriod.value?.[0];
+    const finish = customPeriod.value?.[1] || start;
+    return {
+      after: start ? ymdLocal(start) : end,
+      before: finish ? ymdLocal(finish) : end,
+    };
   }
   return { after: end, before: end }; // hoje
 });
@@ -502,7 +519,8 @@ onMounted(() => {
   loadStations();
   loadItems();
   loadSlas();
-  refreshTimer = window.setInterval(loadItems, 30000);
+  // Polling remains only as a safety net when an intermediary blocks WebSocket.
+  refreshTimer = window.setInterval(loadItems, 120000);
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
 });
 onUnmounted(() => {
@@ -513,6 +531,7 @@ onUnmounted(() => {
 
 <style scoped>
 .kds-root { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
+.kds-root > * { animation: soft-pop var(--motion-base) var(--motion-spring) both; }
 
 /* ── Header ──────────────────────────────────────────────────── */
 .kds-head {
@@ -539,8 +558,9 @@ onUnmounted(() => {
 .kds-dr__btn { height: 28px; padding: 0 11px; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; font: var(--weight-semibold) 12.5px/1 var(--font-sans); }
 .kds-dr__btn:hover { color: var(--text-strong); }
 .kds-dr__btn--on { background: var(--surface-card); color: var(--text-strong); box-shadow: var(--shadow-sm); }
-.kds-dr__date { height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-strong); font: var(--weight-medium) 12px/1 var(--font-sans); }
-.kds-dr__sep { color: var(--text-subtle); font-size: 12px; }
+.kds-dr__range { width: 230px; }
+.kds-dr__range :deep(.p-inputtext) { height: 30px; padding-block: 0; font-size: 12px; }
+.kds-dr__range :deep(.p-datepicker-trigger) { width: 30px; padding: 0; }
 .kds-station-menu {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 25; min-width: 220px; padding: 6px;
   background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
@@ -572,6 +592,10 @@ onUnmounted(() => {
 /* ── Board ───────────────────────────────────────────────────── */
 .kds-board { flex: 1; min-height: 0; display: flex; gap: 14px; overflow-x: auto; padding-bottom: 4px; align-items: stretch; scrollbar-width: none; }
 .kds-board::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.kds-board--loading { pointer-events: none; }
+.kds-col--skeleton { min-height: 420px; padding: 16px; }
+.kds-skeleton__title { width: 48%; height: 18px; margin-bottom: 18px; }
+.kds-skeleton__card { height: 116px; margin-bottom: 12px; }
 .kds-col {
   flex: 0 0 clamp(240px, 26vw, 300px); display: flex; flex-direction: column; min-height: 0;
   border: 1px solid var(--border); border-top: 3px solid var(--c, var(--border-strong)); border-radius: var(--radius-lg);
@@ -599,6 +623,9 @@ onUnmounted(() => {
   border: 1px solid var(--border); border-left: 3px solid var(--c, var(--border-strong)); border-radius: var(--radius-md);
   background: var(--surface-card); box-shadow: var(--shadow-sm); transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
+.ticket { animation: soft-pop var(--motion-slow) var(--motion-spring) both; transition: transform var(--motion-base) var(--motion-spring), box-shadow var(--motion-base) ease, border-color var(--motion-base) ease; }
+.ticket:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.ticket--dragging { transform: rotate(1.5deg) scale(1.02); }
 .ticket:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .ticket:active { cursor: grabbing; }
 .ticket--dragging { opacity: 0.45; }

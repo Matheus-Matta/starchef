@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["migrations"]
+
+[tool.ruff.lint]
+# Começa só com pyflakes (bugs reais: imports/variáveis não usadas, nomes indefinidos).
+# E501/I001 (linha longa/ordem de import) ficam de fora por ora — o código existente
+# não segue essas convenções e reformatar tudo de uma vez é um diff enorme e arriscado
+# fora do escopo deste ajuste. Apertar depois, incrementalmente.
+select = ["F"]

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:sqlite_async/sqlite_async.dart';
 
+import '../storage/app_paths.dart';
+
 /// SQLite-backed cache and transactional outbox used by the desktop PDV.
 ///
 /// `sqlite_async` keeps database I/O off the UI isolate, enables WAL by
@@ -25,21 +27,9 @@ class OfflineStore {
   late final Future<void> _ready;
   bool _closed = false;
 
-  static Directory _dataDirectory() {
-    final configured = Platform.environment['LOCALAPPDATA'];
-    final base = configured == null || configured.trim().isEmpty
-        ? Directory.systemTemp.path
-        : configured;
-    return Directory('$base${Platform.pathSeparator}StarChef');
-  }
+  static File _defaultFile() => AppPaths.dataFile('offline_data.sqlite');
 
-  static File _defaultFile() => File(
-    '${_dataDirectory().path}${Platform.pathSeparator}offline_data.sqlite',
-  );
-
-  static File _defaultLegacyFile() => File(
-    '${_dataDirectory().path}${Platform.pathSeparator}offline_data.json',
-  );
+  static File _defaultLegacyFile() => AppPaths.dataFile('offline_data.json');
 
   Future<void> _initialize() async {
     await _file.parent.create(recursive: true);
@@ -371,6 +361,49 @@ class OfflineStore {
       ''',
       [error, queueId],
     );
+  }
+
+  /// Devolve uma operação bloqueada para a fila normal.
+  ///
+  /// Usado pela tela de revisão depois que o operador corrigiu a causa (uma
+  /// comanda inexistente, um caixa fechado). A operação volta com a mesma
+  /// chave de idempotência: se o servidor já a tiver aceitado antes de
+  /// recusar, o reenvio não cria uma segunda venda.
+  Future<void> unblock(String queueId) async {
+    await _ready;
+    await _database.execute(
+      '''
+      UPDATE offline_outbox
+      SET state = 'pending',
+          attempt_count = 0,
+          next_attempt_at = NULL,
+          last_error = NULL,
+          lease_owner = NULL,
+          lease_until = NULL
+      WHERE queue_id = ? AND state = 'blocked'
+      ''',
+      [queueId],
+    );
+  }
+
+  /// Descarta definitivamente uma operação bloqueada.
+  ///
+  /// Só remove itens em `blocked`: uma operação ainda elegível pode estar
+  /// sendo enviada neste instante, e apagá-la perderia a venda em silêncio.
+  Future<bool> discardBlocked(String queueId) async {
+    await _ready;
+    return _database.writeTransaction((tx) async {
+      final row = await tx.getOptional(
+        'SELECT state FROM offline_outbox WHERE queue_id = ?',
+        [queueId],
+      );
+      if (row == null || '${row['state']}' != 'blocked') return false;
+      await tx.execute(
+        "DELETE FROM offline_outbox WHERE queue_id = ? AND state = 'blocked'",
+        [queueId],
+      );
+      return true;
+    });
   }
 
   Future<void> retryNow({required String scope}) async {

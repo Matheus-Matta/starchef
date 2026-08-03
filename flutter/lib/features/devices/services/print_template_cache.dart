@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/storage/app_paths.dart';
 
 class PrintTemplateCache {
   PrintTemplateCache({required this.api});
@@ -42,13 +43,8 @@ class PrintTemplateCache {
   }
 
   Future<Directory> _cacheDirectory(String restaurantId) async {
-    final localAppData = Platform.environment['LOCALAPPDATA'];
-    final base = localAppData == null || localAppData.trim().isEmpty
-        ? Directory.systemTemp
-        : Directory(localAppData);
     final directory = Directory(
-      '${base.path}${Platform.pathSeparator}StarChef'
-      '${Platform.pathSeparator}print_templates'
+      '${AppPaths.dataDirectory().path}${Platform.pathSeparator}print_templates'
       '${Platform.pathSeparator}${_safeName(restaurantId)}',
     );
     await directory.create(recursive: true);

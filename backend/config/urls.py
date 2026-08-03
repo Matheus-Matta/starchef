@@ -43,7 +43,15 @@ from apps.notifications.views import NotificationViewSet
 from apps.orders.views import OrderItemViewSet, OrderViewSet
 from apps.payments.views import CashRegisterViewSet, CashStationViewSet, PaymentMethodViewSet, PaymentViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
-from apps.reports.views import DashboardReportView, SalesReportView
+from apps.reports.views import (
+    DashboardReportView,
+    OrdersReportView,
+    PaymentsReportView,
+    ProductsReportView,
+    RestaurantsReportView,
+    SalesReportView,
+    WaitersReportView,
+)
 from apps.restaurants.views import (
     BranchViewSet,
     CommandViewSet,
@@ -54,6 +62,7 @@ from apps.restaurants.views import (
     TableViewSet,
 )
 from apps.stock.views import StockAlertView, StockLocationViewSet, StockMovementViewSet
+from apps.data_exchange.views import CsvExportView, CsvParseView
 
 
 def healthcheck(_request):
@@ -134,7 +143,14 @@ urlpatterns = [
     path("api/v1/auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path("api/v1/auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("api/v1/reports/sales/", SalesReportView.as_view(), name="sales-report"),
+    path("api/v1/reports/orders/", OrdersReportView.as_view(), name="orders-report"),
+    path("api/v1/reports/products/", ProductsReportView.as_view(), name="products-report"),
+    path("api/v1/reports/payments/", PaymentsReportView.as_view(), name="payments-report"),
+    path("api/v1/reports/waiters/", WaitersReportView.as_view(), name="waiters-report"),
+    path("api/v1/reports/restaurants/", RestaurantsReportView.as_view(), name="restaurants-report"),
     path("api/v1/reports/dashboard/", DashboardReportView.as_view(), name="dashboard-report"),
+    path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
+    path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
     path("api/v1/", include(router.urls)),

@@ -39,12 +39,17 @@ class PdvRepository {
       list('/menu/products/', query: {...query, 'is_active': true}),
       list('/menu/categories/', query: {'page_size': 100, 'is_active': true}),
       list('/tables/', query: query),
+      // Comandas entram no carregamento inicial junto com as mesas: as duas
+      // são o contexto de abertura de pedido e precisam estar em cache para
+      // o PDV abrir um atendimento sem rede.
+      list('/commands/', query: {...query, 'is_active': true}),
     ]);
     return PdvCatalog(
       cashStations: responses[0],
       products: responses[1],
       categories: responses[2],
       tables: responses[3],
+      commands: responses[4],
     );
   }
 }
@@ -55,10 +60,12 @@ class PdvCatalog {
     required this.products,
     required this.categories,
     required this.tables,
+    required this.commands,
   });
 
   final List<JsonMap> cashStations;
   final List<JsonMap> products;
   final List<JsonMap> categories;
   final List<JsonMap> tables;
+  final List<JsonMap> commands;
 }

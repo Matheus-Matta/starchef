@@ -41,6 +41,28 @@ def test_create_product_without_category(api_client, restaurant, branch):
     assert resp.data["category_name"] == "Sem categoria"
 
 
+def test_product_can_be_shared_between_restaurants(admin_client, account, restaurant, branch):
+    second = Restaurant.objects.create(
+        account=account,
+        legal_name="Restaurante Dois LTDA",
+        trade_name="Restaurante Dois",
+    )
+    payload = product_payload(
+        restaurant,
+        branch,
+        restaurants=[str(restaurant.id), str(second.id)],
+    )
+
+    created = admin_client.post("/api/v1/menu/products/", payload, format="json")
+
+    assert created.status_code == 201, created.data
+    assert set(map(str, created.data["restaurants"])) == {str(restaurant.id), str(second.id)}
+    first_list = admin_client.get("/api/v1/menu/products/", {"restaurant": restaurant.id})
+    second_list = admin_client.get("/api/v1/menu/products/", {"restaurant": second.id})
+    assert created.data["id"] in {row["id"] for row in first_list.data["results"]}
+    assert created.data["id"] in {row["id"] for row in second_list.data["results"]}
+
+
 def test_create_product_with_category(api_client, account, restaurant, branch):
     category = make_category(account, restaurant, branch)
     payload = product_payload(restaurant, branch, category=str(category.id))
@@ -144,7 +166,6 @@ def test_create_without_restaurant_scope_gives_clear_error(db, account):
     # num recurso que EXIGE restaurante (produto): erro claro no campo `restaurant`
     # (400), não 409 do banco.
     from django.contrib.auth import get_user_model
-    from apps.accounts.models import UserProfile
     from conftest import _authenticated_client
 
     user = get_user_model().objects.create_user(username="admin-sem-rest", password="x", is_superuser=True, is_staff=True)
@@ -159,7 +180,6 @@ def test_create_without_restaurant_scope_gives_clear_error(db, account):
 def test_shared_category_can_be_created_without_restaurant(db, account):
     # Categorias são compartilhadas: admin sem escopo consegue criar (restaurant nulo).
     from django.contrib.auth import get_user_model
-    from apps.accounts.models import UserProfile
     from conftest import _authenticated_client
 
     user = get_user_model().objects.create_user(username="admin-shared", password="x", is_superuser=True, is_staff=True)

@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_ECOMMERCE
 from apps.core.viewsets import BaseTenantViewSet
 from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
@@ -35,7 +36,7 @@ class ProductCategoryViewSet(BaseTenantViewSet):
 
 class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
-    queryset = Product.objects.select_related("restaurant", "branch", "category", "sector").prefetch_related("variations").all()
+    queryset = Product.objects.select_related("restaurant", "branch", "category", "sector").prefetch_related("variations", "restaurants").all()
     filterset_fields = [
         "category",
         "product_type",
@@ -48,6 +49,34 @@ class ProductViewSet(BaseTenantViewSet):
     search_fields = ["name", "internal_code", "description"]
     ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
     ordering = ["name"]
+
+    def get_queryset(self):
+        account = getattr(self.request, "account", None)
+        if account is None or not self.request.user.is_authenticated:
+            return Product.all_objects.none()
+        queryset = (
+            Product.all_objects
+            .filter(account=account, deleted_at__isnull=True)
+            .select_related("restaurant", "branch", "category", "sector")
+            .prefetch_related("variations", "restaurants")
+        )
+        profile = getattr(self.request.user, "profile", None)
+        restaurant_id = self.request.query_params.get("restaurant")
+        if not is_tenant_admin(self.request.user):
+            restaurant_id = getattr(profile, "restaurant_id", None)
+            if not restaurant_id:
+                return queryset.none()
+        if restaurant_id:
+            queryset = queryset.filter(restaurants__id=restaurant_id)
+        return queryset.distinct()
+
+    def perform_create(self, serializer):
+        selected = serializer.validated_data.get("restaurants") or []
+        if not serializer.validated_data.get("restaurant") and selected:
+            serializer.validated_data["restaurant"] = selected[0]
+        super().perform_create(serializer)
+        if not selected:
+            serializer.instance.restaurants.add(serializer.instance.restaurant)
 
     def _get_addon(self, request):
         # Escopo por tenant: só adicionais da conta (queryset padrão do model).

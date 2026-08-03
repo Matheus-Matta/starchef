@@ -5,3 +5,6 @@ class MenuConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.menu"
 
+    def ready(self):
+        from . import signals  # noqa: F401
+

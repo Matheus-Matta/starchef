@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from django.utils import timezone
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
@@ -74,11 +73,6 @@ class ScaleSerializer(TenantModelSerializer):
 
 class ScaleReadingSerializer(TenantModelSerializer):
     net_weight_kg = serializers.DecimalField(max_digits=9, decimal_places=3, read_only=True)
-    agent_instance_id = serializers.CharField(
-        write_only=True,
-        required=False,
-        allow_blank=True,
-    )
 
     class Meta:
         model = ScaleReading
@@ -94,25 +88,14 @@ class ScaleReadingSerializer(TenantModelSerializer):
             raise serializers.ValidationError("Peso deve ser maior que zero.")
         return value
 
+    # A exclusividade da balança não é mais decidida aqui: o PDV lê a porta
+    # serial direto (SerialScaleReader) e o sistema operacional, mais uma
+    # trava de arquivo local, já garante que só uma janela usa o
+    # equipamento por vez. O lease remoto por `agent_instance_id` era da
+    # arquitetura anterior (LocalDeviceAgent consultando a API por peso) e
+    # nenhum cliente envia mais esse campo — exigi-lo aqui só rejeitava
+    # toda leitura automática de uma balança com `auto_print`.
     def validate(self, attrs):
-        instance_id = attrs.pop("agent_instance_id", "")
-        scale = attrs.get("scale")
-        if scale and scale.auto_print:
-            valid_lease = (
-                instance_id
-                and scale.agent_instance_id == instance_id
-                and scale.agent_lease_expires_at
-                and scale.agent_lease_expires_at > timezone.now()
-            )
-            if not valid_lease:
-                raise serializers.ValidationError(
-                    {
-                        "agent_instance_id": (
-                            "Esta balança não está reservada para este PDV. "
-                            "A leitura automática foi ignorada."
-                        )
-                    }
-                )
         tare = attrs.get("tare_kg") or 0
         weight = attrs.get("weight_kg")
         if weight is not None and tare and tare >= weight:

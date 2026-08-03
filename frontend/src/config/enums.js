@@ -110,10 +110,36 @@ export const CASH_STATUS_LABELS = { open: "Aberto", closed: "Fechado" };
 
 export const INVOICE_STATUS_LABELS = {
   draft: "Rascunho",
+  pending: "Aguardando autorizacao",
   issued: "Emitida",
   cancelled: "Cancelada",
   error: "Erro",
 };
+
+export const EMISSION_TYPE_LABELS = { "1": "Normal", "9": "Contingencia" };
+
+// Espelham FiscalConfig.* do backend (apps/invoices/models.py).
+export const FISCAL_DOCUMENT_MODEL_OPTIONS = [
+  { label: "NFC-e (modelo 65)", value: "65" },
+  { label: "NF-e (modelo 55)", value: "55" },
+  { label: "SAT/CF-e (modelo 59)", value: "59" },
+];
+export const FISCAL_ENVIRONMENT_OPTIONS = [
+  { label: "Homologacao", value: "2" },
+  { label: "Producao", value: "1" },
+];
+export const FISCAL_CRT_OPTIONS = [
+  { label: "Simples Nacional", value: "1" },
+  { label: "Simples Nacional - excesso de sublimite", value: "2" },
+  { label: "Regime Normal", value: "3" },
+];
+// "manual" = scaffold (nao transmite a SEFAZ, so monta o documento). Outros
+// provedores precisam ser registrados no backend (apps/invoices/providers.py)
+// antes de aparecerem aqui como opcao utilizavel de verdade.
+export const FISCAL_PROVIDER_OPTIONS = [
+  { label: "Manual (sem transmissao a SEFAZ)", value: "manual" },
+  { label: "Focus NFe", value: "focus_nfe" },
+];
 
 export const STOCK_TIMING_LABELS = { payment: "No pagamento", kitchen: "Na cozinha" };
 

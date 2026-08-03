@@ -24,65 +24,163 @@ _TEMPLATE_BY_TYPE = {
 }
 _WITH_PAYMENTS = {PrintJob.TYPE_PAYMENT, PrintJob.TYPE_RECEIPT}
 
+# 48 colunas: padrao de fonte A em bobina de 80mm (a largura mais comum de
+# impressora termica no Brasil). 32 colunas era pensado pra bobina de 58mm e
+# deixava sobrando quase metade da largura em branco numa impressora de 80mm.
+LARGURA_CUPOM = 48
+_COLUNA_VALOR = 14
+
+
+def _linha_valor(rotulo, valor):
+    """Linha com rotulo a esquerda e valor em reais a direita, alinhada em
+    LARGURA_CUPOM colunas — o mesmo formato usado em toda linha de item,
+    subtotal, total e pagamento do cupom."""
+    quantia = f"R$ {valor}"
+    return f"{rotulo:<{LARGURA_CUPOM - _COLUNA_VALOR}}{quantia:>{_COLUNA_VALOR}}"
+
+
+def _establishment_info(order):
+    """Dados do estabelecimento pro cabecalho do cupom.
+
+    Prioriza os campos da filial: cada unidade fisica costuma ter CNPJ,
+    inscricao estadual e endereco proprios para fins de nota, distintos da
+    matriz. Cai para os dados da conta (restaurant) quando a filial nao
+    tiver o campo preenchido.
+    """
+    restaurant = order.restaurant
+    branch = order.branch
+
+    def pick(field):
+        branch_value = getattr(branch, field, "") if branch else ""
+        return branch_value or getattr(restaurant, field, "") or ""
+
+    return {
+        "legal_name": restaurant.legal_name,
+        "trade_name": restaurant.trade_name,
+        "cnpj": pick("cnpj"),
+        "state_registration": pick("state_registration"),
+        "phone": pick("phone"),
+        "address": pick("address"),
+        "city": pick("city"),
+        "state": pick("state"),
+        "zip_code": pick("zip_code"),
+    }
+
+
+def _order_command_barcode(order):
+    """Codigo de barras (Code128) da comanda do pedido, se houver.
+
+    Usado tanto na nota de pesagem quanto no cupom normal: em ambos, quando
+    o pedido esta vinculado a uma comanda fisica, o codigo sai impresso pra
+    permitir reler a comanda depois (reabrir, cobrar) sem digitar nada.
+    """
+    value = ""
+    if order.command_id:
+        value = str(order.command.code or order.command.number or "")
+    return {
+        "symbology": "CODE128",
+        "value": value,
+        "data_uri": barcode_data_uri(value),
+    }
+
+
+def _establishment_lines(info, width=LARGURA_CUPOM):
+    """Cabecalho do cupom com os dados do estabelecimento, em texto monospace.
+
+    Compartilhado entre o cupom normal e a nota de pesagem — as duas notas
+    saem da mesma impressora fisica e precisam se identificar do mesmo jeito.
+    Mostra so o nome fantasia (nao repete a razao social embaixo: quando as
+    duas so diferem por "LTDA"/"ME" no fim, a segunda linha e so ruido).
+    """
+    lines = [info["trade_name"].center(width)]
+    lines.append(f"CNPJ: {info['cnpj'] or '-'}")
+    if info["state_registration"]:
+        lines.append(f"IE: {info['state_registration']}"[:width])
+    address_line = f"{info['address']} {info['city']}/{info['state']}".strip(" /")
+    if address_line:
+        lines.append(address_line[:width])
+    if info["zip_code"]:
+        lines.append(f"CEP: {info['zip_code']}"[:width])
+    if info["phone"]:
+        lines.append(f"Tel: {info['phone']}"[:width])
+    return lines
+
 
 def _customer_receipt_text(order):
-    restaurant = order.restaurant
-    lines = [
-        restaurant.trade_name.center(32),
-        f"CNPJ: {restaurant.cnpj or '-'}",
-        f"{restaurant.address or ''} {restaurant.city or ''} {restaurant.state or ''}".strip()[:32],
-        "-" * 32,
-        f"PEDIDO #{order.sequence}",
-        f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}",
-    ]
+    info = _establishment_info(order)
+    lines = _establishment_lines(info)
+    lines.extend(
+        [
+            "-" * LARGURA_CUPOM,
+            f"PEDIDO #{order.sequence}",
+            f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}",
+        ]
+    )
     if order.table_id:
         lines.append(f"Mesa: {order.table.number}")
     if order.command_id:
         lines.append(f"Comanda: {order.command.code}")
     if order.customer_id:
-        lines.append(f"Cliente: {order.customer.name}"[:32])
+        lines.append(f"Cliente: {order.customer.name}"[:LARGURA_CUPOM])
         if order.customer.phone:
-            lines.append(f"Telefone: {order.customer.phone}"[:32])
+            lines.append(f"Telefone: {order.customer.phone}"[:LARGURA_CUPOM])
     if order.responsible_user_id:
         operator = order.responsible_user.get_full_name() or order.responsible_user.username
-        lines.append(f"Operador: {operator}"[:32])
-    lines.append("-" * 32)
+        lines.append(f"Operador: {operator}"[:LARGURA_CUPOM])
+    lines.append("-" * LARGURA_CUPOM)
     for item in order.items.select_related("product").prefetch_related("addons__addon"):
         if item.status == item.STATUS_CANCELLED:
             continue
-        lines.append(f"{item.quantity:g}x {item.product.name}"[:32])
+        lines.append(f"{item.quantity:g}x {item.product.name}"[:LARGURA_CUPOM])
         if item.product.is_weighed:
-            lines.append(f"  {item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:32])
+            lines.append(
+                f"  {item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM]
+            )
         for variation in item.variations or []:
             name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:32])
+            lines.append(f"  VAR: {name}"[:LARGURA_CUPOM])
         for addon in item.addons.all():
-            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:32])
+            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:LARGURA_CUPOM])
         if item.customer_note:
-            lines.append(f"  OBS: {item.customer_note}"[:32])
-        lines.append(f"{'':20}R$ {item.total_price:>8}")
+            lines.append(f"  OBS: {item.customer_note}"[:LARGURA_CUPOM])
+        lines.append(_linha_valor("", item.total_price))
     lines.extend(
         [
-            "-" * 32,
-            f"{'Subtotal':20}R$ {order.subtotal:>8}",
-            f"{'Servico':20}R$ {order.service_fee:>8}",
-            f"{'Desconto':20}R$ {order.discount:>8}",
-            f"{'Entrega':20}R$ {order.delivery_fee:>8}",
-            f"{'TOTAL':20}R$ {order.total:>8}",
+            "-" * LARGURA_CUPOM,
+            _linha_valor("Subtotal", order.subtotal),
+            _linha_valor("Servico", order.service_fee),
+            _linha_valor("Desconto", order.discount),
+            _linha_valor("Entrega", order.delivery_fee),
+            _linha_valor("TOTAL", order.total),
         ]
     )
     payments = order.payments.select_related("payment_method").order_by("created_at")
     if payments.exists():
-        lines.extend(["-" * 32, "PAGAMENTOS"])
+        lines.extend(["-" * LARGURA_CUPOM, "PAGAMENTOS"])
         for payment in payments:
-            lines.append(f"{payment.payment_method.name[:20]:20}R$ {payment.amount:>8}")
+            lines.append(_linha_valor(payment.payment_method.name, payment.amount))
             if payment.change_amount:
                 received = payment.metadata.get("received_amount", payment.amount)
-                lines.append(f"{'Recebido':20}R$ {received:>8}")
-                lines.append(f"{'Troco':20}R$ {payment.change_amount:>8}")
+                lines.append(_linha_valor("Recebido", received))
+                lines.append(_linha_valor("Troco", payment.change_amount))
     if order.general_notes:
-        lines.extend(["-" * 32, f"OBS: {order.general_notes}"[:32]])
-    lines.extend(["-" * 32, "Obrigado pela preferencia!".center(32), ""])
+        lines.extend(["-" * LARGURA_CUPOM, f"OBS: {order.general_notes}"[:LARGURA_CUPOM]])
+    barcode_value = _order_command_barcode(order)["value"]
+    if barcode_value:
+        # So o valor: o agente local (LocalDeviceAgent) reconhece este mesmo
+        # payload_version/barcode e imprime o Code128 de verdade no final do
+        # cupom — aqui so cabe a legenda legivel, redundante em impressoras
+        # sem ESC/POS.
+        lines.extend(
+            [
+                "-" * LARGURA_CUPOM,
+                "COMANDA".center(LARGURA_CUPOM),
+                barcode_value.center(LARGURA_CUPOM),
+            ]
+        )
+    lines.extend(
+        ["-" * LARGURA_CUPOM, "Obrigado pela preferencia!".center(LARGURA_CUPOM), ""]
+    )
     return "\n".join(lines)
 
 
@@ -113,7 +211,13 @@ def register_print_job(
                 printer = active.filter(sector_id__in=sector_ids).order_by("name").first()
             printer = printer or active.filter(sector=None).order_by("name").first() or active.order_by("name").first()
 
-        html = render_print_html(order, job_type)
+        barcode = _order_command_barcode(order)
+        html = render_print_html(
+            order,
+            job_type,
+            establishment=_establishment_info(order),
+            barcode=barcode,
+        )
         job = PrintJob.objects.create(
             account=order.account,
             restaurant=order.restaurant,
@@ -127,6 +231,12 @@ def register_print_job(
                 "order_id": str(order.id),
                 "sequence": order.sequence,
                 "manual_only": manual_only,
+                # payload_version 2 + barcode: mesmo formato que o agente local
+                # (LocalDeviceAgent.code128ValueFromPayload) ja sabe reconhecer
+                # pra imprimir o Code128 de verdade no final do cupom, sem
+                # nenhuma mudanca no cliente.
+                "payload_version": 2,
+                "barcode": {"symbology": barcode["symbology"], "value": barcode["value"]},
                 "text_content": (
                     _customer_receipt_text(order)
                     if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL}
@@ -353,17 +463,6 @@ def _weigh_ticket_items(order):
     )
 
 
-def _weigh_ticket_barcode(order):
-    value = ""
-    if order.command_id:
-        value = str(order.command.code or order.command.number or "")
-    return {
-        "symbology": "CODE128",
-        "value": value,
-        "data_uri": barcode_data_uri(value),
-    }
-
-
 def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
     command = None
     if order.command_id:
@@ -424,7 +523,6 @@ def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
 
 def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     """Versao texto (monospace) da nota, enviada pelo agente para impressoras ESC/POS."""
-    restaurant = order.restaurant.trade_name if order.restaurant_id else "Restaurante"
     where = (
         f"Mesa {order.table.number}"
         if order.table_id
@@ -434,16 +532,18 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
             else "Balcao"
         )
     )
-    lines = [
-        restaurant.center(32),
-        "NOTA DE PESAGEM".center(32),
-        "-" * 32,
-        f"Pedido #{order.sequence}  {where}",
-        timezone.localtime(weighed_item.created_at).strftime("%d/%m/%Y %H:%M"),
-        "-" * 32,
-    ]
+    lines = _establishment_lines(_establishment_info(order))
+    lines.extend(
+        [
+            "NOTA DE PESAGEM".center(LARGURA_CUPOM),
+            "-" * LARGURA_CUPOM,
+            f"Pedido #{order.sequence}  {where}",
+            timezone.localtime(weighed_item.created_at).strftime("%d/%m/%Y %H:%M"),
+            "-" * LARGURA_CUPOM,
+        ]
+    )
     for ticket_item in items:
-        lines.append(ticket_item.product.name[:32])
+        lines.append(ticket_item.product.name[:LARGURA_CUPOM])
         if ticket_item.product.is_weighed:
             lines.append(
                 f"{Decimal(ticket_item.quantity):.3f} kg x "
@@ -453,24 +553,18 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
             lines.append(
                 f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}"
             )
-        lines.append(
-            f"{'VALOR'.ljust(20)}"
-            f"{('R$ ' + str(ticket_item.total_price)).rjust(12)}"
-        )
-        lines.append("-" * 32)
-    lines.append(
-        f"{'TOTAL DO PEDIDO'.ljust(18)}"
-        f"{('R$ ' + str(order.total)).rjust(14)}"
-    )
+        lines.append(_linha_valor("VALOR", ticket_item.total_price))
+        lines.append("-" * LARGURA_CUPOM)
+    lines.append(_linha_valor("TOTAL DO PEDIDO", order.total))
     if barcode["value"]:
         lines.extend(
             [
                 "",
-                "COMANDA - CODE128".center(32),
-                barcode["value"].center(32),
+                "COMANDA - CODE128".center(LARGURA_CUPOM),
+                barcode["value"].center(LARGURA_CUPOM),
             ]
         )
-    lines.extend(["", "Pague no caixa. Obrigado!".center(32)])
+    lines.extend(["", "Pague no caixa. Obrigado!".center(LARGURA_CUPOM)])
     return "\n".join(lines)
 
 
@@ -493,7 +587,7 @@ def register_weigh_print(*, order, item, scale, user=None):
             ]
         )
         items = _weigh_ticket_items(order)
-        barcode = _weigh_ticket_barcode(order)
+        barcode = _order_command_barcode(order)
         payload = _weigh_ticket_payload(
             order=order,
             weighed_item=item,
@@ -513,6 +607,7 @@ def register_weigh_print(*, order, item, scale, user=None):
             scale=scale,
             items=items,
             barcode=barcode,
+            establishment=_establishment_info(order),
         )
         job = PrintJob.objects.create(
             account=order.account,

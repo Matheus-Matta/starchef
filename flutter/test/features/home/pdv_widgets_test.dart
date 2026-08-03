@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
 import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart';
@@ -32,11 +33,15 @@ void main() {
       expect(find.text('AS'), findsOneWidget);
       expect(find.text('Ana Souza'), findsOneWidget);
 
-      await tester.tap(find.text('Delivery'));
+      // Delivery deixou de ser um módulo da barra lateral; ele existe apenas
+      // como tipo de pedido dentro do fluxo de Pedidos.
+      expect(find.text('Delivery'), findsNothing);
+
+      await tester.tap(find.text('Financeiro'));
       await tester.tap(find.byTooltip('Recolher menu'));
       await tester.tap(find.text('Sair'));
 
-      expect(selected, PdvDestination.delivery);
+      expect(selected, PdvDestination.finance);
       expect(toggles, 1);
       expect(logouts, 1);
       expect(tester.takeException(), isNull);
@@ -69,9 +74,11 @@ void main() {
       expect(find.byIcon(Icons.settings_outlined), findsNothing);
       expect(find.byTooltip('Expandir menu'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.delivery_dining_outlined));
+      expect(find.byIcon(Icons.delivery_dining_outlined), findsNothing);
 
-      expect(selected, PdvDestination.delivery);
+      await tester.tap(find.byIcon(Icons.table_restaurant_outlined));
+
+      expect(selected, PdvDestination.tables);
       expect(tester.takeException(), isNull);
     });
   });
@@ -118,7 +125,6 @@ void main() {
           selectedCategory: null,
           search: '',
           money: _money,
-          imageUrlFor: (_) => null,
           onSearchChanged: (value) => search = value,
           onCategoryChanged: (value) => category = value,
           onProductPressed: (value) => pressedProduct = value,
@@ -130,7 +136,11 @@ void main() {
       expect(find.text('Hambúrguer artesanal'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), 'suco');
-      await tester.tap(find.text('Bebidas').first);
+      // As categorias agora ficam em um select, como no frontend web.
+      await tester.tap(find.byType(DropdownButtonFormField<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bebidas · 1').last);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Suco de laranja'));
 
       expect(search, 'suco');
@@ -152,7 +162,6 @@ void main() {
           selectedCategory: null,
           search: 'inexistente',
           money: _money,
-          imageUrlFor: (_) => null,
           onSearchChanged: (_) {},
           onCategoryChanged: (_) {},
           onProductPressed: (_) {},
@@ -165,6 +174,86 @@ void main() {
         find.text('Tente buscar por outro nome, código ou categoria.'),
         findsOneWidget,
       );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('card do produto não estoura com nome de 2 linhas + pesado + '
+        'promocional', (tester) async {
+      // Pior caso empilhado: nome longo o bastante para 2 linhas, unidade
+      // "/ kg" e preço promocional riscado — os três elementos que competem
+      // por altura dentro do card ao mesmo tempo.
+      final heavy = <Map<String, dynamic>>[
+        {
+          'id': 'product-1',
+          'name': 'Picanha Angus Premium Fatiada Especial',
+          'category': 'category-1',
+          'category_name': 'Carnes nobres',
+          'current_price': 89.9,
+          'sale_price': 109.9,
+          'promotional_price': 89.9,
+          'pricing_unit': 'kg',
+          'is_weighed': true,
+        },
+      ];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(1280, 800),
+        child: ProductCatalogPanel(
+          products: heavy,
+          allProducts: heavy,
+          categories: const [
+            {'id': 'category-1', 'name': 'Carnes nobres'},
+          ],
+          selectedCategory: null,
+          search: '',
+          money: _money,
+          onSearchChanged: (_) {},
+          onCategoryChanged: (_) {},
+          onProductPressed: (_) {},
+        ),
+      );
+
+      expect(find.textContaining('Picanha'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('mostra o código do produto com # ao lado do título', (
+      tester,
+    ) async {
+      final coded = <Map<String, dynamic>>[
+        {
+          'id': 'product-1',
+          'name': 'Suco de laranja',
+          'internal_code': '104',
+          'category': 'category-1',
+          'category_name': 'Bebidas',
+          'current_price': 12.5,
+          'sale_price': 12.5,
+          'pricing_unit': 'unit',
+        },
+      ];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(640, 680),
+        child: ProductCatalogPanel(
+          products: coded,
+          allProducts: coded,
+          categories: const [
+            {'id': 'category-1', 'name': 'Bebidas'},
+          ],
+          selectedCategory: null,
+          search: '',
+          money: _money,
+          onSearchChanged: (_) {},
+          onCategoryChanged: (_) {},
+          onProductPressed: (_) {},
+        ),
+      );
+
+      expect(find.textContaining('#104'), findsOneWidget);
+      expect(find.textContaining('Suco de laranja'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -181,9 +270,7 @@ void main() {
           table: null,
           customer: null,
           items: const [],
-          products: const [],
           money: _money,
-          imageUrlFor: (_) => null,
           onVoidItem: (_) {},
           onFinish: () {},
           onPrint: () {},
@@ -249,11 +336,7 @@ void main() {
           table: const {'number': 7},
           customer: null,
           items: [item],
-          products: const [
-            {'id': 'product-1', 'name': 'Prato executivo'},
-          ],
           money: _money,
-          imageUrlFor: (_) => null,
           onVoidItem: (value) => voidedItem = value,
           onFinish: () => finishes++,
           onPrint: () => prints++,
@@ -270,7 +353,7 @@ void main() {
       expect(find.text('Desconto'), findsOneWidget);
       expect(find.text('R\$ 21,00'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Remover item'));
+      await tester.tap(find.byTooltip('Cancelar item'));
       await tester.tap(find.widgetWithText(FilledButton, 'Revisar pedido'));
       await tester.tap(
         find.widgetWithText(OutlinedButton, 'Imprimir nota do cliente'),
@@ -280,6 +363,126 @@ void main() {
       expect(finishes, 1);
       expect(prints, 1);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('identifica o pedido pela comanda quando não há mesa', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {
+            'sequence': 51,
+            'order_type': 'command',
+            'total': 0,
+          },
+          table: null,
+          command: const {'number': 12, 'customer_name': 'Ana'},
+          customer: null,
+          items: const [],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      // Sem isso o cabeçalho cairia no rótulo genérico do tipo e o operador
+      // não saberia qual cartão está na mão.
+      expect(find.text('Comanda 12 · Ana'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('comanda sem cliente ainda diz que é self-service', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 52, 'order_type': 'command', 'total': 0},
+          table: null,
+          command: const {'number': 3, 'customer_name': ''},
+          customer: null,
+          items: const [],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      expect(find.text('Comanda 3 · Self-service'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('PdvPrincipalBadge', () {
+    testWidgets('avisa que o caixa não grava sem o principal', (tester) async {
+      var taps = 0;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(400, 200),
+        child: PdvPrincipalBadge(
+          connected: false,
+          detail: 'Caixa Principal 192.168.1.10:47832 indisponível.',
+          onPressed: () => taps++,
+        ),
+      );
+
+      // O operador precisa ver isso antes de montar o pedido inteiro, não
+      // depois de tentar lançar.
+      expect(find.text('Sem o Principal'), findsOneWidget);
+
+      await tester.tap(find.byType(PdvPrincipalBadge));
+      expect(taps, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('mostra a ligação ativa quando o principal responde', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(400, 200),
+        child: const PdvPrincipalBadge(
+          connected: true,
+          detail: 'Conectado ao Caixa Principal 192.168.1.10.',
+        ),
+      );
+
+      expect(find.text('Principal'), findsOneWidget);
+      expect(find.text('Sem o Principal'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('cabe ao lado do indicador de conexão em tela estreita', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(360, 120),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PdvConnectionBadge(
+              status: NetworkSyncStatus(phase: NetworkSyncPhase.offline),
+            ),
+            SizedBox(width: 8),
+            PdvPrincipalBadge(connected: false, detail: '', compact: true),
+          ],
+        ),
+      );
+
+      // O cabeçalho do PDV já estourou antes por um widget a mais; em tela
+      // estreita o badge fica só com o ícone e o texto vai para o tooltip.
+      expect(tester.takeException(), isNull);
+      expect(find.text('Sem o Principal'), findsNothing);
+      expect(find.byIcon(Icons.lan_outlined), findsOneWidget);
     });
   });
 }

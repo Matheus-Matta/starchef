@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/storage/local_preferences.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../home/data/pdv_repository.dart';
 import 'scale_workstation_page.dart';
@@ -8,10 +9,12 @@ class ScaleWindowPage extends StatefulWidget {
   const ScaleWindowPage({
     super.key,
     required this.controller,
+    required this.preferences,
     this.preferredRestaurantId,
   });
 
   final AuthController controller;
+  final LocalPreferences preferences;
   final String? preferredRestaurantId;
 
   @override
@@ -137,6 +140,7 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
         restaurantId: restaurantId,
         products: products,
         onRestaurantChanged: _changeRestaurant,
+        preferences: widget.preferences,
       ),
     );
   }

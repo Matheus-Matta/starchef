@@ -93,6 +93,9 @@ class FiscalConfig(TenantModel):
     qr_base_url = models.URLField(blank=True, help_text="URL de consulta da NFC-e da UF.")
     portal_url = models.URLField(blank=True, help_text="URL do portal para consulta por chave.")
     certificate_ref = models.CharField(max_length=255, blank=True, help_text="Referencia ao certificado A1.")
+    provider_token = models.CharField(
+        max_length=255, blank=True, help_text="Credencial/token do integrador fiscal (ex.: Focus NFe)."
+    )
 
     default_profile = models.ForeignKey(
         FiscalProfile, null=True, blank=True, related_name="+", on_delete=models.SET_NULL
@@ -123,6 +126,13 @@ class Invoice(TenantModel):
     STATUS_CANCELLED = "cancelled"
     STATUS_ERROR = "error"
 
+    EMISSION_NORMAL = "1"
+    EMISSION_CONTINGENCY = "9"  # contingencia offline (tpEmis): provider real falhou/indisponivel
+    EMISSION_TYPE_CHOICES = [
+        (EMISSION_NORMAL, "Normal"),
+        (EMISSION_CONTINGENCY, "Contingencia offline"),
+    ]
+
     order = models.OneToOneField("orders.Order", related_name="invoice", on_delete=models.PROTECT)
     phase = models.CharField(max_length=20, default=PHASE_RECEIPT)
     status = models.CharField(max_length=20, default=STATUS_DRAFT, db_index=True)
@@ -134,6 +144,9 @@ class Invoice(TenantModel):
     number = models.CharField(max_length=60, blank=True)  # nNF
     environment = models.CharField(max_length=1, blank=True)
     crt = models.CharField(max_length=1, blank=True)
+    emission_type = models.CharField(
+        max_length=1, choices=EMISSION_TYPE_CHOICES, default=EMISSION_NORMAL, help_text="tpEmis da chave de acesso."
+    )
     access_key = models.CharField(max_length=44, blank=True, db_index=True)
 
     # Emitente (snapshot no momento da emissao)

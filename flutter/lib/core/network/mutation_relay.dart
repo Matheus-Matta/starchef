@@ -30,6 +30,24 @@ class RelayMutation {
 /// cloud or its own local outbox.
 abstract interface class MutationRelay {
   Future<Map<String, dynamic>> relay(RelayMutation mutation);
+
+  /// Lê pelo Caixa Principal, que responde do próprio armazenamento local.
+  ///
+  /// É o que faz o secundário enxergar a mesma verdade que o principal. Sem
+  /// isso ele lia direto da nuvem: com a internet fora e a rede local de pé —
+  /// a falha mais comum — ele conseguia gravar pelo principal, mas não
+  /// conseguia abrir o pedido que ia alterar.
+  Future<Map<String, dynamic>> read(RelayRead request);
+}
+
+/// Uma leitura encaminhada ao Caixa Principal.
+class RelayRead {
+  const RelayRead({required this.path, this.query});
+
+  final String path;
+  final Map<String, dynamic>? query;
+
+  Map<String, dynamic> toJson() => {'path': path, 'query': ?query};
 }
 
 /// The principal node was definitively unreachable before delivery.

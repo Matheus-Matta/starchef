@@ -1,3 +1,5 @@
+import logging
+
 from .base import *  # noqa: F403
 from decouple import config
 from django.core.exceptions import ImproperlyConfigured
@@ -56,4 +58,10 @@ if SENTRY_DSN:
         traces_sample_rate=config("SENTRY_TRACES_SAMPLE_RATE", default=0.1, cast=float),
         # Não enviar PII (corpo de requisição/headers) por padrão — dados de tenant.
         send_default_pii=config("SENTRY_SEND_PII", default=False, cast=bool),
+    )
+else:
+    # Silencioso não é seguro aqui: sem isso, "esquecer o DSN" só é descoberto
+    # quando já falta um erro em produção que ninguém viu.
+    logging.getLogger(__name__).warning(
+        "SENTRY_DSN não configurado em produção — erros não serão reportados ao Sentry."
     )

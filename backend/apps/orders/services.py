@@ -144,6 +144,8 @@ def add_order_item(
         order = Order.objects.select_for_update().get(pk=order.pk)
         if product.account_id != order.account_id:
             raise ValidationError("O produto não pertence à conta do pedido.")
+        if not product.restaurants.filter(pk=order.restaurant_id).exists():
+            raise ValidationError("O produto não está disponível neste restaurante.")
         if order.is_locked:
             raise ValidationError("Pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if not product.is_active:

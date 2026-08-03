@@ -1,6 +1,7 @@
 <template>
   <div
     class="sc-card"
+    :data-padding="padding"
     :style="[cardStyle, style]"
     @mouseenter="hover = interactive"
     @mouseleave="hover = false"
@@ -14,7 +15,7 @@
         <slot name="actions" />
       </div>
     </div>
-    <div :style="[bodyPaddingStyle, bodyStyle]">
+    <div class="sc-card__body" :style="[bodyPaddingStyle, bodyStyle]">
       <slot />
     </div>
   </div>
@@ -44,7 +45,7 @@ const cardStyle = computed(() => ({
 
 const headerStyle = computed(() => {
   const value = paddingValue.value === 0 ? "var(--space-5)" : paddingValue.value;
-  return { padding: `${value} ${value} 0` };
+  return { padding: value };
 });
 
 const bodyPaddingStyle = computed(() => ({ padding: paddingValue.value }));
@@ -88,5 +89,13 @@ const bodyPaddingStyle = computed(() => ({ padding: paddingValue.value }));
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .sc-card__header { padding: 14px !important; gap: 8px; }
+  .sc-card:not([data-padding="none"]) .sc-card__body { padding: 14px !important; }
+  .sc-card__title { font-size: 14px; line-height: 1.3; }
+  .sc-card__subtitle { line-height: 1.35; }
+  .sc-card__actions { max-width: 45%; overflow-x: auto; }
 }
 </style>

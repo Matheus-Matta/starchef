@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/widgets/copyable_error.dart';
+import '../domain/printer_endpoint.dart';
 import '../services/local_device_agent.dart';
 
 enum DeviceKind { printer, scale }
@@ -68,7 +69,7 @@ class _DeviceListPageState extends State<DeviceListPage> {
     } on ApiException catch (error) {
       loadError = error.message;
       if (mounted) {
-        showCopyableError(context, error.message);
+        showAppError(context, error);
       }
     } finally {
       if (mounted) setState(() => loading = false);
@@ -187,6 +188,7 @@ class _DeviceListPageState extends State<DeviceListPage> {
                               width: tableWidth,
                               child: PaginatedDataTable(
                                 header: Text('$title cadastradas'),
+                                showCheckboxColumn: false,
                                 rowsPerPage: rowsPerPage,
                                 availableRowsPerPage: pageOptions,
                                 showFirstLastButtons: true,
@@ -378,18 +380,8 @@ class _DeviceSource extends DataTableSource {
   @override
   int get selectedRowCount => 0;
 
-  static String _printerConnection(Map<String, dynamic> item) {
-    final settings = _deviceSettings(item);
-    final type =
-        '${settings['connection_type'] ?? item['connection_type'] ?? 'windows'}';
-    if (type == 'network') {
-      return '${item['host'] ?? settings['host'] ?? '—'}:${item['port'] ?? settings['port'] ?? 9100}';
-    }
-    if (type == 'serial') {
-      return 'Serial · ${item['endpoint'] ?? '—'}';
-    }
-    return 'Windows · ${item['endpoint'] ?? '—'}';
-  }
+  static String _printerConnection(Map<String, dynamic> item) =>
+      PrinterEndpoint.fromJson(item).describe;
 }
 
 class DeviceEditPage extends StatefulWidget {
@@ -491,7 +483,7 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       localSerialPorts = await _loadWindowsSerialPorts();
     } on ApiException catch (error) {
       if (mounted) {
-        showCopyableError(context, error.message);
+        showAppError(context, error);
       }
     } finally {
       if (mounted) setState(() => loadingChoices = false);
@@ -627,7 +619,7 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (error) {
       if (mounted) {
-        showCopyableError(context, error.message);
+        showAppError(context, error);
       }
     } finally {
       if (mounted) setState(() => saving = false);
@@ -673,11 +665,7 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         accessToken: widget.token,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Conexão confirmada. A nota de teste foi impressa.'),
-          ),
-        );
+        showAppToast(context, 'Conexão confirmada. A nota de teste foi impressa.');
       }
     } catch (error) {
       final jobId = job?['print_job_id'];
@@ -691,10 +679,13 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         } catch (_) {}
       }
       if (mounted) {
-        final message = error is ApiException
-            ? error.message
-            : 'Não foi possível imprimir a nota de teste: $error';
-        showCopyableError(context, message);
+        showAppError(
+          context,
+          error,
+          title: 'Não foi possível imprimir a nota de teste',
+          recommendedAction:
+              'Confira o endereço da impressora e se ela está ligada.',
+        );
       }
     } finally {
       if (mounted) setState(() => testing = false);

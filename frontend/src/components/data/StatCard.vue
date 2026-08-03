@@ -58,6 +58,14 @@ const deltaStyle = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  animation: soft-pop var(--motion-slow) var(--motion-spring) both;
+  transition: transform var(--motion-base) var(--motion-spring), box-shadow var(--motion-base) ease, border-color var(--motion-base) ease;
+}
+
+.sc-stat-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand) 22%, var(--border));
+  box-shadow: var(--shadow-md);
 }
 
 .sc-stat-card__header {
@@ -113,5 +121,14 @@ const deltaStyle = computed(() => {
 .sc-stat-card__caption {
   font: var(--font-caption);
   color: var(--text-subtle);
+}
+
+@media (max-width: 560px) {
+  .sc-stat-card { padding: 14px; gap: 10px; min-width: 0; }
+  .sc-stat-card:hover { transform: none; }
+  .sc-stat-card__icon { width: 32px; height: 32px; font-size: 16px; }
+  .sc-stat-card__label { font-size: 11px; line-height: 1.25; }
+  .sc-stat-card__value { font-size: clamp(20px, 7vw, 27px); overflow-wrap: anywhere; }
+  .sc-stat-card__caption { font-size: 11px; line-height: 1.3; }
 }
 </style>

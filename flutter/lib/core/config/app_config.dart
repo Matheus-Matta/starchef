@@ -1,12 +1,28 @@
 import 'dart:io';
 
 class AppConfig {
-  const AppConfig({required this.apiBaseUrl, this.envFilePath});
+  const AppConfig({
+    required this.apiBaseUrl,
+    this.envFilePath,
+    this.usedFallbackApiUrl = false,
+    this.sentryDsn,
+  });
 
   static const _fallbackApiUrl = 'http://localhost:8000/api/v1';
 
   final String apiBaseUrl;
   final String? envFilePath;
+
+  /// True quando nenhuma URL de API foi configurada (nem --dart-define, nem
+  /// .env) e o app caiu no fallback de desenvolvimento. Um terminal real
+  /// nessa condição "funciona" apontando para lugar nenhum — quem chama
+  /// [load] deve tornar isso visível em vez de deixar passar em silêncio.
+  final bool usedFallbackApiUrl;
+
+  /// DSN do Sentry (opcional). Sem ela, `main.dart` não inicializa o Sentry —
+  /// mesmo critério de "zero overhead sem configuração" usado no backend e
+  /// no frontend web.
+  final String? sentryDsn;
 
   /// Base do WebSocket derivada da API (http→ws, https→wss), sem o sufixo
   /// `/api/v1`. Ex.: `http://host:8001/api/v1` → `ws://host:8001`.
@@ -22,13 +38,24 @@ class AppConfig {
 
   static Future<AppConfig> load() async {
     const definedUrl = String.fromEnvironment('API_BASE_URL');
+    const definedDsn = String.fromEnvironment('PDV_SENTRY_DSN');
+
     if (definedUrl.isNotEmpty) {
-      return const AppConfig(apiBaseUrl: definedUrl);
+      // --dart-define resolve a API diretamente; ainda assim tenta achar um
+      // .env só para pegar PDV_SENTRY_DSN, se a DSN não veio por --dart-define.
+      final dsn = definedDsn.isNotEmpty
+          ? definedDsn
+          : await _sentryDsnFromEnvFile();
+      return AppConfig(apiBaseUrl: definedUrl, sentryDsn: _orNull(dsn));
     }
 
     final envFile = await EnvFileLoader.find();
     if (envFile == null) {
-      return const AppConfig(apiBaseUrl: _fallbackApiUrl);
+      return AppConfig(
+        apiBaseUrl: _fallbackApiUrl,
+        usedFallbackApiUrl: true,
+        sentryDsn: _orNull(definedDsn),
+      );
     }
 
     final values = await EnvFileLoader.read(
@@ -37,6 +64,7 @@ class AppConfig {
         'VITE_API_BASE_URL',
         'VITE_BACKEND_TARGET',
         'API_BASE_URL',
+        'PDV_SENTRY_DSN',
       },
     );
     final explicitApiUrl = values['API_BASE_URL'];
@@ -52,8 +80,23 @@ class AppConfig {
     return AppConfig(
       apiBaseUrl: _normalizeUrl(apiUrl!),
       envFilePath: envFile.path,
+      usedFallbackApiUrl: apiUrl == _fallbackApiUrl,
+      sentryDsn: _orNull(definedDsn.isNotEmpty ? definedDsn : values['PDV_SENTRY_DSN']),
     );
   }
+
+  static Future<String?> _sentryDsnFromEnvFile() async {
+    final envFile = await EnvFileLoader.find();
+    if (envFile == null) return null;
+    final values = await EnvFileLoader.read(
+      envFile,
+      allowedKeys: const {'PDV_SENTRY_DSN'},
+    );
+    return values['PDV_SENTRY_DSN'];
+  }
+
+  static String? _orNull(String? value) =>
+      (value == null || value.trim().isEmpty) ? null : value.trim();
 
   static bool _absoluteHttpUrl(String? value) {
     if (value == null || value.trim().isEmpty) return false;

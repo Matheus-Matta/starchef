@@ -29,7 +29,11 @@
         @logout="logout"
       />
       <section class="app-content" :class="{ 'app-content--full': route.meta.fullWidth, 'app-content--mobile-nav': showMobileBottomNav }">
-        <RouterView :key="routeViewKey" />
+        <RouterView v-slot="{ Component }">
+          <Transition name="page" mode="out-in">
+            <component :is="Component" :key="routeViewKey" />
+          </Transition>
+        </RouterView>
       </section>
       <MobileBottomNav
         v-if="showMobileBottomNav"
@@ -56,6 +60,7 @@ import { resources } from "../config/resources";
 import { api } from "../services/api";
 import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
+import { useRealtimeResource } from "../composables/useRealtimeResource";
 
 const route = useRoute();
 const router = useRouter();
@@ -71,13 +76,17 @@ const restaurants = ref([]);
 const selectedRestaurantId = ref(localStorage.getItem("starchef-restaurant-scope") || "");
 const scopeRefreshKey = ref(0);
 let summaryTimer = null;
+useRealtimeResource(
+  ["orders.order", "orders.orderitem", "payments.payment"],
+  () => loadDashboardSummary(),
+  { debounce: 250 },
+);
 
 const activeKey = computed(() => route.meta.nav || route.name || "painel");
 const currentResource = computed(() => resources.find((resource) => resource.name === route.name) || null);
 const isPdvRoute = computed(() => ["pdv", "pedido-editar-itens"].includes(String(route.name)));
 const showMobileBottomNav = computed(() => {
-  const staticPages = new Set(["painel", "relatorio-geral", "relatorios"]);
-  return staticPages.has(String(route.name)) || Boolean(currentResource.value);
+  return (String(route.name) === "painel" || String(route.name).startsWith("relatorio")) || Boolean(currentResource.value);
 });
 const canCreateHere = computed(() => {
   if (currentResource.value) return Boolean(currentResource.value.formFields || currentResource.value.pro?.primaryAction);

@@ -9,11 +9,10 @@ class OrderCartPanel extends StatelessWidget {
     super.key,
     required this.order,
     required this.table,
+    this.command,
     required this.customer,
     required this.items,
-    required this.products,
     required this.money,
-    required this.imageUrlFor,
     required this.onVoidItem,
     required this.onFinish,
     required this.onPrint,
@@ -22,11 +21,10 @@ class OrderCartPanel extends StatelessWidget {
 
   final Map<String, dynamic>? order;
   final Map<String, dynamic>? table;
+  final Map<String, dynamic>? command;
   final Map<String, dynamic>? customer;
   final List<Map<String, dynamic>> items;
-  final List<Map<String, dynamic>> products;
   final String Function(dynamic) money;
-  final String? Function(Map<String, dynamic>) imageUrlFor;
   final ValueChanged<Map<String, dynamic>> onVoidItem;
   final VoidCallback onFinish;
   final VoidCallback onPrint;
@@ -238,6 +236,11 @@ class OrderCartPanel extends StatelessWidget {
   String _contextLabel() {
     final type = '${order?['order_type'] ?? ''}';
     if (table != null) return 'Mesa ${table!['number']} · Salão';
+    if (command != null) {
+      final name = '${command!['customer_name'] ?? ''}'.trim();
+      final label = 'Comanda ${command!['number']}';
+      return name.isEmpty ? '$label · Self-service' : '$label · $name';
+    }
     if (customer != null) {
       final phone = '${customer!['phone'] ?? ''}'.trim();
       return phone.isEmpty
@@ -293,36 +296,87 @@ class OrderCartPanel extends StatelessWidget {
     );
   }
 
+  /// Lista os itens agrupados por situação, como no frontend web.
+  ///
+  /// Separar o que já foi para a produção do que ainda aguarda envio é a
+  /// informação que o operador precisa antes de fechar: só a segunda parte
+  /// ainda pode ser removida.
   Widget _items(BuildContext context) {
-    return ListView.separated(
+    final sent = items
+        .where((item) => item['status'] != 'pending')
+        .toList(growable: false);
+    final pending = items
+        .where((item) => item['status'] == 'pending')
+        .toList(growable: false);
+
+    return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      itemCount: items.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final note = '${item['customer_note'] ?? ''}'.trim();
-        final product = _productFor(item);
-        final imageUrl = product == null ? null : imageUrlFor(product);
-        final canRemove = item['status'] == 'pending';
-        return _CartItem(
-          item: item,
-          imageUrl: imageUrl,
-          note: note,
-          canRemove: canRemove,
-          money: money,
-          onRemove: () => onVoidItem(item),
-        );
-      },
+      children: [
+        if (sent.isNotEmpty) ...[
+          _sectionLabel(
+            context,
+            icon: Icons.soup_kitchen_outlined,
+            label: 'Em produção (${sent.length})',
+          ),
+          for (final item in sent)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _CartItem(
+                item: item,
+                money: money,
+                canRemove: false,
+                onRemove: () {},
+              ),
+            ),
+        ],
+        if (pending.isNotEmpty) ...[
+          _sectionLabel(
+            context,
+            icon: Icons.schedule_outlined,
+            label: 'Aguardando envio (${pending.length})',
+            highlight: true,
+          ),
+          for (final item in pending)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _CartItem(
+                item: item,
+                money: money,
+                canRemove: true,
+                onRemove: () => onVoidItem(item),
+              ),
+            ),
+        ],
+      ],
     );
   }
 
-  Map<String, dynamic>? _productFor(Map<String, dynamic> item) {
-    final id = '${item['product'] ?? ''}';
-    if (id.isEmpty) return null;
-    for (final product in products) {
-      if ('${product['id']}' == id) return product;
-    }
-    return null;
+  Widget _sectionLabel(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    bool highlight = false,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = highlight ? scheme.primary : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 4, 2, 7),
+      child: Row(
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .5,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   static String _typeLabel(String type) => switch (type) {
@@ -339,19 +393,21 @@ class OrderCartPanel extends StatelessWidget {
   }
 }
 
+/// Linha do pedido, no mesmo formato do frontend web.
+///
+/// Sem miniatura do produto: a foto ocupava espaço numa coluna estreita sem
+/// ajudar quem já escolheu o item, e uma imagem remota ainda falhava com o
+/// terminal offline. O que importa aqui é nome, variações, observação,
+/// quantidade e valor.
 class _CartItem extends StatelessWidget {
   const _CartItem({
     required this.item,
-    required this.imageUrl,
-    required this.note,
     required this.canRemove,
     required this.money,
     required this.onRemove,
   });
 
   final Map<String, dynamic> item;
-  final String? imageUrl;
-  final String note;
   final bool canRemove;
   final String Function(dynamic) money;
   final VoidCallback onRemove;
@@ -359,8 +415,12 @@ class _CartItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final note = '${item['customer_note'] ?? ''}'.trim();
+    final extras = _extras();
+    final comped = item['status'] == 'comped';
+
     return Container(
-      padding: const EdgeInsets.all(9),
+      padding: const EdgeInsets.fromLTRB(11, 9, 7, 9),
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(11),
@@ -369,35 +429,6 @@ class _CartItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 50,
-              height: 50,
-              child: imageUrl == null
-                  ? ColoredBox(
-                      color: scheme.primaryContainer,
-                      child: Icon(
-                        Icons.restaurant_outlined,
-                        color: scheme.primary,
-                        size: 22,
-                      ),
-                    )
-                  : Image.network(
-                      imageUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => ColoredBox(
-                        color: scheme.primaryContainer,
-                        child: Icon(
-                          Icons.restaurant_outlined,
-                          color: scheme.primary,
-                          size: 22,
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,20 +438,24 @@ class _CartItem extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: 12.5,
                     height: 1.2,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  '${item['quantity']} × ${money(item['unit_price'])}',
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+                if (extras.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    extras,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                ],
                 if (note.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(
@@ -434,37 +469,117 @@ class _CartItem extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (!canRemove) ...[
+                  const SizedBox(height: 5),
+                  _statusChip(context),
+                ],
               ],
             ),
           ),
-          const SizedBox(width: 5),
+          const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                money(item['total_price']),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
+                '${_quantityLabel()} ${money(item['unit_price'])}'
+                '${item['pricing_unit'] == 'kg' ? '/kg' : ''}',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 5),
-              SizedBox(
-                width: 30,
-                height: 30,
-                child: IconButton(
-                  padding: EdgeInsets.zero,
-                  tooltip: canRemove
-                      ? 'Remover item'
-                      : 'Item já enviado e não pode ser removido aqui',
-                  onPressed: canRemove ? onRemove : null,
-                  icon: const Icon(Icons.close_rounded, size: 18),
+              const SizedBox(height: 3),
+              Text(
+                money(item['total_price']),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  decoration: comped ? TextDecoration.lineThrough : null,
+                  color: comped ? scheme.onSurfaceVariant : null,
                 ),
               ),
             ],
           ),
+          if (canRemove)
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                tooltip: 'Cancelar item',
+                onPressed: onRemove,
+                icon: const Icon(Icons.close_rounded, size: 17),
+              ),
+            )
+          else
+            const SizedBox(width: 30),
         ],
       ),
     );
   }
+
+  Widget _statusChip(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final batch = item['batch_number'];
+    return Wrap(
+      spacing: 5,
+      runSpacing: 4,
+      children: [
+        if (batch != null)
+          _chip(context, 'Rodada $batch', scheme.surfaceContainerHigh),
+        _chip(
+          context,
+          _statusLabel('${item['status'] ?? ''}'),
+          scheme.secondaryContainer,
+        ),
+      ],
+    );
+  }
+
+  Widget _chip(BuildContext context, String label, Color background) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800),
+        ),
+      );
+
+  String _quantityLabel() {
+    final quantity = OrderCartPanel._number(item['quantity']);
+    if (item['pricing_unit'] == 'kg') {
+      return '${quantity.toStringAsFixed(3).replaceAll('.', ',')} kg ×';
+    }
+    return '${quantity.toStringAsFixed(0)}×';
+  }
+
+  /// Variações e adicionais em uma linha, como o frontend web faz.
+  String _extras() {
+    final parts = <String>[
+      for (final variation in (item['variations'] as List? ?? const []))
+        if (variation is Map)
+          '${variation['name'] ?? ''}'.trim()
+        else
+          '$variation'.trim(),
+      for (final addon in (item['addons'] as List? ?? const []))
+        if (addon is Map) '${addon['addon_name'] ?? addon['name'] ?? ''}'.trim(),
+    ];
+    return parts.where((part) => part.isNotEmpty).join(' · ');
+  }
+
+  static String _statusLabel(String status) => switch (status) {
+    'pending' => 'Pendente',
+    'sent' => 'Cozinha',
+    'preparing' => 'Preparo',
+    'ready' => 'Pronto',
+    'delivered' => 'Entregue',
+    'cancelled' => 'Cancelado',
+    'comped' => 'Cortesia',
+    _ => status,
+  };
 }

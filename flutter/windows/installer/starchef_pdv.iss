@@ -1,5 +1,10 @@
 #define AppName "StarChef PDV"
-#define AppVersion "1.0.0"
+; AppVersion normalmente vem de fora (build_installer.ps1 lê o pubspec.yaml e
+; passa /DAppVersion=X.Y.Z ao ISCC) — assim a versão só existe em um lugar.
+; O default abaixo só é usado se o .iss for compilado direto, sem o script.
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define AppPublisher "StarChef"
 #define AppExeName "starchef_pdv.exe"
 #define SourceDir "..\..\build\windows\x64\runner\Release"
@@ -14,7 +19,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\..\..\artifacts
-OutputBaseFilename=StarChef-PDV-Setup-1.0.0-offline
+OutputBaseFilename=StarChef-PDV-Setup-{#AppVersion}-offline
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

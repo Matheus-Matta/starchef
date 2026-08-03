@@ -10,12 +10,20 @@
     td { padding: 3px 0; vertical-align: top; }
     .right { text-align: right; }
     .line { border-top: 1px dashed #111; margin: 8px 0; }
+    .barcode { margin-top: 12px; text-align: center; }
+    .barcode img { display: block; max-width: 100%; height: 54px; margin: 0 auto 4px; }
+    .barcode-label { font-family: monospace; letter-spacing: 1px; }
   </style>
 </head>
 <body>
-  <h1>{{ order.restaurant.trade_name }}</h1>
-  <p>CNPJ: {{ order.restaurant.cnpj }}</p>
-  <p>{{ order.branch.address }} {{ order.branch.city }} {{ order.branch.state }}</p>
+  <h1>{{ establishment.trade_name }}</h1>
+  <p>CNPJ: {{ establishment.cnpj|default:"-" }}{% if establishment.state_registration %} · IE: {{ establishment.state_registration }}{% endif %}</p>
+  {% if establishment.address or establishment.city %}
+    <p>{{ establishment.address }} {{ establishment.city }}{% if establishment.state %}/{{ establishment.state }}{% endif %}{% if establishment.zip_code %} · CEP {{ establishment.zip_code }}{% endif %}</p>
+  {% endif %}
+  {% if establishment.phone %}
+    <p>Tel: {{ establishment.phone }}</p>
+  {% endif %}
   <div class="line"></div>
   <p>Pedido: {{ order.sequence }}</p>
   <p>Mesa: {{ order.table.number|default:"-" }} Comanda: {{ order.command.code|default:"-" }}</p>
@@ -73,7 +81,16 @@
     </table>
   {% endif %}
   <div class="line"></div>
+  {% if barcode.value %}
+    <div class="barcode" data-symbology="{{ barcode.symbology }}">
+      {% if barcode.data_uri %}
+        <img src="{{ barcode.data_uri }}" alt="Codigo de barras Code128 da comanda {{ barcode.value }}">
+      {% endif %}
+      <p>Comanda · {{ barcode.symbology }}</p>
+      <p class="barcode-label">{{ barcode.value }}</p>
+    </div>
+    <div class="line"></div>
+  {% endif %}
   <p>Obrigado pela preferencia.</p>
 </body>
 </html>
-

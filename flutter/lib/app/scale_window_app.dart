@@ -1,7 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../core/errors/app_error_host.dart';
+import '../core/errors/error_center.dart';
+import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/app_window_frame.dart';
+import '../core/widgets/responsive_scale.dart';
 import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/auth/presentation/login_page.dart';
@@ -11,10 +17,14 @@ class ScaleWindowApp extends StatefulWidget {
   const ScaleWindowApp({
     super.key,
     required this.authRepository,
+    required this.preferences,
+    required this.errorCenter,
     this.preferredRestaurantId,
   });
 
   final AuthRepository authRepository;
+  final LocalPreferences preferences;
+  final ErrorCenter errorCenter;
   final String? preferredRestaurantId;
 
   @override
@@ -24,7 +34,15 @@ class ScaleWindowApp extends StatefulWidget {
 class _ScaleWindowAppState extends State<ScaleWindowApp> {
   late final AuthController _auth = AuthController(widget.authRepository)
     ..initialize();
-  ThemeMode _themeMode = ThemeMode.light;
+  late ThemeMode _themeMode = widget.preferences.themeMode;
+
+  void _toggleTheme() {
+    final next = _themeMode == ThemeMode.dark
+        ? ThemeMode.light
+        : ThemeMode.dark;
+    setState(() => _themeMode = next);
+    unawaited(widget.preferences.setThemeMode(next));
+  }
 
   @override
   void dispose() {
@@ -41,7 +59,13 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
     themeMode: _themeMode,
     builder: (context, child) => AppWindowFrame(
       title: 'StarChef · Balança Rápida',
-      child: child!,
+      // Dentro da moldura para não cobrir os botões da barra de título. A
+      // referência é o tamanho padrão desta janela (ver `main.dart`), menor
+      // que o do PDV principal — a balança abre numa janela mais compacta.
+      child: ResponsiveScale(
+        referenceSize: const Size(1180, 760),
+        child: AppErrorHost(center: widget.errorCenter, child: child!),
+      ),
     ),
     home: ListenableBuilder(
       listenable: _auth,
@@ -55,16 +79,13 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
           return LoginPage(
             controller: _auth,
             isDark: _themeMode == ThemeMode.dark,
-            onToggleTheme: () => setState(() {
-              _themeMode = _themeMode == ThemeMode.dark
-                  ? ThemeMode.light
-                  : ThemeMode.dark;
-            }),
+            onToggleTheme: _toggleTheme,
           );
         }
         return ScaleWindowPage(
           controller: _auth,
           preferredRestaurantId: widget.preferredRestaurantId,
+          preferences: widget.preferences,
         );
       },
     ),

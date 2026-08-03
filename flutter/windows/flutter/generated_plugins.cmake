@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_libserialport
   flutter_secure_storage_windows
   screen_retriever_windows
+  sentry_flutter
   window_manager
 )
 

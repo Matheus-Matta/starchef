@@ -2,19 +2,26 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/errors/app_error.dart';
+import '../../../core/errors/app_error_host.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/value_formatters.dart';
+import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
+import '../../orders/data/local_order_store.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/order_cart_panel.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
+import '../../orders/presentation/product_config_dialog.dart';
 import '../../scale/presentation/scale_workstation_page.dart';
+import '../../settings/presentation/terminal_preferences_dialog.dart';
+import '../../sync/presentation/outbox_review_dialog.dart';
 import '../../scale/services/scale_window_launcher.dart';
 import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
@@ -32,6 +39,7 @@ class HomePage extends StatefulWidget {
     required this.onToggleTheme,
     required this.isFullScreen,
     required this.onToggleFullScreen,
+    required this.preferences,
   });
 
   final AuthController controller;
@@ -39,6 +47,7 @@ class HomePage extends StatefulWidget {
   final VoidCallback onToggleTheme;
   final bool isFullScreen;
   final VoidCallback onToggleFullScreen;
+  final LocalPreferences preferences;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -50,8 +59,13 @@ class _HomePageState extends State<HomePage> {
   String? get restaurantId => selectedRestaurantId;
 
   bool loading = true;
+
+  /// Recarga em segundo plano: os dados estão sendo atualizados, mas a tela
+  /// atual continua utilizável.
+  bool refreshing = false;
   bool busy = false;
   bool printingReceipt = false;
+  bool emittingInvoice = false;
   bool divergenceDialogOpen = false;
   bool movementApprovalDialogOpen = false;
   String flowStep = 'type';
@@ -59,8 +73,14 @@ class _HomePageState extends State<HomePage> {
   String search = '';
   String? category;
   Map<String, dynamic>? cashSession;
+
+  /// A sessão de caixa veio do cache local, não de uma leitura ao servidor.
+  /// O estado pode ter mudado em outro terminal enquanto este esteve offline.
+  bool cashSessionFromCache = false;
   Map<String, dynamic>? activeOrder;
   Map<String, dynamic>? selectedTable;
+  Map<String, dynamic>? selectedCommand;
+  String commandSearch = '';
   Map<String, dynamic>? selectedCustomer;
   Map<String, dynamic>? pendingCashMovement;
   List<Map<String, dynamic>> stations = [];
@@ -68,6 +88,7 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> categories = [];
   List<Map<String, dynamic>> tables = [];
+  List<Map<String, dynamic>> commands = [];
   List<Map<String, dynamic>> orderItems = [];
   List<Map<String, dynamic>> paymentMethods = [];
   List<Map<String, dynamic>> registeredPayments = [];
@@ -75,21 +96,44 @@ class _HomePageState extends State<HomePage> {
   bool ordersLoading = false;
   String? loadErrorMessage;
   String orderStatusFilter = 'pending';
+  String orderSearch = '';
+  String? orderTypeFilter;
+  String orderOrdering = '-opened_at';
+  DateTimeRange? orderDateRange;
+
+  /// A busca não alcançou o servidor e o resultado saiu do que já estava
+  /// guardado — pode faltar pedido antigo. A tela avisa em vez de fingir que
+  /// achou tudo.
+  bool ordersPartial = false;
+  final ordersSearchController = TextEditingController();
+  Timer? ordersSearchDebounce;
   String? selectedPaymentMethod;
   String paymentDigits = '0';
-  String cardSubtype = 'debit';
+  String? removingPaymentId;
   final paymentReference = TextEditingController();
   final paymentAmount = TextEditingController();
   String? selectedRestaurantId;
   late final LocalDeviceAgent deviceAgent;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
+
+  /// Cópia local dos pedidos, com as edições offline já aplicadas.
+  final LocalOrderStore orderStore = LocalOrderStore();
   StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
+  StreamSubscription<void>? ordersSignalSubscription;
   LocalTopologyService? topologyService;
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
   );
   bool offlineMode = false;
+
+  /// Este terminal é um Caixa Cliente, que depende do principal para gravar.
+  bool get isSecondaryStation =>
+      topologyService?.config?.mode == LocalTopologyMode.client;
+
+  /// O principal respondeu ao último teste de conexão.
+  bool get principalReachable =>
+      topologyService?.status.phase == LocalTopologyPhase.clientReady;
   int offlinePendingCount = 0;
   bool sidebarExpanded = true;
 
@@ -152,18 +196,55 @@ class _HomePageState extends State<HomePage> {
     syncStatusSubscription = api.syncStatusChanges.listen((status) {
       if (!mounted) return;
       final online = status.hasConnection;
-      final shouldReload =
+      // A rede voltar é motivo para reler os dados, não para reconstruir a
+      // tela. Como `_load` só apaga a tela na primeira carga, uma oscilação
+      // agora passa despercebida pelo operador — antes ela devolvia o PDV a
+      // uma tela em branco no meio do atendimento.
+      final shouldRefresh =
           online &&
-          ((offlineMode && !loading) ||
-              (offlinePendingCount > 0 && status.total == 0));
+          !loading &&
+          !refreshing &&
+          (offlineMode || (offlinePendingCount > 0 && status.total == 0));
       setState(() {
         networkStatus = status;
         offlineMode = !online;
         offlinePendingCount = status.total;
       });
-      if (shouldReload) unawaited(_load());
+      // Com a conexão de volta, o aviso de "sem conexão" perdeu o assunto e
+      // sai sozinho — o operador não precisa fechá-lo à mão.
+      if (online) ErrorCenterScope.read(context).dismissByKey('connectivity');
+      if (shouldRefresh) unawaited(_load());
+    });
+    // Quando um pedido muda — porque chegou do servidor, do Caixa Principal ou
+    // de uma edição offline —, a tela relê do armazenamento local. A leitura é
+    // barata e local, então isso nunca prende a interface esperando a rede.
+    ordersSignalSubscription = api.signals.on('orders').listen((_) {
+      if (mounted) unawaited(_refreshFromSignal());
     });
     _load();
+  }
+
+  /// Relê o que está na tela a partir da cópia local.
+  Future<void> _refreshFromSignal() async {
+    final scope = api.sessionScope;
+    if (scope == null) return;
+    if (flowStep == 'orders') {
+      final local = await _ordersFromStore(scope);
+      if (!mounted || local.isEmpty) return;
+      setState(() => orders = local);
+      return;
+    }
+    final current = activeOrder;
+    if (current == null || flowStep != 'order') return;
+    final stored = await orderStore.read('${current['id']}', scope: scope);
+    if (!mounted || stored == null) return;
+    setState(() {
+      activeOrder = stored;
+      orderItems = (stored['items'] as List? ?? const [])
+          .cast<Map<String, dynamic>>()
+          .where((item) => item['status'] != 'voided')
+          .toList();
+    });
   }
 
   Future<List<Map<String, dynamic>>> _list(
@@ -220,9 +301,18 @@ class _HomePageState extends State<HomePage> {
     setState(() {});
   }
 
+  /// Recarrega os dados do PDV.
+  ///
+  /// A tela só é apagada na primeira vez, quando ainda não há nada para
+  /// mostrar. Depois disso a recarga acontece por baixo: os dados são
+  /// trocados quando chegam e o operador continua na mesma tela, com o mesmo
+  /// pedido aberto. Antes, qualquer oscilação de rede — cair e voltar —
+  /// devolvia o PDV a uma tela em branco no meio do atendimento.
   Future<void> _load() async {
+    final firstLoad = restaurants.isEmpty;
     setState(() {
-      loading = true;
+      loading = firstLoad;
+      refreshing = !firstLoad;
       loadErrorMessage = null;
     });
     try {
@@ -241,16 +331,17 @@ class _HomePageState extends State<HomePage> {
       products = catalog.products;
       categories = catalog.categories;
       tables = catalog.tables;
+      commands = catalog.commands;
       try {
         await _ensureTopology();
       } catch (error) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'O PDV foi carregado, mas a rede local não iniciou: $error',
-              ),
-            ),
+          showAppToast(
+            context,
+            'A rede local não iniciou: $error',
+            title: 'Rede local indisponível',
+            severity: AppErrorSeverity.warning,
+            autoDismissAfter: const Duration(seconds: 8),
           );
         }
       }
@@ -276,19 +367,39 @@ class _HomePageState extends State<HomePage> {
                   }.contains('${item?['movement_type']}'),
               orElse: () => null,
             );
+        cashSessionFromCache = currentSession['_offline_cache'] == true;
       } on ApiException catch (error) {
-        if (error.statusCode != 404) rethrow;
+        // 404 significa "nenhum caixa aberto". Sem rede e sem cache prévio o
+        // terminal também não sabe o estado do caixa; em ambos os casos ele
+        // segue carregando, porque abrir/fechar já exige servidor e falharia
+        // com mensagem própria.
+        if (error.statusCode != null && error.statusCode != 404) rethrow;
         cashSession = null;
         pendingCashMovement = null;
+        cashSessionFromCache = false;
       }
     } catch (error) {
-      loadErrorMessage = error is ApiException
-          ? error.message
-          : 'Não foi possível carregar os dados iniciais do PDV.';
-      if (mounted) _error(error);
+      // Numa recarga de fundo o operador já tem uma tela utilizável: falhar
+      // aqui não pode substituí-la por um erro de tela cheia. O alerta global
+      // e o indicador de conexão já contam o que houve.
+      if (firstLoad) {
+        loadErrorMessage = error is ApiException
+            ? error.message
+            : 'Não foi possível carregar os dados iniciais do PDV.';
+      }
+      if (mounted && !(error is ApiException && error.isConnectivity)) {
+        _error(error);
+      }
     } finally {
       if (mounted) {
-        setState(() => loading = false);
+        setState(() {
+          loading = false;
+          refreshing = false;
+        });
+        // Guarda os pedidos recentes assim que o PDV abre, para que uma queda
+        // de rede depois não impeça de reabrir um pedido lançado em outro
+        // caixa. Fora do caminho crítico: o operador não espera por isso.
+        unawaited(_warmOrdersCache());
         if (restaurantId != null &&
             topologyService?.config?.mode != LocalTopologyMode.client) {
           deviceAgent.start(token: token, restaurantId: restaurantId!);
@@ -312,6 +423,7 @@ class _HomePageState extends State<HomePage> {
       selectedRestaurantId = value;
       activeOrder = null;
       selectedTable = null;
+      selectedCommand = null;
       selectedCustomer = null;
       orderItems = [];
       registeredPayments = [];
@@ -319,6 +431,13 @@ class _HomePageState extends State<HomePage> {
       orderType = null;
       category = null;
       flowStep = 'type';
+      // Aqui o conteúdo antigo precisa sair: manter o cardápio e as mesas do
+      // restaurante anterior na tela levaria alguém a lançar no lugar errado.
+      // É a única troca que ainda mostra "carregando".
+      products = [];
+      categories = [];
+      tables = [];
+      restaurants = [];
     });
     await _load();
   }
@@ -338,13 +457,7 @@ class _HomePageState extends State<HomePage> {
       );
       if (!mounted) return;
       if (opened) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Balança Rápida aberta em uma janela independente.',
-            ),
-          ),
-        );
+        showAppToast(context, 'Balança Rápida aberta em uma janela independente.');
         return;
       }
     } catch (_) {
@@ -354,38 +467,305 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => flowStep = 'scale-workstation');
   }
 
-  Future<void> _syncNow() async {
-    await api.syncPendingNow();
+  /// Abre a revisão da fila e reflete o resultado no badge ao fechar.
+  Future<void> _openOutboxReview() async {
+    await OutboxReviewDialog.show(context, api);
     final pending = await api.pendingOperations();
     if (!mounted) return;
     setState(() => offlinePendingCount = pending);
   }
 
+  /// Página de pedidos guardada localmente.
+  ///
+  /// A listagem já vem com os itens de cada pedido, então uma página é a
+  /// cópia completa do que dá para editar offline. 50 é um meio-termo: cobre
+  /// o movimento recente sem transferir centenas de pedidos com todos os
+  /// itens aninhados a cada abertura do PDV.
+  static const _ordersPageSize = 50;
+
+  /// Consulta fixa de aquecimento do cache.
+  ///
+  /// Não leva filtro nenhum de propósito: o cache do `ApiClient` é gravado por
+  /// consulta exata, então esta precisa ser sempre a mesma para que exista uma
+  /// lista guardada quando a rede cair. Os filtros da tela usam
+  /// [_ordersServerQuery], que é outra consulta.
+  Map<String, dynamic> get _ordersQuery => {
+    'page_size': _ordersPageSize,
+    'ordering': '-opened_at',
+    'restaurant': restaurantId,
+  };
+
+  /// Consulta da tela de Pedidos, com os filtros do operador.
+  ///
+  /// Manda para a API o que ela sabe filtrar (busca, tipo, período,
+  /// ordenação), para que a procura alcance o histórico inteiro e não só a
+  /// página que já foi baixada. O agrupamento de situação continua sendo
+  /// refinado na memória por [_matchesStatusFilter] — "pendentes" cruza
+  /// `status` e `payment_status`, o que a API não expressa num parâmetro só.
+  Map<String, dynamic> get _ordersServerQuery {
+    final query = <String, dynamic>{
+      'page_size': _ordersPageSize,
+      'ordering': orderOrdering,
+      'restaurant': restaurantId,
+    };
+    final term = orderSearch.trim();
+    if (term.isNotEmpty) query['search'] = term;
+    if (orderTypeFilter != null) query['order_type'] = orderTypeFilter;
+    if (orderStatusFilter == 'pending') {
+      query['payment_status'] = 'pending';
+    } else if (orderStatusFilter != 'all') {
+      query['status'] = orderStatusFilter;
+    }
+    final range = orderDateRange;
+    if (range != null) {
+      query['opened_after'] = _isoDate(range.start);
+      query['opened_before'] = _isoDate(range.end);
+    }
+    return query;
+  }
+
+  static String _isoDate(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
+  /// Agrupamento de situação escolhido no seletor da tela.
+  bool _matchesStatusFilter(Map<String, dynamic> order) {
+    switch (orderStatusFilter) {
+      case 'all':
+        return true;
+      case 'pending':
+        return order['payment_status'] != 'paid' &&
+            {'open', 'awaiting_payment'}.contains('${order['status']}');
+      default:
+        return '${order['status']}' == orderStatusFilter;
+    }
+  }
+
+  /// Filtro local, usado quando a busca não alcançou o servidor.
+  bool _matchesLocalFilters(Map<String, dynamic> order) {
+    if (!_matchesStatusFilter(order)) return false;
+    if (orderTypeFilter != null &&
+        '${order['order_type']}' != orderTypeFilter) {
+      return false;
+    }
+    final range = orderDateRange;
+    if (range != null) {
+      final openedAt = DateTime.tryParse('${order['opened_at'] ?? ''}');
+      if (openedAt == null) return false;
+      final day = DateTime(openedAt.year, openedAt.month, openedAt.day);
+      final start = DateTime(
+        range.start.year,
+        range.start.month,
+        range.start.day,
+      );
+      final end = DateTime(range.end.year, range.end.month, range.end.day);
+      if (day.isBefore(start) || day.isAfter(end)) return false;
+    }
+    final term = orderSearch.trim().toLowerCase();
+    if (term.isEmpty) return true;
+    final haystack =
+        '${order['sequence'] ?? ''} ${order['customer_name'] ?? ''} '
+                '${order['table_number'] ?? ''} ${order['command_code'] ?? ''}'
+            .toLowerCase();
+    return haystack.contains(term);
+  }
+
+  /// Ordena a lista local pelo mesmo critério pedido ao servidor.
+  List<Map<String, dynamic>> _sortedLocally(List<Map<String, dynamic>> list) {
+    final descending = orderOrdering.startsWith('-');
+    final field = descending ? orderOrdering.substring(1) : orderOrdering;
+    final sorted = [...list];
+    sorted.sort((a, b) {
+      final comparison = switch (field) {
+        'total' => _number(a['total']).compareTo(_number(b['total'])),
+        'sequence' => _number(a['sequence']).compareTo(_number(b['sequence'])),
+        _ => '${a['opened_at'] ?? ''}'.compareTo('${b['opened_at'] ?? ''}'),
+      };
+      return descending ? -comparison : comparison;
+    });
+    return sorted;
+  }
+
+  /// Baixa e guarda os pedidos recentes sem prender a interface.
+  Future<void> _warmOrdersCache() async {
+    if (restaurantId == null) return;
+    try {
+      await api.get('/orders/', query: _ordersQuery, accessToken: token);
+    } catch (_) {
+      // É só aquecimento de cache: sem rede, o que já estiver guardado serve,
+      // e a tela de Pedidos reporta o problema quando for aberta.
+    }
+  }
+
   Future<void> _openOrders() async {
+    final scope = api.sessionScope;
+    // Abre já com o que está guardado: a lista aparece na hora e a versão do
+    // servidor entra por cima quando chegar. Só mostra "carregando" quem
+    // ainda não tem nada para ver.
+    final cached = scope == null ? const <Map<String, dynamic>>[] : null;
+    final local = cached ?? await _ordersFromStore(scope!);
+    if (!mounted) return;
     setState(() {
       flowStep = 'orders';
       activeOrder = null;
-      ordersLoading = true;
+      if (local.isNotEmpty) orders = _localResults(local);
+      ordersLoading = orders.isEmpty;
     });
+    await _reloadOrders();
+  }
+
+  /// Busca a lista com os filtros atuais, caindo para o cache quando sem rede.
+  Future<void> _reloadOrders() async {
+    final scope = api.sessionScope;
     try {
-      final loaded = await _list(
-        '/orders/',
-        query: {'page_size': 300, 'ordering': '-opened_at'},
-      );
-      orders = loaded
+      final loaded = await _list('/orders/', query: _ordersServerQuery);
+      final ofRestaurant = loaded
           .where((item) => '${item['restaurant']}' == restaurantId)
           .toList();
+      if (scope != null) {
+        await orderStore.saveAllFromServer(ofRestaurant, scope: scope);
+        // A ordem e a seleção vêm do servidor, mas cada pedido é relido do
+        // store para não apagar da tela uma edição feita offline que ainda
+        // não subiu. Reler a lista inteira do store desfaria o filtro.
+        final merged = <Map<String, dynamic>>[];
+        for (final order in ofRestaurant) {
+          final stored = await orderStore.read('${order['id']}', scope: scope);
+          merged.add(stored ?? order);
+        }
+        orders = merged.where(_matchesStatusFilter).toList();
+      } else {
+        orders = ofRestaurant.where(_matchesStatusFilter).toList();
+      }
+      ordersPartial = false;
     } catch (error) {
-      if (mounted) _error(error);
+      // Sem rede a busca vale só para o que já está guardado. A lista continua
+      // útil — o operador precisa achar o pedido aberto agora —, mas a tela
+      // avisa que o resultado pode estar incompleto.
+      final localCopy = scope == null
+          ? const <Map<String, dynamic>>[]
+          : await _ordersFromStore(scope);
+      if (localCopy.isNotEmpty) {
+        orders = _localResults(localCopy);
+        ordersPartial = true;
+      } else if (mounted) {
+        orders = [];
+        ordersPartial = false;
+        _error(error);
+      }
     } finally {
       if (mounted) setState(() => ordersLoading = false);
     }
   }
 
-  Future<void> _editOrder(Map<String, dynamic> order) async {
-    final detail = await _work(
-      () => api.get('/orders/${order['id']}/', accessToken: token),
+  List<Map<String, dynamic>> _localResults(List<Map<String, dynamic>> source) =>
+      _sortedLocally(source.where(_matchesLocalFilters).toList());
+
+  /// Reaplica os filtros. A busca por texto espera o operador parar de digitar
+  /// para não disparar uma requisição por tecla.
+  void _onOrdersFilterChanged({bool debounce = false}) {
+    ordersSearchDebounce?.cancel();
+    if (!debounce) {
+      setState(() => ordersLoading = orders.isEmpty);
+      unawaited(_reloadOrders());
+      return;
+    }
+    ordersSearchDebounce = Timer(
+      const Duration(milliseconds: 400),
+      () => unawaited(_reloadOrders()),
     );
+  }
+
+  Future<List<Map<String, dynamic>>> _ordersFromStore(String scope) async {
+    final stored = await orderStore.recent(
+      scope: scope,
+      limit: _ordersPageSize,
+    );
+    return stored
+        .where((item) => '${item['restaurant']}' == restaurantId)
+        .toList();
+  }
+
+  /// Carrega o pedido para edição/pagamento, com o que houver disponível.
+  ///
+  /// A listagem já traz o pedido completo — o serializer aninha os itens —,
+  /// então [fromList] é uma cópia legítima do detalhe, e não um resumo. Sem
+  /// rede, ela é a fonte: antes o operador não conseguia abrir um pedido que
+  /// não tivesse sido feito neste terminal, porque só a rota de detalhe tinha
+  /// sido cacheada e ela nunca fora chamada para aquele pedido.
+  Future<Map<String, dynamic>?> _orderDetail(
+    Map<String, dynamic> fromList,
+  ) async {
+    final id = '${fromList['id'] ?? ''}';
+    final scope = api.sessionScope;
+
+    // Um pedido criado offline só existe localmente; buscá-lo no servidor
+    // devolveria 404.
+    if (id.startsWith('offline-') && scope != null) {
+      final local = await orderStore.read(id, scope: scope);
+      if (local != null) return local;
+    }
+
+    try {
+      final fresh = await api.get('/orders/$id/', accessToken: token);
+      if (scope != null) {
+        // Guardar aqui preserva os itens lançados offline que o servidor
+        // ainda não conhece.
+        return await orderStore.saveFromServer(fresh, scope: scope);
+      }
+      return fresh;
+    } on ApiException catch (error) {
+      if (!error.isConnectivity) {
+        if (mounted) _error(error);
+        return null;
+      }
+      // A cópia local vem antes da entrada da listagem porque é ela que tem
+      // as edições feitas sem rede.
+      final local = scope == null
+          ? null
+          : await orderStore.read(id, scope: scope);
+      final fallback = local ?? (fromList['items'] is List ? fromList : null);
+      if (fallback != null) {
+        if (mounted) _warnLocalOrderData();
+        return fallback;
+      }
+      if (mounted) {
+        _error(
+          error,
+          title: 'Este pedido ainda não está salvo neste terminal',
+          action:
+              'Abra a tela de Pedidos com a rede disponível ao menos uma vez '
+              'para guardar os dados; depois ele funciona offline.',
+        );
+      }
+      return null;
+    } catch (error) {
+      if (mounted) _error(error);
+      return null;
+    }
+  }
+
+  /// Avisa que a edição está usando a cópia local, uma vez por queda de rede.
+  void _warnLocalOrderData() {
+    ErrorCenterScope.read(context).report(
+      AppError(
+        title: 'Editando com os dados salvos localmente',
+        message:
+            'Sem conexão, este pedido é aberto a partir da última cópia '
+            'guardada neste terminal. Se ele foi alterado em outro caixa, '
+            'essas mudanças ainda não aparecem aqui.',
+        origin: AppErrorOrigin.network,
+        severity: AppErrorSeverity.warning,
+        recommendedAction:
+            'As alterações feitas agora entram na fila e sobem quando a rede '
+            'voltar.',
+        dedupeKey: 'order-local-copy',
+      ),
+    );
+  }
+
+  Future<void> _editOrder(Map<String, dynamic> order) async {
+    final detail = await _orderDetail(order);
     if (detail == null) return;
     activeOrder = detail;
     orderType = '${detail['order_type']}';
@@ -393,6 +773,12 @@ class _HomePageState extends State<HomePage> {
         ? null
         : tables.cast<Map<String, dynamic>?>().firstWhere(
             (item) => '${item?['id']}' == '${detail['table']}',
+            orElse: () => null,
+          );
+    selectedCommand = detail['command'] == null
+        ? null
+        : commands.cast<Map<String, dynamic>?>().firstWhere(
+            (item) => '${item?['id']}' == '${detail['command']}',
             orElse: () => null,
           );
     selectedCustomer = detail['customer'] == null
@@ -407,9 +793,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _payOrder(Map<String, dynamic> order) async {
-    final detail = await _work(
-      () => api.get('/orders/${order['id']}/', accessToken: token),
-    );
+    final detail = await _orderDetail(order);
     if (detail == null) return;
     activeOrder = detail;
     orderType = '${detail['order_type']}';
@@ -437,7 +821,6 @@ class _HomePageState extends State<HomePage> {
     if (flowStep == 'context' || orderType == 'table') {
       return PdvDestination.tables;
     }
-    if (orderType == 'delivery') return PdvDestination.delivery;
     return PdvDestination.menu;
   }
 
@@ -454,15 +837,13 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           activeOrder = null;
           selectedTable = null;
+          selectedCommand = null;
           selectedCustomer = null;
           orderItems = [];
           registeredPayments = [];
           orderType = 'table';
           flowStep = 'context';
         });
-        return;
-      case PdvDestination.delivery:
-        await _selectOrderType('delivery');
         return;
       case PdvDestination.orders:
         await _openOrders();
@@ -641,6 +1022,26 @@ class _HomePageState extends State<HomePage> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.pop(dialogContext, 'topology'),
               ),
+              ListTile(
+                leading: const Icon(Icons.tune),
+                title: const Text('Preferências deste terminal'),
+                subtitle: const Text(
+                  'Tempo da comanda, estabilidade, alertas e impressão',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pop(dialogContext, 'preferences'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.sync_problem_outlined),
+                title: const Text('Operações pendentes'),
+                subtitle: Text(
+                  offlinePendingCount == 0
+                      ? 'Nada aguardando o servidor'
+                      : '$offlinePendingCount aguardando o servidor',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pop(dialogContext, 'outbox'),
+              ),
               const Divider(),
               SwitchListTile(
                 secondary: Icon(
@@ -684,6 +1085,10 @@ class _HomePageState extends State<HomePage> {
     if (selection == 'printer') _openDeviceSettings(DeviceKind.printer);
     if (selection == 'scale') _openDeviceSettings(DeviceKind.scale);
     if (selection == 'topology') await _openTopologySettings();
+    if (selection == 'preferences' && mounted) {
+      await TerminalPreferencesDialog.show(context, widget.preferences);
+    }
+    if (selection == 'outbox' && mounted) await _openOutboxReview();
     if (selection == 'theme') widget.onToggleTheme();
     if (selection == 'fullscreen') widget.onToggleFullScreen();
   }
@@ -692,13 +1097,13 @@ class _HomePageState extends State<HomePage> {
     final service = topologyService;
     final current = service?.config;
     if (service == null || current == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'A sessão restaurada não contém a identidade da conta. '
-            'Saia e entre novamente antes de configurar a rede local.',
-          ),
-        ),
+      showAppToast(
+        context,
+        'A sessão restaurada não contém a identidade da conta. '
+        'Saia e entre novamente antes de configurar a rede local.',
+        title: 'Sessão incompleta',
+        severity: AppErrorSeverity.warning,
+        autoDismissAfter: const Duration(seconds: 6),
       );
       return;
     }
@@ -714,17 +1119,20 @@ class _HomePageState extends State<HomePage> {
       await service.reconfigure(candidate);
       if (!mounted) return;
       _onTopologyChanged();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            candidate.mode == LocalTopologyMode.client &&
-                    !service.status.ready
-                ? 'Modo Cliente salvo, mas o Caixa Principal está indisponível.'
-                : candidate.mode == LocalTopologyMode.client
-                ? 'Modo Cliente salvo. O agente físico local foi pausado.'
-                : 'Configuração da rede local aplicada.',
-          ),
-        ),
+      final degraded =
+          candidate.mode == LocalTopologyMode.client && !service.status.ready;
+      showAppToast(
+        context,
+        degraded
+            ? 'Modo Cliente salvo, mas o Caixa Principal está indisponível.'
+            : candidate.mode == LocalTopologyMode.client
+            ? 'Modo Cliente salvo. O agente físico local foi pausado.'
+            : 'Configuração da rede local aplicada.',
+        title: 'Rede local',
+        severity: degraded ? AppErrorSeverity.warning : AppErrorSeverity.info,
+        autoDismissAfter: degraded
+            ? const Duration(seconds: 6)
+            : const Duration(milliseconds: 2200),
       );
     } catch (error) {
       if (mounted) _error(error);
@@ -733,17 +1141,23 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Volta à tela inicial do atendimento.
+  ///
+  /// A volta é imediata: o cardápio e as mesas já estão em memória e mudam
+  /// pouco. A atualização segue por baixo, sem prender o operador entre um
+  /// pedido e o próximo.
   Future<void> _goHome() async {
     setState(() {
       activeOrder = null;
       selectedTable = null;
+      selectedCommand = null;
       selectedCustomer = null;
       orderItems = [];
       registeredPayments = [];
       orderType = null;
       flowStep = 'type';
     });
-    await _load();
+    unawaited(_load());
   }
 
   Future<void> _showCashDivergence() async {
@@ -1055,28 +1469,60 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     deviceAgent.stop();
+    unawaited(orderStore.close());
+    ordersSignalSubscription?.cancel();
     syncStatusSubscription?.cancel();
     topologyService?.removeListener(_onTopologyChanged);
     topologyService?.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
+    ordersSearchDebounce?.cancel();
+    ordersSearchController.dispose();
     super.dispose();
   }
 
-  void _error(Object error) {
-    final message = error is ApiException
-        ? error.message
-        : 'Não foi possível concluir a operação.';
-    showCopyableError(context, message);
+  /// Publica a falha no alerta global, que sempre traz o botão de fechar.
+  ///
+  /// A mensagem do backend é repassada literalmente: uma inconsistência de
+  /// caixa ("caixa já aberto em outro terminal", "sangria divergente") precisa
+  /// chegar ao operador exatamente como o servidor a descreveu.
+  void _error(Object error, {String? title, String? action}) {
+    final center = ErrorCenterScope.read(context);
+    if (error is ApiException) {
+      center.reportApi(error, title: title, recommendedAction: action);
+      return;
+    }
+    center.reportUnexpected(error, title: title);
   }
 
-  Future<T?> _work<T>(Future<T> Function() action) async {
+  /// Reporta falhas de abertura, fechamento e movimentos de caixa.
+  ///
+  /// A operação só é considerada concluída depois da confirmação do servidor;
+  /// qualquer recusa vira um alerta que o operador fecha para corrigir os
+  /// dados e repetir.
+  void _cashError(Object error, String operation) => _error(
+    error,
+    title: 'Não foi possível $operation',
+    action: 'Feche este alerta, revise os dados e tente novamente.',
+  );
+
+  Future<T?> _work<T>(
+    Future<T> Function() action, {
+    String? errorTitle,
+    void Function(Object error)? onError,
+  }) async {
     if (busy) return null;
     setState(() => busy = true);
     try {
       return await action();
     } catch (error) {
-      if (mounted) _error(error);
+      if (mounted) {
+        if (onError != null) {
+          onError(error);
+        } else {
+          _error(error, title: errorTitle);
+        }
+      }
       return null;
     } finally {
       if (mounted) setState(() => busy = false);
@@ -1168,10 +1614,46 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// Abre (ou retoma) o pedido de uma comanda.
+  ///
+  /// Espelha [_openTable]: comanda livre cria o pedido, comanda em uso retoma
+  /// o que já existe. Quem decide é o servidor (`/orders/open-command/`), para
+  /// que dois caixas lendo a mesma comanda não criem dois pedidos.
+  Future<void> _openCommand(Map<String, dynamic> command) async {
+    await _work(() async {
+      selectedCommand = command;
+      final currentId = command['current_order_id'];
+      final order = currentId != null
+          ? await api.get('/orders/$currentId/', accessToken: token)
+          : await api.post(
+              '/orders/open-command/',
+              body: {'command': command['id']},
+              accessToken: token,
+            );
+      activeOrder = _completeOfflineOrder(
+        order,
+        type: 'command',
+        command: command,
+      );
+      if (_isOfflinePending(activeOrder)) {
+        orderItems = [];
+        command['status'] = 'occupied';
+        command['current_order_id'] = activeOrder!['id'];
+        if (mounted) setState(() {});
+      } else {
+        await _refreshOrder();
+      }
+      flowStep = 'order';
+    });
+  }
+
   Future<void> _selectOrderType(String type) async {
     orderType = type;
-    if (type == 'table') {
-      setState(() => flowStep = 'context');
+    if (type == 'table' || type == 'command') {
+      setState(() {
+        commandSearch = '';
+        flowStep = 'context';
+      });
       return;
     }
     if (type == 'takeaway' || type == 'delivery') {
@@ -1471,10 +1953,25 @@ class _HomePageState extends State<HomePage> {
       if (mounted) setState(() {});
       return;
     }
-    activeOrder = await api.get(
-      '/orders/${activeOrder!['id']}/',
-      accessToken: token,
-    );
+    final scope = api.sessionScope;
+    try {
+      final fresh = await api.get(
+        '/orders/${activeOrder!['id']}/',
+        accessToken: token,
+      );
+      activeOrder = scope == null
+          ? fresh
+          : await orderStore.saveFromServer(fresh, scope: scope);
+    } on ApiException catch (error) {
+      // Sem rede, a cópia local é a versão boa: ela tem as edições que ainda
+      // não subiram. Esvaziar a tela aqui perderia o trabalho do operador.
+      if (!error.isConnectivity) rethrow;
+      final local = scope == null
+          ? null
+          : await orderStore.read('${activeOrder!['id']}', scope: scope);
+      if (local != null) activeOrder = local;
+      if (mounted) _warnLocalOrderData();
+    }
     final items = activeOrder!['items'] as List? ?? [];
     orderItems = items
         .cast<Map<String, dynamic>>()
@@ -1490,21 +1987,27 @@ class _HomePageState extends State<HomePage> {
     Map<String, dynamic> order, {
     required String type,
     Map<String, dynamic>? table,
+    Map<String, dynamic>? command,
   }) {
     return OrderPresenter.completeOfflineOrder(
       order,
       restaurantId: restaurantId,
       type: type,
       table: table,
+      command: command,
     );
   }
 
-  void _addOfflineItem(
+  /// Registra o item lançado sem rede na memória **e** no disco.
+  ///
+  /// Guardar só em memória fazia a edição sumir ao sair da tela e voltar: a
+  /// releitura pegava a cópia antiga, que não conhecia o item.
+  Future<void> _addOfflineItem(
     Map<String, dynamic> response,
     Map<String, dynamic> product, {
     required double quantity,
     String customerNote = '',
-  }) {
+  }) async {
     final item = OrderPresenter.offlineItem(
       response: response,
       product: product,
@@ -1513,6 +2016,37 @@ class _HomePageState extends State<HomePage> {
     );
     orderItems = [...orderItems, item];
     activeOrder = OrderPresenter.withItems(activeOrder!, orderItems);
+
+    final scope = api.sessionScope;
+    if (scope != null) {
+      final persisted = await orderStore.addItem(
+        '${activeOrder!['id']}',
+        item,
+        scope: scope,
+      );
+      // O store recalcula os totais; usar o resultado dele mantém a tela e o
+      // disco com exatamente o mesmo valor.
+      if (persisted != null) activeOrder = persisted;
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Marca o item como cancelado na cópia local.
+  Future<void> _voidOfflineItem(String itemId) async {
+    final scope = api.sessionScope;
+    final order = activeOrder;
+    if (scope == null || order == null) return;
+    final persisted = await orderStore.voidItem(
+      '${order['id']}',
+      itemId,
+      scope: scope,
+    );
+    if (persisted == null) return;
+    activeOrder = persisted;
+    orderItems = (persisted['items'] as List? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .where((item) => item['status'] != 'voided')
+        .toList();
     if (mounted) setState(() {});
   }
 
@@ -1532,141 +2066,19 @@ class _HomePageState extends State<HomePage> {
       await _weighProduct(product);
       return;
     }
-    final variations = (product['variations'] as List? ?? [])
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['is_active'] != false)
-        .toList();
-    final addons = (product['addons'] as List? ?? [])
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['is_active'] != false)
-        .toList();
-    String? variation;
-    final selectedAddons = <String>{};
-    var quantity = 1;
-    final note = TextEditingController();
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: Text(product['name'] as String),
-          content: SizedBox(
-            width: 480,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (variations.isNotEmpty) ...[
-                    const Text(
-                      'Variação',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    ...variations.map((item) {
-                      final id = '${item['id']}';
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          variation == id
-                              ? Icons.radio_button_checked
-                              : Icons.radio_button_off,
-                        ),
-                        title: Text(
-                          '${item['name']}  + ${_money(item['price_delta'])}',
-                        ),
-                        onTap: () => update(() => variation = id),
-                      );
-                    }),
-                  ],
-                  if (addons.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Adicionais',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    ...addons.map(
-                      (item) => CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          '${item['name']}  + ${_money(item['price'])}',
-                        ),
-                        value: selectedAddons.contains('${item['id']}'),
-                        onChanged: (checked) => update(
-                          () => checked == true
-                              ? selectedAddons.add('${item['id']}')
-                              : selectedAddons.remove('${item['id']}'),
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Text(
-                        'Quantidade',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const Spacer(),
-                      IconButton.filledTonal(
-                        onPressed: quantity > 1
-                            ? () => update(() => quantity--)
-                            : null,
-                        icon: const Icon(Icons.remove),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          '$quantity',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      IconButton.filled(
-                        onPressed: () => update(() => quantity++),
-                        icon: const Icon(Icons.add),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: note,
-                    maxLines: 2,
-                    decoration: const InputDecoration(
-                      labelText: 'Observação',
-                      hintText: 'Ex.: sem cebola',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed:
-                  product['requires_variation'] == true && variation == null
-                  ? null
-                  : () => Navigator.pop(context, true),
-              child: const Text('Adicionar'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (accepted != true) return;
+    final config = await showProductConfigDialog(context, product);
+    if (config == null) return;
     await _work(() async {
       final response = await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
-          'quantity': quantity,
-          'variations': variation == null ? [] : [variation],
-          'addons': selectedAddons.toList(),
-          'customer_note': note.text.trim(),
+          'quantity': config.quantity,
+          'variations': config.variationId == null
+              ? []
+              : [config.variationId],
+          'addons': config.addonIds,
+          'customer_note': config.customerNote,
         },
         accessToken: token,
       );
@@ -1674,8 +2086,8 @@ class _HomePageState extends State<HomePage> {
         _addOfflineItem(
           response,
           product,
-          quantity: quantity.toDouble(),
-          customerNote: note.text.trim(),
+          quantity: config.quantity.toDouble(),
+          customerNote: config.customerNote,
         );
       } else {
         await _refreshOrder();
@@ -1721,6 +2133,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 DropdownButtonFormField<String?>(
                   initialValue: scaleId,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Balança',
                     helperText:
@@ -1815,10 +2228,7 @@ class _HomePageState extends State<HomePage> {
                                 } on ApiException catch (error) {
                                   update(() => readingMessage = error.message);
                                   if (mounted) {
-                                    showCopyableError(
-                                      this.context,
-                                      error.message,
-                                    );
+                                    showAppError(this.context, error);
                                   }
                                 } finally {
                                   update(() => readingScale = false);
@@ -1944,11 +2354,7 @@ class _HomePageState extends State<HomePage> {
         accessToken: token,
       );
       if (_isOfflinePending(response)) {
-        orderItems = orderItems
-            .where((row) => '${row['id']}' != '${item['id']}')
-            .toList();
-        activeOrder = {...activeOrder!, 'items': orderItems};
-        if (mounted) setState(() {});
+        await _voidOfflineItem('${item['id']}');
       } else {
         await _refreshOrder();
       }
@@ -2027,22 +2433,33 @@ class _HomePageState extends State<HomePage> {
     });
     if (closed == null) return;
     if (nextStep == 'later') {
-      final printJob = await _work(
-        () => api.post(
+      // O pedido já foi fechado acima. A nota é um efeito colateral: se a
+      // impressora falhar, o operador não pode ficar preso na tela do pedido
+      // com uma venda que, do ponto de vista do caixa, já terminou.
+      var printed = false;
+      try {
+        final printJob = await api.post(
           '/orders/${closed['id']}/print/',
           body: const {'job_type': 'receipt'},
           accessToken: token,
-        ),
-      );
-      if (printJob == null) return;
-      await _handlePrintJob(printJob);
+        );
+        await _handlePrintJob(printJob);
+        printed = true;
+      } catch (error) {
+        if (mounted) {
+          _error(
+            error,
+            title: 'O pedido foi fechado, mas a nota não saiu',
+            action: 'Reimprima pela tela de Pedidos quando quiser.',
+          );
+        }
+      }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Pedido enviado e deixado pendente de pagamento. Nota gerada.',
-            ),
-          ),
+        showAppToast(
+          context,
+          printed
+              ? 'Pedido deixado pendente de pagamento. Nota gerada.'
+              : 'Pedido deixado pendente de pagamento.',
         );
       }
       await _goHome();
@@ -2112,15 +2529,84 @@ class _HomePageState extends State<HomePage> {
         return true;
       });
       if (result == true && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nota do cliente impressa com sucesso.'),
-            duration: Duration(milliseconds: 1500),
-          ),
-        );
+        showAppToast(context, 'Nota do cliente impressa com sucesso.');
       }
     } finally {
       if (mounted) setState(() => printingReceipt = false);
+    }
+  }
+
+  /// Operação fiscal separada da comanda: emite a NFC-e (POST /invoices/emit)
+  /// e, se conseguir, imprime o DANFE (POST /invoices/{id}/print). Exige
+  /// conexão real com o backend — `ApiClient._requiresOnline` já bloqueia o
+  /// enfileiramento offline dessas rotas, então uma falha aqui chega como
+  /// [ApiException] normal, tratada pelo [_error] de sempre.
+  Future<void> _emitFiscalInvoice(Map<String, dynamic> order) async {
+    if (emittingInvoice) return;
+    setState(() => emittingInvoice = true);
+    try {
+      final invoice = await _work(
+        () => api.post(
+          '/invoices/emit/',
+          body: {
+            'order': order['id'],
+            if (selectedCustomer?['document'] != null) 'cpf': selectedCustomer!['document'],
+            if (selectedCustomer?['name'] != null) 'cpf_name': selectedCustomer!['name'],
+          },
+          accessToken: token,
+        ),
+        errorTitle: 'Não foi possível emitir a NFC-e',
+      );
+      if (invoice == null || !mounted) return;
+
+      if (invoice['emission_type'] == '9') {
+        showAppToast(
+          context,
+          'NFC-e emitida em contingência — será retransmitida quando a conexão com a SEFAZ voltar.',
+        );
+      } else if (invoice['status'] == 'issued') {
+        showAppToast(context, 'NFC-e autorizada.');
+      } else {
+        showAppToast(context, 'NFC-e emitida, aguardando autorização.');
+      }
+
+      final printers = await _list(
+        '/printers/',
+        query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+      );
+      if (!mounted || printers.isEmpty) return;
+      final printerId = await showDialog<String>(
+        context: context,
+        builder: (_) => PrinterSelectionDialog(
+          printers: printers,
+          title: 'Imprimir DANFE NFC-e',
+          summary: 'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+          description: 'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+        ),
+      );
+      if (printerId == null) return;
+      final printJob = await _work(
+        () => api.post(
+          '/invoices/${invoice['id']}/print/',
+          body: {'printer': printerId},
+          accessToken: token,
+        ),
+      );
+      if (printJob == null) return;
+      final printer = printJob['printer'] as Map<String, dynamic>?;
+      if (printer == null) {
+        _error(const ApiException('A impressora selecionada não foi encontrada.'));
+        return;
+      }
+      final result = await _work(() async {
+        await deviceAgent.printJobManually(printJob, printer);
+        return true;
+      });
+      if (result == true && mounted) {
+        showAppToast(context, 'DANFE impresso com sucesso.');
+      }
+    } finally {
+      if (mounted) setState(() => emittingInvoice = false);
     }
   }
 
@@ -2132,18 +2618,33 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Pagamentos já registrados no pedido.
+  ///
+  /// Offline a lista vem do cache; se nem isso existir, o pedido ainda não tem
+  /// pagamento e a lista vazia é a resposta correta — não um erro.
+  Future<List<Map<String, dynamic>>> _loadRegisteredPayments() async {
+    try {
+      final response = await api.get(
+        '/orders/${activeOrder!['id']}/payments/',
+        accessToken: token,
+      );
+      return ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
+          .cast<Map<String, dynamic>>();
+    } on ApiException catch (error) {
+      if (!error.isConnectivity) rethrow;
+      return registeredPayments;
+    }
+  }
+
   Future<void> _preparePaymentPage() async {
     paymentMethods = await _list(
       '/payments/methods/',
       query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
     );
-    final response = await api.get(
-      '/orders/${activeOrder!['id']}/payments/',
-      accessToken: token,
-    );
-    registeredPayments =
-        ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
-            .cast<Map<String, dynamic>>();
+    // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
+    // pagamentos — tratar isso como falha impediria de receber offline, que é
+    // exatamente quando o operador mais precisa concluir a venda.
+    registeredPayments = await _loadRegisteredPayments();
     selectedPaymentMethod = paymentMethods.isEmpty
         ? null
         : '${paymentMethods.first['id']}';
@@ -2178,6 +2679,16 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Débito/crédito não é escolhido à parte: o próprio método de pagamento
+  /// selecionado já diz qual é ("Cartão de Débito", "Cartão de Crédito"),
+  /// como cadastrado em Formas de pagamento. Isso só preenche o metadado
+  /// para relatórios; nada no backend valida esse texto.
+  String _cardSubtypeFor(Map<String, dynamic> method) {
+    final name = '${method['name']}'.toLowerCase();
+    if (name.contains('débito') || name.contains('debito')) return 'debit';
+    return 'credit';
+  }
+
   Future<void> _addSplitPayment() async {
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
     final method = paymentMethods.firstWhere(
@@ -2201,7 +2712,9 @@ class _HomePageState extends State<HomePage> {
           'idempotency_key':
               'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
           'metadata': {
-            'card_subtype': method['method_type'] == 'card' ? cardSubtype : '',
+            'card_subtype': method['method_type'] == 'card'
+                ? _cardSubtypeFor(method)
+                : '',
             'reference': paymentReference.text.trim(),
             'source': 'flutter_pdv',
           },
@@ -2210,21 +2723,22 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     if (result == null) return;
-    final response = await api.get(
-      '/orders/${activeOrder!['id']}/payments/',
-      accessToken: token,
-    );
-    registeredPayments =
-        ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
-            .cast<Map<String, dynamic>>();
-    if (method['method_type'] == 'cash') {
-      try {
-        cashSession = await api.get(
-          '/cash-register/current/',
-          accessToken: token,
-        );
-      } on ApiException {
-        // O pagamento já foi registrado; a atualização geral tentará novamente.
+    if (_isOfflinePending(result)) {
+      // O pagamento está na fila. Ele já conta para o total recebido, senão o
+      // operador nunca chegaria a zerar o restante e fechar a venda sem rede.
+      // A chave de idempotência garante que o reenvio não cobre de novo.
+      registeredPayments = [...registeredPayments, result];
+    } else {
+      registeredPayments = await _loadRegisteredPayments();
+      if (method['method_type'] == 'cash') {
+        try {
+          cashSession = await api.get(
+            '/cash-register/current/',
+            accessToken: token,
+          );
+        } on ApiException {
+          // O pagamento já foi registrado; a atualização geral tenta de novo.
+        }
       }
     }
     paymentDigits = (remainingTotal * 100).round().toString();
@@ -2233,30 +2747,108 @@ class _HomePageState extends State<HomePage> {
     setState(() {});
   }
 
+  /// Remove um pagamento já confirmado, como no frontend web.
+  ///
+  /// Só se aplica a pagamentos com id real: um pagamento ainda na fila
+  /// offline nunca chegou ao servidor, então não há o que cancelar lá — a
+  /// remoção correta nesse caso é esperar a sincronização.
+  Future<void> _removePayment(Map<String, dynamic> payment) async {
+    final id = payment['id'];
+    if (id == null || removingPaymentId != null) return;
+    setState(() => removingPaymentId = '$id');
+    try {
+      await api.delete(
+        '/orders/${activeOrder!['id']}/payments/$id/',
+        accessToken: token,
+      );
+      registeredPayments = await _loadRegisteredPayments();
+      paymentDigits = (remainingTotal * 100).round().toString();
+      _syncPaymentAmount();
+    } catch (error) {
+      if (mounted) {
+        _error(error, title: 'Não foi possível excluir o pagamento');
+      }
+    } finally {
+      if (mounted) setState(() => removingPaymentId = null);
+    }
+  }
+
   Future<void> _completePaidOrder() async {
     if (remainingTotal > .009) {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
       return;
     }
-    final printJob = await _work(
-      () => api.post(
+    // Guarda o pedido antes do reset de estado abaixo — a oferta de NFC-e
+    // ainda precisa dele (e do cliente selecionado, pro CPF na nota).
+    final paidOrder = activeOrder;
+    // O pagamento já foi registrado. O comprovante é efeito colateral: se a
+    // impressora ou a rede falhar, o operador não pode ficar preso na tela de
+    // pagamento com uma venda que, para o caixa, já terminou.
+    try {
+      final printJob = await api.post(
         '/orders/${activeOrder!['id']}/print/',
         body: const {'job_type': 'payment_receipt'},
         accessToken: token,
-      ),
-    );
-    if (printJob == null) return;
-    await _handlePrintJob(printJob);
+      );
+      await _handlePrintJob(printJob);
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'O pagamento foi registrado, mas o comprovante não saiu',
+          action: 'Reimprima pela tela de Pedidos quando quiser.',
+        );
+      }
+    }
+
+    // Emitir NFC-e é uma operação separada de imprimir a comanda — pergunta
+    // antes de resetar a tela, sem forçar (o operador pode preferir emitir
+    // depois, pela tela de Pedidos).
+    if (mounted && paidOrder != null) {
+      final shouldEmit = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.receipt_long_outlined),
+              SizedBox(width: 10),
+              Expanded(child: Text('Emitir NFC-e?')),
+            ],
+          ),
+          content: const Text(
+            'O comprovante interno já foi impresso. Deseja também emitir a '
+            'nota fiscal (NFC-e) e imprimir o DANFE?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Agora não'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.receipt_long),
+              label: const Text('Emitir NFC-e'),
+            ),
+          ],
+        ),
+      );
+      if (shouldEmit == true) {
+        await _emitFiscalInvoice(paidOrder);
+      }
+    }
+
+    if (!mounted) return;
     setState(() {
       activeOrder = null;
       selectedTable = null;
+      selectedCommand = null;
       selectedCustomer = null;
       orderItems = [];
       registeredPayments = [];
       orderType = null;
       flowStep = 'type';
     });
-    await _load();
+    unawaited(_load());
   }
 
   Future<void> _handlePrintJob(Map<String, dynamic> job) async {
@@ -2305,9 +2897,7 @@ class _HomePageState extends State<HomePage> {
       return <String, dynamic>{'printed': true};
     });
     if (result != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impressão enviada com sucesso.')),
-      );
+      showAppToast(context, 'Impressão enviada com sucesso.');
     }
   }
 
@@ -2341,6 +2931,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: stationId,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Caixa'),
                   items: linked
                       .map(
@@ -2402,7 +2993,7 @@ class _HomePageState extends State<HomePage> {
         );
         setState(() {});
         return cashSession;
-      });
+      }, onError: (error) => _cashError(error, 'abrir o caixa'));
       if (result != null) {
         await _goHome();
       }
@@ -2477,7 +3068,10 @@ class _HomePageState extends State<HomePage> {
           },
           accessToken: token,
         );
-      });
+      }, onError: (error) => _cashError(
+        error,
+        isWithdrawal ? 'registrar a sangria' : 'registrar o suprimento',
+      ));
       if (movement != null && movement['status'] == 'pending') {
         setState(() => pendingCashMovement = movement);
         await _showMovementApproval();
@@ -2714,7 +3308,7 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         );
         setState(() {});
-      });
+      }, onError: (error) => _cashError(error, 'fechar o caixa'));
     }
   }
 
@@ -2876,11 +3470,28 @@ class _HomePageState extends State<HomePage> {
                     ),
                     child: PdvConnectionBadge(
                       status: networkStatus,
-                      onPressed: offlinePendingCount > 0 && !offlineMode
-                          ? () => unawaited(_syncNow())
+                      // Clicar no badge abre a revisão da fila. Um item
+                      // bloqueado não é resolvido por "sincronizar de novo":
+                      // ele precisa ser inspecionado.
+                      onPressed: offlinePendingCount > 0
+                          ? () => unawaited(_openOutboxReview())
                           : null,
                     ),
                   ),
+                  if (isSecondaryStation)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 2,
+                      ),
+                      child: PdvPrincipalBadge(
+                        connected: principalReachable,
+                        compact: compactHeader,
+                        detail: topologyService?.status.message ?? '',
+                        onPressed: () =>
+                            unawaited(_openTopologySettings()),
+                      ),
+                    ),
                   if (flowStep != 'type' || activeOrder != null)
                     IconButton(
                       tooltip: 'Voltar',
@@ -2960,7 +3571,9 @@ class _HomePageState extends State<HomePage> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Caixa aberto · ${cashSession!['station']}',
+                                    cashSessionFromCache
+                                        ? 'Caixa (offline) · ${cashSession!['station']}'
+                                        : 'Caixa aberto · ${cashSession!['station']}',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 11,
@@ -2992,9 +3605,16 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   IconButton(
-                    tooltip: 'Atualizar',
-                    onPressed: _load,
-                    icon: const Icon(Icons.refresh),
+                    tooltip: refreshing ? 'Atualizando...' : 'Atualizar',
+                    onPressed: refreshing ? null : _load,
+                    // Toda a sinalização de recarga cabe aqui: o operador vê
+                    // que algo está acontecendo sem perder a tela em que está.
+                    icon: refreshing
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
                   ),
                   const SizedBox(width: 10),
                 ],
@@ -3009,13 +3629,16 @@ class _HomePageState extends State<HomePage> {
                       restaurantId: restaurantId,
                       products: products,
                       onRestaurantChanged: _changeScaleRestaurant,
+                      preferences: widget.preferences,
                     )
                   else if (flowStep == 'orders')
                     _ordersPage()
                   else if (activeOrder == null && flowStep == 'type')
                     _startPanel()
                   else if (activeOrder == null && flowStep == 'context')
-                    _tableContextPanel()
+                    (orderType == 'command'
+                        ? _commandContextPanel()
+                        : _tableContextPanel())
                   else if (flowStep == 'payment')
                     _paymentPage()
                   else
@@ -3124,12 +3747,19 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
+                  // Uma barra fina no topo, em vez de cobrir a tela.
+                  //
+                  // O overlay escuro com spinner central aparecia em toda
+                  // operação — abrir mesa, incluir item, pagar — e dava a
+                  // sensação de que o PDV recarregava a cada toque. Bloquear
+                  // a interface também era redundante: `_work` já ignora uma
+                  // segunda chamada enquanto a primeira não termina.
                   if (busy)
-                    const Positioned.fill(
-                      child: ColoredBox(
-                        color: Color(0x33000000),
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
+                    const Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: LinearProgressIndicator(minHeight: 3),
                     ),
                 ],
               ),
@@ -3140,15 +3770,278 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Barra de busca, filtros e ordenação da tela de Pedidos.
+  Widget _ordersFilterBar() {
+    final range = orderDateRange;
+    final dateLabel = range == null
+        ? 'Período'
+        : '${_shortDate(range.start)} – ${_shortDate(range.end)}';
+    final hasFilters =
+        orderSearch.trim().isNotEmpty ||
+        orderTypeFilter != null ||
+        orderDateRange != null ||
+        orderStatusFilter != 'pending' ||
+        orderOrdering != '-opened_at';
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          width: 300,
+          child: TextField(
+            controller: ordersSearchController,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search_rounded),
+              hintText: 'Nº do pedido, cliente ou mesa...',
+              suffixIcon: orderSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Limpar busca',
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () {
+                        ordersSearchController.clear();
+                        setState(() => orderSearch = '');
+                        _onOrdersFilterChanged();
+                      },
+                    ),
+            ),
+            onChanged: (value) {
+              setState(() => orderSearch = value);
+              _onOrdersFilterChanged(debounce: true);
+            },
+          ),
+        ),
+        SizedBox(
+          width: 230,
+          child: DropdownButtonFormField<String>(
+            initialValue: orderStatusFilter,
+            // Sem `isExpanded` o rótulo selecionado usa a largura natural do
+            // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
+            // 230 px com o texto ampliado.
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Situação'),
+            items: const [
+              DropdownMenuItem(
+                value: 'pending',
+                child: Text(
+                  'Pendentes de pagamento',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(value: 'open', child: Text('Em aberto')),
+              DropdownMenuItem(
+                value: 'awaiting_payment',
+                child: Text(
+                  'Aguardando pagamento',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(value: 'paid', child: Text('Pagos')),
+              DropdownMenuItem(value: 'all', child: Text('Todos')),
+            ],
+            onChanged: (value) {
+              setState(() => orderStatusFilter = value ?? 'pending');
+              _onOrdersFilterChanged();
+            },
+          ),
+        ),
+        SizedBox(
+          width: 180,
+          child: DropdownButtonFormField<String?>(
+            initialValue: orderTypeFilter,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Tipo'),
+            items: const [
+              DropdownMenuItem(value: null, child: Text('Todos os tipos')),
+              DropdownMenuItem(value: 'table', child: Text('Mesa')),
+              DropdownMenuItem(value: 'command', child: Text('Comanda')),
+              DropdownMenuItem(value: 'counter', child: Text('Balcão')),
+              DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
+              DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
+            ],
+            onChanged: (value) {
+              setState(() => orderTypeFilter = value);
+              _onOrdersFilterChanged();
+            },
+          ),
+        ),
+        SizedBox(
+          width: 210,
+          child: DropdownButtonFormField<String>(
+            initialValue: orderOrdering,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Ordenar por'),
+            items: const [
+              DropdownMenuItem(
+                value: '-opened_at',
+                child: Text('Mais recentes', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'opened_at',
+                child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: '-total',
+                child: Text('Maior valor', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'total',
+                child: Text('Menor valor', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: '-sequence',
+                child: Text('Nº decrescente', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'sequence',
+                child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
+              ),
+            ],
+            onChanged: (value) {
+              setState(() => orderOrdering = value ?? '-opened_at');
+              _onOrdersFilterChanged();
+            },
+          ),
+        ),
+        _ordersDateRangeMenu(dateLabel),
+        if (hasFilters)
+          TextButton.icon(
+            onPressed: () {
+              ordersSearchController.clear();
+              setState(() {
+                orderSearch = '';
+                orderTypeFilter = null;
+                orderDateRange = null;
+                orderStatusFilter = 'pending';
+                orderOrdering = '-opened_at';
+              });
+              _onOrdersFilterChanged();
+            },
+            icon: const Icon(Icons.filter_alt_off_outlined),
+            label: const Text('Limpar filtros'),
+          ),
+      ],
+    );
+  }
+
+  Widget _ordersPartialWarning() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.withValues(alpha: .4)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_rounded, size: 18, color: scheme.onSurface),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Sem conexão: a busca vale só para os pedidos já guardados '
+              'neste caixa. Pedidos antigos podem não aparecer.',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _shortDate(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}/'
+      '${value.month.toString().padLeft(2, '0')}';
+
+  /// Menu compacto de período, ancorado no botão — em vez do seletor nativo,
+  /// que abre um diálogo grande e cobre a tela para escolher só duas datas.
+  /// Os atalhos cobrem o uso comum; "Personalizado" ainda cai no seletor
+  /// nativo, só para quem realmente precisa de datas específicas.
+  Widget _ordersDateRangeMenu(String label) {
+    final today = DateTime.now();
+    final startOfToday = DateTime(today.year, today.month, today.day);
+
+    DateTimeRange lastDays(int count) => DateTimeRange(
+      start: startOfToday.subtract(Duration(days: count - 1)),
+      end: startOfToday,
+    );
+
+    void apply(DateTimeRange? range) {
+      setState(() => orderDateRange = range);
+      _onOrdersFilterChanged();
+    }
+
+    return MenuAnchor(
+      builder: (context, controller, child) => OutlinedButton.icon(
+        onPressed: () =>
+            controller.isOpen ? controller.close() : controller.open(),
+        icon: const Icon(Icons.date_range_outlined),
+        label: Text(label),
+      ),
+      menuChildren: [
+        MenuItemButton(
+          onPressed: () => apply(DateTimeRange(start: startOfToday, end: startOfToday)),
+          child: const Text('Hoje'),
+        ),
+        MenuItemButton(
+          onPressed: () {
+            final yesterday = startOfToday.subtract(const Duration(days: 1));
+            apply(DateTimeRange(start: yesterday, end: yesterday));
+          },
+          child: const Text('Ontem'),
+        ),
+        MenuItemButton(
+          onPressed: () => apply(lastDays(7)),
+          child: const Text('Últimos 7 dias'),
+        ),
+        MenuItemButton(
+          onPressed: () => apply(lastDays(30)),
+          child: const Text('Últimos 30 dias'),
+        ),
+        MenuItemButton(
+          onPressed: () => apply(
+            DateTimeRange(
+              start: DateTime(today.year, today.month, 1),
+              end: startOfToday,
+            ),
+          ),
+          child: const Text('Este mês'),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          onPressed: () => unawaited(_pickCustomDateRange()),
+          child: const Text('Personalizado...'),
+        ),
+        if (orderDateRange != null)
+          MenuItemButton(
+            onPressed: () => apply(null),
+            child: const Text('Limpar período'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _pickCustomDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 2),
+      lastDate: DateTime(now.year + 1),
+      initialDateRange: orderDateRange,
+      helpText: 'Período de abertura',
+      saveText: 'Aplicar',
+    );
+    if (picked == null || !mounted) return;
+    setState(() => orderDateRange = picked);
+    _onOrdersFilterChanged();
+  }
+
   Widget _ordersPage() {
-    final filtered = orders.where((order) {
-      if (orderStatusFilter == 'all') return true;
-      if (orderStatusFilter == 'pending') {
-        return order['payment_status'] != 'paid' &&
-            {'open', 'awaiting_payment'}.contains('${order['status']}');
-      }
-      return '${order['status']}' == orderStatusFilter;
-    }).toList();
+    // A lista já vem filtrada do servidor (ou do cache, offline). Aqui só
+    // sobra a situação, que cruza dois campos e por isso é decidida sempre
+    // localmente — inclusive sobre o resultado do servidor.
+    final filtered = orders.where(_matchesStatusFilter).toList();
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -3171,36 +4064,19 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
-              SizedBox(
-                width: 230,
-                child: DropdownButtonFormField<String>(
-                  initialValue: orderStatusFilter,
-                  decoration: const InputDecoration(labelText: 'Situação'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'pending',
-                      child: Text('Pendentes de pagamento'),
-                    ),
-                    DropdownMenuItem(value: 'open', child: Text('Em aberto')),
-                    DropdownMenuItem(
-                      value: 'awaiting_payment',
-                      child: Text('Aguardando pagamento'),
-                    ),
-                    DropdownMenuItem(value: 'paid', child: Text('Pagos')),
-                    DropdownMenuItem(value: 'all', child: Text('Todos')),
-                  ],
-                  onChanged: (value) =>
-                      setState(() => orderStatusFilter = value ?? 'pending'),
-                ),
-              ),
-              const SizedBox(width: 12),
               IconButton.filledTonal(
                 tooltip: 'Atualizar pedidos',
-                onPressed: _openOrders,
+                onPressed: () => _onOrdersFilterChanged(),
                 icon: const Icon(Icons.refresh),
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          _ordersFilterBar(),
+          if (ordersPartial) ...[
+            const SizedBox(height: 12),
+            _ordersPartialWarning(),
+          ],
           const SizedBox(height: 18),
           Expanded(
             child: Card(
@@ -3213,8 +4089,15 @@ class _HomePageState extends State<HomePage> {
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
+                        // Precisa ser a mesma altura passada em
+                        // dataRowMaxHeight abaixo: a tabela não rola
+                        // internamente, então se a conta de quantas linhas
+                        // cabem usar uma altura menor que a real, a tabela
+                        // fica mais alta que o espaço disponível e estoura.
+                        const rowHeight = 68.0;
                         final calculatedRows =
-                            ((constraints.maxHeight - 180) / 48).floor();
+                            ((constraints.maxHeight - 180) / rowHeight)
+                                .floor();
                         final rowsPerPage = calculatedRows.clamp(1, 10);
                         return SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
@@ -3224,6 +4107,18 @@ class _HomePageState extends State<HomePage> {
                                 : constraints.maxWidth,
                             child: PaginatedDataTable(
                               header: Text('${filtered.length} pedido(s)'),
+                              // Não há seleção múltipla nessa lista; sem isso
+                              // o DataTable mostra uma caixa de marcação por
+                              // linha por padrão, sem nenhuma ação associada.
+                              showCheckboxColumn: false,
+                              // A linha padrão tem 48 px fixos, e a célula de
+                              // ações traz botões que passam disso com o texto
+                              // ampliado que o PDV usa — daí o estouro de
+                              // poucos pixels repetido em toda linha. Dar
+                              // altura suficiente resolve na origem, em vez de
+                              // encolher os alvos de toque do operador.
+                              dataRowMinHeight: 52,
+                              dataRowMaxHeight: rowHeight,
                               rowsPerPage: rowsPerPage,
                               availableRowsPerPage: <int>{
                                 rowsPerPage,
@@ -3273,6 +4168,7 @@ class _HomePageState extends State<HomePage> {
   Widget _startPanel() {
     final options = [
       ('table', 'Mesa', 'Atendimento no salão', Icons.table_restaurant),
+      ('command', 'Comanda', 'Cartão de comanda', Icons.qr_code_2),
       ('counter', 'Balcão', 'Consumo rápido no local', Icons.storefront),
       (
         'takeaway',
@@ -3308,10 +4204,13 @@ class _HomePageState extends State<HomePage> {
               GridView.builder(
                 shrinkWrap: true,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 4,
+                  crossAxisCount: 5,
                   mainAxisSpacing: 16,
                   crossAxisSpacing: 16,
-                  childAspectRatio: 1.05,
+                  // Cinco colunas deixam cada card mais estreito, então a
+                  // legenda quebra em duas linhas; sem baixar a proporção o
+                  // conteúdo estoura a altura da célula.
+                  childAspectRatio: .92,
                 ),
                 itemCount: options.length,
                 itemBuilder: (_, index) {
@@ -3411,7 +4310,7 @@ class _HomePageState extends State<HomePage> {
               child: GridView.builder(
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 170,
-                  childAspectRatio: 1.25,
+                  childAspectRatio: 1.05,
                   crossAxisSpacing: 12,
                   mainAxisSpacing: 12,
                 ),
@@ -3430,7 +4329,7 @@ class _HomePageState extends State<HomePage> {
                     child: InkWell(
                       onTap: () => _openTable(table),
                       child: Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(12),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -3487,13 +4386,169 @@ class _HomePageState extends State<HomePage> {
     ),
   );
 
+  /// Comandas ativas, filtradas por número, código escaneável ou cliente.
+  ///
+  /// A busca é local porque a lista inteira já veio no carregamento do PDV —
+  /// e precisa continuar respondendo sem rede, que é quando o operador mais
+  /// depende de achar a comanda pelo número impresso no cartão.
+  List<Map<String, dynamic>> get visibleCommands {
+    final term = commandSearch.trim().toLowerCase();
+    final active = commands.where((item) => item['is_active'] != false);
+    if (term.isEmpty) return active.toList();
+    return active.where((item) {
+      final haystack =
+          '${item['number']} ${item['code'] ?? ''} '
+                  '${item['customer_name'] ?? ''}'
+              .toLowerCase();
+      return haystack.contains(term);
+    }).toList();
+  }
+
+  Widget _commandContextPanel() {
+    final visible = visibleCommands;
+    final free = commands
+        .where((item) => item['is_active'] != false && item['status'] == 'free')
+        .length;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextButton.icon(
+                onPressed: () => setState(() {
+                  flowStep = 'type';
+                  orderType = null;
+                }),
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Voltar'),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Selecione a comanda',
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                '$free ${free == 1 ? 'comanda livre' : 'comandas livres'} · '
+                'toque numa em uso para retomar o pedido.',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                autofocus: true,
+                onChanged: (value) => setState(() => commandSearch = value),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search_rounded),
+                  hintText: 'Buscar por número, código ou cliente...',
+                ),
+              ),
+              const SizedBox(height: 18),
+              Expanded(
+                child: visible.isEmpty
+                    ? Center(
+                        child: Text(
+                          commands.isEmpty
+                              ? 'Nenhuma comanda cadastrada.'
+                              : 'Nenhuma comanda encontrada.',
+                        ),
+                      )
+                    : GridView.builder(
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 170,
+                              childAspectRatio: 1.05,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                            ),
+                        itemCount: visible.length,
+                        itemBuilder: (_, index) {
+                          final command = visible[index];
+                          final occupied =
+                              command['current_order_id'] != null ||
+                              command['status'] == 'occupied';
+                          final color = occupied ? Colors.orange : Colors.green;
+                          return Card(
+                            elevation: 0,
+                            clipBehavior: Clip.antiAlias,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(color: color.shade300),
+                            ),
+                            child: InkWell(
+                              onTap: () => _openCommand(command),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(
+                                          '${command['number']}',
+                                          style: const TextStyle(
+                                            fontSize: 24,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Container(
+                                          width: 9,
+                                          height: 9,
+                                          decoration: BoxDecoration(
+                                            color: color,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      occupied ? 'Em uso' : 'Livre',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        color: color.shade800,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${command['customer_name']?.toString().trim().isNotEmpty == true ? command['customer_name'] : command['code'] ?? '—'}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _paymentPage() {
     final selected = selectedPaymentMethod == null || paymentMethods.isEmpty
         ? null
         : paymentMethods.firstWhere(
             (item) => '${item['id']}' == selectedPaymentMethod,
           );
-    final isCard = selected?['method_type'] == 'card';
     final needsReference = selected?['requires_reference'] == true;
     const keys = [
       '1',
@@ -3620,11 +4675,37 @@ class _HomePageState extends State<HomePage> {
                                           'Recebido: ${_money(_number(payment['amount']) + _number(payment['change_amount']))} · Troco: ${_money(payment['change_amount'])}',
                                         )
                                       : null,
-                                  trailing: Text(
-                                    _money(payment['amount']),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        _money(payment['amount']),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      if (payment['id'] != null)
+                                        IconButton(
+                                          tooltip: 'Excluir pagamento',
+                                          icon:
+                                              removingPaymentId ==
+                                                  '${payment['id']}'
+                                              ? const SizedBox(
+                                                  width: 18,
+                                                  height: 18,
+                                                  child: CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                )
+                                              : const Icon(
+                                                  Icons.delete_outline,
+                                                  size: 20,
+                                                ),
+                                          onPressed: removingPaymentId == null
+                                              ? () => _removePayment(payment)
+                                              : null,
+                                        ),
+                                    ],
                                   ),
                                 );
                               },
@@ -3659,6 +4740,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     DropdownButtonFormField<String>(
                       initialValue: selectedPaymentMethod,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Forma de pagamento',
                       ),
@@ -3673,21 +4755,6 @@ class _HomePageState extends State<HomePage> {
                       onChanged: (value) =>
                           setState(() => selectedPaymentMethod = value),
                     ),
-                    if (isCard) ...[
-                      const SizedBox(height: 12),
-                      SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment(value: 'debit', label: Text('Débito')),
-                          ButtonSegment(
-                            value: 'credit',
-                            label: Text('Crédito'),
-                          ),
-                        ],
-                        selected: {cardSubtype},
-                        onSelectionChanged: (value) =>
-                            setState(() => cardSubtype = value.first),
-                      ),
-                    ],
                     if (needsReference) ...[
                       const SizedBox(height: 12),
                       TextField(
@@ -3840,32 +4907,19 @@ class _HomePageState extends State<HomePage> {
       selectedCategory: category,
       search: search,
       money: _money,
-      imageUrlFor: _productImageUrl,
       onSearchChanged: (value) => setState(() => search = value),
       onCategoryChanged: (value) => setState(() => category = value),
       onProductPressed: _configureProduct,
     );
   }
 
-  String? _productImageUrl(Map<String, dynamic> product) {
-    final raw = '${product['image'] ?? ''}'.trim();
-    if (raw.isEmpty) return null;
-    final parsed = Uri.tryParse(raw);
-    if (parsed != null && parsed.hasScheme) return parsed.toString();
-    final base = Uri.tryParse(api.baseUrl);
-    if (base == null) return raw;
-    final normalized = raw.startsWith('/') ? raw : '/$raw';
-    return base.resolve(normalized).toString();
-  }
-
   Widget _cart() => OrderCartPanel(
     order: activeOrder,
     table: selectedTable,
+    command: selectedCommand,
     customer: selectedCustomer,
     items: orderItems,
-    products: products,
     money: _money,
-    imageUrlFor: _productImageUrl,
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,

@@ -139,6 +139,7 @@
             <label :for="`f-${field.name}`" class="rpage__label">
               {{ field.label }}
               <span v-if="field.required && !isView" class="rpage__required" aria-hidden="true">*</span>
+              <i v-if="field.hint" v-tooltip.top="field.hint" class="pi pi-question-circle rpage__help-icon" aria-hidden="true" />
             </label>
 
             <div v-if="field.type === 'boolean'" class="rpage__switch-row">
@@ -160,6 +161,33 @@
               filter
               fluid
             />
+
+            <div v-else-if="field.type === 'remote-dropdown' && field.quickCreate" class="rpage__field-row">
+              <Dropdown
+                :id="`f-${field.name}`"
+                v-model="formData[field.name]"
+                :options="remoteOptions[field.name] || []"
+                option-label="label"
+                option-value="value"
+                :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+                :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+                :show-clear="!field.required"
+                :loading="!remoteOptions[field.name]"
+                :disabled="isView"
+                filter
+                fluid
+              />
+              <Button
+                v-if="!isView"
+                type="button"
+                icon="pi pi-plus"
+                text
+                rounded
+                aria-label="Criar novo"
+                :disabled="quickCreateLoading"
+                @click="openQuickCreate(field)"
+              />
+            </div>
 
             <Dropdown
               v-else-if="field.type === 'remote-dropdown'"
@@ -270,7 +298,6 @@
               <i class="pi pi-exclamation-circle" />
               {{ fieldErrors[field.name] }}
             </small>
-            <small v-else-if="field.hint && !isView" class="rpage__field-hint">{{ field.hint }}</small>
           </div>
         </div>
       </div>
@@ -315,6 +342,18 @@
         <p v-else class="rpage__hint">Salve a receita para poder adicionar ingredientes.</p>
       </div>
 
+      <!-- Configuração fiscal (CNPJ, CSC, integrador) do restaurante -->
+      <div v-else-if="isRestaurant" class="rpage__extra">
+        <RestaurantFiscalSection
+          v-if="recordId"
+          ref="fiscalSectionRef"
+          :key="`fiscal-${recordId}`"
+          :restaurant-id="recordId"
+          :readonly="isView"
+        />
+        <p v-else class="rpage__hint">Salve o restaurante para poder configurar os dados fiscais.</p>
+      </div>
+
       <div v-if="saveError" class="rpage__alert rpage__alert--error rpage__alert--inline">
         <i class="pi pi-exclamation-triangle" /> {{ saveError }}
       </div>
@@ -324,6 +363,15 @@
         <Button type="submit" :label="isEdit ? 'Salvar alteracoes' : 'Criar registro'" :loading="saving" icon="pi pi-check" />
       </div>
     </form>
+
+    <!-- Criação rápida de perfil fiscal a partir de qualquer remote-dropdown marcado com quickCreate: "fiscal-profile" (ex.: produto) -->
+    <FiscalProfileDialog
+      v-if="quickCreateBranchId"
+      v-model:visible="fiscalProfileDialogOpen"
+      :restaurant-id="quickCreateRestaurantId"
+      :branch-id="quickCreateBranchId"
+      @saved="onQuickCreateSaved"
+    />
   </div>
 </template>
 
@@ -351,10 +399,13 @@ import Column from "primevue/column";
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
 import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
+import RestaurantFiscalSection from "../components/restaurant/RestaurantFiscalSection.vue";
+import FiscalProfileDialog from "../components/restaurant/FiscalProfileDialog.vue";
 import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
+import { resolveBranchIdForRestaurant } from "../utils/fiscalBranch";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 import { useToast } from "primevue/usetoast";
@@ -479,9 +530,17 @@ function cancelForm() {
   if (isEdit.value && recordId.value) goToView(recordId.value);
   else goToList();
 }
+const fiscalSectionRef = ref(null);
+
 async function submit() {
   const saved = await save();
   if (!saved) return; // erros de validacao ja estao em fieldErrors/saveError
+  // Botão único: ao salvar o restaurante, salva junto a configuração fiscal
+  // embutida na mesma página (dois modelos/endpoints, uma ação só pro usuário).
+  if (isRestaurant.value && fiscalSectionRef.value) {
+    const fiscalOk = await fiscalSectionRef.value.save();
+    if (!fiscalOk) return; // erro já aparece na própria seção fiscal
+  }
   if (props.mode === "view") {
     // edição inline concluída: volta ao modo leitura e recarrega o registro.
     localEdit.value = false;
@@ -497,9 +556,54 @@ async function submit() {
 const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View remonta por :key)
 const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
+const isRestaurant = computed(() => props.endpoint === "/restaurants/");
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
 const printing = ref(false);
 const toast = useToast();
+
+/* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
+   formulário de produto) — o mesmo diálogo usado na seção fiscal do
+   restaurante, disparado por um "+" ao lado do campo (`field.quickCreate`). */
+const quickCreateLoading = ref(false);
+const quickCreateField = ref(null);
+const quickCreateRestaurantId = ref(null);
+const quickCreateBranchId = ref(null);
+const fiscalProfileDialogOpen = ref(false);
+
+async function openQuickCreate(field) {
+  if (field.quickCreate !== "fiscal-profile") return;
+  const restaurantId = formData.restaurants?.[0] || formData.restaurant || null;
+  if (!restaurantId) {
+    toast.add({ severity: "warn", summary: "Selecione um restaurante primeiro", life: 3500 });
+    return;
+  }
+  quickCreateLoading.value = true;
+  try {
+    const branchId = await resolveBranchIdForRestaurant(restaurantId);
+    if (!branchId) {
+      toast.add({ severity: "warn", summary: "Nenhuma filial encontrada para o restaurante selecionado", life: 4000 });
+      return;
+    }
+    quickCreateField.value = field;
+    quickCreateRestaurantId.value = restaurantId;
+    quickCreateBranchId.value = branchId;
+    fiscalProfileDialogOpen.value = true;
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Não foi possível preparar a criação", detail: normalizeApiError(err).message, life: 4000 });
+  } finally {
+    quickCreateLoading.value = false;
+  }
+}
+
+function onQuickCreateSaved(saved) {
+  const field = quickCreateField.value;
+  if (!field) return;
+  const options = remoteOptions[field.name] || [];
+  options.push({ label: saved.name, value: saved.id, group: "", description: "" });
+  remoteOptions[field.name] = options;
+  formData[field.name] = saved.id;
+  toast.add({ severity: "success", summary: "Perfil fiscal criado", life: 2500 });
+}
 
 /** Gera a nota (PrintJob) e abre a janela de impressão com o HTML retornado. */
 async function printOrder() {
@@ -736,8 +840,10 @@ watch(() => [recordId.value, props.mode], async () => {
   box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 12%, transparent) !important;
 }
 
-.rpage__label { color: var(--text-strong); font: var(--weight-bold) 12.5px/1.2 var(--font-sans); letter-spacing: 0.01em; }
+.rpage__label { display: inline-flex; align-items: center; gap: 5px; color: var(--text-strong); font: var(--weight-bold) 12.5px/1.2 var(--font-sans); letter-spacing: 0.01em; }
 .rpage__required { color: #ef4444; margin-left: 3px; }
+.rpage__help-icon { color: var(--text-muted); font-size: 12px; cursor: help; }
+.rpage__help-icon:hover { color: var(--text-strong); }
 
 .rpage__input {
   width: 100%;
@@ -758,13 +864,14 @@ watch(() => [recordId.value, props.mode], async () => {
 .rpage__input:is(textarea) { height: auto; padding: 11px 13px; resize: vertical; line-height: 1.55; }
 .rpage__select { width: 100%; }
 .rpage__password { width: 100%; }
+.rpage__field-row { display: flex; align-items: center; gap: 6px; }
+.rpage__field-row .rpage__select { flex: 1; }
 
 .rpage__switch-row { display: flex; align-items: center; gap: 12px; height: var(--control-h); }
 .rpage__switch-label { color: var(--text-body); font: var(--weight-semibold) 13.5px/1 var(--font-sans); }
 
 .rpage__field-err { display: flex; align-items: center; gap: 6px; color: #ef4444; font: var(--weight-medium) 12px/1.3 var(--font-sans); }
 .rpage__field-err .pi { font-size: 12px; }
-.rpage__field-hint { color: var(--text-muted); font: var(--weight-medium) 12px/1.4 var(--font-sans); }
 
 /* ── Modo leitura (view): mesma tela do editar, com os campos desabilitados ──
    Estilo "ghost/outline": fundo transparente, borda suave e texto legível —

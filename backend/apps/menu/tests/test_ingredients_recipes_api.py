@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from apps.menu.models import Ingredient, Product, ProductCategory, Recipe
+from apps.menu.models import Ingredient, Product, Recipe
 
 pytestmark = pytest.mark.django_db
 

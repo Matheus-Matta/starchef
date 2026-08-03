@@ -64,6 +64,12 @@ class Product(TenantModel):
     ]
 
     name = models.CharField(max_length=180, db_index=True)
+    restaurants = models.ManyToManyField(
+        "restaurants.Restaurant",
+        related_name="available_products",
+        blank=True,
+        help_text="Restaurantes da conta que podem comercializar este produto.",
+    )
     internal_code = models.CharField(max_length=60)
     description = models.TextField(blank=True)
     category = models.ForeignKey(

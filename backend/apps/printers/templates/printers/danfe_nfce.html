@@ -37,6 +37,9 @@
   {% if is_homologation %}
     <div class="warn small">EMITIDA EM AMBIENTE DE HOMOLOGACAO<br>SEM VALOR FISCAL</div>
   {% endif %}
+  {% if is_contingency %}
+    <div class="warn small">EMITIDA EM CONTINGENCIA<br>TRANSMITIR QUANDO A CONEXAO VOLTAR</div>
+  {% endif %}
 
   <div class="line"></div>
 

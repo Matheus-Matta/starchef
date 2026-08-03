@@ -1,10 +1,24 @@
 # Produção (VPS): imagem imutável (sem bind-mount de código), settings de produção,
 # gunicorn+UvicornWorker, nginx na borda com TLS/rate-limit e estáticos servidos
 # direto. Suba com:  docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
+# via env se o servidor tiver mais recursos) — sem eles, um vazamento em
+# qualquer serviço pode consumir toda a RAM do host e derrubar os outros.
+# Log rotation (json-file) evita disco cheio por log de container sem limite.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpus: ${POSTGRES_CPUS:-1.0}
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-starchef}
       POSTGRES_USER: ${POSTGRES_USER:-starchef}
@@ -21,9 +35,35 @@ services:
     networks:
       - starchef
 
+  # Dump diário (pg_dump) + retenção configurável — sem depender de cron externo
+  # no host nem de uma imagem de terceiros: reusa a mesma imagem do postgres.
+  postgres_backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 256m
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-starchef}
+      POSTGRES_USER: ${POSTGRES_USER:-starchef}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD é obrigatório em produção}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    entrypoint: ["/bin/sh", "/scripts/backup_postgres.sh"]
+    volumes:
+      - ./backups:/backups
+      - ./infra/scripts/backup_postgres.sh:/scripts/backup_postgres.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - starchef
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    mem_limit: ${REDIS_MEM_LIMIT:-512m}
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -42,6 +82,8 @@ services:
         REQUIREMENTS: production
     restart: unless-stopped
     user: "1000:1000"
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    logging: *default-logging
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -74,6 +116,8 @@ services:
         REQUIREMENTS: production
     restart: unless-stopped
     user: "1000:1000"
+    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
+    logging: *default-logging
     command: celery -A config worker -l info --concurrency=${CELERY_CONCURRENCY:-4}
     env_file:
       - .env.production
@@ -94,6 +138,8 @@ services:
         REQUIREMENTS: production
     restart: unless-stopped
     user: "1000:1000"
+    mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
+    logging: *default-logging
     command: celery -A config beat -l info
     env_file:
       - .env.production
@@ -116,6 +162,8 @@ services:
       # Gerada em runtime; a mesma imagem pode ser promovida entre ambientes.
       API_URL: ${API_URL:-/api/v1}
     restart: unless-stopped
+    mem_limit: ${NGINX_MEM_LIMIT:-256m}
+    logging: *default-logging
     volumes:
       - ./infra/nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - backend_static:/var/www/static:ro

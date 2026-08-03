@@ -16,6 +16,7 @@ abstract final class OrderPresenter {
     required String? restaurantId,
     required String type,
     JsonMap? table,
+    JsonMap? command,
   }) {
     if (!isOffline(order)) return order;
     return {
@@ -32,6 +33,11 @@ abstract final class OrderPresenter {
       'items': <JsonMap>[],
       if (table != null) 'table': table['id'],
       if (table != null) 'table_number': table['number'],
+      // Sem isso o cabeçalho do pedido offline por comanda não sabe dizer
+      // qual comanda foi aberta — e é justamente o que o operador confere.
+      if (command != null) 'command': command['id'],
+      if (command != null) 'command_code': command['code'],
+      if (command != null) 'command_number': command['number'],
       ...order,
     };
   }

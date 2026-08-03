@@ -4,60 +4,97 @@
   <meta charset="utf-8">
   <title>Nota de pesagem - Pedido {{ order.sequence }}</title>
   <style>
-    body { font-family: Arial, sans-serif; font-size: 12px; width: 280px; margin: 0; }
-    h1, h2, p { margin: 0 0 6px; }
+    @page { size: 80mm auto; margin: 4mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+    body {
+      width: 72mm;
+      font-family: "Courier New", Courier, monospace;
+      font-size: 10.5pt;
+      line-height: 1.28;
+      font-variant-numeric: tabular-nums;
+    }
+    p { margin: 0; overflow-wrap: anywhere; }
+    .establishment { margin-bottom: 2mm; }
+    .establishment__name { font-size: 12pt; font-weight: 700; }
     .center { text-align: center; }
-    .right { text-align: right; }
-    table { width: 100%; border-collapse: collapse; }
-    td { padding: 3px 0; vertical-align: top; }
-    .line { border-top: 1px dashed #111; margin: 8px 0; }
-    .big { font-size: 20px; font-weight: bold; }
-    .barcode { margin-top: 12px; text-align: center; }
-    .barcode img { display: block; max-width: 100%; height: 54px; margin: 0 auto 4px; }
-    .barcode-label { font-family: monospace; letter-spacing: 1px; }
+    .rule { height: 0; margin: 1.7mm 0; border-top: 1px dashed #000; }
+    .title { padding: .8mm 0; font-weight: 700; letter-spacing: .06em; }
+    .order-line { display: flex; flex-wrap: wrap; gap: 0 2.5mm; }
+    .items { display: flex; flex-direction: column; gap: 1.4mm; }
+    .item__name { font-weight: 700; }
+    .value-row,
+    .total-row { display: flex; justify-content: space-between; gap: 4mm; }
+    .value-row span:last-child,
+    .total-row span:last-child { margin-left: auto; white-space: nowrap; }
+    .value-row { font-weight: 700; }
+    .total-row { font-weight: 700; }
+    .barcode { margin-top: 4mm; text-align: center; break-inside: avoid; }
+    .barcode__title { font-weight: 700; letter-spacing: .04em; }
+    .barcode__value { margin: 1mm 0 1.5mm; font-size: 12pt; letter-spacing: .2em; }
+    .barcode img { display: block; width: 100%; max-width: 62mm; height: 14mm; margin: 0 auto; object-fit: fill; }
+    .footer { margin-top: 4mm; text-align: center; }
+    @media screen {
+      body { margin: 12px auto; padding: 4mm; box-shadow: 0 0 14px rgba(0, 0, 0, .12); }
+    }
+    @media print {
+      body { width: 72mm; }
+    }
   </style>
 </head>
 <body>
-  <h1 class="center">{{ order.restaurant.trade_name }}</h1>
-  <p class="center">NOTA DE PESAGEM</p>
-  <div class="line"></div>
-  <p>Pedido: {{ order.sequence }}</p>
-  <p>Mesa: {{ order.table.number|default:"-" }} Comanda: {{ order.command.code|default:"-" }}</p>
-  <p>Data: {{ item.created_at|date:"d/m/Y H:i" }}</p>
-  <div class="line"></div>
+  <header class="establishment">
+    <p class="establishment__name">{{ establishment.trade_name }}</p>
+    <p>CNPJ: {{ establishment.cnpj|default:"-" }}{% if establishment.state_registration %} &middot; IE: {{ establishment.state_registration }}{% endif %}</p>
+    {% if establishment.address or establishment.city %}
+      <p>{{ establishment.address }}{% if establishment.city %} {{ establishment.city }}{% endif %}{% if establishment.state %}/{{ establishment.state }}{% endif %}</p>
+    {% endif %}
+    {% if establishment.zip_code %}<p>CEP: {{ establishment.zip_code }}</p>{% endif %}
+    {% if establishment.phone %}<p>Tel: {{ establishment.phone }}</p>{% endif %}
+  </header>
 
-  <table>
+  <p class="title center">NOTA DE PESAGEM</p>
+  <div class="rule"></div>
+  <p class="order-line">
+    <span>Pedido #{{ order.sequence }}</span>
+    {% if order.table_id %}
+      <span>Mesa {{ order.table.number }}</span>
+    {% elif order.command_id %}
+      <span>Comanda {{ order.command.code }}</span>
+    {% else %}
+      <span>Balcão</span>
+    {% endif %}
+  </p>
+  <p>{{ item.created_at|date:"d/m/Y H:i" }}</p>
+  <div class="rule"></div>
+
+  <section class="items">
     {% for ticket_item in items %}
-    <tr>
-      <td>
-        <strong>{{ ticket_item.product.name }}</strong><br>
+      <article class="item">
+        <p class="item__name">{{ ticket_item.product.name }}</p>
         {% if ticket_item.product.is_weighed %}
-          {{ ticket_item.quantity|floatformat:3 }} kg x R$ {{ ticket_item.unit_price }}/kg
+          <p>{{ ticket_item.quantity|floatformat:3 }} kg x R$ {{ ticket_item.unit_price }}/kg</p>
         {% else %}
-          {{ ticket_item.quantity|floatformat:"-3" }} un x R$ {{ ticket_item.unit_price }}
+          <p>{{ ticket_item.quantity|floatformat:"-3" }} un x R$ {{ ticket_item.unit_price }}</p>
         {% endif %}
-      </td>
-      <td class="right">R$ {{ ticket_item.total_price }}</td>
-    </tr>
+        <p class="value-row"><span>VALOR</span><span>R$ {{ ticket_item.total_price }}</span></p>
+      </article>
+      <div class="rule"></div>
     {% endfor %}
-  </table>
+  </section>
 
-  <div class="line"></div>
-  <table>
-    <tr><td>Subtotal</td><td class="right">{{ order.subtotal }}</td></tr>
-    <tr><td><strong>Total do pedido</strong></td><td class="right"><strong>{{ order.total }}</strong></td></tr>
-  </table>
-  <div class="line"></div>
+  <p class="total-row"><span>TOTAL DO PEDIDO</span><span>R$ {{ order.total }}</span></p>
+
   {% if barcode.value %}
-    <div class="barcode" data-symbology="{{ barcode.symbology }}">
+    <section class="barcode" data-symbology="{{ barcode.symbology }}">
+      <p class="barcode__title">COMANDA - {{ barcode.symbology|upper }}</p>
+      <p class="barcode__value">{{ barcode.value }}</p>
       {% if barcode.data_uri %}
-        <img src="{{ barcode.data_uri }}" alt="Codigo de barras Code128 da comanda {{ barcode.value }}">
+        <img src="{{ barcode.data_uri }}" alt="Código de barras {{ barcode.symbology }} da comanda {{ barcode.value }}">
       {% endif %}
-      <p>Comanda · {{ barcode.symbology }}</p>
-      <p class="barcode-label">{{ barcode.value }}</p>
-    </div>
-    <div class="line"></div>
+    </section>
   {% endif %}
-  <p class="center">Pague no caixa. Obrigado!</p>
+
+  <p class="footer">Pague no caixa. Obrigado!</p>
 </body>
 </html>

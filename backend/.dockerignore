@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+.git
+.gitignore
+db*.sqlite3
+media
+staticfiles
+logs
+.env
+.env.*
+.vscode
+.idea
+Dockerfile
+.dockerignore

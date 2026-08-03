@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:sqlite_async/sqlite_async.dart';
 
+import '../../../core/storage/app_paths.dart';
+
 class ScannerBinding {
   const ScannerBinding({
     required this.slot,
@@ -45,14 +47,7 @@ class ScannerBindingStore {
   late final Future<void> _ready;
 
   static File _defaultFile() {
-    final configured = Platform.environment['LOCALAPPDATA'];
-    final base = configured == null || configured.trim().isEmpty
-        ? Directory.systemTemp.path
-        : configured;
-    return File(
-      '$base${Platform.pathSeparator}StarChef'
-      '${Platform.pathSeparator}device_bindings.sqlite',
-    );
+    return AppPaths.dataFile('device_bindings.sqlite');
   }
 
   Future<void> _initialize() async {

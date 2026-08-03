@@ -99,12 +99,16 @@ class ProductSerializer(TenantModelSerializer):
     recipe = RecipeSerializer(read_only=True)
     # Adicionais vinculados a este produto (gerenciados na edição do produto).
     addons = serializers.SerializerMethodField()
+    restaurant_names = serializers.SerializerMethodField()
 
     def get_addons(self, obj):
         return [
             {"id": addon.id, "name": addon.name, "price": addon.price, "is_active": addon.is_active}
             for addon in obj.addons.all()
         ]
+
+    def get_restaurant_names(self, obj):
+        return [restaurant.trade_name for restaurant in obj.restaurants.all()]
 
     class Meta:
         model = Product
@@ -118,6 +122,24 @@ class ProductSerializer(TenantModelSerializer):
         if value and self.instance and value.branch_id != self.instance.branch_id:
             raise serializers.ValidationError("O setor deve pertencer à mesma filial do produto.")
         return value
+
+    def validate_restaurants(self, value):
+        account = getattr(self.context.get("request"), "account", None)
+        if account and any(restaurant.account_id != account.id for restaurant in value):
+            raise serializers.ValidationError("Selecione apenas restaurantes da mesma conta.")
+        if not value:
+            raise serializers.ValidationError("Selecione ao menos um restaurante.")
+        return value
+
+    def validate(self, attrs):
+        # A validação tenant genérica exige que toda relação pertença ao
+        # restaurante principal. `restaurants` é justamente a exceção: pode
+        # conter várias unidades, desde que todas pertençam à mesma conta.
+        selected = attrs.pop("restaurants", serializers.empty)
+        attrs = super().validate(attrs)
+        if selected is not serializers.empty:
+            attrs["restaurants"] = selected
+        return attrs
 
 
 class IngredientSerializer(TenantModelSerializer):

@@ -46,6 +46,27 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
       final config = await AppConfig.load();
 
       expect(config.apiBaseUrl, 'https://backend.starchef.test/api/v1');
+      expect(config.usedFallbackApiUrl, isFalse);
+    },
+  );
+
+  test(
+    'sem --dart-define e sem .env, cai no fallback e sinaliza isso',
+    () async {
+      final originalDirectory = Directory.current;
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef_config_no_env_',
+      );
+      addTearDown(() {
+        Directory.current = originalDirectory;
+        return directory.delete(recursive: true);
+      });
+      Directory.current = directory;
+
+      final config = await AppConfig.load();
+
+      expect(config.apiBaseUrl, 'http://localhost:8000/api/v1');
+      expect(config.usedFallbackApiUrl, isTrue);
     },
   );
 }

@@ -3,13 +3,13 @@
     <label v-if="label" :for="fieldId" class="appfield__label">
       {{ label }}
       <span v-if="required && !readonly" class="appfield__required" aria-hidden="true">*</span>
+      <i v-if="help" v-tooltip.top="help" class="pi pi-question-circle appfield__help-icon" aria-hidden="true" />
     </label>
 
     <!-- O controle real (PrimeVue) é passado pelo pai. `fieldId` e `invalid`
          são expostos para o slot poder ligar id/aria e o estado de erro. -->
     <slot :field-id="fieldId" :invalid="!!error" />
 
-    <small v-if="help && !error" :id="`${fieldId}-help`" class="appfield__help">{{ help }}</small>
     <small v-if="error" :id="`${fieldId}-error`" class="appfield__error" role="alert">
       <AppIcon name="alert-circle" :size="12" />
       {{ error }}
@@ -50,6 +50,9 @@ const fieldId = computed(() => `f-${props.name || `field-${(uid += 1)}`}`);
 .appfield--full { grid-column: 1 / -1; }
 
 .appfield__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-strong);
   font: var(--weight-bold) 12.5px/1.2 var(--font-sans);
   letter-spacing: 0.01em;
@@ -57,8 +60,9 @@ const fieldId = computed(() => `f-${props.name || `field-${(uid += 1)}`}`);
 .appfield--error .appfield__label { color: var(--danger-text, #dc2626); }
 .appfield--readonly .appfield__label { color: var(--text-muted); }
 .appfield__required { color: #ef4444; margin-left: 3px; }
+.appfield__help-icon { color: var(--text-muted); font-size: 12px; cursor: help; }
+.appfield__help-icon:hover { color: var(--text-strong); }
 
-.appfield__help { color: var(--text-muted); font: var(--weight-medium) 12px/1.35 var(--font-sans); }
 .appfield__error {
   display: flex; align-items: center; gap: 6px;
   color: #ef4444; font: var(--weight-medium) 12px/1.3 var(--font-sans);

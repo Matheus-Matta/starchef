@@ -31,7 +31,7 @@
       <form class="login-screen__form" @submit.prevent="submit">
         <div class="login-screen__heading">
           <h1>Bem-vindo de volta</h1>
-          <p>Entre para acessar o painel da sua filial.</p>
+          <p>Entre para acessar o painel do seu restaurante.</p>
         </div>
 
         <div class="login-field">

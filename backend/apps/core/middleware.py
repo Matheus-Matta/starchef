@@ -4,6 +4,8 @@ import logging
 from django.conf import settings
 from django.http import Http404, JsonResponse
 from django.urls import resolve
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from apps.core.authentication import CookieJWTAuthentication
 from apps.accounts.models import Account
@@ -44,14 +46,48 @@ class TenantMiddleware:
     def __call__(self, request):
         try:
             if self.requires_tenant(request):
-                self.authenticate_jwt(request)
+                if self.authenticate_jwt(request):
+                    # A credencial foi apresentada e recusada (tipicamente um
+                    # access token expirado). Isso é 401, não 403: o cliente
+                    # precisa saber que deve renovar o token em vez de exibir
+                    # "permissão insuficiente" para um operador que, na
+                    # verdade, só está com a sessão vencida.
+                    response = JsonResponse(
+                        {"detail": "Credencial inválida ou expirada."},
+                        status=401,
+                    )
+                    response["WWW-Authenticate"] = 'Bearer realm="api"'
+                    return response
+                user = getattr(request, "user", None)
+                is_authenticated = bool(user and user.is_authenticated)
                 account = self.resolve_account(request)
                 if account is None:
-                    user = getattr(request, "user", None)
-                    if user and user.is_authenticated and user.is_superuser:
+                    if is_authenticated and user.is_superuser:
                         request.account = None
                         return self.get_response(request)
-                    return JsonResponse({"detail": "O contexto da conta é obrigatório."}, status=403)
+                    if not is_authenticated:
+                        # Nenhuma credencial foi apresentada. Isso é 401 — o
+                        # cliente precisa autenticar, não pedir permissão a
+                        # alguém. Responder 403 aqui produzia a mensagem
+                        # enganosa "permissão insuficiente" no PDV.
+                        response = JsonResponse(
+                            {"detail": "Autenticação necessária."},
+                            status=401,
+                        )
+                        response["WWW-Authenticate"] = 'Bearer realm="api"'
+                        return response
+                    # Autenticado, mas o usuário não tem perfil ligado a uma
+                    # conta. É um problema de cadastro, e a mensagem precisa
+                    # dizer isso em vez de falar em permissão.
+                    return JsonResponse(
+                        {
+                            "detail": (
+                                "Seu usuário não está vinculado a nenhuma conta. "
+                                "Peça ao responsável para associar um perfil ao seu login."
+                            )
+                        },
+                        status=403,
+                    )
                 if not account.is_active or account.status != Account.STATUS_ACTIVE:
                     return JsonResponse({"detail": "A conta não está ativa."}, status=403)
 
@@ -74,16 +110,28 @@ class TenantMiddleware:
         return match.url_name not in PUBLIC_URL_NAMES
 
     def authenticate_jwt(self, request):
+        """Autentica pelo JWT do header ou do cookie.
+
+        Devolve `True` quando havia uma credencial e ela foi recusada, para que
+        o chamador responda 401. Uma requisição sem credencial nenhuma devolve
+        `False` e segue o fluxo normal — quem decide ali é a resolução de conta.
+        """
         if getattr(request, "user", None) is not None and request.user.is_authenticated:
-            return
+            return False
 
         try:
             authenticated = self.jwt_authentication.authenticate(request)
+        except (InvalidToken, TokenError, AuthenticationFailed):
+            return True
         except Exception:
-            authenticated = None
+            # Falha inesperada (banco fora, por exemplo) não deve virar 401:
+            # o pedido segue como anônimo e a camada seguinte decide.
+            logger.exception("Falha inesperada ao autenticar o JWT")
+            return False
 
         if authenticated:
             request.user, request.auth = authenticated
+        return False
 
     def resolve_account(self, request):
         user = getattr(request, "user", None)

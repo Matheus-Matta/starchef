@@ -1,0 +1,149 @@
+"""Fluxo fiscal completo pela API de verdade (não chamando os services
+Python diretamente) — cobre exatamente o que o frontend/Flutter chamam:
+emitir, reimprimir o DANFE e cancelar, além do CRUD de config/perfil.
+
+Existe pra pegar bugs que só aparecem na camada HTTP (rota, barra final,
+serializer, permissão) — foi assim que se achou o bug real de
+`POST /invoices/emit` sem barra final virando redirect 301 e quebrando o
+POST no navegador/Flutter (corrigido em PdvView.vue e home_page.dart).
+"""
+import uuid
+from decimal import Decimal
+
+import pytest
+
+from apps.invoices.models import FiscalConfig, Invoice
+from apps.menu.models import Product
+from apps.orders.models import Order
+from apps.orders.services import add_order_item, create_order
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def account_with_financeiro(account):
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    return account
+
+
+@pytest.fixture
+def product(account, restaurant, branch):
+    return Product.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        name="X-Burger", internal_code=f"P{uuid.uuid4().hex[:6]}", sale_price=Decimal("25.00"),
+    )
+
+
+@pytest.fixture
+def order_with_item(restaurant, branch, product, manager_user):
+    order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=manager_user)
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    return order
+
+
+def test_emit_without_fiscal_config_returns_400(api_client, account_with_financeiro, order_with_item):
+    resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
+    assert resp.status_code == 400
+
+
+def test_emit_unknown_order_returns_404(api_client, account_with_financeiro):
+    resp = api_client.post("/api/v1/invoices/emit/", {"order": str(uuid.uuid4())}, format="json")
+    assert resp.status_code == 404
+
+
+def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_financeiro, restaurant, branch):
+    resp = api_client.post(
+        "/api/v1/fiscal/config/",
+        {
+            "restaurant": str(restaurant.id), "branch": str(branch.id),
+            "corporate_name": "Restaurante Teste LTDA", "cnpj": "11222333000181", "uf": "SP",
+            "environment": FiscalConfig.ENV_HOMOLOGATION, "series": 1,
+            "provider_token": "segredo-super-secreto",
+            "csc_token": "csc-secreto",
+        },
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    assert "provider_token" not in resp.data
+    assert "csc_token" not in resp.data
+
+    listed = api_client.get("/api/v1/fiscal/config/")
+    assert listed.status_code == 200
+    assert all("provider_token" not in row and "csc_token" not in row for row in listed.data["results"])
+
+
+def test_fiscal_profile_crud_via_api(api_client, account_with_financeiro, restaurant, branch):
+    create_resp = api_client.post(
+        "/api/v1/fiscal/profiles/",
+        {"restaurant": str(restaurant.id), "branch": str(branch.id), "name": "Prato padrão", "cfop": "5102"},
+        format="json",
+    )
+    assert create_resp.status_code == 201, create_resp.data
+    profile_id = create_resp.data["id"]
+
+    update_resp = api_client.patch(f"/api/v1/fiscal/profiles/{profile_id}/", {"is_default": True}, format="json")
+    assert update_resp.status_code == 200
+    assert update_resp.data["is_default"] is True
+
+    list_resp = api_client.get("/api/v1/fiscal/profiles/")
+    assert list_resp.status_code == 200
+    assert any(row["id"] == profile_id for row in list_resp.data["results"])
+
+
+class TestFullEmissionFlow:
+    """emitir -> filtrar por pedido -> imprimir -> cancelar, tudo via API."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, api_client, account, restaurant, branch, account_with_financeiro, order_with_item):
+        FiscalConfig.objects.create(
+            account=account, restaurant=restaurant, branch=branch,
+            provider="manual", cnpj="11222333000181", uf="SP",
+            environment=FiscalConfig.ENV_HOMOLOGATION, series=1, next_number=1,
+        )
+        self.client = api_client
+        self.order = order_with_item
+
+    def test_emit_returns_created_invoice(self):
+        resp = self.client.post(
+            "/api/v1/invoices/emit/",
+            {"order": str(self.order.id), "cpf": "123.456.789-09", "cpf_name": "Cliente Teste"},
+            format="json",
+        )
+        assert resp.status_code == 201, resp.data
+        assert resp.data["access_key"]
+        assert resp.data["access_key_formatted"]
+        assert resp.data["status"] == Invoice.STATUS_PENDING
+        assert resp.data["emission_type"] == Invoice.EMISSION_NORMAL
+        assert resp.data["recipient_cpf"] == "12345678909"
+
+    def test_emit_twice_for_same_order_is_rejected(self):
+        first = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        assert first.status_code == 201
+        second = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        assert second.status_code == 400
+
+    def test_filter_invoices_by_order(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice_id = emitted.data["id"]
+
+        resp = self.client.get(f"/api/v1/invoices/?order={self.order.id}")
+        assert resp.status_code == 200
+        assert [row["id"] for row in resp.data["results"]] == [invoice_id]
+
+    def test_print_danfe_after_emit(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice_id = emitted.data["id"]
+
+        resp = self.client.post(f"/api/v1/invoices/{invoice_id}/print/", {}, format="json")
+        assert resp.status_code == 201, resp.data
+        assert resp.data["print_job_id"]
+        assert "DANFE" in resp.data["html"]
+
+    def test_cancel_after_emit(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice_id = emitted.data["id"]
+
+        resp = self.client.post(f"/api/v1/invoices/{invoice_id}/cancel/", {"reason": "Pedido cancelado"}, format="json")
+        assert resp.status_code == 200, resp.data
+        assert resp.data["status"] == Invoice.STATUS_CANCELLED

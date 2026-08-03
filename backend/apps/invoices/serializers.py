@@ -20,8 +20,11 @@ class FiscalConfigSerializer(TenantModelSerializer):
         model = FiscalConfig
         fields = "__all__"
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "next_number"]
-        # CSC e o segredo da NFC-e: aceita escrita, nunca devolve no GET.
-        extra_kwargs = {"csc_token": {"write_only": True}}
+        # CSC e a credencial do integrador: aceitam escrita, nunca voltam no GET.
+        extra_kwargs = {
+            "csc_token": {"write_only": True},
+            "provider_token": {"write_only": True},
+        }
 
 
 class InvoiceItemSerializer(TenantModelSerializer):
@@ -41,6 +44,7 @@ class InvoiceSerializer(TenantModelSerializer):
         read_only_fields = [
             *AUDIT_READ_ONLY_FIELDS,
             "access_key",
+            "emission_type",
             "authorization_protocol",
             "authorized_at",
             "digest_value",
