@@ -102,3 +102,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Poda o GHCR: mantém as 10 versões com tag mais recentes (as sha-* de
+  # commits antigos viram lixo a cada push) e nunca apaga `latest` nem
+  # versões semver (release) — essas ficam protegidas por `exclude-tags`
+  # independente de idade/posição no ranking.
+  cleanup-old-images:
+    needs: build-and-push-image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: starchef-frontend
+          keep-n-tagged: 10
+          exclude-tags: "latest,*.*"
+          delete-untagged: true

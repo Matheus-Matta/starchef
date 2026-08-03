@@ -215,6 +215,8 @@ O `ruff` está configurado (`backend/pyproject.toml`) só com a regra `F` (pyfla
 
 **Imagem de produção**: depois do `test` passar, o job `build-and-push-image` builda `backend/` (`REQUIREMENTS=production`) e publica em `ghcr.io/<owner>/starchef-backend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem secrets no build — settings de produção são lidos em runtime via `.env.production`.
 
+**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões antigas (`dataaxiom/ghcr-cleanup-action`) — mantém as 10 versões com tag mais recentes e apaga manifests sem tag, mas nunca apaga `latest` nem qualquer tag semver (`exclude-tags: latest,*.*`), então releases nunca somem, só o acúmulo de `sha-*` de commits antigos.
+
 ## 13. Testes
 
 188 testes hoje (`pytest -q`), ~72% de cobertura de linha (`--cov=apps`). Todas as 17 apps de domínio têm ao menos smoke tests (GET nos endpoints principais, autenticado, checando que a rota responde e não estoura 500) — 8 apps têm suítes mais profundas cobrindo regra de negócio (`accounts`, `customers`, `kitchen`, `menu`, `orders`, `payments`, `restaurants`, `sla`). `backend/conftest.py` centraliza as fixtures multi-tenant (`account`, `restaurant`, `branch`, `api_client` autenticado como gerente, `admin_client` autenticado como admin do tenant).

@@ -171,6 +171,8 @@ Subir tudo: `docker compose -f docker-compose.prod.yml --env-file .env.productio
 
 **Imagem de produção**: depois do `build` passar, o job `build-and-push-image` builda `frontend/` e publica em `ghcr.io/<owner>/starchef-frontend`. Roda só em `push` (nunca em PR) — em push na `main` sai `sha-<curto>` + `latest`; em tag `vX.Y.Z` (ver [`FLUTTER_DESKTOP.md`§12](FLUTTER_DESKTOP.md#12-build-e-release) pra o fluxo completo de release) sai `X.Y.Z` + `X.Y` + `latest`. Sem build args/secrets — a mesma imagem serve qualquer ambiente (§11 acima).
 
+**Limpeza do GHCR**: o job `cleanup-old-images` roda depois e poda versões antigas (`dataaxiom/ghcr-cleanup-action`) — mantém as 10 versões com tag mais recentes e apaga manifests sem tag, mas nunca apaga `latest` nem qualquer tag semver (`exclude-tags: latest,*.*`), então releases nunca somem, só o acúmulo de `sha-*` de commits antigos.
+
 ## 14. Referências
 
 - [`BACKEND.md`](BACKEND.md) — a API que este frontend consome.
