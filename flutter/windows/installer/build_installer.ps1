@@ -39,4 +39,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "ISCC.exe falhou com codigo $LASTEXITCODE"
 }
 
-Write-Host "Instalador gerado em artifacts\starchef-pdv.exe (versao $appVersion)"
+Write-Host "Instalador gerado em artifacts\StarChef-PDV-Setup-$appVersion.exe"
