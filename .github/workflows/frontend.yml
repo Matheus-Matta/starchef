@@ -27,7 +27,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # vitest 4/jsdom 30 exigem Node >=22 (jsdom quer especificamente
+          # ^22.22.2 || ^24.15.0 || >=26); Node 20 fazia `npm ci` falhar
+          # ("lock file out of sync") porque o npm 10 do Node 20 resolve a
+          # arvore de optionalDependencies do esbuild diferente do npm 11
+          # usado pra gerar o package-lock.json.
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
