@@ -475,7 +475,13 @@ const augmentedFormFields = computed(() => {
 
 // Licenciamento modular: campos atrelados a um modulo que a conta nao tem sao
 // omitidos do formulario (nao apenas no template — nao entram no payload/validacao).
-const visibleFormFields = computed(() => augmentedFormFields.value.filter((field) => auth.hasModule(field.module)));
+// `superuserOnly` esconde campos de uso restrito a superusuário (ex.: escolher
+// a conta ao criar um usuário) de qualquer outro perfil.
+const visibleFormFields = computed(() =>
+  augmentedFormFields.value.filter(
+    (field) => auth.hasModule(field.module) && (!field.superuserOnly || auth.user?.is_superuser),
+  ),
+);
 
 // Agrupa os campos por `section` preservando a ordem de declaração (STC-021).
 // Sem nenhuma seção declarada, cai em um único grupo sem título (comportamento antigo).

@@ -90,10 +90,27 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     return path.split(".").reduce((acc, key) => (acc == null ? undefined : acc[key]), source);
   }
 
+  /**
+   * Campos com `field.header` (ex.: escolher a conta como superusuário, ver
+   * recurso "usuarios") não entram no corpo — viram um header HTTP na
+   * chamada (`X-Account-ID` etc.), porque o backend resolve esse dado antes
+   * mesmo do corpo ser lido (TenantMiddleware/request.account).
+   */
+  function buildHeaders() {
+    const headers = {};
+    for (const field of formFields) {
+      if (!field.header) continue;
+      const value = formData[field.name];
+      if (value !== "" && value !== null && value !== undefined) headers[field.header] = value;
+    }
+    return headers;
+  }
+
   /** Converte o formulario no payload, aplicando os casts numericos declarados. */
   function buildPayload() {
     const payload = {};
     for (const field of formFields) {
+      if (field.header) continue; // vira header (ver buildHeaders), não corpo.
       let value = formData[field.name];
       const filled = value !== "" && value !== null && value !== undefined;
       if (field.type === "number" && filled) value = parseInt(value, 10);
@@ -139,9 +156,11 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       if (isCreate.value && !sharedAcrossRestaurants) {
         applyTenantDefaults(payload, { skip: formFields.map((field) => field.name) });
       }
+      const headers = buildHeaders();
+      const extraConfig = Object.keys(headers).length ? { headers } : undefined;
       const saved = isEdit.value
-        ? await service.update(unref(recordId), payload)
-        : await service.create(payload);
+        ? await service.update(unref(recordId), payload, extraConfig)
+        : await service.create(payload, extraConfig);
       return saved;
     } catch (err) {
       applyServerErrors(err);

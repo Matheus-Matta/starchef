@@ -48,15 +48,15 @@ export class ResourceService {
     return data;
   }
 
-  /** Cria um novo registro. */
-  async create(payload) {
-    const { data } = await api.post(this.endpoint, payload);
+  /** Cria um novo registro. `extraConfig` mescla config extra do axios (ex.: headers). */
+  async create(payload, extraConfig = {}) {
+    const { data } = await api.post(this.endpoint, payload, extraConfig);
     return data;
   }
 
   /** Atualiza parcialmente um registro existente (PATCH). */
-  async update(id, payload) {
-    const { data } = await api.patch(`${this.endpoint}${id}/`, payload);
+  async update(id, payload, extraConfig = {}) {
+    const { data } = await api.patch(`${this.endpoint}${id}/`, payload, extraConfig);
     return data;
   }
 
