@@ -92,7 +92,11 @@ class AuthController extends ChangeNotifier {
         cause: error,
         stackTrace: stackTrace,
       );
-      errorMessage = 'Ocorreu um erro inesperado. Tente novamente.';
+      // Não deveria chegar aqui — falhas de rede já viram ApiException em
+      // ApiClient. Mas se algo inesperado escapar, mostrar só "erro
+      // inesperado" sem detalhe nenhum torna impossível diagnosticar sem
+      // acesso ao log do terminal. Inclui o texto da exceção.
+      errorMessage = 'Ocorreu um erro inesperado ao entrar: $error';
       return false;
     } finally {
       loading = false;

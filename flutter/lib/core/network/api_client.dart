@@ -465,10 +465,24 @@ class ApiClient {
         'Não foi possível conectar ao servidor '
         '${error.address?.address ?? Uri.tryParse(baseUrl)?.host ?? baseUrl}.',
       );
+    } on HandshakeException catch (error) {
+      // TLS falhou (certificado inválido/expirado, ou https:// apontando pra
+      // um servidor que só fala http puro) — sem isso, essa exceção não bate
+      // com nenhum catch acima e vaza como "erro inesperado" sem explicação
+      // nenhuma pra quem está tentando logar.
+      throw _NetworkUnavailable(
+        'Falha de TLS ao conectar em $baseUrl: ${error.message}',
+      );
     } on http.ClientException catch (error) {
       throw _NetworkUnavailable(
         'Não foi possível acessar a API em $baseUrl: ${error.message}',
       );
+    } catch (error) {
+      // Rede de segurança: qualquer outra exceção de baixo nível (ex.: erro
+      // de certificado embrulhado de outra forma pela plataforma) ainda
+      // precisa virar uma mensagem legível em vez de um "erro inesperado"
+      // sem contexto na tela de login.
+      throw _NetworkUnavailable('Não foi possível falar com $baseUrl: $error');
     }
   }
 
