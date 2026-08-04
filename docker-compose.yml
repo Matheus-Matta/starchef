@@ -45,25 +45,6 @@ services:
     networks:
       - starchef
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    mem_limit: ${REDIS_MEM_LIMIT:-512m}
-    logging: *default-logging
-    # REDIS_URL/CELERY_BROKER_URL/CELERY_RESULT_BACKEND já mandam senha na
-    # connection string — sem --requirepass aqui, o Redis não pede senha
-    # nenhuma e os clientes com AUTH na URL não conseguem conectar.
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD é obrigatório em produção}"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - starchef
-
   backend:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
@@ -92,8 +73,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
       interval: 30s
@@ -101,6 +80,10 @@ services:
       retries: 3
     networks:
       - starchef
+      # Redis é compartilhado com outros apps do servidor, fora deste
+      # compose — não roda aqui. `apps_net` é a rede Docker onde ele já
+      # está (`docker network ls` no host pra conferir o nome exato).
+      - apps_net
 
   celery_worker:
     image: ghcr.io/matheus-matta/starchef-backend:latest
@@ -116,10 +99,10 @@ services:
       DJANGO_DEBUG: "False"
     depends_on:
       - backend
-      - redis
       - postgres
     networks:
       - starchef
+      - apps_net
 
   celery_beat:
     image: ghcr.io/matheus-matta/starchef-backend:latest
@@ -135,10 +118,10 @@ services:
       DJANGO_DEBUG: "False"
     depends_on:
       - backend
-      - redis
       - postgres
     networks:
       - starchef
+      - apps_net
 
   # SPA (Vue) já compilado dentro da imagem, servido em HTTP puro pelo `serve`
   # (sem nginx). TLS e o proxy same-origin de /api e /ws ficam a cargo do
@@ -164,10 +147,14 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   backend_media:
   backend_static:
 
 networks:
   starchef:
     driver: bridge
+  # Rede onde o Redis compartilhado (usado por outros apps do servidor) já
+  # está — não é criada por este compose, precisa existir de antemão no
+  # Docker do host. Troque o nome se o seu Redis estiver em outra rede.
+  apps_net:
+    external: true
