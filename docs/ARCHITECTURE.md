@@ -81,7 +81,7 @@ containers:
 deploy:
   aplicar migrations
   subir backend ASGI, workers e beat
-  publicar frontend estatico no Nginx
+  publicar frontend estatico (container `serve`, sem Nginx)
   validar /health/ e smoke tests
 ```
 
@@ -97,7 +97,7 @@ Producao:
 
 - PostgreSQL gerenciado com backup PITR;
 - Redis gerenciado ou dedicado;
-- Nginx como reverse proxy HTTP/WS;
+- proxy reverso HTTP/WS externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver `infra/reverse-proxy.example.conf`);
 - Django rodando em ASGI com Daphne/Uvicorn;
 - Celery worker e beat separados;
 - Sentry ou equivalente para erros;

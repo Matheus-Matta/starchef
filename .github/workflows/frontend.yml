@@ -90,8 +90,9 @@ jobs:
             type=raw,value=latest
 
       # Sem secrets/API_URL no build: o bundle é same-origin (/api/v1) e o
-      # nginx injeta window.RUNTIME_CONFIG via runtime-config.js.template no
-      # start do container (ver Dockerfile) — a MESMA imagem serve qualquer ambiente.
+      # docker-entrypoint.sh injeta window.RUNTIME_CONFIG via
+      # runtime-config.js.template no start do container (ver Dockerfile) —
+      # a MESMA imagem serve qualquer ambiente.
       - name: Build e push
         uses: docker/build-push-action@v6
         with:

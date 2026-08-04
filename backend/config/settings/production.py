@@ -18,7 +18,8 @@ if DATABASES["default"].get("PASSWORD") in {"", "starchef"}:  # noqa: F405
     raise ImproperlyConfigured("POSTGRES_PASSWORD deve ser definido com um valor seguro em produção.")
 
 # WhiteNoise serve os estáticos coletados (admin/DRF) direto do app, logo após o
-# SecurityMiddleware — assim o /static/ funciona mesmo sem o nginx no caminho.
+# SecurityMiddleware — assim o /static/ funciona sem depender de nenhum proxy
+# reverso no caminho.
 MIDDLEWARE.insert(  # noqa: F405
     MIDDLEWARE.index("django.middleware.security.SecurityMiddleware") + 1,  # noqa: F405
     "whitenoise.middleware.WhiteNoiseMiddleware",

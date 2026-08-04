@@ -163,10 +163,10 @@ if settings.DEBUG:
 else:
     # Em produção:
     #  - estáticos são servidos pelo WhiteNoise (middleware, hasheados/comprimidos);
-    #  - media (uploads dinâmicos) é servida pelo nginx (`location /media/`). O
-    #    WhiteNoise NÃO serve media, pois indexa arquivos só no boot e uploads
-    #    posteriores não apareceriam. Este re_path é um fallback para quando o app
-    #    roda sem nginx na frente (o nginx intercepta /media/ antes de chegar aqui).
+    #  - media (uploads dinâmicos) é servida por este re_path direto pelo Django.
+    #    O WhiteNoise NÃO serve media, pois indexa arquivos só no boot e uploads
+    #    posteriores não apareceriam. Não há proxy reverso na frente servindo
+    #    /media/ direto de um volume — isto é o único caminho de servi-la.
     from django.urls import re_path
     from django.views.static import serve as media_serve
 

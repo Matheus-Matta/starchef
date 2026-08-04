@@ -38,7 +38,7 @@ Menu público ─────┘                                      │
                                   transações      cache/channels    jobs/beat
 ```
 
-Em desenvolvimento, o backend pode usar SQLite, cache e Channels em memória e Celery em modo eager. Em produção, o Compose usa PostgreSQL, Redis, Gunicorn com worker Uvicorn, Celery e Nginx.
+Em desenvolvimento, o backend pode usar SQLite, cache e Channels em memória e Celery em modo eager. Em produção, o Compose usa PostgreSQL, Redis, Gunicorn com worker Uvicorn e Celery. TLS e o proxy reverso ficam a cargo de infraestrutura externa ao Compose.
 
 ## Estrutura
 
@@ -59,7 +59,7 @@ backend/
   tests/            testes de integração
 frontend/           SPA Vue 3 + PrimeVue + Pinia + Vite
 flutter/            PDV Flutter desktop para Windows
-infra/              configuração Nginx de produção
+infra/              scripts, simuladores e exemplo de proxy reverso externo
 docs/               documentação complementar
 DOC.md              referência técnica da versão atual
 ```
@@ -105,12 +105,12 @@ Para reconstruir um SQLite local inconsistente, mantendo backup automático:
 
 ```bash
 cp .env.example .env
-# preencha segredos, domínio, origens confiáveis e certificados
+# preencha segredos, domínio e origens confiáveis
 docker compose pull
 docker compose up -d
 ```
 
-Não publica PostgreSQL nem Redis para fora, executa migrations e `collectstatic` no start, roda com usuário não-root, e expõe só o `frontend` (nginx) em `80/443`.
+Não publica PostgreSQL nem Redis para fora, executa migrations e `collectstatic` no start, roda com usuário não-root, e publica `backend`/`frontend` em HTTP puro só em loopback (127.0.0.1) por padrão. TLS, domínio e o proxy same-origin de `/api`/`/ws` são responsabilidade de um proxy reverso externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver [`infra/reverse-proxy.example.conf`](infra/reverse-proxy.example.conf)).
 
 ## URLs úteis
 

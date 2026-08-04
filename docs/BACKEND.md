@@ -147,7 +147,7 @@ Configurado (`config/celery.py`), com Redis como broker/result backend em produ�
 Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 
 - `GET /api/v1/public/menu/<slug>/` — único endpoint sem autenticação (cardápio digital público).
-- `GET /health/` — healthcheck (usado pelo Docker healthcheck e pelo nginx).
+- `GET /health/` — healthcheck (usado pelo Docker healthcheck e pelo proxy reverso externo).
 - `GET /` — índice JSON com links (health/swagger/login).
 - `GET /api/schema/` e `/api/schema/swagger-ui/` — OpenAPI via `drf-spectacular`.
 - `/admin/` — Django Admin (Unfold), com `/admin/login/` cobrindo o fluxo de primeiro acesso.
@@ -178,7 +178,7 @@ redis             — cache + Channels layer + broker/result Celery
 backend           — gunicorn + UvicornWorker (ASGI), roda migrate + collectstatic no start
 celery_worker     — processa tasks (hoje, infraestrutura pronta sem jobs definidos)
 celery_beat       — agendador Celery
-frontend          — nginx com o SPA (Vue) já embutido na imagem, serve estático + faz proxy de /api, /ws, /admin, /health para o backend
+frontend          — SPA (Vue) já embutido na imagem, servido em HTTP puro pelo `serve` (sem nginx)
 ```
 
 `backend`, `celery_worker`, `celery_beat` e `frontend` usam as imagens publicadas em `ghcr.io/<owner>/starchef-{backend,frontend}` (ver [§12](#12-cicd)), sempre fixas em `:latest` (a última tag de release publicada) — nada é buildado no host. Subir:
@@ -188,18 +188,22 @@ docker compose pull
 docker compose up -d
 ```
 
-Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000).
+Todos os serviços têm `mem_limit`/`cpus` (evita um vazamento em qualquer container derrubar o host inteiro) e log rotation (`json-file`, 10 MB × 5 arquivos). O backend roda com usuário não-root (uid 1000). `backend` e `frontend` publicam porta em HTTP puro, só em loopback por padrão (`BACKEND_PORT`/`FRONTEND_PORT`, `BACKEND_BIND`/`FRONTEND_BIND` no `.env.example`) — **este compose não tem nginx nem TLS**.
 
 ### Fluxo de request em produção
 
-1. Cliente (browser ou app Flutter) → **nginx** (TLS, rate limiting por IP com `limit_req_zone`, mais restrito em `/auth/{login,refresh,password-reset}` e `/admin/login/`).
-2. nginx serve o SPA estático direto (`/`, `/assets/`), ou faz proxy de `/api/`, `/ws/`, `/health/`, `/admin/` para o `backend` (gunicorn).
+TLS, rate limiting por IP e o proxy same-origin ficam a cargo de um proxy reverso **externo** a este compose (nginx do host, Caddy, LB da nuvem etc. — ver [`infra/reverse-proxy.example.conf`](../infra/reverse-proxy.example.conf) como ponto de partida). O fluxo típico:
+
+1. Cliente (browser ou app Flutter) → proxy reverso externo (TLS, rate limiting, mais restrito em `/auth/{login,refresh,password-reset}` e `/admin/login/`).
+2. O proxy repassa `/` pro `frontend` (SPA estático via `serve`), e `/api/`, `/ws/`, `/health/`, `/admin/`, `/static/`, `/media/` pro `backend` (gunicorn) — tudo no mesmo domínio (same-origin, exigido pelos cookies `SameSite=Lax`).
 3. `backend` roda Django em ASGI (`config.asgi:application`) via `UvicornWorker` — necessário porque HTTP e WebSocket (Channels) precisam do mesmo processo.
-4. Estáticos do Django (admin/DRF) são servidos pelo próprio app via WhiteNoise (funciona mesmo se o nginx não estiver na frente); mídia (uploads) é servida pelo nginx direto do volume compartilhado.
+4. Estáticos do Django (admin/DRF) são servidos pelo próprio app via WhiteNoise; mídia (uploads) é servida por um `re_path` de fallback em `config/urls.py` — nenhum dos dois depende de volume compartilhado com outro serviço.
+
+**Limite de confiança:** o backend confia em `X-Forwarded-Proto`/`X-Forwarded-For`/`Host` de quem se conectar nele (`SECURE_PROXY_SSL_HEADER`, `real_ip` de auditoria/throttle). Por isso a porta do backend não deve ficar acessível de fora do proxy reverso — por padrão ela só é publicada em loopback; se o proxy rodar em outra máquina, a porta liberada por firewall/security group deve ficar restrita ao IP dele.
 
 ### Segurança em produção
 
-HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (adicionado no nginx, ver [`FRONTEND.md`](FRONTEND.md)), rate limiting em duas camadas (nginx por IP + DRF throttle por usuário/rota).
+HSTS (30 dias + subdomínios + preload), `SECURE_SSL_REDIRECT`, cookies `Secure`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` — estes três últimos headers são adicionados pelo proxy reverso externo, não pelo Django (ver `infra/reverse-proxy.example.conf` e [`FRONTEND.md`](FRONTEND.md)). Rate limiting em duas camadas: IP no proxy externo + DRF throttle por usuário/rota.
 
 ### Backup
 

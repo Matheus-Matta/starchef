@@ -17,20 +17,20 @@ Tipos de atendimento: mesa, comanda, balcão, retirada e delivery.
 ## 2. Arquitetura e execução
 
 ```text
-Vue/Vite ou Nginx ─┐
-Flutter Windows ───┼── HTTP REST ───────┐
-                   └── WebSocket ───────┤
-                                       ▼
-                                Django ASGI/DRF
-                                  │    │    │
-                         PostgreSQL  Redis  Celery
+Vue/Vite ou proxy reverso externo ─┐
+Flutter Windows ───────────────────┼── HTTP REST ───────┐
+                                    └── WebSocket ───────┤
+                                                         ▼
+                                                  Django ASGI/DRF
+                                                    │    │    │
+                                           PostgreSQL  Redis  Celery
 ```
 
 - A API fica sob `/api/v1/`.
 - O KDS usa `/ws/kitchen/<branch_id>/<sector>/`.
 - Notificações usam `/ws/notifications/`.
 - Em desenvolvimento, `DEBUG=True` seleciona `config.settings.development`; SQLite e serviços em memória são suportados.
-- Em produção, `config.settings.production` usa PostgreSQL, Redis, cookies seguros, Gunicorn/Uvicorn e Nginx.
+- Em produção, `config.settings.production` usa PostgreSQL, Redis, cookies seguros e Gunicorn/Uvicorn. TLS e proxy reverso ficam fora do Compose (infra externa).
 - `manage.py runservices` inicia backend e frontend juntos e encerra ambos no `Ctrl+C`.
 
 ## 3. Tecnologias
@@ -41,7 +41,7 @@ Frontend: Vue 3, Vue Router, Pinia, PrimeVue/PrimeIcons, Axios, Vite e ESLint.
 
 Desktop: Flutter/Dart, `http`, `flutter_secure_storage`, `window_manager`, SVG e `crypto`.
 
-Infraestrutura: Docker Compose, Nginx, Gunicorn com `UvicornWorker`, volumes persistentes e health checks.
+Infraestrutura: Docker Compose, Gunicorn com `UvicornWorker`, volumes persistentes e health checks. TLS/proxy reverso são infra externa ao Compose.
 
 As versões exatas estão em `backend/requirements/*.txt`, `frontend/package.json` e `flutter/pubspec.yaml`.
 
@@ -360,10 +360,11 @@ O `docker-compose.yml`:
 - executa migrations e coleta de estáticos;
 - inicia backend ASGI com Gunicorn/Uvicorn;
 - inicia worker e beat do Celery;
-- serve SPA, estáticos e mídia pelo Nginx;
-- faz proxy de HTTP e WebSocket;
-- publica apenas `80` e `443`;
+- serve o SPA compilado via `serve` (sem nginx) e a mídia/estáticos direto pelo Django (WhiteNoise + fallback próprio);
+- publica `backend` e `frontend` em HTTP puro, só em loopback por padrão (`BACKEND_PORT`/`FRONTEND_PORT`);
 - usa volumes para banco, Redis, mídia e estáticos.
+
+TLS, domínio e o proxy same-origin de `/api`/`/ws` são responsabilidade de um proxy reverso externo ao Compose (nginx do host, Caddy, LB da nuvem etc. — ver `infra/reverse-proxy.example.conf`), que deve repassar `X-Forwarded-Proto`/`X-Forwarded-For`/`Host` corretamente; a porta do backend não deve ficar acessível de fora dessa borda.
 
 Antes de publicar, execute testes/builds, troque todas as credenciais e valide `/health/`, login, WebSockets e impressão. Backup do PostgreSQL não roda automático por padrão — ver `infra/scripts/backup_postgres.sh`.
 

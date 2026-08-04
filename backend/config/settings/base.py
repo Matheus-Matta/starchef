@@ -10,6 +10,16 @@ SECRET_KEY = config("DJANGO_SECRET_KEY", default="unsafe-dev-key")
 SETTINGS_MODULE = os.getenv("DJANGO_SETTINGS_MODULE", "")
 DEBUG = config("DJANGO_DEBUG", default=SETTINGS_MODULE.endswith(".development"), cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+# O healthcheck do Docker roda dentro do próprio container e bate em
+# localhost:8000 — se o DJANGO_ALLOWED_HOSTS de produção só tiver o domínio
+# público (comum, já que localhost não é exposto por fora), o healthcheck
+# recebe 400 (DisallowedHost) e o container nunca fica "healthy". A porta do
+# backend é publicada só em loopback por padrão (ver BACKEND_BIND no
+# docker-compose.yml), então liberar localhost/127.0.0.1 aqui não amplia a
+# superfície de ataque nesse cenário padrão.
+for _host in ("localhost", "127.0.0.1"):
+    if _host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host)
 
 INSTALLED_APPS = [
     "daphne",

@@ -15,7 +15,7 @@
 | Testes | Vitest (jsdom) + `@vue/test-utils` |
 | Lint | ESLint (`eslint-plugin-vue`) |
 | Observabilidade | Sentry (`@sentry/vue`, opcional via `VITE_SENTRY_DSN`) |
-| Servidor de produção | nginx (serve os estáticos + proxy reverso) |
+| Servidor de produção | `serve` (Node) — só estáticos; TLS e proxy reverso ficam fora do compose |
 
 Não há framework de estrutura por "features" — tudo vive em `src/views` (telas) e `src/components` (blocos reutilizáveis), sem uma pasta `src/features`.
 
@@ -50,8 +50,9 @@ frontend/
     sentry.js               init condicional do Sentry
     main.js                 bootstrap da app
     App.vue                 shell raiz (Toast/ConfirmDialog globais, error handler)
-  public/                  runtime-config.js.template, favicon etc.
-  Dockerfile               build de produção (multi-stage → nginx)
+  public/                  runtime-config.js (default de dev), favicon etc.
+  runtime-config.js.template  template usado no build de produção (ver §12)
+  Dockerfile               build de produção (multi-stage → `serve`, sem nginx)
 ```
 
 ## 3. Rotas (`src/router/index.js`)
@@ -107,7 +108,7 @@ Dois composables sustentam isso:
 
 ## 6. Tempo real
 
-Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo Vite em dev e pelo nginx em produção):
+Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo Vite em dev e pelo proxy reverso externo em produção):
 
 - **`stores/notifications.js`** conecta em `/ws/notifications/` — sino de notificações, reconecta sozinho após 4s se cair. Mensagens: `{event:"notification", payload}` (nova notificação) e `{event:"connected", payload:{unread}}` (sync inicial do contador).
 - **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
@@ -152,18 +153,18 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
 - `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 
-Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `envsubst` do nginx no start do container (`window.RUNTIME_CONFIG = { API_URL: "..." }`), permitindo promover a mesma imagem entre ambientes sem rebuild.
+Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `sed` num `docker-entrypoint.sh` próprio, executado no start do container (`window.RUNTIME_CONFIG = { API_URL: "..." }`), permitindo promover a mesma imagem entre ambientes sem rebuild.
 
 ## 12. Produção
 
-**Build** (`frontend/Dockerfile`, multi-stage):
+**Build** (`frontend/Dockerfile`, multi-stage, sem nginx):
 
 1. `node:24-alpine` — `npm ci` + `npm run build` (sourcemaps desligados, `console`/`debugger` removidos pelo esbuild, chunks separados por vendor: `primevue`, `vue`, `axios`).
-2. `nginx:1.27-alpine` — copia só `dist/` + o template de runtime-config.
+2. `node:24-alpine` (stage de runtime) — instala o pacote `serve` (versão pinada), copia só `dist/`, o template de runtime-config, `serve.json` (cache headers) e `docker-entrypoint.sh`.
 
-**Serving** (`infra/nginx.prod.conf`, montado pelo `docker-compose.yml`): nginx serve o SPA (`/`, `/assets/` com cache longo e imutável, `index.html`/`runtime-config.js` sem cache), e faz proxy reverso de `/api/`, `/ws/`, `/health/`, `/admin/` para o container `backend` (gunicorn) — mesma origem, sem CORS, cookies `SameSite=Lax` funcionam. Rate limiting por IP na borda (mais rígido em `/auth/login`, `/auth/refresh`, `/auth/password-reset`, `/admin/login/`), compressão gzip, headers de segurança incluindo `Content-Security-Policy` (`default-src 'self'; connect-src 'self' wss:; style-src 'self' 'unsafe-inline'` — o `unsafe-inline` de estilo é necessário porque o PrimeVue injeta estilo inline via JS).
+**Serving**: o container roda `docker-entrypoint.sh` (gera `dist/runtime-config.js` a partir do template) e então `serve -s dist -l 8080 -c serve.json` — só serve os estáticos da SPA em HTTP puro, com fallback de rota (`-s`) e os `Cache-Control` de `serve.json` (`index.html`/`runtime-config.js` sem cache, `assets/` imutável 1 ano). **Não há mais proxy nem TLS neste container**: quem faz proxy same-origin de `/api/`, `/ws/`, `/health/`, `/admin/` para o `backend` (gunicorn), rate limiting por IP, compressão e headers de segurança (`Content-Security-Policy` etc.) é um proxy reverso **externo** ao `docker-compose.yml` — ver [`infra/reverse-proxy.example.conf`](../infra/reverse-proxy.example.conf), que preserva a mesma política de CSP (`default-src 'self'; connect-src 'self' wss:; style-src 'self' 'unsafe-inline'` — o `unsafe-inline` de estilo é necessário porque o PrimeVue injeta estilo inline via JS) como ponto de partida pra montar esse proxy.
 
-Subir tudo: `docker compose pull && docker compose up -d` (baixa as imagens publicadas de backend/frontend, nada é buildado no host; ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe).
+Subir tudo: `docker compose pull && docker compose up -d` (baixa as imagens publicadas de backend/frontend, nada é buildado no host; `frontend` e `backend` ficam em HTTP puro, publicados só em loopback por padrão — ver [`BACKEND.md`](BACKEND.md#11-produção) para o que mais sobe e o fluxo de request completo).
 
 ## 13. Testes e CI
 

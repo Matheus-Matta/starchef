@@ -1,11 +1,17 @@
 # Imagens publicadas pelo CI em ghcr.io (backend/frontend só saem em tag de
 # release — ver .github/workflows/{backend,frontend}.yml), settings de produção,
-# gunicorn+UvicornWorker, nginx na borda com TLS/rate-limit e estáticos servidos
-# direto. `.env` na raiz é lido automaticamente pelo Compose. Suba com:
+# gunicorn+UvicornWorker. `.env` na raiz é lido automaticamente pelo Compose.
+# Suba com:
 #   docker compose pull
 #   docker compose up -d
 # Imagens fixas em `:latest` (backend e frontend) — sempre a última tag de
 # release publicada pelo CI.
+#
+# SEM nginx/TLS/rate-limit neste compose: backend e frontend publicam HTTP
+# puro (em loopback por padrão — ver BACKEND_BIND/FRONTEND_BIND). TLS,
+# proxy same-origin de /api e /ws, e rate-limit de borda são responsabilidade
+# de um proxy reverso EXTERNO a este arquivo (nginx do host, Caddy, LB da
+# nuvem etc.) — ver infra/reverse-proxy.example.conf como ponto de partida.
 #
 # Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
 # via env se o servidor tiver mais recursos) — sem eles, um vazamento em
@@ -73,6 +79,13 @@ services:
     volumes:
       - backend_media:/app/media
       - backend_static:/app/staticfiles
+    # Publicado em loopback por padrão: o backend confia em X-Forwarded-Proto/
+    # X-Forwarded-For de quem se conectar nele (SECURE_PROXY_SSL_HEADER), então
+    # só deve ficar acessível pelo proxy reverso externo. Se esse proxy rodar
+    # em outra máquina, troque BACKEND_BIND para 0.0.0.0 e restrinja o acesso
+    # via firewall/security group só ao IP do proxy.
+    ports:
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,27 +137,23 @@ services:
     networks:
       - starchef
 
-  # Borda: nginx com o SPA (Vue) já compilado dentro da imagem + proxy de /api e
-  # /ws para o backend. A config e os certificados são montados por fora.
+  # SPA (Vue) já compilado dentro da imagem, servido em HTTP puro pelo `serve`
+  # (sem nginx). TLS e o proxy same-origin de /api e /ws ficam a cargo do
+  # proxy reverso externo (ver comentário no topo do arquivo).
   frontend:
     image: ghcr.io/matheus-matta/starchef-frontend:latest
     environment:
-      # Injetada pelo nginx no start do container (runtime-config.js via
-      # envsubst — a mesma imagem serve qualquer ambiente sem rebuild), mas o
+      # Injetada pelo entrypoint no start do container (runtime-config.js via
+      # sed — a mesma imagem serve qualquer ambiente sem rebuild), mas o
       # valor tem que vir do `.env` explicitamente, sem fallback silencioso.
       API_URL: ${API_URL:?API_URL é obrigatório}
     restart: unless-stopped
-    mem_limit: ${NGINX_MEM_LIMIT:-256m}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
     logging: *default-logging
-    volumes:
-      - ./infra/nginx.prod.conf:/etc/nginx/nginx.conf:ro
-      - backend_static:/var/www/static:ro
-      - backend_media:/var/www/media:ro
-      # Certificados TLS (ex.: via certbot/host). Ajuste o caminho conforme seu setup.
-      - ./infra/certs:/etc/nginx/certs:ro
+    # Publicado em loopback por padrão — mesmo raciocínio do backend: quem
+    # termina TLS e expõe pra internet é o proxy reverso externo.
     ports:
-      - "80:80"
-      - "443:443"
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-8080}:8080"
     depends_on:
       - backend
     networks:
