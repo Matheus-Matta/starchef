@@ -110,26 +110,14 @@ def ensure_base_tenant(
         else:
             _update_instance(restaurant, restaurant_defaults, skip_fields={"account", "cnpj"})
 
-        branch, _ = Branch.all_objects.update_or_create(
-            account=account,
-            restaurant=restaurant,
-            name=branch_name,
-            defaults={
-                "phone": restaurant_phone,
-                "email": restaurant_email,
-                "address": restaurant_address,
-                "city": restaurant_city,
-                "state": restaurant_state,
-                "zip_code": "01000-000",
-                "opening_hours": {"seg_sex": "11:00-23:00", "sab_dom": "12:00-23:30"},
-                "default_service_fee_percent": Decimal("10.00"),
-                "require_open_cash_register": True,
-                "stock_deduction_timing": Branch.STOCK_DEDUCTION_PAYMENT,
-                "print_settings": {"demo": True},
-                "fiscal_settings": {"demo": True},
-                "is_active": True,
-            },
-        )
+        # A Branch em si (dados espelhados do Restaurant: phone, address,
+        # fiscal_settings etc.) já foi criada/sincronizada pelo signal
+        # `on_restaurant_saved` no create/update acima — só falta o que não
+        # tem equivalente no Restaurant (nome de unidade e opening_hours).
+        branch = Branch.all_objects.get(restaurant=restaurant)
+        branch.name = branch_name
+        branch.opening_hours = {"seg_sex": "11:00-23:00", "sab_dom": "12:00-23:30"}
+        branch.save(update_fields=["name", "opening_hours", "updated_at"])
 
     return account, restaurant, branch
 
@@ -172,26 +160,12 @@ def ensure_restaurant_in_account(
         else:
             _update_instance(restaurant, defaults, skip_fields={"account", "cnpj"})
 
-        branch, _ = Branch.all_objects.update_or_create(
-            account=account,
-            restaurant=restaurant,
-            name=branch_name,
-            defaults={
-                "phone": phone,
-                "email": email,
-                "address": address,
-                "city": city,
-                "state": state,
-                "zip_code": "20000-000",
-                "opening_hours": {"seg_sex": "12:00-23:00", "sab_dom": "12:00-00:00"},
-                "default_service_fee_percent": Decimal(service_fee_percent),
-                "require_open_cash_register": True,
-                "stock_deduction_timing": Branch.STOCK_DEDUCTION_PAYMENT,
-                "print_settings": {"demo": True},
-                "fiscal_settings": {"demo": True},
-                "is_active": True,
-            },
-        )
+        # Idem ensure_base_tenant: a Branch já foi criada/sincronizada pelo
+        # signal no create/update acima — só falta nome de unidade e horário.
+        branch = Branch.all_objects.get(restaurant=restaurant)
+        branch.name = branch_name
+        branch.opening_hours = {"seg_sex": "12:00-23:00", "sab_dom": "12:00-00:00"}
+        branch.save(update_fields=["name", "opening_hours", "updated_at"])
 
     return restaurant, branch
 

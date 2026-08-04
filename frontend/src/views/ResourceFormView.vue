@@ -581,7 +581,7 @@ async function openQuickCreate(field) {
   try {
     const branchId = await resolveBranchIdForRestaurant(restaurantId);
     if (!branchId) {
-      toast.add({ severity: "warn", summary: "Nenhuma filial encontrada para o restaurante selecionado", life: 4000 });
+      toast.add({ severity: "warn", summary: "Não foi possível carregar a configuração fiscal deste restaurante. Tente novamente.", life: 4000 });
       return;
     }
     quickCreateField.value = field;

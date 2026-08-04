@@ -4,13 +4,13 @@
          visualmente os dados do restaurante dos dados fiscais abaixo. -->
     <div class="fs__head">
       <h2>Configuração fiscal</h2>
-      <p>{{ readonly ? "Somente leitura." : "CNPJ e integrador da NFC-e desta filial. Salva junto com o restaurante." }}</p>
+      <p>{{ readonly ? "Somente leitura." : "CNPJ e integrador da NFC-e deste restaurante. Salva junto com o cadastro." }}</p>
     </div>
 
     <div v-if="loading" class="fs__hint">Carregando configuração fiscal...</div>
 
     <div v-else-if="!branchId" class="fs__hint">
-      Nenhuma filial encontrada para este restaurante — a configuração fiscal fica vinculada à filial.
+      Não foi possível carregar a configuração fiscal deste restaurante. Tente novamente em instantes.
     </div>
 
     <template v-else>

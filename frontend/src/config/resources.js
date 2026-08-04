@@ -243,8 +243,8 @@ export const resources = [
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
       { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },
-      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e; sem ele, usa o perfil padrão da filial.
-      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Usar perfil padrão da filial", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile" },
+      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e; sem ele, usa o perfil padrão do restaurante.
+      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Usar perfil padrão do restaurante", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile" },
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
       // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
       { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },

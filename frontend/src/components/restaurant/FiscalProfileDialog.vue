@@ -76,7 +76,7 @@
           <InputNumber :id="fieldId" v-model="form.approx_tax_rate" :class="{ 'p-invalid': invalid }" :min-fraction-digits="2" @update:model-value="dirty = true" />
         </template>
       </AppFormField>
-      <AppFormField label="Perfil padrão da filial">
+      <AppFormField label="Perfil padrão do restaurante">
         <div class="fpd__switch">
           <InputSwitch v-model="form.is_default" @update:model-value="dirty = true" />
           <span>{{ form.is_default ? "Sim" : "Não" }}</span>
