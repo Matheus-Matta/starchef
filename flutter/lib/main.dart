@@ -17,10 +17,12 @@ import 'features/scale/services/scale_window_launcher.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
-  final config = await AppConfig.load();
   final scaleWindow = ScaleWindowLauncher.isScaleWindow(arguments);
   final preferences = LocalPreferences();
   await preferences.load();
+  final config = await AppConfig.load(
+    manualOverrideUrl: preferences.apiBaseUrlOverride,
+  );
   final errorCenter = ErrorCenter();
 
   if (config.usedFallbackApiUrl) {

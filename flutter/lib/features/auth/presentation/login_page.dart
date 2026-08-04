@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_text_field.dart';
+import '../../settings/presentation/api_url_settings_dialog.dart';
 import 'auth_controller.dart';
 
 class LoginPage extends StatefulWidget {
@@ -11,11 +13,13 @@ class LoginPage extends StatefulWidget {
     required this.controller,
     required this.isDark,
     required this.onToggleTheme,
+    required this.preferences,
   });
 
   final AuthController controller;
   final bool isDark;
   final VoidCallback onToggleTheme;
+  final LocalPreferences preferences;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -80,14 +84,27 @@ class _LoginPageState extends State<LoginPage> {
                   Positioned(
                     top: 24,
                     right: 24,
-                    child: IconButton.outlined(
-                      tooltip: 'Alternar tema',
-                      onPressed: widget.onToggleTheme,
-                      icon: Icon(
-                        widget.isDark
-                            ? Icons.light_mode_outlined
-                            : Icons.dark_mode_outlined,
-                      ),
+                    child: Row(
+                      children: [
+                        IconButton.outlined(
+                          tooltip: 'URL da API',
+                          onPressed: () => ApiUrlSettingsDialog.show(
+                            context,
+                            widget.preferences,
+                          ),
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.outlined(
+                          tooltip: 'Alternar tema',
+                          onPressed: widget.onToggleTheme,
+                          icon: Icon(
+                            widget.isDark
+                                ? Icons.light_mode_outlined
+                                : Icons.dark_mode_outlined,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],

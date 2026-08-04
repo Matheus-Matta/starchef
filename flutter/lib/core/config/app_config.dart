@@ -36,9 +36,23 @@ class AppConfig {
   String notificationsSocketUrl(String accessToken) =>
       '$webSocketBaseUrl/ws/notifications/?token=${Uri.encodeComponent(accessToken)}';
 
-  static Future<AppConfig> load() async {
+  /// [manualOverrideUrl] vem de `LocalPreferences.apiBaseUrlOverride` — o que
+  /// o usuário digitou na engrenagem da tela de login. Tem prioridade sobre
+  /// --dart-define/.env porque é a ação mais explícita e recente: se alguém
+  /// mexeu ali, é porque quer apontar para outro lugar de propósito.
+  static Future<AppConfig> load({String? manualOverrideUrl}) async {
     const definedUrl = String.fromEnvironment('API_BASE_URL');
     const definedDsn = String.fromEnvironment('PDV_SENTRY_DSN');
+
+    if (manualOverrideUrl != null && _absoluteHttpUrl(manualOverrideUrl)) {
+      final dsn = definedDsn.isNotEmpty
+          ? definedDsn
+          : await _sentryDsnFromEnvFile();
+      return AppConfig(
+        apiBaseUrl: _normalizeUrl(manualOverrideUrl),
+        sentryDsn: _orNull(dsn),
+      );
+    }
 
     if (definedUrl.isNotEmpty) {
       // --dart-define resolve a API diretamente; ainda assim tenta achar um

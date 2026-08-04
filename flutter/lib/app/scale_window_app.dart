@@ -80,6 +80,7 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
             controller: _auth,
             isDark: _themeMode == ThemeMode.dark,
             onToggleTheme: _toggleTheme,
+            preferences: widget.preferences,
           );
         }
         return ScaleWindowPage(

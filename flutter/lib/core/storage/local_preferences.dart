@@ -24,6 +24,7 @@ class LocalPreferences {
   static const _stabilityToleranceKey = 'scale_stability_tolerance_kg';
   static const _audibleAlertsKey = 'scale_audible_alerts';
   static const _autoPrintKey = 'scale_auto_print';
+  static const _apiBaseUrlOverrideKey = 'api_base_url_override';
 
   final File _file;
   Map<String, dynamic> _values = const {};
@@ -77,6 +78,17 @@ class LocalPreferences {
   bool get autoPrint => _values[_autoPrintKey] as bool? ?? true;
 
   Future<void> setAutoPrint(bool value) => _write(_autoPrintKey, value);
+
+  /// URL da API definida manualmente na tela de login (sobrescreve o que veio
+  /// de --dart-define/.env — ver `AppConfig.load`). `null`/vazio significa
+  /// "sem override, usa a configuração padrão do build".
+  String? get apiBaseUrlOverride {
+    final value = _values[_apiBaseUrlOverrideKey] as String?;
+    return (value == null || value.trim().isEmpty) ? null : value.trim();
+  }
+
+  Future<void> setApiBaseUrlOverride(String? value) =>
+      _write(_apiBaseUrlOverrideKey, (value == null || value.trim().isEmpty) ? null : value.trim());
 
   int _int(String key, {required int fallback, required int min, required int max}) {
     final raw = _values[key];

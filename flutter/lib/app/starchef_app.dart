@@ -105,6 +105,7 @@ class _StarChefAppState extends State<StarChefApp> {
                 controller: _auth,
                 isDark: _themeMode == ThemeMode.dark,
                 onToggleTheme: _toggleTheme,
+                preferences: widget.preferences,
               );
       },
     ),

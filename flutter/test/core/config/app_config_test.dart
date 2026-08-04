@@ -69,4 +69,46 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
       expect(config.usedFallbackApiUrl, isTrue);
     },
   );
+
+  test(
+    'override manual (engrenagem do login) tem prioridade e não conta como fallback',
+    () async {
+      final originalDirectory = Directory.current;
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef_config_override_',
+      );
+      addTearDown(() {
+        Directory.current = originalDirectory;
+        return directory.delete(recursive: true);
+      });
+      await File(
+        '${directory.path}${Platform.pathSeparator}.env',
+      ).writeAsString('API_BASE_URL=https://backend-do-env.starchef.test/api/v1\n');
+      Directory.current = directory;
+
+      final config = await AppConfig.load(
+        manualOverrideUrl: 'https://manual.starchef.test/api/v1',
+      );
+
+      expect(config.apiBaseUrl, 'https://manual.starchef.test/api/v1');
+      expect(config.usedFallbackApiUrl, isFalse);
+    },
+  );
+
+  test('override manual inválido é ignorado, cai pro resto da cadeia', () async {
+    final originalDirectory = Directory.current;
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef_config_bad_override_',
+    );
+    addTearDown(() {
+      Directory.current = originalDirectory;
+      return directory.delete(recursive: true);
+    });
+    Directory.current = directory;
+
+    final config = await AppConfig.load(manualOverrideUrl: 'nao-e-uma-url');
+
+    expect(config.apiBaseUrl, 'http://localhost:8000/api/v1');
+    expect(config.usedFallbackApiUrl, isTrue);
+  });
 }
