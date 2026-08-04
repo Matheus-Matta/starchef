@@ -50,11 +50,14 @@ services:
     restart: unless-stopped
     mem_limit: ${REDIS_MEM_LIMIT:-512m}
     logging: *default-logging
-    command: ["redis-server", "--appendonly", "yes"]
+    # REDIS_URL/CELERY_BROKER_URL/CELERY_RESULT_BACKEND já mandam senha na
+    # connection string — sem --requirepass aqui, o Redis não pede senha
+    # nenhuma e os clientes com AUTH na URL não conseguem conectar.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD é obrigatório em produção}"]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
