@@ -30,9 +30,13 @@ STORAGES = {
 }
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# Todos os três dependem de TLS estar de fato na frente (proxy reverso
+# externo). Sem TLS ainda (ex.: testando via HTTP puro antes de montar esse
+# proxy), desligue os três no .env — senão o redirect quebra tudo e os
+# cookies Secure não são gravados pelo navegador em conexão HTTP.
 SECURE_SSL_REDIRECT = config("DJANGO_SECURE_SSL_REDIRECT", default=True, cast=bool)
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = config("DJANGO_SESSION_COOKIE_SECURE", default=True, cast=bool)
+CSRF_COOKIE_SECURE = config("DJANGO_CSRF_COOKIE_SECURE", default=True, cast=bool)
 SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
