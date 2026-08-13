@@ -138,10 +138,10 @@ def product_with_recipe(product, account, restaurant, branch, manager_user):
 
 @pytest.fixture
 def payment_method(account, restaurant, branch):
-    return PaymentMethod.objects.create(
+    return PaymentMethod.objects.get_or_create(
         account=account,
         restaurant=restaurant,
         branch=branch,
         name="PIX",
-        method_type=PaymentMethod.TYPE_PIX,
-    )
+        defaults={"method_type": PaymentMethod.TYPE_PIX},
+    )[0]

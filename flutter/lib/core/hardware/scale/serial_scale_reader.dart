@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../logging/app_logger.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 import '../peripheral_lock.dart';
 import 'scale_protocol.dart';
 import 'scale_sample.dart';
@@ -39,17 +40,41 @@ class SerialScaleReader {
     double zeroThresholdKg = 0.005,
     String role = 'balanca-rapida',
     String? ownerDetail,
-  }) => SerialScaleReader(
-    portName: portName,
-    protocol: protocol,
-    stabilityToleranceKg: stabilityToleranceKg,
-    settleDuration: settleDuration,
-    zeroThresholdKg: zeroThresholdKg,
-    role: role,
-    ownerDetail: ownerDetail,
-    transportFactory: () =>
-        SerialScaleTransport(portName: portName, baudRate: baudRate),
-  );
+  }) {
+    // Extrai configuração serial do protocolo, se houver.
+    final cfg = protocol.serialConfig;
+    dynamic parity;
+    int? stopBits;
+    if (cfg != null) {
+      if (cfg.containsKey('parity')) {
+        final p = cfg['parity'];
+        if (p == 1) {
+          parity = SerialPortParity.odd;
+        } else if (p == 2) {
+          parity = SerialPortParity.even;
+        } else {
+          parity = SerialPortParity.none;
+        }
+      }
+      if (cfg.containsKey('stopBits')) stopBits = cfg['stopBits'];
+    }
+
+    return SerialScaleReader(
+      portName: portName,
+      protocol: protocol,
+      stabilityToleranceKg: stabilityToleranceKg,
+      settleDuration: settleDuration,
+      zeroThresholdKg: zeroThresholdKg,
+      role: role,
+      ownerDetail: ownerDetail,
+      transportFactory: () => SerialScaleTransport(
+        portName: portName,
+        baudRate: baudRate,
+        parity: parity,
+        stopBits: stopBits,
+      ),
+    );
+  }
 
   static const _maximumRetryDelay = Duration(seconds: 15);
 
@@ -80,6 +105,7 @@ class SerialScaleReader {
 
   DateTime? _lastFrameAt;
   DateTime? _stableSince;
+  DateTime? _lastWeightRequestAt;
   double _referenceWeight = 0;
   ScaleSample? _lastSample;
 
@@ -243,6 +269,23 @@ class SerialScaleReader {
       ),
     );
     if (!_samples.isClosed) _samples.add(resolved);
+
+    // Se o equipamento enviou apenas um indicador de estabilidade (sem
+    // valor numérico), solicitamos o peso explicitamente. Limitamos a
+    // frequência das solicitações para evitar flood (1s).
+    if (!resolved.hasWeight && resolved.stable == true) {
+      final nowTime = DateTime.now();
+      if (_lastWeightRequestAt == null ||
+          nowTime.difference(_lastWeightRequestAt!) >
+              const Duration(seconds: 1)) {
+        _lastWeightRequestAt = nowTime;
+        try {
+          unawaited(requestWeight());
+        } catch (_) {
+          // Não deixamos uma exceção impedir o fluxo normal.
+        }
+      }
+    }
   }
 
   void _checkSilence() {

@@ -212,7 +212,13 @@ def register_payment(*, order, user, payment_method_id, amount, idempotency_key=
             if existing:
                 return existing
 
-        order = Order.objects.select_for_update().select_related("branch").get(pk=order.pk)
+        # PostgreSQL rejeita FOR UPDATE quando o JOIN inclui o lado nullable.
+        # O `of` mantém o eager loading, mas restringe o lock ao pedido.
+        order = (
+            Order.objects.select_related("branch")
+            .select_for_update(of=("self",))
+            .get(pk=order.pk)
+        )
         if order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
             raise ValidationError("Pedidos cancelados ou estornados não podem ser pagos.")
         if order.payment_status == Order.PAYMENT_PAID:

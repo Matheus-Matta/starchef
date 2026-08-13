@@ -167,12 +167,37 @@ class LocalDeviceAgent {
     final printableContent = barcodeBytes == null
         ? textWithBarcodeFallback(content, barcodeValue)
         : content;
+    final contentBytes = isEscPos
+        ? _readableReceiptBytes(printableContent)
+        : utf8.encode(printableContent);
     return <int>[
-      ...utf8.encode(printableContent),
+      ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
       if (isEscPos) ...const [10, 10, 10, 29, 86, 0],
     ];
+  }
+
+  /// Applies conservative ESC/POS typography that remains readable on both
+  /// 58 mm and 80 mm rolls: larger line spacing, emphasized first line and
+  /// double-height totals. Width is kept normal so item values are not cut.
+  static List<int> _readableReceiptBytes(String content) {
+    final result = <int>[
+      0x1b, 0x40, // Initialize.
+      0x1b, 0x33, 34, // Comfortable line spacing.
+      0x1d, 0x4c, 8, 0, // Small left margin.
+    ];
+    var firstTextLine = true;
+    for (final line in content.split('\n')) {
+      final normalized = line.trim().toUpperCase();
+      final prominent = firstTextLine || normalized.startsWith('TOTAL');
+      result.addAll([0x1b, 0x21, prominent ? 0x10 : 0x00]);
+      result.addAll(utf8.encode(line));
+      result.add(0x0a);
+      if (normalized.isNotEmpty) firstTextLine = false;
+    }
+    result.addAll([0x1b, 0x21, 0x00]);
+    return result;
   }
 
   final ApiClient api;

@@ -132,14 +132,15 @@ void main() {
           isEscPos: true,
           barcodeValue: 'CMD-42',
         );
-        final contentLength = utf8.encode('TICKET').length;
+        final barcodeStart = _sublistIndex(bytes, barcode);
 
-        expect(bytes.sublist(0, contentLength), utf8.encode('TICKET'));
+        expect(bytes, containsAllInOrder([0x1b, 0x40, 0x1b, 0x33, 34]));
+        expect(bytes, containsAllInOrder(utf8.encode('TICKET')));
         expect(
-          bytes.sublist(contentLength, contentLength + barcode.length),
+          bytes.sublist(barcodeStart, barcodeStart + barcode.length),
           barcode,
         );
-        expect(bytes.sublist(contentLength + barcode.length), [
+        expect(bytes.sublist(barcodeStart + barcode.length), [
           10,
           10,
           10,
@@ -232,11 +233,11 @@ void main() {
         isEscPos: true,
         qrValue: 'https://x.test',
       );
-      final contentLength = utf8.encode('DANFE').length;
+      final qrStart = _sublistIndex(bytes, qr);
 
-      expect(bytes.sublist(0, contentLength), utf8.encode('DANFE'));
-      expect(bytes.sublist(contentLength, contentLength + qr.length), qr);
-      expect(bytes.sublist(contentLength + qr.length), [10, 10, 10, 29, 86, 0]);
+      expect(bytes, containsAllInOrder(utf8.encode('DANFE')));
+      expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
+      expect(bytes.sublist(qrStart + qr.length), [10, 10, 10, 29, 86, 0]);
     });
   });
 
@@ -267,4 +268,14 @@ void main() {
       expect(utf8.decode(bytes), 'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42');
     });
   });
+}
+
+int _sublistIndex(List<int> source, List<int> pattern) {
+  for (var index = 0; index <= source.length - pattern.length; index++) {
+    if (source.sublist(index, index + pattern.length).join(',') ==
+        pattern.join(',')) {
+      return index;
+    }
+  }
+  return -1;
 }

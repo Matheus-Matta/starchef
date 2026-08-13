@@ -535,6 +535,7 @@ onUnmounted(() => {
 
 /* ── Header ──────────────────────────────────────────────────── */
 .kds-head {
+  position: relative; z-index: 40; overflow: visible;
   display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
   padding: 10px 14px; flex-shrink: 0;
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm);
@@ -545,7 +546,7 @@ onUnmounted(() => {
 .kds-head__count { color: var(--text-muted); font: var(--weight-semibold) 12px/1 var(--font-sans); white-space: nowrap; }
 .kds-head__actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.kds-station-picker { position: relative; }
+.kds-station-picker { position: relative; z-index: 41; }
 .kds-station-btn {
   display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 12px 0 6px; cursor: pointer;
   border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-card); color: var(--text-body);
@@ -562,7 +563,7 @@ onUnmounted(() => {
 .kds-dr__range :deep(.p-inputtext) { height: 30px; padding-block: 0; font-size: 12px; }
 .kds-dr__range :deep(.p-datepicker-trigger) { width: 30px; padding: 0; }
 .kds-station-menu {
-  position: absolute; top: calc(100% + 6px); left: 0; z-index: 25; min-width: 220px; padding: 6px;
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 1000; min-width: 220px; padding: 6px;
   background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
 }
 .kds-station-opt { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; text-align: left; cursor: pointer; border: none; border-radius: var(--radius-sm); background: transparent; }

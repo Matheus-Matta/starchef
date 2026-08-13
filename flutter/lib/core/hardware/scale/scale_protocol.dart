@@ -30,6 +30,12 @@ abstract class ScaleProtocol {
   /// responda a ele precisa ser homologada.
   List<int> get weightRequest => const [0x05];
 
+  /// Configuração serial específica do protocolo.
+  /// Retorna um mapa com chaves opcionais: `parity` e `stopBits`.
+  /// `parity` usa os mesmos valores de `SerialPortParity` (0=none,1=odd,2=even)
+  /// `stopBits` é um inteiro (1 ou 2).
+  Map<String, int>? get serialConfig => null;
+
   final StringBuffer _buffer = StringBuffer();
 
   static const _maximumFrameLength = 64;
@@ -58,12 +64,86 @@ abstract class ScaleProtocol {
         final frame = _buffer.toString();
         _buffer.clear();
         final sample = _frameToSample(frame);
-        if (sample != null) samples.add(sample);
+        if (sample != null) {
+          samples.add(sample);
+        } else {
+          // Alguns equipamentos enviam apenas um indicador de estabilidade
+          // sem um valor numérico. Detectamos esse caso por presença de
+          // caracteres conhecidos e emitimos uma amostra especial com
+          // `hasWeight == false` para que o leitor possa pedir o peso
+          // explicitamente quando necessário.
+          final upper = frame.toUpperCase();
+          final hasStability =
+              upper.contains('*') ||
+              upper.contains('S') ||
+              upper.contains('I') ||
+              upper.contains('M') ||
+              upper.contains('U');
+          if (hasStability) {
+            final bool? stable = upper.contains('*') || upper.contains('S')
+                ? true
+                : (upper.contains('I') ||
+                      upper.contains('M') ||
+                      upper.contains('U'))
+                ? false
+                : null;
+            samples.add(
+              ScaleSample(
+                weightKg: 0.0,
+                raw: frame,
+                stable: stable,
+                hasWeight: false,
+              ),
+            );
+          }
+        }
         continue;
       }
       if (_isFrameStart(byte)) {
         // Um novo início descarta um quadro parcial anterior: bytes perdidos
         // não podem contaminar a próxima pesagem.
+        _buffer.clear();
+        continue;
+      }
+
+      // Trata ESC (0x1B) como delimitador comum em quadros binários que
+      // encapsulam sequências de controle. Se encontrarmos ESC e já havia
+      // conteúdo acumulado, processamos esse conteúdo como um quadro.
+      if (byte == 0x1B) {
+        if (_buffer.isNotEmpty) {
+          final frame = _buffer.toString();
+          _buffer.clear();
+          final sample = _frameToSample(frame);
+          if (sample != null) {
+            samples.add(sample);
+          } else {
+            final upper = frame.toUpperCase();
+            final hasStability =
+                upper.contains('*') ||
+                upper.contains('S') ||
+                upper.contains('I') ||
+                upper.contains('M') ||
+                upper.contains('U');
+            if (hasStability) {
+              final bool? stable = upper.contains('*') || upper.contains('S')
+                  ? true
+                  : (upper.contains('I') ||
+                        upper.contains('M') ||
+                        upper.contains('U'))
+                  ? false
+                  : null;
+              samples.add(
+                ScaleSample(
+                  weightKg: 0.0,
+                  raw: frame,
+                  stable: stable,
+                  hasWeight: false,
+                ),
+              );
+            }
+          }
+        }
+        // sempre ignoramos o ESC em si e iniciamos um novo quadro.
         _buffer.clear();
         continue;
       }
@@ -219,6 +299,39 @@ class UranoProtocol extends ScaleProtocol {
   ScaleSample? _frameToSample(String frame) {
     final trimmed = frame.trim();
     if (trimmed.isEmpty) return null;
+    final upper = trimmed.toUpperCase();
+
+    // Caso comum observado: quadro binário contendo sequências ESC e um
+    // campo 'PESO:    284 g'. Tratamos esse caso prioritariamente.
+    if (upper.contains('PESO:')) {
+      try {
+        final idx = upper.indexOf('PESO:');
+        final after = trimmed.substring(idx + 5);
+        final pesoMatch = RegExp(
+          r'(-?\d+(?:[.,]\d+)?)\s*(kg|g)?',
+          caseSensitive: false,
+        ).firstMatch(after);
+        if (pesoMatch == null) return null;
+        var value = double.tryParse(pesoMatch.group(1)!.replaceAll(',', '.'));
+        if (value == null) return null;
+        final unit = pesoMatch.group(2);
+        final inGrams = unit?.toLowerCase() == 'g';
+        final negative =
+            pesoMatch.group(1)!.startsWith('-') || trimmed.contains('-');
+        final stable = trimmed.contains('*') || upper.contains('S');
+        final weightKg = inGrams ? value / 1000.0 : value;
+        return ScaleSample(
+          weightKg: weightKg.abs(),
+          stable: stable ? true : null,
+          negative: negative,
+          raw: frame,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // Fallback: formato já tratado anteriormente (ex.: +00.500kg)
     final match = RegExp(
       r'([+-]?)\s*(\d+(?:[.,]\d+)?)\s*(kg|g)?',
       caseSensitive: false,
@@ -227,7 +340,6 @@ class UranoProtocol extends ScaleProtocol {
     final value = double.tryParse(match.group(2)!.replaceAll(',', '.'));
     if (value == null) return null;
     final inGrams = match.group(3)?.toLowerCase() == 'g';
-    final upper = trimmed.toUpperCase();
     return ScaleSample(
       weightKg: inGrams ? value / 1000 : value,
       stable: upper.contains('I') || upper.contains('M') ? false : null,
@@ -235,4 +347,10 @@ class UranoProtocol extends ScaleProtocol {
       raw: frame,
     );
   }
+
+  @override
+  List<int> get weightRequest => const [0x04]; // Alguns modelos respondem a EOT
+
+  @override
+  Map<String, int>? get serialConfig => {'stopBits': 2};
 }

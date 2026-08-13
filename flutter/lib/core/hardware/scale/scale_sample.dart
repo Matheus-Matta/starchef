@@ -5,6 +5,7 @@ class ScaleSample {
     required this.raw,
     this.stable,
     this.negative = false,
+    this.hasWeight = true,
     DateTime? at,
   }) : at = at ?? DateTime.now();
 
@@ -20,6 +21,11 @@ class ScaleSample {
   /// decide é o leitor, comparando leituras consecutivas.
   final bool? stable;
 
+  /// Indica se a amostra contém um peso válido enviado pelo equipamento.
+  /// `true` por padrão; `false` significa que o quadro trouxe apenas
+  /// informação de estabilidade/status sem valor numérico.
+  final bool hasWeight;
+
   /// Peso negativo indica prato retirado ou necessidade de tara.
   final bool negative;
 
@@ -27,7 +33,7 @@ class ScaleSample {
 
   @override
   String toString() =>
-      'ScaleSample(${weightKg.toStringAsFixed(3)} kg, stable: $stable)';
+      'ScaleSample(${weightKg.toStringAsFixed(3)} kg, stable: $stable, hasWeight: $hasWeight)';
 }
 
 /// Resultado de um pedido manual de pesagem.

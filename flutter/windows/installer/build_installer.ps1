@@ -25,16 +25,22 @@ Write-Host "Versao lida do pubspec.yaml: $fullVersion (instalador usara $appVers
 
 $iscc = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
 if (-not $iscc) {
-    $defaultPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-    if (Test-Path $defaultPath) {
-        $iscc = Get-Item $defaultPath
+    $candidatePaths = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    )
+    $installedPath = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($installedPath) {
+        $iscc = Get-Item $installedPath
     } else {
-        throw "ISCC.exe (Inno Setup) nao encontrado no PATH nem em '$defaultPath'."
+        throw "ISCC.exe (Inno Setup) nao encontrado no PATH nem nos caminhos padrao (sistema/usuario)."
     }
 }
 
 $issPath = Join-Path $PSScriptRoot "starchef_pdv.iss"
-& $iscc.Source "/DAppVersion=$appVersion" $issPath
+$isccPath = if ($iscc.Source) { $iscc.Source } else { $iscc.FullName }
+& $isccPath "/DAppVersion=$appVersion" $issPath
 if ($LASTEXITCODE -ne 0) {
     throw "ISCC.exe falhou com codigo $LASTEXITCODE"
 }

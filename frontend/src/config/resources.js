@@ -24,6 +24,7 @@ import {
   PAYMENT_STATUS_LABELS,
   PRODUCTION_STATUS_LABELS,
   PAYMENT_METHOD_TYPE_LABELS,
+  PAYMENT_TYPE_OPTIONS,
   PRICING_OPTIONS,
   PRINTER_DRIVER_LABELS,
   PRINTER_CONNECTION_LABELS,
@@ -450,6 +451,12 @@ export const resources = [
       { key: "name", label: "Forma" },
       { key: "method_type", label: "Tipo", map: PAYMENT_METHOD_TYPE_LABELS },
       { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "method_type", label: "Tipo", type: "dropdown", required: true, options: PAYMENT_TYPE_OPTIONS },
+      { name: "requires_reference", label: "Exige referencia", type: "boolean", default: false },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
   },
   {

@@ -36,10 +36,17 @@ abstract interface class ScaleTransport {
 
 /// Porta serial real (COM no Windows, `/dev/tty*` no Linux).
 class SerialScaleTransport implements ScaleTransport {
-  SerialScaleTransport({required this.portName, required this.baudRate});
+  SerialScaleTransport({
+    required this.portName,
+    required this.baudRate,
+    this.parity,
+    this.stopBits,
+  });
 
   final String portName;
   final int baudRate;
+  final dynamic parity;
+  final int? stopBits;
 
   SerialPort? _port;
   SerialPortReader? _reader;
@@ -77,8 +84,8 @@ class SerialScaleTransport implements ScaleTransport {
       port.config = SerialPortConfig()
         ..baudRate = baudRate
         ..bits = 8
-        ..parity = SerialPortParity.none
-        ..stopBits = 1;
+        ..parity = parity ?? SerialPortParity.none
+        ..stopBits = stopBits ?? 1;
       final reader = SerialPortReader(port);
       _port = port;
       _reader = reader;
