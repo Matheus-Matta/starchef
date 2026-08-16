@@ -566,6 +566,35 @@ async function executeBulkMutation(action) {
   if (!selected.length) return;
   exchangeLoading.value = true;
   let success = 0;
+  if (action.type === "patch" && proCfg.value.bulkUpdateEndpoint) {
+    try {
+      const { data } = await api.post(proCfg.value.bulkUpdateEndpoint, {
+        ids: selected.map((row) => row.id),
+        changes: action.payload,
+      });
+      success = data.updated || 0;
+    } catch (error) {
+      toast.add({ severity: "error", summary: "Não foi possível atualizar em lote", detail: normalizeApiError(error).message, life: 5000 });
+    }
+    selection.value = [];
+    exchangeLoading.value = false;
+    if (success) toast.add({ severity: "success", summary: `${success} itens atualizados`, life: 4000 });
+    reload();
+    return;
+  }
+  if (action.type === "delete" && proCfg.value.bulkDeleteEndpoint) {
+    try {
+      const { data } = await api.post(proCfg.value.bulkDeleteEndpoint, { ids: selected.map((row) => row.id) });
+      success = data.deleted || 0;
+    } catch (error) {
+      toast.add({ severity: "error", summary: "Não foi possível excluir as comandas", detail: normalizeApiError(error).message, life: 5000 });
+    }
+    selection.value = [];
+    exchangeLoading.value = false;
+    if (success) toast.add({ severity: "success", summary: `${success} comandas excluídas`, life: 4000 });
+    reload();
+    return;
+  }
   for (let index = 0; index < selected.length; index += 10) {
     const batch = selected.slice(index, index + 10);
     const results = await Promise.allSettled(batch.map((row) =>
@@ -837,6 +866,11 @@ async function submitBulk() {
   }
   if (!to_number || to_number < 1) {
     toast.add({ severity: "warn", summary: "Informe o número final", life: 3000 });
+    return;
+  }
+  const start = Number(from_number || 1);
+  if (Number(to_number) - start + 1 > 200) {
+    toast.add({ severity: "warn", summary: "Limite de 200 comandas por lote", life: 4000 });
     return;
   }
   bulkSubmitting.value = true;

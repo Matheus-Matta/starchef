@@ -157,6 +157,8 @@ export const resources = [
     // de barras/QR. Ação de cabeçalho cria muitas de uma vez; ação por linha
     // exibe/imprime os códigos do cartão.
     pro: {
+      bulkDeleteEndpoint: "/commands/bulk-delete/",
+      bulkUpdateEndpoint: "/commands/bulk-update/",
       headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-commands" }],
       bulkActions: [{ key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" }],
       rowActions: [{ key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" }],

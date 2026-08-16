@@ -72,6 +72,17 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
+# Flutter e os plugins nativos sao compilados com MSVC. Em maquinas sem o
+# Visual C++ Redistributable instalado, o executavel nao inicia e o Windows
+# informa que DLLs como VCRUNTIME140.dll/MSVCP140.dll nao foram encontradas.
+# Distribuir o runtime de forma app-local deixa tanto o ZIP quanto o instalador
+# autocontidos, sem exigir uma instalacao separada no computador do operador.
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+include(InstallRequiredSystemLibraries)
+install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 

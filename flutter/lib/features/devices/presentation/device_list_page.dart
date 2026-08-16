@@ -665,7 +665,10 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         accessToken: widget.token,
       );
       if (mounted) {
-        showAppToast(context, 'Conexão confirmada. A nota de teste foi impressa.');
+        showAppToast(
+          context,
+          'Conexão confirmada. A nota de teste foi impressa.',
+        );
       }
     } catch (error) {
       final jobId = job?['print_job_id'];
@@ -679,13 +682,22 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         } catch (_) {}
       }
       if (mounted) {
-        showAppError(
-          context,
-          error,
-          title: 'Não foi possível imprimir a nota de teste',
-          recommendedAction:
-              'Confira o endereço da impressora e se ela está ligada.',
-        );
+        if (error is PrinterCommunicationException) {
+          showAppError(
+            context,
+            error.message,
+            title: 'Não foi possível imprimir a nota de teste',
+            recommendedAction: error.recommendedAction,
+          );
+        } else {
+          showAppError(
+            context,
+            error,
+            title: 'Não foi possível imprimir a nota de teste',
+            recommendedAction:
+                'Confira o endereço da impressora e se ela está ligada.',
+          );
+        }
       }
     } finally {
       if (mounted) setState(() => testing = false);

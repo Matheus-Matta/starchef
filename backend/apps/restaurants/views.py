@@ -1,4 +1,6 @@
 from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -115,6 +117,13 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     filterset_fields = ["status", "is_active"]
     search_fields = ["number", "code", "customer_name"]
     ordering_fields = ["number", "status", "updated_at"]
+    MAX_BULK_COMMANDS = 200
+
+    def destroy(self, request, *args, **kwargs):
+        command = self.get_object()
+        if command.status != Command.STATUS_FREE or command.current_order_id:
+            raise ValidationError({"detail": "Comandas ocupadas não podem ser excluídas."})
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=False, methods=["get"], url_path="by-code")
     def by_code(self, request):
@@ -167,8 +176,8 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             raise ValidationError({"detail": "from_number/to_number devem ser inteiros."})
         if from_number < 1 or to_number < from_number:
             raise ValidationError({"detail": "Intervalo inválido (from_number ≤ to_number, ambos ≥ 1)."})
-        if to_number - from_number + 1 > 1000:
-            raise ValidationError({"detail": "Máximo de 1000 comandas por lote."})
+        if to_number - from_number + 1 > self.MAX_BULK_COMMANDS:
+            raise ValidationError({"detail": f"Máximo de {self.MAX_BULK_COMMANDS} comandas por lote."})
 
         existing = set(
             Command.all_objects.filter(restaurant=restaurant, number__range=(from_number, to_number)).values_list(
@@ -195,6 +204,55 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
             status=201,
         )
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    @transaction.atomic
+    def bulk_delete(self, request):
+        """Exclui um lote com uma única operação, sem rajada de conexões."""
+        ids = request.data.get("ids")
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"ids": "Informe uma lista não vazia de comandas."})
+        ids = list(dict.fromkeys(str(value) for value in ids))
+        if len(ids) > self.MAX_BULK_COMMANDS:
+            raise ValidationError({"ids": f"Máximo de {self.MAX_BULK_COMMANDS} comandas por operação."})
+
+        commands = self.filter_queryset(self.get_queryset()).filter(pk__in=ids)
+        if commands.count() != len(ids):
+            raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
+        occupied = commands.filter(status=Command.STATUS_OCCUPIED).count()
+        occupied += commands.exclude(current_order_id=None).exclude(status=Command.STATUS_OCCUPIED).count()
+        if occupied:
+            raise ValidationError({"ids": f"{occupied} comanda(s) estão ocupadas e não podem ser excluídas."})
+
+        now = timezone.now()
+        deleted = commands.update(deleted_at=now, updated_at=now, updated_by=request.user)
+        return Response({"deleted": deleted}, status=200)
+
+    @action(detail=False, methods=["post"], url_path="bulk-update")
+    @transaction.atomic
+    def bulk_update(self, request):
+        """Atualiza o estado de várias comandas em uma única consulta."""
+        ids = request.data.get("ids")
+        changes = request.data.get("changes")
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"ids": "Informe uma lista não vazia de comandas."})
+        ids = list(dict.fromkeys(str(value) for value in ids))
+        if len(ids) > self.MAX_BULK_COMMANDS:
+            raise ValidationError({"ids": f"Máximo de {self.MAX_BULK_COMMANDS} comandas por operação."})
+        if not isinstance(changes, dict) or set(changes) != {"is_active"} or not isinstance(changes["is_active"], bool):
+            raise ValidationError({"changes": "A atualização em lote permite somente o campo is_active booleano."})
+
+        commands = self.filter_queryset(self.get_queryset()).filter(pk__in=ids)
+        if commands.count() != len(ids):
+            raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
+
+        now = timezone.now()
+        updated = commands.update(
+            is_active=changes["is_active"],
+            updated_at=now,
+            updated_by=request.user,
+        )
+        return Response({"updated": updated}, status=200)
 
 
 class DeliveryZoneViewSet(BaseTenantViewSet):

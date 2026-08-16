@@ -11,6 +11,19 @@ import '../../../core/network/realtime_client.dart';
 import '../domain/printer_endpoint.dart';
 import 'print_template_cache.dart';
 
+class PrinterCommunicationException implements Exception {
+  const PrinterCommunicationException({
+    required this.message,
+    required this.recommendedAction,
+  });
+
+  final String message;
+  final String recommendedAction;
+
+  @override
+  String toString() => message;
+}
+
 /// Agente local de impressão do processo principal.
 ///
 /// Ele processa a fila de trabalhos de impressão do restaurante e mantém os
@@ -163,7 +176,9 @@ class LocalDeviceAgent {
     final barcodeBytes = isEscPos && barcodeValue != null
         ? escPosCode128Bytes(barcodeValue)
         : null;
-    final qrBytes = isEscPos && qrValue != null ? escPosQrCodeBytes(qrValue) : null;
+    final qrBytes = isEscPos && qrValue != null
+        ? escPosQrCodeBytes(qrValue)
+        : null;
     final printableContent = barcodeBytes == null
         ? textWithBarcodeFallback(content, barcodeValue)
         : content;
@@ -536,10 +551,13 @@ class LocalDeviceAgent {
   ) async {
     final port = SerialPort(target.endpoint);
     try {
-      if (!port.openWrite()) {
-        throw StateError(
-          'Não foi possível abrir ${target.endpoint}: '
-          '${SerialPort.lastError?.message ?? 'porta ocupada ou inexistente'}.',
+      // Alguns drivers COM virtuais do Windows rejeitam um handle aberto
+      // somente para escrita com ERROR_INVALID_HANDLE, embora aceitem o modo
+      // leitura/escrita usado pelas APIs e ferramentas nativas do sistema.
+      if (!port.openReadWrite()) {
+        throw _serialCommunicationError(
+          target,
+          SerialPort.lastError?.message ?? 'porta ocupada ou inexistente',
         );
       }
       port.config = SerialPortConfig()
@@ -552,20 +570,40 @@ class LocalDeviceAgent {
         timeout: target.timeout.inMilliseconds,
       );
       if (written < bytes.length) {
-        throw StateError(
-          'A impressora aceitou apenas $written de ${bytes.length} bytes '
-          'em ${target.endpoint}.',
+        throw _serialCommunicationError(
+          target,
+          'foram enviados apenas $written de ${bytes.length} bytes',
         );
       }
       port.drain();
     } on SerialPortError catch (error) {
-      throw StateError(
-        'Falha na porta ${target.endpoint}: ${error.message}',
-      );
+      throw _serialCommunicationError(target, error.message);
     } finally {
       if (port.isOpen) port.close();
       port.dispose();
     }
+  }
+
+  PrinterCommunicationException _serialCommunicationError(
+    PrinterEndpoint target,
+    String reason,
+  ) {
+    final available = SerialPort.availablePorts;
+    final detected = available.isEmpty ? 'nenhuma' : available.join(', ');
+    return PrinterCommunicationException(
+      message:
+          'Falha ao comunicar pela porta ${target.endpoint} '
+          '(${target.baudRate} baud, 8N1). Motivo: $reason. '
+          'Portas seriais detectadas: $detected.',
+      recommendedAction: Platform.isWindows
+          ? 'Se a impressora funciona no Teste do Windows, escolha o tipo '
+                'Windows / USB e selecione o nome da impressora instalada. '
+                'Use Porta serial somente para acesso direto à COM; nesse '
+                'caso, feche outros programas que possam estar usando '
+                '${target.endpoint} e confirme a velocidade no manual.'
+          : 'Feche outros programas que possam estar usando '
+                '${target.endpoint} e confirme a porta e a velocidade no manual.',
+    );
   }
 
   Future<void> _syncDevicesIfNeeded() async {
@@ -579,11 +617,7 @@ class LocalDeviceAgent {
 
     final sync = _list(
       '/printers/',
-      query: {
-        'restaurant': _restaurantId,
-        'is_active': true,
-        'page_size': 100,
-      },
+      query: {'restaurant': _restaurantId, 'is_active': true, 'page_size': 100},
     ).then((printers) => _printers = printers);
     _deviceSyncInFlight = sync;
     try {

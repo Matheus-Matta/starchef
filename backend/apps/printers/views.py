@@ -263,7 +263,7 @@ class ScaleViewSet(BaseTenantViewSet):
 
         try:
             with transaction.atomic():
-                scale = Scale.objects.select_for_update().select_related("product").get(pk=self.get_object().pk)
+                scale = Scale.objects.select_for_update().get(pk=self.get_object().pk)
                 command_lookup = Q(code=command_code)
                 if command_code.isdigit():
                     command_lookup |= Q(number=int(command_code))
