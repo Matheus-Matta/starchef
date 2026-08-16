@@ -558,8 +558,9 @@ class OfflineStore {
     }
     await _database.writeTransaction((tx) async {
       if (decoded != null) {
+        final legacyData = decoded;
         final cache = Map<String, dynamic>.from(
-          decoded['cache'] as Map? ?? const {},
+          legacyData['cache'] as Map? ?? const {},
         );
         if (cache.isNotEmpty) {
           await tx.executeBatch(
@@ -579,7 +580,7 @@ class OfflineStore {
                 .toList(),
           );
         }
-        final outbox = (decoded['outbox'] as List? ?? const [])
+        final outbox = (legacyData['outbox'] as List? ?? const [])
             .whereType<Map>();
         for (final raw in outbox) {
           final item = Map<String, dynamic>.from(raw);
