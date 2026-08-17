@@ -83,7 +83,7 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
         showAppError(
           context,
           'A operação saiu do estado bloqueado e voltou para a fila. '
-              'Ela não foi descartada.',
+          'Ela não foi descartada.',
           title: 'Descarte não aplicado',
         );
       }
@@ -112,7 +112,9 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
                 const Text(
                   'Use isto apenas quando a venda já tiver sido lançada de '
                   'outra forma ou quando ela realmente não deve existir. '
-                  'O descarte fica registrado no log.',
+                  'Se ela criou um pedido ou item local, as operações que '
+                  'dependem dele também serão descartadas. O descarte fica '
+                  'registrado no log.',
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ],
@@ -190,7 +192,10 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
           label: const Text('Atualizar'),
         ),
         FilledButton.icon(
-          onPressed: loading
+          onPressed:
+              loading ||
+                  (operations.isNotEmpty &&
+                      operations.first['state'] == 'blocked')
               ? null
               : () async {
                   await widget.api.syncPendingNow();
@@ -366,6 +371,7 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
     }
     if (path == '/orders/' && method == 'POST') return 'Novo pedido';
     if (path == '/orders/open-table/') return 'Abertura de pedido na mesa';
+    if (path == '/orders/open-command/') return 'Abertura de pedido na comanda';
     if (RegExp(r'^/orders/[^/]+/items/$').hasMatch(path)) {
       final body = operation['body'];
       final quantity = body is Map ? body['quantity'] : null;
@@ -375,6 +381,15 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
     }
     if (RegExp(r'^/orders/[^/]+/items/[^/]+/void/$').hasMatch(path)) {
       return 'Cancelamento de item';
+    }
+    if (RegExp(r'^/orders/[^/]+/send-to-kitchen/$').hasMatch(path)) {
+      return 'Envio do pedido para a cozinha';
+    }
+    if (RegExp(r'^/orders/[^/]+/close/$').hasMatch(path)) {
+      return 'Fechamento do pedido';
+    }
+    if (RegExp(r'^/orders/[^/]+/pay/$').hasMatch(path)) {
+      return 'Pagamento do pedido';
     }
     return '$method $path';
   }

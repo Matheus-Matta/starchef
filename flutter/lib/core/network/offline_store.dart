@@ -97,12 +97,8 @@ class OfflineStore {
   }
 
   static Future<void> _addOutboxLeaseColumns(SqliteWriteContext tx) async {
-    await tx.execute(
-      'ALTER TABLE offline_outbox ADD COLUMN lease_owner TEXT',
-    );
-    await tx.execute(
-      'ALTER TABLE offline_outbox ADD COLUMN lease_until TEXT',
-    );
+    await tx.execute('ALTER TABLE offline_outbox ADD COLUMN lease_owner TEXT');
+    await tx.execute('ALTER TABLE offline_outbox ADD COLUMN lease_until TEXT');
   }
 
   Future<Map<String, dynamic>?> cached(String key) async {
@@ -218,11 +214,7 @@ class OfflineStore {
         SET lease_owner = ?, lease_until = ?
         WHERE queue_id = ?
         ''',
-        [
-          leaseOwner,
-          now.add(leaseDuration).toIso8601String(),
-          queueId,
-        ],
+        [leaseOwner, now.add(leaseDuration).toIso8601String(), queueId],
       );
       final claimed = await tx.getOptional(
         'SELECT * FROM offline_outbox WHERE queue_id = ?',
@@ -386,22 +378,53 @@ class OfflineStore {
     );
   }
 
-  /// Descarta definitivamente uma operação bloqueada.
+  /// Descarta definitivamente uma operação bloqueada e sua cadeia local.
   ///
-  /// Só remove itens em `blocked`: uma operação ainda elegível pode estar
-  /// sendo enviada neste instante, e apagá-la perderia a venda em silêncio.
+  /// Só aceita como raiz um item em `blocked`: uma operação ainda elegível
+  /// pode estar sendo enviada neste instante, e apagá-la perderia a venda em
+  /// silêncio. Se a raiz criou um ID temporário, as operações posteriores que
+  /// dependem dele também precisam sair; mantê-las deixaria a fila travada para
+  /// sempre tentando alterar um pedido ou item que nunca existirá no servidor.
   Future<bool> discardBlocked(String queueId) async {
     await _ready;
     return _database.writeTransaction((tx) async {
       final row = await tx.getOptional(
-        'SELECT state FROM offline_outbox WHERE queue_id = ?',
+        '''
+        SELECT state, scope, temporary_id, created_at
+        FROM offline_outbox
+        WHERE queue_id = ?
+        ''',
         [queueId],
       );
       if (row == null || '${row['state']}' != 'blocked') return false;
-      await tx.execute(
-        "DELETE FROM offline_outbox WHERE queue_id = ? AND state = 'blocked'",
-        [queueId],
-      );
+      final temporaryId = '${row['temporary_id'] ?? ''}';
+      if (temporaryId.isEmpty) {
+        await tx.execute(
+          "DELETE FROM offline_outbox WHERE queue_id = ? AND state = 'blocked'",
+          [queueId],
+        );
+      } else {
+        await tx.execute(
+          '''
+          DELETE FROM offline_outbox
+          WHERE queue_id = ? OR (
+            scope = ? AND created_at >= ? AND (
+              instr(path, ?) > 0 OR
+              instr(COALESCE(query_json, ''), ?) > 0 OR
+              instr(COALESCE(body_json, ''), ?) > 0
+            )
+          )
+          ''',
+          [
+            queueId,
+            '${row['scope']}',
+            '${row['created_at']}',
+            temporaryId,
+            temporaryId,
+            temporaryId,
+          ],
+        );
+      }
       return true;
     });
   }
@@ -463,6 +486,25 @@ class OfflineStore {
         ],
       );
     });
+  }
+
+  /// Mapeamentos já confirmados pelo servidor para esta sessão.
+  ///
+  /// O cache HTTP e o banco de pedidos são arquivos distintos. Expor o mapa
+  /// persistido permite que a camada de pedidos se reconcilie também depois de
+  /// uma reinicialização, inclusive quando o evento do replay ocorreu enquanto
+  /// a tela ainda não estava montada.
+  Future<Map<String, String>> resolvedIdMappings({
+    required String scope,
+  }) async {
+    await _ready;
+    final rows = await _database.getAll(
+      'SELECT local_id, remote_id FROM offline_id_map WHERE scope = ?',
+      [scope],
+    );
+    return {
+      for (final row in rows) '${row['local_id']}': '${row['remote_id']}',
+    };
   }
 
   Future<Map<String, dynamic>> resolveReferences(

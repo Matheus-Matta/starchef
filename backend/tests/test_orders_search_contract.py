@@ -81,10 +81,30 @@ def test_ordering_and_filters_accepted(authed, manager_user, restaurant, branch,
         "/api/v1/orders/",
         {"opened_after": "2000-01-01", "opened_before": "2100-01-01"},
     )
-    by_payment = authed.get("/api/v1/orders/", {"payment_status": Order.PAYMENT_PENDING})
+    cheap.payment_status = Order.PAYMENT_PARTIAL
+    cheap.save(update_fields=["payment_status"])
+    by_payment = authed.get("/api/v1/orders/", {"payment_pending": "true"})
 
     assert [item["id"] for item in _results(by_total)][0] == str(pricey.id)
     assert [item["id"] for item in _results(by_type)] == [str(pricey.id)]
     assert len(_results(by_range)) == 2
-    # "Pendentes de pagamento" na tela vira este parametro no servidor.
+    # O agrupamento da tela inclui tanto pendente quanto pagamento parcial.
     assert len(_results(by_payment)) == 2
+
+
+@pytest.mark.django_db
+def test_default_ordering_uses_latest_update(authed, manager_user, restaurant, branch):
+    older = create_order(
+        restaurant=restaurant, branch=branch,
+        order_type=Order.TYPE_COUNTER, user=manager_user,
+    )
+    newer = create_order(
+        restaurant=restaurant, branch=branch,
+        order_type=Order.TYPE_TAKEAWAY, user=manager_user,
+    )
+    older.general_notes = "Pedido atualizado por ultimo"
+    older.save(update_fields=["general_notes"])
+
+    response = authed.get("/api/v1/orders/")
+
+    assert [item["id"] for item in _results(response)][:2] == [str(older.id), str(newer.id)]

@@ -57,6 +57,13 @@ class _HomePageState extends State<HomePage> {
   ApiClient get api => widget.controller.repository.apiClient;
   String get token => widget.controller.session!.accessToken;
   String? get restaurantId => selectedRestaurantId;
+  Map<String, dynamic>? get selectedRestaurant =>
+      restaurants.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => '${item?['id']}' == restaurantId,
+        orElse: () => null,
+      );
+  double get defaultServiceFeePercent =>
+      _number(selectedRestaurant?['default_service_fee_percent']);
 
   bool loading = true;
 
@@ -98,7 +105,7 @@ class _HomePageState extends State<HomePage> {
   String orderStatusFilter = 'pending';
   String orderSearch = '';
   String? orderTypeFilter;
-  String orderOrdering = '-opened_at';
+  String orderOrdering = '-updated_at';
   DateTimeRange? orderDateRange;
 
   /// A busca não alcançou o servidor e o resultado saiu do que já estava
@@ -228,6 +235,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _refreshFromSignal() async {
     final scope = api.sessionScope;
     if (scope == null) return;
+    await _reconcileLocalIds(scope);
     if (flowStep == 'orders') {
       final local = await _ordersFromStore(scope);
       if (!mounted || local.isEmpty) return;
@@ -452,12 +460,13 @@ class _HomePageState extends State<HomePage> {
       await widget.controller.repository.sessionStore.save(
         widget.controller.session!,
       );
-      final opened = await ScaleWindowLauncher.open(
-        restaurantId: restaurantId,
-      );
+      final opened = await ScaleWindowLauncher.open(restaurantId: restaurantId);
       if (!mounted) return;
       if (opened) {
-        showAppToast(context, 'Balança Rápida aberta em uma janela independente.');
+        showAppToast(
+          context,
+          'Balança Rápida aberta em uma janela independente.',
+        );
         return;
       }
     } catch (_) {
@@ -491,7 +500,7 @@ class _HomePageState extends State<HomePage> {
   /// [_ordersServerQuery], que é outra consulta.
   Map<String, dynamic> get _ordersQuery => {
     'page_size': _ordersPageSize,
-    'ordering': '-opened_at',
+    'ordering': '-updated_at',
     'restaurant': restaurantId,
   };
 
@@ -512,7 +521,7 @@ class _HomePageState extends State<HomePage> {
     if (term.isNotEmpty) query['search'] = term;
     if (orderTypeFilter != null) query['order_type'] = orderTypeFilter;
     if (orderStatusFilter == 'pending') {
-      query['payment_status'] = 'pending';
+      query['payment_pending'] = true;
     } else if (orderStatusFilter != 'all') {
       query['status'] = orderStatusFilter;
     }
@@ -580,7 +589,10 @@ class _HomePageState extends State<HomePage> {
       final comparison = switch (field) {
         'total' => _number(a['total']).compareTo(_number(b['total'])),
         'sequence' => _number(a['sequence']).compareTo(_number(b['sequence'])),
-        _ => '${a['opened_at'] ?? ''}'.compareTo('${b['opened_at'] ?? ''}'),
+        'opened_at' => '${a['opened_at'] ?? ''}'.compareTo(
+          '${b['opened_at'] ?? ''}',
+        ),
+        _ => '${a['updated_at'] ?? ''}'.compareTo('${b['updated_at'] ?? ''}'),
       };
       return descending ? -comparison : comparison;
     });
@@ -677,6 +689,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<List<Map<String, dynamic>>> _ordersFromStore(String scope) async {
+    await _reconcileLocalIds(scope);
     final stored = await orderStore.recent(
       scope: scope,
       limit: _ordersPageSize,
@@ -684,6 +697,20 @@ class _HomePageState extends State<HomePage> {
     return stored
         .where((item) => '${item['restaurant']}' == restaurantId)
         .toList();
+  }
+
+  Future<void> _reconcileLocalIds(String scope) async {
+    final mappings = await api.resolvedTemporaryIds();
+    for (final entry in mappings.entries) {
+      await orderStore.replaceId(entry.key, entry.value, scope: scope);
+    }
+  }
+
+  Future<void> _persistOfflineOrder() async {
+    final scope = api.sessionScope;
+    final order = activeOrder;
+    if (scope == null || order == null) return;
+    activeOrder = await orderStore.saveLocal(order, scope: scope);
   }
 
   /// Carrega o pedido para edição/pagamento, com o que houver disponível.
@@ -786,6 +813,7 @@ class _HomePageState extends State<HomePage> {
         : {
             'id': detail['customer'],
             'name': detail['customer_name'] ?? 'Cliente',
+            'document': detail['customer_document'],
             'phone': '',
           };
     await _refreshOrder();
@@ -1604,6 +1632,7 @@ class _HomePageState extends State<HomePage> {
       activeOrder = _completeOfflineOrder(order, type: 'table', table: table);
       if (_isOfflinePending(activeOrder)) {
         orderItems = [];
+        await _persistOfflineOrder();
         table['status'] = 'occupied';
         table['current_order_id'] = activeOrder!['id'];
         if (mounted) setState(() {});
@@ -1637,6 +1666,7 @@ class _HomePageState extends State<HomePage> {
       );
       if (_isOfflinePending(activeOrder)) {
         orderItems = [];
+        await _persistOfflineOrder();
         command['status'] = 'occupied';
         command['current_order_id'] = activeOrder!['id'];
         if (mounted) setState(() {});
@@ -1936,6 +1966,7 @@ class _HomePageState extends State<HomePage> {
       activeOrder = _completeOfflineOrder(activeOrder!, type: type);
       if (_isOfflinePending(activeOrder)) {
         orderItems = [];
+        await _persistOfflineOrder();
         if (mounted) setState(() {});
       } else {
         await _refreshOrder();
@@ -2051,6 +2082,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _configureProduct(Map<String, dynamic> product) async {
+    if (const {
+      'paid',
+      'cancelled',
+      'refunded',
+    }.contains('${activeOrder?['status']}')) {
+      _error(
+        const ApiException(
+          'Este pedido já foi concluído e está disponível somente para consulta.',
+        ),
+      );
+      return;
+    }
     if (cashSession == null) {
       _error(
         const ApiException('Abra o caixa antes de iniciar pedidos no PDV.'),
@@ -2074,10 +2117,15 @@ class _HomePageState extends State<HomePage> {
         body: {
           'product': product['id'],
           'quantity': config.quantity,
-          'variations': config.variationId == null
-              ? []
-              : [config.variationId],
+          'variations': config.variationId == null ? [] : [config.variationId],
           'addons': config.addonIds,
+          'expected_unit_price': OrderPresenter.expectedUnitPrice(
+            product,
+            variationIds: config.variationId == null
+                ? const []
+                : [config.variationId!],
+            addonIds: config.addonIds,
+          ).toStringAsFixed(2),
           'customer_note': config.customerNote,
         },
         accessToken: token,
@@ -2363,48 +2411,69 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _finishOrder() async {
     if (activeOrder == null || orderItems.isEmpty) return;
+    var chargeService = activeOrder?['service_fee_enabled'] != false;
     final nextStep = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Revisar pedido'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Subtotal', style: Theme.of(context).textTheme.labelLarge),
-              const SizedBox(height: 4),
-              Text(
-                _money(activeOrder?['subtotal']),
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Revisar pedido'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Subtotal', style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 4),
+                Text(
+                  _money(activeOrder?['subtotal']),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'A taxa de serviço configurada no restaurante será calculada automaticamente.',
-                style: TextStyle(fontSize: 12),
-              ),
-            ],
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: chargeService,
+                  onChanged: (value) =>
+                      setDialogState(() => chargeService = value ?? true),
+                  title: const Text('Cobrar taxa de serviço'),
+                  subtitle: const Text(
+                    'Desmarque para retirar a taxa deste pedido.',
+                  ),
+                ),
+                if (chargeService && defaultServiceFeePercent > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Taxa estimada (${defaultServiceFeePercent.toStringAsFixed(2).replaceAll('.', ',')}%): '
+                    '${_money(_number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100)}',
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  'Total estimado: ${_money(_number(activeOrder?['subtotal']) + (chargeService ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100 : 0) + _number(activeOrder?['delivery_fee']) - _number(activeOrder?['discount']))}',
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Voltar'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, 'later'),
+              icon: const Icon(Icons.schedule),
+              label: const Text('Pagar depois'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, 'payment'),
+              child: const Text('Ir para pagamento'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Voltar'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(context, 'later'),
-            icon: const Icon(Icons.schedule),
-            label: const Text('Pagar depois'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, 'payment'),
-            child: const Text('Ir para pagamento'),
-          ),
-        ],
       ),
     );
     if (nextStep == null) return;
@@ -2413,26 +2482,51 @@ class _HomePageState extends State<HomePage> {
         (item) => item['status'] == 'pending',
       );
       if (hasPendingItems) {
-        await api.post(
+        final kitchenResponse = await api.post(
           '/orders/${activeOrder!['id']}/send-to-kitchen/',
           body: const {},
           accessToken: token,
         );
+        if (_isOfflinePending(kitchenResponse)) {
+          activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
+          orderItems = (activeOrder!['items'] as List)
+              .cast<Map<String, dynamic>>();
+          await _persistOfflineOrder();
+        }
       }
-      final alreadyAwaitingPayment =
-          activeOrder!['status'] == 'awaiting_payment';
-      final order = alreadyAwaitingPayment && !hasPendingItems
-          ? activeOrder!
-          : await api.post(
-              '/orders/${activeOrder!['id']}/close/',
-              body: const {},
-              accessToken: token,
-            );
-      activeOrder = order;
-      return order;
+      final localClosed = OrderPresenter.closeOfflineOrder(
+        activeOrder!,
+        serviceFeeEnabled: chargeService,
+        serviceFeePercent: defaultServiceFeePercent,
+      );
+      final order = await api.post(
+        '/orders/${activeOrder!['id']}/close/',
+        body: {
+          'service_fee_enabled': chargeService,
+          'expected_total': localClosed['total'],
+        },
+        accessToken: token,
+      );
+      if (_isOfflinePending(order)) {
+        activeOrder = {...localClosed, ...order, 'id': activeOrder!['id']};
+        await _persistOfflineOrder();
+      } else {
+        activeOrder = order;
+      }
+      return activeOrder!;
     });
     if (closed == null) return;
     if (nextStep == 'later') {
+      if (_isOfflinePending(closed)) {
+        if (mounted) {
+          showAppToast(
+            context,
+            'Pedido salvo para sincronização e deixado pendente de pagamento.',
+          );
+        }
+        await _goHome();
+        return;
+      }
       // O pedido já foi fechado acima. A nota é um efeito colateral: se a
       // impressora falhar, o operador não pode ficar preso na tela do pedido
       // com uma venda que, do ponto de vista do caixa, já terminou.
@@ -2498,7 +2592,7 @@ class _HomePageState extends State<HomePage> {
         context: context,
         builder: (_) => PrinterSelectionDialog(
           printers: printers,
-          title: 'Imprimir nota do cliente',
+          title: 'Imprimir recibo de venda',
           summary: 'Pedido #${order['sequence']} · ${_money(order['total'])}',
           description:
               'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
@@ -2529,7 +2623,7 @@ class _HomePageState extends State<HomePage> {
         return true;
       });
       if (result == true && mounted) {
-        showAppToast(context, 'Nota do cliente impressa com sucesso.');
+        showAppToast(context, 'Recibo de venda impresso com sucesso.');
       }
     } finally {
       if (mounted) setState(() => printingReceipt = false);
@@ -2550,8 +2644,10 @@ class _HomePageState extends State<HomePage> {
           '/invoices/emit/',
           body: {
             'order': order['id'],
-            if (selectedCustomer?['document'] != null) 'cpf': selectedCustomer!['document'],
-            if (selectedCustomer?['name'] != null) 'cpf_name': selectedCustomer!['name'],
+            if (selectedCustomer?['document'] != null)
+              'cpf': selectedCustomer!['document'],
+            if (selectedCustomer?['name'] != null)
+              'cpf_name': selectedCustomer!['name'],
           },
           accessToken: token,
         ),
@@ -2572,7 +2668,11 @@ class _HomePageState extends State<HomePage> {
 
       final printers = await _list(
         '/printers/',
-        query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
       );
       if (!mounted || printers.isEmpty) return;
       final printerId = await showDialog<String>(
@@ -2580,8 +2680,10 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => PrinterSelectionDialog(
           printers: printers,
           title: 'Imprimir DANFE NFC-e',
-          summary: 'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-          description: 'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+          summary:
+              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+          description:
+              'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
         ),
       );
       if (printerId == null) return;
@@ -2595,7 +2697,9 @@ class _HomePageState extends State<HomePage> {
       if (printJob == null) return;
       final printer = printJob['printer'] as Map<String, dynamic>?;
       if (printer == null) {
-        _error(const ApiException('A impressora selecionada não foi encontrada.'));
+        _error(
+          const ApiException('A impressora selecionada não foi encontrada.'),
+        );
         return;
       }
       final result = await _work(() async {
@@ -2628,11 +2732,24 @@ class _HomePageState extends State<HomePage> {
         '/orders/${activeOrder!['id']}/payments/',
         accessToken: token,
       );
-      return ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
-          .cast<Map<String, dynamic>>();
+      final server =
+          ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
+              .cast<Map<String, dynamic>>();
+      if (response['_offline_cache'] != true) return server;
+      final local = (activeOrder?['offline_payments'] as List? ?? const [])
+          .whereType<Map>()
+          .map((value) => Map<String, dynamic>.from(value));
+      final ids = server.map((payment) => '${payment['id']}').toSet();
+      return [
+        ...server,
+        ...local.where((payment) => !ids.contains('${payment['id']}')),
+      ];
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;
-      return registeredPayments;
+      return (activeOrder?['offline_payments'] as List? ?? registeredPayments)
+          .whereType<Map>()
+          .map((value) => Map<String, dynamic>.from(value))
+          .toList();
     }
   }
 
@@ -2691,6 +2808,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addSplitPayment() async {
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
+    final remainingBefore = remainingTotal;
+    final receivedBefore = paymentValue;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
@@ -2709,6 +2828,8 @@ class _HomePageState extends State<HomePage> {
         body: {
           'payment_method': selectedPaymentMethod,
           'amount': paymentValue.toStringAsFixed(2),
+          if (method['method_type'] == 'cash' && cashSession?['id'] != null)
+            'cash_register': cashSession!['id'],
           'idempotency_key':
               'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
           'metadata': {
@@ -2724,10 +2845,32 @@ class _HomePageState extends State<HomePage> {
     );
     if (result == null) return;
     if (_isOfflinePending(result)) {
-      // O pagamento está na fila. Ele já conta para o total recebido, senão o
-      // operador nunca chegaria a zerar o restante e fechar a venda sem rede.
-      // A chave de idempotência garante que o reenvio não cobre de novo.
-      registeredPayments = [...registeredPayments, result];
+      final change = method['method_type'] == 'cash'
+          ? (receivedBefore - remainingBefore).clamp(0, double.infinity)
+          : 0.0;
+      final applied = receivedBefore - change;
+      final optimisticPayment = {
+        ...result,
+        'payment_method_name': method['name'],
+        'method_type': method['method_type'],
+        'amount': applied.toStringAsFixed(2),
+        'change_amount': change.toStringAsFixed(2),
+        'received_amount': receivedBefore.toStringAsFixed(2),
+      };
+      registeredPayments = [...registeredPayments, optimisticPayment];
+      final paid = remainingTotal <= .009;
+      final scope = api.sessionScope;
+      if (scope != null && activeOrder != null) {
+        final persisted = await orderStore.patch('${activeOrder!['id']}', {
+          'offline_payments': registeredPayments
+              .where((payment) => payment['_offline_pending'] == true)
+              .toList(),
+          'payment_status': paid ? 'paid' : 'partial',
+          'status': paid ? 'paid' : 'awaiting_payment',
+          '_offline_pending': true,
+        }, scope: scope);
+        if (persisted != null) activeOrder = persisted;
+      }
     } else {
       registeredPayments = await _loadRegisteredPayments();
       if (method['method_type'] == 'cash') {
@@ -2778,62 +2921,36 @@ class _HomePageState extends State<HomePage> {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
       return;
     }
-    // Guarda o pedido antes do reset de estado abaixo — a oferta de NFC-e
-    // ainda precisa dele (e do cliente selecionado, pro CPF na nota).
-    final paidOrder = activeOrder;
-    // O pagamento já foi registrado. O comprovante é efeito colateral: se a
-    // impressora ou a rede falhar, o operador não pode ficar preso na tela de
-    // pagamento com uma venda que, para o caixa, já terminou.
-    try {
-      final printJob = await api.post(
-        '/orders/${activeOrder!['id']}/print/',
-        body: const {'job_type': 'payment_receipt'},
-        accessToken: token,
-      );
-      await _handlePrintJob(printJob);
-    } catch (error) {
+    final awaitingSync =
+        _isOfflinePending(activeOrder) ||
+        registeredPayments.any(
+          (payment) => payment['_offline_pending'] == true,
+        );
+    if (awaitingSync) {
       if (mounted) {
-        _error(
-          error,
-          title: 'O pagamento foi registrado, mas o comprovante não saiu',
-          action: 'Reimprima pela tela de Pedidos quando quiser.',
+        showAppToast(
+          context,
+          'Venda salva localmente. O recibo ficará disponível após a sincronização.',
         );
       }
-    }
-
-    // Emitir NFC-e é uma operação separada de imprimir a comanda — pergunta
-    // antes de resetar a tela, sem forçar (o operador pode preferir emitir
-    // depois, pela tela de Pedidos).
-    if (mounted && paidOrder != null) {
-      final shouldEmit = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.receipt_long_outlined),
-              SizedBox(width: 10),
-              Expanded(child: Text('Emitir NFC-e?')),
-            ],
-          ),
-          content: const Text(
-            'O comprovante interno já foi impresso. Deseja também emitir a '
-            'nota fiscal (NFC-e) e imprimir o DANFE?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Agora não'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              icon: const Icon(Icons.receipt_long),
-              label: const Text('Emitir NFC-e'),
-            ),
-          ],
-        ),
-      );
-      if (shouldEmit == true) {
-        await _emitFiscalInvoice(paidOrder);
+    } else {
+      // O pagamento já foi registrado. O recibo é um efeito colateral: uma
+      // falha de impressão não pode reabrir uma venda concluída.
+      try {
+        final printJob = await api.post(
+          '/orders/${activeOrder!['id']}/print/',
+          body: const {'job_type': 'receipt'},
+          accessToken: token,
+        );
+        await _handlePrintJob(printJob);
+      } catch (error) {
+        if (mounted) {
+          _error(
+            error,
+            title: 'O pagamento foi registrado, mas o recibo não saiu',
+            action: 'Reimprima pela tela de Pedidos quando quiser.',
+          );
+        }
       }
     }
 
@@ -3057,21 +3174,24 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     if (confirmed == true) {
-      final movement = await _work(() async {
-        return api.post(
-          '/cash-register/${cashSession!['id']}/$type/',
-          body: {
-            'amount': amount.text.replaceAll(',', '.'),
-            'reason': reason.text.trim(),
-            'destination': destination.text.trim(),
-            'source': destination.text.trim(),
-          },
-          accessToken: token,
-        );
-      }, onError: (error) => _cashError(
-        error,
-        isWithdrawal ? 'registrar a sangria' : 'registrar o suprimento',
-      ));
+      final movement = await _work(
+        () async {
+          return api.post(
+            '/cash-register/${cashSession!['id']}/$type/',
+            body: {
+              'amount': amount.text.replaceAll(',', '.'),
+              'reason': reason.text.trim(),
+              'destination': destination.text.trim(),
+              'source': destination.text.trim(),
+            },
+            accessToken: token,
+          );
+        },
+        onError: (error) => _cashError(
+          error,
+          isWithdrawal ? 'registrar a sangria' : 'registrar o suprimento',
+        ),
+      );
       if (movement != null && movement['status'] == 'pending') {
         setState(() => pendingCashMovement = movement);
         await _showMovementApproval();
@@ -3249,6 +3369,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _closeCash() async {
+    if (offlinePendingCount > 0) {
+      _error(
+        const ApiException(
+          'Existem vendas ou pagamentos aguardando sincronização. '
+          'Sincronize e revise a fila antes de fechar o caixa.',
+        ),
+        title: 'O caixa ainda possui operações pendentes',
+      );
+      return;
+    }
     final amount = TextEditingController();
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -3488,8 +3618,7 @@ class _HomePageState extends State<HomePage> {
                         connected: principalReachable,
                         compact: compactHeader,
                         detail: topologyService?.status.message ?? '',
-                        onPressed: () =>
-                            unawaited(_openTopologySettings()),
+                        onPressed: () => unawaited(_openTopologySettings()),
                       ),
                     ),
                   if (flowStep != 'type' || activeOrder != null)
@@ -3781,7 +3910,7 @@ class _HomePageState extends State<HomePage> {
         orderTypeFilter != null ||
         orderDateRange != null ||
         orderStatusFilter != 'pending' ||
-        orderOrdering != '-opened_at';
+        orderOrdering != '-updated_at';
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -3874,8 +4003,18 @@ class _HomePageState extends State<HomePage> {
             decoration: const InputDecoration(labelText: 'Ordenar por'),
             items: const [
               DropdownMenuItem(
+                value: '-updated_at',
+                child: Text(
+                  'Última atualização',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
                 value: '-opened_at',
-                child: Text('Mais recentes', overflow: TextOverflow.ellipsis),
+                child: Text(
+                  'Abertos recentemente',
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               DropdownMenuItem(
                 value: 'opened_at',
@@ -3899,7 +4038,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
             onChanged: (value) {
-              setState(() => orderOrdering = value ?? '-opened_at');
+              setState(() => orderOrdering = value ?? '-updated_at');
               _onOrdersFilterChanged();
             },
           ),
@@ -3914,7 +4053,7 @@ class _HomePageState extends State<HomePage> {
                 orderTypeFilter = null;
                 orderDateRange = null;
                 orderStatusFilter = 'pending';
-                orderOrdering = '-opened_at';
+                orderOrdering = '-updated_at';
               });
               _onOrdersFilterChanged();
             },
@@ -3981,7 +4120,8 @@ class _HomePageState extends State<HomePage> {
       ),
       menuChildren: [
         MenuItemButton(
-          onPressed: () => apply(DateTimeRange(start: startOfToday, end: startOfToday)),
+          onPressed: () =>
+              apply(DateTimeRange(start: startOfToday, end: startOfToday)),
           child: const Text('Hoje'),
         ),
         MenuItemButton(
@@ -4096,8 +4236,7 @@ class _HomePageState extends State<HomePage> {
                         // fica mais alta que o espaço disponível e estoura.
                         const rowHeight = 68.0;
                         final calculatedRows =
-                            ((constraints.maxHeight - 180) / rowHeight)
-                                .floor();
+                            ((constraints.maxHeight - 180) / rowHeight).floor();
                         final rowsPerPage = calculatedRows.clamp(1, 10);
                         return SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
@@ -4486,8 +4625,7 @@ class _HomePageState extends State<HomePage> {
                               child: Padding(
                                 padding: const EdgeInsets.all(12),
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Row(
                                       children: [
@@ -4597,8 +4735,28 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 24),
                     _paymentSummaryRow(
+                      'Subtotal',
+                      _money(activeOrder!['subtotal']),
+                    ),
+                    if (_number(activeOrder!['service_fee']) > .009)
+                      _paymentSummaryRow(
+                        'Taxa de serviço',
+                        _money(activeOrder!['service_fee']),
+                      ),
+                    if (_number(activeOrder!['delivery_fee']) > .009)
+                      _paymentSummaryRow(
+                        'Entrega',
+                        _money(activeOrder!['delivery_fee']),
+                      ),
+                    if (_number(activeOrder!['discount']) > .009)
+                      _paymentSummaryRow(
+                        'Desconto',
+                        '- ${_money(activeOrder!['discount'])}',
+                      ),
+                    _paymentSummaryRow(
                       'Total do pedido',
                       _money(activeOrder!['total']),
+                      strong: true,
                     ),
                     _paymentSummaryRow('Valor aplicado', _money(paidTotal)),
                     _paymentSummaryRow('Total recebido', _money(receivedTotal)),
@@ -4693,9 +4851,10 @@ class _HomePageState extends State<HomePage> {
                                               ? const SizedBox(
                                                   width: 18,
                                                   height: 18,
-                                                  child: CircularProgressIndicator(
-                                                    strokeWidth: 2,
-                                                  ),
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
                                                 )
                                               : const Icon(
                                                   Icons.delete_outline,
@@ -4923,7 +5082,11 @@ class _HomePageState extends State<HomePage> {
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,
+    onEmitInvoice: activeOrder == null
+        ? null
+        : () => _emitFiscalInvoice(activeOrder!),
     printing: printingReceipt,
+    emittingInvoice: emittingInvoice,
   );
 
   static double _number(dynamic value) => ValueFormatters.number(value);

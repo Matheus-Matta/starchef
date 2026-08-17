@@ -23,14 +23,21 @@ void main() {
     }
   });
 
-  Future<void> enqueue(String queueId) => store.enqueue({
+  Future<void> enqueue(
+    String queueId, {
+    String path = '/orders/',
+    Map<String, dynamic>? body,
+    String? temporaryId,
+    DateTime? createdAt,
+  }) => store.enqueue({
     'queue_id': queueId,
     'scope': 'terminal',
     'method': 'POST',
-    'path': '/orders/',
-    'body': {'restaurant': 'r1'},
+    'path': path,
+    'body': body ?? {'restaurant': 'r1'},
+    'temporary_id': temporaryId,
     'idempotency_key': queueId,
-    'created_at': DateTime.now().toUtc().toIso8601String(),
+    'created_at': (createdAt ?? DateTime.now()).toUtc().toIso8601String(),
   });
 
   test('uma operação bloqueada volta para a fila mantendo a chave', () async {
@@ -70,6 +77,33 @@ void main() {
     // Ela pode estar sendo enviada neste instante; apagá-la perderia a venda.
     expect(removed, isFalse);
     expect((await store.summary(scope: 'terminal')).pending, 1);
+  });
+
+  test('descartar uma criação remove operações dependentes', () async {
+    final createdAt = DateTime.now().toUtc();
+    const localOrderId = 'offline-order-1';
+    await enqueue(
+      'create-order',
+      temporaryId: localOrderId,
+      createdAt: createdAt,
+    );
+    await enqueue(
+      'add-item',
+      path: '/orders/$localOrderId/items/',
+      body: const {'product': 'p1'},
+      createdAt: createdAt.add(const Duration(seconds: 1)),
+    );
+    await enqueue(
+      'unrelated-order',
+      temporaryId: 'offline-order-2',
+      createdAt: createdAt.add(const Duration(seconds: 2)),
+    );
+    await store.markBlocked('create-order', error: 'Pedido recusado.');
+
+    expect(await store.discardBlocked('create-order'), isTrue);
+
+    final remaining = await store.pending(scope: 'terminal');
+    expect(remaining.map((item) => item['queue_id']), ['unrelated-order']);
   });
 
   test('uma operação em retry também é protegida do descarte', () async {

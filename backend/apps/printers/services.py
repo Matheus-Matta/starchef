@@ -18,11 +18,10 @@ _TEMPLATE_BY_TYPE = {
     PrintJob.TYPE_BAR: "printers/kitchen_ticket.html",
     PrintJob.TYPE_WEIGH: "printers/weigh_ticket.html",
     PrintJob.TYPE_RECEIPT: "printers/receipt.html",
-    PrintJob.TYPE_PAYMENT: "printers/receipt.html",
     PrintJob.TYPE_TABLE_BILL: "printers/receipt.html",
     PrintJob.TYPE_CASH_CLOSE: "printers/receipt.html",
 }
-_WITH_PAYMENTS = {PrintJob.TYPE_PAYMENT, PrintJob.TYPE_RECEIPT}
+_WITH_PAYMENTS = {PrintJob.TYPE_RECEIPT}
 
 # 48 colunas: padrao de fonte A em bobina de 80mm (a largura mais comum de
 # impressora termica no Brasil). 32 colunas era pensado pra bobina de 58mm e
@@ -148,7 +147,7 @@ def _customer_receipt_text(order):
         [
             "-" * LARGURA_CUPOM,
             _linha_valor("Subtotal", order.subtotal),
-            _linha_valor("Servico", order.service_fee),
+            _linha_valor("Serviço", order.service_fee),
             _linha_valor("Desconto", order.discount),
             _linha_valor("Entrega", order.delivery_fee),
             _linha_valor("TOTAL", order.total),
@@ -179,7 +178,7 @@ def _customer_receipt_text(order):
             ]
         )
     lines.extend(
-        ["-" * LARGURA_CUPOM, "Obrigado pela preferencia!".center(LARGURA_CUPOM), ""]
+        ["-" * LARGURA_CUPOM, "Obrigado pela preferência!".center(LARGURA_CUPOM), ""]
     )
     return "\n".join(lines)
 
@@ -202,6 +201,9 @@ def register_print_job(
     manual_only=False,
 ):
     with tenant_context(order.account):
+        # Compatibilidade com clientes antigos; novos jobs persistem um unico tipo.
+        if job_type == "payment_receipt":
+            job_type = PrintJob.TYPE_RECEIPT
         if printer and printer.account_id != order.account_id:
             raise ValueError("Printer does not belong to the order account.")
         if printer is None:

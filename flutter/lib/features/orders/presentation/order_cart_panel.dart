@@ -16,7 +16,9 @@ class OrderCartPanel extends StatelessWidget {
     required this.onVoidItem,
     required this.onFinish,
     required this.onPrint,
+    this.onEmitInvoice,
     required this.printing,
+    this.emittingInvoice = false,
   });
 
   final Map<String, dynamic>? order;
@@ -28,7 +30,12 @@ class OrderCartPanel extends StatelessWidget {
   final ValueChanged<Map<String, dynamic>> onVoidItem;
   final VoidCallback onFinish;
   final VoidCallback onPrint;
+  final VoidCallback? onEmitInvoice;
   final bool printing;
+  final bool emittingInvoice;
+
+  bool get _readOnly =>
+      const {'paid', 'cancelled', 'refunded'}.contains('${order?['status']}');
 
   @override
   Widget build(BuildContext context) {
@@ -167,11 +174,16 @@ class OrderCartPanel extends StatelessWidget {
             width: double.infinity,
             height: 54,
             child: FilledButton.icon(
-              onPressed: order != null && items.isNotEmpty ? onFinish : null,
+              onPressed: order != null && items.isNotEmpty && !_readOnly
+                  ? onFinish
+                  : null,
               icon: const Icon(Icons.arrow_forward_rounded, size: 21),
-              label: const Text(
-                'Revisar pedido',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              label: Text(
+                _readOnly ? 'Pedido somente para consulta' : 'Revisar pedido',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ),
@@ -191,10 +203,32 @@ class OrderCartPanel extends StatelessWidget {
                     )
                   : const Icon(Icons.print_outlined, size: 19),
               label: Text(
-                printing ? 'Gerando nota...' : 'Imprimir nota do cliente',
+                printing ? 'Gerando recibo...' : 'Imprimir recibo de venda',
               ),
             ),
           ),
+          if ('${order?['payment_status']}' == 'paid') ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton.icon(
+                onPressed: !emittingInvoice ? onEmitInvoice : null,
+                icon: emittingInvoice
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.receipt_long_outlined, size: 19),
+                label: Text(
+                  emittingInvoice
+                      ? 'Emitindo NFC-e...'
+                      : 'Emitir NFC-e / Imprimir DANFE',
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -342,7 +376,7 @@ class OrderCartPanel extends StatelessWidget {
               child: _CartItem(
                 item: item,
                 money: money,
-                canRemove: true,
+                canRemove: !_readOnly,
                 onRemove: () => onVoidItem(item),
               ),
             ),
@@ -567,7 +601,8 @@ class _CartItem extends StatelessWidget {
         else
           '$variation'.trim(),
       for (final addon in (item['addons'] as List? ?? const []))
-        if (addon is Map) '${addon['addon_name'] ?? addon['name'] ?? ''}'.trim(),
+        if (addon is Map)
+          '${addon['addon_name'] ?? addon['name'] ?? ''}'.trim(),
     ];
     return parts.where((part) => part.isNotEmpty).join(' · ');
   }

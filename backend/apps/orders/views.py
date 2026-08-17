@@ -28,6 +28,15 @@ class OrderFilterSet(django_filters.FilterSet):
     # Intervalo de datas por "aberto em" — comparação por data, inclusiva nas duas pontas.
     opened_after = django_filters.DateFilter(field_name="opened_at", lookup_expr="date__gte")
     opened_before = django_filters.DateFilter(field_name="opened_at", lookup_expr="date__lte")
+    payment_pending = django_filters.BooleanFilter(method="filter_payment_pending")
+
+    def filter_payment_pending(self, queryset, name, value):
+        if value is True:
+            return queryset.filter(
+                payment_status__in=[Order.PAYMENT_PENDING, Order.PAYMENT_PARTIAL],
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            )
+        return queryset
 
     class Meta:
         model = Order
@@ -52,7 +61,8 @@ class OrderViewSet(BaseTenantViewSet):
         "command__code",
         "command_number_text",
     ]
-    ordering_fields = ["opened_at", "closed_at", "total", "sequence"]
+    ordering_fields = ["updated_at", "opened_at", "closed_at", "total", "sequence"]
+    ordering = ["-updated_at"]
 
     def get_queryset(self):
         # A anotacao precisa ser aplicada aqui, e nao no `queryset` da classe:
@@ -229,6 +239,7 @@ class OrderViewSet(BaseTenantViewSet):
                 customer_note=request.data.get("customer_note", ""),
                 scale_reading=scale_reading,
                 weight_kg=request.data.get("weight_kg"),
+                expected_unit_price=request.data.get("expected_unit_price"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
@@ -282,6 +293,8 @@ class OrderViewSet(BaseTenantViewSet):
                 request.user,
                 discount=request.data.get("discount", 0),
                 service_fee=request.data.get("service_fee"),
+                service_fee_enabled=request.data.get("service_fee_enabled"),
+                expected_total=request.data.get("expected_total"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
@@ -300,6 +313,7 @@ class OrderViewSet(BaseTenantViewSet):
                 amount=request.data["amount"],
                 idempotency_key=request.headers.get("Idempotency-Key") or request.data.get("idempotency_key"),
                 metadata=request.data.get("metadata", {}),
+                cash_register_id=request.data.get("cash_register"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)

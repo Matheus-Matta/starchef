@@ -69,6 +69,7 @@ class OrderSerializer(TenantModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     table_number = serializers.CharField(source="table.number", read_only=True)
     customer_name = serializers.CharField(source="customer.name", read_only=True)
+    customer_document = serializers.CharField(source="customer.document", read_only=True)
 
     class Meta:
         model = Order
@@ -84,6 +85,7 @@ class OrderSerializer(TenantModelSerializer):
             "closed_at",
             "subtotal",
             "service_fee",
+            "service_fee_enabled",
             "total",
             "payment_status",
             "production_status",

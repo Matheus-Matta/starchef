@@ -297,6 +297,7 @@ class HandsFreeMachine extends ChangeNotifier {
     _failureMessage = null;
     _commandDeadline = null;
     _cancelDeadline = null;
+    _currentWeightKg = 0;
     _stable = false;
   }
 }

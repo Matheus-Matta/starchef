@@ -36,7 +36,7 @@ class OrderDataSource extends DataTableSource {
 
     return DataRow.byIndex(
       index: index,
-      onSelectChanged: canEdit ? (_) => onEdit(order) : null,
+      onSelectChanged: (_) => onEdit(order),
       cells: [
         DataCell(Text('#${order['sequence']}')),
         DataCell(Text(_typeLabel('${order['order_type']}'))),
@@ -53,6 +53,12 @@ class OrderDataSource extends DataTableSource {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (!canEdit)
+                IconButton(
+                  tooltip: 'Visualizar pedido',
+                  onPressed: () => onEdit(order),
+                  icon: const Icon(Icons.visibility_outlined),
+                ),
               if (canEdit)
                 IconButton(
                   tooltip: 'Editar pedido e adicionar itens',
@@ -65,11 +71,6 @@ class OrderDataSource extends DataTableSource {
                   icon: const Icon(Icons.payments_outlined, size: 18),
                   label: const Text('Pagar'),
                 ),
-              IconButton(
-                tooltip: 'Imprimir nota do cliente',
-                onPressed: () => onPrint(order),
-                icon: const Icon(Icons.print_outlined),
-              ),
             ],
           ),
         ),

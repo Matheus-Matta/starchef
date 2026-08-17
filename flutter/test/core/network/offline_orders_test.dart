@@ -215,6 +215,7 @@ void main() {
       // A tela soma os pagamentos para saber quanto falta. Sem o valor de
       // volta, o restante nunca zeraria e o operador não fecharia a venda.
       expect(queued['_offline_pending'], isTrue);
+      expect('${queued['id']}', startsWith('offline-'));
       expect(queued['amount'], '25.00');
       expect(queued['payment_method'], 'pm-1');
     });

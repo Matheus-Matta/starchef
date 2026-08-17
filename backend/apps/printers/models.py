@@ -185,7 +185,8 @@ class PrintJob(TenantModel):
     TYPE_BAR = "bar_ticket"
     TYPE_TABLE_BILL = "table_bill"
     TYPE_RECEIPT = "receipt"
-    TYPE_PAYMENT = "payment_receipt"
+    # Recibo e comprovante de pagamento sao o mesmo documento do cliente.
+    TYPE_PAYMENT = TYPE_RECEIPT
     TYPE_CASH_CLOSE = "cash_close"
     TYPE_WEIGH = "weigh_ticket"  # nota de pesagem (balanca por kilo)
     TYPE_FISCAL = "fiscal_danfe"  # cupom fiscal DANFE NFC-e

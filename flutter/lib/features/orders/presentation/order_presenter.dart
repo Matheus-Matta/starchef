@@ -19,8 +19,15 @@ abstract final class OrderPresenter {
     JsonMap? command,
   }) {
     if (!isOffline(order)) return order;
+    final localReference = '${order['_offline_queue_id'] ?? order['id'] ?? ''}'
+        .replaceFirst('offline-', '');
+    final referenceSuffix = localReference.length > 8
+        ? localReference.substring(localReference.length - 8)
+        : localReference;
     return {
-      'sequence': 'OFFLINE',
+      'sequence': referenceSuffix.isEmpty
+          ? 'LOCAL'
+          : 'LOCAL-${referenceSuffix.toUpperCase()}',
       'restaurant': restaurantId,
       'order_type': type,
       'status': 'open',
@@ -48,9 +55,32 @@ abstract final class OrderPresenter {
     required double quantity,
     String customerNote = '',
   }) {
-    final unitPrice = ValueFormatters.number(
-      product['current_price'] ?? product['sale_price'],
-    );
+    final selectedVariationIds = (response['variations'] as List? ?? const [])
+        .map((value) => value is Map ? '${value['id']}' : '$value')
+        .toSet();
+    final selectedAddonIds = (response['addons'] as List? ?? const [])
+        .map((value) => value is Map ? '${value['id']}' : '$value')
+        .toSet();
+    final variations = (product['variations'] as List? ?? const [])
+        .whereType<Map>()
+        .where((value) => selectedVariationIds.contains('${value['id']}'))
+        .map((value) => Map<String, dynamic>.from(value))
+        .toList();
+    final addons = (product['addons'] as List? ?? const [])
+        .whereType<Map>()
+        .where((value) => selectedAddonIds.contains('${value['id']}'))
+        .map(
+          (value) => {
+            ...Map<String, dynamic>.from(value),
+            'addon': value['id'],
+            'addon_name': value['name'],
+            'quantity': 1,
+            'unit_price': value['price'],
+            'total_price': ValueFormatters.number(value['price']) * quantity,
+          },
+        )
+        .toList();
+    final unitPrice = expectedUnitPrice(product, response: response);
     return {
       ...response,
       'product': product['id'],
@@ -61,7 +91,84 @@ abstract final class OrderPresenter {
       'total_price': unitPrice * quantity,
       'status': 'pending',
       'customer_note': customerNote,
-      'addons': <JsonMap>[],
+      'variations': variations,
+      'addons': addons,
+    };
+  }
+
+  static double expectedUnitPrice(
+    JsonMap product, {
+    JsonMap? response,
+    Iterable<String> variationIds = const [],
+    Iterable<String> addonIds = const [],
+  }) {
+    final selectedVariations = {
+      ...variationIds,
+      ...(response?['variations'] as List? ?? const []).map(
+        (value) => value is Map ? '${value['id']}' : '$value',
+      ),
+    };
+    final selectedAddons = {
+      ...addonIds,
+      ...(response?['addons'] as List? ?? const []).map(
+        (value) => value is Map ? '${value['id']}' : '$value',
+      ),
+    };
+    var total = ValueFormatters.number(
+      product['current_price'] ?? product['sale_price'],
+    );
+    for (final variation in (product['variations'] as List? ?? const [])) {
+      if (variation is Map &&
+          selectedVariations.contains('${variation['id']}')) {
+        total += ValueFormatters.number(variation['price_delta']);
+      }
+    }
+    for (final addon in (product['addons'] as List? ?? const [])) {
+      if (addon is Map && selectedAddons.contains('${addon['id']}')) {
+        total += ValueFormatters.number(addon['price']);
+      }
+    }
+    return total;
+  }
+
+  static JsonMap sentToKitchen(JsonMap order) {
+    final items = (order['items'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => item['status'] == 'pending'
+              ? {...Map<String, dynamic>.from(item), 'status': 'sent'}
+              : Map<String, dynamic>.from(item),
+        )
+        .toList();
+    return {
+      ...order,
+      'items': items,
+      'production_status': 'sent_to_kitchen',
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+  }
+
+  static JsonMap closeOfflineOrder(
+    JsonMap order, {
+    required bool serviceFeeEnabled,
+    required double serviceFeePercent,
+  }) {
+    final subtotal = ValueFormatters.number(order['subtotal']);
+    final fee = serviceFeeEnabled ? subtotal * serviceFeePercent / 100 : 0.0;
+    final discount = ValueFormatters.number(order['discount']);
+    final delivery = ValueFormatters.number(order['delivery_fee']);
+    final total = (subtotal + fee + delivery - discount).clamp(
+      0,
+      double.infinity,
+    );
+    return {
+      ...order,
+      'service_fee_enabled': serviceFeeEnabled,
+      'service_fee': fee.toStringAsFixed(2),
+      'total': total.toStringAsFixed(2),
+      'status': 'awaiting_payment',
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      '_offline_pending': true,
     };
   }
 
@@ -70,6 +177,15 @@ abstract final class OrderPresenter {
       0,
       (total, item) => total + ValueFormatters.number(item['total_price']),
     );
-    return {...order, 'items': items, 'subtotal': subtotal, 'total': subtotal};
+    final serviceFee = order['service_fee_enabled'] == false
+        ? 0.0
+        : ValueFormatters.number(order['service_fee']);
+    final delivery = ValueFormatters.number(order['delivery_fee']);
+    final discount = ValueFormatters.number(order['discount']);
+    final total = (subtotal + serviceFee + delivery - discount).clamp(
+      0,
+      double.infinity,
+    );
+    return {...order, 'items': items, 'subtotal': subtotal, 'total': total};
   }
 }

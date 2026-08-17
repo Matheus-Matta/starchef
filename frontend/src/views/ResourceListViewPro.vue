@@ -424,6 +424,7 @@ const {
   pageSize: proCfg.value.pageSize || 25,
 });
 const loadRows = reload;
+if (props.endpoint === "/orders/") ordering.value = "-updated_at";
 const realtimeModelByEndpoint = {
   "/orders/": "orders.order",
   "/tables/": "restaurants.table",

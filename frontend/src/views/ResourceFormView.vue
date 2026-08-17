@@ -14,8 +14,9 @@
       <div class="rpage__head-actions">
         <template v-if="isView">
           <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
-          <Button v-if="isOrder" label="Imprimir nota" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
-          <Button v-if="isOrder" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
+          <Button v-if="isOrder" label="Imprimir recibo" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
+          <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir NFC-e / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
+          <Button v-if="isOrder && ['open', 'awaiting_payment'].includes(record?.status)" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
           <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
         </template>
       </div>
@@ -565,6 +566,7 @@ const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
 const printing = ref(false);
+const emittingInvoice = ref(false);
 const toast = useToast();
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
@@ -629,6 +631,34 @@ async function printOrder() {
     toast.add({ severity: "error", summary: "Erro ao imprimir", detail: normalizeApiError(err).message, life: 5000 });
   } finally {
     printing.value = false;
+  }
+}
+
+/** Emite a NFC-e do pedido visualizado e abre o DANFE para impressao. */
+async function emitOrderInvoice() {
+  if (!recordId.value || emittingInvoice.value) return;
+  emittingInvoice.value = true;
+  try {
+    const { data: invoice } = await api.post("/invoices/emit/", {
+      order: recordId.value,
+      ...(record.value?.customer_document ? { cpf: record.value.customer_document } : {}),
+      ...(record.value?.customer_name ? { cpf_name: record.value.customer_name } : {}),
+    });
+    const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
+    const win = window.open("", "_blank", "width=420,height=720");
+    if (!win) {
+      toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir o DANFE.", life: 4000 });
+      return;
+    }
+    win.document.write(printJob.html || "<p>DANFE indisponível.</p>");
+    win.document.close();
+    win.focus();
+    win.print();
+    toast.add({ severity: "success", summary: "NFC-e emitida", detail: "DANFE preparado para impressão.", life: 4000 });
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Não foi possível emitir a NFC-e", detail: normalizeApiError(err).message, life: 5000 });
+  } finally {
+    emittingInvoice.value = false;
   }
 }
 

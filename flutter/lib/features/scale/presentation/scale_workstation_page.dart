@@ -31,6 +31,8 @@ class ScaleWorkstationPage extends StatefulWidget {
     required this.products,
     required this.onRestaurantChanged,
     required this.preferences,
+    this.isFullScreen = false,
+    this.onToggleFullScreen,
   });
 
   final ApiClient api;
@@ -40,6 +42,8 @@ class ScaleWorkstationPage extends StatefulWidget {
   final List<Map<String, dynamic>> products;
   final Future<void> Function(String restaurantId) onRestaurantChanged;
   final LocalPreferences preferences;
+  final bool isFullScreen;
+  final VoidCallback? onToggleFullScreen;
 
   @override
   State<ScaleWorkstationPage> createState() => _ScaleWorkstationPageState();
@@ -69,6 +73,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Timer? clock;
 
   final commandController = TextEditingController();
+  final commandFocusNode = FocusNode(debugLabel: 'command-input');
   final ScannerBindingStore scannerBindingStore = ScannerBindingStore();
   ScannerBinding? scannerBinding;
   SerialScannerService? scannerService;
@@ -148,7 +153,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }).toList();
   }
 
-  double get pricePerKg => ValueFormatters.number(weighedProduct?['current_price']);
+  double get pricePerKg =>
+      ValueFormatters.number(weighedProduct?['current_price']);
 
   /// Segundos de estabilidade exigidos, vindos do cadastro da balança.
   int get settleSeconds =>
@@ -161,14 +167,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   String get configuredPort => '${selectedScale?['port'] ?? ''}'.trim();
 
-  HandsFreeMachine _buildMachine() => HandsFreeMachine(
-    commandTimeout: widget.preferences.commandTimeout,
-  );
+  HandsFreeMachine _buildMachine() =>
+      HandsFreeMachine(commandTimeout: widget.preferences.commandTimeout);
 
   @override
   void initState() {
     super.initState();
     machine.addListener(_onMachineChanged);
+    HardwareKeyboard.instance.addHandler(_handleFallbackKeyboard);
     if (widget.restaurantId != null) {
       _loadScales();
       _loadPrinters();
@@ -193,6 +199,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   @override
   void dispose() {
     clock?.cancel();
+    HardwareKeyboard.instance.removeHandler(_handleFallbackKeyboard);
     machine.removeListener(_onMachineChanged);
     machine.dispose();
     unawaited(sampleSubscription?.cancel());
@@ -201,11 +208,88 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     unawaited(_detachScanner());
     unawaited(scannerBindingStore.close());
     commandController.dispose();
+    commandFocusNode.dispose();
     super.dispose();
   }
 
   void _onMachineChanged() {
+    if (!mounted) return;
+    setState(() {});
+    if (_acceptsCommandInput) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _acceptsCommandInput) commandFocusNode.requestFocus();
+      });
+    }
+  }
+
+  bool get _acceptsCommandInput => switch (machine.state) {
+    HandsFreeState.waitingCommand ||
+    HandsFreeState.commandOverdue ||
+    HandsFreeState.failed => true,
+    _ => false,
+  };
+
+  bool _handleFallbackKeyboard(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        !_acceptsCommandInput ||
+        commandFocusNode.hasFocus) {
+      return false;
+    }
+
+    final keyboard = HardwareKeyboard.instance;
+    final key = event.logicalKey;
+    if (keyboard.isControlPressed && key == LogicalKeyboardKey.keyV) {
+      unawaited(_pasteCommandFromClipboard());
+      return true;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _submitCommandInput();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.backspace) {
+      final value = commandController.text;
+      if (value.isNotEmpty) {
+        _replaceCommandText(value.substring(0, value.length - 1));
+      }
+      return true;
+    }
+    if (keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed) {
+      return false;
+    }
+    final character = event.character;
+    if (character == null ||
+        character.isEmpty ||
+        character.runes.any((rune) => rune < 0x20 || rune == 0x7f)) {
+      return false;
+    }
+    _replaceCommandText('${commandController.text}$character');
+    return true;
+  }
+
+  Future<void> _pasteCommandFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted || !_acceptsCommandInput) return;
+    final pasted = data?.text?.replaceAll(RegExp(r'[\r\n\t]'), '').trim();
+    if (pasted == null || pasted.isEmpty) return;
+    _replaceCommandText('${commandController.text}$pasted');
+  }
+
+  void _replaceCommandText(String value) {
+    final normalized = value.length <= 32 ? value : value.substring(0, 32);
+    commandController.value = TextEditingValue(
+      text: normalized,
+      selection: TextSelection.collapsed(offset: normalized.length),
+    );
     if (mounted) setState(() {});
+  }
+
+  void _submitCommandInput() {
+    final code = commandController.text.trim();
+    if (code.isEmpty) return;
+    _runEffects(machine.onCommandRead(code));
   }
 
   // ---------------------------------------------------------------- catálogo
@@ -559,6 +643,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       // _resetOperation): sem isso, o próximo cliente herdaria a
       // configuração de adicionais do anterior.
       extraConfigs.clear();
+      commandController.clear();
       machine.readyForNext();
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -579,7 +664,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       commandController.clear();
     } catch (error, stackTrace) {
       if (!mounted) return;
-      _runEffects(machine.onOrderFailed('Falha inesperada ao lançar o pedido.'));
+      _runEffects(
+        machine.onOrderFailed('Falha inesperada ao lançar o pedido.'),
+      );
       ErrorCenterScope.read(context).reportUnexpected(
         error,
         title: 'A comanda não pôde ser fechada',
@@ -985,6 +1072,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         maximumLength: 32,
       );
     });
+    commandFocusNode.requestFocus();
   }
 
   // ------------------------------------------------------------------- UI
@@ -1127,7 +1215,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                       .map(
                         (item) => DropdownMenuItem(
                           value: '${item['id']}',
-                          child: Text('${item['name']} · ${item['port'] ?? ''}'),
+                          child: Text(
+                            '${item['name']} · ${item['port'] ?? ''}',
+                          ),
                         ),
                       )
                       .toList(),
@@ -1287,10 +1377,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         Icons.hourglass_empty,
       ),
       ScaleLinkState.readError => (scheme.error, Icons.error_outline),
-      ScaleLinkState.disconnected => (
-        scheme.onSurfaceVariant,
-        Icons.link_off,
-      ),
+      ScaleLinkState.disconnected => (scheme.onSurfaceVariant, Icons.link_off),
     };
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1468,6 +1555,16 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
           ),
+          if (widget.onToggleFullScreen != null)
+            IconButton(
+              tooltip: widget.isFullScreen
+                  ? 'Sair da tela cheia (F11)'
+                  : 'Usar tela cheia (F11)',
+              onPressed: widget.onToggleFullScreen,
+              icon: Icon(
+                widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
+              ),
+            ),
           IconButton(
             tooltip: 'Trocar restaurante ou balança',
             onPressed: machine.state == HandsFreeState.creatingOrder
@@ -1533,7 +1630,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               ),
             )
           : const Icon(Icons.download_rounded),
-      label: Text(requestingWeight ? 'Solicitando...' : 'Pegar peso da balança'),
+      label: Text(
+        requestingWeight ? 'Solicitando...' : 'Pegar peso da balança',
+      ),
     ),
     Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -1549,7 +1648,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         ),
         if (lastPrintJobId != null)
           TextButton.icon(
-            onPressed: reprinting ? null : () => unawaited(_reprintLastTicket()),
+            onPressed: reprinting
+                ? null
+                : () => unawaited(_reprintLastTicket()),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               textStyle: const TextStyle(fontSize: 12),
@@ -1692,7 +1793,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       return const FilledButton(onPressed: null, child: Text('Finalizando...'));
     }
     if (machine.state == HandsFreeState.completed) {
-      return const FilledButton(onPressed: null, child: Text('Pedido concluído'));
+      return const FilledButton(
+        onPressed: null,
+        child: Text('Pedido concluído'),
+      );
     }
     return const SizedBox.shrink();
   }
@@ -1749,10 +1853,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   ? 'Peso estável.'
                   : 'Aguardando leitura estável por $settleSeconds s...',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           ],
         ],
@@ -1782,10 +1883,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               'Coloque o prato na balança.\nOs extras podem ser tocados no '
               'cardápio ao lado.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -1812,8 +1910,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
-        for (final entry in selected)
-          _extraLine(entry.key, entry.value),
+        for (final entry in selected) _extraLine(entry.key, entry.value),
       ],
     );
   }
@@ -1937,16 +2034,19 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         ],
         TextField(
           controller: commandController,
-          readOnly: true,
-          showCursor: false,
-          enableInteractiveSelection: false,
+          focusNode: commandFocusNode,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          inputFormatters: [LengthLimitingTextInputFormatter(32)],
+          onChanged: (_) => setState(() {}),
+          onSubmitted: (_) => _submitCommandInput(),
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
           decoration: InputDecoration(
             labelText: 'Código da comanda',
             helperText: scannerService != null
                 ? 'Aproxime a comanda do leitor desta janela.'
-                : 'Digite o número no teclado abaixo.',
+                : 'Digite ou leia a comanda e pressione Enter.',
             helperMaxLines: 2,
           ),
         ),
@@ -2007,7 +2107,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       ),
     ),
   );
-
 }
 
 class _ScannerChoice {
@@ -2044,4 +2143,3 @@ class _ScannerEmptyState extends StatelessWidget {
     ),
   );
 }
-

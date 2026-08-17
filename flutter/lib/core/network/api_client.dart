@@ -181,8 +181,8 @@ class ApiClient {
     _rememberSession(accessToken);
     final cacheKey = _cacheKey(path, query, accessToken);
     final operationId = method == 'GET' ? null : _nextOperationId();
-    final queueableMutation =
-        method != 'GET' && _canQueue(method, path, body);
+    final queueableMutation = method != 'GET' && _canQueue(method, path, body);
+    final bypassesPrincipal = path.startsWith('/customers/');
     if (method != 'GET' && _containsPrincipalTemporaryId(path, query, body)) {
       final relay = _mutationRelay;
       if (relay == null || !queueableMutation) {
@@ -248,7 +248,7 @@ class ApiClient {
     // problema só apareceria depois, como pedido divergente ou cobrança
     // repetida. Preferimos recusar agora, com o motivo na tela.
     final preferredRelay = _mutationRelay;
-    if (method != 'GET' && preferredRelay != null) {
+    if (method != 'GET' && preferredRelay != null && !bypassesPrincipal) {
       if (!queueableMutation) {
         throw ApiException(
           'Esta operação precisa do servidor e este caixa é secundário. '
@@ -310,7 +310,7 @@ class ApiClient {
       // acima. Chegar aqui com relay significa que a nuvem caiu numa operação
       // que não passa pelo principal, e a fila local continua fora de questão.
       if (method != 'GET' &&
-          _mutationRelay == null &&
+          (_mutationRelay == null || bypassesPrincipal) &&
           _canQueue(method, path, body)) {
         final queued = await _queueMutation(
           method: method,
@@ -667,7 +667,9 @@ class ApiClient {
         try {
           late final Map<String, dynamic> response;
           final relay = _mutationRelay;
-          if (relay != null && _canQueue(method, path, body)) {
+          if (relay != null &&
+              _canQueue(method, path, body) &&
+              !path.startsWith('/customers/')) {
             try {
               response = await _relayMutation(
                 relay,
@@ -730,10 +732,7 @@ class ApiClient {
           break;
         } on MutationRelayUncertain catch (error) {
           await _offlineStore.markBlocked(queueId, error: error.message);
-          await _publishStatus(
-            NetworkSyncPhase.blocked,
-            error: error.message,
-          );
+          await _publishStatus(NetworkSyncPhase.blocked, error: error.message);
           break;
         } on ApiException catch (error) {
           await _offlineStore.markBlocked(queueId, error: error.message);
@@ -952,7 +951,11 @@ class ApiClient {
         utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
       );
       if (payload is Map) {
-        return '${payload['account_id'] ?? payload['user_id'] ?? payload['sub'] ?? 'authenticated'}';
+        final account =
+            '${payload['account_id'] ?? payload['tenant_id'] ?? 'account'}';
+        final actor =
+            '${payload['user_id'] ?? payload['sub'] ?? 'authenticated'}';
+        return '$account:$actor';
       }
     } catch (_) {}
     return 'authenticated';
@@ -1033,6 +1036,13 @@ class ApiClient {
     if (scope != null) await _offlineStore.retryNow(scope: scope);
     _retryTimer?.cancel();
     await _flushPending();
+  }
+
+  /// IDs temporários que já receberam um ID definitivo no servidor.
+  Future<Map<String, String>> resolvedTemporaryIds() async {
+    final scope = _activeScope;
+    if (scope == null) return const {};
+    return _offlineStore.resolvedIdMappings(scope: scope);
   }
 
   Future<int> pendingOperations() async =>

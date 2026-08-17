@@ -114,6 +114,7 @@ void main() {
     expect(machine.state, HandsFreeState.waitingWeight);
     expect(machine.weighedItem, isNull);
     expect(machine.commandCode, isNull);
+    expect(machine.currentWeightKg, 0);
   });
 
   test('falha preserva a pesagem para uma nova tentativa', () {

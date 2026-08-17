@@ -10,11 +10,15 @@ class ScaleWindowPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.preferences,
+    required this.isFullScreen,
+    required this.onToggleFullScreen,
     this.preferredRestaurantId,
   });
 
   final AuthController controller;
   final LocalPreferences preferences;
+  final bool isFullScreen;
+  final VoidCallback onToggleFullScreen;
   final String? preferredRestaurantId;
 
   @override
@@ -141,6 +145,8 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
         products: products,
         onRestaurantChanged: _changeRestaurant,
         preferences: widget.preferences,
+        isFullScreen: widget.isFullScreen,
+        onToggleFullScreen: widget.onToggleFullScreen,
       ),
     );
   }

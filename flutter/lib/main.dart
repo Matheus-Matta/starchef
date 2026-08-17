@@ -77,6 +77,9 @@ Future<void> main(List<String> arguments) async {
   final windowOptions = WindowOptions(
     size: scaleWindow ? const Size(1180, 760) : const Size(1280, 800),
     minimumSize: scaleWindow ? const Size(900, 650) : const Size(960, 640),
+    // Tanto o PDV quanto a Balança Rápida iniciam ocupando a tela inteira.
+    // O operador ainda pode sair desse modo pelo botão ou por F11.
+    fullScreen: true,
     center: true,
     backgroundColor: Colors.transparent,
     title: scaleWindow ? 'StarChef · Balança Rápida' : 'StarChef PDV',
@@ -99,9 +102,7 @@ Future<void> main(List<String> arguments) async {
           authRepository: repository,
           preferences: preferences,
           errorCenter: errorCenter,
-          preferredRestaurantId: ScaleWindowLauncher.restaurantFrom(
-            arguments,
-          ),
+          preferredRestaurantId: ScaleWindowLauncher.restaurantFrom(arguments),
         )
       : StarChefApp(
           authRepository: repository,

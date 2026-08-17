@@ -75,17 +75,25 @@ class LocalOrderStore {
     final stored = await read(id, scope: scope);
     final pendingItems = stored == null
         ? const <Map<String, dynamic>>[]
-        : _itemsOf(stored)
-              .where((item) => '${item['id']}'.startsWith('offline-'))
+        : _itemsOf(
+            stored,
+          ).where((item) => '${item['id']}'.startsWith('offline-')).toList();
+    final pendingPayments = stored == null
+        ? const <Map<String, dynamic>>[]
+        : _paymentsOf(stored)
+              .where((payment) => '${payment['id']}'.startsWith('offline-'))
               .toList();
 
-    final merged = pendingItems.isEmpty
+    var merged = pendingItems.isEmpty
         ? Map<String, dynamic>.from(order)
         : _withItems(order, [..._itemsOf(order), ...pendingItems]);
+    if (pendingPayments.isNotEmpty) {
+      merged = {...merged, 'offline_payments': pendingPayments};
+    }
     await _write(
       merged,
       scope: scope,
-      hasLocalChanges: pendingItems.isNotEmpty,
+      hasLocalChanges: pendingItems.isNotEmpty || pendingPayments.isNotEmpty,
     );
     return merged;
   }
@@ -135,6 +143,16 @@ class LocalOrderStore {
   }
 
   /// Acrescenta um item lançado sem rede e recalcula os totais.
+  Future<Map<String, dynamic>> saveLocal(
+    Map<String, dynamic> order, {
+    required String scope,
+  }) async {
+    final updated = _touch(order);
+    await _write(updated, scope: scope, hasLocalChanges: true);
+    return updated;
+  }
+
+  /// Acrescenta um item lançado sem rede e recalcula os totais.
   Future<Map<String, dynamic>?> addItem(
     String orderId,
     Map<String, dynamic> item, {
@@ -142,7 +160,7 @@ class LocalOrderStore {
   }) async {
     final order = await read(orderId, scope: scope);
     if (order == null) return null;
-    final updated = _withItems(order, [..._itemsOf(order), item]);
+    final updated = _touch(_withItems(order, [..._itemsOf(order), item]));
     await _write(updated, scope: scope, hasLocalChanges: true);
     return updated;
   }
@@ -157,12 +175,11 @@ class LocalOrderStore {
     if (order == null) return null;
     final items = _itemsOf(order)
         .map(
-          (item) => '${item['id']}' == itemId
-              ? {...item, 'status': 'voided'}
-              : item,
+          (item) =>
+              '${item['id']}' == itemId ? {...item, 'status': 'voided'} : item,
         )
         .toList();
-    final updated = _withItems(order, items);
+    final updated = _touch(_withItems(order, items));
     await _write(updated, scope: scope, hasLocalChanges: true);
     return updated;
   }
@@ -175,7 +192,7 @@ class LocalOrderStore {
   }) async {
     final order = await read(orderId, scope: scope);
     if (order == null) return null;
-    final updated = {...order, ...changes};
+    final updated = _touch({...order, ...changes});
     await _write(updated, scope: scope, hasLocalChanges: true);
     return updated;
   }
@@ -217,6 +234,9 @@ class LocalOrderStore {
     await _ready;
     final id = '${order['id'] ?? ''}';
     if (id.isEmpty) return;
+    final storedAt = hasLocalChanges
+        ? DateTime.now().millisecondsSinceEpoch
+        : _serverUpdatedAt(order);
     await _database.writeTransaction((tx) async {
       await tx.execute(
         '''
@@ -226,17 +246,9 @@ class LocalOrderStore {
         ON CONFLICT(scope, order_id) DO UPDATE SET
           payload = excluded.payload,
           updated_at = excluded.updated_at,
-          has_local_changes = MAX(
-            local_orders.has_local_changes, excluded.has_local_changes
-          )
+          has_local_changes = excluded.has_local_changes
         ''',
-        [
-          scope,
-          id,
-          jsonEncode(order),
-          DateTime.now().millisecondsSinceEpoch,
-          hasLocalChanges ? 1 : 0,
-        ],
+        [scope, id, jsonEncode(order), storedAt, hasLocalChanges ? 1 : 0],
       );
       // Mantém o banco pequeno: um PDV não precisa do histórico inteiro para
       // operar offline, e pedidos antigos raramente voltam a ser editados.
@@ -287,6 +299,23 @@ class LocalOrderStore {
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
+
+  static List<Map<String, dynamic>> _paymentsOf(Map<String, dynamic> order) =>
+      (order['offline_payments'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+
+  static Map<String, dynamic> _touch(Map<String, dynamic> order) => {
+    ...order,
+    'updated_at': DateTime.now().toUtc().toIso8601String(),
+  };
+
+  static int _serverUpdatedAt(Map<String, dynamic> order) =>
+      DateTime.tryParse(
+        '${order['updated_at'] ?? ''}',
+      )?.millisecondsSinceEpoch ??
+      DateTime.now().millisecondsSinceEpoch;
 
   static Map<String, dynamic>? _decode(Object? raw) {
     if (raw is! String || raw.isEmpty) return null;

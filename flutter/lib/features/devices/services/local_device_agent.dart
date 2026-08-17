@@ -199,6 +199,7 @@ class LocalDeviceAgent {
   static List<int> _readableReceiptBytes(String content) {
     final result = <int>[
       0x1b, 0x40, // Initialize.
+      0x1b, 0x74, 0x02, // ESC t 2: pagina PC850 (padrao brasileiro).
       0x1b, 0x33, 34, // Comfortable line spacing.
       0x1d, 0x4c, 8, 0, // Small left margin.
     ];
@@ -207,12 +208,64 @@ class LocalDeviceAgent {
       final normalized = line.trim().toUpperCase();
       final prominent = firstTextLine || normalized.startsWith('TOTAL');
       result.addAll([0x1b, 0x21, prominent ? 0x10 : 0x00]);
-      result.addAll(utf8.encode(line));
+      result.addAll(_encodeCp850(line));
       result.add(0x0a);
       if (normalized.isNotEmpty) firstTextLine = false;
     }
     result.addAll([0x1b, 0x21, 0x00]);
     return result;
+  }
+
+  /// Codifica o texto na pagina PC850 usada pelas termicas vendidas no Brasil.
+  /// Caracteres fora da pagina viram equivalentes seguros, evitando que os
+  /// bytes UTF-8 aparecam impressos como "Ã", "Â" ou trechos de estilo.
+  static List<int> _encodeCp850(String value) {
+    const extended = <int, int>{
+      0x00c7: 0x80,
+      0x00fc: 0x81,
+      0x00e9: 0x82,
+      0x00e2: 0x83,
+      0x00e4: 0x84,
+      0x00e0: 0x85,
+      0x00e7: 0x87,
+      0x00ea: 0x88,
+      0x00eb: 0x89,
+      0x00e8: 0x8a,
+      0x00ef: 0x8b,
+      0x00ee: 0x8c,
+      0x00ec: 0x8d,
+      0x00c4: 0x8e,
+      0x00c9: 0x90,
+      0x00f4: 0x93,
+      0x00f6: 0x94,
+      0x00f2: 0x95,
+      0x00fb: 0x96,
+      0x00f9: 0x97,
+      0x00d6: 0x99,
+      0x00dc: 0x9a,
+      0x00e1: 0xa0,
+      0x00ed: 0xa1,
+      0x00f3: 0xa2,
+      0x00fa: 0xa3,
+      0x00e3: 0xc6,
+      0x00c3: 0xc7,
+      0x00f5: 0xe4,
+      0x00d5: 0xe5,
+    };
+    const replacements = <int, int>{
+      0x2013: 0x2d,
+      0x2014: 0x2d,
+      0x2018: 0x27,
+      0x2019: 0x27,
+      0x201c: 0x22,
+      0x201d: 0x22,
+      0x00b7: 0x2d,
+      0x00d7: 0x78,
+    };
+    return value.runes.map((rune) {
+      if (rune <= 0x7f) return rune;
+      return extended[rune] ?? replacements[rune] ?? 0x3f;
+    }).toList();
   }
 
   final ApiClient api;
@@ -633,6 +686,12 @@ class LocalDeviceAgent {
   }
 
   String _htmlToText(String html) => html
+      // CSS/JS nao sao conteudo imprimivel. Sem esta remocao, o fallback de
+      // jobs antigos imprimia regras como "td { padding... }" junto aos itens.
+      .replaceAll(
+        RegExp(r'<(style|script)\b[^>]*>[\s\S]*?</\1>', caseSensitive: false),
+        '',
+      )
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
       .replaceAll(
         RegExp(r'</(p|div|tr|li|h[1-6])>', caseSensitive: false),

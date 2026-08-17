@@ -35,7 +35,9 @@ class _StarChefAppState extends State<StarChefApp> {
   late final AuthController _auth = AuthController(widget.authRepository)
     ..initialize();
   late ThemeMode _themeMode = widget.preferences.themeMode;
-  bool _isFullScreen = false;
+  // main.dart inicia o PDV principal em tela cheia. Manter o estado alinhado
+  // evita o menu oferecer "entrar" em tela cheia quando ele já está nela.
+  bool _isFullScreen = true;
 
   Future<void> _toggleFullScreen() async {
     final current = await windowManager.isFullScreen();
@@ -72,16 +74,22 @@ class _StarChefAppState extends State<StarChefApp> {
       },
       child: Focus(
         autofocus: true,
-        // O host fica *dentro* da moldura: assim os alertas ocupam apenas a
-        // área de conteúdo e nunca cobrem os botões de minimizar, maximizar
-        // e fechar da barra de título. A escala também fica de fora da
-        // moldura: a barra de título usa coordenadas físicas da janela para
-        // arrastar e clicar nos botões nativos, e não pode ser deformada.
-        child: AppWindowFrame(
-          child: ResponsiveScale(
-            child: AppErrorHost(center: widget.errorCenter, child: child!),
-          ),
-        ),
+        // Em tela cheia não há moldura própria: o conteúdo ocupa também a
+        // área da barra de tarefas. Ao sair pelo F11, a moldura volta para
+        // oferecer arrastar, minimizar, maximizar e fechar. A barra nunca é
+        // escalada, pois usa coordenadas físicas para os controles nativos.
+        child: _isFullScreen
+            ? ResponsiveScale(
+                child: AppErrorHost(center: widget.errorCenter, child: child!),
+              )
+            : AppWindowFrame(
+                child: ResponsiveScale(
+                  child: AppErrorHost(
+                    center: widget.errorCenter,
+                    child: child!,
+                  ),
+                ),
+              ),
       ),
     ),
     home: ListenableBuilder(

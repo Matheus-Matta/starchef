@@ -205,7 +205,16 @@ def approve_cash_operation(*, cash_register, user, reason, movement=None, cash_p
 
 
 @transaction.atomic
-def register_payment(*, order, user, payment_method_id, amount, idempotency_key=None, metadata=None):
+def register_payment(
+    *,
+    order,
+    user,
+    payment_method_id,
+    amount,
+    idempotency_key=None,
+    metadata=None,
+    cash_register_id=None,
+):
     with tenant_context(order.account):
         if idempotency_key:
             existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
@@ -225,7 +234,20 @@ def register_payment(*, order, user, payment_method_id, amount, idempotency_key=
             raise ValidationError("O pedido já foi pago.")
 
         payment_method = PaymentMethod.objects.get(pk=payment_method_id, restaurant=order.restaurant, is_active=True)
-        cash_register = get_open_cash_register(order.restaurant, user=user)
+        if cash_register_id:
+            cash_register = CashRegister.objects.filter(
+                pk=cash_register_id,
+                restaurant=order.restaurant,
+                opened_by=user,
+                status=CashRegister.STATUS_OPEN,
+            ).first()
+            if cash_register is None:
+                raise ValidationError(
+                    "A sessão de caixa usada neste pagamento não está mais aberta "
+                    "para este operador. Revise a venda antes de sincronizar."
+                )
+        else:
+            cash_register = get_open_cash_register(order.restaurant, user=user)
         if order.restaurant.require_open_cash_register and not cash_register:
             raise ValidationError("É necessário ter um caixa aberto para receber o pagamento.")
 

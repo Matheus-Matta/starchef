@@ -134,7 +134,10 @@ void main() {
         );
         final barcodeStart = _sublistIndex(bytes, barcode);
 
-        expect(bytes, containsAllInOrder([0x1b, 0x40, 0x1b, 0x33, 34]));
+        expect(
+          bytes,
+          containsAllInOrder([0x1b, 0x40, 0x1b, 0x74, 0x02, 0x1b, 0x33, 34]),
+        );
         expect(bytes, containsAllInOrder(utf8.encode('TICKET')));
         expect(
           bytes.sublist(barcodeStart, barcodeStart + barcode.length),
@@ -148,6 +151,23 @@ void main() {
           86,
           0,
         ]);
+      },
+    );
+
+    test(
+      'selects PC850 and encodes Brazilian accents without UTF-8 mojibake',
+      () {
+        final bytes = LocalDeviceAgent.rawTransportBytes(
+          'Serviço · preferência',
+          isEscPos: true,
+        );
+
+        expect(bytes, containsAllInOrder([0x1b, 0x74, 0x02]));
+        expect(
+          bytes,
+          containsAllInOrder([0x53, 0x65, 0x72, 0x76, 0x69, 0x87, 0x6f]),
+        );
+        expect(bytes, isNot(containsAllInOrder(utf8.encode('Serviço'))));
       },
     );
   });
@@ -183,30 +203,38 @@ void main() {
   });
 
   group('LocalDeviceAgent ESC/POS QR Code', () {
-    test('encodes a GS ( k sequence: model, size, correction, store, print', () {
-      final bytes = LocalDeviceAgent.escPosQrCodeBytes('abc')!;
-      final data = utf8.encode('abc');
+    test(
+      'encodes a GS ( k sequence: model, size, correction, store, print',
+      () {
+        final bytes = LocalDeviceAgent.escPosQrCodeBytes('abc')!;
+        final data = utf8.encode('abc');
 
-      expect(
-        bytes,
-        containsAllInOrder([
-          // Select model 2.
-          0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
-          // Module size 6.
-          0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,
-          // Error correction level M.
-          0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,
-          // Store data (pL/pH = 3 + len(data) = 6, little-endian).
-          0x1d, 0x28, 0x6b, 3 + data.length, 0x00, 0x31, 0x50, 0x30,
-          ...data,
-          // Print symbol.
-          0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,
-        ]),
-      );
-      expect(bytes.first, 0x0a);
-      expect(bytes.sublist(1, 4), [0x1b, 0x61, 0x01]); // center before.
-      expect(bytes.sublist(bytes.length - 4), [0x0a, 0x1b, 0x61, 0x00]); // restore after.
-    });
+        expect(
+          bytes,
+          containsAllInOrder([
+            // Select model 2.
+            0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
+            // Module size 6.
+            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,
+            // Error correction level M.
+            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,
+            // Store data (pL/pH = 3 + len(data) = 6, little-endian).
+            0x1d, 0x28, 0x6b, 3 + data.length, 0x00, 0x31, 0x50, 0x30,
+            ...data,
+            // Print symbol.
+            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,
+          ]),
+        );
+        expect(bytes.first, 0x0a);
+        expect(bytes.sublist(1, 4), [0x1b, 0x61, 0x01]); // center before.
+        expect(bytes.sublist(bytes.length - 4), [
+          0x0a,
+          0x1b,
+          0x61,
+          0x00,
+        ]); // restore after.
+      },
+    );
 
     test('computes a two-byte little-endian length for larger payloads', () {
       final longUrl = 'https://sefaz.sp.gov.br/nfce?p=${'0' * 300}';

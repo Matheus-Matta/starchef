@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../core/errors/app_error_host.dart';
 import '../core/errors/error_center.dart';
@@ -35,6 +37,14 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
   late final AuthController _auth = AuthController(widget.authRepository)
     ..initialize();
   late ThemeMode _themeMode = widget.preferences.themeMode;
+  // main.dart inicia também a Balança Rápida em tela cheia.
+  bool _isFullScreen = true;
+
+  Future<void> _toggleFullScreen() async {
+    final current = await windowManager.isFullScreen();
+    await windowManager.setFullScreen(!current);
+    if (mounted) setState(() => _isFullScreen = !current);
+  }
 
   void _toggleTheme() {
     final next = _themeMode == ThemeMode.dark
@@ -57,14 +67,27 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
     theme: AppTheme.light(),
     darkTheme: AppTheme.dark(),
     themeMode: _themeMode,
-    builder: (context, child) => AppWindowFrame(
-      title: 'StarChef · Balança Rápida',
-      // Dentro da moldura para não cobrir os botões da barra de título. A
-      // referência é o tamanho padrão desta janela (ver `main.dart`), menor
-      // que o do PDV principal — a balança abre numa janela mais compacta.
-      child: ResponsiveScale(
-        referenceSize: const Size(1180, 760),
-        child: AppErrorHost(center: widget.errorCenter, child: child!),
+    builder: (context, child) => CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f11): _toggleFullScreen,
+      },
+      child: Focus(
+        autofocus: true,
+        child: _isFullScreen
+            ? ResponsiveScale(
+                referenceSize: const Size(1180, 760),
+                child: AppErrorHost(center: widget.errorCenter, child: child!),
+              )
+            : AppWindowFrame(
+                title: 'StarChef · Balança Rápida',
+                child: ResponsiveScale(
+                  referenceSize: const Size(1180, 760),
+                  child: AppErrorHost(
+                    center: widget.errorCenter,
+                    child: child!,
+                  ),
+                ),
+              ),
       ),
     ),
     home: ListenableBuilder(
@@ -87,6 +110,8 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> {
           controller: _auth,
           preferredRestaurantId: widget.preferredRestaurantId,
           preferences: widget.preferences,
+          isFullScreen: _isFullScreen,
+          onToggleFullScreen: _toggleFullScreen,
         );
       },
     ),

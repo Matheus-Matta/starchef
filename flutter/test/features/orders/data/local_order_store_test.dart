@@ -58,15 +58,46 @@ void main() {
   });
 
   test('guarda e devolve o pedido do servidor', () async {
-    await store.saveFromServer(
-      order(items: [item()]),
-      scope: _scope,
-    );
+    await store.saveFromServer(order(items: [item()]), scope: _scope);
 
     final stored = await store.read('order-1', scope: _scope);
 
     expect(stored, isNotNull);
     expect((stored!['items'] as List), hasLength(1));
+  });
+
+  test('pedido criado offline existe antes do primeiro item', () async {
+    final local = await store.saveLocal(
+      order(id: 'offline-order-1'),
+      scope: _scope,
+    );
+
+    expect(local['updated_at'], isNotNull);
+    expect(await store.read('offline-order-1', scope: _scope), isNotNull);
+    final withItem = await store.addItem(
+      'offline-order-1',
+      item(id: 'offline-item-1'),
+      scope: _scope,
+    );
+    expect((withItem!['items'] as List), hasLength(1));
+  });
+
+  test('pagamento offline é removido depois que o ID é reconciliado', () async {
+    await store.saveLocal({
+      ...order(),
+      'offline_payments': [
+        {
+          'id': 'offline-payment-1',
+          'amount': '10.00',
+          '_offline_pending': true,
+        },
+      ],
+    }, scope: _scope);
+
+    await store.replaceId('offline-payment-1', 'payment-real-1', scope: _scope);
+    final merged = await store.saveFromServer(order(), scope: _scope);
+
+    expect(merged['offline_payments'], isNull);
   });
 
   test('a edição offline sobrevive a sair e voltar da tela', () async {
@@ -106,7 +137,12 @@ void main() {
 
   test('cancelar um item tira o valor do total sem apagar o registro', () async {
     await store.saveFromServer(
-      order(items: [item(id: 'a', total: '10.00'), item(id: 'b', total: '4.00')]),
+      order(
+        items: [
+          item(id: 'a', total: '10.00'),
+          item(id: 'b', total: '4.00'),
+        ],
+      ),
       scope: _scope,
     );
 
@@ -119,28 +155,33 @@ void main() {
     expect(items.firstWhere((row) => row['id'] == 'a')['status'], 'voided');
   });
 
-  test('uma resposta do servidor não apaga o item que ainda está na fila',
-      () async {
-    await store.saveFromServer(order(items: [item(id: 'a')]), scope: _scope);
-    await store.addItem(
-      'order-1',
-      item(id: 'offline-novo', total: '7.00'),
-      scope: _scope,
-    );
+  test(
+    'uma resposta do servidor não apaga o item que ainda está na fila',
+    () async {
+      await store.saveFromServer(
+        order(items: [item(id: 'a')]),
+        scope: _scope,
+      );
+      await store.addItem(
+        'order-1',
+        item(id: 'offline-novo', total: '7.00'),
+        scope: _scope,
+      );
 
-    // O servidor responde sem conhecer o item da fila.
-    final merged = await store.saveFromServer(
-      order(items: [item(id: 'a')]),
-      scope: _scope,
-    );
+      // O servidor responde sem conhecer o item da fila.
+      final merged = await store.saveFromServer(
+        order(items: [item(id: 'a')]),
+        scope: _scope,
+      );
 
-    // Sumir aqui daria ao operador a impressão de que o lançamento se perdeu.
-    final ids = (merged['items'] as List)
-        .cast<Map<String, dynamic>>()
-        .map((row) => '${row['id']}')
-        .toList();
-    expect(ids, containsAll(['a', 'offline-novo']));
-  });
+      // Sumir aqui daria ao operador a impressão de que o lançamento se perdeu.
+      final ids = (merged['items'] as List)
+          .cast<Map<String, dynamic>>()
+          .map((row) => '${row['id']}')
+          .toList();
+      expect(ids, containsAll(['a', 'offline-novo']));
+    },
+  );
 
   test('o item confirmado pelo servidor não vira duplicata', () async {
     await store.saveFromServer(order(), scope: _scope);
@@ -153,7 +194,9 @@ void main() {
     // A fila sincronizou: o ID temporário virou o real.
     await store.replaceId('offline-abc', 'item-real', scope: _scope);
     final merged = await store.saveFromServer(
-      order(items: [item(id: 'item-real', total: '7.00')]),
+      order(
+        items: [item(id: 'item-real', total: '7.00')],
+      ),
       scope: _scope,
     );
 
@@ -179,10 +222,7 @@ void main() {
   });
 
   test('mutação em pedido desconhecido não cria registro solto', () async {
-    expect(
-      await store.addItem('inexistente', item(), scope: _scope),
-      isNull,
-    );
+    expect(await store.addItem('inexistente', item(), scope: _scope), isNull);
     expect(await store.recent(scope: _scope), isEmpty);
   });
 

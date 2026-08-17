@@ -40,7 +40,7 @@ class PrinterViewSet(BaseTenantViewSet):
     def templates(self, request):
         """Modelos oficiais baixados e armazenados pelo agente desktop."""
         definitions = {
-            "receipt": ("printers/receipt.html", ["receipt", "payment_receipt", "table_bill", "cash_close"]),
+            "receipt": ("printers/receipt.html", ["receipt", "table_bill", "cash_close"]),
             "kitchen_ticket": ("printers/kitchen_ticket.html", ["kitchen_ticket", "bar_ticket"]),
             "weigh_ticket": ("printers/weigh_ticket.html", ["weigh_ticket"]),
             "danfe_nfce": ("printers/danfe_nfce.html", ["fiscal_danfe"]),

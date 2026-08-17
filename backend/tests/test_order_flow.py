@@ -116,6 +116,114 @@ def test_payment_is_idempotent(restaurant, branch, table, product, payment_metho
 
 
 @pytest.mark.django_db
+def test_service_fee_can_be_removed_per_order(restaurant, branch, table, product, manager_user):
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    order = close_order(order, manager_user, service_fee_enabled=False)
+
+    assert order.service_fee_enabled is False
+    assert order.service_fee == Decimal("0.00")
+    assert order.total == order.subtotal + order.delivery_fee - order.discount
+
+
+@pytest.mark.django_db
+def test_offline_item_replay_stops_when_price_changed(
+    restaurant, branch, product, manager_user
+):
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+
+    with pytest.raises(ValidationError, match="preço deste item mudou"):
+        add_order_item(
+            order=order,
+            product=product,
+            quantity=1,
+            user=manager_user,
+            expected_unit_price=product.current_price + Decimal("1.00"),
+        )
+
+    assert not order.items.exists()
+
+
+@pytest.mark.django_db
+def test_offline_close_replay_stops_when_total_changed(
+    restaurant, branch, product, manager_user
+):
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    with pytest.raises(ValidationError, match="total do pedido mudou"):
+        close_order(
+            order,
+            manager_user,
+            expected_total=order.total + Decimal("1.00"),
+        )
+
+    order.refresh_from_db()
+    assert order.status == Order.STATUS_OPEN
+
+
+@pytest.mark.django_db
+def test_removing_fee_after_partial_payment_finishes_consistent_order(
+    restaurant, branch, table, product, payment_method, manager_user
+):
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order = close_order(order, manager_user, service_fee=Decimal("5.00"))
+    open_cash_register(branch=branch, user=manager_user)
+    register_payment(
+        order=order,
+        user=manager_user,
+        payment_method_id=payment_method.id,
+        amount=order.subtotal,
+    )
+
+    order = close_order(order, manager_user, service_fee_enabled=False)
+    table.refresh_from_db()
+
+    assert order.payment_status == Order.PAYMENT_PAID
+    assert order.status == Order.STATUS_PAID
+    assert table.status == Table.STATUS_FREE
+
+
+@pytest.mark.django_db
+def test_order_save_always_touches_updated_at(restaurant, branch, manager_user):
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    previous = order.updated_at
+    order.general_notes = "Atualizado"
+    order.save(update_fields=["general_notes"])
+
+    assert order.updated_at > previous
+
+
+@pytest.mark.django_db
 def test_cash_payment_records_received_amount_and_change(
     account, restaurant, branch, table, product, manager_user
 ):
@@ -150,6 +258,39 @@ def test_cash_payment_records_received_amount_and_change(
     assert payment.metadata["received_amount"] == str(received)
     assert payment.metadata["applied_amount"] == str(order.total)
     assert payment.metadata["change_amount"] == "25.00"
+
+
+@pytest.mark.django_db
+def test_offline_cash_payment_is_pinned_to_original_register(
+    account, restaurant, branch, table, product, manager_user
+):
+    cash = PaymentMethod.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Dinheiro offline",
+        method_type=PaymentMethod.TYPE_CASH,
+    )
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order = close_order(order, manager_user)
+    register = open_cash_register(branch=branch, user=manager_user)
+
+    payment = register_payment(
+        order=order,
+        user=manager_user,
+        payment_method_id=cash.id,
+        amount=order.total,
+        cash_register_id=register.id,
+    )
+
+    assert payment.cash_movements.get().cash_register_id == register.id
 
 
 @pytest.mark.django_db

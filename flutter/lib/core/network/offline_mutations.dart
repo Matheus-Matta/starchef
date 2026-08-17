@@ -44,7 +44,11 @@ abstract final class OfflineMutations {
           path == '/orders/' ||
           path == '/orders/open-table/' ||
           path == '/orders/open-command/' ||
-          RegExp('^/orders/$_localId/items/\$').hasMatch(path));
+          RegExp('^/orders/$_localId/items/\$').hasMatch(path) ||
+          // Um pagamento tambem cria um recurso. Dar a ele um ID temporario
+          // permite reconciliar o recebimento otimista com o Payment real e
+          // impede que ele permaneça para sempre como "pendente local".
+          RegExp('^/orders/$_localId/pay/\$').hasMatch(path));
 
   static bool _matches(String method, String path, String id) {
     if (method == 'POST') {

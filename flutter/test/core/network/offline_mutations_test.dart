@@ -62,10 +62,7 @@ void main() {
       expect(OfflineMutations.isQueueable('GET', '/orders/'), isFalse);
       expect(OfflineMutations.isQueueable('PUT', '/orders/'), isFalse);
       expect(OfflineMutations.isQueueable('POST', '/orders'), isFalse);
-      expect(
-        OfflineMutations.isQueueable('POST', '$_order/cancel/'),
-        isFalse,
-      );
+      expect(OfflineMutations.isQueueable('POST', '$_order/cancel/'), isFalse);
       // Travessia de diretório não passa nem no caminho local.
       expect(
         OfflineMutations.isQueueable('POST', '/orders/../admin/close/'),
@@ -118,10 +115,7 @@ void main() {
         OfflineMutations.isRelayable('POST', '/orders/../etc/close/'),
         isFalse,
       );
-      expect(
-        OfflineMutations.isRelayable('POST', '$_order/close/'),
-        isTrue,
-      );
+      expect(OfflineMutations.isRelayable('POST', '$_order/close/'), isTrue);
     });
 
     test('o relay nunca aceita mais do que a fila aceitaria', () {
@@ -160,15 +154,12 @@ void main() {
         isTrue,
       );
 
-      // Transições mudam um pedido que já existe.
+      // Fechar muda um pedido existente; pagar cria um Payment reconciliável.
       expect(
         OfflineMutations.createsResource('POST', '$_order/close/'),
         isFalse,
       );
-      expect(
-        OfflineMutations.createsResource('POST', '$_order/pay/'),
-        isFalse,
-      );
+      expect(OfflineMutations.createsResource('POST', '$_order/pay/'), isTrue);
       expect(
         OfflineMutations.createsResource('PATCH', '/customers/abc-123/'),
         isFalse,

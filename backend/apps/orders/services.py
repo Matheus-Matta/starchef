@@ -139,6 +139,7 @@ def add_order_item(
     customer_note="",
     scale_reading=None,
     weight_kg=None,
+    expected_unit_price=None,
 ):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
@@ -189,6 +190,16 @@ def add_order_item(
         extras_price = sum((v.price_delta for v in selected_variations), Decimal("0.00"))
         extras_price += sum((a.price for a in selected_addons), Decimal("0.00"))
         unit_price = product.current_price + extras_price
+        if expected_unit_price not in (None, ""):
+            expected = Decimal(str(expected_unit_price)).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP
+            )
+            actual = unit_price.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            if expected != actual:
+                raise ValidationError(
+                    "O preço deste item mudou desde que o PDV ficou offline. "
+                    "Revise o pedido antes de continuar a sincronização."
+                )
 
         existing = None
         if not product.is_weighed:
@@ -402,7 +413,15 @@ def update_order_item_status(item, new_status, user, reason=""):
 
 
 @transaction.atomic
-def close_order(order, user, *, discount=Decimal("0.00"), service_fee=None):
+def close_order(
+    order,
+    user,
+    *,
+    discount=Decimal("0.00"),
+    service_fee=None,
+    service_fee_enabled=None,
+    expected_total=None,
+):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.is_locked:
@@ -416,7 +435,13 @@ def close_order(order, user, *, discount=Decimal("0.00"), service_fee=None):
                 raise ValidationError("Aplicar desconto exige permissão de gerente.")
 
         order.discount = discount
-        if service_fee is not None:
+        if service_fee_enabled is not None:
+            if isinstance(service_fee_enabled, str):
+                service_fee_enabled = service_fee_enabled.lower() in {"1", "true", "yes", "on"}
+            order.service_fee_enabled = bool(service_fee_enabled)
+        if not order.service_fee_enabled:
+            order.service_fee = Decimal("0.00")
+        elif service_fee is not None:
             order.service_fee = Decimal(str(service_fee))
         elif order.restaurant.default_service_fee_percent:
             order.service_fee = (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
@@ -424,8 +449,54 @@ def close_order(order, user, *, discount=Decimal("0.00"), service_fee=None):
         order.closed_by = user
         order.updated_by = user
         order.closed_at = timezone.now()
-        order.save(update_fields=["discount", "service_fee", "status", "closed_by", "closed_at", "updated_by", "updated_at"])
+        order.save(update_fields=["discount", "service_fee", "service_fee_enabled", "status", "closed_by", "closed_at", "updated_by"])
         order = recalculate_order(order)
+        if expected_total not in (None, ""):
+            expected = Decimal(str(expected_total)).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP
+            )
+            if expected != order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP):
+                raise ValidationError(
+                    "O total do pedido mudou durante o período offline. "
+                    "Revise os valores antes de registrar o pagamento."
+                )
+
+        # Fechar novamente um pedido parcialmente pago pode alterar desconto ou
+        # taxa. O estado financeiro precisa acompanhar o novo total; caso
+        # contrário a interface mostra saldo zero enquanto o pedido permanece
+        # parcial no servidor.
+        from apps.payments.models import Payment
+
+        paid_total = (
+            order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(
+                value=Sum("amount")
+            )["value"]
+            or Decimal("0.00")
+        )
+        if paid_total > order.total:
+            raise ValidationError(
+                "A alteração deixaria o valor já pago maior que o total do pedido. "
+                "Cancele ou ajuste os pagamentos antes de retirar a taxa."
+            )
+        if paid_total == order.total and order.total > Decimal("0.00"):
+            order.payment_status = Order.PAYMENT_PAID
+            order.status = Order.STATUS_PAID
+            if order.table_id:
+                order.table.status = Table.STATUS_FREE
+                order.table.current_order_id = None
+                order.table.save(
+                    update_fields=["status", "current_order_id", "updated_at"]
+                )
+            free_command_for_order(order)
+            if order.restaurant.stock_deduction_timing == "payment":
+                from apps.stock.services import deduct_order_stock
+
+                deduct_order_stock(order=order, user=user)
+        elif paid_total > Decimal("0.00"):
+            order.payment_status = Order.PAYMENT_PARTIAL
+        else:
+            order.payment_status = Order.PAYMENT_PENDING
+        order.save(update_fields=["payment_status", "status", "updated_by"])
         record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "close_order"})
         return order
 

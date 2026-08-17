@@ -2,6 +2,7 @@
   <div class="pdv">
     <div v-if="pdvGateLoading" class="pdv__gate"><i class="pi pi-spin pi-spinner" /><h2>Verificando o caixa...</h2></div>
     <div v-else-if="pdvBlocked" class="pdv__gate pdv__gate--blocked"><span><i class="pi pi-lock" /></span><h2>PDV bloqueado</h2><p>{{ pdvBlockedReason }}</p><button class="pdv__btn pdv__btn--primary" type="button" @click="router.push({name:'caixa'})">Ir para o controle de caixa</button></div>
+    <div v-else-if="!browserOnline" class="pdv__gate pdv__gate--blocked"><span><i class="pi pi-wifi" /></span><h2>PDV web sem conexão</h2><p>O navegador precisa do servidor para registrar vendas. Para operar offline, utilize o aplicativo StarChef PDV Desktop.</p></div>
     <!-- ── STEP 0: Selecionar restaurante (admin em "Todos") ──────── -->
     <div v-if="step === 'restaurant'" class="pdv__step pdv__step--type">
       <div class="pdv__step-header">
@@ -451,17 +452,21 @@
         </Teleport>
 
         <div class="pdv__cart-totals">
+          <label class="pdv__service-fee-toggle">
+            <input v-model="serviceFeeEnabled" type="checkbox" />
+            <span>Cobrar taxa de serviço</span>
+          </label>
           <div class="pdv__total-row">
             <span>Subtotal</span>
             <strong>{{ money(currentOrder?.subtotal) }}</strong>
           </div>
-          <div v-if="currentOrder?.service_fee > 0" class="pdv__total-row">
-            <span>Taxa de servico</span>
-            <strong>{{ money(currentOrder?.service_fee) }}</strong>
+          <div v-if="serviceFeeEnabled && previewServiceFee > 0" class="pdv__total-row">
+            <span>Taxa de serviço</span>
+            <strong>{{ money(previewServiceFee) }}</strong>
           </div>
           <div class="pdv__total-row pdv__total-row--total">
             <span>Total</span>
-            <strong>{{ money(currentOrder?.total) }}</strong>
+            <strong>{{ money(orderPreviewTotal) }}</strong>
           </div>
         </div>
 
@@ -472,7 +477,7 @@
             :disabled="!cartItems.length || printingOrder"
             @click="showReceipt"
           >
-            <i class="pi pi-file" /> {{ printingOrder ? "Abrindo nota..." : "Imprimir nota do cliente" }}
+            <i class="pi pi-file" /> {{ printingOrder ? "Abrindo recibo..." : "Imprimir recibo de venda" }}
           </button>
           <button
             class="pdv__btn pdv__btn--danger"
@@ -592,7 +597,7 @@
 
         <button class="pdv__btn pdv__btn--secondary pdv__pay-print" type="button" :disabled="printingOrder" @click="showReceipt">
           <i class="pi pi-print" />
-          {{ printingOrder ? "Abrindo nota..." : "Imprimir nota" }}
+          {{ printingOrder ? "Abrindo recibo..." : "Imprimir recibo" }}
         </button>
 
         <div class="pdv__pay-summary-actions">
@@ -655,15 +660,6 @@
           <strong>{{ money(totalChange) }}</strong>
         </div>
 
-        <div v-if="fiscalInvoice" class="pdv__success-summary">
-          <span>
-            <template v-if="fiscalInvoice.emission_type === '9'">NFC-e em contingência</template>
-            <template v-else-if="fiscalInvoice.status === 'issued'">NFC-e autorizada</template>
-            <template v-else>NFC-e aguardando autorização</template>
-          </span>
-          <strong class="pdv__fiscal-key">{{ fiscalInvoice.access_key_formatted }}</strong>
-        </div>
-
         <!-- Imprimir pedido/comanda: comprovante interno, sem valor fiscal. -->
         <button
           class="pdv__btn pdv__btn--secondary pdv__success-fiscal"
@@ -672,17 +668,6 @@
           @click="showReceipt"
         >
           <i class="pi pi-file" /> {{ printingOrder ? "Abrindo nota..." : "Imprimir pedido/comanda" }}
-        </button>
-
-        <!-- Finalizar venda e emitir NFC-e: operação fiscal separada — só imprime o DANFE depois do retorno. -->
-        <button
-          class="pdv__btn pdv__btn--secondary pdv__success-fiscal"
-          type="button"
-          :disabled="emittingInvoice || !!fiscalInvoice"
-          @click="emitFiscalInvoice"
-        >
-          <i class="pi pi-receipt" />
-          {{ emittingInvoice ? "Emitindo NFC-e..." : fiscalInvoice ? "NFC-e já emitida" : "Finalizar venda e emitir NFC-e" }}
         </button>
 
         <div class="pdv__success-actions">
@@ -793,7 +778,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
 import AppIcon from "../components/AppIcon.vue";
@@ -862,12 +847,15 @@ const commandSearch = ref("");
 
 // restaurante (contexto do PDV — necessário quando o admin está em "Todos")
 const restaurants = ref([]);
+const browserOnline = ref(navigator.onLine);
+const updateBrowserConnection = () => { browserOnline.value = navigator.onLine; };
 const loadingRestaurants = ref(false);
 const resolvedRestaurantId = ref(null);
 const resolvedBranchId = ref(null);
 const RESTAURANT_SCOPE_KEY = "starchef-restaurant-scope";
 const isAdmin = ref(false); // definido ao resolver o contexto (a partir do /auth/me)
 const currentRestaurantName = computed(() => restaurants.value.find((r) => r.id === resolvedRestaurantId.value)?.trade_name || "");
+const currentRestaurant = computed(() => restaurants.value.find((r) => r.id === resolvedRestaurantId.value) || null);
 const pdvGateLoading = ref(true);
 const pdvBlocked = ref(false);
 const pdvBlockedReason = ref("");
@@ -895,6 +883,7 @@ const padStr = ref("");
 // misc
 const discount = ref(0);
 const discountInput = ref("0.00");
+const serviceFeeEnabled = ref(true);
 const sendingKitchen = ref(false);
 const creatingOrder = ref(false);
 const showCancelModal = ref(false);
@@ -912,8 +901,6 @@ const ITEM_VOID_REASONS = [
   "Troca solicitada pelo cliente",
 ];
 const printingOrder = ref(false);
-const emittingInvoice = ref(false);
-const fiscalInvoice = ref(null);
 const addingNoteFor = ref(null);
 const pendingNote = ref("");
 const configuringProduct = ref(null);
@@ -1016,11 +1003,19 @@ const orderTypeLabel = computed(() => orderTypes.value.find((t) => t.value === o
 const tableLabel = computed(() => (selectedTable.value ? ` — Mesa ${selectedTable.value.number}` : ""));
 const commandLabel = computed(() => (selectedCommand.value ? ` — Comanda ${selectedCommand.value.number}` : ""));
 
-const finalTotal = computed(() => {
-  const sub = Number(currentOrder.value?.subtotal || 0);
-  const fee = Number(currentOrder.value?.service_fee || 0);
-  const disc = Number(discount.value || 0);
-  return Math.max(0, sub + fee - disc);
+const finalTotal = computed(() => Math.max(0, Number(currentOrder.value?.total || 0)));
+const previewServiceFee = computed(() => {
+  if (!serviceFeeEnabled.value) return 0;
+  const current = Number(currentOrder.value?.service_fee || 0);
+  if (current > 0) return current;
+  const percent = Number(currentRestaurant.value?.default_service_fee_percent || 0);
+  return Number(currentOrder.value?.subtotal || 0) * percent / 100;
+});
+const orderPreviewTotal = computed(() => {
+  const subtotal = Number(currentOrder.value?.subtotal || 0);
+  const delivery = Number(currentOrder.value?.delivery_fee || 0);
+  const orderDiscount = Number(currentOrder.value?.discount || 0);
+  return Math.max(0, subtotal + delivery + previewServiceFee.value - orderDiscount);
 });
 
 const totalPaid = computed(() => registeredPayments.value.reduce((s, p) => s + Number(p.amount), 0));
@@ -1094,6 +1089,7 @@ async function startOrder() {
     cartItems.value = [];
     discount.value = 0;
     discountInput.value = "0.00";
+    serviceFeeEnabled.value = true;
     navigateStep("order", { query: { order: currentOrder.value.id } });
   } catch (e) {
     pdvError(e, "Erro ao abrir pedido");
@@ -1380,6 +1376,7 @@ async function resumeTableOrder(order) {
   currentOrder.value = order;
   discount.value = Number(order.discount || 0);
   discountInput.value = discount.value.toFixed(2);
+  serviceFeeEnabled.value = order.service_fee_enabled !== false;
   await refreshCart();
   // Editar sempre abre a tela do PEDIDO (montar/editar itens) — inclusive quando
   // já está "aguardando pagamento". O caminho para o pagamento é o botão
@@ -1510,7 +1507,11 @@ async function goToClose() {
       sendingKitchen.value = true;
       await api.post(`/orders/${currentOrder.value.id}/send-to-kitchen/`);
     }
-    const res = await api.post(`/orders/${currentOrder.value.id}/close/`, { discount: discount.value || 0 });
+    const res = await api.post(`/orders/${currentOrder.value.id}/close/`, {
+      discount: discount.value || 0,
+      service_fee_enabled: serviceFeeEnabled.value,
+      expected_total: orderPreviewTotal.value.toFixed(2),
+    });
     currentOrder.value = res.data;
   } catch (e) {
     pdvError(e, "Erro ao fechar pedido");
@@ -1605,76 +1606,22 @@ async function showReceipt() {
   if (!currentOrder.value) return;
   const receiptWindow = window.open("", "_blank", "width=420,height=720");
   if (!receiptWindow) {
-    toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para exibir a nota.", life: 4000 });
+    toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para exibir o recibo.", life: 4000 });
     return;
   }
-  receiptWindow.document.write("<p style='font-family:sans-serif;padding:24px'>Carregando nota...</p>");
+  receiptWindow.document.write("<p style='font-family:sans-serif;padding:24px'>Carregando recibo...</p>");
   printingOrder.value = true;
   try {
     const { data } = await api.post(`/orders/${currentOrder.value.id}/print/`, { job_type: "receipt" });
     receiptWindow.document.open();
-    receiptWindow.document.write(data.html || "<p>Nota indisponível.</p>");
+    receiptWindow.document.write(data.html || "<p>Recibo indisponível.</p>");
     receiptWindow.document.close();
     receiptWindow.focus();
   } catch (e) {
     receiptWindow.close();
-    pdvError(e, "Erro ao exibir nota");
+    pdvError(e, "Erro ao exibir recibo");
   } finally {
     printingOrder.value = false;
-  }
-}
-
-/**
- * Fluxo fiscal: emite a NFC-e do pedido (POST /invoices/emit) e, se conseguir,
- * imprime o DANFE (POST /invoices/{id}/print) — ação separada de "Exibir nota"
- * (que só mostra o comprovante interno, sem valor fiscal).
- */
-async function emitFiscalInvoice() {
-  if (!currentOrder.value || emittingInvoice.value) return;
-  emittingInvoice.value = true;
-  try {
-    const { data: invoice } = await api.post("/invoices/emit/", {
-      order: currentOrder.value.id,
-      cpf: selectedCustomer.value?.document || undefined,
-      cpf_name: selectedCustomer.value?.name || undefined,
-    });
-    fiscalInvoice.value = invoice;
-
-    const danfeWindow = window.open("", "_blank", "width=420,height=720");
-    try {
-      const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
-      if (danfeWindow) {
-        danfeWindow.document.open();
-        danfeWindow.document.write(printJob.html || "<p>DANFE indisponível.</p>");
-        danfeWindow.document.close();
-        danfeWindow.focus();
-      }
-    } catch (printErr) {
-      danfeWindow?.close();
-      pdvError(printErr, "NFC-e emitida, mas o DANFE não pôde ser exibido");
-    }
-
-    if (invoice.emission_type === "9") {
-      toast.add({
-        severity: "warn",
-        summary: "NFC-e emitida em contingência",
-        detail: "A transmissão à SEFAZ falhou — o DANFE saiu com o aviso de contingência e será retransmitido depois.",
-        life: 8000,
-      });
-    } else if (invoice.status === "issued") {
-      toast.add({ severity: "success", summary: "NFC-e autorizada", life: 4000 });
-    } else {
-      toast.add({
-        severity: "info",
-        summary: "NFC-e emitida",
-        detail: "Documento montado, aguardando autorização.",
-        life: 5000,
-      });
-    }
-  } catch (e) {
-    pdvError(e, "Não foi possível emitir a NFC-e");
-  } finally {
-    emittingInvoice.value = false;
   }
 }
 
@@ -1700,10 +1647,10 @@ function newOrder() {
   commandSearch.value = "";
   selectedCustomer.value = null;
   currentOrder.value = null;
-  fiscalInvoice.value = null;
   cartItems.value = [];
   discount.value = 0;
   discountInput.value = "0.00";
+  serviceFeeEnabled.value = true;
   selectedPaymentMethod.value = null;
   amountReceived.value = 0;
   payError.value = "";
@@ -1757,10 +1704,24 @@ async function openExistingOrder(orderId, { validateCash = false } = {}) {
   try {
     const res = await api.get(`/orders/${orderId}/`);
     const order = res.data;
+    if (["paid", "cancelled", "refunded"].includes(order.status)) {
+      toast.add({
+        severity: "info",
+        summary: "Pedido somente para consulta",
+        detail: "Pedidos concluídos ou cancelados não podem ser alterados.",
+        life: 3500,
+      });
+      await router.replace({ name: "pedidos--view", params: { id: order.id } });
+      return;
+    }
     currentOrder.value = order;
     orderType.value = order.order_type;
     resolvedRestaurantId.value = order.restaurant;
     resolvedBranchId.value = null;
+    if (!restaurants.value.some((restaurant) => restaurant.id === order.restaurant)) {
+      const restaurantResponse = await api.get(`/restaurants/${order.restaurant}/`);
+      restaurants.value = [restaurantResponse.data, ...restaurants.value];
+    }
     if (validateCash) {
       await validatePdvCashAccess();
       if (pdvBlocked.value) return;
@@ -1788,6 +1749,8 @@ watch(
 );
 
 onMounted(async () => {
+  window.addEventListener("online", updateBrowserConnection);
+  window.addEventListener("offline", updateBrowserConnection);
   const requestedStep = typeof route.query.step === "string" ? route.query.step : null;
 
   // Em edição, o restaurante vem do pedido. O admin em escopo "Todos" não
@@ -1816,6 +1779,11 @@ onMounted(async () => {
   if (!resolvedRestaurantId.value) pdvGateLoading.value = false;
   if (pdvBlocked.value) return;
   navigateStep(step.value, { replace: true });
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("online", updateBrowserConnection);
+  window.removeEventListener("offline", updateBrowserConnection);
 });
 </script>
 
@@ -2251,6 +2219,8 @@ onMounted(async () => {
   font: var(--weight-medium) 13px/1 var(--font-sans); color: var(--text-body);
 }
 .pdv__total-row--discount { color: var(--success-text, #065f46); }
+.pdv__service-fee-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.pdv__service-fee-toggle input { width: 17px; height: 17px; accent-color: var(--primary-color); }
 .pdv__total-row--total {
   font: var(--weight-extra) 16px/1 var(--font-sans); color: var(--text-strong);
   padding-top: 5px; border-top: 1px solid var(--border-subtle);

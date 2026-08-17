@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import TenantModel
 
@@ -134,6 +135,7 @@ class Order(TenantModel):
     closed_at = models.DateTimeField(null=True, blank=True)
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     service_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    service_fee_enabled = models.BooleanField(default=True)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -154,7 +156,7 @@ class Order(TenantModel):
     cancel_reason = models.TextField(blank=True)
 
     class Meta:
-        ordering = ["-opened_at"]
+        ordering = ["-updated_at"]
         constraints = [
             models.UniqueConstraint(fields=["branch", "sequence"], name="unique_order_sequence_by_branch"),
         ]
@@ -162,10 +164,20 @@ class Order(TenantModel):
             models.Index(fields=["branch", "status", "opened_at"]),
             models.Index(fields=["branch", "payment_status"]),
             models.Index(fields=["restaurant", "opened_at"]),
+            models.Index(fields=["restaurant", "updated_at"], name="orders_rest_updated_idx"),
         ]
 
     def __str__(self):
         return f"Order {self.sequence}"
+
+    def save(self, *args, **kwargs):
+        # Mantem a ultima atividade confiavel mesmo quando um chamador usa
+        # update_fields e esquece o campo auto_now.
+        self.updated_at = timezone.now()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = [*set(update_fields), "updated_at"]
+        return super().save(*args, **kwargs)
 
     @property
     def is_locked(self):
