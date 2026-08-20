@@ -104,7 +104,7 @@ const sidebarStats = computed(() => ({
   ordersToday: dashboardSummary.value?.orders_count ?? 0,
   kitchenOpen: dashboardSummary.value?.kitchen_open_items ?? dashboardSummary.value?.open_orders ?? 0,
 }));
-const canSeeAllRestaurants = computed(() => Boolean(auth.user?.is_superuser || auth.user?.profile_type === "admin"));
+const canSeeAllRestaurants = computed(() => Boolean(auth.user?.is_superuser || auth.user?.profile_type === "admin" || auth.user?.profile_type === "owner"));
 const selectedRestaurant = computed(() => restaurants.value.find((restaurant) => restaurant.id === selectedRestaurantId.value) || null);
 const routeViewKey = computed(() => {
   // A etapa do PDV usa a URL para alimentar o histórico do botão Voltar, mas
@@ -223,7 +223,7 @@ function logout() {
   // forma síncrona antes de chamar a API, então a navegação pode acontecer na
   // hora — sem travar o clique em "Sair" esperando a rede.
   auth.logout();
-  router.push({ name: "login" });
+  window.location.href = "/login";
 }
 
 onErrorCaptured((err) => {

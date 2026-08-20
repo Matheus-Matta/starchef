@@ -181,17 +181,17 @@
         </div>
       </Dialog>
 
-      <Dialog v-model:visible="bulkVisible" modal header="Criar comandas em lote" :style="{ width: '420px' }">
+      <Dialog v-model:visible="bulkVisible" modal :header="bulkType === 'commands' ? 'Criar comandas em lote' : 'Criar mesas em lote'" :style="{ width: '420px' }">
         <div class="rpro__bulk">
           <label class="rpro__bulk-field">
-            <span>Restaurante</span>
+            <span>{{ bulkType === 'commands' ? 'Restaurante' : 'Setor' }}</span>
             <Dropdown
-              v-model="bulkForm.restaurant"
-              :options="bulkRestaurants"
-              option-label="trade_name"
+              v-model="bulkForm.parent_id"
+              :options="bulkOptions"
+              :option-label="bulkType === 'commands' ? 'trade_name' : 'name'"
               option-value="id"
-              placeholder="Selecione o restaurante"
-              :loading="bulkRestaurantsLoading"
+              :placeholder="bulkType === 'commands' ? 'Selecione o restaurante' : 'Selecione o setor'"
+              :loading="bulkOptionsLoading"
               filter
             />
           </label>
@@ -531,7 +531,7 @@ function runPrimary() {
 // ── Ações do cabeçalho (config `pro.headerActions`) ───────────────────
 const headerActions = computed(() => proCfg.value.headerActions || []);
 function runHeaderAction(headerAction) {
-  if (headerAction.type === "bulk-commands") openBulk();
+  if (headerAction.type === "bulk-create") openBulk(headerAction.bulkType);
 }
 
 // ── Ações em massa (config `pro.bulkActions`) ─────────────────────────
@@ -832,37 +832,46 @@ function renderLabelsSheet(items, kind, { layout = "sheet", cutlines = true } = 
   win.document.close();
 }
 
-// ── Diálogo "Criar em lote" (comandas) ────────────────────────────────
+// ── Diálogo "Criar em lote" (comandas e mesas) ────────────────────────────────
 const bulkVisible = ref(false);
 const bulkSubmitting = ref(false);
-const bulkRestaurants = ref([]);
-const bulkRestaurantsLoading = ref(false);
-const bulkForm = ref({ restaurant: null, from_number: null, to_number: null });
+const bulkType = ref("commands");
+const bulkOptions = ref([]);
+const bulkOptionsLoading = ref(false);
+const bulkForm = ref({ parent_id: null, from_number: null, to_number: null });
 
-async function openBulk() {
+async function openBulk(type) {
+  bulkType.value = type || "commands";
+  bulkOptions.value = []; // zera opções ao abrir
   bulkForm.value = {
-    // Default = restaurante do seletor de topo (escopo atual), se houver.
-    restaurant: localStorage.getItem("starchef-restaurant-scope") || null,
+    // Restaurante (para comandas) tenta pegar o escopo atual. Setor (para mesas) começa vazio.
+    parent_id: type === "commands" ? (localStorage.getItem("starchef-restaurant-scope") || null) : null,
     from_number: null,
     to_number: null,
   };
   bulkVisible.value = true;
-  if (bulkRestaurants.value.length) return;
-  bulkRestaurantsLoading.value = true;
+  bulkOptionsLoading.value = true;
   try {
-    const { data } = await api.get("/restaurants/", { skipRestaurantScope: true });
-    bulkRestaurants.value = data.results || data || [];
+    const isCommands = type === "commands";
+    const endpoint = isCommands ? "/restaurants/" : "/tables/sectors/";
+    // Apenas ignora o escopo do restaurante se for comandas (onde queremos listar
+    // todos os restaurantes para o usuário escolher o destino do lote).
+    // Para setores, o axios vai injetar o X-Restaurant (se houver), e a API
+    // vai filtrar automaticamente os setores pelo restaurante ativo na sidebar.
+    const { data } = await api.get(endpoint, isCommands ? { skipRestaurantScope: true } : {});
+    bulkOptions.value = data.results || data || [];
   } catch (error) {
-    toast.add({ severity: "error", summary: "Não foi possível carregar os restaurantes", detail: normalizeApiError(error).message, life: 4000 });
+    toast.add({ severity: "error", summary: "Não foi possível carregar os dados", detail: normalizeApiError(error).message, life: 4000 });
   } finally {
-    bulkRestaurantsLoading.value = false;
+    bulkOptionsLoading.value = false;
   }
 }
 
 async function submitBulk() {
-  const { restaurant, from_number, to_number } = bulkForm.value;
-  if (!restaurant) {
-    toast.add({ severity: "warn", summary: "Selecione o restaurante", life: 3000 });
+  const { parent_id, from_number, to_number } = bulkForm.value;
+  const parentName = bulkType.value === "commands" ? "restaurante" : "setor";
+  if (!parent_id) {
+    toast.add({ severity: "warn", summary: `Selecione o ${parentName}`, life: 3000 });
     return;
   }
   if (!to_number || to_number < 1) {
@@ -870,18 +879,21 @@ async function submitBulk() {
     return;
   }
   const start = Number(from_number || 1);
-  if (Number(to_number) - start + 1 > 200) {
-    toast.add({ severity: "warn", summary: "Limite de 200 comandas por lote", life: 4000 });
+  const maxLimit = bulkType.value === "commands" ? 200 : 100;
+  if (Number(to_number) - start + 1 > maxLimit) {
+    toast.add({ severity: "warn", summary: `Limite de ${maxLimit} registros por lote`, life: 4000 });
     return;
   }
   bulkSubmitting.value = true;
   try {
-    const payload = { restaurant, to_number };
+    const payload = { to_number };
+    if (bulkType.value === "commands") payload.restaurant = parent_id;
+    else payload.sector = parent_id;
     if (from_number) payload.from_number = from_number;
     const { data } = await api.post(`${props.endpoint}bulk-create/`, payload);
     toast.add({
       severity: "success",
-      summary: "Comandas criadas",
+      summary: bulkType.value === "commands" ? "Comandas criadas" : "Mesas criadas",
       detail: `${data.created} criadas${data.skipped ? `, ${data.skipped} já existiam` : ""}.`,
       life: 4000,
     });

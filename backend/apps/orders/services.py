@@ -81,10 +81,117 @@ def free_command_for_order(order):
     if not order.command_id:
         return
     command = Command.objects.select_for_update().get(pk=order.command_id)
+    old_table_id = command.current_table_id
+
     command.status = Command.STATUS_FREE
     command.current_order_id = None
     command.customer_name = ""
-    command.save(update_fields=["status", "current_order_id", "customer_name", "updated_at"])
+    command.current_table = None
+    command.save(update_fields=["status", "current_order_id", "customer_name", "current_table", "updated_at"])
+
+    if old_table_id:
+        from apps.restaurants.models import CommandMovementLog, Table
+
+        CommandMovementLog.objects.create(
+            account=command.account,
+            restaurant=command.restaurant,
+            branch=command.branch,
+            command=command,
+            action=CommandMovementLog.ACTION_UNLINKED,
+            waiter=order.updated_by,
+        )
+        
+        # Libera a mesa se ela não tiver mais comandas nem pedidos diretos
+        table = Table.objects.select_for_update().get(pk=old_table_id)
+        active_commands = table.active_commands.exists()
+        from apps.orders.models import Order
+        active_orders = table.orders.filter(status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]).exists()
+        
+        if not active_commands and not active_orders:
+            table.status = Table.STATUS_FREE
+            table.current_order_id = None
+            table.save(update_fields=["status", "current_order_id", "updated_at"])
+
+
+def free_table_if_empty(table):
+    """Verifica se a mesa ainda possui pedidos em andamento (abertos ou aguardando pagamento).
+    Se não possuir pedidos nem comandas vinculadas, libera a mesa definindo status como FREE."""
+    if not table:
+        return
+    table = Table.objects.select_for_update().get(pk=table.pk)
+    active_orders = table.orders.filter(
+        status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
+    ).count()
+    active_commands = table.active_commands.exists()
+    
+    if active_orders == 0 and not active_commands:
+        table.status = Table.STATUS_FREE
+        table.current_order_id = None
+        table.save(update_fields=["status", "current_order_id", "updated_at"])
+
+
+@transaction.atomic
+def link_order_to_table(order, table, user):
+    """Vincula uma comanda a uma mesa. Valida a capacidade."""
+    with tenant_context(order.account):
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        if order.order_type != Order.TYPE_COMMAND:
+            raise ValidationError("Apenas comandas podem ser vinculadas a uma mesa.")
+        if order.status not in {Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT}:
+            raise ValidationError("O pedido já está encerrado.")
+            
+        # Não permite mesas em limpeza (Cleaning)
+        if table.status == Table.STATUS_CLEANING:
+            raise ValidationError("A mesa selecionada aguarda limpeza.")
+
+        # Evita recálculo se for a mesma mesa
+        if order.table_id == table.id:
+            return order
+
+        old_table = order.table
+
+        order.table = table
+        order.updated_by = user
+        order.save(update_fields=["table", "updated_by", "updated_at"])
+
+        # Ocupa a nova mesa
+        if table.status == Table.STATUS_FREE:
+            table.status = Table.STATUS_OCCUPIED
+            table.save(update_fields=["status", "updated_at"])
+            
+        if old_table:
+            free_table_if_empty(old_table)
+            
+        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Vinculada a mesa {table.number}", metadata={"event": "link_table"})
+        return order
+
+
+@transaction.atomic
+def transfer_table_orders(source_table, target_table, user):
+    """Transfere todas as comandas/pedidos de uma mesa para outra."""
+    with tenant_context(source_table.account):
+        if target_table.status == Table.STATUS_CLEANING:
+            raise ValidationError("A mesa destino aguarda limpeza.")
+            
+        orders_to_transfer = source_table.orders.filter(
+            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
+        )
+        
+        count = 0
+        for order in orders_to_transfer:
+            order.table = target_table
+            order.updated_by = user
+            order.save(update_fields=["table", "updated_by", "updated_at"])
+            record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Transferida da mesa {source_table.number} para {target_table.number}", metadata={"event": "transfer_table"})
+            count += 1
+            
+        if count > 0:
+            if target_table.status == Table.STATUS_FREE:
+                target_table.status = Table.STATUS_OCCUPIED
+                target_table.save(update_fields=["status", "updated_at"])
+            free_table_if_empty(source_table)
+            
+        return count
 
 
 def _resolve_weighed_quantity(*, order, product, scale_reading=None, weight_kg=None, user=None):
@@ -482,11 +589,7 @@ def close_order(
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID
             if order.table_id:
-                order.table.status = Table.STATUS_FREE
-                order.table.current_order_id = None
-                order.table.save(
-                    update_fields=["status", "current_order_id", "updated_at"]
-                )
+                free_table_if_empty(order.table)
             free_command_for_order(order)
             if order.restaurant.stock_deduction_timing == "payment":
                 from apps.stock.services import deduct_order_stock
@@ -517,9 +620,7 @@ def cancel_order(order, user, reason):
             status=OrderItem.STATUS_CANCELLED, void_reason=reason
         )
         if order.table_id:
-            order.table.status = Table.STATUS_FREE
-            order.table.current_order_id = None
-            order.table.save(update_fields=["status", "current_order_id", "updated_at"])
+            free_table_if_empty(order.table)
         free_command_for_order(order)
         record_audit(action=AuditLog.ACTION_CANCELLED, instance=order, actor=user, reason=reason)
         return order

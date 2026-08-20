@@ -63,6 +63,7 @@ class RoleSerializer(TenantModelSerializer):
             "restaurant",
             "permissions",
             "max_discount_percent",
+            "is_account_admin",
             "is_system",
             "created_at",
             "updated_at",

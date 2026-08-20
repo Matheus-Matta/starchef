@@ -212,14 +212,14 @@ def ensure_tenant_user(
     is_superuser=False,
 ):
     User = get_user_model()
-    user, _ = User.objects.get_or_create(username=username)
+    user, created = User.objects.get_or_create(username=username)
     user.email = email
     user.first_name = first_name
     user.last_name = last_name
     user.is_active = True
     user.is_staff = is_staff
     user.is_superuser = is_superuser
-    if password:
+    if password and created:
         user.set_password(password)
     user.save()
 

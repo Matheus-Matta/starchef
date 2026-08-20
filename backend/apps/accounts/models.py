@@ -169,6 +169,7 @@ class Role(TenantBaseModel):
     )
     permissions = models.ManyToManyField(Permission, blank=True, related_name="roles")
     max_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    is_account_admin = models.BooleanField(default=False)
     is_system = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True, db_index=True)
 

@@ -30,6 +30,7 @@ import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_presenter.dart';
 import 'product_catalog_panel.dart';
+import 'table_details_panel.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -1487,6 +1488,8 @@ class _HomePageState extends State<HomePage> {
   void _goBack() {
     if (flowStep == 'payment' && activeOrder != null) {
       setState(() => flowStep = 'order');
+    } else if (flowStep == 'table_details') {
+      setState(() => flowStep = 'context');
     } else if (flowStep == 'context') {
       setState(() => flowStep = 'type');
     } else if (activeOrder != null) {
@@ -1619,6 +1622,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openTable(Map<String, dynamic> table) async {
+    setState(() {
+      selectedTable = table;
+      flowStep = 'table_details';
+    });
+  }
+
+  Future<void> _openTableOrder(Map<String, dynamic> table) async {
     await _work(() async {
       selectedTable = table;
       final currentId = table['current_order_id'];
@@ -1641,6 +1651,182 @@ class _HomePageState extends State<HomePage> {
       }
       flowStep = 'order';
     });
+  }
+
+  Future<void> _linkCommandDialog() async {
+    final searchController = TextEditingController();
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Vincular Comanda'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Digite ou bipe o número/código da comanda:'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: searchController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search_rounded),
+                hintText: 'Número ou código...',
+              ),
+              onSubmitted: (value) => Navigator.pop(dialogContext, value),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, searchController.text),
+            child: const Text('Vincular'),
+          ),
+        ],
+      ),
+    );
+
+    if (action != null && action.trim().isNotEmpty && mounted) {
+      final term = action.trim().toLowerCase();
+      final command = commands.cast<Map<String, dynamic>?>().firstWhere(
+            (c) => '${c?['number']}' == term || '${c?['code']}'.toLowerCase() == term,
+            orElse: () => null,
+          );
+      
+      if (command == null) {
+        showAppToast(context, 'Comanda não encontrada.', severity: AppErrorSeverity.warning);
+        return;
+      }
+      
+      if (selectedTable != null) {
+        final capacity = selectedTable!['capacity'] ?? 0;
+        final activeCommandsCount = (selectedTable!['active_commands'] as List? ?? []).length;
+        if (capacity > 0 && activeCommandsCount >= capacity) {
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Lotação Atingida'),
+              content: const Text('A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Vincular')),
+              ],
+            ),
+          );
+          if (confirm != true) return;
+        }
+
+        try {
+          setState(() => busy = true);
+          await api.post('/commands/${command['id']}/link_table/', body: {'table': selectedTable!['id']}, accessToken: token);
+          showAppToast(context, 'Comanda vinculada com sucesso.');
+          await _load();
+        } catch (e) {
+          _error(e);
+        } finally {
+          if (mounted) setState(() => busy = false);
+        }
+      }
+    }
+  }
+
+  Future<void> _unlinkCommand(Map<String, dynamic> command) async {
+    try {
+      setState(() => busy = true);
+      await api.post('/commands/${command['id']}/unlink_table/', accessToken: token);
+      showAppToast(context, 'Comanda desvinculada.');
+      await _load();
+    } catch (e) {
+      _error(e);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _transferCommandDialog(Map<String, dynamic> command) async {
+    final tablesList = tables.where((t) => t['id'] != selectedTable?['id']).toList();
+    final destTable = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Transferir Comanda'),
+        content: SizedBox(
+          width: 400,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: tablesList.length,
+            separatorBuilder: (_, __) => const Divider(),
+            itemBuilder: (_, index) {
+              final t = tablesList[index];
+              return ListTile(
+                title: Text('Mesa ${t['number']}'),
+                subtitle: Text(t['sector_name'] ?? ''),
+                onTap: () => Navigator.pop(ctx, t),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+        ],
+      ),
+    );
+
+    if (destTable != null && mounted) {
+      try {
+        setState(() => busy = true);
+        await api.post('/commands/${command['id']}/link_table/', body: {'table': destTable['id']}, accessToken: token);
+        showAppToast(context, 'Comanda transferida.');
+        await _load();
+      } catch (e) {
+        _error(e);
+      } finally {
+        if (mounted) setState(() => busy = false);
+      }
+    }
+  }
+
+  Future<void> _transferAllCommandsDialog() async {
+    final tablesList = tables.where((t) => t['id'] != selectedTable?['id']).toList();
+    final destTable = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Transferir Todas as Comandas'),
+        content: SizedBox(
+          width: 400,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: tablesList.length,
+            separatorBuilder: (_, __) => const Divider(),
+            itemBuilder: (_, index) {
+              final t = tablesList[index];
+              return ListTile(
+                title: Text('Mesa ${t['number']}'),
+                subtitle: Text(t['sector_name'] ?? ''),
+                onTap: () => Navigator.pop(ctx, t),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+        ],
+      ),
+    );
+
+    if (destTable != null && mounted && selectedTable != null) {
+      try {
+        setState(() => busy = true);
+        await api.post('/tables/${selectedTable!['id']}/transfer_commands/', body: {'destination_table_id': destTable['id']}, accessToken: token);
+        showAppToast(context, 'Comandas transferidas.');
+        await _load();
+      } catch (e) {
+        _error(e);
+      } finally {
+        if (mounted) setState(() => busy = false);
+      }
+    }
   }
 
   /// Abre (ou retoma) o pedido de uma comanda.
@@ -3768,6 +3954,17 @@ class _HomePageState extends State<HomePage> {
                     (orderType == 'command'
                         ? _commandContextPanel()
                         : _tableContextPanel())
+                  else if (activeOrder == null && flowStep == 'table_details' && selectedTable != null)
+                    TableDetailsPanel(
+                      table: selectedTable!,
+                      onBack: () => setState(() => flowStep = 'context'),
+                      onOpenTableOrder: () => _openTableOrder(selectedTable!),
+                      onLinkCommand: _linkCommandDialog,
+                      onUnlinkCommand: _unlinkCommand,
+                      onTransferCommand: _transferCommandDialog,
+                      onTransferAllCommands: _transferAllCommandsDialog,
+                      onOpenCommand: (cmd) => _openCommand(cmd),
+                    )
                   else if (flowStep == 'payment')
                     _paymentPage()
                   else

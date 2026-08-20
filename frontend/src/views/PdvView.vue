@@ -1245,7 +1245,7 @@ async function runPdvCashValidation() {
 /** Descobre o restaurante do PDV; se não houver (admin em "Todos"), abre o step. */
 async function resolveContext() {
   const profile = await loadProfile();
-  isAdmin.value = Boolean(profile?.is_superuser || profile?.profile_type === "admin");
+  isAdmin.value = Boolean(profile?.is_superuser || profile?.profile_type === "admin" || profile?.profile_type === "owner");
   const scope = localStorage.getItem(RESTAURANT_SCOPE_KEY) || "";
   if (isAdmin.value) {
     // Admin: o contexto vem do seletor do topo. Sem seleção ("Todos") → pede num step.
@@ -1758,7 +1758,7 @@ onMounted(async () => {
   const requestedOrderId = props.orderId || route.query.order;
   if (requestedOrderId) {
     const profile = await loadProfile();
-    isAdmin.value = Boolean(profile?.is_superuser || profile?.profile_type === "admin");
+    isAdmin.value = Boolean(profile?.is_superuser || profile?.profile_type === "admin" || profile?.profile_type === "owner");
     if (isAdmin.value) await loadRestaurants();
     await openExistingOrder(requestedOrderId, { validateCash: true });
     if (pdvBlocked.value || !currentOrder.value) return;

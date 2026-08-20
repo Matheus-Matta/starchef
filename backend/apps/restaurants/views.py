@@ -107,6 +107,120 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
     filterset_fields = ["sector", "status", "is_active"]
     search_fields = ["number", "code"]
     ordering_fields = ["number", "status", "updated_at"]
+    MAX_BULK_TABLES = 100
+
+    @action(detail=False, methods=["post"], url_path="bulk-create")
+    def bulk_create(self, request):
+        """Cria um intervalo de mesas de uma vez (ex: mesa 1 a 40)."""
+        account = getattr(request, "account", None)
+        profile = getattr(request.user, "profile", None)
+
+        sector_id = request.data.get("sector")
+        if not sector_id:
+            raise ValidationError({"sector": "Selecione o setor para criar mesas."})
+
+        sector = TableSector.objects.filter(pk=sector_id, account=account).first()
+        if not sector:
+            raise ValidationError({"sector": "Setor não encontrado nesta conta."})
+
+        from apps.core.access import is_tenant_admin
+
+        if profile and not is_tenant_admin(request.user):
+            if profile.branch_id and sector.branch_id != profile.branch_id:
+                raise ValidationError({"sector": "Setor fora do escopo do usuário."})
+            if profile.restaurant_id and sector.restaurant_id != profile.restaurant_id:
+                raise ValidationError({"sector": "Setor pertence a outro restaurante."})
+
+        to_number = request.data.get("to_number")
+        if to_number is None:
+            raise ValidationError({"to_number": "Informe o número final do intervalo."})
+        try:
+            to_number = int(to_number)
+            from_number = int(request.data.get("from_number") or 1)
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "from_number/to_number devem ser inteiros."})
+
+        if from_number < 1 or to_number < from_number:
+            raise ValidationError({"detail": "Intervalo inválido (from_number ≤ to_number, ambos ≥ 1)."})
+        if to_number - from_number + 1 > self.MAX_BULK_TABLES:
+            raise ValidationError({"detail": f"Máximo de {self.MAX_BULK_TABLES} mesas por lote."})
+
+        existing = set(
+            Table.all_objects.filter(branch=sector.branch, number__in=[str(n) for n in range(from_number, to_number + 1)]).values_list(
+                "number", flat=True
+            )
+        )
+        created = []
+        for number_int in range(from_number, to_number + 1):
+            number_str = str(number_int)
+            if number_str in existing:
+                continue
+            created.append(
+                Table(
+                    account=account,
+                    restaurant=sector.restaurant,
+                    branch=sector.branch,
+                    sector=sector,
+                    number=number_str,
+                    code=number_str,
+                    capacity=4,
+                    created_by=request.user,
+                    updated_by=request.user,
+                )
+            )
+        Table.objects.bulk_create(created)
+        return Response(
+            {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
+            status=201,
+        )
+
+    @action(detail=True, methods=["post"], url_path="transfer-commands")
+    @transaction.atomic
+    def transfer_commands(self, request, pk=None):
+        """Transfere TODAS as comandas desta mesa para outra."""
+        from_table = self.get_object()
+        to_table_id = request.data.get("to_table_id")
+        
+        if not to_table_id:
+            raise ValidationError({"to_table_id": "Informe a mesa de destino."})
+            
+        to_table = self.get_queryset().filter(pk=to_table_id).first()
+        if not to_table:
+            raise ValidationError({"to_table_id": "Mesa destino não encontrada."})
+            
+        if from_table.id == to_table.id:
+            raise ValidationError({"to_table_id": "A mesa de destino não pode ser a mesma de origem."})
+            
+        commands = list(from_table.active_commands.all())
+        if not commands:
+            raise ValidationError({"detail": "Não há comandas vinculadas a esta mesa para transferir."})
+            
+        from apps.restaurants.models import CommandMovementLog
+        logs = []
+        for cmd in commands:
+            cmd.current_table = to_table
+            cmd.save(update_fields=["current_table", "updated_at"])
+            logs.append(CommandMovementLog(
+                account=cmd.account,
+                restaurant=cmd.restaurant,
+                branch=cmd.branch,
+                command=cmd,
+                action=CommandMovementLog.ACTION_TRANSFERRED,
+                table=to_table,
+                from_table=from_table,
+                waiter=request.user
+            ))
+            
+        CommandMovementLog.objects.bulk_create(logs)
+        
+        if to_table.status == Table.STATUS_FREE:
+            to_table.status = Table.STATUS_OCCUPIED
+            to_table.save(update_fields=["status", "updated_at"])
+            
+        from apps.orders.services import free_table_if_empty
+        free_table_if_empty(from_table)
+        
+        return Response({"transferred": len(commands)})
 
 
 class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
@@ -134,6 +248,77 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         command = self.get_queryset().filter(code=code).first()
         if not command:
             return Response({"detail": "Comanda não encontrada."}, status=404)
+        return Response(self.get_serializer(command).data)
+
+    @action(detail=True, methods=["post"], url_path="link-table")
+    @transaction.atomic
+    def link_table(self, request, pk=None):
+        """Vincula a comanda a uma mesa específica."""
+        command = self.get_object()
+        table_id = request.data.get("table_id")
+        if not table_id:
+            raise ValidationError({"table_id": "Informe a mesa para vincular a comanda."})
+        
+        table = Table.objects.filter(pk=table_id, branch=command.branch).first()
+        if not table:
+            raise ValidationError({"table_id": "Mesa não encontrada nesta filial."})
+            
+        if command.current_table_id == table.id:
+            return Response(self.get_serializer(command).data)
+            
+        from apps.restaurants.models import CommandMovementLog
+        
+        old_table_id = command.current_table_id
+        command.current_table = table
+        command.save(update_fields=["current_table", "updated_at"])
+        
+        CommandMovementLog.objects.create(
+            account=command.account,
+            restaurant=command.restaurant,
+            branch=command.branch,
+            command=command,
+            action=CommandMovementLog.ACTION_LINKED,
+            table=table,
+            from_table_id=old_table_id,
+            waiter=request.user
+        )
+        
+        if table.status == Table.STATUS_FREE:
+            table.status = Table.STATUS_OCCUPIED
+            table.save(update_fields=["status", "updated_at"])
+            
+        if old_table_id:
+            from apps.orders.services import free_table_if_empty
+            free_table_if_empty(Table.objects.get(pk=old_table_id))
+            
+        return Response(self.get_serializer(command).data)
+
+    @action(detail=True, methods=["post"], url_path="unlink-table")
+    @transaction.atomic
+    def unlink_table(self, request, pk=None):
+        """Desvincula a comanda da mesa atual."""
+        command = self.get_object()
+        if not command.current_table_id:
+            return Response(self.get_serializer(command).data)
+            
+        old_table_id = command.current_table_id
+        command.current_table = None
+        command.save(update_fields=["current_table", "updated_at"])
+        
+        from apps.restaurants.models import CommandMovementLog
+        CommandMovementLog.objects.create(
+            account=command.account,
+            restaurant=command.restaurant,
+            branch=command.branch,
+            command=command,
+            action=CommandMovementLog.ACTION_UNLINKED,
+            from_table_id=old_table_id,
+            waiter=request.user
+        )
+        
+        from apps.orders.services import free_table_if_empty
+        free_table_if_empty(Table.objects.get(pk=old_table_id))
+        
         return Response(self.get_serializer(command).data)
 
     def _resolve_bulk_restaurant(self, request, account, profile):

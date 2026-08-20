@@ -8,4 +8,10 @@ def is_tenant_admin(user):
         return True
 
     profile = getattr(user, "profile", None)
-    return bool(profile and profile.profile_type == UserProfile.PROFILE_ADMIN)
+    if not profile:
+        return False
+        
+    if profile.profile_type in (UserProfile.PROFILE_ADMIN, UserProfile.PROFILE_OWNER):
+        return True
+        
+    return bool(profile.role_id and profile.role.is_account_admin)

@@ -73,6 +73,57 @@ class OrderViewSet(BaseTenantViewSet):
             command_number_text=Cast("command__number", CharField()),
         )
 
+    @action(detail=True, methods=["post"], url_path="link-table")
+    def link_table(self, request, pk=None):
+        order = self.get_object()
+        table_id = request.data.get("table")
+        if not table_id:
+            return Response(
+                {"detail": "Selecione uma mesa para vincular a comanda."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+            
+        profile = getattr(request.user, "profile", None)
+        from apps.core.access import is_tenant_admin
+        # Apenas perfis autorizados (garcom, admin, manager, owner)
+        if not is_tenant_admin(request.user) and profile.profile_type not in {"manager", "garcom"}:
+            return Response(
+                {"detail": "Apenas garçons e gerentes podem vincular comandas a mesas."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        table = Table.objects.filter(
+            pk=table_id,
+            account=getattr(request, "account", None),
+            is_active=True,
+        ).first()
+        if table is None:
+            return Response(
+                {"detail": "A mesa selecionada não existe ou está inativa."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+            
+        # Capacidade permitida = dobro
+        max_capacity = table.capacity * 2
+        active_orders_count = table.orders.filter(
+            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
+        ).count()
+        
+        from apps.orders.services import link_order_to_table
+        
+        try:
+            order = link_order_to_table(order, table, request.user)
+        except ValidationError as e:
+            return Response({"detail": str(e.message if hasattr(e, 'message') else e.messages[0])}, status=status.HTTP_400_BAD_REQUEST)
+            
+        serializer = self.get_serializer(order)
+        response_data = serializer.data
+        
+        if active_orders_count >= max_capacity:
+            response_data["_warning"] = f"Atenção: A mesa {table.number} já atingiu a capacidade máxima (limite {max_capacity} comandas)."
+            
+        return Response(response_data)
+
     @action(detail=False, methods=["post"], url_path="open-table")
     def open_table(self, request):
         table_id = request.data.get("table")

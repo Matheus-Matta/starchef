@@ -130,6 +130,7 @@ export const resources = [
     endpoint: "/tables/",
     // Ações: ver códigos por linha; imprimir etiquetas em lote (seleção).
     pro: {
+      headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "tables" }],
       bulkActions: [{ key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" }],
       rowActions: [{ key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" }],
     },
@@ -159,7 +160,7 @@ export const resources = [
     pro: {
       bulkDeleteEndpoint: "/commands/bulk-delete/",
       bulkUpdateEndpoint: "/commands/bulk-update/",
-      headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-commands" }],
+      headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "commands" }],
       bulkActions: [{ key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" }],
       rowActions: [{ key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" }],
     },
@@ -647,6 +648,7 @@ export const resources = [
       { name: "name", label: "Nome do perfil", type: "text", required: true, section: "Perfil" },
       { name: "code", label: "Codigo", type: "text", required: true, placeholder: "ex: gerente-vip", section: "Perfil" },
       { name: "restaurant", label: "Restaurante (opcional)", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil" },
+      { name: "is_account_admin", label: "Administrador da Conta", type: "boolean", default: false, section: "Perfil", hint: "Dá acesso irrestrito a todos os restaurantes e configurações globais da conta." },
       // Permissões de negócio vinculadas ao perfil (M2M).
       { name: "permissions", label: "Permissões", type: "remote-multiselect", endpoint: "/permissions/", optionLabel: "name", optionValue: "id", grouped: true, full: true, section: "Permissões", hint: "Agrupadas por área. Itens com \"meu/meus\" restringem ao próprio operador (ex.: ver meus pedidos, gerenciar somente meu caixa)." },
     ],

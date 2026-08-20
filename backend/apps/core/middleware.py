@@ -137,8 +137,11 @@ class TenantMiddleware:
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             return None
-        if user.is_superuser and request.headers.get("X-Account-ID"):
-            return Account.objects.filter(id=request.headers["X-Account-ID"], is_active=True).first()
+        if user.is_superuser:
+            if request.headers.get("X-Account-ID"):
+                return Account.objects.filter(id=request.headers["X-Account-ID"], is_active=True).first()
+            # Superusuários sem X-Account-ID operam no escopo global
+            return None
         profile = getattr(user, "profile", None)
         return profile.account if profile else None
 
