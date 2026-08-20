@@ -19,10 +19,11 @@ def _tenant_queryset(model, account=None):
 class TenantAdminMixin:
     def get_request_account(self, request):
         account_id = request.headers.get("X-Account-ID") or request.GET.get("account")
-        if request.user.is_superuser and account_id:
-            from apps.accounts.models import Account
-
-            return Account.objects.filter(id=account_id, is_active=True).first()
+        if request.user.is_superuser:
+            if account_id:
+                from apps.accounts.models import Account
+                return Account.objects.filter(id=account_id, is_active=True).first()
+            return None
 
         profile = getattr(request.user, "profile", None)
         return getattr(profile, "account", None)

@@ -1,0 +1,84 @@
+# Stage 1: Build Frontend
+FROM node:24-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+ENV API_URL=/api/v1
+RUN npm run build
+
+# Stage 2: Standalone Image
+FROM ubuntu:24.04
+
+# Evita prompts do apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Instala dependências (Postgres 16, Redis, Python 3.12, Nginx, Supervisor)
+RUN apt-get update && apt-get install -y \
+    postgresql-16 \
+    redis-server \
+    python3.12 \
+    python3.12-venv \
+    python3-pip \
+    nginx \
+    supervisor \
+    curl \
+    sudo \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configura o usuário da aplicação
+RUN useradd -ms /bin/bash appuser
+
+# Copia os arquivos do repositório
+WORKDIR /app
+COPY . /app/
+
+# Configura o Python
+RUN python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir -r /app/backend/requirements/production.txt \
+    && /app/.venv/bin/pip install uvicorn
+
+# Copia o build do frontend
+COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
+
+# Configurações do Nginx, Supervisor e Entrypoint
+COPY nginx.standalone.conf /etc/nginx/nginx.conf
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY standalone-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Permissões do Postgres
+RUN mkdir -p /var/run/postgresql && chown -R postgres:postgres /var/run/postgresql
+
+# Variáveis de ambiente padrão para o standalone
+ENV DJANGO_SETTINGS_MODULE=config.settings.production
+ENV DJANGO_DEBUG=False
+ENV DJANGO_SECRET_KEY=standalone-insecure-secret-key-that-is-at-least-fifty-characters-long-12345
+ENV DJANGO_FIRST_ACCESS_TOKEN=standalone-first-access-token-that-is-at-least-fifty-characters-long-12345
+ENV POSTGRES_DB=starchef
+ENV POSTGRES_USER=starchef
+ENV POSTGRES_PASSWORD=standalone-postgres-secure-password
+ENV POSTGRES_HOST=127.0.0.1
+ENV POSTGRES_PORT=5432
+ENV REDIS_URL=redis://127.0.0.1:6379/0
+ENV CELERY_BROKER_URL=redis://127.0.0.1:6379/1
+ENV CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
+ENV USE_SQLITE_DATABASE=False
+ENV USE_LOCAL_MEMORY_SERVICES=False
+ENV DJANGO_ALLOWED_HOSTS=*
+ENV DJANGO_CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080
+ENV DJANGO_CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080
+ENV DJANGO_SECURE_SSL_REDIRECT=False
+ENV DJANGO_SESSION_COOKIE_SECURE=False
+ENV DJANGO_CSRF_COOKIE_SECURE=False
+ENV DJANGO_AUTH_COOKIE_SECURE=False
+ENV DJANGO_AUTH_COOKIE_SAMESITE=Lax
+
+RUN mkdir -p /app/backend/media /app/backend/staticfiles \
+    && chown -R appuser:appuser /app/backend/media /app/backend/staticfiles
+
+EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

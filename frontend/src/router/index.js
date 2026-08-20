@@ -156,6 +156,6 @@ window.addEventListener("auth:unauthorized", () => {
   const auth = useAuthStore();
   auth.clearSession();
   if (router.currentRoute.value.name !== "login") {
-    router.push({ name: "login", query: { next: router.currentRoute.value.fullPath } });
+    window.location.href = "/login?next=" + encodeURIComponent(router.currentRoute.value.fullPath);
   }
 });

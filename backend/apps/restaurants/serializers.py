@@ -3,7 +3,16 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.restaurants.models import Branch, Command, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
+from apps.restaurants.models import (
+    Branch,
+    Command,
+    CommandMovementLog,
+    DeliveryZone,
+    Deliveryman,
+    Restaurant,
+    Table,
+    TableSector,
+)
 
 
 class RestaurantSerializer(TenantModelSerializer):
@@ -67,17 +76,6 @@ class TableSectorSerializer(TenantModelSerializer):
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
-class TableSerializer(TenantModelSerializer):
-    sector_name = serializers.CharField(source="sector.name", read_only=True)
-    code = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
-
-    class Meta:
-        model = Table
-        fields = "__all__"
-        # Estado e vinculo com pedido pertencem ao fluxo transacional, nao ao CRUD.
-        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id"]
-
-
 class CommandSerializer(TenantModelSerializer):
     # Numero e opcional na escrita: quando omitido, o model atribui o proximo
     # sequencial do restaurante. `code` idem (derivado do numero).
@@ -87,9 +85,28 @@ class CommandSerializer(TenantModelSerializer):
     class Meta:
         model = Command
         fields = "__all__"
-        # status e current_order_id sao geridos pelo ciclo de vida (pedido/pagamento),
-        # nunca definidos direto pelo cliente.
+        # status, current_order_id e current_table sao geridos pelo ciclo de vida
+        # (pedido/pagamento e endpoints de mesa), nunca definidos direto pelo CRUD cliente.
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id", "current_table"]
+
+
+class TableSerializer(TenantModelSerializer):
+    sector_name = serializers.CharField(source="sector.name", read_only=True)
+    code = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
+    active_commands = CommandSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Table
+        fields = "__all__"
+        # Estado e vinculo com pedido pertencem ao fluxo transacional, nao ao CRUD.
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id"]
+
+
+class CommandMovementLogSerializer(TenantModelSerializer):
+    class Meta:
+        model = CommandMovementLog
+        fields = "__all__"
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
 class DeliveryZoneSerializer(TenantModelSerializer):

@@ -169,6 +169,13 @@ class Command(TenantModel):
     customer_name = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_FREE, db_index=True)
     current_order_id = models.UUIDField(null=True, blank=True, db_index=True)
+    current_table = models.ForeignKey(
+        "restaurants.Table",
+        null=True,
+        blank=True,
+        related_name="active_commands",
+        on_delete=models.SET_NULL,
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -201,6 +208,52 @@ class Command(TenantModel):
 
     def __str__(self):
         return f"Comanda {self.number}"
+
+
+class CommandMovementLog(TenantModel):
+    ACTION_LINKED = "linked"
+    ACTION_UNLINKED = "unlinked"
+    ACTION_TRANSFERRED = "transferred"
+
+    ACTION_CHOICES = [
+        (ACTION_LINKED, "Linked to table"),
+        (ACTION_UNLINKED, "Unlinked from table"),
+        (ACTION_TRANSFERRED, "Transferred to another table"),
+    ]
+
+    command = models.ForeignKey(Command, on_delete=models.CASCADE, related_name="movement_logs")
+    table = models.ForeignKey(
+        "restaurants.Table",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="command_movement_logs"
+    )
+    waiter = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="command_movements_made"
+    )
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, db_index=True)
+    from_table = models.ForeignKey(
+        "restaurants.Table",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["command", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.action} - Command {self.command_id} -> Table {self.table_id}"
 
 
 class DeliveryZone(TenantModel):

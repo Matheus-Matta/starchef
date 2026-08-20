@@ -43,7 +43,7 @@ const router = useRouter();
 const auth = useAuthStore();
 const canManage = computed(() => auth.user?.is_superuser || ["admin", "owner", "manager"].includes(auth.user?.profile_type));
 const canUseCash = computed(() => auth.user?.is_superuser || ["admin", "owner", "manager", "cashier"].includes(auth.user?.profile_type));
-const canSeeAll = computed(() => auth.user?.is_superuser || auth.user?.profile_type === "admin");
+const canSeeAll = computed(() => auth.user?.is_superuser || auth.user?.profile_type === "admin" || auth.user?.profile_type === "owner");
 const enabledModules = computed(() => auth.user?.enabled_modules || ["base"]);
 const hasModule = (name) => !name || name === "base" || auth.user?.is_superuser || enabledModules.value.includes(name);
 const displayName = computed(() => auth.user?.name || auth.user?.username || "Operador");

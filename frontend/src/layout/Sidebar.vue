@@ -137,7 +137,7 @@ watch(() => props.active, (value) => {
   if (String(value).startsWith("relatorio")) reportsOpen.value = true;
 });
 
-const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin"));
+const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin" || props.user?.profile_type === "owner"));
 const canManage = computed(() => ["admin", "owner", "manager"].includes(props.user?.profile_type) || props.user?.is_superuser);
 
 // Licenciamento modular: itens de modulos desabilitados nao sao renderizados.

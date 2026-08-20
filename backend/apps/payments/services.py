@@ -302,9 +302,8 @@ def register_payment(
             order.status = Order.STATUS_PAID
             order.closed_at = order.closed_at or timezone.now()
             if order.table_id:
-                order.table.status = Table.STATUS_FREE
-                order.table.current_order_id = None
-                order.table.save(update_fields=["status", "current_order_id", "updated_at"])
+                from apps.orders.services import free_table_if_empty
+                free_table_if_empty(order.table)
             # Comanda: zera e libera para reuso (padrao self-service).
             from apps.orders.services import free_command_for_order
 

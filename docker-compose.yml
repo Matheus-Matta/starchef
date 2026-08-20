@@ -69,12 +69,12 @@ services:
     # em outra máquina, troque BACKEND_BIND para 0.0.0.0 e restrinja o acesso
     # via firewall/security group só ao IP do proxy.
     ports:
-      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8008}:8008"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8008/health/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
