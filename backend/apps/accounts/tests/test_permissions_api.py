@@ -1,7 +1,10 @@
 """Catálogo de permissões + vínculo com Perfil de acesso (Role)."""
 import pytest
+from django.apps import apps
+from django.db.models.signals import post_migrate
 
 from apps.accounts.models import Permission, Role
+from apps.accounts.permission_catalog import ALL_CODES
 
 pytestmark = pytest.mark.django_db
 
@@ -9,9 +12,18 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def permissions(db):
     return [
-        Permission.objects.create(code="menu.manage", name="Gerenciar cardápio"),
-        Permission.objects.create(code="orders.view", name="Visualizar pedidos"),
+        Permission.objects.update_or_create(code="menu.manage", defaults={"name": "Gerenciar cardápio"})[0],
+        Permission.objects.update_or_create(code="orders.view", defaults={"name": "Visualizar pedidos"})[0],
     ]
+
+
+def test_post_migrate_populates_canonical_permission_catalog(db):
+    Permission.objects.all().delete()
+    app_config = apps.get_app_config("accounts")
+
+    post_migrate.send(sender=app_config, app_config=app_config, verbosity=0)
+
+    assert set(Permission.objects.values_list("code", flat=True)) == set(ALL_CODES)
 
 
 def test_permissions_endpoint_lists_catalog(admin_client, permissions):
