@@ -1716,7 +1716,8 @@ class _HomePageState extends State<HomePage> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, searchController.text),
+            onPressed: () =>
+                Navigator.pop(dialogContext, searchController.text),
             child: const Text('Vincular'),
           ),
         ],
@@ -1726,36 +1727,56 @@ class _HomePageState extends State<HomePage> {
     if (action != null && action.trim().isNotEmpty && mounted) {
       final term = action.trim().toLowerCase();
       final command = commands.cast<Map<String, dynamic>?>().firstWhere(
-            (c) => '${c?['number']}' == term || '${c?['code']}'.toLowerCase() == term,
-            orElse: () => null,
-          );
+        (c) =>
+            '${c?['number']}' == term || '${c?['code']}'.toLowerCase() == term,
+        orElse: () => null,
+      );
 
       if (command == null) {
-        showAppToast(context, 'Comanda não encontrada.', severity: AppErrorSeverity.warning);
+        showAppToast(
+          context,
+          'Comanda não encontrada.',
+          severity: AppErrorSeverity.warning,
+        );
         return;
       }
 
       if (selectedTable != null) {
         final capacity = selectedTable!['capacity'] ?? 0;
-        final activeCommandsCount = (selectedTable!['active_commands'] as List? ?? []).length;
+        final activeCommandsCount =
+            (selectedTable!['active_commands'] as List? ?? []).length;
         if (capacity > 0 && activeCommandsCount >= capacity) {
           final confirm = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
               title: const Text('Lotação Atingida'),
-              content: const Text('A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?'),
+              content: const Text(
+                'A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?',
+              ),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-                FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Vincular')),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Vincular'),
+                ),
               ],
             ),
           );
+          if (!mounted) return;
           if (confirm != true) return;
         }
 
         try {
           setState(() => busy = true);
-          await api.post('/commands/${command['id']}/link_table/', body: {'table': selectedTable!['id']}, accessToken: token);
+          await api.post(
+            '/commands/${command['id']}/link_table/',
+            body: {'table': selectedTable!['id']},
+            accessToken: token,
+          );
+          if (!mounted) return;
           showAppToast(context, 'Comanda vinculada com sucesso.');
           await _load();
         } catch (e) {
@@ -1770,7 +1791,12 @@ class _HomePageState extends State<HomePage> {
   Future<void> _unlinkCommand(Map<String, dynamic> command) async {
     try {
       setState(() => busy = true);
-      await api.post('/commands/${command['id']}/unlink_table/', body: const {}, accessToken: token);
+      await api.post(
+        '/commands/${command['id']}/unlink_table/',
+        body: const {},
+        accessToken: token,
+      );
+      if (!mounted) return;
       showAppToast(context, 'Comanda desvinculada.');
       await _load();
     } catch (e) {
@@ -1781,7 +1807,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _transferCommandDialog(Map<String, dynamic> command) async {
-    final tablesList = tables.where((t) => t['id'] != selectedTable?['id']).toList();
+    final tablesList = tables
+        .where((t) => t['id'] != selectedTable?['id'])
+        .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1791,7 +1819,7 @@ class _HomePageState extends State<HomePage> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: tablesList.length,
-            separatorBuilder: (_, __) => const Divider(),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (_, index) {
               final t = tablesList[index];
               return ListTile(
@@ -1803,7 +1831,10 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
         ],
       ),
     );
@@ -1811,7 +1842,12 @@ class _HomePageState extends State<HomePage> {
     if (destTable != null && mounted) {
       try {
         setState(() => busy = true);
-        await api.post('/commands/${command['id']}/link_table/', body: {'table': destTable['id']}, accessToken: token);
+        await api.post(
+          '/commands/${command['id']}/link_table/',
+          body: {'table': destTable['id']},
+          accessToken: token,
+        );
+        if (!mounted) return;
         showAppToast(context, 'Comanda transferida.');
         await _load();
       } catch (e) {
@@ -1823,7 +1859,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _transferAllCommandsDialog() async {
-    final tablesList = tables.where((t) => t['id'] != selectedTable?['id']).toList();
+    final tablesList = tables
+        .where((t) => t['id'] != selectedTable?['id'])
+        .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1833,7 +1871,7 @@ class _HomePageState extends State<HomePage> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: tablesList.length,
-            separatorBuilder: (_, __) => const Divider(),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (_, index) {
               final t = tablesList[index];
               return ListTile(
@@ -1845,7 +1883,10 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
         ],
       ),
     );
@@ -1853,7 +1894,12 @@ class _HomePageState extends State<HomePage> {
     if (destTable != null && mounted && selectedTable != null) {
       try {
         setState(() => busy = true);
-        await api.post('/tables/${selectedTable!['id']}/transfer_commands/', body: {'destination_table_id': destTable['id']}, accessToken: token);
+        await api.post(
+          '/tables/${selectedTable!['id']}/transfer_commands/',
+          body: {'destination_table_id': destTable['id']},
+          accessToken: token,
+        );
+        if (!mounted) return;
         showAppToast(context, 'Comandas transferidas.');
         await _load();
       } catch (e) {
@@ -4034,7 +4080,9 @@ class _HomePageState extends State<HomePage> {
                     (orderType == 'command'
                         ? _commandContextPanel()
                         : _tableContextPanel())
-                  else if (activeOrder == null && flowStep == 'table_details' && selectedTable != null)
+                  else if (activeOrder == null &&
+                      flowStep == 'table_details' &&
+                      selectedTable != null)
                     TableDetailsPanel(
                       table: selectedTable!,
                       onBack: () => setState(() => flowStep = 'context'),

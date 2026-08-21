@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import TenantBaseModel, TenantModel
@@ -230,7 +231,7 @@ class CommandMovementLog(TenantModel):
         related_name="command_movement_logs"
     )
     waiter = models.ForeignKey(
-        "accounts.User",
+        settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,

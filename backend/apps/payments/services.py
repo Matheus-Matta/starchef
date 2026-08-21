@@ -297,12 +297,21 @@ def register_payment(
             )
 
         paid_total = paid_before + accepted_amount
-        if paid_total >= order.total:
+        paid_in_full = paid_total >= order.total
+        if paid_in_full:
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID
             order.closed_at = order.closed_at or timezone.now()
+        else:
+            order.payment_status = Order.PAYMENT_PARTIAL
+
+        order.updated_by = user
+        order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
+
+        if paid_in_full:
             if order.table_id:
                 from apps.orders.services import free_table_if_empty
+
                 free_table_if_empty(order.table)
             # Comanda: zera e libera para reuso (padrao self-service).
             from apps.orders.services import free_command_for_order
@@ -312,11 +321,7 @@ def register_payment(
                 from apps.stock.services import deduct_order_stock
 
                 deduct_order_stock(order=order, user=user)
-        else:
-            order.payment_status = Order.PAYMENT_PARTIAL
 
-        order.updated_by = user
-        order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
         record_audit(action=AuditLog.ACTION_PAYMENT, instance=payment, actor=user, metadata={"order": str(order.id)})
         return payment
 

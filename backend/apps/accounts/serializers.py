@@ -127,13 +127,22 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Ja existe um usuario com este email.")
         return value
 
+    def _request_account(self):
+        request = self.context.get("request")
+        if request is None:
+            return None
+        account = getattr(request, "account", None)
+        if account is not None or not request.user.is_superuser:
+            return account
+        profile = getattr(request.user, "profile", None)
+        return profile.account if profile and profile.account_id else None
+
     def create(self, validated_data):
         profile_data = validated_data.pop("profile", {})
         password = validated_data.pop("password", "")
         if not password:
             raise serializers.ValidationError({"password": "Informe uma senha para criar o usuário."})
-        request = self.context.get("request")
-        account = getattr(request, "account", None) if request else None
+        account = self._request_account()
         if account:
             profile_data["account"] = account
         user = User(**validated_data)
@@ -151,8 +160,7 @@ class UserSerializer(serializers.ModelSerializer):
             instance.set_password(password)
         instance.save()
         if profile_data is not None:
-            request = self.context.get("request")
-            account = getattr(request, "account", None) if request else None
+            account = self._request_account()
             defaults = {"account": account} if account else {}
             profile, _ = UserProfile.all_objects.get_or_create(user=instance, defaults=defaults)
             if account:

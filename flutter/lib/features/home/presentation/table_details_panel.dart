@@ -24,8 +24,10 @@ class TableDetailsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeCommands = (table['active_commands'] as List? ?? const []).cast<Map<String, dynamic>>();
-    final occupied = table['current_order_id'] != null || activeCommands.isNotEmpty;
+    final activeCommands = (table['active_commands'] as List? ?? const [])
+        .cast<Map<String, dynamic>>();
+    final occupied =
+        table['current_order_id'] != null || activeCommands.isNotEmpty;
     final color = occupied ? Colors.orange : Colors.green;
     final scheme = Theme.of(context).colorScheme;
 
@@ -51,22 +53,22 @@ class TableDetailsPanel extends StatelessWidget {
                     children: [
                       Text(
                         'Mesa ${table['number']}',
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.w900,
-                            ),
+                        style: Theme.of(context).textTheme.headlineMedium
+                            ?.copyWith(fontWeight: FontWeight.w900),
                       ),
                       Text(
                         '${table['capacity'] ?? 0} lugares · ${table['sector_name'] ?? 'Sem setor'}',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                        ),
+                        style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
                     ],
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.1),
+                      color: color.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: color.shade300),
                     ),
@@ -98,7 +100,11 @@ class TableDetailsPanel extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: onOpenTableOrder,
                       icon: const Icon(Icons.receipt_long),
-                      label: Text(table['current_order_id'] != null ? 'Abrir Pedido da Mesa' : 'Iniciar Pedido na Mesa'),
+                      label: Text(
+                        table['current_order_id'] != null
+                            ? 'Abrir Pedido da Mesa'
+                            : 'Iniciar Pedido na Mesa',
+                      ),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 50),
                       ),
@@ -116,7 +122,7 @@ class TableDetailsPanel extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ]
+                  ],
                 ],
               ),
               const SizedBox(height: 22),
@@ -138,7 +144,7 @@ class TableDetailsPanel extends StatelessWidget {
                       )
                     : ListView.separated(
                         itemCount: activeCommands.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final command = activeCommands[index];
                           return Card(
@@ -148,7 +154,10 @@ class TableDetailsPanel extends StatelessWidget {
                               side: BorderSide(color: scheme.outlineVariant),
                             ),
                             child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
                               leading: CircleAvatar(
                                 backgroundColor: scheme.primaryContainer,
                                 child: Text(
@@ -163,17 +172,26 @@ class TableDetailsPanel extends StatelessWidget {
                                 command['customer_name']?.isNotEmpty == true
                                     ? command['customer_name']
                                     : 'Comanda ${command['number']}',
-                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                               subtitle: Text(
                                 command['code'] ?? 'Sem código',
-                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
+                                ),
                               ),
                               onTap: () => onOpenCommand(command),
                               trailing: PopupMenuButton<String>(
                                 onSelected: (val) {
-                                  if (val == 'unlink') onUnlinkCommand(command);
-                                  if (val == 'transfer') onTransferCommand(command);
+                                  if (val == 'unlink') {
+                                    onUnlinkCommand(command);
+                                  }
+                                  if (val == 'transfer') {
+                                    onTransferCommand(command);
+                                  }
                                 },
                                 itemBuilder: (context) => [
                                   const PopupMenuItem(
@@ -190,9 +208,16 @@ class TableDetailsPanel extends StatelessWidget {
                                     value: 'unlink',
                                     child: Row(
                                       children: [
-                                        Icon(Icons.link_off, size: 20, color: Colors.red),
+                                        Icon(
+                                          Icons.link_off,
+                                          size: 20,
+                                          color: Colors.red,
+                                        ),
                                         SizedBox(width: 8),
-                                        Text('Desvincular', style: TextStyle(color: Colors.red)),
+                                        Text(
+                                          'Desvincular',
+                                          style: TextStyle(color: Colors.red),
+                                        ),
                                       ],
                                     ),
                                   ),

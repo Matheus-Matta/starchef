@@ -585,9 +585,16 @@ def close_order(
                 "A alteração deixaria o valor já pago maior que o total do pedido. "
                 "Cancele ou ajuste os pagamentos antes de retirar a taxa."
             )
-        if paid_total == order.total and order.total > Decimal("0.00"):
+        paid_in_full = paid_total == order.total and order.total > Decimal("0.00")
+        if paid_in_full:
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID
+        elif paid_total > Decimal("0.00"):
+            order.payment_status = Order.PAYMENT_PARTIAL
+        else:
+            order.payment_status = Order.PAYMENT_PENDING
+        order.save(update_fields=["payment_status", "status", "updated_by"])
+        if paid_in_full:
             if order.table_id:
                 free_table_if_empty(order.table)
             free_command_for_order(order)
@@ -595,11 +602,6 @@ def close_order(
                 from apps.stock.services import deduct_order_stock
 
                 deduct_order_stock(order=order, user=user)
-        elif paid_total > Decimal("0.00"):
-            order.payment_status = Order.PAYMENT_PARTIAL
-        else:
-            order.payment_status = Order.PAYMENT_PENDING
-        order.save(update_fields=["payment_status", "status", "updated_by"])
         record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "close_order"})
         return order
 
