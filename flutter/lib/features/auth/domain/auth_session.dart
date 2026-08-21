@@ -14,6 +14,12 @@ class AuthSession {
     refreshToken: json['refresh'] as String,
     user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
   );
+
+  Map<String, dynamic> toJson() => {
+    'access': accessToken,
+    'refresh': refreshToken,
+    'user': user.toJson(),
+  };
 }
 
 class AuthUser {

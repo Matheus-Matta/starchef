@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 
@@ -294,6 +295,71 @@ void main() {
       );
 
       expect(utf8.decode(bytes), 'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42');
+    });
+  });
+
+  group('LocalDeviceAgent corte e disponibilidade', () {
+    test('separa a guilhotina do conteúdo para drenar antes do corte', () {
+      final bytes = LocalDeviceAgent.rawTransportBytes(
+        'CUPOM LONGO',
+        isEscPos: true,
+      );
+
+      final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
+
+      expect(parts.content, isNotEmpty);
+      expect(parts.content.sublist(parts.content.length - 3), [10, 10, 10]);
+      expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
+    });
+
+    test(
+      'publica status dinâmico retornado pela checagem de hardware',
+      () async {
+        var connected = true;
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        final agent = LocalDeviceAgent(
+          api: api,
+          availabilityProbe: (_) async => connected,
+        );
+        final printer = <String, dynamic>{
+          'connection_type': 'serial',
+          'endpoint': '/dev/starchef-printer',
+        };
+
+        expect(await agent.checkPrinterAvailability(printer), isTrue);
+        expect(agent.printerAvailability.value.isAvailable, isTrue);
+
+        connected = false;
+        expect(await agent.checkPrinterAvailability(printer), isFalse);
+        expect(
+          agent.printerAvailability.value.phase,
+          PrinterAvailabilityPhase.unavailable,
+        );
+        await api.dispose();
+      },
+    );
+
+    test('impressora ausente gera aviso amigável sem exceção nativa', () async {
+      final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+      final agent = LocalDeviceAgent(
+        api: api,
+        availabilityProbe: (_) async => false,
+      );
+
+      expect(
+        () => agent.printForPrinter({
+          'connection_type': 'serial',
+          'endpoint': 'COM99',
+        }, 'RECIBO'),
+        throwsA(
+          isA<PrinterCommunicationException>().having(
+            (error) => error.message,
+            'message',
+            contains('Falha ao comunicar com a impressora'),
+          ),
+        ),
+      );
+      await api.dispose();
     });
   });
 }

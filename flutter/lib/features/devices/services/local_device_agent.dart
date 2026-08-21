@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/realtime_client.dart';
+import '../../../core/storage/local_preferences.dart';
 import '../domain/printer_endpoint.dart';
 import 'print_template_cache.dart';
 
@@ -22,6 +22,22 @@ class PrinterCommunicationException implements Exception {
 
   @override
   String toString() => message;
+}
+
+enum PrinterAvailabilityPhase {
+  checking,
+  available,
+  unavailable,
+  notConfigured,
+}
+
+class PrinterAvailability {
+  const PrinterAvailability(this.phase, this.message);
+
+  final PrinterAvailabilityPhase phase;
+  final String message;
+
+  bool get isAvailable => phase == PrinterAvailabilityPhase.available;
 }
 
 /// Agente local de impressão do processo principal.
@@ -42,7 +58,16 @@ class PrinterCommunicationException implements Exception {
 /// estava caída. Modelos de impressão seguem a mesma regra: sem timer,
 /// sincroniza no início e a cada reconexão.
 class LocalDeviceAgent {
-  LocalDeviceAgent({required this.api});
+  LocalDeviceAgent({
+    required this.api,
+    this.preferences,
+    Future<bool> Function(PrinterEndpoint target)? availabilityProbe,
+    Future<void> Function(Duration duration)? delay,
+    this.cutDelay = const Duration(milliseconds: 650),
+  }) : _availabilityProbe = availabilityProbe,
+       _delay = delay ?? Future<void>.delayed;
+
+  static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
 
   static String? code128ValueFromPayload(Map<String, dynamic> payload) {
     final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
@@ -189,8 +214,30 @@ class LocalDeviceAgent {
       ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
-      if (isEscPos) ...const [10, 10, 10, 29, 86, 0],
+      if (isEscPos) ...const [10, 10, 10, ...escPosCutBytes],
     ];
+  }
+
+  /// Separa o comando de corte para que o transporte possa drenar o conteúdo
+  /// antes de enviá-lo. O retorno mantém os avanços de papel junto ao corpo.
+  static ({List<int> content, List<int> cut}) splitCutCommand(
+    List<int> bytes, {
+    required bool isEscPos,
+  }) {
+    if (!isEscPos || bytes.length < escPosCutBytes.length) {
+      return (content: List<int>.from(bytes), cut: const <int>[]);
+    }
+    final cutStart = bytes.length - escPosCutBytes.length;
+    final hasCut =
+        List<int>.generate(
+          escPosCutBytes.length,
+          (index) => bytes[cutStart + index],
+        ).join(',') ==
+        escPosCutBytes.join(',');
+    if (!hasCut) {
+      return (content: List<int>.from(bytes), cut: const <int>[]);
+    }
+    return (content: bytes.sublist(0, cutStart), cut: bytes.sublist(cutStart));
   }
 
   /// Applies conservative ESC/POS typography that remains readable on both
@@ -269,6 +316,17 @@ class LocalDeviceAgent {
   }
 
   final ApiClient api;
+  final LocalPreferences? preferences;
+  final Future<bool> Function(PrinterEndpoint target)? _availabilityProbe;
+  final Future<void> Function(Duration duration) _delay;
+  final Duration cutDelay;
+  final ValueNotifier<PrinterAvailability> printerAvailability =
+      ValueNotifier<PrinterAvailability>(
+        const PrinterAvailability(
+          PrinterAvailabilityPhase.checking,
+          'Verificando impressora...',
+        ),
+      );
   RealtimeClient? _realtime;
   StreamSubscription<RealtimeEvent>? _eventSubscription;
   StreamSubscription<void>? _connectedSubscription;
@@ -280,6 +338,7 @@ class LocalDeviceAgent {
   DateTime? _backoffUntil;
   Future<void>? _deviceSyncInFlight;
   List<Map<String, dynamic>> _printers = const [];
+  Timer? _availabilityTimer;
 
   void start({required String token, required String restaurantId}) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
@@ -290,8 +349,17 @@ class LocalDeviceAgent {
     _lastTemplateSync = null;
     _lastDeviceSync = null;
     _backoffUntil = null;
+    _availabilityTimer?.cancel();
+    printerAvailability.value = const PrinterAvailability(
+      PrinterAvailabilityPhase.checking,
+      'Verificando impressora...',
+    );
+    unawaited(refreshPrinterAvailability());
+    _availabilityTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => unawaited(refreshPrinterAvailability(useCachedDevices: true)),
+    );
     _stopRealtime();
-    if (!Platform.isWindows) return;
     final realtime = RealtimeClient(
       urlBuilder: () => api.realtimeSocketUrl(_token!),
     );
@@ -307,6 +375,8 @@ class LocalDeviceAgent {
 
   void stop() {
     _stopRealtime();
+    _availabilityTimer?.cancel();
+    _availabilityTimer = null;
     _token = null;
     _restaurantId = null;
     _lastTemplateSync = null;
@@ -314,6 +384,14 @@ class LocalDeviceAgent {
     _backoffUntil = null;
     _deviceSyncInFlight = null;
     _printers = const [];
+    printerAvailability.value = const PrinterAvailability(
+      PrinterAvailabilityPhase.notConfigured,
+      'Impressora desconectada',
+    );
+  }
+
+  void dispose() {
+    stop();
   }
 
   void _stopRealtime() {
@@ -556,40 +634,91 @@ class LocalDeviceAgent {
   }) async {
     final target = PrinterEndpoint.fromJson(printer);
     final missing = target.missingConfiguration;
-    if (missing != null) throw StateError(missing);
-
-    if (target.connection == PrinterConnection.spool) {
-      // O spool recebe texto puro (Out-Printer/lp não renderizam imagem) — o
-      // QR não sai escaneável por essa via, mesma limitação que o Code128 já
-      // tem hoje aqui; o texto ainda traz a chave de acesso pra consulta manual.
-      await printText(
-        target.endpoint,
-        textWithBarcodeFallback(content, barcodeValue),
+    if (missing != null) {
+      printerAvailability.value = const PrinterAvailability(
+        PrinterAvailabilityPhase.unavailable,
+        'Impressora desconectada',
       );
-      return;
+      throw PrinterCommunicationException(
+        message: 'Falha ao comunicar com a impressora. $missing',
+        recommendedAction: 'Revise a configuração local da impressora.',
+      );
     }
 
-    final printBytes = rawTransportBytes(
-      content,
-      isEscPos: target.isEscPos,
-      barcodeValue: barcodeValue,
-      qrValue: qrValue,
-    );
-    if (target.connection == PrinterConnection.network) {
-      final socket = await Socket.connect(
-        target.host,
-        target.port,
-        timeout: target.timeout,
-      );
-      try {
-        socket.add(printBytes);
-        await socket.flush();
-      } finally {
-        await socket.close();
+    try {
+      if (!await checkPrinterAvailability(printer)) {
+        throw const PrinterCommunicationException(
+          message:
+              'Falha ao comunicar com a impressora: dispositivo não encontrado.',
+          recommendedAction:
+              'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
+        );
       }
-      return;
+
+      if (target.connection == PrinterConnection.spool) {
+        // O spool recebe texto puro (Out-Printer/lp não renderizam imagem).
+        await printText(
+          target.endpoint,
+          textWithBarcodeFallback(content, barcodeValue),
+        );
+      } else {
+        final printBytes = rawTransportBytes(
+          content,
+          isEscPos: target.isEscPos,
+          barcodeValue: barcodeValue,
+          qrValue: qrValue,
+        );
+        if (target.connection == PrinterConnection.network) {
+          await _writeToNetworkPrinter(target, printBytes);
+        } else {
+          await _writeToSerialPrinter(target, printBytes);
+        }
+      }
+      printerAvailability.value = const PrinterAvailability(
+        PrinterAvailabilityPhase.available,
+        'Impressora disponível',
+      );
+    } on PrinterCommunicationException {
+      printerAvailability.value = const PrinterAvailability(
+        PrinterAvailabilityPhase.unavailable,
+        'Impressora desconectada',
+      );
+      rethrow;
+    } catch (error) {
+      printerAvailability.value = const PrinterAvailability(
+        PrinterAvailabilityPhase.unavailable,
+        'Impressora desconectada',
+      );
+      throw PrinterCommunicationException(
+        message: 'Falha ao comunicar com a impressora: $error',
+        recommendedAction:
+            'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
+      );
     }
-    await _writeToSerialPrinter(target, printBytes);
+  }
+
+  Future<void> _writeToNetworkPrinter(
+    PrinterEndpoint target,
+    List<int> bytes,
+  ) async {
+    final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
+    final socket = await Socket.connect(
+      target.host,
+      target.port,
+      timeout: target.timeout,
+    );
+    try {
+      socket.add(payload.content);
+      // `flush` confirma que o buffer de saída do socket foi entregue ao SO.
+      await socket.flush().timeout(target.timeout);
+      if (payload.cut.isNotEmpty) {
+        await _delay(cutDelay); // pausa física antes da guilhotina
+        socket.add(payload.cut);
+        await socket.flush().timeout(target.timeout);
+      }
+    } finally {
+      await socket.close();
+    }
   }
 
   /// Escreve na impressora serial pela biblioteca nativa.
@@ -618,22 +747,51 @@ class LocalDeviceAgent {
         ..bits = 8
         ..parity = SerialPortParity.none
         ..stopBits = 1;
-      final written = port.write(
-        Uint8List.fromList(bytes),
-        timeout: target.timeout.inMilliseconds,
-      );
-      if (written < bytes.length) {
+      final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
+      _writeAllSerial(port, target, payload.content);
+      // `drain` aguarda a transmissão física e `bytesToWrite` confirma que o
+      // buffer do driver realmente chegou a zero antes da guilhotina.
+      port.drain();
+      if (port.bytesToWrite != 0) {
         throw _serialCommunicationError(
           target,
-          'foram enviados apenas $written de ${bytes.length} bytes',
+          '${port.bytesToWrite} bytes ainda estavam no buffer de saída',
         );
       }
-      port.drain();
+      if (payload.cut.isNotEmpty) {
+        await _delay(cutDelay); // pausa física antes da guilhotina
+        _writeAllSerial(port, target, payload.cut);
+        port.drain();
+        if (port.bytesToWrite != 0) {
+          throw _serialCommunicationError(
+            target,
+            '${port.bytesToWrite} bytes do corte ficaram no buffer de saída',
+          );
+        }
+      }
     } on SerialPortError catch (error) {
       throw _serialCommunicationError(target, error.message);
     } finally {
       if (port.isOpen) port.close();
       port.dispose();
+    }
+  }
+
+  void _writeAllSerial(
+    SerialPort port,
+    PrinterEndpoint target,
+    List<int> bytes,
+  ) {
+    if (bytes.isEmpty) return;
+    final written = port.write(
+      Uint8List.fromList(bytes),
+      timeout: target.timeout.inMilliseconds,
+    );
+    if (written < bytes.length) {
+      throw _serialCommunicationError(
+        target,
+        'foram enviados apenas $written de ${bytes.length} bytes',
+      );
     }
   }
 
@@ -659,6 +817,120 @@ class LocalDeviceAgent {
     );
   }
 
+  /// Revalida os equipamentos sem bloquear a tela de vendas.
+  Future<PrinterAvailability> refreshPrinterAvailability({
+    bool useCachedDevices = false,
+  }) async {
+    if (_token == null || _restaurantId == null) {
+      const status = PrinterAvailability(
+        PrinterAvailabilityPhase.notConfigured,
+        'Impressora desconectada',
+      );
+      printerAvailability.value = status;
+      return status;
+    }
+    printerAvailability.value = const PrinterAvailability(
+      PrinterAvailabilityPhase.checking,
+      'Verificando impressora...',
+    );
+    try {
+      if (!useCachedDevices || _printers.isEmpty) {
+        await _syncDevicesIfNeeded();
+      }
+      final candidates = _printers
+          .where((printer) => PrinterEndpoint.fromJson(printer).isAddressable)
+          .toList();
+      if (candidates.isEmpty) {
+        const status = PrinterAvailability(
+          PrinterAvailabilityPhase.notConfigured,
+          'Impressora desconectada',
+        );
+        printerAvailability.value = status;
+        return status;
+      }
+      for (final printer in candidates) {
+        final target = PrinterEndpoint.fromJson(printer);
+        if (await _probe(target)) {
+          final status = PrinterAvailability(
+            PrinterAvailabilityPhase.available,
+            'Impressora disponível',
+          );
+          printerAvailability.value = status;
+          return status;
+        }
+      }
+    } catch (_) {
+      // A indisponibilidade vira estado visual; nunca encerra a tela de venda.
+    }
+    const status = PrinterAvailability(
+      PrinterAvailabilityPhase.unavailable,
+      'Impressora desconectada',
+    );
+    printerAvailability.value = status;
+    return status;
+  }
+
+  Future<bool> checkPrinterAvailability(
+    Map<String, dynamic> printer, {
+    bool publish = true,
+  }) async {
+    final target = PrinterEndpoint.fromJson(printer);
+    final available = target.isAddressable && await _probe(target);
+    if (publish) {
+      printerAvailability.value = PrinterAvailability(
+        available
+            ? PrinterAvailabilityPhase.available
+            : PrinterAvailabilityPhase.unavailable,
+        available ? 'Impressora disponível' : 'Impressora desconectada',
+      );
+    }
+    return available;
+  }
+
+  Future<bool> _probe(PrinterEndpoint target) async {
+    final custom = _availabilityProbe;
+    if (custom != null) return custom(target);
+    try {
+      switch (target.connection) {
+        case PrinterConnection.serial:
+          final configured = target.endpoint.trim();
+          final detected = SerialPort.availablePorts.any(
+            (port) => Platform.isWindows
+                ? port.toLowerCase() == configured.toLowerCase()
+                : port == configured,
+          );
+          return detected ||
+              (!Platform.isWindows && await File(configured).exists());
+        case PrinterConnection.network:
+          final socket = await Socket.connect(
+            target.host,
+            target.port,
+            timeout: target.timeout,
+          );
+          socket.destroy();
+          return true;
+        case PrinterConnection.spool:
+          if (Platform.isWindows) {
+            final safeName = target.endpoint.replaceAll("'", "''");
+            final result = await Process.run('powershell.exe', [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              "Get-Printer -Name '$safeName' -ErrorAction Stop | Out-Null",
+            ]).timeout(target.timeout);
+            return result.exitCode == 0;
+          }
+          final result = await Process.run('lpstat', [
+            '-p',
+            target.endpoint,
+          ]).timeout(target.timeout);
+          return result.exitCode == 0;
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _syncDevicesIfNeeded() async {
     final now = DateTime.now();
     if (_lastDeviceSync != null &&
@@ -668,10 +940,23 @@ class LocalDeviceAgent {
     final existing = _deviceSyncInFlight;
     if (existing != null) return existing;
 
-    final sync = _list(
-      '/printers/',
-      query: {'restaurant': _restaurantId, 'is_active': true, 'page_size': 100},
-    ).then((printers) => _printers = printers);
+    final sync =
+        _list(
+          '/printers/',
+          query: {
+            'restaurant': _restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          },
+        ).then(
+          (printers) => _printers = printers
+              .map(
+                (printer) =>
+                    preferences?.applySerialPort(printer, kind: 'printer') ??
+                    printer,
+              )
+              .toList(),
+        );
     _deviceSyncInFlight = sync;
     try {
       await sync;

@@ -25,6 +25,7 @@ class LocalPreferences {
   static const _audibleAlertsKey = 'scale_audible_alerts';
   static const _autoPrintKey = 'scale_auto_print';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
+  static const _serialPortOverridesKey = 'serial_port_overrides';
 
   final File _file;
   Map<String, dynamic> _values = const {};
@@ -56,8 +57,9 @@ class LocalPreferences {
 
   /// Tempo máximo aguardando a leitura da comanda antes de cancelar a operação
   /// temporária e voltar ao estado inicial.
-  Duration get commandTimeout =>
-      Duration(seconds: _int(_commandTimeoutKey, fallback: 45, min: 10, max: 600));
+  Duration get commandTimeout => Duration(
+    seconds: _int(_commandTimeoutKey, fallback: 45, min: 10, max: 600),
+  );
 
   Future<void> setCommandTimeout(Duration value) =>
       _write(_commandTimeoutKey, value.inSeconds.clamp(10, 600));
@@ -71,8 +73,7 @@ class LocalPreferences {
 
   bool get audibleAlerts => _values[_audibleAlertsKey] as bool? ?? true;
 
-  Future<void> setAudibleAlerts(bool value) =>
-      _write(_audibleAlertsKey, value);
+  Future<void> setAudibleAlerts(bool value) => _write(_audibleAlertsKey, value);
 
   /// Imprime o cupom automaticamente ao concluir o pedido da balança.
   bool get autoPrint => _values[_autoPrintKey] as bool? ?? true;
@@ -87,10 +88,66 @@ class LocalPreferences {
     return (value == null || value.trim().isEmpty) ? null : value.trim();
   }
 
-  Future<void> setApiBaseUrlOverride(String? value) =>
-      _write(_apiBaseUrlOverrideKey, (value == null || value.trim().isEmpty) ? null : value.trim());
+  Future<void> setApiBaseUrlOverride(String? value) => _write(
+    _apiBaseUrlOverrideKey,
+    (value == null || value.trim().isEmpty) ? null : value.trim(),
+  );
 
-  int _int(String key, {required int fallback, required int min, required int max}) {
+  /// Porta serial escolhida especificamente neste terminal.
+  ///
+  /// O cadastro do equipamento continua sincronizado com a Retaguarda, mas a
+  /// mesma balanca/impressora pode receber nomes diferentes do sistema
+  /// operacional em cada caixa (por exemplo, COM4 no Windows e
+  /// /dev/ttyUSB0 no Linux). O override local evita que um terminal altere o
+  /// caminho usado pelos demais.
+  String? serialPortFor({required String kind, required String deviceId}) {
+    final overrides = _values[_serialPortOverridesKey];
+    if (overrides is! Map) return null;
+    final value = overrides['$kind:$deviceId'];
+    final normalized = '${value ?? ''}'.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  Future<void> setSerialPort({
+    required String kind,
+    required String deviceId,
+    required String? value,
+  }) {
+    final current = _values[_serialPortOverridesKey];
+    final overrides = current is Map
+        ? Map<String, dynamic>.from(current)
+        : <String, dynamic>{};
+    final key = '$kind:$deviceId';
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty) {
+      overrides.remove(key);
+    } else {
+      overrides[key] = normalized;
+    }
+    return _write(_serialPortOverridesKey, overrides);
+  }
+
+  /// Aplica o caminho local sem descartar os demais campos recebidos da API.
+  Map<String, dynamic> applySerialPort(
+    Map<String, dynamic> device, {
+    required String kind,
+  }) {
+    final id = '${device['id'] ?? ''}'.trim();
+    if (id.isEmpty) return device;
+    final local = serialPortFor(kind: kind, deviceId: id);
+    if (local == null) return device;
+    return {
+      ...device,
+      if (kind == 'printer') 'endpoint': local else 'port': local,
+    };
+  }
+
+  int _int(
+    String key, {
+    required int fallback,
+    required int min,
+    required int max,
+  }) {
     final raw = _values[key];
     final value = raw is num ? raw.toInt() : int.tryParse('$raw');
     if (value == null) return fallback;

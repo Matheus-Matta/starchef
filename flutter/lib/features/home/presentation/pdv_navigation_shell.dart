@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../devices/services/local_device_agent.dart';
 
 /// Destinos da barra lateral.
 ///
@@ -341,6 +342,67 @@ class PdvConnectionBadge extends StatelessWidget {
               child: content,
             ),
     );
+  }
+}
+
+/// Estado do periférico de impressão acompanhado pelo agente local.
+class PdvPrinterBadge extends StatelessWidget {
+  const PdvPrinterBadge({
+    super.key,
+    required this.status,
+    this.compact = false,
+  });
+
+  final PrinterAvailability status;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final available = status.phase == PrinterAvailabilityPhase.available;
+    final checking = status.phase == PrinterAvailabilityPhase.checking;
+    final foreground = checking
+        ? scheme.onSurfaceVariant
+        : available
+        ? const Color(0xFF167A3E)
+        : scheme.error;
+    final background = checking
+        ? scheme.surfaceContainer
+        : available
+        ? const Color(0xFFE8F7EE)
+        : scheme.errorContainer;
+    final icon = checking
+        ? Icons.sync
+        : available
+        ? Icons.print_rounded
+        : Icons.print_disabled_outlined;
+    final content = Container(
+      height: 38,
+      padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 11),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: foreground.withValues(alpha: .18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 17, color: foreground),
+          if (!compact) ...[
+            const SizedBox(width: 7),
+            Text(
+              status.message,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+    return Tooltip(message: status.message, child: content);
   }
 }
 

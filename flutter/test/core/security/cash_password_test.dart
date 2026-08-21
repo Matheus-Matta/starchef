@@ -21,4 +21,16 @@ void main() {
       isFalse,
     );
   });
+
+  test('gera verificador local sem armazenar a senha em texto puro', () async {
+    final encoded = await CashPassword.encode(
+      'segredo-offline',
+      iterations: 1000,
+    );
+
+    expect(encoded, startsWith(r'pbkdf2_sha256$1000$'));
+    expect(encoded, isNot(contains('segredo-offline')));
+    expect(await CashPassword.verify('segredo-offline', encoded), isTrue);
+    expect(await CashPassword.verify('outra-senha', encoded), isFalse);
+  });
 }

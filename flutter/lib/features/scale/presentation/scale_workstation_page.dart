@@ -311,7 +311,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         accessToken: widget.accessToken,
       );
       final values = (response['results'] as List? ?? const [])
-          .cast<Map<String, dynamic>>();
+          .cast<Map<String, dynamic>>()
+          .map(
+            (item) => widget.preferences.applySerialPort(item, kind: 'scale'),
+          )
+          .toList();
       if (!mounted) return;
       setState(() {
         scales = values;
@@ -342,7 +346,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         accessToken: widget.accessToken,
       );
       final values = (response['results'] as List? ?? const [])
-          .cast<Map<String, dynamic>>();
+          .cast<Map<String, dynamic>>()
+          .map(
+            (item) => widget.preferences.applySerialPort(item, kind: 'printer'),
+          )
+          .toList();
       if (mounted) setState(() => printers = values);
     } on ApiException catch (error) {
       if (mounted) {

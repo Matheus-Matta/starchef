@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
+import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
 import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart';
@@ -479,6 +480,44 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Sem o Principal'), findsNothing);
       expect(find.byIcon(Icons.lan_outlined), findsOneWidget);
+    });
+  });
+
+  group('PdvPrinterBadge', () {
+    testWidgets('mostra impressora disponível', (tester) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(360, 120),
+        child: const PdvPrinterBadge(
+          status: PrinterAvailability(
+            PrinterAvailabilityPhase.available,
+            'Impressora disponível',
+          ),
+        ),
+      );
+
+      expect(find.text('Impressora disponível'), findsOneWidget);
+      expect(find.byIcon(Icons.print_rounded), findsOneWidget);
+    });
+
+    testWidgets('mostra impressora desconectada sem estourar no compacto', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(120, 90),
+        child: const PdvPrinterBadge(
+          compact: true,
+          status: PrinterAvailability(
+            PrinterAvailabilityPhase.unavailable,
+            'Impressora desconectada',
+          ),
+        ),
+      );
+
+      expect(find.text('Impressora desconectada'), findsNothing);
+      expect(find.byIcon(Icons.print_disabled_outlined), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

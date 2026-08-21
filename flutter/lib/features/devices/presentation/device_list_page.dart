@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../domain/printer_endpoint.dart';
 import '../services/local_device_agent.dart';
@@ -23,12 +24,14 @@ class DeviceListPage extends StatefulWidget {
     required this.api,
     required this.token,
     required this.restaurantId,
+    required this.preferences,
   });
 
   final DeviceKind kind;
   final ApiClient api;
   final String token;
   final String restaurantId;
+  final LocalPreferences preferences;
 
   @override
   State<DeviceListPage> createState() => _DeviceListPageState();
@@ -65,6 +68,12 @@ class _DeviceListPageState extends State<DeviceListPage> {
       rows = ((data['results'] ?? const []) as List)
           .cast<Map<String, dynamic>>()
           .where((item) => '${item['restaurant']}' == widget.restaurantId)
+          .map(
+            (item) => widget.preferences.applySerialPort(
+              item,
+              kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
+            ),
+          )
           .toList();
     } on ApiException catch (error) {
       loadError = error.message;
@@ -84,6 +93,7 @@ class _DeviceListPageState extends State<DeviceListPage> {
           api: widget.api,
           token: widget.token,
           restaurantId: widget.restaurantId,
+          preferences: widget.preferences,
           item: item,
         ),
       ),
@@ -391,12 +401,14 @@ class DeviceEditPage extends StatefulWidget {
     required this.api,
     required this.token,
     required this.restaurantId,
+    required this.preferences,
     this.item,
   });
   final DeviceKind kind;
   final ApiClient api;
   final String token;
   final String restaurantId;
+  final LocalPreferences preferences;
   final Map<String, dynamic>? item;
 
   @override
@@ -616,6 +628,17 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
           'O servidor não confirmou o tipo de conexão. Reinicie e atualize o backend antes de tentar novamente.',
         );
       }
+      final savedId = '${saved['id'] ?? widget.item?['id'] ?? ''}'.trim();
+      if (savedId.isNotEmpty) {
+        final usesSerial =
+            widget.kind == DeviceKind.scale ||
+            (widget.kind == DeviceKind.printer && connectionType == 'serial');
+        await widget.preferences.setSerialPort(
+          kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
+          deviceId: savedId,
+          value: usesSerial ? connection.text : null,
+        );
+      }
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (error) {
       if (mounted) {
@@ -642,7 +665,7 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       final printer = <String, dynamic>{
         ...apiPrinter,
         'connection_type': connectionType,
-        'endpoint': connection.text.trim().toUpperCase(),
+        'endpoint': connection.text.trim(),
         'host': host.text.trim().isEmpty ? null : host.text.trim(),
         'port': int.tryParse(networkPort.text) ?? 9100,
         'timeout_seconds': int.tryParse(timeout.text) ?? 10,
@@ -926,59 +949,20 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Expanded(
-                                child: localSerialPorts.isNotEmpty
-                                    ? DropdownButtonFormField<String>(
-                                        key: ValueKey(
-                                          localSerialPorts.join('|'),
-                                        ),
-                                        initialValue: connection.text.isEmpty
-                                            ? null
-                                            : connection.text.toUpperCase(),
-                                        decoration: const InputDecoration(
-                                          labelText: 'Porta serial',
-                                          helperText:
-                                              'Portas COM detectadas neste computador.',
-                                        ),
-                                        items:
-                                            {
-                                                  if (connection
-                                                      .text
-                                                      .isNotEmpty)
-                                                    connection.text
-                                                        .toUpperCase(),
-                                                  ...localSerialPorts,
-                                                }
-                                                .map(
-                                                  (port) => DropdownMenuItem(
-                                                    value: port,
-                                                    child: Text(port),
-                                                  ),
-                                                )
-                                                .toList(),
-                                        onChanged: (value) =>
-                                            connection.text = value ?? '',
-                                        validator: (value) =>
-                                            value == null || value.isEmpty
-                                            ? 'Selecione a porta serial.'
-                                            : null,
-                                      )
-                                    : TextFormField(
-                                        controller: connection,
-                                        textCapitalization:
-                                            TextCapitalization.characters,
-                                        decoration: const InputDecoration(
-                                          labelText: 'Porta serial',
-                                          helperText: 'Ex.: COM1 ou COM2',
-                                        ),
-                                        validator: (value) =>
-                                            value == null ||
-                                                !RegExp(
-                                                  r'^COM\d+$',
-                                                  caseSensitive: false,
-                                                ).hasMatch(value.trim())
-                                            ? 'Informe uma porta como COM1 ou COM2.'
-                                            : null,
-                                      ),
+                                child: TextFormField(
+                                  controller: connection,
+                                  decoration: InputDecoration(
+                                    labelText: 'Porta serial',
+                                    hintText: 'COM4 ou /dev/ttyUSB0',
+                                    helperText: localSerialPorts.isEmpty
+                                        ? 'Digite o nome ou caminho completo da porta.'
+                                        : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
+                                  ),
+                                  validator: (value) =>
+                                      value == null || value.trim().isEmpty
+                                      ? 'Informe a porta serial.'
+                                      : null,
+                                ),
                               ),
                               const SizedBox(width: 16),
                               Expanded(
@@ -1012,40 +996,20 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                                 : null;
                           },
                         ),
-                      ] else if (localSerialPorts.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          key: ValueKey('scale-${localSerialPorts.join('|')}'),
-                          initialValue: connection.text.isEmpty
-                              ? null
-                              : connection.text.toUpperCase(),
-                          decoration: const InputDecoration(
-                            labelText: 'Porta da balança',
-                            helperText:
-                                'Selecione COM1, COM2 ou outra porta detectada.',
-                          ),
-                          items:
-                              {
-                                    if (connection.text.isNotEmpty)
-                                      connection.text.toUpperCase(),
-                                    ...localSerialPorts,
-                                  }
-                                  .map(
-                                    (port) => DropdownMenuItem(
-                                      value: port,
-                                      child: Text(port),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged: (value) => connection.text = value ?? '',
-                        )
-                      else
+                      ] else
                         TextFormField(
                           controller: connection,
-                          textCapitalization: TextCapitalization.characters,
-                          decoration: const InputDecoration(
-                            labelText: 'Porta',
-                            helperText: 'Ex.: COM1, COM2 ou /dev/ttyUSB0.',
+                          decoration: InputDecoration(
+                            labelText: 'Porta da balança',
+                            hintText: 'COM4 ou /dev/ttyUSB0',
+                            helperText: localSerialPorts.isEmpty
+                                ? 'Digite o nome ou caminho completo da porta.'
+                                : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
                           ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? 'Informe a porta da balança.'
+                              : null,
                         ),
                       if (!printer) ...[
                         const SizedBox(height: 16),

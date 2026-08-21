@@ -122,6 +122,7 @@ class _HomePageState extends State<HomePage> {
   final paymentAmount = TextEditingController();
   String? selectedRestaurantId;
   late final LocalDeviceAgent deviceAgent;
+  PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
 
@@ -197,7 +198,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    deviceAgent = LocalDeviceAgent(api: api);
+    deviceAgent = LocalDeviceAgent(api: api, preferences: widget.preferences);
+    deviceAgent.printerAvailability.addListener(_onPrinterStatusChanged);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
     networkStatus = api.syncStatus;
@@ -218,6 +220,7 @@ class _HomePageState extends State<HomePage> {
         offlineMode = !online;
         offlinePendingCount = status.total;
       });
+      if (online) widget.controller.markOnline();
       // Com a conexão de volta, o aviso de "sem conexão" perdeu o assunto e
       // sai sozinho — o operador não precisa fechá-lo à mão.
       if (online) ErrorCenterScope.read(context).dismissByKey('connectivity');
@@ -230,6 +233,22 @@ class _HomePageState extends State<HomePage> {
       if (mounted) unawaited(_refreshFromSignal());
     });
     _load();
+  }
+
+  void _onPrinterStatusChanged() {
+    final next = deviceAgent.printerAvailability.value.phase;
+    final disconnectedAfterUse =
+        next == PrinterAvailabilityPhase.unavailable &&
+        lastPrinterPhase == PrinterAvailabilityPhase.available;
+    lastPrinterPhase = next;
+    if (!mounted || !disconnectedAfterUse) return;
+    showAppToast(
+      context,
+      'Falha ao comunicar com a impressora. Confira o cabo e a porta; o PDV continua disponível.',
+      title: 'Impressora desconectada',
+      severity: AppErrorSeverity.warning,
+      autoDismissAfter: const Duration(seconds: 8),
+    );
   }
 
   /// Relê o que está na tela a partir da cópia local.
@@ -331,6 +350,7 @@ class _HomePageState extends State<HomePage> {
       );
       restaurants = bootstrap.restaurants;
       selectedRestaurantId = bootstrap.selectedRestaurantId;
+      widget.controller.setActiveRestaurant(selectedRestaurantId);
       await widget.controller.repository.cashAuth?.trySync(
         widget.controller.session!,
         restaurantId: selectedRestaurantId,
@@ -839,6 +859,7 @@ class _HomePageState extends State<HomePage> {
           api: api,
           token: token,
           restaurantId: id,
+          preferences: widget.preferences,
         ),
       ),
     );
@@ -1499,7 +1520,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    deviceAgent.stop();
+    deviceAgent.printerAvailability.removeListener(_onPrinterStatusChanged);
+    deviceAgent.dispose();
     unawaited(orderStore.close());
     ordersSignalSubscription?.cancel();
     syncStatusSubscription?.cancel();
@@ -1521,6 +1543,19 @@ class _HomePageState extends State<HomePage> {
     final center = ErrorCenterScope.read(context);
     if (error is ApiException) {
       center.reportApi(error, title: title, recommendedAction: action);
+      return;
+    }
+    if (error is PrinterCommunicationException) {
+      center.report(
+        AppError(
+          title: title ?? 'Falha ao comunicar com a impressora',
+          message: error.message,
+          origin: AppErrorOrigin.peripheral,
+          severity: AppErrorSeverity.warning,
+          recommendedAction: action ?? error.recommendedAction,
+          dedupeKey: 'printer-communication',
+        ),
+      );
       return;
     }
     center.reportUnexpected(error, title: title);
@@ -1694,12 +1729,12 @@ class _HomePageState extends State<HomePage> {
             (c) => '${c?['number']}' == term || '${c?['code']}'.toLowerCase() == term,
             orElse: () => null,
           );
-      
+
       if (command == null) {
         showAppToast(context, 'Comanda não encontrada.', severity: AppErrorSeverity.warning);
         return;
       }
-      
+
       if (selectedTable != null) {
         final capacity = selectedTable!['capacity'] ?? 0;
         final activeCommandsCount = (selectedTable!['active_commands'] as List? ?? []).length;
@@ -1735,7 +1770,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _unlinkCommand(Map<String, dynamic> command) async {
     try {
       setState(() => busy = true);
-      await api.post('/commands/${command['id']}/unlink_table/', accessToken: token);
+      await api.post('/commands/${command['id']}/unlink_table/', body: const {}, accessToken: token);
       showAppToast(context, 'Comanda desvinculada.');
       await _load();
     } catch (e) {
@@ -3794,6 +3829,19 @@ class _HomePageState extends State<HomePage> {
                           : null,
                     ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 2,
+                    ),
+                    child: ValueListenableBuilder<PrinterAvailability>(
+                      valueListenable: deviceAgent.printerAvailability,
+                      builder: (_, status, _) => PdvPrinterBadge(
+                        status: status,
+                        compact: compactHeader,
+                      ),
+                    ),
+                  ),
                   if (isSecondaryStation)
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -3933,6 +3981,38 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(width: 10),
                 ],
+                bottom: widget.controller.offlineMode
+                    ? PreferredSize(
+                        preferredSize: const Size.fromHeight(38),
+                        child: Container(
+                          width: double.infinity,
+                          height: 38,
+                          color: scheme.errorContainer,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.cloud_off_outlined,
+                                size: 18,
+                                color: scheme.onErrorContainer,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Modo Offline — login validado no cache local; a Retaguarda está indisponível.',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: scheme.onErrorContainer,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : null,
               ),
               body: Stack(
                 children: [

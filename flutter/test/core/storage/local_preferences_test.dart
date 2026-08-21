@@ -90,4 +90,41 @@ void main() {
     expect(reloaded.audibleAlerts, isFalse);
     expect(reloaded.commandTimeout, const Duration(seconds: 90));
   });
+
+  test(
+    'porta serial livre persiste e sobrepõe o caminho deste terminal',
+    () async {
+      final preferences = LocalPreferences(file: file);
+      await preferences.load();
+      await preferences.setSerialPort(
+        kind: 'printer',
+        deviceId: 'printer-1',
+        value: '/dev/ttyUSB0',
+      );
+      await preferences.setSerialPort(
+        kind: 'scale',
+        deviceId: 'scale-1',
+        value: 'COM17',
+      );
+
+      final reloaded = LocalPreferences(file: file);
+      await reloaded.load();
+
+      expect(
+        reloaded.applySerialPort({
+          'id': 'printer-1',
+          'endpoint': 'COM1',
+          'connection_type': 'serial',
+        }, kind: 'printer')['endpoint'],
+        '/dev/ttyUSB0',
+      );
+      expect(
+        reloaded.applySerialPort({
+          'id': 'scale-1',
+          'port': 'COM2',
+        }, kind: 'scale')['port'],
+        'COM17',
+      );
+    },
+  );
 }

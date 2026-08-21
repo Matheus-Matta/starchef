@@ -5,9 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
+import 'package:starchef_pdv/core/network/api_exception.dart';
 import 'package:starchef_pdv/core/network/offline_store.dart';
 import 'package:starchef_pdv/core/storage/session_store.dart';
 import 'package:starchef_pdv/features/auth/data/auth_repository.dart';
+import 'package:starchef_pdv/features/auth/data/offline_login_store.dart';
 import 'package:starchef_pdv/features/auth/domain/auth_session.dart';
 
 /// Cofre em memória, para não tocar no cofre real do sistema.
@@ -31,6 +33,38 @@ class FakeSessionStore implements SessionStore {
   Future<void> clear() async {
     clears += 1;
     stored = null;
+  }
+}
+
+class FakeOfflineLoginStore implements OfflineLoginStore {
+  AuthSession? session;
+  String? username;
+  String? password;
+  int saves = 0;
+  int authenticationAttempts = 0;
+
+  @override
+  Future<void> save({
+    required String username,
+    required String password,
+    required AuthSession session,
+  }) async {
+    saves += 1;
+    this.username = username.trim().toLowerCase();
+    this.password = password;
+    this.session = session;
+  }
+
+  @override
+  Future<AuthSession?> authenticate({
+    required String username,
+    required String password,
+  }) async {
+    authenticationAttempts += 1;
+    return username.trim().toLowerCase() == this.username &&
+            password == this.password
+        ? session
+        : null;
   }
 }
 
@@ -188,9 +222,7 @@ void main() {
   });
 
   test('sem sessão guardada não há o que restaurar', () async {
-    final api = clientWith(
-      MockClient((_) async => http.Response('{}', 200)),
-    );
+    final api = clientWith(MockClient((_) async => http.Response('{}', 200)));
     final repository = AuthRepository(
       apiClient: api,
       sessionStore: FakeSessionStore(),
@@ -221,6 +253,105 @@ void main() {
 
     expect(await repository.restoreSession(), isNull);
     expect(store.clears, 1);
+    await api.dispose();
+  });
+
+  test('login online atualiza o cache seguro mesmo sem Lembrar-me', () async {
+    final api = clientWith(
+      MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'access': 'access-novo',
+            'refresh': 'refresh-novo',
+            'user': {'id': 'u1', 'username': 'ana', 'name': 'Ana'},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+    final sessions = FakeSessionStore();
+    final offline = FakeOfflineLoginStore();
+    final repository = AuthRepository(
+      apiClient: api,
+      sessionStore: sessions,
+      offlineLoginStore: offline,
+    );
+
+    final result = await repository.loginWithFallback(
+      username: 'Ana',
+      password: 'segredo',
+      remember: false,
+    );
+
+    expect(result.offline, isFalse);
+    expect(offline.saves, 1);
+    expect(offline.username, 'ana');
+    expect(sessions.saves, 0);
+    await api.dispose();
+  });
+
+  test(
+    'timeout no servidor valida usuário e senha contra o cache local',
+    () async {
+      final api = clientWith(
+        MockClient((_) async => throw const SocketException('sem internet')),
+      );
+      final cached = sessionWith();
+      final offline = FakeOfflineLoginStore()
+        ..username = 'ana'
+        ..password = 'segredo'
+        ..session = cached;
+      final repository = AuthRepository(
+        apiClient: api,
+        sessionStore: FakeSessionStore(),
+        offlineLoginStore: offline,
+      );
+
+      final result = await repository.loginWithFallback(
+        username: 'ANA',
+        password: 'segredo',
+        remember: false,
+      );
+
+      expect(result.offline, isTrue);
+      expect(result.session, same(cached));
+      expect(offline.authenticationAttempts, 1);
+      await api.dispose();
+    },
+  );
+
+  test('senha recusada pelo servidor nunca usa o cache offline', () async {
+    final api = clientWith(
+      MockClient(
+        (_) async => http.Response(
+          jsonEncode({'detail': 'Credenciais inválidas.'}),
+          401,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+    final offline = FakeOfflineLoginStore()
+      ..username = 'ana'
+      ..password = 'segredo'
+      ..session = sessionWith();
+    final repository = AuthRepository(
+      apiClient: api,
+      sessionStore: FakeSessionStore(),
+      offlineLoginStore: offline,
+    );
+
+    expect(
+      () => repository.loginWithFallback(
+        username: 'ana',
+        password: 'errada',
+        remember: false,
+      ),
+      throwsA(
+        isA<ApiException>().having((error) => error.statusCode, 'status', 401),
+      ),
+    );
+    expect(offline.authenticationAttempts, 0);
     await api.dispose();
   });
 }

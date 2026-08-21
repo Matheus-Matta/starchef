@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,37 @@ class CashPassword {
       'encoded': encoded,
     });
   }
+
+  /// Cria um verificador PBKDF2 compatível com o formato do Django.
+  ///
+  /// É usado pelo login offline para nunca persistir a senha em texto puro.
+  static Future<String> encode(String password, {int iterations = 210000}) {
+    if (password.isEmpty) {
+      throw ArgumentError.value(password, 'password', 'não pode ser vazia');
+    }
+    final random = Random.secure();
+    final salt = base64Url
+        .encode(List<int>.generate(18, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    return compute(_encodeInIsolate, <String, Object>{
+      'password': password,
+      'salt': salt,
+      'iterations': iterations,
+    });
+  }
+}
+
+String _encodeInIsolate(Map<String, Object> args) {
+  final password = '${args['password'] ?? ''}';
+  final salt = '${args['salt'] ?? ''}';
+  final iterations = args['iterations'] as int? ?? 210000;
+  final derived = _pbkdf2Sha256(
+    utf8.encode(password),
+    utf8.encode(salt),
+    iterations,
+    32,
+  );
+  return 'pbkdf2_sha256\$$iterations\$$salt\$${base64.encode(derived)}';
 }
 
 bool _verifyInIsolate(Map<String, String> args) {

@@ -31,13 +31,20 @@ class StarChefApp extends StatefulWidget {
   State<StarChefApp> createState() => _StarChefAppState();
 }
 
-class _StarChefAppState extends State<StarChefApp> {
+class _StarChefAppState extends State<StarChefApp> with WindowListener {
   late final AuthController _auth = AuthController(widget.authRepository)
     ..initialize();
   late ThemeMode _themeMode = widget.preferences.themeMode;
   // main.dart inicia o PDV principal em tela cheia. Manter o estado alinhado
   // evita o menu oferecer "entrar" em tela cheia quando ele já está nela.
   bool _isFullScreen = true;
+  bool _closeDialogOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+  }
 
   Future<void> _toggleFullScreen() async {
     final current = await windowManager.isFullScreen();
@@ -56,7 +63,109 @@ class _StarChefAppState extends State<StarChefApp> {
   }
 
   @override
+  Future<void> onWindowClose() async {
+    if (_closeDialogOpen || !mounted) return;
+    _closeDialogOpen = true;
+    final password = TextEditingController();
+    String? errorMessage;
+    var checking = false;
+    try {
+      final authorized = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, update) {
+            Future<void> confirm() async {
+              if (checking || password.text.isEmpty) return;
+              update(() {
+                checking = true;
+                errorMessage = null;
+              });
+              final valid = await _auth.verifySupervisorClosePassword(
+                password.text,
+              );
+              if (!dialogContext.mounted) return;
+              if (valid) {
+                Navigator.pop(dialogContext, true);
+                return;
+              }
+              await windowManager.setFullScreen(true);
+              if (mounted) setState(() => _isFullScreen = true);
+              update(() {
+                checking = false;
+                errorMessage = 'Senha do Supervisor incorreta.';
+                password.clear();
+              });
+            }
+
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.admin_panel_settings_outlined),
+                  SizedBox(width: 10),
+                  Expanded(child: Text('Autorização para fechar o PDV')),
+                ],
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Informe a Senha do Supervisor cadastrada para o restaurante.',
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: password,
+                      autofocus: true,
+                      obscureText: true,
+                      enabled: !checking,
+                      decoration: InputDecoration(
+                        labelText: 'Senha do Supervisor',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        errorText: errorMessage,
+                      ),
+                      onSubmitted: (_) => unawaited(confirm()),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: checking
+                      ? null
+                      : () => Navigator.pop(dialogContext, false),
+                  child: const Text('Manter PDV aberto'),
+                ),
+                FilledButton.icon(
+                  onPressed: checking ? null : () => unawaited(confirm()),
+                  icon: checking
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.power_settings_new),
+                  label: const Text('Fechar aplicação'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      if (authorized == true) {
+        await windowManager.setPreventClose(false);
+        await windowManager.destroy();
+      }
+    } finally {
+      password.dispose();
+      _closeDialogOpen = false;
+    }
+  }
+
+  @override
   void dispose() {
+    windowManager.removeListener(this);
     _auth.dispose();
     super.dispose();
   }

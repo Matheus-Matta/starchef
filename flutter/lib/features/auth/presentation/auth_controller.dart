@@ -14,7 +14,9 @@ class AuthController extends ChangeNotifier {
   AuthSession? session;
   bool loading = false;
   bool initialized = false;
+  bool offlineMode = false;
   String? errorMessage;
+  String? activeRestaurantId;
 
   /// Mensagem mostrada na tela de login quando a sessão caiu sozinha.
   String? expiredNotice;
@@ -28,7 +30,9 @@ class AuthController extends ChangeNotifier {
     // A restauração renova o token por conta própria quando necessário, então
     // o refresher do ApiClient só é ligado depois: durante o boot ainda não há
     // sessão em memória para ele renovar.
-    session = await _repository.restoreSession();
+    final restored = await _repository.restoreSessionWithStatus();
+    session = restored?.session;
+    offlineMode = restored?.offline ?? false;
     _repository.apiClient.attachTokenRefresher(_renewAccessToken);
     initialized = true;
     _safeNotify();
@@ -59,6 +63,7 @@ class AuthController extends ChangeNotifier {
   void _handleSessionExpired() {
     if (session == null) return;
     session = null;
+    offlineMode = false;
     expiredNotice =
         'Sua sessão expirou. Entre novamente para continuar operando.';
     AppLogger.instance.warning('auth_session_expired');
@@ -77,11 +82,13 @@ class AuthController extends ChangeNotifier {
     expiredNotice = null;
     notifyListeners();
     try {
-      session = await _repository.login(
+      final result = await _repository.loginWithFallback(
         username: username,
         password: password,
         remember: remember,
       );
+      session = result.session;
+      offlineMode = result.offline;
       return true;
     } on ApiException catch (error) {
       errorMessage = error.message;
@@ -107,8 +114,35 @@ class AuthController extends ChangeNotifier {
   Future<void> logout() async {
     await _repository.logout();
     session = null;
+    offlineMode = false;
+    activeRestaurantId = null;
     expiredNotice = null;
     _safeNotify();
+  }
+
+  void setActiveRestaurant(String? restaurantId) {
+    activeRestaurantId = restaurantId;
+  }
+
+  /// Remove o aviso de autenticação offline assim que a Retaguarda volta.
+  void markOnline() {
+    if (!offlineMode) return;
+    offlineMode = false;
+    _safeNotify();
+  }
+
+  /// Confere a senha cadastrada do restaurante; enquanto ainda não houver um
+  /// hash sincronizado, aceita a senha temporária definida pelo produto.
+  Future<bool> verifySupervisorClosePassword(String password) async {
+    final restaurantId = activeRestaurantId ?? session?.user.restaurantId;
+    final cashAuth = _repository.cashAuth;
+    if (restaurantId != null && restaurantId.isNotEmpty && cashAuth != null) {
+      final hasStored = await cashAuth.hasStoredPassword(restaurantId);
+      if (hasStored) {
+        return cashAuth.verify(password, restaurantId: restaurantId);
+      }
+    }
+    return password == '12345678';
   }
 
   void _safeNotify() {

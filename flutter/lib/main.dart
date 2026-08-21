@@ -74,6 +74,9 @@ Future<void> main(List<String> arguments) async {
   );
 
   await windowManager.ensureInitialized();
+  if (!scaleWindow) {
+    await windowManager.setPreventClose(true);
+  }
   final windowOptions = WindowOptions(
     size: scaleWindow ? const Size(1180, 760) : const Size(1280, 800),
     minimumSize: scaleWindow ? const Size(900, 650) : const Size(960, 640),
