@@ -1,5 +1,7 @@
 import { computed, readonly, ref } from "vue";
 
+import { API_BASE_URL } from "./api";
+
 const state = ref("idle");
 const lastEvent = ref(null);
 const listeners = new Map();
@@ -9,11 +11,21 @@ let heartbeatTimer = null;
 let attempts = 0;
 let manuallyStopped = false;
 
-function websocketUrl() {
+export function websocketUrl() {
   const configured = window.RUNTIME_CONFIG?.WS_URL || import.meta.env.VITE_WS_BASE_URL;
-  if (configured) return `${configured.replace(/\/$/, "")}/ws/realtime/`;
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/ws/realtime/`;
+  // Sem WS_URL explícito o socket segue a ORIGEM DA API, não a do SPA: quando a
+  // API mora em outro host (ex.: api.dominio enquanto o SPA está em dominio), o
+  // /ws/ só existe atrás do proxy da API — apontar para a origem da página cai
+  // no servidor de estáticos e o handshake falha.
+  const url = new URL(configured || API_BASE_URL, window.location.href);
+  // http(s) -> ws(s): `new WebSocket("https://...")` lança SyntaxError. Um
+  // WS_URL que já venha como ws:/wss: é preservado como está.
+  if (url.protocol === "https:") url.protocol = "wss:";
+  else if (url.protocol === "http:") url.protocol = "ws:";
+  url.pathname = "/ws/realtime/";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function emit(message) {

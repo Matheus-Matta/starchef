@@ -111,7 +111,7 @@ Dois composables sustentam isso:
 Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo Vite em dev e pelo proxy reverso externo em produção):
 
 - **`stores/notifications.js`** conecta em `/ws/notifications/` — sino de notificações, reconecta sozinho após 4s se cair. Mensagens: `{event:"notification", payload}` (nova notificação) e `{event:"connected", payload:{unread}}` (sync inicial do contador).
-- **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
+- **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. A URL do socket é derivada da **origem da API** (`RUNTIME_CONFIG.API_URL`), não da origem da página: com a API num subdomínio próprio (`api.dominio`), o `/ws/` só existe atrás do proxy dela. `RUNTIME_CONFIG.WS_URL` sobrescreve quando o WebSocket fica num host à parte. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
 
 ## 7. Autenticação no frontend
 
@@ -153,7 +153,7 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
 - `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 
-Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `sed` num `docker-entrypoint.sh` próprio, executado no start do container (`window.RUNTIME_CONFIG = { API_URL: "..." }`), permitindo promover a mesma imagem entre ambientes sem rebuild.
+Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `sed` num `docker-entrypoint.sh` próprio, executado no start do container (`window.RUNTIME_CONFIG = { API_URL: "...", WS_URL: "..." }` — `WS_URL` é opcional e fica vazio quando o WebSocket acompanha a origem da API), permitindo promover a mesma imagem entre ambientes sem rebuild.
 
 ## 12. Produção
 
