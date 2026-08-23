@@ -183,13 +183,25 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
         profile = getattr(self.user, "profile", None)
         account = profile.account if profile and profile.account_id else None
 
-        if not self.user.is_superuser:
-            if account is None:
-                raise AuthenticationFailed("Usuario sem conta vinculada.", code="account_required")
-            if not account.is_active or account.status != Account.STATUS_ACTIVE:
-                raise AuthenticationFailed("Conta inativa.", code="account_inactive")
-            if not profile.is_active:
-                raise AuthenticationFailed("Perfil inativo.", code="profile_inactive")
+        # Conta vinculada é obrigatória para TODO mundo, superusuário incluído:
+        # no app ele opera como admin da própria conta (a visão de todas as
+        # contas é o /admin). Sem vínculo, o app abriria vazio/403 em toda tela
+        # — melhor barrar aqui, onde a mensagem aparece na tela de login.
+        if account is None:
+            raise AuthenticationFailed(
+                "Usuario sem conta vinculada."
+                if not self.user.is_superuser
+                else "Usuario de plataforma sem conta vinculada. Use o /admin ou vincule um perfil a uma conta.",
+                code="account_required",
+            )
+
+        # Conta inativa vale para o superusuário também: o TenantMiddleware
+        # bloqueia (403 "A conta não está ativa.") sem exceção, então deixá-lo
+        # logar só produziria uma sessão que erra em toda tela.
+        if not account.is_active or account.status != Account.STATUS_ACTIVE:
+            raise AuthenticationFailed("Conta inativa.", code="account_inactive")
+        if not profile.is_active:
+            raise AuthenticationFailed("Perfil inativo.", code="profile_inactive")
 
         data["user"] = {
             "id": str(self.user.id),

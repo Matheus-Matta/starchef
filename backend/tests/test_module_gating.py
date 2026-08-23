@@ -63,10 +63,33 @@ def test_delivery_orders_native_in_base(api_client, restaurant, branch, manager_
 
 
 @pytest.mark.django_db
-def test_superuser_bypasses_module_gating(api_client, db):
+def test_superuser_bypasses_module_gating(api_client, account, restaurant, branch):
+    """Superuser ignora o licenciamento de modulo — mas dentro da conta dele.
+
+    O escopo de conta vale para o superusuario como para qualquer admin (a
+    visao de todas as contas e o /admin), entao ele precisa de perfil: sem
+    conta vinculada a API responde 403 em tudo.
+    """
     from django.contrib.auth import get_user_model
 
+    from apps.accounts.models import UserProfile
+
     root = get_user_model().objects.create_superuser("root", "root@starchef.test", "secret123")
+    UserProfile.objects.create(
+        account=account, user=root, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+    )
     _auth(api_client, root)
-    # Superuser (dono da plataforma) acessa qualquer modulo mesmo sem conta.
+    # Conta sem o modulo `logistica` habilitado: o superuser passa mesmo assim.
+    assert account.enabled_modules == [] or "logistica" not in account.enabled_modules
     assert api_client.get("/api/v1/stock/locations/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_superuser_sem_conta_vinculada_nao_acessa_a_api(api_client, db):
+    from django.contrib.auth import get_user_model
+
+    root = get_user_model().objects.create_superuser("root2", "root2@starchef.test", "secret123")
+    _auth(api_client, root)
+    response = api_client.get("/api/v1/stock/locations/")
+    assert response.status_code == 403
+    assert "não está vinculado a nenhuma conta" in response.json()["detail"]

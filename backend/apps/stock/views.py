@@ -40,8 +40,8 @@ class StockAlertView(APIView):
 
     def _tenant_filter(self, request):
         account = getattr(request, "account", None)
-        if request.user.is_superuser and account is None:
-            return {}
+        # Sem conta no request não há alerta — nem para superusuário (a API
+        # nunca consolida contas; ver TenantMiddleware.resolve_account).
         if not account:
             return {"account_id": None}
         filters = {"account_id": account.id}

@@ -22,6 +22,8 @@ class TenantQuerySetMixin:
 
     Admin/superuser enxerga a conta inteira e pode filtrar por restaurante/filial via
     query params; demais perfis ficam limitados ao proprio restaurante/filial do perfil.
+    Nunca ha escopo global: sem conta no request, um model com campo `account`
+    devolve vazio (ver get_queryset).
     """
 
     tenant_branch_field = "branch"
@@ -44,6 +46,14 @@ class TenantQuerySetMixin:
             set_current_account(account)
             if model_has_field(queryset.model, "account"):
                 queryset = queryset.filter(account=account)
+        elif model_has_field(queryset.model, "account"):
+            # Sem conta no request (superusuário sem perfil e sem X-Account-ID)
+            # a API não serve dados de conta nenhuma — devolver o queryset sem
+            # filtro aqui vazava todas as contas para o frontend. Mesmo
+            # comportamento do TenantManager, que também devolve none() quando
+            # não há conta atual. Ver tudo é papel do /admin, isento do
+            # TenantMiddleware.
+            return queryset.none()
 
         if not user.is_authenticated:
             return queryset.none()

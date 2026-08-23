@@ -286,6 +286,12 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+# A sessão do Django existe SÓ para o /admin (o app usa JWT em cookie próprio).
+# Restringir o path faz o navegador nem enviar o `sessionid` para /api/**: logar
+# no /admin no mesmo navegador não pode influenciar a identidade da API. O
+# TenantMiddleware também ignora a sessão (autentica sempre pelo JWT) — isto
+# aqui é a mesma garantia um nível antes, no navegador.
+SESSION_COOKIE_PATH = "/admin/"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

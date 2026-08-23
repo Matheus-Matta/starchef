@@ -130,7 +130,14 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         user = self.request.user
         if user.is_superuser:
-            return self._filter_users_by_selected_scope(queryset)
+            # Superusuário também é escopado por conta na API: a conta vem do
+            # header X-Account-ID ou do próprio perfil (TenantMiddleware).
+            # Sem conta resolvida não há listagem — ver todas as contas de uma
+            # vez é papel do /admin.
+            account = getattr(self.request, "account", None)
+            if account is None:
+                return queryset.none()
+            return self._filter_users_by_selected_scope(queryset.filter(profile__account_id=account.id))
         profile = getattr(user, "profile", None)
         if not profile or not profile.account_id:
             return queryset.none()
