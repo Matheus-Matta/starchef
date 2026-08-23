@@ -107,6 +107,47 @@ class FocusNfeProvider(FiscalProvider):
             return "https://api.focusnfe.com.br"
         return self.BASE_URL
 
+    @staticmethod
+    def _payment_code(payment):
+        """Converte os meios internos para os códigos tPag da NF-e/NFC-e 4.00."""
+        method = payment.payment_method
+        if method.method_type == "cash":
+            return "01"
+        if method.method_type == "pix":
+            return "17"
+        if method.method_type == "voucher":
+            return "10"
+        if method.method_type == "card":
+            if payment.card_subtype == "debit":
+                return "04"
+            if payment.card_subtype == "credit":
+                return "03"
+        return "99"
+
+    def _build_payments(self, invoice):
+        from apps.payments.models import Payment
+
+        payments = invoice.order.payments.filter(status=Payment.STATUS_APPROVED).select_related("payment_method")
+        result = []
+        for payment in payments:
+            # Em dinheiro, a tag recebe o valor entregue e o troco é informado
+            # separadamente no total da NFC-e. Nos demais meios não há troco.
+            paid_value = payment.amount
+            if payment.payment_method.method_type == "cash":
+                paid_value += payment.change_amount
+            result.append(
+                {
+                    "forma_pagamento": self._payment_code(payment),
+                    "valor_pagamento": str(paid_value),
+                }
+            )
+
+        # Mantém a montagem útil para pedidos antigos/testes sem Payment. O
+        # código 90 significa "sem pagamento" no leiaute fiscal.
+        if not result:
+            result.append({"forma_pagamento": "90", "valor_pagamento": "0.00"})
+        return result
+
     def _build_payload(self, invoice, config):
         items = []
         for item in invoice.items.all():
@@ -128,15 +169,33 @@ class FocusNfeProvider(FiscalProvider):
                     "icms_situacao_tributaria": item.csosn or item.cst_icms or "102",
                 }
             )
+        payments = self._build_payments(invoice)
+        change_total = sum(
+            (
+                payment.change_amount
+                for payment in invoice.order.payments.filter(status="approved", payment_method__method_type="cash")
+            ),
+            start=0,
+        )
+        emission = invoice.fiscal_payload.get("emission")
         payload = {
             "natureza_operacao": "Venda ao consumidor",
-            "presenca_comprador": "1",  # operacao presencial
+            "data_emissao": emission,
+            "indicador_inscricao_estadual_destinatario": "9",  # consumidor final não contribuinte
+            "local_destino": "1",  # operação interna
+            "consumidor_final": "1",
+            "finalidade_emissao": "1",  # emissão normal
+            "presenca_comprador": "4" if invoice.order.order_type == "delivery" else "1",
             "cnpj_emitente": config.cnpj,
             "valor_produtos": str(invoice.products_total),
             "valor_desconto": str(invoice.discount_total),
+            "valor_total": str(invoice.total_amount),
             "modalidade_frete": "9",  # sem frete
             "items": items,
+            "formas_pagamento": payments,
         }
+        if change_total:
+            payload["valor_troco"] = str(change_total)
         if invoice.recipient_cpf:
             payload["cpf_destinatario"] = invoice.recipient_cpf
             payload["nome_destinatario"] = invoice.recipient_name

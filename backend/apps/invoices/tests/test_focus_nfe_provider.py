@@ -17,6 +17,7 @@ from apps.invoices.services import emit_fiscal_invoice
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
+from apps.payments.models import Payment, PaymentMethod
 
 pytestmark = pytest.mark.django_db
 
@@ -73,8 +74,50 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
     assert mock_post.call_count == 1
     sent_payload = mock_post.call_args.kwargs["json"]
     assert sent_payload["cnpj_emitente"] == "11222333000181"
+    assert sent_payload["data_emissao"]
+    assert sent_payload["indicador_inscricao_estadual_destinatario"] == "9"
+    assert sent_payload["local_destino"] == "1"
+    assert sent_payload["consumidor_final"] == "1"
+    assert sent_payload["finalidade_emissao"] == "1"
+    assert sent_payload["presenca_comprador"] == "1"
+    assert sent_payload["formas_pagamento"] == [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
     assert len(sent_payload["items"]) == 1
     assert sent_payload["items"][0]["descricao"] == "X-Burger"
+
+
+@patch("requests.post")
+def test_payload_maps_approved_payments_and_cash_change(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "35" + "0" * 42,
+        "protocolo": "135250000000001",
+    })
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    cash = PaymentMethod.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="Dinheiro", method_type="cash"
+    )
+    pix = PaymentMethod.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="PIX", method_type="pix"
+    )
+    Payment.objects.create(
+        account=account, restaurant=restaurant, branch=branch, order=order,
+        payment_method=cash, amount=Decimal("20.00"), change_amount=Decimal("5.00"),
+    )
+    Payment.objects.create(
+        account=account, restaurant=restaurant, branch=branch, order=order,
+        payment_method=pix, amount=Decimal("5.00"),
+    )
+
+    emit_fiscal_invoice(order, user=manager_user)
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["formas_pagamento"] == [
+        {"forma_pagamento": "01", "valor_pagamento": "25.00"},
+        {"forma_pagamento": "17", "valor_pagamento": "5.00"},
+    ]
+    assert sent_payload["valor_troco"] == "5.00"
 
 
 @patch("requests.post")
