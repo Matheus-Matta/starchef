@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 import '../../../core/hardware/scale/scale_protocol.dart';
 import '../../../core/hardware/scale/scale_transport.dart';
 import '../../../core/storage/local_preferences.dart';
@@ -11,9 +13,14 @@ import '../../../core/storage/local_preferences.dart';
 /// restaurante podem precisar de valores diferentes. Por isso ficam no
 /// `preferences.json` local e não no cadastro do backend.
 class TerminalPreferencesDialog extends StatefulWidget {
-  const TerminalPreferencesDialog({super.key, required this.preferences});
+  const TerminalPreferencesDialog({
+    super.key,
+    required this.preferences,
+    this.detectedPorts,
+  });
 
   final LocalPreferences preferences;
+  final List<String>? detectedPorts;
 
   static Future<void> show(
     BuildContext context,
@@ -28,12 +35,9 @@ class TerminalPreferencesDialog extends StatefulWidget {
       _TerminalPreferencesDialogState();
 }
 
-class _TerminalPreferencesDialogState
-    extends State<TerminalPreferencesDialog> {
-  late int commandTimeoutSeconds =
-      widget.preferences.commandTimeout.inSeconds;
-  late double toleranceGrams =
-      widget.preferences.stabilityToleranceKg * 1000;
+class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
+  late int commandTimeoutSeconds = widget.preferences.commandTimeout.inSeconds;
+  late double toleranceGrams = widget.preferences.stabilityToleranceKg * 1000;
   late bool audibleAlerts = widget.preferences.audibleAlerts;
   late bool autoPrint = widget.preferences.autoPrint;
 
@@ -51,7 +55,9 @@ class _TerminalPreferencesDialogState
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return AppDialog(
+      scrollable: true,
+      maxWidth: 668,
       title: Row(
         children: [
           const Icon(Icons.tune),
@@ -66,85 +72,80 @@ class _TerminalPreferencesDialogState
       ),
       content: SizedBox(
         width: 620,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _section('Balança Rápida', scheme),
-              _slider(
-                label: 'Tempo para ler a comanda',
-                value: commandTimeoutSeconds.toDouble(),
-                min: 10,
-                max: 300,
-                divisions: 29,
-                display: '$commandTimeoutSeconds s',
-                helper:
-                    'Depois desse tempo a estação avisa e, se ninguém ler a '
-                    'comanda, cancela a pesagem e volta a esperar peso.',
-                onChanged: (value) =>
-                    setState(() => commandTimeoutSeconds = value.round()),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _section('Balança Rápida', scheme),
+            _slider(
+              label: 'Tempo para ler a comanda',
+              value: commandTimeoutSeconds.toDouble(),
+              min: 10,
+              max: 300,
+              divisions: 29,
+              display: '$commandTimeoutSeconds s',
+              helper:
+                  'Depois desse tempo a estação avisa e, se ninguém ler a '
+                  'comanda, cancela a pesagem e volta a esperar peso.',
+              onChanged: (value) =>
+                  setState(() => commandTimeoutSeconds = value.round()),
+            ),
+            _slider(
+              label: 'Tolerância de estabilidade',
+              value: toleranceGrams,
+              min: 1,
+              max: 50,
+              divisions: 49,
+              display: '${toleranceGrams.round()} g',
+              helper:
+                  'Oscilação ignorada entre leituras. Aumente se a bancada '
+                  'vibra e o peso nunca estabiliza.',
+              onChanged: (value) => setState(() => toleranceGrams = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: audibleAlerts,
+              onChanged: (value) => setState(() => audibleAlerts = value),
+              title: const Text('Alertas sonoros'),
+              subtitle: const Text(
+                'Bipe ao confirmar o peso, ao aceitar a comanda e no aviso '
+                'de tempo esgotado.',
               ),
-              _slider(
-                label: 'Tolerância de estabilidade',
-                value: toleranceGrams,
-                min: 1,
-                max: 50,
-                divisions: 49,
-                display: '${toleranceGrams.round()} g',
-                helper:
-                    'Oscilação ignorada entre leituras. Aumente se a bancada '
-                    'vibra e o peso nunca estabiliza.',
-                onChanged: (value) => setState(() => toleranceGrams = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: autoPrint,
+              onChanged: (value) => setState(() => autoPrint = value),
+              title: const Text('Imprimir o cupom automaticamente'),
+              subtitle: const Text(
+                'Desligue apenas se o cupom for emitido por outro caminho; '
+                'o pedido continua sendo lançado normalmente.',
               ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: audibleAlerts,
-                onChanged: (value) => setState(() => audibleAlerts = value),
-                title: const Text('Alertas sonoros'),
-                subtitle: const Text(
-                  'Bipe ao confirmar o peso, ao aceitar a comanda e no aviso '
-                  'de tempo esgotado.',
-                ),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: autoPrint,
-                onChanged: (value) => setState(() => autoPrint = value),
-                title: const Text('Imprimir o cupom automaticamente'),
-                subtitle: const Text(
-                  'Desligue apenas se o cupom for emitido por outro caminho; '
-                  'o pedido continua sendo lançado normalmente.',
-                ),
-              ),
-              const SizedBox(height: 18),
-              _section('Diagnóstico do terminal', scheme),
-              _readOnlyRow(
-                icon: Icons.usb,
-                label: 'Portas seriais detectadas',
-                value: _portsSummary(),
-                scheme: scheme,
-              ),
-              _readOnlyRow(
-                icon: Icons.settings_input_component,
-                label: 'Protocolos de balança suportados',
-                value: ScaleProtocol.available
-                    .map((protocol) => protocol.label)
-                    .join(', '),
-                scheme: scheme,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'O protocolo, a porta e o baud rate de cada balança ficam no '
-                'cadastro do equipamento, porque valem para todos os terminais '
-                'que a usam.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 18),
+            _section('Diagnóstico do terminal', scheme),
+            _readOnlyRow(
+              icon: Icons.usb,
+              label: 'Portas seriais detectadas',
+              value: _portsSummary(),
+              scheme: scheme,
+            ),
+            _readOnlyRow(
+              icon: Icons.settings_input_component,
+              label: 'Protocolos de balança suportados',
+              value: ScaleProtocol.available
+                  .map((protocol) => protocol.label)
+                  .join(', '),
+              scheme: scheme,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'O protocolo, a porta e o baud rate de cada balança ficam no '
+              'cadastro do equipamento, porque valem para todos os terminais '
+              'que a usam.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
         ),
       ),
       actions: [
@@ -248,10 +249,7 @@ class _TerminalPreferencesDialogState
               ),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -260,8 +258,8 @@ class _TerminalPreferencesDialogState
     ),
   );
 
-  static String _portsSummary() {
-    final ports = SerialScaleTransport.availablePorts();
+  String _portsSummary() {
+    final ports = widget.detectedPorts ?? SerialScaleTransport.availablePorts();
     return ports.isEmpty ? 'Nenhuma porta encontrada' : ports.join(', ');
   }
 }

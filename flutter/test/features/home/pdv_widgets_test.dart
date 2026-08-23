@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
+import 'package:starchef_pdv/core/theme/app_theme.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
@@ -22,7 +24,7 @@ void main() {
           onToggle: () => toggles++,
           onSelected: (destination) => selected = destination,
           userName: 'Ana Souza',
-          restaurantName: 'StarChef Centro',
+          userSubtitle: '@ana · Operadora',
           onLogout: () => logouts++,
         ),
       );
@@ -33,6 +35,8 @@ void main() {
       expect(find.text('Balança rápida'), findsOneWidget);
       expect(find.text('AS'), findsOneWidget);
       expect(find.text('Ana Souza'), findsOneWidget);
+      expect(find.text('@ana · Operadora'), findsOneWidget);
+      expect(find.text('StarChef Centro'), findsNothing);
 
       // Delivery deixou de ser um módulo da barra lateral; ele existe apenas
       // como tipo de pedido dentro do fluxo de Pedidos.
@@ -62,7 +66,7 @@ void main() {
           onToggle: () {},
           onSelected: (destination) => selected = destination,
           userName: 'Operador',
-          restaurantName: 'Unidade',
+          userSubtitle: '@operador',
           onLogout: () {},
           showOrders: false,
           showScale: false,
@@ -137,10 +141,8 @@ void main() {
       expect(find.text('Hambúrguer artesanal'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), 'suco');
-      // As categorias agora ficam em um select, como no frontend web.
-      await tester.tap(find.byType(DropdownButtonFormField<String?>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Bebidas · 1').last);
+      // A faixa de categorias permanece visível para seleção rápida no PDV.
+      await tester.tap(find.text('Bebidas · 1'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Suco de laranja'));
 
@@ -540,7 +542,10 @@ Future<void> _pumpAtSize(
         useMaterial3: true,
         colorSchemeSeed: const Color(0xFFF57C00),
       ),
-      home: Scaffold(body: child),
+      home: ShadTheme(
+        data: AppTheme.shadLight(),
+        child: Scaffold(body: child),
+      ),
     ),
   );
   await tester.pump();

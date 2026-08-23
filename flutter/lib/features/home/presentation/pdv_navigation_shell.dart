@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../devices/services/local_device_agent.dart';
 
 /// Destinos da barra lateral.
@@ -17,8 +19,10 @@ class PdvSidebar extends StatelessWidget {
     required this.onToggle,
     required this.onSelected,
     required this.userName,
-    required this.restaurantName,
+    required this.userSubtitle,
     required this.onLogout,
+    this.contextPanel,
+    this.compactContextPanel,
     this.showOrders = true,
     this.showScale = true,
     this.showSettings = true,
@@ -29,8 +33,10 @@ class PdvSidebar extends StatelessWidget {
   final VoidCallback onToggle;
   final ValueChanged<PdvDestination> onSelected;
   final String userName;
-  final String restaurantName;
+  final String userSubtitle;
   final VoidCallback onLogout;
+  final Widget? contextPanel;
+  final Widget? compactContextPanel;
   final bool showOrders;
   final bool showScale;
   final bool showSettings;
@@ -75,7 +81,7 @@ class PdvSidebar extends StatelessWidget {
     ];
 
     return SizedBox(
-      width: expanded ? 224 : 76,
+      width: expanded ? 236 : 72,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.surface,
@@ -85,82 +91,139 @@ class PdvSidebar extends StatelessWidget {
           right: false,
           child: Column(
             children: [
-              SizedBox(
-                height: 76,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: expanded ? 18 : 14),
-                  child: Row(
-                    mainAxisAlignment: expanded
-                        ? MainAxisAlignment.start
-                        : MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        padding: const EdgeInsets.all(7),
-                        decoration: BoxDecoration(
-                          color: scheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Image.asset(
-                          'assets/logoicon.png',
-                          filterQuality: FilterQuality.high,
-                        ),
-                      ),
-                      if (expanded) ...[
-                        const SizedBox(width: 11),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'STARCHEF',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.primary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: .8,
-                                ),
-                              ),
-                              Text(
-                                'Ponto de venda',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  expanded ? 16 : 12,
+                  16,
+                  expanded ? 16 : 12,
+                  14,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: expanded
+                          ? MainAxisAlignment.start
+                          : MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: scheme.primaryContainer,
+                            borderRadius: AppTheme.radius,
+                            border: Border.all(color: scheme.outlineVariant),
+                          ),
+                          child: Image.asset(
+                            'assets/logoicon.png',
+                            filterQuality: FilterQuality.high,
                           ),
                         ),
+                        if (expanded) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'STARCHEF',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: scheme.primary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: .8,
+                                  ),
+                                ),
+                                Text(
+                                  'Ponto de venda',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
+                    ),
+                    if (expanded) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 17,
+                            backgroundColor: scheme.surfaceContainer,
+                            foregroundColor: scheme.onSurface,
+                            child: Text(
+                              _initials(userName),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  userName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  userSubtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: scheme.onSurfaceVariant,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (contextPanel != null) ...[
+                        const SizedBox(height: 12),
+                        contextPanel!,
+                      ],
+                    ] else if (compactContextPanel != null) ...[
+                      const SizedBox(height: 12),
+                      Center(child: compactContextPanel!),
                     ],
-                  ),
+                  ],
                 ),
               ),
               Divider(height: 1, color: scheme.outlineVariant),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 12, 10, 8),
-                child: Align(
-                  alignment: expanded
-                      ? Alignment.centerRight
-                      : Alignment.center,
-                  child: IconButton(
-                    tooltip: expanded ? 'Recolher menu' : 'Expandir menu',
-                    onPressed: onToggle,
-                    icon: Icon(
-                      expanded
-                          ? Icons.keyboard_double_arrow_left
-                          : Icons.keyboard_double_arrow_right,
+              if (expanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+                  child: Text(
+                    'NAVEGAÇÃO',
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.1,
                     ),
                   ),
-                ),
-              ),
+                )
+              else
+                const SizedBox(height: 10),
               Expanded(
                 child: ListView.separated(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -178,59 +241,26 @@ class PdvSidebar extends StatelessWidget {
                 ),
               ),
               Divider(height: 1, color: scheme.outlineVariant),
-              if (expanded)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 19,
-                        backgroundColor: scheme.primaryContainer,
-                        foregroundColor: scheme.onPrimaryContainer,
-                        child: Text(
-                          _initials(userName),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              userName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13,
-                              ),
-                            ),
-                            Text(
-                              restaurantName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: scheme.onSurfaceVariant,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(10, 4, 10, 12),
-                child: _SidebarAction(
-                  expanded: expanded,
-                  label: 'Sair',
-                  icon: Icons.logout,
-                  onTap: onLogout,
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  children: [
+                    _SidebarAction(
+                      expanded: expanded,
+                      label: expanded ? 'Recolher menu' : 'Expandir menu',
+                      icon: expanded
+                          ? Icons.keyboard_double_arrow_left
+                          : Icons.keyboard_double_arrow_right,
+                      onTap: onToggle,
+                    ),
+                    const SizedBox(height: 3),
+                    _SidebarAction(
+                      expanded: expanded,
+                      label: 'Sair',
+                      icon: Icons.logout,
+                      onTap: onLogout,
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -301,28 +331,33 @@ class PdvConnectionBadge extends StatelessWidget {
       ),
     };
 
-    final content = Container(
-      height: 38,
+    final content = ShadBadge.raw(
+      variant: ShadBadgeVariant.outline,
+      onPressed: onPressed,
       padding: const EdgeInsets.symmetric(horizontal: 11),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: foreground.withValues(alpha: .18)),
+      backgroundColor: background,
+      foregroundColor: foreground,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppTheme.radius,
+        side: BorderSide(color: foreground.withValues(alpha: .18)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 17, color: foreground),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: TextStyle(
-              color: foreground,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
+      child: SizedBox(
+        height: 36,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: foreground),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
     return Tooltip(
@@ -334,13 +369,7 @@ class PdvConnectionBadge extends StatelessWidget {
           ? '${status.total} operação(ões) aguardando confirmação do servidor.'
           : status.lastError ??
                 'Conectado ao servidor e sem operações pendentes.',
-      child: onPressed == null
-          ? content
-          : InkWell(
-              onTap: onPressed,
-              borderRadius: BorderRadius.circular(10),
-              child: content,
-            ),
+      child: content,
     );
   }
 }
@@ -376,30 +405,34 @@ class PdvPrinterBadge extends StatelessWidget {
         : available
         ? Icons.print_rounded
         : Icons.print_disabled_outlined;
-    final content = Container(
-      height: 38,
+    final content = ShadBadge.raw(
+      variant: ShadBadgeVariant.outline,
       padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 11),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: foreground.withValues(alpha: .18)),
+      backgroundColor: background,
+      foregroundColor: foreground,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppTheme.radius,
+        side: BorderSide(color: foreground.withValues(alpha: .18)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 17, color: foreground),
-          if (!compact) ...[
-            const SizedBox(width: 7),
-            Text(
-              status.message,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
+      child: SizedBox(
+        height: 36,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: foreground),
+            if (!compact) ...[
+              const SizedBox(width: 7),
+              Text(
+                status.message,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
     return Tooltip(message: status.message, child: content);
@@ -445,30 +478,35 @@ class PdvPrincipalBadge extends StatelessWidget {
             scheme.errorContainer,
           );
 
-    final content = Container(
-      height: 38,
+    final content = ShadBadge.raw(
+      variant: ShadBadgeVariant.outline,
+      onPressed: onPressed,
       padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: foreground.withValues(alpha: .18)),
+      backgroundColor: background,
+      foregroundColor: foreground,
+      shape: RoundedRectangleBorder(
+        borderRadius: AppTheme.radius,
+        side: BorderSide(color: foreground.withValues(alpha: .18)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 17, color: foreground),
-          if (!compact) ...[
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
+      child: SizedBox(
+        height: 36,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: foreground),
+            if (!compact) ...[
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
     return Tooltip(
@@ -476,13 +514,7 @@ class PdvPrincipalBadge extends StatelessWidget {
           ? 'Conectado ao Caixa Principal. $detail'
           : 'Este caixa é secundário e não altera pedidos sem o Caixa '
                 'Principal, para não gerar divergência. $detail',
-      child: onPressed == null
-          ? content
-          : InkWell(
-              onTap: onPressed,
-              borderRadius: BorderRadius.circular(10),
-              child: content,
-            ),
+      child: content,
     );
   }
 }
@@ -504,44 +536,30 @@ class _DestinationButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final foreground = selected ? scheme.onPrimary : scheme.onSurfaceVariant;
-    final button = Material(
-      color: selected ? scheme.primary : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: SizedBox(
-          height: 46,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
-            child: Row(
-              mainAxisAlignment: expanded
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: [
-                Icon(entry.icon, size: 21, color: foreground),
-                if (expanded) ...[
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      entry.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: foreground,
-                        fontSize: 13,
-                        fontWeight: selected
-                            ? FontWeight.w800
-                            : FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
+    final button = ShadButton.raw(
+      variant: selected ? ShadButtonVariant.primary : ShadButtonVariant.ghost,
+      onPressed: onTap,
+      width: expanded ? 204 : 56,
+      height: 46,
+      padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
+      foregroundColor: foreground,
+      hoverForegroundColor: selected ? scheme.onPrimary : scheme.onSurface,
+      expands: expanded,
+      mainAxisAlignment: expanded
+          ? MainAxisAlignment.start
+          : MainAxisAlignment.center,
+      leading: Icon(entry.icon, size: 20),
+      child: expanded
+          ? Text(
+              entry.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            )
+          : null,
     );
     return expanded ? button : Tooltip(message: entry.label, child: button);
   }
@@ -563,39 +581,23 @@ class _SidebarAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final child = Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: SizedBox(
-          height: 44,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
-            child: Row(
-              mainAxisAlignment: expanded
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 20, color: scheme.onSurfaceVariant),
-                if (expanded) ...[
-                  const SizedBox(width: 12),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
+    final child = ShadButton.ghost(
+      onPressed: onTap,
+      width: expanded ? 204 : 56,
+      height: 44,
+      padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
+      foregroundColor: scheme.onSurfaceVariant,
+      hoverForegroundColor: scheme.onSurface,
+      expands: expanded,
+      mainAxisAlignment: expanded
+          ? MainAxisAlignment.start
+          : MainAxisAlignment.center,
+      leading: Icon(icon, size: 20),
+      child: expanded
+          ? Text(label, style: const TextStyle(fontWeight: FontWeight.w700))
+          : null,
     );
-    return expanded ? child : Tooltip(message: label, child: child);
+    return Tooltip(message: label, child: child);
   }
 }
 

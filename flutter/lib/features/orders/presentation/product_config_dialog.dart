@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 /// O que o operador escolheu para um produto: variação, adicionais,
 /// quantidade e observação — antes de o item entrar no pedido.
 class ProductConfigResult {
@@ -51,10 +53,13 @@ Future<ProductConfigResult?> showProductConfigDialog(
           // Uma fração maior da largura da janela resolve sem tomar a tela
           // inteira numa janela pequena.
           final maxWidth = (size.width * .62).clamp(680.0, 900.0);
-          return AlertDialog(
+          return AppDialog(
             title: Text('${product['name']}'),
             content: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+              constraints: BoxConstraints(
+                maxWidth: maxWidth,
+                maxHeight: maxHeight,
+              ),
               child: SingleChildScrollView(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -103,34 +108,62 @@ Future<ProductConfigResult?> showProductConfigDialog(
                       ),
                     ],
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const Text(
-                          'Quantidade',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const Spacer(),
-                        IconButton.filledTonal(
-                          onPressed: quantity > 1
-                              ? () => update(() => quantity--)
-                              : null,
-                          icon: const Icon(Icons.remove),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Text(
-                            '$quantity',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final controls = Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton.filledTonal(
+                              onPressed: quantity > 1
+                                  ? () => update(() => quantity--)
+                                  : null,
+                              icon: const Icon(Icons.remove),
                             ),
-                          ),
-                        ),
-                        IconButton.filled(
-                          onPressed: () => update(() => quantity++),
-                          icon: const Icon(Icons.add),
-                        ),
-                      ],
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              child: Text(
+                                '$quantity',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            IconButton.filled(
+                              onPressed: () => update(() => quantity++),
+                              icon: const Icon(Icons.add),
+                            ),
+                          ],
+                        );
+                        if (constraints.maxWidth < 340) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                'Quantidade',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: controls,
+                              ),
+                            ],
+                          );
+                        }
+                        return Row(
+                          children: [
+                            const Text(
+                              'Quantidade',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const Spacer(),
+                            controls,
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
                     TextField(

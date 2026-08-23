@@ -21,7 +21,7 @@ void main() {
     final preferences = LocalPreferences(file: file);
     await preferences.load();
 
-    expect(preferences.themeMode, ThemeMode.light);
+    expect(preferences.themeMode, ThemeMode.dark);
     expect(preferences.commandTimeout, const Duration(seconds: 45));
     expect(preferences.stabilityToleranceKg, 0.002);
     expect(preferences.audibleAlerts, isTrue);
@@ -58,7 +58,7 @@ void main() {
     final preferences = LocalPreferences(file: file);
     await preferences.load();
 
-    expect(preferences.themeMode, ThemeMode.light);
+    expect(preferences.themeMode, ThemeMode.dark);
   });
 
   test('timeout e tolerância ficam dentro dos limites seguros', () async {

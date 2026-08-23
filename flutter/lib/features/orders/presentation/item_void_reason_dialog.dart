@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 /// Solicita um motivo objetivo antes de cancelar um item do pedido.
 class ItemVoidReasonDialog {
   static const reasons = [
@@ -24,7 +26,9 @@ class ItemVoidReasonDialog {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           final requiresDetails = selectedReason == 'Outro';
-          return AlertDialog(
+          return AppDialog(
+            scrollable: true,
+            maxWidth: 488,
             title: const Text('Remover item'),
             content: SizedBox(
               width: 440,

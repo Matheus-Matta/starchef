@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../data/local_topology_store.dart';
 import '../domain/local_topology_config.dart';
 import '../services/local_topology_service.dart';
@@ -12,11 +14,8 @@ Future<LocalTopologyConfig?> showLocalTopologyDialog({
   required bool canEdit,
 }) => showDialog<LocalTopologyConfig>(
   context: context,
-  builder: (_) => _LocalTopologyDialog(
-    initial: config,
-    status: status,
-    canEdit: canEdit,
-  ),
+  builder: (_) =>
+      _LocalTopologyDialog(initial: config, status: status, canEdit: canEdit),
 );
 
 class _LocalTopologyDialog extends StatefulWidget {
@@ -83,302 +82,316 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final scheme = Theme.of(context).colorScheme;
-    return Dialog(
-      insetPadding: const EdgeInsets.all(20),
-      child: ConstrainedBox(
+    return Material(
+      type: MaterialType.transparency,
+      child: ShadDialog(
+        padding: EdgeInsets.zero,
+        radius: AppTheme.radius,
+        shadows: const [],
         constraints: BoxConstraints(
           maxWidth: 680,
           maxHeight: media.size.height - 40,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 22, 16, 16),
-              child: Row(
-                children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(13),
-                    ),
-                    child: Icon(Icons.hub_outlined, color: scheme.primary),
-                  ),
-                  const SizedBox(width: 13),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Rede local de caixas',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        Text(
-                          'Relay offline controlado · versão inicial',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Fechar',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
-                  ),
-                ],
-              ),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Material(
+          type: MaterialType.transparency,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 680,
+              maxHeight: media.size.height - 40,
             ),
-            const Divider(height: 1),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _StatusCard(status: widget.status),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Função desta estação',
-                      style: TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 9),
-                    for (final value in LocalTopologyMode.values) ...[
-                      _ModeCard(
-                        mode: value,
-                        selected: mode == value,
-                        enabled: widget.canEdit,
-                        onTap: () => setState(() {
-                          mode = value;
-                          errors = const [];
-                        }),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    ...[
-                      const SizedBox(height: 12),
-                      if (mode == LocalTopologyMode.client) ...[
-                        TextField(
-                          controller: hostController,
-                          enabled: widget.canEdit,
-                          onChanged: (_) => setState(() => errors = const []),
-                          decoration: const InputDecoration(
-                            labelText: 'IP ou nome do Caixa Principal',
-                            prefixIcon: Icon(Icons.dns_outlined),
-                            hintText: '192.168.1.10',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                      TextField(
-                        controller: portController,
-                        enabled: widget.canEdit,
-                        onChanged: (_) => setState(() => errors = const []),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
-                        decoration: const InputDecoration(
-                          labelText: 'Porta do relay',
-                          prefixIcon: Icon(Icons.settings_ethernet),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: secretController,
-                        enabled: widget.canEdit,
-                        obscureText: obscureSecret,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        onChanged: (_) => setState(() => errors = const []),
-                        decoration: InputDecoration(
-                          labelText: 'Chave de pareamento',
-                          prefixIcon: const Icon(Icons.key_outlined),
-                          suffixIcon: IconButton(
-                            tooltip: obscureSecret ? 'Mostrar' : 'Ocultar',
-                            onPressed: widget.canEdit
-                                ? () => setState(
-                                    () => obscureSecret = !obscureSecret,
-                                  )
-                                : null,
-                            icon: Icon(
-                              obscureSecret
-                                  ? Icons.visibility_outlined
-                                  : Icons.visibility_off_outlined,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (widget.canEdit) ...[
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            if (mode == LocalTopologyMode.principal)
-                              OutlinedButton.icon(
-                                onPressed: () => setState(() {
-                                  secretController.text =
-                                      LocalTopologyStore
-                                          .generatePairingSecret();
-                                  errors = const [];
-                                }),
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(0, 52),
-                                ),
-                                icon: const Icon(Icons.autorenew),
-                                label: const Text('Gerar chave'),
-                              ),
-                            OutlinedButton.icon(
-                              onPressed: secretController.text.trim().isEmpty
-                                  ? null
-                                  : () async {
-                                      await Clipboard.setData(
-                                        ClipboardData(
-                                          text: secretController.text.trim(),
-                                        ),
-                                      );
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'Chave copiada com segurança.',
-                                            ),
-                                          ),
-                                        );
-                                      }
-                                    },
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(0, 52),
-                              ),
-                              icon: const Icon(Icons.copy_outlined),
-                              label: const Text('Copiar'),
-                            ),
-                            if (mode == LocalTopologyMode.client)
-                              OutlinedButton.icon(
-                                onPressed: () async {
-                                  final data = await Clipboard.getData(
-                                    Clipboard.kTextPlain,
-                                  );
-                                  final value = data?.text?.trim() ?? '';
-                                  if (value.isNotEmpty && mounted) {
-                                    setState(() {
-                                      secretController.text = value;
-                                      errors = const [];
-                                    });
-                                  }
-                                },
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(0, 52),
-                                ),
-                                icon: const Icon(Icons.content_paste),
-                                label: const Text('Colar'),
-                              ),
-                          ],
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      CheckboxListTile(
-                        value: trustedNetwork,
-                        enabled: widget.canEdit,
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text(
-                          'Confirmo que os caixas estão em uma rede privada e confiável',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        subtitle: const Text(
-                          'As mensagens têm assinatura HMAC e proteção contra '
-                          'replay, mas esta versão ainda não inclui TLS.',
-                        ),
-                        onChanged: (value) => setState(
-                          () => trustedNetwork = value ?? false,
-                        ),
-                      ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 22, 16, 16),
+                  child: Row(
+                    children: [
                       Container(
-                        margin: const EdgeInsets.only(top: 8),
-                        padding: const EdgeInsets.all(14),
+                        width: 46,
+                        height: 46,
                         decoration: BoxDecoration(
-                          color: scheme.tertiaryContainer,
-                          borderRadius: BorderRadius.circular(12),
+                          color: scheme.primaryContainer,
+                          borderRadius: AppTheme.radius,
                         ),
-                        child: const Text(
-                          'Por segurança de auditoria, Cliente e Principal '
-                          'precisam estar autenticados com o mesmo operador e '
-                          'no mesmo restaurante. Clientes e pagamentos não são '
-                          'encaminhados por esta versão.',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
+                        child: Icon(Icons.hub_outlined, color: scheme.primary),
                       ),
-                    ],
-                    if (errors.isNotEmpty)
-                      Container(
-                        margin: const EdgeInsets.only(top: 16),
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: scheme.errorContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                      const SizedBox(width: 13),
+                      const Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            for (final error in errors)
-                              Text(
-                                '• $error',
-                                style: TextStyle(
-                                  color: scheme.onErrorContainer,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                            Text(
+                              'Rede local de caixas',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
                               ),
+                            ),
+                            Text(
+                              'Relay offline controlado · versão inicial',
+                              style: TextStyle(fontSize: 12),
+                            ),
                           ],
                         ),
                       ),
-                    if (!widget.canEdit)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 16),
-                        child: Text(
-                          'Seu perfil pode consultar, mas não alterar a rede local.',
-                          style: TextStyle(color: scheme.onSurfaceVariant),
-                        ),
+                      IconButton(
+                        tooltip: 'Fechar',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close),
                       ),
-                  ],
-                ),
-              ),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 10,
-                runSpacing: 8,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 52),
-                    ),
-                    child: const Text('Cancelar'),
+                    ],
                   ),
-                  if (widget.canEdit)
-                    FilledButton.icon(
-                      onPressed: _save,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 52),
-                      ),
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text('Salvar e aplicar'),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _StatusCard(status: widget.status),
+                        const SizedBox(height: 20),
+                        const Text(
+                          'Função desta estação',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 9),
+                        for (final value in LocalTopologyMode.values) ...[
+                          _ModeCard(
+                            mode: value,
+                            selected: mode == value,
+                            enabled: widget.canEdit,
+                            onTap: () => setState(() {
+                              mode = value;
+                              errors = const [];
+                            }),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        ...[
+                          const SizedBox(height: 12),
+                          if (mode == LocalTopologyMode.client) ...[
+                            TextField(
+                              controller: hostController,
+                              enabled: widget.canEdit,
+                              onChanged: (_) =>
+                                  setState(() => errors = const []),
+                              decoration: const InputDecoration(
+                                labelText: 'IP ou nome do Caixa Principal',
+                                prefixIcon: Icon(Icons.dns_outlined),
+                                hintText: '192.168.1.10',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          TextField(
+                            controller: portController,
+                            enabled: widget.canEdit,
+                            onChanged: (_) => setState(() => errors = const []),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            decoration: const InputDecoration(
+                              labelText: 'Porta do relay',
+                              prefixIcon: Icon(Icons.settings_ethernet),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: secretController,
+                            enabled: widget.canEdit,
+                            obscureText: obscureSecret,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            onChanged: (_) => setState(() => errors = const []),
+                            decoration: InputDecoration(
+                              labelText: 'Chave de pareamento',
+                              prefixIcon: const Icon(Icons.key_outlined),
+                              suffixIcon: IconButton(
+                                tooltip: obscureSecret ? 'Mostrar' : 'Ocultar',
+                                onPressed: widget.canEdit
+                                    ? () => setState(
+                                        () => obscureSecret = !obscureSecret,
+                                      )
+                                    : null,
+                                icon: Icon(
+                                  obscureSecret
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (widget.canEdit) ...[
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (mode == LocalTopologyMode.principal)
+                                  OutlinedButton.icon(
+                                    onPressed: () => setState(() {
+                                      secretController.text =
+                                          LocalTopologyStore.generatePairingSecret();
+                                      errors = const [];
+                                    }),
+                                    style: OutlinedButton.styleFrom(
+                                      minimumSize: const Size(0, 52),
+                                    ),
+                                    icon: const Icon(Icons.autorenew),
+                                    label: const Text('Gerar chave'),
+                                  ),
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      secretController.text.trim().isEmpty
+                                      ? null
+                                      : () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: secretController.text
+                                                  .trim(),
+                                            ),
+                                          );
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Chave copiada com segurança.',
+                                                ),
+                                              ),
+                                            );
+                                          }
+                                        },
+                                  style: OutlinedButton.styleFrom(
+                                    minimumSize: const Size(0, 52),
+                                  ),
+                                  icon: const Icon(Icons.copy_outlined),
+                                  label: const Text('Copiar'),
+                                ),
+                                if (mode == LocalTopologyMode.client)
+                                  OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final data = await Clipboard.getData(
+                                        Clipboard.kTextPlain,
+                                      );
+                                      final value = data?.text?.trim() ?? '';
+                                      if (value.isNotEmpty && mounted) {
+                                        setState(() {
+                                          secretController.text = value;
+                                          errors = const [];
+                                        });
+                                      }
+                                    },
+                                    style: OutlinedButton.styleFrom(
+                                      minimumSize: const Size(0, 52),
+                                    ),
+                                    icon: const Icon(Icons.content_paste),
+                                    label: const Text('Colar'),
+                                  ),
+                              ],
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          CheckboxListTile(
+                            value: trustedNetwork,
+                            enabled: widget.canEdit,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            title: const Text(
+                              'Confirmo que os caixas estão em uma rede privada e confiável',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            subtitle: const Text(
+                              'As mensagens têm assinatura HMAC e proteção contra '
+                              'replay, mas esta versão ainda não inclui TLS.',
+                            ),
+                            onChanged: (value) =>
+                                setState(() => trustedNetwork = value ?? false),
+                          ),
+                          Container(
+                            margin: const EdgeInsets.only(top: 8),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: scheme.tertiaryContainer,
+                              borderRadius: AppTheme.radius,
+                            ),
+                            child: const Text(
+                              'Por segurança de auditoria, Cliente e Principal '
+                              'precisam estar autenticados com o mesmo operador e '
+                              'no mesmo restaurante. Clientes e pagamentos não são '
+                              'encaminhados por esta versão.',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                        if (errors.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(top: 16),
+                            padding: const EdgeInsets.all(13),
+                            decoration: BoxDecoration(
+                              color: scheme.errorContainer,
+                              borderRadius: AppTheme.radius,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final error in errors)
+                                  Text(
+                                    '• $error',
+                                    style: TextStyle(
+                                      color: scheme.onErrorContainer,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        if (!widget.canEdit)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 16),
+                            child: Text(
+                              'Seu perfil pode consultar, mas não alterar a rede local.',
+                              style: TextStyle(color: scheme.onSurfaceVariant),
+                            ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
+                  ),
+                ),
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                        ),
+                        child: const Text('Cancelar'),
+                      ),
+                      if (widget.canEdit)
+                        FilledButton.icon(
+                          onPressed: _save,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 52),
+                          ),
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Salvar e aplicar'),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -404,7 +417,7 @@ class _StatusCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: AppTheme.radius,
       ),
       child: Row(
         children: [
@@ -466,15 +479,15 @@ class _ModeCard extends StatelessWidget {
     };
     return Material(
       color: selected ? scheme.primaryContainer : scheme.surface,
-      borderRadius: BorderRadius.circular(13),
+      borderRadius: AppTheme.radius,
       child: InkWell(
         onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: AppTheme.radius,
         child: Container(
           constraints: const BoxConstraints(minHeight: 68),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(13),
+            borderRadius: AppTheme.radius,
             border: Border.all(
               color: selected ? scheme.primary : scheme.outlineVariant,
               width: selected ? 1.5 : 1,
@@ -497,9 +510,7 @@ class _ModeCard extends StatelessWidget {
                 ),
               ),
               Icon(
-                selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
                 color: selected ? scheme.primary : scheme.outline,
               ),
             ],

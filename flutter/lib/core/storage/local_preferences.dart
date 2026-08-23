@@ -50,7 +50,7 @@ class LocalPreferences {
     'dark' => ThemeMode.dark,
     'light' => ThemeMode.light,
     'system' => ThemeMode.system,
-    _ => ThemeMode.light,
+    _ => ThemeMode.dark,
   };
 
   Future<void> setThemeMode(ThemeMode mode) => _write(_themeKey, mode.name);

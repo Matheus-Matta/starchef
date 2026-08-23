@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../theme/app_theme.dart';
 import 'app_error.dart';
 import 'error_center.dart';
 
@@ -21,8 +22,7 @@ class ErrorCenterScope extends InheritedNotifier<ErrorCenter> {
 
   /// Versão que não cria dependência de rebuild — para uso em callbacks.
   static ErrorCenter read(BuildContext context) {
-    final scope = context
-        .getInheritedWidgetOfExactType<ErrorCenterScope>();
+    final scope = context.getInheritedWidgetOfExactType<ErrorCenterScope>();
     assert(scope?.notifier != null, 'ErrorCenterScope ausente na árvore.');
     return scope!.notifier!;
   }
@@ -117,15 +117,15 @@ class AppErrorCard extends StatelessWidget {
     };
 
     return Material(
-      elevation: 6,
-      borderRadius: BorderRadius.circular(14),
+      elevation: 0,
+      borderRadius: AppTheme.radius,
       color: scheme.surface,
-      shadowColor: Colors.black.withValues(alpha: .25),
+      shadowColor: Colors.transparent,
       child: Container(
         width: 360,
         padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: AppTheme.radius,
           border: Border.all(color: accent.withValues(alpha: .45)),
         ),
         child: Column(

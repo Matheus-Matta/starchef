@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 import '../../../core/storage/local_preferences.dart';
 
 /// Permite digitar manualmente a URL da API a partir da tela de login —
@@ -17,11 +19,13 @@ class ApiUrlSettingsDialog extends StatefulWidget {
 
   final LocalPreferences preferences;
 
-  static Future<void> show(BuildContext context, LocalPreferences preferences) =>
-      showDialog<void>(
-        context: context,
-        builder: (_) => ApiUrlSettingsDialog(preferences: preferences),
-      );
+  static Future<void> show(
+    BuildContext context,
+    LocalPreferences preferences,
+  ) => showDialog<void>(
+    context: context,
+    builder: (_) => ApiUrlSettingsDialog(preferences: preferences),
+  );
 
   @override
   State<ApiUrlSettingsDialog> createState() => _ApiUrlSettingsDialogState();
@@ -44,10 +48,13 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
     final text = value?.trim() ?? '';
     if (text.isEmpty) return null; // vazio = remove o override, é válido.
     final uri = Uri.tryParse(text);
-    final valid = uri != null &&
+    final valid =
+        uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https') &&
         uri.host.isNotEmpty;
-    return valid ? null : 'Informe uma URL completa (ex.: https://api.seu-dominio.com/api/v1).';
+    return valid
+        ? null
+        : 'Informe uma URL completa (ex.: https://api.seu-dominio.com/api/v1).';
   }
 
   Future<void> _save() async {
@@ -72,7 +79,9 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return AppDialog(
+      scrollable: true,
+      maxWidth: 528,
       title: Row(
         children: [
           const Icon(Icons.settings_outlined),
@@ -97,7 +106,10 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
                 'Normalmente essa URL já vem configurada no instalador. Use '
                 'isso só se o terminal não tiver sido configurado, ou pra '
                 'apontar temporariamente pra outro ambiente.',
-                style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(height: 16),
               TextFormField(

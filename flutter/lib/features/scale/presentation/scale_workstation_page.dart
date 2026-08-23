@@ -13,7 +13,10 @@ import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/copyable_error.dart';
+import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 import '../../devices/domain/printer_endpoint.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
@@ -822,7 +825,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final choice = await showDialog<_ScannerChoice>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDialogState) => AppDialog(
           title: const Row(
             children: [
               Icon(Icons.barcode_reader),
@@ -969,7 +972,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             Navigator.pop(dialogContext, parsed);
           }
 
-          return AlertDialog(
+          return AppDialog(
             title: const Row(
               children: [
                 Icon(Icons.touch_app_outlined),
@@ -990,7 +993,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surfaceContainer,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: AppTheme.radius,
                     ),
                     child: Text(
                       '${rawValue.isEmpty ? '0,000' : rawValue} kg',
@@ -1172,7 +1175,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     child: SizedBox(
       width: 620,
       child: SingleChildScrollView(
-        child: Card(
+        child: AppSection(
+          padding: EdgeInsets.zero,
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
@@ -1315,7 +1319,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
         border: Border.all(
           color: missingPort
               ? color.withValues(alpha: .45)
@@ -1329,7 +1333,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             height: 46,
             decoration: BoxDecoration(
               color: color.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppTheme.radius,
             ),
             child: Icon(
               missingPort
@@ -1391,7 +1395,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppTheme.radius,
         border: Border.all(color: color.withValues(alpha: .4)),
       ),
       child: Row(
@@ -1435,7 +1439,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
         border: Border.all(
           color: scannerError != null
               ? colorScheme.error.withValues(alpha: .45)
@@ -1449,7 +1453,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             height: 46,
             decoration: BoxDecoration(
               color: statusColor.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppTheme.radius,
             ),
             child: scannerConnecting
                 ? const Padding(
@@ -1511,41 +1515,43 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _itemsHeader(),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              children: [
-                _weightBlock(compact: waitingCommand),
-                // O estado da porta some da tela quando a balança está
-                // saudável e a etapa é outra: o que o operador precisa ver
-                // aí são os itens, não a conexão que já está funcionando.
-                if (!waitingCommand ||
-                    linkStatus.state != ScaleLinkState.connected) ...[
-                  const SizedBox(height: 10),
-                  _linkCard(),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+      child: AppSection(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _itemsHeader(),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                children: [
+                  _weightBlock(compact: waitingCommand),
+                  // O estado da porta some da tela quando a balança está
+                  // saudável e a etapa é outra: o que o operador precisa ver
+                  // aí são os itens, não a conexão que já está funcionando.
+                  if (!waitingCommand ||
+                      linkStatus.state != ScaleLinkState.connected) ...[
+                    const SizedBox(height: 10),
+                    _linkCard(),
+                  ],
+                  const SizedBox(height: 14),
+                  _cartItems(),
+                  if (errorMessage != null) _errorBox(),
                 ],
-                const SizedBox(height: 14),
-                _cartItems(),
-                if (errorMessage != null) _errorBox(),
-              ],
+              ),
             ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLowest,
-              border: Border(top: BorderSide(color: scheme.outlineVariant)),
+            Container(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLowest,
+                border: Border(top: BorderSide(color: scheme.outlineVariant)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: _itemsFooter(),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-            child: _itemsFooter(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1675,28 +1681,30 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// (aguardando peso) ou o resultado (finalizando/concluído).
   Widget _commandPanel() {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _commandHeader(),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              child: _commandBody(),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      child: AppSection(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _commandHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                child: _commandBody(),
+              ),
             ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLowest,
-              border: Border(top: BorderSide(color: scheme.outlineVariant)),
+            Container(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLowest,
+                border: Border(top: BorderSide(color: scheme.outlineVariant)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: _commandFooter(),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-            child: _commandFooter(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1835,7 +1843,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: EdgeInsets.symmetric(vertical: compact ? 12 : 20),
       decoration: BoxDecoration(
         color: scheme.primaryContainer.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
       ),
       child: Column(
         children: [
@@ -2085,7 +2093,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     padding: const EdgeInsets.all(11),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: AppTheme.radius,
     ),
     child: Text(
       message,
@@ -2103,7 +2111,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppTheme.radius,
       ),
       child: Text(
         errorMessage!,
@@ -2132,7 +2140,7 @@ class _ScannerEmptyState extends StatelessWidget {
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surfaceContainer,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: AppTheme.radius,
     ),
     child: const Column(
       children: [

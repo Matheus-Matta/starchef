@@ -74,9 +74,10 @@ Future<void> main(List<String> arguments) async {
   );
 
   await windowManager.ensureInitialized();
-  if (!scaleWindow) {
-    await windowManager.setPreventClose(true);
-  }
+  // As duas janelas validam a Senha do Supervisor antes de encerrar. Sem
+  // interceptar o fechamento também na Balança Rápida, o X nativo ignora o
+  // diálogo implementado em ScaleWindowApp.
+  await windowManager.setPreventClose(true);
   final windowOptions = WindowOptions(
     size: scaleWindow ? const Size(1180, 760) : const Size(1280, 800),
     minimumSize: scaleWindow ? const Size(900, 650) : const Size(960, 640),
@@ -84,7 +85,11 @@ Future<void> main(List<String> arguments) async {
     // O operador ainda pode sair desse modo pelo botão ou por F11.
     fullScreen: true,
     center: true,
-    backgroundColor: Colors.transparent,
+    // Uma superfície nativa transparente deixa janelas que estão atrás do
+    // PDV vazarem por qualquer pixel ainda não pintado durante resize/escala.
+    // O conteúdo Material continua controlando tema claro/escuro depois do
+    // primeiro frame; este fundo opaco protege também a inicialização.
+    backgroundColor: const Color(0xFF09090B),
     title: scaleWindow ? 'StarChef · Balança Rápida' : 'StarChef PDV',
     titleBarStyle: TitleBarStyle.hidden,
   );

@@ -1,4 +1,5 @@
 import '../../../core/network/api_exception.dart';
+import '../../cash/domain/cash_restaurant_selector.dart';
 import '../data/pdv_repository.dart';
 
 /// Presenter da inicialização do PDV.
@@ -13,6 +14,7 @@ class PdvPresenter {
   Future<PdvBootstrap> load({
     String? selectedRestaurantId,
     String? userRestaurantId,
+    String? userId,
   }) async {
     final restaurants = await repository.list(
       '/restaurants/',
@@ -26,7 +28,27 @@ class PdvPresenter {
     }
 
     final availableIds = restaurants.map((item) => '${item['id']}').toSet();
-    final preferred = selectedRestaurantId ?? userRestaurantId;
+    String? linkedRestaurantId;
+    // O vínculo do caixa só decide a abertura inicial. Depois que o operador
+    // troca a unidade manualmente, `selectedRestaurantId` preserva essa
+    // escolha nas recargas da mesma sessão.
+    if (selectedRestaurantId == null && userId?.trim().isNotEmpty == true) {
+      try {
+        final cashStations = await repository.list(
+          '/cash-stations/',
+          query: {'page_size': 300, 'is_active': true},
+        );
+        linkedRestaurantId = cashLinkedRestaurantId(
+          cashStations: cashStations,
+          userId: userId!,
+          availableRestaurantIds: availableIds,
+        );
+      } on ApiException {
+        // Sem resposta (ou sem cache) mantém exatamente o fallback anterior.
+      }
+    }
+    final preferred =
+        selectedRestaurantId ?? linkedRestaurantId ?? userRestaurantId;
     final restaurantId = preferred != null && availableIds.contains(preferred)
         ? preferred
         : '${restaurants.first['id']}';

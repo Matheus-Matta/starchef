@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 
 /// Painel visual do pedido atual.
 ///
@@ -40,19 +44,24 @@ class OrderCartPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(left: BorderSide(color: scheme.outlineVariant)),
-      ),
-      child: Column(
-        children: [
-          _header(context),
-          Divider(height: 1, color: scheme.outlineVariant),
-          Expanded(child: items.isEmpty ? _empty(context) : _items(context)),
-          Divider(height: 1, color: scheme.outlineVariant),
-          _footer(context),
-        ],
+    return ClipRRect(
+      borderRadius: AppTheme.radius,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border.all(color: scheme.outlineVariant),
+          borderRadius: AppTheme.radius,
+        ),
+        child: Column(
+          children: [
+            Container(height: 3, color: scheme.primary),
+            _header(context),
+            Divider(height: 1, color: scheme.outlineVariant),
+            Expanded(child: items.isEmpty ? _empty(context) : _items(context)),
+            Divider(height: 1, color: scheme.outlineVariant),
+            _footer(context),
+          ],
+        ),
       ),
     );
   }
@@ -61,67 +70,108 @@ class OrderCartPanel extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final pendingOffline = order?['_offline_pending'] == true;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(17, 15, 13, 14),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(16, 13, 13, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(
-              Icons.receipt_long_outlined,
-              color: scheme.primary,
-              size: 21,
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  order == null
-                      ? 'Novo pedido'
-                      : 'Pedido #${order!['sequence']}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _contextLabel(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (pendingOffline)
-            Tooltip(
-              message: 'Pedido salvo localmente e aguardando sincronização.',
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: scheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'LOCAL',
-                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900),
+          Row(
+            children: [
+              Text(
+                'RESUMO DO PEDIDO',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .9,
                 ),
               ),
-            ),
+              const Spacer(),
+              ShadBadge.outline(
+                shape: const RoundedRectangleBorder(
+                  borderRadius: AppTheme.radius,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                child: Text(
+                  _typeLabel('${order?['order_type'] ?? ''}').toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: AppTheme.radius,
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Icon(
+                  Icons.receipt_long_outlined,
+                  color: scheme.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      order == null
+                          ? 'Novo pedido'
+                          : 'Pedido #${order!['sequence']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _contextLabel(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (pendingOffline)
+                Tooltip(
+                  message:
+                      'Pedido salvo localmente e aguardando sincronização.',
+                  child: ShadBadge.secondary(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    backgroundColor: scheme.tertiaryContainer,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: AppTheme.radius,
+                    ),
+                    child: const Text(
+                      'LOCAL',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -289,44 +339,13 @@ class OrderCartPanel extends StatelessWidget {
   }
 
   Widget _empty(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final type = '${order?['order_type'] ?? ''}';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 62,
-              height: 62,
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.shopping_basket_outlined,
-                color: scheme.onSurfaceVariant,
-                size: 29,
-              ),
-            ),
-            const SizedBox(height: 13),
-            const Text(
-              'O pedido está vazio',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              type == 'table'
-                  ? 'Toque em um produto para adicioná-lo à mesa.'
-                  : 'Toque em um produto do cardápio para começar.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
+    return AppEmptyState(
+      icon: Icons.shopping_basket_outlined,
+      title: 'O pedido está vazio',
+      description: type == 'table'
+          ? 'Toque em um produto para adicioná-lo à mesa.'
+          : 'Toque em um produto do cardápio para começar.',
     );
   }
 
@@ -453,13 +472,12 @@ class _CartItem extends StatelessWidget {
     final extras = _extras();
     final comped = item['status'] == 'comped';
 
-    return Container(
+    return ShadCard(
       padding: const EdgeInsets.fromLTRB(11, 9, 7, 9),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
+      backgroundColor: scheme.surface,
+      radius: AppTheme.radius,
+      shadows: const [],
+      columnCrossAxisAlignment: CrossAxisAlignment.stretch,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -572,12 +590,12 @@ class _CartItem extends StatelessWidget {
   }
 
   Widget _chip(BuildContext context, String label, Color background) =>
-      Container(
+      ShadBadge.raw(
+        variant: ShadBadgeVariant.secondary,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(5),
-        ),
+        backgroundColor: background,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
         child: Text(
           label,
           style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800),

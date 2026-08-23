@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 /// Seletor reutilizável para operações de impressão manual.
 class PrinterSelectionDialog extends StatefulWidget {
   const PrinterSelectionDialog({
@@ -24,7 +26,9 @@ class _PrinterSelectionDialogState extends State<PrinterSelectionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AppDialog(
+      scrollable: true,
+      maxWidth: 488,
       title: Row(
         children: [
           const Icon(Icons.receipt_long_outlined),

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_text_field.dart';
 import '../../settings/presentation/api_url_settings_dialog.dart';
@@ -14,12 +16,14 @@ class LoginPage extends StatefulWidget {
     required this.isDark,
     required this.onToggleTheme,
     required this.preferences,
+    this.onClose,
   });
 
   final AuthController controller;
   final bool isDark;
   final VoidCallback onToggleTheme;
   final LocalPreferences preferences;
+  final VoidCallback? onClose;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -53,6 +57,7 @@ class _LoginPageState extends State<LoginPage> {
     body: LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
+        final compact = constraints.maxWidth < 480;
         return Row(
           children: [
             if (wide) const Expanded(flex: 21, child: _BrandPanel()),
@@ -62,28 +67,39 @@ class _LoginPageState extends State<LoginPage> {
                 children: [
                   Center(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(32),
+                      padding: EdgeInsets.fromLTRB(
+                        compact ? 16 : 32,
+                        compact ? 88 : 32,
+                        compact ? 16 : 32,
+                        compact ? 16 : 32,
+                      ),
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 384),
-                        child: _LoginForm(
-                          formKey: _formKey,
-                          username: _username,
-                          password: _password,
-                          remember: _remember,
-                          hidePassword: _hidePassword,
-                          controller: widget.controller,
-                          onRememberChanged: (value) =>
-                              setState(() => _remember = value),
-                          onPasswordVisibilityChanged: () =>
-                              setState(() => _hidePassword = !_hidePassword),
-                          onSubmit: _submit,
+                        child: ShadCard(
+                          padding: EdgeInsets.all(compact ? 20 : 28),
+                          radius: AppTheme.radius,
+                          shadows: const [],
+                          columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+                          child: _LoginForm(
+                            formKey: _formKey,
+                            username: _username,
+                            password: _password,
+                            remember: _remember,
+                            hidePassword: _hidePassword,
+                            controller: widget.controller,
+                            onRememberChanged: (value) =>
+                                setState(() => _remember = value),
+                            onPasswordVisibilityChanged: () =>
+                                setState(() => _hidePassword = !_hidePassword),
+                            onSubmit: _submit,
+                          ),
                         ),
                       ),
                     ),
                   ),
                   Positioned(
-                    top: 24,
-                    right: 24,
+                    top: compact ? 12 : 24,
+                    right: compact ? 12 : 24,
                     child: Row(
                       children: [
                         IconButton.outlined(
@@ -104,6 +120,19 @@ class _LoginPageState extends State<LoginPage> {
                                 : Icons.dark_mode_outlined,
                           ),
                         ),
+                        if (widget.onClose != null) ...[
+                          const SizedBox(width: 8),
+                          IconButton.outlined(
+                            tooltip: 'Fechar aplicação',
+                            onPressed: widget.onClose,
+                            style: IconButton.styleFrom(
+                              foregroundColor: Theme.of(
+                                context,
+                              ).colorScheme.error,
+                            ),
+                            icon: const Icon(Icons.power_settings_new),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -155,9 +184,9 @@ class _LoginForm extends StatelessWidget {
         const SizedBox(height: 8),
         Text(
           'Entre para acessar o PDV da sua filial.',
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: AppColors.stone500),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 28),
         AppTextField(
@@ -203,7 +232,12 @@ class _LoginForm extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: AppTheme.radius,
+              border: Border.all(
+                color: Theme.of(
+                  context,
+                ).colorScheme.error.withValues(alpha: .2),
+              ),
             ),
             child: Row(
               children: [
@@ -226,9 +260,11 @@ class _LoginForm extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 20),
-        ElevatedButton.icon(
-          onPressed: controller.loading ? null : onSubmit,
-          icon: controller.loading
+        ShadButton(
+          onPressed: onSubmit,
+          enabled: !controller.loading,
+          height: 44,
+          leading: controller.loading
               ? const SizedBox.square(
                   dimension: 18,
                   child: CircularProgressIndicator(
@@ -236,16 +272,16 @@ class _LoginForm extends StatelessWidget {
                     color: Colors.white,
                   ),
                 )
-              : const Icon(Icons.login),
-          label: Text(controller.loading ? 'Entrando...' : 'Entrar'),
+              : const Icon(Icons.login, size: 18),
+          child: Text(controller.loading ? 'Entrando...' : 'Entrar'),
         ),
         const SizedBox(height: 24),
         Text(
           'O acesso é protegido pelos dados da sua conta StarChef.',
           textAlign: TextAlign.center,
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: AppColors.stone500),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     ),
@@ -259,11 +295,8 @@ class _BrandPanel extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(48),
     decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [AppColors.orange, AppColors.orangeDark, Color(0xFF7C2D12)],
-      ),
+      color: AppColors.zinc900,
+      border: Border(right: BorderSide(color: AppColors.orange, width: 4)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -360,7 +393,8 @@ class _Feature extends StatelessWidget {
           height: 42,
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: .16),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: AppTheme.radius,
+            border: Border.all(color: Colors.white24),
           ),
           child: Icon(icon, color: Colors.white, size: 21),
         ),

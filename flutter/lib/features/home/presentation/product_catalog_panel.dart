@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 
 class ProductCatalogPanel extends StatelessWidget {
   const ProductCatalogPanel({
@@ -35,123 +39,160 @@ class ProductCatalogPanel extends StatelessWidget {
       }
     }
 
-    return ColoredBox(
-      color: scheme.surfaceContainerLowest,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 16, 18, 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Busca e filtro lado a lado, como no frontend web. A faixa
-            // horizontal de categorias saiu: com muitas categorias ela exigia
-            // rolagem lateral para achar a última, e ocupava 70 px de altura
-            // que agora são do cardápio.
-            Row(
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: AppTheme.radius,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 520;
+          final searchField = TextField(
+            onChanged: onSearchChanged,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search_rounded),
+              hintText: 'Buscar produto, código ou categoria...',
+            ),
+          );
+          final totalBadge = ShadBadge.outline(
+            shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    onChanged: onSearchChanged,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search_rounded),
-                      hintText: 'Buscar produto, código ou categoria...',
-                    ),
-                  ),
+                Icon(
+                  Icons.inventory_2_outlined,
+                  size: 16,
+                  color: scheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<String?>(
-                    key: ValueKey(
-                      'category-$selectedCategory-${categories.length}',
-                    ),
-                    initialValue: selectedCategory,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.filter_list_rounded),
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: null,
-                        child: Text(
-                          'Todas as categorias · ${allProducts.length}',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      ...categories.map((item) {
-                        final id = '${item['id']}';
-                        return DropdownMenuItem(
-                          value: id,
-                          child: Text(
-                            '${item['name']} · ${counts[id] ?? 0}',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      }),
-                    ],
-                    onChanged: onCategoryChanged,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  height: 48,
-                  padding: const EdgeInsets.symmetric(horizontal: 13),
-                  decoration: BoxDecoration(
-                    color: scheme.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.inventory_2_outlined,
-                        size: 18,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        '${products.length} itens',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
+                const SizedBox(width: 6),
+                Text(
+                  '${products.length} itens',
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            Expanded(
-              child: products.isEmpty
-                  ? _EmptyCatalog(search: search)
-                  : GridView.builder(
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 244,
-                            mainAxisExtent: 120,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 15, 16, 12),
+                child: compact
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          searchField,
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: totalBadge,
                           ),
-                      itemCount: products.length,
-                      itemBuilder: (context, index) {
-                        final product = products[index];
-                        return _ProductCard(
-                          product: product,
-                          money: money,
-                          onPressed: () => onProductPressed(product),
-                        );
-                      },
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          Expanded(child: searchField),
+                          const SizedBox(width: 10),
+                          totalBadge,
+                        ],
+                      ),
+              ),
+              Divider(height: 1, color: scheme.outlineVariant),
+              SizedBox(
+                height: 54,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  children: [
+                    _CategoryButton(
+                      label: 'Todos',
+                      count: allProducts.length,
+                      selected: selectedCategory == null,
+                      onPressed: () => onCategoryChanged(null),
                     ),
-            ),
-          ],
-        ),
+                    for (final item in categories) ...[
+                      const SizedBox(width: 7),
+                      _CategoryButton(
+                        label: '${item['name']}',
+                        count: counts['${item['id']}'] ?? 0,
+                        selected: selectedCategory == '${item['id']}',
+                        onPressed: () => onCategoryChanged('${item['id']}'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: scheme.outlineVariant),
+              Expanded(
+                child: products.isEmpty
+                    ? _EmptyCatalog(search: search)
+                    : GridView.builder(
+                        padding: const EdgeInsets.all(14),
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 226,
+                              mainAxisExtent: 204,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 10,
+                            ),
+                        itemCount: products.length,
+                        itemBuilder: (context, index) {
+                          final product = products[index];
+                          return _ProductCard(
+                            product: product,
+                            money: money,
+                            onPressed: () => onProductPressed(product),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
+}
+
+class _CategoryButton extends StatelessWidget {
+  const _CategoryButton({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => ShadButton.raw(
+    variant: selected ? ShadButtonVariant.primary : ShadButtonVariant.outline,
+    onPressed: onPressed,
+    height: 38,
+    padding: const EdgeInsets.symmetric(horizontal: 11),
+    leading: Icon(
+      selected ? Icons.check_rounded : Icons.restaurant_menu_outlined,
+      size: 15,
+    ),
+    child: Text(
+      '$label · $count',
+      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+    ),
+  );
 }
 
 class _ProductCard extends StatelessWidget {
@@ -172,106 +213,189 @@ class _ProductCard extends StatelessWidget {
     final weighed =
         product['pricing_unit'] == 'kg' || product['is_weighed'] == true;
     final code = '${product['internal_code'] ?? ''}'.trim();
+    final imageUrl = '${product['image'] ?? ''}'.trim();
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+    return ShadCard(
+      padding: EdgeInsets.zero,
+      radius: AppTheme.radius,
+      shadows: const [],
+      columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Material(
+        color: Colors.transparent,
+        clipBehavior: Clip.antiAlias,
+        shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: AppTheme.radius,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text.rich(
-                TextSpan(
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.18,
-                    fontWeight: FontWeight.w800,
-                    color: scheme.onSurface,
-                  ),
+              SizedBox(
+                height: 88,
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    if (code.isNotEmpty)
-                      TextSpan(
-                        text: '#$code  ',
-                        style: TextStyle(color: scheme.onSurfaceVariant),
-                      ),
-                    TextSpan(text: '${product['name']}'),
-                  ],
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${product['category_name'] ?? 'Sem categoria'}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: scheme.onSurfaceVariant,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.end,
-                      spacing: 5,
-                      children: [
-                        Text(
-                          money(product['current_price']),
-                          style: TextStyle(
-                            color: scheme.primary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
+                    _ProductImage(url: imageUrl),
+                    if (promotional || weighed)
+                      Positioned(
+                        top: 7,
+                        left: 7,
+                        child: ShadBadge.raw(
+                          variant: ShadBadgeVariant.secondary,
+                          backgroundColor: scheme.surface.withValues(
+                            alpha: .92,
+                          ),
+                          foregroundColor: scheme.onSurface,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: AppTheme.radius,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 4,
+                          ),
+                          child: Text(
+                            promotional ? 'OFERTA' : 'POR KG',
+                            style: const TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .5,
+                            ),
                           ),
                         ),
-                        if (weighed)
-                          Text(
-                            '/ kg',
-                            style: TextStyle(
-                              color: scheme.onSurfaceVariant,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
+                      ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(11, 9, 9, 9),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text.rich(
+                        TextSpan(
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.15,
+                            fontWeight: FontWeight.w800,
+                            color: scheme.onSurface,
+                          ),
+                          children: [
+                            if (code.isNotEmpty)
+                              TextSpan(
+                                text: '#$code  ',
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            TextSpan(text: '${product['name']}'),
+                          ],
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${product['category_name'] ?? 'Sem categoria'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: scheme.onSurfaceVariant,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.end,
+                              spacing: 4,
+                              children: [
+                                Text(
+                                  money(product['current_price']),
+                                  style: TextStyle(
+                                    color: scheme.primary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                if (weighed)
+                                  Text(
+                                    '/ kg',
+                                    style: TextStyle(
+                                      color: scheme.onSurfaceVariant,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                if (promotional &&
+                                    product['sale_price'] !=
+                                        product['promotional_price'])
+                                  Text(
+                                    money(product['sale_price']),
+                                    style: TextStyle(
+                                      color: scheme.onSurfaceVariant,
+                                      fontSize: 9,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                        if (promotional &&
-                            product['sale_price'] !=
-                                product['promotional_price'])
-                          Text(
-                            money(product['sale_price']),
-                            style: TextStyle(
-                              color: scheme.onSurfaceVariant,
-                              fontSize: 10,
-                              decoration: TextDecoration.lineThrough,
+                          Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: AppTheme.radius,
+                            ),
+                            child: const Icon(
+                              Icons.add_rounded,
+                              size: 18,
+                              color: Colors.white,
                             ),
                           ),
-                      ],
-                    ),
+                        ],
+                      ),
+                    ],
                   ),
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Icon(
-                      Icons.add_rounded,
-                      size: 20,
-                      color: scheme.primary,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ProductImage extends StatelessWidget {
+  const _ProductImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fallback = ColoredBox(
+      color: scheme.surfaceContainer,
+      child: Center(
+        child: Icon(
+          Icons.restaurant_menu_outlined,
+          size: 30,
+          color: scheme.onSurfaceVariant.withValues(alpha: .7),
+        ),
+      ),
+    );
+    if (url.isEmpty) return fallback;
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, _, _) => fallback,
     );
   }
 }
@@ -283,39 +407,16 @@ class _EmptyCatalog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              search.trim().isEmpty
-                  ? Icons.inventory_2_outlined
-                  : Icons.search_off_rounded,
-              size: 48,
-              color: scheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              search.trim().isEmpty
-                  ? 'Nenhum produto disponível'
-                  : 'Nenhum produto encontrado',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              search.trim().isEmpty
-                  ? 'Verifique o cardápio e a disponibilidade da unidade.'
-                  : 'Tente buscar por outro nome, código ou categoria.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ),
+    return AppEmptyState(
+      icon: search.trim().isEmpty
+          ? Icons.inventory_2_outlined
+          : Icons.search_off_rounded,
+      title: search.trim().isEmpty
+          ? 'Nenhum produto disponível'
+          : 'Nenhum produto encontrado',
+      description: search.trim().isEmpty
+          ? 'Verifique o cardápio e a disponibilidade da unidade.'
+          : 'Tente buscar por outro nome, código ou categoria.',
     );
   }
 }

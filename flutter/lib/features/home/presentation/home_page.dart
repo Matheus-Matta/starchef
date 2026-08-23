@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../../../core/errors/app_error_host.dart';
@@ -8,7 +9,10 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/copyable_error.dart';
+import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
@@ -28,7 +32,9 @@ import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
+import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
+import 'pdv_settings_menu_dialog.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 
@@ -40,6 +46,7 @@ class HomePage extends StatefulWidget {
     required this.onToggleTheme,
     required this.isFullScreen,
     required this.onToggleFullScreen,
+    required this.onClose,
     required this.preferences,
   });
 
@@ -48,6 +55,7 @@ class HomePage extends StatefulWidget {
   final VoidCallback onToggleTheme;
   final bool isFullScreen;
   final VoidCallback onToggleFullScreen;
+  final VoidCallback onClose;
   final LocalPreferences preferences;
 
   @override
@@ -347,6 +355,7 @@ class _HomePageState extends State<HomePage> {
       final bootstrap = await presenter.load(
         selectedRestaurantId: selectedRestaurantId,
         userRestaurantId: widget.controller.session!.user.restaurantId,
+        userId: widget.controller.session!.user.id,
       );
       restaurants = bootstrap.restaurants;
       selectedRestaurantId = bootstrap.selectedRestaurantId;
@@ -911,110 +920,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openCashCenter() async {
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        final scheme = Theme.of(dialogContext).colorScheme;
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.account_balance_wallet_outlined),
-              SizedBox(width: 10),
-              Text('Financeiro do caixa'),
-            ],
-          ),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        cashSession == null ? 'Caixa fechado' : 'Caixa aberto',
-                        style: TextStyle(
-                          color: cashSession == null
-                              ? scheme.error
-                              : const Color(0xFF167A3E),
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        cashSession == null
-                            ? 'Abra uma sessão para iniciar as vendas.'
-                            : _money(cashBalance),
-                        style: TextStyle(
-                          fontSize: cashSession == null ? 16 : 30,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      if (cashSession != null)
-                        Text(
-                          '${cashSession!['station'] ?? 'Estação atual'}',
-                          style: TextStyle(color: scheme.onSurfaceVariant),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                if (cashSession == null)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: () => Navigator.pop(dialogContext, 'open'),
-                      icon: const Icon(Icons.lock_open),
-                      label: const Text('Abrir caixa'),
-                    ),
-                  )
-                else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () =>
-                              Navigator.pop(dialogContext, 'supply'),
-                          icon: const Icon(Icons.add_circle_outline),
-                          label: const Text('Suprimento'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () =>
-                              Navigator.pop(dialogContext, 'withdrawal'),
-                          icon: const Icon(Icons.remove_circle_outline),
-                          label: const Text('Sangria'),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            if (cashSession != null)
-              TextButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, 'close'),
-                icon: const Icon(Icons.lock_outline),
-                label: const Text('Fechar caixa'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Voltar'),
-            ),
-          ],
-        );
-      },
+    final action = await PdvCashCenterDialog.show(
+      context,
+      cashSession: cashSession,
+      balanceLabel: _money(cashBalance),
     );
     if (!mounted || action == null) return;
     if (action == 'open') await _openCash();
@@ -1025,111 +934,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openSettingsCenter() async {
-    final selection = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        scrollable: true,
-        title: const Row(
-          children: [
-            Icon(Icons.settings_outlined),
-            SizedBox(width: 10),
-            Text('Configurações do PDV'),
-          ],
-        ),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.controller.session!.user.canManageDevices) ...[
-                ListTile(
-                  leading: const Icon(Icons.print_outlined),
-                  title: const Text('Impressoras'),
-                  subtitle: const Text('Conexão, driver e testes de impressão'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pop(dialogContext, 'printer'),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.scale_outlined),
-                  title: const Text('Balanças'),
-                  subtitle: const Text(
-                    'Porta, protocolo e impressora vinculada',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pop(dialogContext, 'scale'),
-                ),
-                const Divider(),
-              ],
-              ListTile(
-                leading: const Icon(Icons.hub_outlined),
-                title: const Text('Rede local de caixas'),
-                subtitle: Text(
-                  topologyService?.status.message ??
-                      'Entre novamente para habilitar a identidade deste caixa.',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'topology'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Preferências deste terminal'),
-                subtitle: const Text(
-                  'Tempo da comanda, estabilidade, alertas e impressão',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'preferences'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.sync_problem_outlined),
-                title: const Text('Operações pendentes'),
-                subtitle: Text(
-                  offlinePendingCount == 0
-                      ? 'Nada aguardando o servidor'
-                      : '$offlinePendingCount aguardando o servidor',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'outbox'),
-              ),
-              const Divider(),
-              SwitchListTile(
-                secondary: Icon(
-                  widget.isDark
-                      ? Icons.dark_mode_outlined
-                      : Icons.light_mode_outlined,
-                ),
-                title: const Text('Tema escuro'),
-                subtitle: const Text('Ajuste visual desta estação'),
-                value: widget.isDark,
-                onChanged: (_) {
-                  Navigator.pop(dialogContext, 'theme');
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  widget.isFullScreen
-                      ? Icons.fullscreen_exit
-                      : Icons.fullscreen,
-                ),
-                title: Text(
-                  widget.isFullScreen
-                      ? 'Sair da tela cheia'
-                      : 'Usar tela cheia',
-                ),
-                subtitle: const Text('Atalho: F11'),
-                onTap: () => Navigator.pop(dialogContext, 'fullscreen'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Fechar'),
-          ),
-        ],
-      ),
+    final selection = await PdvSettingsMenuDialog.show(
+      context,
+      canManageDevices: widget.controller.session!.user.canManageDevices,
+      topologyStatus:
+          topologyService?.status.message ??
+          'Entre novamente para habilitar a identidade deste caixa.',
+      offlinePendingCount: offlinePendingCount,
+      isDark: widget.isDark,
+      isFullScreen: widget.isFullScreen,
     );
     if (!mounted || selection == null) return;
     if (selection == 'printer') _openDeviceSettings(DeviceKind.printer);
@@ -1229,7 +1042,7 @@ class _HomePageState extends State<HomePage> {
         builder: (dialogContext) => PopScope(
           canPop: false,
           child: StatefulBuilder(
-            builder: (context, update) => AlertDialog(
+            builder: (context, update) => AppDialog(
               title: const Row(
                 children: [
                   Icon(Icons.warning_amber_rounded, color: Colors.orange),
@@ -1598,7 +1411,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _chooseTable() async {
     final table = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: const Text('Selecionar mesa'),
         content: SizedBox(
           width: 620,
@@ -1615,14 +1428,14 @@ class _HomePageState extends State<HomePage> {
               final item = tables[index];
               final occupied = item['current_order_id'] != null;
               return InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: AppTheme.radius,
                 onTap: () => Navigator.pop(context, item),
                 child: Ink(
                   decoration: BoxDecoration(
                     color: occupied
                         ? Colors.orange.shade50
                         : Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: AppTheme.radius,
                     border: Border.all(
                       color: occupied
                           ? Colors.orange.shade300
@@ -1692,7 +1505,7 @@ class _HomePageState extends State<HomePage> {
     final searchController = TextEditingController();
     final action = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AppDialog(
         title: const Text('Vincular Comanda'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1748,7 +1561,7 @@ class _HomePageState extends State<HomePage> {
         if (capacity > 0 && activeCommandsCount >= capacity) {
           final confirm = await showDialog<bool>(
             context: context,
-            builder: (ctx) => AlertDialog(
+            builder: (ctx) => AppDialog(
               title: const Text('Lotação Atingida'),
               content: const Text(
                 'A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?',
@@ -1812,7 +1625,7 @@ class _HomePageState extends State<HomePage> {
         .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: const Text('Transferir Comanda'),
         content: SizedBox(
           width: 400,
@@ -1864,7 +1677,7 @@ class _HomePageState extends State<HomePage> {
         .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: const Text('Transferir Todas as Comandas'),
         content: SizedBox(
           width: 400,
@@ -1993,7 +1806,7 @@ class _HomePageState extends State<HomePage> {
                     .toLowerCase()
                     .contains(term);
           }).toList();
-          return AlertDialog(
+          return AppDialog(
             title: Text(
               type == 'delivery'
                   ? 'Cliente do delivery'
@@ -2086,7 +1899,7 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => AppDialog(
           title: const Text('Cadastrar cliente'),
           content: SizedBox(
             width: 560,
@@ -2429,7 +2242,7 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => AppDialog(
           title: Row(
             children: [
               const Icon(Icons.scale_outlined),
@@ -2478,7 +2291,7 @@ class _HomePageState extends State<HomePage> {
                   padding: const EdgeInsets.symmetric(vertical: 22),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: AppTheme.radius,
                     border: Border.all(
                       color: weight > 0
                           ? Theme.of(context).colorScheme.primary
@@ -2682,7 +2495,7 @@ class _HomePageState extends State<HomePage> {
     final nextStep = await showDialog<String>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDialogState) => AppDialog(
           title: const Text('Revisar pedido'),
           content: SizedBox(
             width: 420,
@@ -3250,7 +3063,7 @@ class _HomePageState extends State<HomePage> {
 
     final shouldPrint = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AppDialog(
         title: const Row(
           children: [
             Icon(Icons.print_outlined),
@@ -3306,7 +3119,7 @@ class _HomePageState extends State<HomePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => AppDialog(
           title: const Text('Abrir caixa'),
           content: SizedBox(
             width: 420,
@@ -3391,7 +3204,7 @@ class _HomePageState extends State<HomePage> {
     final isWithdrawal = type == 'withdrawal';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: Text(
           isWithdrawal ? 'Registrar sangria' : 'Registrar suprimento',
         ),
@@ -3480,7 +3293,7 @@ class _HomePageState extends State<HomePage> {
         context: context,
         barrierDismissible: true,
         builder: (dialogContext) => StatefulBuilder(
-          builder: (context, update) => AlertDialog(
+          builder: (context, update) => AppDialog(
             title: Text(
               movement['movement_type'] == 'withdrawal'
                   ? 'Autorizar sangria'
@@ -3650,7 +3463,7 @@ class _HomePageState extends State<HomePage> {
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: const Text('Fechar caixa'),
         content: SizedBox(
           width: 420,
@@ -3709,6 +3522,234 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _onCashMenuSelected(String value) {
+    if (value == 'supply' || value == 'withdrawal') {
+      _cashMovement(value);
+    }
+    if (value == 'close') _closeCash();
+  }
+
+  List<PopupMenuEntry<String>> _cashMenuItems() => const [
+    PopupMenuItem(
+      value: 'supply',
+      child: ListTile(
+        leading: Icon(Icons.add_circle_outline),
+        title: Text('Suprimento'),
+      ),
+    ),
+    PopupMenuItem(
+      value: 'withdrawal',
+      child: ListTile(
+        leading: Icon(Icons.remove_circle_outline),
+        title: Text('Sangria'),
+      ),
+    ),
+    PopupMenuDivider(),
+    PopupMenuItem(
+      value: 'close',
+      child: ListTile(leading: Icon(Icons.lock), title: Text('Fechar caixa')),
+    ),
+  ];
+
+  String _sidebarUserSubtitle() {
+    final user = widget.controller.session!.user;
+    final profile = switch (user.profileType) {
+      'owner' => 'Proprietário',
+      'admin' => 'Administrador',
+      'manager' => 'Gerente',
+      'cashier' => 'Operador de caixa',
+      'waiter' => 'Garçom',
+      _ => '',
+    };
+    final username = user.username.trim();
+    if (username.isEmpty) {
+      return profile.isEmpty ? 'Usuário conectado' : profile;
+    }
+    return profile.isEmpty ? '@$username' : '@$username · $profile';
+  }
+
+  Widget _sidebarOperationPanel({bool compact = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    if (compact) {
+      if (cashSession == null) {
+        return IconButton.filled(
+          tooltip: 'Abrir caixa',
+          onPressed: _openCash,
+          icon: const Icon(Icons.lock_open_outlined),
+        );
+      }
+      return PopupMenuButton<String>(
+        tooltip: 'Caixa aberto · ${_money(cashBalance)}',
+        onSelected: _onCashMenuSelected,
+        itemBuilder: (_) => _cashMenuItems(),
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            borderRadius: AppTheme.radius,
+          ),
+          child: const Icon(Icons.point_of_sale, color: Colors.white, size: 20),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (restaurants.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            initialValue: selectedRestaurantId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Unidade',
+              prefixIcon: Icon(Icons.storefront_outlined, size: 18),
+            ),
+            items: restaurants
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: '${item['id']}',
+                    child: Text(
+                      '${item['trade_name'] ?? item['name']}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: busy || restaurants.length == 1
+                ? null
+                : (value) {
+                    if (value != null) _changeRestaurant(value);
+                  },
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (cashSession == null)
+          ShadButton(
+            onPressed: _openCash,
+            height: 44,
+            leading: const Icon(Icons.lock_open_outlined, size: 18),
+            child: const Text('Abrir caixa'),
+          )
+        else
+          PopupMenuButton<String>(
+            tooltip: 'Ações do caixa',
+            onSelected: _onCashMenuSelected,
+            itemBuilder: (_) => _cashMenuItems(),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(11, 9, 9, 9),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainer,
+                borderRadius: AppTheme.radius,
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: AppTheme.radius,
+                    ),
+                    child: const Icon(
+                      Icons.point_of_sale,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          cashSessionFromCache
+                              ? 'CAIXA OFFLINE'
+                              : 'CAIXA ABERTO',
+                          style: TextStyle(
+                            color: cashSessionFromCache
+                                ? scheme.error
+                                : scheme.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .7,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _money(cashBalance),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          '${cashSession!['station']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 9,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.more_vert, size: 17),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  (String, String, IconData) get _workspaceIdentity {
+    if (flowStep == 'scale-workstation') {
+      return (
+        'Estação de balança',
+        'Pesagem rápida e leitura de comandas',
+        Icons.scale_outlined,
+      );
+    }
+    if (flowStep == 'orders') {
+      return (
+        'Pedidos',
+        'Consulta, edição e pagamentos pendentes',
+        Icons.receipt_long_outlined,
+      );
+    }
+    if (flowStep == 'payment') {
+      return (
+        'Pagamento',
+        'Conferência e finalização do pedido',
+        Icons.payments_outlined,
+      );
+    }
+    if (activeOrder != null) {
+      return (
+        'Pedido #${activeOrder!['sequence']}',
+        'Cardápio e resumo do atendimento',
+        Icons.shopping_bag_outlined,
+      );
+    }
+    if (flowStep == 'context' || flowStep == 'table_details') {
+      return (
+        orderType == 'command' ? 'Comandas' : 'Mesas',
+        'Selecione o contexto do atendimento',
+        orderType == 'command'
+            ? Icons.qr_code_2_outlined
+            : Icons.table_restaurant_outlined,
+      );
+    }
+    return (
+      'Novo atendimento',
+      'Escolha como o pedido será iniciado',
+      Icons.grid_view_outlined,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -3719,69 +3760,41 @@ class _HomePageState extends State<HomePage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (restaurants.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            'StarChef PDV',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          actions: [
-            IconButton(
-              tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
-              onPressed: widget.onToggleTheme,
-              icon: Icon(
-                widget.isDark
-                    ? Icons.light_mode_outlined
-                    : Icons.dark_mode_outlined,
-              ),
-            ),
-            IconButton(
-              tooltip: 'Sair',
-              onPressed: widget.controller.logout,
-              icon: const Icon(Icons.logout),
-            ),
-          ],
+      return AppPageScaffold(
+        title: 'StarChef PDV',
+        description: 'Não foi possível preparar a unidade para atendimento.',
+        leading: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Image.asset('assets/logoicon.png', width: 32, height: 32),
         ),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    offlineMode ? Icons.cloud_off : Icons.storefront_outlined,
-                    size: 64,
-                    color: scheme.primary,
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    offlineMode
-                        ? 'Dados offline ainda não disponíveis'
-                        : 'Não foi possível carregar os restaurantes',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    loadErrorMessage ??
-                        'Conecte o PDV à internet ao menos uma vez para baixar os dados necessários.',
-                    textAlign: TextAlign.center,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 22),
-                  FilledButton.icon(
-                    onPressed: loading ? null : _load,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Tentar novamente'),
-                  ),
-                ],
-              ),
+        actions: [
+          IconButton.outlined(
+            tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
+            onPressed: widget.onToggleTheme,
+            icon: Icon(
+              widget.isDark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
             ),
+          ),
+          IconButton.outlined(
+            tooltip: 'Sair',
+            onPressed: widget.controller.logout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+        body: AppEmptyState(
+          icon: offlineMode ? Icons.cloud_off : Icons.storefront_outlined,
+          title: offlineMode
+              ? 'Dados offline ainda não disponíveis'
+              : 'Não foi possível carregar os restaurantes',
+          description:
+              loadErrorMessage ??
+              'Conecte o PDV à internet ao menos uma vez para baixar os dados necessários.',
+          action: FilledButton.icon(
+            onPressed: loading ? null : _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Tentar novamente'),
           ),
         ),
       );
@@ -3797,9 +3810,10 @@ class _HomePageState extends State<HomePage> {
             userName: widget.controller.session!.user.name.trim().isEmpty
                 ? widget.controller.session!.user.username
                 : widget.controller.session!.user.name,
-            restaurantName:
-                '${restaurants.firstWhere((item) => '${item['id']}' == selectedRestaurantId, orElse: () => restaurants.first)['trade_name'] ?? restaurants.first['name']}',
+            userSubtitle: _sidebarUserSubtitle(),
             onLogout: widget.controller.logout,
+            contextPanel: _sidebarOperationPanel(),
+            compactContextPanel: _sidebarOperationPanel(compact: true),
             showOrders: widget.controller.session!.user.canViewOrders,
             showScale:
                 widget.controller.session!.user.canManageOrders ||
@@ -3809,54 +3823,53 @@ class _HomePageState extends State<HomePage> {
           Expanded(
             child: Scaffold(
               appBar: AppBar(
+                toolbarHeight: 72,
                 titleSpacing: 20,
                 title: Row(
                   children: [
-                    Icon(Icons.restaurant_menu, color: scheme.primary),
-                    if (!compactHeader) ...[
-                      const SizedBox(width: 10),
-                      const Text(
-                        'StarChef PDV',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer,
+                        borderRadius: AppTheme.radius,
+                        border: Border.all(color: scheme.outlineVariant),
                       ),
-                    ],
-                    const SizedBox(width: 12),
-                    if (restaurants.length > 1)
-                      Expanded(
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: selectedRestaurantId,
-                            isExpanded: true,
-                            borderRadius: BorderRadius.circular(12),
-                            icon: const Icon(Icons.expand_more),
-                            items: restaurants
-                                .map(
-                                  (item) => DropdownMenuItem(
-                                    value: '${item['id']}',
-                                    child: Text(
-                                      '${item['trade_name'] ?? item['name']}',
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: busy
-                                ? null
-                                : (value) {
-                                    if (value != null) _changeRestaurant(value);
-                                  },
+                      child: Icon(
+                        _workspaceIdentity.$3,
+                        size: 19,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _workspaceIdentity.$1,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Text(
-                          '${restaurants.first['trade_name'] ?? restaurants.first['name']}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
+                          if (!compactHeader)
+                            Text(
+                              _workspaceIdentity.$2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onSurfaceVariant,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
                 actions: [
@@ -3912,107 +3925,17 @@ class _HomePageState extends State<HomePage> {
                     onPressed: _goHome,
                     icon: const Icon(Icons.home_outlined),
                   ),
-                  if (cashSession == null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: FilledButton.icon(
-                        onPressed: _openCash,
-                        icon: const Icon(Icons.lock_open),
-                        label: const Text('Abrir caixa'),
-                      ),
-                    )
-                  else
-                    PopupMenuButton<String>(
-                      tooltip: 'Ações do caixa',
-                      onSelected: (value) {
-                        if (value == 'supply' || value == 'withdrawal') {
-                          _cashMovement(value);
-                        }
-                        if (value == 'close') _closeCash();
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          value: 'supply',
-                          child: ListTile(
-                            leading: Icon(Icons.add_circle_outline),
-                            title: Text('Suprimento'),
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'withdrawal',
-                          child: ListTile(
-                            leading: Icon(Icons.remove_circle_outline),
-                            title: Text('Sangria'),
-                          ),
-                        ),
-                        PopupMenuDivider(),
-                        PopupMenuItem(
-                          value: 'close',
-                          child: ListTile(
-                            leading: Icon(Icons.lock),
-                            title: Text('Fechar caixa'),
-                          ),
-                        ),
-                      ],
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                        child: Container(
-                          height: 40,
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.point_of_sale,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                              const SizedBox(width: 8),
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    cashSessionFromCache
-                                        ? 'Caixa (offline) · ${cashSession!['station']}'
-                                        : 'Caixa aberto · ${cashSession!['station']}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      height: 1,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    'Saldo ${_money(cashBalance)}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                      height: 1,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(
-                                Icons.expand_more,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                  IconButton(
+                    tooltip: widget.isDark
+                        ? 'Usar tema claro'
+                        : 'Usar tema escuro',
+                    onPressed: widget.onToggleTheme,
+                    icon: Icon(
+                      widget.isDark
+                          ? Icons.light_mode_outlined
+                          : Icons.dark_mode_outlined,
                     ),
+                  ),
                   IconButton(
                     tooltip: refreshing ? 'Atualizando...' : 'Atualizar',
                     onPressed: refreshing ? null : _load,
@@ -4024,6 +3947,12 @@ class _HomePageState extends State<HomePage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.refresh),
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar aplicação',
+                    onPressed: widget.onClose,
+                    style: IconButton.styleFrom(foregroundColor: scheme.error),
+                    icon: const Icon(Icons.power_settings_new),
                   ),
                   const SizedBox(width: 10),
                 ],
@@ -4103,11 +4032,15 @@ class _HomePageState extends State<HomePage> {
                             : constraints.maxWidth >= 1500
                             ? 420.0
                             : 380.0;
-                        return Row(
-                          children: [
-                            Expanded(child: _catalog()),
-                            SizedBox(width: cartWidth, child: _cart()),
-                          ],
+                        return Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Expanded(child: _catalog()),
+                              const SizedBox(width: 12),
+                              SizedBox(width: cartWidth, child: _cart()),
+                            ],
+                          ),
                         );
                       },
                     ),
@@ -4118,7 +4051,9 @@ class _HomePageState extends State<HomePage> {
                         child: Center(
                           child: SizedBox(
                             width: 460,
-                            child: Card(
+                            child: ShadCard(
+                              radius: AppTheme.radius,
+                              shadows: const [],
                               child: Padding(
                                 padding: const EdgeInsets.all(32),
                                 child: Column(
@@ -4164,9 +4099,9 @@ class _HomePageState extends State<HomePage> {
                       child: Material(
                         color: Colors.orange.shade50,
                         elevation: 3,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppTheme.radius,
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: AppTheme.radius,
                           onTap: _showMovementApproval,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
@@ -4396,7 +4331,7 @@ class _HomePageState extends State<HomePage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.orange.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: AppTheme.radius,
         border: Border.all(color: Colors.orange.withValues(alpha: .4)),
       ),
       child: Row(
@@ -4507,32 +4442,44 @@ class _HomePageState extends State<HomePage> {
     // sobra a situação, que cruza dois campos e por isso é decidida sempre
     // localmente — inclusive sobre o resultado do servidor.
     final filtered = orders.where(_matchesStatusFilter).toList();
+    final openCount = orders
+        .where(
+          (item) =>
+              const {'open', 'awaiting_payment'}.contains('${item['status']}'),
+        )
+        .length;
+    final paidCount = orders
+        .where((item) => '${item['payment_status']}' == 'paid')
+        .length;
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pedidos',
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                    const Text(
-                      'Edite pedidos em aberto ou finalize pagamentos pendentes.',
-                    ),
-                  ],
+                child: _operationStat(
+                  'RESULTADOS DO FILTRO',
+                  '${filtered.length}',
+                  Icons.filter_alt_outlined,
                 ),
               ),
-              IconButton.filledTonal(
-                tooltip: 'Atualizar pedidos',
-                onPressed: () => _onOrdersFilterChanged(),
-                icon: const Icon(Icons.refresh),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PEDIDOS EM ABERTO',
+                  '$openCount',
+                  Icons.pending_actions_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PAGAMENTOS CONCLUÍDOS',
+                  '$paidCount',
+                  Icons.check_circle_outline,
+                ),
               ),
             ],
           ),
@@ -4544,13 +4491,19 @@ class _HomePageState extends State<HomePage> {
           ],
           const SizedBox(height: 18),
           Expanded(
-            child: Card(
-              clipBehavior: Clip.antiAlias,
+            child: ShadCard(
+              radius: AppTheme.radius,
+              shadows: const [],
+              padding: EdgeInsets.zero,
+              columnCrossAxisAlignment: CrossAxisAlignment.stretch,
               child: ordersLoading
                   ? const Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
-                  ? const Center(
-                      child: Text('Nenhum pedido encontrado neste filtro.'),
+                  ? const AppEmptyState(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Nenhum pedido encontrado',
+                      description:
+                          'Altere os filtros ou atualize a lista para tentar novamente.',
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
@@ -4642,108 +4595,232 @@ class _HomePageState extends State<HomePage> {
       ),
       ('delivery', 'Delivery', 'Pedido para entrega', Icons.delivery_dining),
     ];
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 940),
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+    final scheme = Theme.of(context).colorScheme;
+    final availableTables = tables
+        .where((item) => item['current_order_id'] == null)
+        .length;
+    final availableCommands = commands
+        .where(
+          (item) =>
+              item['is_active'] != false &&
+              item['status'] == 'free' &&
+              item['current_order_id'] == null,
+        )
+        .length;
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Text(
-                'Novo pedido',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Text(
+                  'Escolha o tipo de atendimento',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Selecione o tipo de atendimento para começar.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 28),
-              GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 5,
-                  mainAxisSpacing: 16,
-                  crossAxisSpacing: 16,
-                  // Cinco colunas deixam cada card mais estreito, então a
-                  // legenda quebra em duas linhas; sem baixar a proporção o
-                  // conteúdo estoura a altura da célula.
-                  childAspectRatio: .92,
-                ),
-                itemCount: options.length,
-                itemBuilder: (_, index) {
-                  final option = options[index];
-                  return Card(
-                    elevation: 0,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: Theme.of(context).dividerColor),
-                    ),
-                    child: InkWell(
-                      onTap: () => _selectOrderType(option.$1),
-                      child: Padding(
-                        padding: const EdgeInsets.all(22),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(13),
-                              ),
-                              child: Icon(
-                                option.$4,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              option.$2,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              option.$3,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
+              AppStatusBadge(
+                label: '${products.length} produtos ativos',
+                icon: Icons.inventory_2_outlined,
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _operationStat(
+                  'MESAS LIVRES',
+                  '$availableTables',
+                  Icons.table_restaurant_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'COMANDAS LIVRES',
+                  '$availableCommands',
+                  Icons.qr_code_2_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PEDIDOS CARREGADOS',
+                  '${orders.length}',
+                  Icons.receipt_long_outlined,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Divider(height: 1, color: scheme.outlineVariant),
+          const SizedBox(height: 14),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 230,
+                mainAxisExtent: 190,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+              ),
+              itemCount: options.length,
+              itemBuilder: (_, index) {
+                final option = options[index];
+                return ShadCard(
+                  padding: EdgeInsets.zero,
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: AppTheme.radius,
+                      onTap: () => _selectOrderType(option.$1),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(height: 3, color: scheme.primary),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primaryContainer,
+                                          borderRadius: AppTheme.radius,
+                                        ),
+                                        child: Icon(
+                                          option.$4,
+                                          color: scheme.primary,
+                                          size: 21,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Text(
+                                        '${index + 1}'.padLeft(2, '0'),
+                                        style: TextStyle(
+                                          color: scheme.onSurfaceVariant,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    option.$2,
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    option.$3,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'INICIAR',
+                                        style: TextStyle(
+                                          color: scheme.primary,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: .8,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Icon(
+                                        Icons.arrow_forward,
+                                        size: 16,
+                                        color: scheme.primary,
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _operationStat(String label, String value, IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: AppTheme.radius,
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _tableContextPanel() => Center(
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 980),
+      constraints: const BoxConstraints(maxWidth: 1400),
       child: Padding(
-        padding: const EdgeInsets.all(30),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -4783,60 +4860,63 @@ class _HomePageState extends State<HomePage> {
                   final table = tables[index];
                   final occupied = table['current_order_id'] != null;
                   final color = occupied ? Colors.orange : Colors.green;
-                  return Card(
-                    elevation: 0,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(color: color.shade300),
-                    ),
-                    child: InkWell(
-                      onTap: () => _openTable(table),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  '${table['number']}',
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w900,
+                  return ShadCard(
+                    padding: EdgeInsets.zero,
+                    radius: AppTheme.radius,
+                    shadows: const [],
+                    border: ShadBorder.all(color: color.shade300),
+                    columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: AppTheme.radius,
+                        onTap: () => _openTable(table),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    '${table['number']}',
+                                    style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                ),
-                                const Spacer(),
-                                Container(
-                                  width: 9,
-                                  height: 9,
-                                  decoration: BoxDecoration(
-                                    color: color,
-                                    shape: BoxShape.circle,
+                                  const Spacer(),
+                                  Container(
+                                    width: 9,
+                                    height: 9,
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      shape: BoxShape.circle,
+                                    ),
                                   ),
+                                ],
+                              ),
+                              const Spacer(),
+                              Text(
+                                occupied ? 'Ocupada' : 'Livre',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: color.shade800,
                                 ),
-                              ],
-                            ),
-                            const Spacer(),
-                            Text(
-                              occupied ? 'Ocupada' : 'Livre',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: color.shade800,
                               ),
-                            ),
-                            Text(
-                              '${table['capacity'] ?? 0} lugares · ${table['sector_name'] ?? 'Sem setor'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                              Text(
+                                '${table['capacity'] ?? 0} lugares · ${table['sector_name'] ?? 'Sem setor'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -4875,9 +4955,9 @@ class _HomePageState extends State<HomePage> {
         .length;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 980),
+        constraints: const BoxConstraints(maxWidth: 1400),
         child: Padding(
-          padding: const EdgeInsets.all(30),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4916,12 +4996,14 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 18),
               Expanded(
                 child: visible.isEmpty
-                    ? Center(
-                        child: Text(
-                          commands.isEmpty
-                              ? 'Nenhuma comanda cadastrada.'
-                              : 'Nenhuma comanda encontrada.',
-                        ),
+                    ? AppEmptyState(
+                        icon: Icons.qr_code_2_outlined,
+                        title: commands.isEmpty
+                            ? 'Nenhuma comanda cadastrada'
+                            : 'Nenhuma comanda encontrada',
+                        description: commands.isEmpty
+                            ? 'Cadastre comandas na retaguarda para iniciar atendimentos.'
+                            : 'Tente buscar por outro número, código ou cliente.',
                       )
                     : GridView.builder(
                         gridDelegate:
@@ -4938,13 +5020,13 @@ class _HomePageState extends State<HomePage> {
                               command['current_order_id'] != null ||
                               command['status'] == 'occupied';
                           final color = occupied ? Colors.orange : Colors.green;
-                          return Card(
-                            elevation: 0,
-                            clipBehavior: Clip.antiAlias,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              side: BorderSide(color: color.shade300),
-                            ),
+                          return ShadCard(
+                            padding: EdgeInsets.zero,
+                            radius: AppTheme.radius,
+                            shadows: const [],
+                            border: ShadBorder.all(color: color.shade300),
+                            columnCrossAxisAlignment:
+                                CrossAxisAlignment.stretch,
                             child: InkWell(
                               onTap: () => _openCommand(command),
                               child: Padding(
@@ -5027,331 +5109,358 @@ class _HomePageState extends State<HomePage> {
       '0',
       'back',
     ];
-    return Padding(
-      padding: const EdgeInsets.all(26),
-      child: Row(
-        children: [
-          Expanded(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => setState(() => flowStep = 'order'),
-                      icon: const Icon(Icons.arrow_back),
-                      label: const Text('Voltar ao pedido'),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Pagamento',
-                      style: TextStyle(
-                        fontSize: 27,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Pedido #${activeOrder!['sequence']}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    _paymentSummaryRow(
-                      'Subtotal',
-                      _money(activeOrder!['subtotal']),
-                    ),
-                    if (_number(activeOrder!['service_fee']) > .009)
-                      _paymentSummaryRow(
-                        'Taxa de serviço',
-                        _money(activeOrder!['service_fee']),
-                      ),
-                    if (_number(activeOrder!['delivery_fee']) > .009)
-                      _paymentSummaryRow(
-                        'Entrega',
-                        _money(activeOrder!['delivery_fee']),
-                      ),
-                    if (_number(activeOrder!['discount']) > .009)
-                      _paymentSummaryRow(
-                        'Desconto',
-                        '- ${_money(activeOrder!['discount'])}',
-                      ),
-                    _paymentSummaryRow(
-                      'Total do pedido',
-                      _money(activeOrder!['total']),
-                      strong: true,
-                    ),
-                    _paymentSummaryRow('Valor aplicado', _money(paidTotal)),
-                    _paymentSummaryRow('Total recebido', _money(receivedTotal)),
-                    if (changeTotal > .009)
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(top: 14),
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.green.withValues(alpha: .45),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A janela do PDV pode chegar a 960 px. Com a navegação lateral
+        // aberta, reservar 430 px fixos para o teclado deixava o resumo com
+        // pouco mais de 200 px. O teclado continua confortável, mas agora
+        // cede espaço ao resumo nas larguras menores suportadas.
+        final compact = constraints.maxWidth < 980;
+        final horizontalPadding = compact ? 18.0 : 26.0;
+        final keypadWidth = (constraints.maxWidth * .42)
+            .clamp(340.0, 430.0)
+            .toDouble();
+        return Padding(
+          padding: EdgeInsets.all(horizontalPadding),
+          child: Row(
+            children: [
+              Expanded(
+                child: ShadCard(
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => setState(() => flowStep = 'order'),
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('Voltar ao pedido'),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Pagamento',
+                          style: TextStyle(
+                            fontSize: 27,
+                            fontWeight: FontWeight.w900,
                           ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'TROCO A ENTREGAR',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.green,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _money(changeTotal),
-                              style: const TextStyle(
-                                fontSize: 34,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                              ),
-                            ),
-                            const Text(
-                              'Entregue o troco e depois conclua o pedido.',
-                            ),
-                          ],
+                        const SizedBox(height: 6),
+                        Text(
+                          'Pedido #${activeOrder!['sequence']}',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    const Divider(height: 28),
-                    _paymentSummaryRow(
-                      'Restante',
-                      _money(remainingTotal),
-                      strong: true,
-                    ),
-                    const SizedBox(height: 22),
-                    const Text(
-                      'Pagamentos registrados',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: registeredPayments.isEmpty
-                          ? const Center(
-                              child: Text('Nenhum pagamento registrado.'),
-                            )
-                          : ListView.separated(
-                              itemCount: registeredPayments.length,
-                              separatorBuilder: (_, _) => const Divider(),
-                              itemBuilder: (_, index) {
-                                final payment = registeredPayments[index];
-                                return ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: const CircleAvatar(
-                                    child: Icon(Icons.check, size: 18),
+                        const SizedBox(height: 24),
+                        _paymentSummaryRow(
+                          'Subtotal',
+                          _money(activeOrder!['subtotal']),
+                        ),
+                        if (_number(activeOrder!['service_fee']) > .009)
+                          _paymentSummaryRow(
+                            'Taxa de serviço',
+                            _money(activeOrder!['service_fee']),
+                          ),
+                        if (_number(activeOrder!['delivery_fee']) > .009)
+                          _paymentSummaryRow(
+                            'Entrega',
+                            _money(activeOrder!['delivery_fee']),
+                          ),
+                        if (_number(activeOrder!['discount']) > .009)
+                          _paymentSummaryRow(
+                            'Desconto',
+                            '- ${_money(activeOrder!['discount'])}',
+                          ),
+                        _paymentSummaryRow(
+                          'Total do pedido',
+                          _money(activeOrder!['total']),
+                          strong: true,
+                        ),
+                        _paymentSummaryRow('Valor aplicado', _money(paidTotal)),
+                        _paymentSummaryRow(
+                          'Total recebido',
+                          _money(receivedTotal),
+                        ),
+                        if (changeTotal > .009)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(top: 14),
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withValues(alpha: .12),
+                              borderRadius: AppTheme.radius,
+                              border: Border.all(
+                                color: Colors.green.withValues(alpha: .45),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'TROCO A ENTREGAR',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.green,
                                   ),
-                                  title: Text(
-                                    '${payment['payment_method_name'] ?? 'Pagamento'}',
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _money(changeTotal),
+                                  style: const TextStyle(
+                                    fontSize: 34,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.green,
                                   ),
-                                  subtitle:
-                                      _number(payment['change_amount']) > .009
-                                      ? Text(
-                                          'Recebido: ${_money(_number(payment['amount']) + _number(payment['change_amount']))} · Troco: ${_money(payment['change_amount'])}',
-                                        )
-                                      : null,
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        _money(payment['amount']),
+                                ),
+                                const Text(
+                                  'Entregue o troco e depois conclua o pedido.',
+                                ),
+                              ],
+                            ),
+                          ),
+                        const Divider(height: 28),
+                        _paymentSummaryRow(
+                          'Restante',
+                          _money(remainingTotal),
+                          strong: true,
+                        ),
+                        const SizedBox(height: 22),
+                        const Text(
+                          'Pagamentos registrados',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: registeredPayments.isEmpty
+                              ? const Center(
+                                  child: Text('Nenhum pagamento registrado.'),
+                                )
+                              : ListView.separated(
+                                  itemCount: registeredPayments.length,
+                                  separatorBuilder: (_, _) => const Divider(),
+                                  itemBuilder: (_, index) {
+                                    final payment = registeredPayments[index];
+                                    return ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: const CircleAvatar(
+                                        child: Icon(Icons.check, size: 18),
+                                      ),
+                                      title: Text(
+                                        '${payment['payment_method_name'] ?? 'Pagamento'}',
+                                      ),
+                                      subtitle:
+                                          _number(payment['change_amount']) >
+                                              .009
+                                          ? Text(
+                                              'Recebido: ${_money(_number(payment['amount']) + _number(payment['change_amount']))} · Troco: ${_money(payment['change_amount'])}',
+                                            )
+                                          : null,
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            _money(payment['amount']),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          if (payment['id'] != null)
+                                            IconButton(
+                                              tooltip: 'Excluir pagamento',
+                                              icon:
+                                                  removingPaymentId ==
+                                                      '${payment['id']}'
+                                                  ? const SizedBox(
+                                                      width: 18,
+                                                      height: 18,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                          ),
+                                                    )
+                                                  : const Icon(
+                                                      Icons.delete_outline,
+                                                      size: 20,
+                                                    ),
+                                              onPressed:
+                                                  removingPaymentId == null
+                                                  ? () =>
+                                                        _removePayment(payment)
+                                                  : null,
+                                            ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed: remainingTotal <= .009
+                                ? _completePaidOrder
+                                : null,
+                            icon: const Icon(Icons.check_circle),
+                            label: const Text(
+                              'Concluir pedido',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: compact ? 14 : 20),
+              SizedBox(
+                width: keypadWidth,
+                child: ShadCard(
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedPaymentMethod,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Forma de pagamento',
+                          ),
+                          items: paymentMethods
+                              .map(
+                                (item) => DropdownMenuItem(
+                                  value: '${item['id']}',
+                                  child: Text('${item['name']}'),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) =>
+                              setState(() => selectedPaymentMethod = value),
+                        ),
+                        if (needsReference) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: paymentReference,
+                            decoration: const InputDecoration(
+                              labelText: 'Referência da transação',
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        TextField(
+                          controller: paymentAmount,
+                          readOnly: true,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Valor do pagamento',
+                            prefixText: r'R$ ',
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 18,
+                            ),
+                          ),
+                        ),
+                        if (pendingChange > .009) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withValues(alpha: .12),
+                              borderRadius: AppTheme.radius,
+                              border: Border.all(
+                                color: Colors.green.withValues(alpha: .45),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Troco',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                Text(
+                                  _money(pendingChange),
+                                  style: const TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.green,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: GridView.builder(
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  childAspectRatio: 1.6,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                ),
+                            itemCount: keys.length,
+                            itemBuilder: (_, index) {
+                              final key = keys[index];
+                              return OutlinedButton(
+                                onPressed: () => _pressPaymentKey(key),
+                                child: key == 'back'
+                                    ? const Icon(Icons.backspace_outlined)
+                                    : key == 'clear'
+                                    ? const Text('C')
+                                    : Text(
+                                        key,
                                         style: const TextStyle(
+                                          fontSize: 20,
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
-                                      if (payment['id'] != null)
-                                        IconButton(
-                                          tooltip: 'Excluir pagamento',
-                                          icon:
-                                              removingPaymentId ==
-                                                  '${payment['id']}'
-                                              ? const SizedBox(
-                                                  width: 18,
-                                                  height: 18,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                )
-                                              : const Icon(
-                                                  Icons.delete_outline,
-                                                  size: 20,
-                                                ),
-                                          onPressed: removingPaymentId == null
-                                              ? () => _removePayment(payment)
-                                              : null,
-                                        ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton.icon(
-                        onPressed: remainingTotal <= .009
-                            ? _completePaidOrder
-                            : null,
-                        icon: const Icon(Icons.check_circle),
-                        label: const Text(
-                          'Concluir pedido',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 20),
-          SizedBox(
-            width: 430,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedPaymentMethod,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Forma de pagamento',
-                      ),
-                      items: paymentMethods
-                          .map(
-                            (item) => DropdownMenuItem(
-                              value: '${item['id']}',
-                              child: Text('${item['name']}'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) =>
-                          setState(() => selectedPaymentMethod = value),
-                    ),
-                    if (needsReference) ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: paymentReference,
-                        decoration: const InputDecoration(
-                          labelText: 'Referência da transação',
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    TextField(
-                      controller: paymentAmount,
-                      readOnly: true,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Valor do pagamento',
-                        prefixText: r'R$ ',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
-                        ),
-                      ),
-                    ),
-                    if (pendingChange > .009) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.green.withValues(alpha: .45),
+                              );
+                            },
                           ),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Troco',
-                              style: TextStyle(fontWeight: FontWeight.w800),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed: paymentValue > 0
+                                ? _addSplitPayment
+                                : null,
+                            icon: const Icon(Icons.add_card),
+                            label: Text(
+                              pendingChange > .009
+                                  ? 'Receber e registrar troco'
+                                  : 'Adicionar pagamento',
+                              style: const TextStyle(fontSize: 16),
                             ),
-                            Text(
-                              _money(pendingChange),
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    Expanded(
-                      child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              childAspectRatio: 1.6,
-                              crossAxisSpacing: 10,
-                              mainAxisSpacing: 10,
-                            ),
-                        itemCount: keys.length,
-                        itemBuilder: (_, index) {
-                          final key = keys[index];
-                          return OutlinedButton(
-                            onPressed: () => _pressPaymentKey(key),
-                            child: key == 'back'
-                                ? const Icon(Icons.backspace_outlined)
-                                : key == 'clear'
-                                ? const Text('C')
-                                : Text(
-                                    key,
-                                    style: const TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
+                      ],
                     ),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton.icon(
-                        onPressed: paymentValue > 0 ? _addSplitPayment : null,
-                        icon: const Icon(Icons.add_card),
-                        label: Text(
-                          pendingChange > .009
-                              ? 'Receber e registrar troco'
-                              : 'Adicionar pagamento',
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
