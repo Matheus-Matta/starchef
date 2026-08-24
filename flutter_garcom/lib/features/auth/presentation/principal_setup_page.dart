@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/relay/principal_client.dart';
+import '../../../core/relay/relay_signature.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/labeled_field.dart';
 import 'auth_scaffold.dart';
+import 'diagnostics_sheet.dart';
 import 'session_controller.dart';
 
 /// Pareamento do aparelho com o Caixa Principal — depois do login.
@@ -69,13 +71,37 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
     if (paired && mounted) widget.onDone?.call();
   }
 
+  /// Testa a ligação com o que está digitado AGORA, sem gravar nada.
+  ///
+  /// É o caminho para descobrir por que "não conecta": o resultado separa rede
+  /// bloqueada de porta fechada e de recusa do caixa — três problemas com
+  /// culpados diferentes que hoje apareciam como a mesma frase.
+  Future<void> _diagnose() async {
+    final session = widget.controller.session;
+    if (session == null) return;
+    FocusScope.of(context).unfocus();
+    await showPrincipalDiagnostics(
+      context,
+      client: widget.controller.principalClient,
+      config: PrincipalConfig(
+        host: _host.text.trim(),
+        port: int.tryParse(_port.text.trim()) ?? PrincipalConfig.defaultPort,
+        secret: _secret.text.trim(),
+        // O aparelho pode ainda não ter identidade no relay (primeiro
+        // pareamento): uma provisória serve, o teste não grava nada.
+        nodeId:
+            widget.controller.principal?.nodeId ?? RelaySignature.randomId(),
+      ),
+      identity: session.identity,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final name = controller.session?.user.displayName ?? '';
     final restaurant = controller.session?.user.restaurantName ?? '';
     return AuthScaffold(
-      icon: Icons.point_of_sale_outlined,
       title: 'Conectar ao caixa',
       subtitle: restaurant.isEmpty
           ? 'Olá, $name. Falta dizer para onde vão os pedidos.'
@@ -179,6 +205,12 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
               child: Text(
                 controller.loading ? 'Testando...' : 'Conectar',
               ),
+            ),
+            const SizedBox(height: 8),
+            ShadButton.ghost(
+              onPressed: controller.loading ? null : _diagnose,
+              leading: const Icon(Icons.troubleshoot, size: 18),
+              child: const Text('Testar conexão'),
             ),
           ],
         ),

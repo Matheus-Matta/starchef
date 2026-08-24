@@ -60,14 +60,16 @@ void main() {
     await _deleteTemporaryDirectory(temporaryDirectory);
   });
 
-  Future<HttpClientResponse> health({
+  Future<({int status, String detail})> health({
     required String actor,
     required String account,
     required String restaurant,
     String signingSecret = '',
     String nonce = 'nonce-do-aparelho-1',
+    Duration clockSkew = Duration.zero,
   }) async {
-    final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final timestamp =
+        DateTime.now().toUtc().add(clockSkew).millisecondsSinceEpoch ~/ 1000;
     final signature = LocalRelayAuthenticator.signature(
       secret: signingSecret.isEmpty ? secret : signingSecret,
       method: 'GET',
@@ -94,8 +96,12 @@ void main() {
         ..set('x-starchef-restaurant', restaurant)
         ..set('x-starchef-signature', signature);
       final response = await request.close();
-      await utf8.decoder.bind(response).join();
-      return response;
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = body.isEmpty ? const {} : jsonDecode(body) as Map;
+      return (
+        status: response.statusCode,
+        detail: '${decoded['detail'] ?? ''}',
+      );
     } finally {
       client.close(force: true);
     }
@@ -108,7 +114,7 @@ void main() {
       restaurant: restaurantId,
     );
 
-    expect(response.statusCode, HttpStatus.ok);
+    expect(response.status, HttpStatus.ok);
   });
 
   test('continua aceitando o próprio operador do principal', () async {
@@ -118,27 +124,29 @@ void main() {
       restaurant: restaurantId,
     );
 
-    expect(response.statusCode, HttpStatus.ok);
+    expect(response.status, HttpStatus.ok);
   });
 
-  test('recusa outra conta', () async {
+  test('recusa outra conta dizendo que é outra conta', () async {
     final response = await health(
       actor: 'garcom-maria',
       account: 'conta-de-outra-loja',
       restaurant: restaurantId,
     );
 
-    expect(response.statusCode, HttpStatus.unauthorized);
+    expect(response.status, HttpStatus.unauthorized);
+    expect(response.detail, contains('outra conta'));
   });
 
-  test('recusa outro restaurante da mesma conta', () async {
+  test('recusa outro restaurante dizendo que é outro restaurante', () async {
     final response = await health(
       actor: 'garcom-maria',
       account: accountId,
       restaurant: 'restaurante-2',
     );
 
-    expect(response.statusCode, HttpStatus.unauthorized);
+    expect(response.status, HttpStatus.unauthorized);
+    expect(response.detail, contains('outro restaurante'));
   });
 
   test('recusa requisição sem ator', () async {
@@ -148,10 +156,11 @@ void main() {
       restaurant: restaurantId,
     );
 
-    expect(response.statusCode, HttpStatus.unauthorized);
+    expect(response.status, HttpStatus.unauthorized);
+    expect(response.detail, contains('incompleta'));
   });
 
-  test('recusa chave de pareamento errada', () async {
+  test('recusa chave errada dizendo que é a chave', () async {
     final response = await health(
       actor: 'garcom-maria',
       account: accountId,
@@ -159,7 +168,35 @@ void main() {
       signingSecret: LocalTopologyStore.generatePairingSecret(),
     );
 
-    expect(response.statusCode, HttpStatus.unauthorized);
+    expect(response.status, HttpStatus.unauthorized);
+    expect(response.detail, contains('chave de pareamento'));
+  });
+
+  test('relógio fora de hora é apontado como relógio, não como senha', () async {
+    final response = await health(
+      actor: 'garcom-maria',
+      account: accountId,
+      restaurant: restaurantId,
+      clockSkew: const Duration(minutes: 9),
+    );
+
+    expect(response.status, HttpStatus.unauthorized);
+    expect(response.detail, contains('relógio'));
+  });
+
+  test('chave errada não revela nada sobre a loja', () async {
+    // Sem a chave, o motivo tem de parar na própria chave: conta e restaurante
+    // do caixa não podem vazar para quem só encostou na rede.
+    final response = await health(
+      actor: 'garcom-maria',
+      account: 'conta-de-outra-loja',
+      restaurant: 'restaurante-9',
+      signingSecret: LocalTopologyStore.generatePairingSecret(),
+    );
+
+    expect(response.detail, contains('chave de pareamento'));
+    expect(response.detail, isNot(contains('conta')));
+    expect(response.detail, isNot(contains('restaurante')));
   });
 
   test('recusa o mesmo nonce duas vezes (proteção contra repetição)', () async {
@@ -176,8 +213,9 @@ void main() {
       nonce: 'nonce-repetido-123',
     );
 
-    expect(first.statusCode, HttpStatus.ok);
-    expect(second.statusCode, HttpStatus.unauthorized);
+    expect(first.status, HttpStatus.ok);
+    expect(second.status, HttpStatus.unauthorized);
+    expect(second.detail, contains('repetida'));
   });
 }
 

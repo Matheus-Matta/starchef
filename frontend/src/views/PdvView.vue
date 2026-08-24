@@ -106,18 +106,6 @@
               {{ allCommands.length ? "Nenhuma comanda encontrada." : "Nenhuma comanda cadastrada." }}
             </div>
           </div>
-          <div v-if="selectedCommand" class="pdv__step-footer">
-            <label class="pdv__field-label" for="pdv-command-table">Mesa vinculada</label>
-            <select id="pdv-command-table" v-model="selectedTable" class="pdv__category-select">
-              <option :value="null">Sem mesa</option>
-              <option v-for="table in linkableTables" :key="table.id" :value="table">
-                Mesa {{ table.number }} · {{ pdvTableStatus(table.status) }}
-              </option>
-            </select>
-            <button class="pdv__btn pdv__btn--primary" type="button" :disabled="creatingOrder" @click="startOrder">
-              {{ creatingOrder ? "Abrindo pedido..." : "Abrir comanda" }}
-            </button>
-          </div>
         </template>
       </div>
 
@@ -650,6 +638,67 @@
       </div>
     </div>
 
+    <!-- Seleção da mesa antes de abrir ou retomar uma comanda -->
+    <div
+      v-if="showCommandTableDialog"
+      class="pdv__overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pdv-command-table-title"
+      @click.self="closeCommandTableDialog"
+    >
+      <div class="pdv__modal pdv__modal--command-table">
+        <div class="pdv__command-dialog-title">
+          <span class="pdv__command-dialog-icon"><AppIcon name="ticket" :size="18" /></span>
+          <span>
+            <small>Comanda</small>
+            <h3 id="pdv-command-table-title">{{ selectedCommand?.number }}</h3>
+          </span>
+        </div>
+        <p>Selecione a mesa que ficará vinculada a esta comanda antes de abrir o pedido.</p>
+
+        <div v-if="loadingTables" class="pdv__loading">Carregando mesas...</div>
+        <div v-else class="pdv__command-table-grid" role="radiogroup" aria-label="Mesa da comanda">
+          <button
+            type="button"
+            class="pdv__command-table-option"
+            :class="{ 'pdv__command-table-option--selected': selectedTable === null }"
+            :aria-checked="selectedTable === null"
+            role="radio"
+            :disabled="creatingOrder"
+            @click="chooseCommandTable(null)"
+          >
+            <AppIcon name="minus" :size="16" />
+            <span><strong>Sem mesa</strong><small>Abrir somente a comanda</small></span>
+          </button>
+          <button
+            v-for="table in linkableTables"
+            :key="table.id"
+            type="button"
+            class="pdv__command-table-option"
+            :class="{ 'pdv__command-table-option--selected': selectedTable?.id === table.id }"
+            :aria-checked="selectedTable?.id === table.id"
+            role="radio"
+            :disabled="creatingOrder"
+            @click="chooseCommandTable(table)"
+          >
+            <AppIcon name="armchair" :size="16" />
+            <span>
+              <strong>Mesa {{ table.number }}</strong>
+              <small>{{ pdvTableStatus(table.status) }}<template v-if="selectedCommand?.current_table === table.id"> · atual</template></small>
+            </span>
+          </button>
+        </div>
+
+        <div class="pdv__modal-actions">
+          <button class="pdv__btn pdv__btn--ghost" type="button" :disabled="creatingOrder" @click="closeCommandTableDialog">Cancelar</button>
+          <button class="pdv__btn pdv__btn--primary" type="button" :disabled="loadingTables || creatingOrder" @click="startOrder">
+            {{ creatingOrder ? "Abrindo..." : "Confirmar e abrir" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal cadastrar cliente (delivery/retirada) -->
     <div v-if="showCustomerModal" class="pdv__overlay" @click.self="showCustomerModal = false">
       <div class="pdv__modal">
@@ -816,6 +865,8 @@ const allCommands = ref([]);
 const loadingCommands = ref(false);
 const selectedCommand = ref(null);
 const commandSearch = ref("");
+const showCommandTableDialog = ref(false);
+const commandTableSelectionTouched = ref(false);
 
 // restaurante (contexto do PDV — necessário quando o admin está em "Todos")
 const restaurants = ref([]);
@@ -1021,6 +1072,21 @@ function pickCommand(command) {
   selectedCommand.value = command;
   selectedTable.value =
     allTables.value.find((table) => table.id === command.current_table) || null;
+  commandTableSelectionTouched.value = false;
+  showCommandTableDialog.value = true;
+}
+
+function chooseCommandTable(table) {
+  selectedTable.value = table;
+  commandTableSelectionTouched.value = true;
+}
+
+function closeCommandTableDialog() {
+  if (creatingOrder.value) return;
+  showCommandTableDialog.value = false;
+  commandTableSelectionTouched.value = false;
+  selectedCommand.value = null;
+  selectedTable.value = null;
 }
 
 async function startOrder() {
@@ -1038,6 +1104,7 @@ async function startOrder() {
       }
       const { data: order } = await api.post("/orders/open-command/", { command: selectedCommand.value.id });
       await resumeTableOrder(order);
+      showCommandTableDialog.value = false;
       return;
     }
 
@@ -1098,6 +1165,14 @@ async function loadTables() {
     if (resolvedRestaurantId.value) params.restaurant = resolvedRestaurantId.value;
     const res = await api.get("/tables/", { params });
     allTables.value = res.data.results || res.data;
+    if (
+      showCommandTableDialog.value
+      && !commandTableSelectionTouched.value
+      && selectedCommand.value?.current_table
+    ) {
+      selectedTable.value =
+        allTables.value.find((table) => table.id === selectedCommand.value.current_table) || null;
+    }
   } finally {
     loadingTables.value = false;
   }
@@ -1607,6 +1682,8 @@ function newOrder() {
   orderType.value = null;
   selectedTable.value = null;
   selectedCommand.value = null;
+  showCommandTableDialog.value = false;
+  commandTableSelectionTouched.value = false;
   commandSearch.value = "";
   selectedCustomer.value = null;
   currentOrder.value = null;
@@ -2415,6 +2492,36 @@ onBeforeUnmount(() => {
   padding: 28px; max-width: 420px; width: calc(100% - 40px);
   display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow-lg);
 }
+.pdv__modal--command-table { max-width: 620px; border-radius: 4px; }
+.pdv__command-dialog-title { display: flex; align-items: center; gap: 10px; }
+.pdv__command-dialog-title > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.pdv__command-dialog-title small {
+  color: var(--text-muted); font: var(--weight-bold) 10px/1 var(--font-sans);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase;
+}
+.pdv__command-dialog-icon {
+  width: 34px; height: 34px; display: inline-grid; place-items: center; flex: 0 0 34px;
+  border: 1px solid var(--brand-border); border-radius: 4px;
+  background: var(--brand-subtle); color: var(--text-brand);
+}
+.pdv__command-table-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+  max-height: min(340px, 45vh); overflow-y: auto; padding: 1px;
+}
+.pdv__command-table-option {
+  min-height: 54px; display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface-sunken); color: var(--text-body); cursor: pointer; text-align: left;
+}
+.pdv__command-table-option:hover:not(:disabled) { border-color: var(--brand-border); background: var(--surface-hover); }
+.pdv__command-table-option--selected {
+  border-color: var(--brand); background: var(--brand-subtle); color: var(--text-brand);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+.pdv__command-table-option:disabled { opacity: .55; cursor: not-allowed; }
+.pdv__command-table-option > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pdv__command-table-option strong { color: var(--text-strong); font: var(--weight-bold) 13px/1.2 var(--font-sans); }
+.pdv__command-table-option small { color: var(--text-muted); font: var(--weight-medium) 11.5px/1.2 var(--font-sans); }
 .pdv__modal h3 { font: var(--weight-extra) 18px/1.2 var(--font-sans); color: var(--text-strong); margin: 0; }
 .pdv__modal h4 { font: var(--weight-bold) 14px/1.2 var(--font-sans); color: var(--text-strong); margin: 0; }
 .pdv__modal p { font: var(--weight-medium) 13.5px/1.5 var(--font-sans); color: var(--text-muted); margin: 0; }
@@ -2594,6 +2701,7 @@ onBeforeUnmount(() => {
   }
   .pdv__modal-actions { margin-top: auto; position: sticky; bottom: 0; padding-top: 12px; background: var(--surface-card); }
   .pdv__modal-actions .pdv__btn { min-height: 46px; flex: 1; }
+  .pdv__command-table-grid { grid-template-columns: 1fr; max-height: none; overflow: visible; }
 
   .pdv__success-card { padding: 30px 22px; }
   .pdv__success-actions { grid-template-columns: 1fr; }

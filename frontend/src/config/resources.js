@@ -75,7 +75,7 @@ export const resources = [
       { key: "customer_name", label: "Cliente" },
       { key: "total", label: "Total", type: "money", align: "right" },
       // Status separados: preparação, pagamento e entrega (esta só com o módulo).
-      { key: "production_status", label: "Preparação", type: "status", map: PRODUCTION_STATUS_LABELS },
+      { key: "production_status", label: "KDS", type: "kds", map: PRODUCTION_STATUS_LABELS },
       { key: "payment_status", label: "Pagamento", type: "status", map: PAYMENT_STATUS_LABELS },
       { key: "delivery_status", label: "Entrega", type: "status", map: DELIVERY_STATUS_LABELS, module: "entrega" },
       { key: "opened_at", label: "Aberto", type: "date" },
@@ -229,7 +229,7 @@ export const resources = [
     columns: [
       { key: "internal_code", label: "Codigo" },
       { key: "name", label: "Produto" },
-      { key: "restaurant_names", label: "Restaurantes", sortable: false },
+      { key: "restaurant_names", label: "Restaurantes", type: "badges", sortable: false },
       { key: "category_name", label: "Categoria" },
       { key: "current_price", label: "Preco", type: "money", align: "right" },
       { key: "sector_name", label: "Setor" },

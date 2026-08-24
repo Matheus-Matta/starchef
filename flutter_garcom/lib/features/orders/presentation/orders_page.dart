@@ -3,12 +3,17 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/relay/principal_client.dart';
+import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/presentation/principal_setup_page.dart';
 import '../../auth/presentation/session_controller.dart';
 import '../data/orders_repository.dart';
+import 'command_picker_sheet.dart';
+import 'new_order_sheet.dart';
 import 'order_detail_page.dart';
 import 'order_formatters.dart';
+import 'sync_banner.dart';
+import 'table_picker_sheet.dart';
 
 /// Tela inicial: os pedidos abertos do salão.
 class OrdersPage extends StatefulWidget {
@@ -70,10 +75,16 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   Future<void> _newOrder() async {
-    final table = await _pickTable();
-    if (table == null || !mounted) return;
+    final kind = await showNewOrderSheet(context);
+    if (kind == null || !mounted) return;
+    if (kind == NewOrderKind.comanda) {
+      await _openByCommand();
+      return;
+    }
+    // Balcão, delivery e retirada não passam por comanda: o pedido nasce
+    // direto com o tipo escolhido.
     try {
-      final order = await widget.repository.openTableOrder('${table['id']}');
+      final order = await widget.repository.createOrder(kind.orderType);
       if (!mounted) return;
       await _openOrder(order);
     } catch (error) {
@@ -82,26 +93,72 @@ class _OrdersPageState extends State<OrdersPage> {
     }
   }
 
-  Future<Map<String, dynamic>?> _pickTable() async {
+  Future<void> _openByCommand() async {
+    final command = await showCommandPicker(context, widget.repository);
+    if (command == null || !mounted) return;
+
+    late final Map<String, dynamic> order;
+    try {
+      order = await widget.repository.openCommandOrder('${command['id']}');
+    } catch (error) {
+      if (!mounted) return;
+      _toast(describeFailure(error));
+      return;
+    }
+    if (!mounted) return;
+
+    // Comanda que já estava vinculada a uma mesa não pergunta de novo: o
+    // cliente já está sentado, e reperguntar a cada item atrasaria o
+    // atendimento.
+    final jaVinculada = '${command['current_table'] ?? ''}'.trim();
+    if (jaVinculada.isEmpty || jaVinculada == 'null') {
+      await _askForTable(command);
+      if (!mounted) return;
+    }
+    await _openOrder(order);
+  }
+
+  /// Pergunta a mesa DEPOIS de a comanda estar aberta — o vínculo é do
+  /// atendimento, não a forma de abrir o pedido.
+  Future<void> _askForTable(Map<String, dynamic> command) async {
     late final List<Map<String, dynamic>> tables;
     try {
       tables = await widget.repository.tables();
     } catch (error) {
-      if (!mounted) return null;
+      if (!mounted) return;
       _toast(describeFailure(error));
-      return null;
+      return;
     }
-    if (!mounted) return null;
-    if (tables.isEmpty) {
-      _toast('Nenhuma mesa ativa cadastrada neste restaurante.');
-      return null;
-    }
-    return showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => _TablePicker(tables: tables),
+    if (!mounted) return;
+    final table = await showTablePicker(
+      context,
+      tables,
+      commandLabel: 'Comanda ${command['number'] ?? ''}',
     );
+    if (table == null || !mounted) return;
+    try {
+      await widget.repository.linkTable(
+        commandId: '${command['id']}',
+        tableId: '${table['id']}',
+        tableLabel: '${table['number']}',
+      );
+      if (mounted) _toast('Comanda vinculada à mesa ${table['number']}.');
+    } on MutationQueued {
+      // Sem conexão com o caixa: o vínculo foi salvo e vai ser reenviado
+      // sozinho — não é uma falha do atendimento.
+      if (mounted) {
+        _toast('Sem conexão: o vínculo com a mesa será enviado assim que o '
+            'Caixa Principal responder.');
+      }
+    } catch (error) {
+      // O pedido já existe: falhar o vínculo não pode cancelar o atendimento.
+      if (mounted) {
+        _toast(
+          'Pedido aberto, mas a mesa não foi vinculada: '
+          '${describeFailure(error)}',
+        );
+      }
+    }
   }
 
   /// Reabre o pareamento sem deslogar: a loja pode ter trocado o computador do
@@ -131,6 +188,7 @@ class _OrdersPageState extends State<OrdersPage> {
   @override
   Widget build(BuildContext context) {
     final user = widget.controller.session?.user;
+    final gateway = widget.repository.gateway;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pedidos abertos'),
@@ -177,9 +235,19 @@ class _OrdersPageState extends State<OrdersPage> {
         icon: const Icon(Icons.add),
         label: const Text('Novo pedido'),
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _buildBody(),
+      body: AnimatedBuilder(
+        animation: gateway,
+        builder: (context, _) => Column(
+          children: [
+            SyncBanner(
+              gateway: gateway,
+              onOpenFailed: () => showFailedMutationsSheet(context, gateway),
+            ),
+            Expanded(
+              child: RefreshIndicator(onRefresh: _load, child: _buildBody()),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -250,6 +318,14 @@ class _OrderCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
+                    orderSubtitle(order),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
                     '$items ${items == 1 ? 'item' : 'itens'} · '
                     '${money(order['total'])}',
                     style: TextStyle(
@@ -299,60 +375,6 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
-class _TablePicker extends StatelessWidget {
-  const _TablePicker({required this.tables});
-
-  final List<Map<String, dynamic>> tables;
-
-  @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 12),
-          child: Text(
-            'Escolha a mesa',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-          ),
-        ),
-        Flexible(
-          child: GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-            shrinkWrap: true,
-            gridDelegate:
-                const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 120,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 1.3,
-                ),
-            itemCount: tables.length,
-            itemBuilder: (context, index) {
-              final table = tables[index];
-              final occupied = table['status'] == 'occupied';
-              return ShadButton.outline(
-                onPressed: () => Navigator.of(context).pop(table),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Mesa ${table['number']}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    if (occupied)
-                      const Text('ocupada', style: TextStyle(fontSize: 11)),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
 class _Message extends StatelessWidget {
   const _Message({
     required this.icon,
@@ -396,6 +418,10 @@ class _Message extends StatelessWidget {
 
 /// Mensagem de falha na linguagem do salão.
 String describeFailure(Object error) {
+  if (error is MutationQueued) {
+    return 'Sem conexão: "${error.mutation.summary}" foi salvo e será '
+        'enviado quando o Caixa Principal responder.';
+  }
   if (error is PrincipalUnavailable) return error.message;
   if (error is ApiException) return error.message;
   return 'Falha inesperada: $error';

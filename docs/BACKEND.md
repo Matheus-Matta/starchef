@@ -116,13 +116,18 @@ Outras peças centrais:
 
 ## 6. WebSocket / tempo real
 
-`config/routing.py` agrega três grupos de rota WebSocket, autenticados via `apps/core/jwt_middleware.py:JwtAuthMiddlewareStack` (lê o JWT do cookie httpOnly no handshake, com fallback `?token=` — usado pelo app Flutter, que não tem cookie de navegador):
+`config/routing.py` agrega as rotas WebSocket autenticadas via `apps/core/jwt_middleware.py:JwtAuthMiddlewareStack`. A credencial é lida primeiro de `Authorization: Bearer <access JWT>`, depois do cookie httpOnly e, apenas para clientes antigos, de `?token=`. O Caixa Principal usa o header Bearer para que o token não apareça em URLs nem em logs de proxy.
 
 | Rota | Consumer | Uso |
 |---|---|---|
 | `/ws/realtime/` | `apps/realtime/consumers.py:RealtimeConsumer` | Canal genérico por conta; qualquer app pode publicar eventos de modelo via `broadcast_model_event` (`apps/realtime/events.py`) para o frontend atualizar listas/boards sem polling |
+| `/ws/pdv/<restaurant_id>/` | `apps/realtime/consumers.py:PdvRealtimeConsumer` | Canal dedicado do Caixa Principal. Exige JWT válido, confirma que o restaurante está ativo e pertence à conta do usuário e descarta eventos de outras unidades. Envia mudanças de mesas, comandas, pedidos/itens, produtos, clientes, pagamentos, caixa, impressoras, balanças e demais modelos do tenant |
 | `/ws/kitchen/<branch_id>/<sector>/` | `apps/orders/consumers.py:KitchenConsumer` | Específico do KDS. Grupo por conta+filial+setor; acesso restrito a quem pertence à filial ou tem perfil admin/owner/manager. Eventos: `order_item.sent` (item mandado à cozinha) e `order_item.status_changed` |
 | `/ws/notifications/...` | `apps/notifications/consumers.py:NotificationConsumer` | Grupo por usuário; envia contagem de não lidas na conexão e um evento `notification` por notificação nova |
+
+O protocolo do PDV usa mensagens `{"event":"model.created|model.updated|model.deleted","payload":{...}}`. O payload contém somente metadados de invalidação (`resource`, `id`, `restaurant_id`, `branch_id`, `changed_fields`, `occurred_at` e `protocol_version`), nunca senhas ou dados completos. Ao receber o evento, o desktop relê pela API REST autenticada apenas o conjunto afetado e atualiza seu cache. A conexão mantém heartbeat, reconecta com backoff e faz uma única reconciliação ao reconectar; não há polling periódico de dados.
+
+Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusão lógica/física e relações N:N de todos os `TenantBaseModel`. Operações em lote de mesas/comandas, que não executam signals do Django, publicam um evento compacto de coleção explicitamente.
 
 ## 7. Pedidos, pagamento e impressão
 
@@ -134,7 +139,7 @@ Outras peças centrais:
 
 Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo; retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`.
 
-**Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)), que faz polling dos `PrintJob`s pendentes e imprime via rede/serial/spool do SO.
+**Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)). O agente recebe a criação do `PrintJob` pelo WebSocket do PDV, busca a fila pendente pela API e imprime via rede/serial/spool do SO; também reconcilia a fila uma vez ao conectar ou reconectar, sem polling periódico.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.
 

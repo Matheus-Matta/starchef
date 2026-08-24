@@ -4,6 +4,8 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'core/config/app_env.dart';
 import 'core/network/api_client.dart';
 import 'core/relay/principal_client.dart';
+import 'core/relay/relay_gateway.dart';
+import 'core/storage/offline_queue_store.dart';
 import 'core/storage/session_store.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/login_page.dart';
@@ -35,22 +37,50 @@ class _GarcomAppState extends State<GarcomApp> {
   late final PrincipalClient _principal;
   late final SessionController _controller;
 
+  /// Vive fora do [OrdersRepository] de propósito: o repositório é
+  /// reconstruído a cada mudança de sessão/pareamento, mas a fila de
+  /// pendências tem que sobreviver a essas trocas — e a fechar e abrir o app.
+  late final RelayGateway _gateway;
+
   @override
   void initState() {
     super.initState();
     _api = ApiClient(baseUrl: AppEnv.backendUrl);
     _principal = PrincipalClient();
+    _gateway = RelayGateway(client: _principal, store: OfflineQueueStore());
     _controller = SessionController(
       api: _api,
       principalClient: _principal,
       store: SecureSessionStore(),
     );
-    _controller.restore();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    // Ordem importa: a fila é lida antes da sessão, para que — se havia
+    // pendências de uma sessão anterior — o gateway já esteja pronto assim
+    // que `updateContext` chegar com a sessão/pareamento restaurados.
+    await _gateway.restore();
+    await _controller.restore();
+    _syncGatewayContext();
+    _controller.addListener(_syncGatewayContext);
+  }
+
+  /// Mantém o alvo do reenvio em dia: se a fila tentasse contra uma sessão ou
+  /// um caixa que não existem mais, todo reenvio falharia silenciosamente.
+  void _syncGatewayContext() {
+    final session = _controller.session;
+    final principal = _controller.principal;
+    if (session != null && principal != null) {
+      _gateway.updateContext(config: principal, identity: session.identity);
+    }
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_syncGatewayContext);
     _controller.dispose();
+    _gateway.dispose();
     _api.close();
     super.dispose();
   }
@@ -86,6 +116,7 @@ class _GarcomAppState extends State<GarcomApp> {
           repository: OrdersRepository(
             api: _api,
             principalClient: _principal,
+            gateway: _gateway,
             session: _controller.session!,
             principal: _controller.principal!,
           ),

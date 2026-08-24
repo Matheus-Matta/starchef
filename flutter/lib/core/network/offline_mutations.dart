@@ -61,7 +61,12 @@ abstract final class OfflineMutations {
           // Fechar, mandar para a cozinha e registrar pagamento: o resto do
           // atendimento, para que uma queda de rede não impeça a venda de
           // terminar.
-          RegExp('^/orders/$id/(close|send-to-kitchen|pay)/\$').hasMatch(path);
+          RegExp('^/orders/$id/(close|send-to-kitchen|pay)/\$').hasMatch(path) ||
+          // Vincular/desvincular a mesa é parte de abrir o atendimento na
+          // comanda — sem isso o garçom abre o pedido pelo principal e depois
+          // esbarra no relay justamente na hora de dizer em que mesa o cliente
+          // sentou.
+          RegExp('^/commands/$id/(link-table|unlink-table)/\$').hasMatch(path);
     }
     if (method == 'PATCH') return path.startsWith('/customers/');
     if (method == 'DELETE') {

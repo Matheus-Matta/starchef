@@ -2,29 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/paginated_picker.dart';
+import '../../orders/data/orders_repository.dart';
 import '../../orders/presentation/order_formatters.dart';
 
-/// O que o garçom escolheu lançar na mesa.
+/// O que o garçom escolheu lançar no pedido.
 class ProductChoice {
   const ProductChoice({
     required this.productId,
+    required this.productName,
     required this.quantity,
     this.note = '',
   });
 
   final String productId;
+  final String productName;
   final int quantity;
   final String note;
 }
 
-/// Busca do catálogo + quantidade + observação, em uma folha só.
-///
-/// Uma tela por escolha atrasaria o atendimento: o garçom está em pé na mesa,
-/// com o cliente esperando. Busca por nome porque decorar código de produto é
-/// coisa de operador de caixa, não de salão.
+/// Busca do catálogo (paginada) e, na sequência, quantidade e observação.
 Future<ProductChoice?> showProductPicker(
   BuildContext context,
-  List<Map<String, dynamic>> products,
+  OrdersRepository repository,
 ) => showModalBottomSheet<ProductChoice>(
   context: context,
   isScrollControlled: true,
@@ -33,44 +33,24 @@ Future<ProductChoice?> showProductPicker(
     padding: EdgeInsets.only(
       bottom: MediaQuery.of(context).viewInsets.bottom,
     ),
-    child: _ProductPicker(products: products),
+    child: SizedBox(
+      height: MediaQuery.of(context).size.height * .85,
+      child: _ProductPicker(repository: repository),
+    ),
   ),
 );
 
 class _ProductPicker extends StatefulWidget {
-  const _ProductPicker({required this.products});
+  const _ProductPicker({required this.repository});
 
-  final List<Map<String, dynamic>> products;
+  final OrdersRepository repository;
 
   @override
   State<_ProductPicker> createState() => _ProductPickerState();
 }
 
 class _ProductPickerState extends State<_ProductPicker> {
-  final _search = TextEditingController();
-  final _note = TextEditingController();
   Map<String, dynamic>? _selected;
-  int _quantity = 1;
-
-  @override
-  void dispose() {
-    _search.dispose();
-    _note.dispose();
-    super.dispose();
-  }
-
-  List<Map<String, dynamic>> get _matches {
-    final term = _search.text.trim().toLowerCase();
-    final available = widget.products.where(_sellable);
-    if (term.isEmpty) return available.toList(growable: false);
-    return available
-        .where(
-          (product) =>
-              '${product['name'] ?? ''}'.toLowerCase().contains(term) ||
-              '${product['internal_code'] ?? ''}'.toLowerCase().contains(term),
-        )
-        .toList(growable: false);
-  }
 
   /// Adicional e insumo não são vendidos sozinhos, e produto por kilo depende
   /// da balança do balcão — nenhum dos três cabe no lançamento pelo celular.
@@ -80,79 +60,83 @@ class _ProductPickerState extends State<_ProductPicker> {
       product['pricing_unit'] != 'kg';
 
   @override
-  Widget build(BuildContext context) {
-    final height = MediaQuery.of(context).size.height * .82;
-    return SizedBox(
-      height: height,
-      child: _selected == null ? _buildList() : _buildConfig(),
-    );
-  }
+  Widget build(BuildContext context) =>
+      _selected == null ? _buildList() : _ProductConfig(
+        product: _selected!,
+        onBack: () => setState(() => _selected = null),
+      );
 
-  Widget _buildList() {
-    final matches = _matches;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: TextField(
-            controller: _search,
-            autofocus: true,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              hintText: 'Buscar produto',
-              prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: AppTheme.radius),
-            ),
+  Widget _buildList() => Column(
+    children: [
+      const Padding(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Adicionar item',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
           ),
         ),
-        if (matches.isEmpty)
-          const Expanded(
-            child: Center(child: Text('Nenhum produto encontrado.')),
-          )
-        else
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              itemCount: matches.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final product = matches[index];
-                return InkWell(
-                  borderRadius: AppTheme.radius,
-                  onTap: () => setState(() {
-                    _selected = product;
-                    _quantity = 1;
-                    _note.clear();
-                  }),
-                  child: ShadCard(
-                    radius: AppTheme.radius,
-                    columnCrossAxisAlignment: CrossAxisAlignment.stretch,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${product['name'] ?? ''}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Text(money(product['sale_price'])),
-                      ],
-                    ),
-                  ),
-                );
-              },
+      ),
+      Expanded(
+        child: PaginatedPicker(
+          searchHint: 'Buscar produto',
+          emptyMessage: 'Nenhum produto encontrado.',
+          fetch: (page, search) async {
+            final result = await widget.repository.products(
+              page: page,
+              search: search,
+            );
+            // O filtro é aplicado sobre a página recebida: `hasMore` continua
+            // vindo da API, então a rolagem segue buscando mesmo quando uma
+            // página inteira cai fora (só adicionais, por exemplo).
+            return (
+              rows: result.rows.where(_sellable).toList(),
+              hasMore: result.hasMore,
+            );
+          },
+          itemBuilder: (context, product) => PickerTile(
+            title: '${product['name'] ?? ''}',
+            subtitle: '${product['internal_code'] ?? ''}'.trim().isEmpty
+                ? null
+                : '#${product['internal_code']}',
+            trailing: Text(
+              money(product['sale_price']),
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
+            onTap: () => setState(() => _selected = product),
           ),
-      ],
-    );
+        ),
+      ),
+    ],
+  );
+}
+
+class _ProductConfig extends StatefulWidget {
+  const _ProductConfig({required this.product, required this.onBack});
+
+  final Map<String, dynamic> product;
+  final VoidCallback onBack;
+
+  @override
+  State<_ProductConfig> createState() => _ProductConfigState();
+}
+
+class _ProductConfigState extends State<_ProductConfig> {
+  final _note = TextEditingController();
+  int _quantity = 1;
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
   }
 
-  Widget _buildConfig() {
-    final product = _selected!;
+  @override
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
+    final product = widget.product;
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -160,7 +144,7 @@ class _ProductPickerState extends State<_ProductPicker> {
           Row(
             children: [
               IconButton(
-                onPressed: () => setState(() => _selected = null),
+                onPressed: widget.onBack,
                 icon: const Icon(Icons.arrow_back),
               ),
               Expanded(
@@ -229,11 +213,12 @@ class _ProductPickerState extends State<_ProductPicker> {
             onPressed: () => Navigator.of(context).pop(
               ProductChoice(
                 productId: '${product['id']}',
+                productName: '${product['name'] ?? ''}',
                 quantity: _quantity,
                 note: _note.text.trim(),
               ),
             ),
-            child: const Text('Lançar na mesa'),
+            child: const Text('Lançar no pedido'),
           ),
         ],
       ),

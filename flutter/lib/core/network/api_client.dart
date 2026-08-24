@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_exception.dart';
 import 'data_signals.dart';
+import 'realtime_client.dart';
 import 'mutation_relay.dart';
 import 'offline_mutations.dart';
 import 'offline_store.dart';
@@ -103,6 +104,7 @@ class ApiClient {
   Stream<NetworkSyncStatus> get syncStatusChanges =>
       _syncStatusController.stream;
   NetworkSyncStatus get syncStatus => _syncStatus;
+  String? get currentAccessToken => _lastAccessToken;
 
   /// Troca o servidor ainda na tela de login, sem exigir reiniciar o app.
   /// O escopo autenticado é descartado para impedir que cache/fila de um
@@ -147,6 +149,32 @@ class ApiClient {
     final httpBase = baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
     final wsBase = httpBase.replaceFirst(RegExp(r'^http'), 'ws');
     return '$wsBase/ws/realtime/?token=${Uri.encodeComponent(accessToken)}';
+  }
+
+  /// Canal dedicado do Caixa Principal. O JWT segue no header Authorization.
+  String pdvSocketUrl(String restaurantId) {
+    final httpBase = baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
+    final wsBase = httpBase.replaceFirst(RegExp(r'^http'), 'ws');
+    return '$wsBase/ws/pdv/$restaurantId/';
+  }
+
+  /// Converte um evento remoto em sinais locais, mantendo a separação por
+  /// restaurante como defesa adicional ao filtro feito pelo servidor.
+  void applyRealtimeEvent(RealtimeEvent event, {required String restaurantId}) {
+    final eventRestaurant = '${event.payload['restaurant_id'] ?? ''}';
+    if (eventRestaurant.isNotEmpty && eventRestaurant != restaurantId) return;
+    final resource = '${event.payload['resource'] ?? ''}';
+    for (final topic in DataSignals.topicsForRealtimeResource(resource)) {
+      signals.emit('realtime:$topic');
+      signals.emit(topic);
+    }
+  }
+
+  void notifyRealtimeConnected() {
+    for (final topic in DataSignals.realtimeSnapshotTopics) {
+      signals.emit('realtime:$topic');
+      signals.emit(topic);
+    }
   }
 
   /// Verifica se a API está acessível antes de gastar tentativas da fila.

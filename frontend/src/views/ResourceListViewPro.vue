@@ -137,7 +137,21 @@
           :header-class="column.align === 'right' ? 'dt-col-right' : undefined"
         >
           <template #body="{ data }">
-            <span v-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+            <span v-if="column.type === 'badges'" class="rpro-badges">
+              <span
+                v-for="(item, index) in badgeValues(value(data, column))"
+                :key="`${item}-${index}`"
+                class="rpro-badge"
+              >
+                {{ item }}
+              </span>
+              <span v-if="!badgeValues(value(data, column)).length" class="rpro-muted">—</span>
+            </span>
+            <span v-else-if="column.type === 'kds'" class="rpro-kds">
+              <span class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+              <small>{{ kdsProgressLabel(value(data, column)) }}</small>
+            </span>
+            <span v-else-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
             <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
             <span v-else-if="column.type === 'date'" class="rpro-muted">{{ dateTime(value(data, column)) }}</span>
             <span v-else-if="column.type === 'boolean'" class="rpro-chip" :data-tone="value(data, column) ? 'success' : 'danger'">{{ value(data, column) ? "Ativo" : "Inativo" }}</span>
@@ -1005,7 +1019,38 @@ const money = formatMoney;
 const dateTime = formatDateTime;
 
 function columnBodyStyle(column) {
-  return { textAlign: column.align === "right" ? "right" : "left", whiteSpace: "nowrap" };
+  return {
+    textAlign: column.align === "right" ? "right" : "left",
+    whiteSpace: column.type === "badges" ? "normal" : "nowrap",
+  };
+}
+
+function badgeValues(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (rawValue === null || rawValue === undefined || rawValue === "") return [];
+  if (typeof rawValue === "string" && rawValue.trim().startsWith("[")) {
+    try {
+      const parsed = JSON.parse(rawValue);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+    } catch {
+      // Mantém o valor original quando uma API antiga retornar texto inválido.
+    }
+  }
+  return [String(rawValue).trim()].filter(Boolean);
+}
+
+const KDS_PROGRESS = {
+  idle: "Não enviado",
+  sent_to_kitchen: "Etapa 1 de 5",
+  preparing: "Etapa 2 de 5",
+  partially_ready: "Etapa 3 de 5",
+  ready: "Etapa 4 de 5",
+  delivered: "Etapa 5 de 5",
+};
+function kdsProgressLabel(status) {
+  return KDS_PROGRESS[status] || "Sem andamento";
 }
 
 // Tom (cor) de cada status — subtil, funciona bem no dark.
@@ -1145,10 +1190,20 @@ onMounted(loadRows);
 .rpro-muted { color: var(--text-muted); }
 .rpro-cell { max-width: 260px; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
+.rpro-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 320px; vertical-align: middle; }
+.rpro-badge {
+  display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface-sunken); color: var(--text-body);
+  font: var(--weight-semibold) 11.5px/1.25 var(--font-sans); white-space: nowrap;
+}
+.rpro-kds { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.rpro-kds small { color: var(--text-muted); font: var(--weight-semibold) 10.5px/1 var(--font-sans); white-space: nowrap; }
+
 /* Status pill — subtil (tint + texto colorido), legível no light e no dark */
 .rpro-chip {
   display: inline-flex; align-items: center;
-  padding: 3px 10px; border-radius: 99px;
+  padding: 3px 8px; border-radius: 4px;
   border: 1px solid transparent;
   font: var(--weight-bold) 11px/1.35 var(--font-sans); white-space: nowrap;
   background: var(--surface-sunken); color: var(--text-muted);

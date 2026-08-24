@@ -48,7 +48,6 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     return AuthScaffold(
-      icon: Icons.room_service_outlined,
       title: 'StarChef Garçom',
       subtitle: 'Pedidos do salão, direto para o caixa.',
       error: controller.error,

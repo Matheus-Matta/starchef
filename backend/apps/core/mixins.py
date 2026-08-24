@@ -160,11 +160,25 @@ class AuditCreateUpdateMixin:
             # fica nulo — pertence a conta (a todos os restaurantes).
 
         if "branch" in model_fields and not serializer.validated_data.get("branch"):
-            # A filial pertence a um restaurante: so herda quando ha restaurante.
-            has_restaurant = bool(serializer.validated_data.get("restaurant") or extra.get("restaurant"))
+            # A filial pertence a um restaurante: nunca herda a filial do perfil
+            # quando um admin escolheu outro restaurante no formulário.
+            selected_restaurant = serializer.validated_data.get("restaurant") or extra.get("restaurant")
+            has_restaurant = bool(selected_restaurant)
             inherited_branch = getattr(profile, "branch", None)
-            if has_restaurant and inherited_branch is not None:
-                extra["branch"] = inherited_branch
+            if has_restaurant:
+                if inherited_branch is not None and inherited_branch.restaurant_id == selected_restaurant.id:
+                    extra["branch"] = inherited_branch
+                else:
+                    branch_model = model._meta.get_field("branch").remote_field.model
+                    extra["branch"] = (
+                        branch_model.all_objects.filter(
+                            account=account,
+                            restaurant=selected_restaurant,
+                            deleted_at__isnull=True,
+                        )
+                        .order_by("created_at")
+                        .first()
+                    )
 
         instance = serializer.save(**{k: v for k, v in extra.items() if v is not None})
         record_audit(action=AuditLog.ACTION_CREATED, instance=instance, actor=user, request=self.request)

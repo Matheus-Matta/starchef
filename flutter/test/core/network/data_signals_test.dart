@@ -74,6 +74,44 @@ void main() {
     });
   });
 
+  group('assuntos por evento WebSocket', () {
+    test('cobre todos os recursos operacionais do PDV', () {
+      expect(DataSignals.topicsForRealtimeResource('orders.orderitem'), {
+        'orders',
+      });
+      expect(
+        DataSignals.topicsForRealtimeResource('restaurants.command'),
+        containsAll({'tables', 'orders'}),
+      );
+      expect(DataSignals.topicsForRealtimeResource('menu.product'), {'menu'});
+      expect(DataSignals.topicsForRealtimeResource('customers.customer'), {
+        'customers',
+      });
+      expect(DataSignals.topicsForRealtimeResource('payments.paymentmethod'), {
+        'payments',
+      });
+      expect(DataSignals.topicsForRealtimeResource('printers.printer'), {
+        'devices',
+      });
+      expect(DataSignals.topicsForRealtimeResource('printers.scale'), {
+        'devices',
+      });
+    });
+
+    test('leitura de balança não recarrega o cadastro de equipamentos', () {
+      expect(DataSignals.topicsForRealtimeResource('printers.scalereading'), {
+        'scale_readings',
+      });
+    });
+
+    test('recurso novo usa reconciliação geral como fallback', () {
+      expect(DataSignals.topicsForRealtimeResource('stock.stockmovement'), {
+        'pdv',
+      });
+      expect(DataSignals.topicsForRealtimeResource(''), isEmpty);
+    });
+  });
+
   test('emitir depois de fechado não explode', () async {
     await signals.close();
 

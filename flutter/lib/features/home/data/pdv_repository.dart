@@ -39,9 +39,8 @@ class PdvRepository {
       list('/menu/products/', query: {...query, 'is_active': true}),
       list('/menu/categories/', query: {'page_size': 100, 'is_active': true}),
       list('/tables/', query: query),
-      // Comandas entram no carregamento inicial junto com as mesas: as duas
-      // são o contexto de abertura de pedido e precisam estar em cache para
-      // o PDV abrir um atendimento sem rede.
+      // Mesas entram no cache para o vínculo opcional da comanda; comandas são
+      // o contexto de abertura do pedido. Ambos precisam funcionar sem rede.
       list('/commands/', query: {...query, 'is_active': true}),
       // Usa exatamente a mesma consulta da tela de recebimento. O ApiClient
       // persiste essa resposta no SQLite, portanto as formas continuam

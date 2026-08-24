@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/api_exception.dart';
 import 'package:starchef_pdv/core/network/offline_store.dart';
+import 'package:starchef_pdv/core/network/realtime_client.dart';
 
 void main() {
   test('troca a API em memória sem reiniciar o aplicativo', () async {
@@ -23,8 +24,40 @@ void main() {
 
     expect(client.baseUrl, 'https://api.starchef.com.br/api/v1');
     expect(client.healthEndpoint, 'https://api.starchef.com.br/health/');
+    expect(
+      client.pdvSocketUrl('restaurant-1'),
+      'wss://api.starchef.com.br/ws/pdv/restaurant-1/',
+    );
     await client.dispose();
     await directory.delete(recursive: true);
+  });
+
+  test('evento WS da unidade vira atualização local em tempo real', () async {
+    final client = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+    final received = <String>[];
+    final subscription = client.signals.changes.listen(received.add);
+
+    client.applyRealtimeEvent(
+      const RealtimeEvent('model.updated', {
+        'resource': 'orders.orderitem',
+        'restaurant_id': 'restaurant-1',
+      }),
+      restaurantId: 'restaurant-1',
+    );
+    client.applyRealtimeEvent(
+      const RealtimeEvent('model.updated', {
+        'resource': 'menu.product',
+        'restaurant_id': 'restaurant-2',
+      }),
+      restaurantId: 'restaurant-1',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(received, containsAll({'realtime:orders', 'orders'}));
+    expect(received, isNot(contains('realtime:menu')));
+
+    await subscription.cancel();
+    await client.dispose();
   });
 
   test('converte resposta de erro da API em ApiException', () async {

@@ -207,6 +207,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           },
         );
         final addresses = await _localAddresses(next.port);
+        // Sem esta linha, "a porta abriu" e "o app nunca chegou aqui" ficam
+        // indistinguíveis no diagnóstico — e é a primeira coisa que se
+        // pergunta quando um aparelho não conecta.
+        AppLogger.instance.info(
+          'relay_escutando',
+          data: {
+            'porta': next.port,
+            'enderecos': addresses,
+            'node_id': next.nodeId,
+          },
+        );
         _setStatus(
           LocalTopologyStatus(
             phase: LocalTopologyPhase.principalReady,
@@ -412,6 +423,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       '/restaurants/',
       '/menu/',
       '/tables/',
+      // A comanda é a porta de entrada do pedido de salão (a mesa virou só um
+      // vínculo dela), então o app do garçom precisa listá-las pelo principal
+      // como já faz com mesas e cardápio.
+      '/commands/',
       '/customers/',
       '/payments/methods/',
       '/cash-stations/',
@@ -540,6 +555,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   Future<void> _handleServerRequest(HttpRequest request) async {
     try {
       final origin = request.connectionInfo?.remoteAddress;
+      // Uma linha por requisição recebida: é o que permite responder "o
+      // aparelho chegou até aqui?" sem depender do que a tela do celular diz.
+      AppLogger.instance.info(
+        'relay_requisicao',
+        data: {
+          'origem': origin?.address ?? 'desconhecida',
+          'metodo': request.method,
+          'path': request.uri.path,
+          'node': request.headers.value('x-starchef-node') ?? '',
+        },
+      );
       if (!isLocalNetworkAddress(origin)) {
         // Uma tentativa de fora da loja é a única coisa aqui que merece
         // atenção humana: sem registro, ela sumiria em silêncio.
@@ -558,15 +584,30 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         return;
       }
       final body = await _readBody(request);
-      final authenticated = await _authenticate(request, body);
+      final attempt = await _authenticate(request, body);
+      final authenticated = attempt.node;
       if (authenticated == null) {
-        await _respond(
-          request,
-          HttpStatus.unauthorized,
-          const {'detail': 'Assinatura local inválida ou expirada.'},
+        // O motivo vai no corpo: eram seis causas distintas devolvendo a mesma
+        // frase, e quem estava com o celular na mão não tinha como saber se
+        // errou a chave, se o relógio estava fora de hora ou se o caixa atende
+        // outro restaurante.
+        AppLogger.instance.warning(
+          'relay_autenticacao_recusada',
+          data: {'motivo': attempt.detail, 'path': request.uri.path},
         );
+        await _respond(request, HttpStatus.unauthorized, {
+          'detail': attempt.detail,
+        });
         return;
       }
+      AppLogger.instance.info(
+        'relay_autenticado',
+        data: {
+          'node': authenticated.nodeId,
+          'ator': authenticated.actorId,
+          'path': request.uri.path,
+        },
+      );
       final path = request.uri.path;
       if (request.method == 'GET' && path == '/v1/health') {
         await _respond(request, HttpStatus.ok, {
@@ -725,12 +766,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     return completer.future;
   }
 
-  Future<_AuthenticatedNode?> _authenticate(
+  /// Autentica a requisição de um nó da rede local.
+  ///
+  /// A ordem das checagens é deliberada: a chave de pareamento é verificada
+  /// ANTES de qualquer coisa sobre conta, restaurante ou relógio. Assim quem
+  /// não tem a chave não descobre nada sobre a loja — e quem tem recebe um
+  /// motivo específico em vez de um "não autorizado" cego.
+  Future<({_AuthenticatedNode? node, String detail})> _authenticate(
     HttpRequest request,
     String body,
   ) async {
     final current = _config;
-    if (current?.mode != LocalTopologyMode.principal) return null;
+    if (current?.mode != LocalTopologyMode.principal) {
+      return (
+        node: null,
+        detail: 'Este terminal não está configurado como Caixa Principal.',
+      );
+    }
     final timestamp = int.tryParse(
       request.headers.value('x-starchef-timestamp') ?? '',
     );
@@ -740,28 +792,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final actor = request.headers.value('x-starchef-actor') ?? '';
     final restaurant = request.headers.value('x-starchef-restaurant') ?? '';
     final received = request.headers.value('x-starchef-signature') ?? '';
-    // Conta e restaurante são checados com igualdade: o principal só atende a
-    // própria loja. O ATOR não — quem opera o outro nó não é necessariamente a
-    // mesma pessoa logada aqui. Era o que travava o app do garçom: cada garçom
-    // entra com o próprio usuário e todas as requisições voltavam 401. O que
-    // autoriza o nó é a chave de pareamento; o ator viaja junto para
-    // identificar quem pediu, não para dar permissão (a operação é executada
-    // com a credencial deste terminal de qualquer forma).
     if (timestamp == null ||
         nonce.length < 8 ||
         nodeId.isEmpty ||
         actor.isEmpty ||
-        account != accountId ||
-        restaurant != _restaurantId) {
-      return null;
-    }
-    final signedAt = DateTime.fromMillisecondsSinceEpoch(
-      timestamp * 1000,
-      isUtc: true,
-    );
-    if (DateTime.now().toUtc().difference(signedAt).abs() >
-        _timestampTolerance) {
-      return null;
+        account.isEmpty ||
+        restaurant.isEmpty) {
+      return (
+        node: null,
+        detail:
+            'Requisição incompleta: faltam cabeçalhos de identificação do '
+            'aparelho.',
+      );
     }
     final expected = LocalRelayAuthenticator.signature(
       secret: current!.pairingSecret,
@@ -776,8 +818,48 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       body: body,
     );
     if (!LocalRelayAuthenticator.constantTimeEquals(received, expected)) {
-      return null;
+      return (
+        node: null,
+        detail:
+            'A chave de pareamento não confere com a deste caixa. Copie a '
+            'chave em Configurações → Rede local.',
+      );
     }
+
+    // Daqui para baixo o chamador provou que tem a chave: os motivos podem ser
+    // específicos sem contar nada da loja para quem não deveria saber.
+    final signedAt = DateTime.fromMillisecondsSinceEpoch(
+      timestamp * 1000,
+      isUtc: true,
+    );
+    final skew = DateTime.now().toUtc().difference(signedAt);
+    if (skew.abs() > _timestampTolerance) {
+      final minutes = skew.inMinutes.abs();
+      return (
+        node: null,
+        detail:
+            'O relógio do aparelho está ${minutes > 0 ? '$minutes min ' : ''}'
+            'fora de hora em relação ao caixa. Ative a data e hora automáticas '
+            'nos dois.',
+      );
+    }
+    if (account != accountId) {
+      return (
+        node: null,
+        detail:
+            'Este caixa atende outra conta. Entre no aplicativo com um '
+            'usuário desta loja.',
+      );
+    }
+    if (restaurant != _restaurantId) {
+      return (
+        node: null,
+        detail:
+            'Este caixa está operando outro restaurante. Selecione o mesmo '
+            'restaurante nos dois.',
+      );
+    }
+
     final now = DateTime.now().toUtc();
     final fresh = await store.consumeNonce(
       accountId: account,
@@ -786,14 +868,21 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       seenAt: now,
       expiresBefore: now.subtract(_timestampTolerance),
     );
-    return fresh
-        ? _AuthenticatedNode(
-            accountId: account,
-            nodeId: nodeId,
-            actorId: actor,
-            restaurantId: restaurant,
-          )
-        : null;
+    if (!fresh) {
+      return (
+        node: null,
+        detail: 'Requisição repetida: esta operação já foi recebida.',
+      );
+    }
+    return (
+      node: _AuthenticatedNode(
+        accountId: account,
+        nodeId: nodeId,
+        actorId: actor,
+        restaurantId: restaurant,
+      ),
+      detail: '',
+    );
   }
 
   Future<String> _readBody(HttpRequest request) async {

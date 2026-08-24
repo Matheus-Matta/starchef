@@ -51,7 +51,7 @@ class PrinterAvailability {
 ///
 /// A fila de impressão não é mais varrida por polling: o backend já publica
 /// `model.updated`/`model.created` para qualquer `PrintJob` da conta em
-/// `/ws/realtime/` (todo `TenantModel` ganha isso de graça — ver
+/// `/ws/pdv/<restaurant_id>/` (todo `TenantModel` ganha isso de graça — ver
 /// `apps/realtime/signals.py`). O agente assina esse evento e só consulta
 /// `/print-jobs/` quando um deles chega, mais uma verificação pontual ao
 /// conectar/reconectar o WS, para cobrir o que foi perdido enquanto a conexão
@@ -366,15 +366,16 @@ class LocalDeviceAgent {
     );
     _stopRealtime();
     final realtime = RealtimeClient(
-      urlBuilder: () => api.realtimeSocketUrl(_token!),
+      urlBuilder: () => api.pdvSocketUrl(_restaurantId!),
+      headersBuilder: () => {
+        'Authorization': 'Bearer ${api.currentAccessToken ?? _token!}',
+      },
     );
     _realtime = realtime;
     // Ao (re)conectar, uma verificação pontual cobre o que pode ter mudado
     // enquanto a conexão estava caída — nunca um timer recorrente.
     _connectedSubscription = realtime.onConnected.listen((_) => _onConnected());
-    _eventSubscription = realtime.events
-        .where((event) => isPrintJobEvent(event, _restaurantId))
-        .listen((_) => _onPrintJobEvent());
+    _eventSubscription = realtime.events.listen(_onRealtimeEvent);
     realtime.start();
   }
 
@@ -416,19 +417,52 @@ class LocalDeviceAgent {
     return eventRestaurantId.isEmpty || eventRestaurantId == restaurantId;
   }
 
-  Future<void> _onConnected() => _guarded(() {
-    // Reconexões instáveis não devem virar rajadas contra o servidor de
-    // modelos: uma janela mínima entre sincronizações basta, já que nada
-    // muda um template com essa frequência.
-    final shouldSyncTemplates =
-        _lastTemplateSync == null ||
-        DateTime.now().difference(_lastTemplateSync!) >
-            const Duration(minutes: 1);
-    return Future.wait([
-      _processPrintJobs(),
-      if (shouldSyncTemplates) _syncTemplates(),
-    ]);
-  });
+  static bool isDeviceConfigurationEvent(
+    RealtimeEvent event,
+    String? restaurantId,
+  ) {
+    final resource = '${event.payload['resource'] ?? ''}';
+    if (resource != 'printers.printer' && resource != 'printers.scale') {
+      return false;
+    }
+    final eventRestaurantId = '${event.payload['restaurant_id'] ?? ''}';
+    return eventRestaurantId.isEmpty || eventRestaurantId == restaurantId;
+  }
+
+  void _onRealtimeEvent(RealtimeEvent event) {
+    final restaurantId = _restaurantId;
+    if (restaurantId == null) return;
+    api.applyRealtimeEvent(event, restaurantId: restaurantId);
+    if (isPrintJobEvent(event, restaurantId)) {
+      unawaited(_onPrintJobEvent());
+    }
+    if (isDeviceConfigurationEvent(event, restaurantId)) {
+      _lastDeviceSync = null;
+      unawaited(
+        _guarded(() async {
+          await _syncDevicesIfNeeded();
+          await refreshPrinterAvailability(useCachedDevices: true);
+        }),
+      );
+    }
+  }
+
+  Future<void> _onConnected() {
+    api.notifyRealtimeConnected();
+    return _guarded(() {
+      // Reconexões instáveis não devem virar rajadas contra o servidor de
+      // modelos: uma janela mínima entre sincronizações basta, já que nada
+      // muda um template com essa frequência.
+      final shouldSyncTemplates =
+          _lastTemplateSync == null ||
+          DateTime.now().difference(_lastTemplateSync!) >
+              const Duration(minutes: 1);
+      return Future.wait([
+        _processPrintJobs(),
+        if (shouldSyncTemplates) _syncTemplates(),
+      ]);
+    });
+  }
 
   Future<void> _onPrintJobEvent() => _guarded(_processPrintJobs);
 

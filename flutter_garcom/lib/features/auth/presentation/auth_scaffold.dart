@@ -11,7 +11,6 @@ import '../../../core/theme/app_theme.dart';
 class AuthScaffold extends StatelessWidget {
   const AuthScaffold({
     super.key,
-    required this.icon,
     required this.title,
     required this.subtitle,
     required this.child,
@@ -20,7 +19,6 @@ class AuthScaffold extends StatelessWidget {
     this.action,
   });
 
-  final IconData icon;
   final String title;
   final String subtitle;
   final Widget child;
@@ -43,15 +41,17 @@ class AuthScaffold extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    height: 56,
-                    width: 56,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
+                  // Align escapa do stretch da Column: sem isso a logo seria
+                  // esticada para os 460 de largura do cartão.
+                  Align(
+                    child: ClipRRect(
                       borderRadius: AppTheme.radius,
+                      child: Image.asset(
+                        'assets/icon/master.png',
+                        height: 64,
+                        width: 64,
+                      ),
                     ),
-                    child: Icon(icon, color: Colors.white, size: 30),
                   ),
                   const SizedBox(height: 12),
                   Text(

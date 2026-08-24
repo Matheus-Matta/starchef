@@ -1,7 +1,7 @@
 name: starchef_garcom
 description: "StarChef Garçom — pedidos no salão, pelo Caixa Principal."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.5.0+6
 
 environment:
   sdk: ^3.12.2
@@ -21,13 +21,37 @@ dependencies:
   # arquivo ao lado do executável, então ele é embarcado como asset.
   flutter_dotenv: ^6.0.0
   shadcn_ui: 0.56.1
+  # Diretório de dados do app (fila offline) — não existe forma pura em
+  # dart:io de achar esse caminho em Android/iOS.
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # Gera os ícones nativos (Android/iOS) a partir de assets/icon — rodar
+  # `dart run flutter_launcher_icons` depois de trocar a logo.
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
   assets:
     - .env
+    # Marca usada dentro do app (AuthScaffold) — mesmo arquivo que gera o
+    # ícone nativo, ver flutter_launcher_icons abaixo.
+    - assets/icon/master.png
+
+# Config do flutter_launcher_icons (lido pelo `dart run flutter_launcher_icons`).
+# Fonte em assets/icon/*.svg — os .png são o resultado já rasterizado.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # Ícone legado (Android <8 / iOS): arte cheia num quadrado opaco — cada SO
+  # aplica seu próprio recorte, por isso este PNG não pode ter cantos
+  # arredondados nem transparência (a Apple rejeita alpha no ícone da loja).
+  image_path: "assets/icon/master.png"
+  # Ícone adaptativo (Android 8+): camadas separadas para o SO poder animar e
+  # recortar em qualquer formato de launcher (círculo, "squircle" etc.).
+  adaptive_icon_background: "#EA580C"
+  adaptive_icon_foreground: "assets/icon/foreground.png"
+  min_sdk_android: 21

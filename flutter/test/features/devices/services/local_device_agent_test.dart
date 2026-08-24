@@ -33,6 +33,27 @@ void main() {
       });
       expect(LocalDeviceAgent.isPrintJobEvent(event, 'r1'), isFalse);
     });
+
+    test('reconhece alterações de impressora e balança da unidade', () {
+      for (final resource in ['printers.printer', 'printers.scale']) {
+        final event = RealtimeEvent('model.updated', {
+          'resource': resource,
+          'restaurant_id': 'r1',
+        });
+        expect(
+          LocalDeviceAgent.isDeviceConfigurationEvent(event, 'r1'),
+          isTrue,
+        );
+      }
+    });
+
+    test('ignora configuração de equipamento de outra unidade', () {
+      final event = RealtimeEvent('model.updated', {
+        'resource': 'printers.printer',
+        'restaurant_id': 'r2',
+      });
+      expect(LocalDeviceAgent.isDeviceConfigurationEvent(event, 'r1'), isFalse);
+    });
   });
 
   group('LocalDeviceAgent Code128 payload', () {

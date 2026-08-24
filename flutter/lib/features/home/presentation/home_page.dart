@@ -32,6 +32,7 @@ import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
 import '../data/pdv_repository.dart';
+import 'command_table_selection_dialog.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
@@ -139,6 +140,11 @@ class _HomePageState extends State<HomePage> {
   final LocalOrderStore orderStore = LocalOrderStore();
   StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
   StreamSubscription<void>? ordersSignalSubscription;
+  StreamSubscription<String>? realtimeSignalSubscription;
+  Timer? realtimeRefreshDebounce;
+  final Set<String> pendingRealtimeTopics = {};
+  bool realtimeRefreshRunning = false;
+  bool realtimeRefreshQueued = false;
   LocalTopologyService? topologyService;
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
@@ -241,7 +247,92 @@ class _HomePageState extends State<HomePage> {
     ordersSignalSubscription = api.signals.on('orders').listen((_) {
       if (mounted) unawaited(_refreshFromSignal());
     });
+    realtimeSignalSubscription = api.signals.changes
+        .where((topic) => topic.startsWith('realtime:'))
+        .listen(_scheduleRealtimeRefresh);
     _load();
+  }
+
+  void _scheduleRealtimeRefresh(String signal) {
+    if (!mounted) return;
+    pendingRealtimeTopics.add(signal.substring('realtime:'.length));
+    realtimeRefreshDebounce?.cancel();
+    realtimeRefreshDebounce = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_applyRealtimeRefresh()),
+    );
+  }
+
+  Future<void> _applyRealtimeRefresh() async {
+    if (!mounted) return;
+    if (realtimeRefreshRunning) {
+      realtimeRefreshQueued = true;
+      return;
+    }
+    realtimeRefreshRunning = true;
+    try {
+      do {
+        realtimeRefreshQueued = false;
+        final topics = Set<String>.from(pendingRealtimeTopics);
+        pendingRealtimeTopics.clear();
+        final reloadCatalog = topics.any(
+          const {
+            'tables',
+            'menu',
+            'payments',
+            'cash',
+            'session',
+            'pdv',
+          }.contains,
+        );
+        if (reloadCatalog) await _load();
+
+        if (topics.contains('customers') && restaurantId != null) {
+          await api.get(
+            '/customers/',
+            query: {
+              'restaurant': restaurantId,
+              'is_active': true,
+              'page_size': 200,
+            },
+            accessToken: token,
+          );
+        }
+
+        if (topics.contains('devices') && restaurantId != null) {
+          final query = {
+            'restaurant': restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          };
+          await Future.wait([
+            api.get('/printers/', query: query, accessToken: token),
+            api.get('/scales/', query: query, accessToken: token),
+          ]);
+        }
+
+        if (topics.contains('orders')) {
+          if (flowStep == 'orders') {
+            await _reloadOrders();
+          } else if (activeOrder != null) {
+            await _refreshOrder();
+          } else {
+            await _warmOrdersCache();
+          }
+        }
+      } while (realtimeRefreshQueued || pendingRealtimeTopics.isNotEmpty);
+    } catch (error) {
+      // O WebSocket é aceleração, não um novo ponto de falha: cache,
+      // reconexão e o próximo evento tentam reconciliar novamente.
+      if (mounted && error is ApiException && !error.isConnectivity) {
+        _error(
+          error,
+          title: 'Não foi possível aplicar a atualização em tempo real',
+        );
+      }
+    } finally {
+      realtimeRefreshRunning = false;
+    }
   }
 
   void _onPrinterStatusChanged() {
@@ -1340,6 +1431,9 @@ class _HomePageState extends State<HomePage> {
     deviceAgent.dispose();
     unawaited(orderStore.close());
     ordersSignalSubscription?.cancel();
+    realtimeSignalSubscription?.cancel();
+    realtimeRefreshDebounce?.cancel();
+    pendingRealtimeTopics.clear();
     syncStatusSubscription?.cancel();
     topologyService?.removeListener(_onTopologyChanged);
     topologyService?.dispose();
@@ -1646,15 +1740,43 @@ class _HomePageState extends State<HomePage> {
   /// o que já existe. Quem decide é o servidor (`/orders/open-command/`), para
   /// que dois caixas lendo a mesma comanda não criem dois pedidos.
   Future<void> _openCommand(Map<String, dynamic> command) async {
+    if (busy) return;
+    final linkedTableId = command['current_table'];
+    final needsTableSelection = commandNeedsTableSelection(command);
+    Map<String, dynamic>? table = needsTableSelection
+        ? null
+        : tables.cast<Map<String, dynamic>?>().firstWhere(
+            (item) => '${item?['id']}' == '$linkedTableId',
+            orElse: () => null,
+          );
+
+    // Uma comanda pode ganhar mesa mesmo depois que o pedido já foi aberto.
+    // Por isso a pergunta depende apenas do vínculo, não do status da comanda.
+    if (needsTableSelection) {
+      final selection = await showDialog<CommandTableSelection>(
+        context: context,
+        builder: (_) =>
+            CommandTableSelectionDialog(command: command, tables: tables),
+      );
+      if (selection == null || !mounted) return;
+      table = selection.table;
+    }
+
+    final tableForCommand = table;
     await _work(() async {
       selectedCommand = command;
-      final linkedTableId = command['current_table'];
-      selectedTable = linkedTableId == null
-          ? null
-          : tables.cast<Map<String, dynamic>?>().firstWhere(
-              (table) => '${table?['id']}' == '$linkedTableId',
-              orElse: () => null,
-            );
+      selectedTable = tableForCommand;
+      if (needsTableSelection && tableForCommand != null) {
+        await api.post(
+          '/commands/${command['id']}/link-table/',
+          body: {'table_id': tableForCommand['id']},
+          accessToken: token,
+        );
+        // Mantém a lista coerente inclusive quando a mutação foi apenas
+        // enfileirada pelo modo offline.
+        command['current_table'] = tableForCommand['id'];
+        command['current_table_number'] = tableForCommand['number'];
+      }
       final currentId = command['current_order_id'];
       final order = currentId != null
           ? await api.get('/orders/$currentId/', accessToken: token)

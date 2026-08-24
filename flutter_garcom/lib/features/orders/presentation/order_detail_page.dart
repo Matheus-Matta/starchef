@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../../../core/relay/pending_mutation.dart';
+import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
 import 'orders_page.dart' show describeFailure;
+import 'sync_banner.dart';
 
 /// Um pedido aberto: o que já foi lançado, o que falta enviar e o que
 /// acrescentar.
@@ -13,6 +16,11 @@ import 'orders_page.dart' show describeFailure;
 /// **Não há pagamento aqui de propósito.** Receber é do caixa: ele tem a
 /// gaveta, a maquininha e a impressora fiscal. O app do garçom para no envio
 /// para a cozinha.
+///
+/// **Sem conexão com o Caixa Principal**, lançar item, cancelar item, enviar
+/// para a cozinha e vincular mesa ficam salvos no aparelho (ver
+/// [RelayGateway]) e aparecem aqui com um selo "aguardando conexão" até o
+/// caixa confirmar — a tela nunca trava esperando rede.
 class OrderDetailPage extends StatefulWidget {
   const OrderDetailPage({
     super.key,
@@ -32,11 +40,37 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   bool _loading = true;
   bool _working = false;
   String? _error;
+  int _lastPendingCount = 0;
+
+  RelayGateway get _gateway => widget.repository.gateway;
 
   @override
   void initState() {
     super.initState();
+    _gateway.addListener(_onGatewayChange);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _gateway.removeListener(_onGatewayChange);
+    super.dispose();
+  }
+
+  /// Reage à fila offline: uma pendência a menos deste pedido é o sinal de
+  /// que o Caixa Principal aceitou alguma coisa — busca a versão real para
+  /// substituir a linha otimista pela definitiva. Qualquer outra mudança (uma
+  /// pendência a mais, ou de outro pedido) só redesenha o selo.
+  void _onGatewayChange() {
+    if (!mounted) return;
+    final current = _gateway.pendingFor(widget.orderId).length;
+    final flushed = current < _lastPendingCount;
+    _lastPendingCount = current;
+    if (flushed) {
+      _load();
+    } else {
+      setState(() {});
+    }
   }
 
   Future<void> _load() async {
@@ -50,6 +84,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       setState(() {
         _order = order;
         _loading = false;
+        _lastPendingCount = _gateway.pendingFor(widget.orderId).length;
       });
     } catch (error) {
       if (!mounted) return;
@@ -60,11 +95,12 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
   }
 
-  /// Executa uma gravação pelo Caixa Principal e recarrega o pedido.
+  /// Executa uma gravação e recarrega o pedido — a versão do Caixa Principal
+  /// é sempre quem manda, mesmo depois de um envio bem-sucedido.
   ///
-  /// Recarregar em vez de confiar na resposta é de propósito: o pedido pode ter
-  /// mudado no caixa enquanto o garçom estava na mesa, e é a versão do
-  /// principal que vale.
+  /// Uma falha de CONEXÃO não cai no `catch` genérico: [MutationQueued] é a
+  /// operação sendo salva com sucesso no aparelho, não um erro — a tela seque
+  /// em frente e o selo de pendência (lido do gateway) aparece sozinho.
   Future<void> _work(Future<void> Function() action, String success) async {
     if (_working) return;
     setState(() => _working = true);
@@ -72,6 +108,14 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       await action();
       await _load();
       if (mounted) _toast(success);
+    } on MutationQueued catch (queued) {
+      if (mounted) {
+        setState(() {});
+        _toast(
+          'Sem conexão: "${queued.mutation.summary}" foi salvo e será '
+          'enviado quando o Caixa Principal responder.',
+        );
+      }
     } catch (error) {
       if (mounted) _toast(describeFailure(error));
     } finally {
@@ -80,28 +124,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   }
 
   Future<void> _addItem() async {
-    final products = await _loadProducts();
-    if (products == null || !mounted) return;
-    final choice = await showProductPicker(context, products);
+    final choice = await showProductPicker(context, widget.repository);
     if (choice == null || !mounted) return;
     await _work(
       () => widget.repository.addItem(
         orderId: widget.orderId,
         productId: choice.productId,
+        productName: choice.productName,
         quantity: choice.quantity,
         customerNote: choice.note,
       ),
       'Item lançado.',
     );
-  }
-
-  Future<List<Map<String, dynamic>>?> _loadProducts() async {
-    try {
-      return await widget.repository.products();
-    } catch (error) {
-      if (mounted) _toast(describeFailure(error));
-      return null;
-    }
   }
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
@@ -111,6 +145,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       () => widget.repository.voidItem(
         orderId: widget.orderId,
         itemId: '${item['id']}',
+        itemLabel: '${item['product_name'] ?? 'item'}',
         reason: reason,
       ),
       'Item cancelado.',
@@ -163,7 +198,20 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   @override
   Widget build(BuildContext context) {
     final order = _order;
-    final pending = order == null ? 0 : pendingItems(order);
+    final ordersPending = _gateway.pendingFor(widget.orderId);
+    final addPending = ordersPending
+        .where((m) => m.kind == 'add_item')
+        .toList();
+    final voidingItemIds = ordersPending
+        .where((m) => m.kind == 'void_item')
+        .map((m) => m.itemId)
+        .whereType<String>()
+        .toSet();
+    final sendQueued = ordersPending.any((m) => m.kind == 'send_to_kitchen');
+    final pending = order == null
+        ? 0
+        : pendingItems(order) + addPending.length;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(order == null ? 'Pedido' : orderTitle(order)),
@@ -181,14 +229,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               total: order['total'],
               pending: pending,
               busy: _working,
+              queued: sendQueued,
               onAdd: _addItem,
-              onSend: pending > 0 ? _sendToKitchen : null,
+              onSend: (pending > 0 && !sendQueued) ? _sendToKitchen : null,
             ),
-      body: _buildBody(),
+      body: _buildBody(addPending, voidingItemIds),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(
+    List<PendingMutation> addPending,
+    Set<String> voidingItemIds,
+  ) {
     if (_loading && _order == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -213,7 +265,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
 
     final items = orderItems(order);
-    if (items.isEmpty) {
+    if (items.isEmpty && addPending.isEmpty) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
@@ -226,21 +278,30 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      itemCount: items.length,
+      itemCount: items.length + addPending.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) => _ItemTile(
-        item: items[index],
-        onVoid: _working ? null : () => _voidItem(items[index]),
-      ),
+      itemBuilder: (context, index) {
+        if (index < items.length) {
+          final item = items[index];
+          final voiding = voidingItemIds.contains('${item['id']}');
+          return _ItemTile(
+            item: item,
+            voiding: voiding,
+            onVoid: (_working || voiding) ? null : () => _voidItem(item),
+          );
+        }
+        return _PendingAddTile(mutation: addPending[index - items.length]);
+      },
     );
   }
 }
 
 class _ItemTile extends StatelessWidget {
-  const _ItemTile({required this.item, this.onVoid});
+  const _ItemTile({required this.item, this.onVoid, this.voiding = false});
 
   final Map<String, dynamic> item;
   final VoidCallback? onVoid;
+  final bool voiding;
 
   @override
   Widget build(BuildContext context) {
@@ -287,6 +348,10 @@ class _ItemTile extends StatelessWidget {
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
+                if (voiding) ...[
+                  const SizedBox(height: 6),
+                  const PendingBadge(label: 'cancelando...'),
+                ],
                 if (note.isNotEmpty && note != 'null') ...[
                   const SizedBox(height: 4),
                   Text(
@@ -303,7 +368,7 @@ class _ItemTile extends StatelessWidget {
           ),
           // Só item pendente some sem rastro; o que já foi para a cozinha
           // exige cancelamento com motivo — e isso é decisão do caixa.
-          if (pending && onVoid != null)
+          if (pending && !voiding && onVoid != null)
             IconButton(
               tooltip: 'Cancelar item',
               onPressed: onVoid,
@@ -315,11 +380,59 @@ class _ItemTile extends StatelessWidget {
   }
 }
 
+/// Item lançado sem conexão: ainda não existe no pedido de verdade, só no
+/// aparelho. Some sozinho assim que o Caixa Principal confirma (o pedido é
+/// recarregado e essa linha some, virando um item de verdade).
+class _PendingAddTile extends StatelessWidget {
+  const _PendingAddTile({required this.mutation});
+
+  final PendingMutation mutation;
+
+  @override
+  Widget build(BuildContext context) => ShadCard(
+    radius: AppTheme.radius,
+    columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+    child: Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.warning.withValues(alpha: .12),
+            borderRadius: AppTheme.radius,
+          ),
+          child: const Icon(
+            Icons.hourglass_empty,
+            size: 16,
+            color: AppColors.warning,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                mutation.summary,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              const PendingBadge(),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class _Actions extends StatelessWidget {
   const _Actions({
     required this.total,
     required this.pending,
     required this.busy,
+    required this.queued,
     required this.onAdd,
     required this.onSend,
   });
@@ -327,6 +440,9 @@ class _Actions extends StatelessWidget {
   final Object? total;
   final int pending;
   final bool busy;
+
+  /// O envio à cozinha já está na fila offline, esperando o caixa responder.
+  final bool queued;
   final VoidCallback onAdd;
   final VoidCallback? onSend;
 
@@ -376,7 +492,7 @@ class _Actions extends StatelessWidget {
                     onPressed: busy ? null : onSend,
                     enabled: !busy && onSend != null,
                     height: AppTheme.controlHeight,
-                    leading: busy
+                    leading: (busy || queued)
                         ? const SizedBox.square(
                             dimension: 16,
                             child: CircularProgressIndicator(
@@ -386,7 +502,11 @@ class _Actions extends StatelessWidget {
                           )
                         : const Icon(Icons.send, size: 18),
                     child: Text(
-                      pending > 0 ? 'Enviar ($pending)' : 'Tudo enviado',
+                      queued
+                          ? 'Aguardando conexão'
+                          : pending > 0
+                          ? 'Enviar ($pending)'
+                          : 'Tudo enviado',
                     ),
                   ),
                 ),

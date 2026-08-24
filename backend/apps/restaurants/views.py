@@ -8,6 +8,7 @@ from apps.accounts.limits import assert_can_create_restaurant
 from apps.core.codes import barcode_data_uri, qr_data_uri
 from apps.core.modules import MODULE_ENTREGA
 from apps.core.viewsets import BaseTenantViewSet
+from apps.realtime.events import broadcast_resource_event
 from apps.restaurants.models import Branch, Command, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
 from apps.restaurants.serializers import (
     BranchSerializer,
@@ -18,7 +19,7 @@ from apps.restaurants.serializers import (
     TableSectorSerializer,
     TableSerializer,
 )
-from apps.restaurants.services import default_command_code, next_command_number
+from apps.restaurants.services import default_command_code, next_command_number, sync_branch_for_restaurant
 
 
 def _codes_payload(obj):
@@ -123,6 +124,15 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if not sector:
             raise ValidationError({"sector": "Setor não encontrado nesta conta."})
 
+        # Dados antigos podiam guardar um setor do restaurante B com a filial
+        # herdada do restaurante A. Corrige o vínculo antes de verificar/criar
+        # mesas para que a numeração seja independente por restaurante.
+        target_branch = sync_branch_for_restaurant(sector.restaurant)
+        if sector.branch_id != target_branch.id:
+            sector.branch = target_branch
+            sector.updated_by = request.user
+            sector.save(update_fields=["branch", "updated_by", "updated_at"])
+
         from apps.core.access import is_tenant_admin
 
         if profile and not is_tenant_admin(request.user):
@@ -147,7 +157,8 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
 
         existing = set(
             Table.all_objects.filter(
-                branch=sector.branch, number__in=[str(n) for n in range(from_number, to_number + 1)]
+                restaurant=sector.restaurant,
+                number__in=[str(n) for n in range(from_number, to_number + 1)],
             ).values_list("number", flat=True)
         )
         created = []
@@ -159,7 +170,7 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 Table(
                     account=account,
                     restaurant=sector.restaurant,
-                    branch=sector.branch,
+                    branch=target_branch,
                     sector=sector,
                     number=number_str,
                     code=number_str,
@@ -169,6 +180,17 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 )
             )
         Table.objects.bulk_create(created)
+        if created:
+            transaction.on_commit(
+                lambda: broadcast_resource_event(
+                    account.id,
+                    resource="restaurants.table",
+                    action="created",
+                    restaurant_id=sector.restaurant_id,
+                    branch_id=sector.branch_id,
+                    changed_fields={"collection"},
+                )
+            )
         return Response(
             {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
             status=201,
@@ -445,6 +467,17 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 )
             )
         Command.objects.bulk_create(created)
+        if created:
+            transaction.on_commit(
+                lambda: broadcast_resource_event(
+                    account.id,
+                    resource="restaurants.command",
+                    action="created",
+                    restaurant_id=restaurant.id,
+                    branch_id=getattr(profile, "branch_id", None),
+                    changed_fields={"collection"},
+                )
+            )
         return Response(
             {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
             status=201,
@@ -472,8 +505,22 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if occupied:
             raise ValidationError({"ids": f"{occupied} comanda(s) estão ocupadas e não podem ser excluídas."})
 
+        scopes = list(commands.values_list("account_id", "restaurant_id", "branch_id").distinct())
         now = timezone.now()
         deleted = commands.update(deleted_at=now, updated_at=now, updated_by=request.user)
+        for account_id, restaurant_id, branch_id in scopes:
+            transaction.on_commit(
+                lambda account_id=account_id, restaurant_id=restaurant_id, branch_id=branch_id: (
+                    broadcast_resource_event(
+                        account_id,
+                        resource="restaurants.command",
+                        action="deleted",
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        changed_fields={"collection", "deleted_at"},
+                    )
+                )
+            )
         return Response({"deleted": deleted}, status=200)
 
     @action(detail=False, methods=["post"], url_path="bulk-update")
@@ -503,12 +550,26 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         ):
             raise ValidationError({"ids": "Desvincule e encerre as comandas antes de desativá-las."})
 
+        scopes = list(commands.values_list("account_id", "restaurant_id", "branch_id").distinct())
         now = timezone.now()
         updated = commands.update(
             is_active=changes["is_active"],
             updated_at=now,
             updated_by=request.user,
         )
+        for account_id, restaurant_id, branch_id in scopes:
+            transaction.on_commit(
+                lambda account_id=account_id, restaurant_id=restaurant_id, branch_id=branch_id: (
+                    broadcast_resource_event(
+                        account_id,
+                        resource="restaurants.command",
+                        action="updated",
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        changed_fields={"collection", "is_active"},
+                    )
+                )
+            )
         return Response({"updated": updated}, status=200)
 
 
