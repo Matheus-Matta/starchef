@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
@@ -113,6 +114,75 @@ class MeView(APIView):
                 "permissions": sorted(effective_permission_codes(request.user)),
             }
         )
+
+
+class AdminAuthorizationView(APIView):
+    """Confirma credenciais autorizadas sem trocar a sessão do operador.
+
+    Sem ``permission`` preserva o fluxo de fechamento do aplicativo, exclusivo
+    para administradores. Para uma operação conhecida, também aceita um usuário
+    da mesma conta que possua explicitamente a permissão solicitada.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "cash_approval"
+
+    def post(self, request):
+        login = str(request.data.get("username") or "").strip()
+        password = str(request.data.get("password") or "")
+        required_permission = str(request.data.get("permission") or "").strip()
+        if required_permission not in {"", "orders.cancel"}:
+            return Response(
+                {"detail": "Operação de autorização inválida."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not login or not password:
+            return Response(
+                {"detail": "Informe o usuário e a senha do administrador."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        username = login
+        if "@" in login:
+            matched = User.objects.filter(email__iexact=login).only("username").first()
+            if matched is not None:
+                username = matched.get_username()
+        administrator = authenticate(request=request, username=username, password=password)
+        if administrator is None:
+            return Response(
+                {"detail": "Credenciais de administrador inválidas."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        profile = getattr(administrator, "profile", None)
+        request_account = getattr(request, "account", None)
+        same_account = bool(
+            request_account is not None
+            and profile is not None
+            and profile.account_id == request_account.id
+        )
+        permission_codes = effective_permission_codes(administrator)
+        has_required_permission = (
+            not required_permission
+            and is_tenant_admin(administrator)
+        ) or (
+            bool(required_permission)
+            and (
+                is_tenant_admin(administrator)
+                or "*" in permission_codes
+                or required_permission in permission_codes
+            )
+        )
+        if not same_account or not profile.is_active or not has_required_permission:
+            # Uma resposta única evita revelar se o usuário existe em outra
+            # conta ou apenas não possui perfil administrativo.
+            return Response(
+                {"detail": "Credenciais sem permissão para esta operação na conta."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response({"authorized": True, "user_id": str(administrator.id)})
 
 
 class UserViewSet(viewsets.ModelViewSet):

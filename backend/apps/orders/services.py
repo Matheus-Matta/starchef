@@ -29,6 +29,8 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
     account = restaurant.account
 
     with tenant_context(account):
+        # Compatibilidade interna para importar histórico e gerar bases demo.
+        # A API e as interfaces não expõem mais este tipo de abertura.
         if order_type == Order.TYPE_TABLE and kwargs.get("table"):
             table = Table.objects.select_for_update().get(pk=kwargs["table"].pk)
             if table.status == Table.STATUS_OCCUPIED and not table.current_order_id:
@@ -42,6 +44,9 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
             if command.status == Command.STATUS_OCCUPIED:
                 raise ValidationError("A comanda já está em uso.")
             kwargs["command"] = command
+            # A mesa é um vínculo da comanda. O pedido guarda apenas o snapshot
+            # para histórico, relatórios e impressão após o pagamento.
+            kwargs["table"] = command.current_table
 
         order = Order.objects.create(
             account=account,
@@ -57,7 +62,7 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
 
         if order.table_id:
             order.table.status = Table.STATUS_OCCUPIED
-            order.table.current_order_id = order.id
+            order.table.current_order_id = order.id if order.order_type == Order.TYPE_TABLE else None
             order.table.save(update_fields=["status", "current_order_id", "updated_at"])
 
         if order.command_id:
@@ -98,100 +103,32 @@ def free_command_for_order(order):
             branch=command.branch,
             command=command,
             action=CommandMovementLog.ACTION_UNLINKED,
+            from_table_id=old_table_id,
             waiter=order.updated_by,
         )
-        
-        # Libera a mesa se ela não tiver mais comandas nem pedidos diretos
+
+        # A ocupação da mesa é determinada exclusivamente pelas comandas
+        # vinculadas. O pedido mantém `table` apenas como histórico.
         table = Table.objects.select_for_update().get(pk=old_table_id)
         active_commands = table.active_commands.exists()
-        from apps.orders.models import Order
-        active_orders = table.orders.filter(status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]).exists()
-        
-        if not active_commands and not active_orders:
+
+        if not active_commands:
             table.status = Table.STATUS_FREE
             table.current_order_id = None
             table.save(update_fields=["status", "current_order_id", "updated_at"])
 
 
 def free_table_if_empty(table):
-    """Verifica se a mesa ainda possui pedidos em andamento (abertos ou aguardando pagamento).
-    Se não possuir pedidos nem comandas vinculadas, libera a mesa definindo status como FREE."""
+    """Libera a mesa quando nenhuma comanda está vinculada a ela."""
     if not table:
         return
     table = Table.objects.select_for_update().get(pk=table.pk)
-    active_orders = table.orders.filter(
-        status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-    ).count()
     active_commands = table.active_commands.exists()
-    
-    if active_orders == 0 and not active_commands:
+
+    if not active_commands:
         table.status = Table.STATUS_FREE
         table.current_order_id = None
         table.save(update_fields=["status", "current_order_id", "updated_at"])
-
-
-@transaction.atomic
-def link_order_to_table(order, table, user):
-    """Vincula uma comanda a uma mesa. Valida a capacidade."""
-    with tenant_context(order.account):
-        order = Order.objects.select_for_update().get(pk=order.pk)
-        if order.order_type != Order.TYPE_COMMAND:
-            raise ValidationError("Apenas comandas podem ser vinculadas a uma mesa.")
-        if order.status not in {Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT}:
-            raise ValidationError("O pedido já está encerrado.")
-            
-        # Não permite mesas em limpeza (Cleaning)
-        if table.status == Table.STATUS_CLEANING:
-            raise ValidationError("A mesa selecionada aguarda limpeza.")
-
-        # Evita recálculo se for a mesma mesa
-        if order.table_id == table.id:
-            return order
-
-        old_table = order.table
-
-        order.table = table
-        order.updated_by = user
-        order.save(update_fields=["table", "updated_by", "updated_at"])
-
-        # Ocupa a nova mesa
-        if table.status == Table.STATUS_FREE:
-            table.status = Table.STATUS_OCCUPIED
-            table.save(update_fields=["status", "updated_at"])
-            
-        if old_table:
-            free_table_if_empty(old_table)
-            
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Vinculada a mesa {table.number}", metadata={"event": "link_table"})
-        return order
-
-
-@transaction.atomic
-def transfer_table_orders(source_table, target_table, user):
-    """Transfere todas as comandas/pedidos de uma mesa para outra."""
-    with tenant_context(source_table.account):
-        if target_table.status == Table.STATUS_CLEANING:
-            raise ValidationError("A mesa destino aguarda limpeza.")
-            
-        orders_to_transfer = source_table.orders.filter(
-            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-        )
-        
-        count = 0
-        for order in orders_to_transfer:
-            order.table = target_table
-            order.updated_by = user
-            order.save(update_fields=["table", "updated_by", "updated_at"])
-            record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Transferida da mesa {source_table.number} para {target_table.number}", metadata={"event": "transfer_table"})
-            count += 1
-            
-        if count > 0:
-            if target_table.status == Table.STATUS_FREE:
-                target_table.status = Table.STATUS_OCCUPIED
-                target_table.save(update_fields=["status", "updated_at"])
-            free_table_if_empty(source_table)
-            
-        return count
 
 
 def _resolve_weighed_quantity(*, order, product, scale_reading=None, weight_kg=None, user=None):
@@ -298,9 +235,7 @@ def add_order_item(
         extras_price += sum((a.price for a in selected_addons), Decimal("0.00"))
         unit_price = product.current_price + extras_price
         if expected_unit_price not in (None, ""):
-            expected = Decimal(str(expected_unit_price)).quantize(
-                TWO_PLACES, rounding=ROUND_HALF_UP
-            )
+            expected = Decimal(str(expected_unit_price)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             actual = unit_price.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             if expected != actual:
                 raise ValidationError(
@@ -310,14 +245,26 @@ def add_order_item(
 
         existing = None
         if not product.is_weighed:
-            candidates = OrderItem.objects.select_for_update().filter(
-                order=order, product=product, status=OrderItem.STATUS_PENDING,
-                customer_note=customer_note, variations=variation_snapshot,
-            ).prefetch_related("addons")
+            candidates = (
+                OrderItem.objects.select_for_update()
+                .filter(
+                    order=order,
+                    product=product,
+                    status=OrderItem.STATUS_PENDING,
+                    customer_note=customer_note,
+                    variations=variation_snapshot,
+                )
+                .prefetch_related("addons")
+            )
             selected_addon_ids = {str(a.id) for a in selected_addons}
-            existing = next((candidate for candidate in candidates if {
-                str(a.addon_id) for a in candidate.addons.all()
-            } == selected_addon_ids), None)
+            existing = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if {str(a.addon_id) for a in candidate.addons.all()} == selected_addon_ids
+                ),
+                None,
+            )
         if existing is not None:
             existing.quantity += quantity
             existing.unit_price = unit_price
@@ -325,7 +272,9 @@ def add_order_item(
             existing.updated_by = user
             existing.save(update_fields=["quantity", "unit_price", "total_price", "updated_by", "updated_at"])
             for item_addon in existing.addons.all():
-                item_addon.total_price = (item_addon.unit_price * existing.quantity).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+                item_addon.total_price = (item_addon.unit_price * existing.quantity).quantize(
+                    TWO_PLACES, rounding=ROUND_HALF_UP
+                )
                 item_addon.updated_by = user
                 item_addon.save(update_fields=["total_price", "updated_by", "updated_at"])
             recalculate_order(order)
@@ -349,9 +298,16 @@ def add_order_item(
         )
         for addon in selected_addons:
             OrderItemAddon.objects.create(
-                account=order.account, restaurant=order.restaurant, branch=order.branch,
-                item=item, addon=addon, quantity=1, unit_price=addon.price,
-                total_price=addon.price * quantity, created_by=user, updated_by=user,
+                account=order.account,
+                restaurant=order.restaurant,
+                branch=order.branch,
+                item=item,
+                addon=addon,
+                quantity=1,
+                unit_price=addon.price,
+                total_price=addon.price * quantity,
+                created_by=user,
+                updated_by=user,
             )
         if reading_to_link is not None:
             reading_to_link.order_item = item
@@ -420,7 +376,12 @@ def send_order_to_kitchen(order, user):
         order.production_status = Order.PROD_SENT
         order.updated_by = user
         order.save(update_fields=["production_status", "updated_by", "updated_at"])
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "send_to_kitchen", "batch": batch.batch_number})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=order,
+            actor=user,
+            metadata={"event": "send_to_kitchen", "batch": batch.batch_number},
+        )
 
         from apps.printers.services import register_kitchen_batch_print_jobs
 
@@ -462,7 +423,9 @@ def comp_order_item(item, user, reason=""):
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if item.status in {OrderItem.STATUS_PENDING, OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
-            raise ValidationError("A cortesia só pode ser aplicada a itens já enviados à cozinha. Cancele itens que ainda estão pendentes.")
+            raise ValidationError(
+                "A cortesia só pode ser aplicada a itens já enviados à cozinha. Cancele itens que ainda estão pendentes."
+            )
 
         profile = getattr(user, "profile", None)
         if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
@@ -473,7 +436,9 @@ def comp_order_item(item, user, reason=""):
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
         recalculate_order(item.order)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"}
+        )
         return item
 
 
@@ -508,7 +473,9 @@ def update_order_item_status(item, new_status, user, reason=""):
         item.save()
         recalculate_order(item.order)
         sync_production_status(item.order)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": new_status})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": new_status}
+        )
         broadcast_kitchen_event(
             item.account_id,
             item.branch_id,
@@ -556,12 +523,20 @@ def close_order(
         order.closed_by = user
         order.updated_by = user
         order.closed_at = timezone.now()
-        order.save(update_fields=["discount", "service_fee", "service_fee_enabled", "status", "closed_by", "closed_at", "updated_by"])
+        order.save(
+            update_fields=[
+                "discount",
+                "service_fee",
+                "service_fee_enabled",
+                "status",
+                "closed_by",
+                "closed_at",
+                "updated_by",
+            ]
+        )
         order = recalculate_order(order)
         if expected_total not in (None, ""):
-            expected = Decimal(str(expected_total)).quantize(
-                TWO_PLACES, rounding=ROUND_HALF_UP
-            )
+            expected = Decimal(str(expected_total)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             if expected != order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP):
                 raise ValidationError(
                     "O total do pedido mudou durante o período offline. "
@@ -574,12 +549,9 @@ def close_order(
         # parcial no servidor.
         from apps.payments.models import Payment
 
-        paid_total = (
-            order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(
-                value=Sum("amount")
-            )["value"]
-            or Decimal("0.00")
-        )
+        paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
+            "value"
+        ] or Decimal("0.00")
         if paid_total > order.total:
             raise ValidationError(
                 "A alteração deixaria o valor já pago maior que o total do pedido. "
@@ -633,7 +605,9 @@ def sync_production_status(order):
     with tenant_context(order.account):
         order = Order.objects.get(pk=order.pk)
         active_statuses = list(
-            order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list("status", flat=True)
+            order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list(
+                "status", flat=True
+            )
         )
         if not active_statuses:
             return order
@@ -672,5 +646,7 @@ def serialize_kitchen_item(item):
         "production_sector": item.production_sector,
         "batch_number": item.batch.batch_number if item.batch_id else None,
         "sent_to_kitchen_at": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else None,
-        "elapsed_from": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else item.launched_at.isoformat(),
+        "elapsed_from": item.sent_to_kitchen_at.isoformat()
+        if item.sent_to_kitchen_at
+        else item.launched_at.isoformat(),
     }

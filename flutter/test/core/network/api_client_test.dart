@@ -8,6 +8,25 @@ import 'package:starchef_pdv/core/network/api_exception.dart';
 import 'package:starchef_pdv/core/network/offline_store.dart';
 
 void main() {
+  test('troca a API em memória sem reiniciar o aplicativo', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef-api-switch-',
+    );
+    final client = ApiClient(
+      baseUrl: 'https://old.starchef.test/api/v1',
+      offlineStore: OfflineStore(
+        file: File('${directory.path}/offline.sqlite'),
+      ),
+    );
+
+    await client.updateBaseUrl('https://api.starchef.com.br/api/v1');
+
+    expect(client.baseUrl, 'https://api.starchef.com.br/api/v1');
+    expect(client.healthEndpoint, 'https://api.starchef.com.br/health/');
+    await client.dispose();
+    await directory.delete(recursive: true);
+  });
+
   test('converte resposta de erro da API em ApiException', () async {
     final client = ApiClient(
       baseUrl: 'http://starchef.test/api/v1',
@@ -82,6 +101,52 @@ void main() {
     await client.dispose();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'persiste formas de pagamento por restaurante para uso offline',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef-payment-methods-cache-',
+      );
+      var online = true;
+      final client = ApiClient(
+        baseUrl: 'http://starchef.test/api/v1',
+        offlineStore: OfflineStore(
+          file: File('${directory.path}/offline.sqlite'),
+        ),
+        client: MockClient((request) async {
+          if (!online) throw const SocketException('offline');
+          expect(request.url.path, endsWith('/payments/methods/'));
+          return http.Response(
+            '{"results":[{"id":"pix-1","name":"PIX","method_type":"pix"}]}',
+            200,
+          );
+        }),
+      );
+      const query = {
+        'restaurant': 'restaurant-1',
+        'is_active': true,
+        'page_size': 100,
+      };
+
+      await client.get(
+        '/payments/methods/',
+        query: query,
+        accessToken: 'token',
+      );
+      online = false;
+      final cached = await client.get(
+        '/payments/methods/',
+        query: query,
+        accessToken: 'token',
+      );
+
+      expect(cached['_offline_cache'], isTrue);
+      expect((cached['results'] as List).single['name'], 'PIX');
+      await client.dispose();
+      await directory.delete(recursive: true);
+    },
+  );
 
   test(
     'enfileira alteração offline e sincroniza quando a rede volta',

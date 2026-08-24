@@ -72,13 +72,27 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> with WindowListener {
     if (_closeDialogOpen || !mounted || dialogContext == null) return;
     _closeDialogOpen = true;
     try {
+      final closingFromLogin = !_auth.isAuthenticated;
       final authorized = await showSupervisorCloseDialog(
         context: dialogContext,
         title: 'Fechar a Balança Rápida',
-        description:
-            'Informe a Senha do Supervisor para encerrar esta estação.',
+        description: closingFromLogin
+            ? 'Use a senha local de fechamento do aplicativo.'
+            : 'Use a senha do restaurante ou as credenciais de um administrador da conta.',
         confirmLabel: 'Fechar balança',
-        verifyPassword: _auth.verifySupervisorClosePassword,
+        verifyPassword: closingFromLogin
+            ? _auth.verifyLoginClosePassword
+            : _auth.verifySupervisorClosePassword,
+        verifyAdminCredentials: closingFromLogin
+            ? null
+            : _auth.verifyAdministratorCloseCredentials,
+        passwordLabel: closingFromLogin
+            ? 'Senha de fechamento'
+            : 'Senha do restaurante',
+        invalidPasswordMessage: closingFromLogin
+            ? 'Senha de fechamento incorreta.'
+            : 'Senha do restaurante incorreta. Se ela foi alterada, '
+                  'recarregue os dados do PDV.',
         onInvalidPassword: () async {
           await windowManager.setFullScreen(true);
           if (mounted) setState(() => _isFullScreen = true);
@@ -163,8 +177,6 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> with WindowListener {
           controller: _auth,
           preferredRestaurantId: widget.preferredRestaurantId,
           preferences: widget.preferences,
-          isFullScreen: _isFullScreen,
-          onToggleFullScreen: _toggleFullScreen,
           onClose: _requestClose,
         );
       },

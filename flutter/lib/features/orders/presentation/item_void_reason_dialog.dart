@@ -16,6 +16,8 @@ class ItemVoidReasonDialog {
   static Future<String?> show(
     BuildContext context, {
     required String itemName,
+    String title = 'Remover item',
+    String confirmLabel = 'Remover item',
   }) async {
     var selectedReason = reasons.first;
     var showDetailsError = false;
@@ -29,7 +31,7 @@ class ItemVoidReasonDialog {
           return AppDialog(
             scrollable: true,
             maxWidth: 488,
-            title: const Text('Remover item'),
+            title: Text(title),
             content: SizedBox(
               width: 440,
               child: Column(
@@ -97,7 +99,7 @@ class ItemVoidReasonDialog {
                       : '$selectedReason — $details';
                   Navigator.pop(dialogContext, reason);
                 },
-                child: const Text('Remover item'),
+                child: Text(confirmLabel),
               ),
             ],
           );

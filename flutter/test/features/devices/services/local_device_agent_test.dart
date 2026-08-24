@@ -361,6 +361,37 @@ void main() {
       );
       await api.dispose();
     });
+
+    test('impressão IP não abre uma conexão de teste antes do envio', () async {
+      final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+      var probes = 0;
+      var writes = 0;
+      final agent = LocalDeviceAgent(
+        api: api,
+        availabilityProbe: (_) async {
+          probes++;
+          return false;
+        },
+        networkWriter: (target, bytes) async {
+          writes++;
+          expect(target.host, '192.0.2.10');
+          expect(target.port, 9100);
+          expect(bytes, isNotEmpty);
+        },
+      );
+
+      await agent.printForPrinter({
+        'connection_type': 'network',
+        'host': '192.0.2.10',
+        'port': 9100,
+        'driver_type': 'escpos',
+      }, 'COMANDA 42');
+
+      expect(probes, 0);
+      expect(writes, 1);
+      expect(agent.printerAvailability.value.isAvailable, isTrue);
+      await api.dispose();
+    });
   });
 }
 

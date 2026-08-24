@@ -63,8 +63,11 @@ class LocalDeviceAgent {
     this.preferences,
     Future<bool> Function(PrinterEndpoint target)? availabilityProbe,
     Future<void> Function(Duration duration)? delay,
+    Future<void> Function(PrinterEndpoint target, List<int> bytes)?
+    networkWriter,
     this.cutDelay = const Duration(milliseconds: 650),
   }) : _availabilityProbe = availabilityProbe,
+       _networkWriter = networkWriter,
        _delay = delay ?? Future<void>.delayed;
 
   static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
@@ -318,6 +321,8 @@ class LocalDeviceAgent {
   final ApiClient api;
   final LocalPreferences? preferences;
   final Future<bool> Function(PrinterEndpoint target)? _availabilityProbe;
+  final Future<void> Function(PrinterEndpoint target, List<int> bytes)?
+  _networkWriter;
   final Future<void> Function(Duration duration) _delay;
   final Duration cutDelay;
   final ValueNotifier<PrinterAvailability> printerAvailability =
@@ -646,7 +651,12 @@ class LocalDeviceAgent {
     }
 
     try {
-      if (!await checkPrinterAvailability(printer)) {
+      // Em TCP/IP, o próprio envio é a prova de disponibilidade. Fazer um
+      // connect/close de teste e reconectar imediatamente faz algumas
+      // impressoras térmicas aceitarem a primeira sessão e ignorarem a
+      // segunda. Serial e spool ainda precisam da checagem prévia local.
+      if (target.connection != PrinterConnection.network &&
+          !await checkPrinterAvailability(printer)) {
         throw const PrinterCommunicationException(
           message:
               'Falha ao comunicar com a impressora: dispositivo não encontrado.',
@@ -669,7 +679,12 @@ class LocalDeviceAgent {
           qrValue: qrValue,
         );
         if (target.connection == PrinterConnection.network) {
-          await _writeToNetworkPrinter(target, printBytes);
+          final writer = _networkWriter;
+          if (writer == null) {
+            await _writeToNetworkPrinter(target, printBytes);
+          } else {
+            await writer(target, printBytes);
+          }
         } else {
           await _writeToSerialPrinter(target, printBytes);
         }

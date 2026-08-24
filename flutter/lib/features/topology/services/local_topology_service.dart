@@ -740,11 +740,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final actor = request.headers.value('x-starchef-actor') ?? '';
     final restaurant = request.headers.value('x-starchef-restaurant') ?? '';
     final received = request.headers.value('x-starchef-signature') ?? '';
+    // Conta e restaurante são checados com igualdade: o principal só atende a
+    // própria loja. O ATOR não — quem opera o outro nó não é necessariamente a
+    // mesma pessoa logada aqui. Era o que travava o app do garçom: cada garçom
+    // entra com o próprio usuário e todas as requisições voltavam 401. O que
+    // autoriza o nó é a chave de pareamento; o ator viaja junto para
+    // identificar quem pediu, não para dar permissão (a operação é executada
+    // com a credencial deste terminal de qualquer forma).
     if (timestamp == null ||
         nonce.length < 8 ||
         nodeId.isEmpty ||
+        actor.isEmpty ||
         account != accountId ||
-        actor != actorId ||
         restaurant != _restaurantId) {
       return null;
     }

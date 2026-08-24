@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/theme/app_theme.dart';
-import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
 import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart';
@@ -312,6 +311,7 @@ void main() {
       Map<String, dynamic>? voidedItem;
       var finishes = 0;
       var prints = 0;
+      var cancellations = 0;
       final item = <String, dynamic>{
         'id': 'item-1',
         'product': 'product-1',
@@ -343,12 +343,13 @@ void main() {
           onVoidItem: (value) => voidedItem = value,
           onFinish: () => finishes++,
           onPrint: () => prints++,
+          onCancel: () => cancellations++,
           printing: false,
         ),
       );
 
       expect(find.text('Pedido #42'), findsOneWidget);
-      expect(find.text('Mesa 7 · Salão'), findsOneWidget);
+      expect(find.text('Mesa 7 · Histórico'), findsOneWidget);
       expect(find.text('LOCAL'), findsOneWidget);
       expect(find.text('Prato executivo'), findsOneWidget);
       expect(find.text('Sem cebola'), findsOneWidget);
@@ -361,10 +362,15 @@ void main() {
       await tester.tap(
         find.widgetWithText(OutlinedButton, 'Imprimir recibo de venda'),
       );
+      await tester.tap(find.byTooltip('Mais ações do pedido'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancelar pedido'));
+      await tester.pumpAndSettle();
 
       expect(voidedItem?['id'], 'item-1');
       expect(finishes, 1);
       expect(prints, 1);
+      expect(cancellations, 1);
       expect(tester.takeException(), isNull);
     });
 
@@ -417,6 +423,24 @@ void main() {
       expect(find.text('Comanda 3 · Self-service'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  testWidgets('PdvConnectionBadge online usa verde escuro com alto contraste', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+
+    final badge = tester.widget<ShadBadge>(find.byType(ShadBadge));
+    expect(badge.backgroundColor, const Color(0xFF166534));
+    expect(badge.hoverBackgroundColor, const Color(0xFF14532D));
+    expect(badge.foregroundColor, Colors.white);
+    expect(find.text('Online'), findsOneWidget);
   });
 
   group('PdvPrincipalBadge', () {
@@ -482,44 +506,6 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Sem o Principal'), findsNothing);
       expect(find.byIcon(Icons.lan_outlined), findsOneWidget);
-    });
-  });
-
-  group('PdvPrinterBadge', () {
-    testWidgets('mostra impressora disponível', (tester) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(360, 120),
-        child: const PdvPrinterBadge(
-          status: PrinterAvailability(
-            PrinterAvailabilityPhase.available,
-            'Impressora disponível',
-          ),
-        ),
-      );
-
-      expect(find.text('Impressora disponível'), findsOneWidget);
-      expect(find.byIcon(Icons.print_rounded), findsOneWidget);
-    });
-
-    testWidgets('mostra impressora desconectada sem estourar no compacto', (
-      tester,
-    ) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(120, 90),
-        child: const PdvPrinterBadge(
-          compact: true,
-          status: PrinterAvailability(
-            PrinterAvailabilityPhase.unavailable,
-            'Impressora desconectada',
-          ),
-        ),
-      );
-
-      expect(find.text('Impressora desconectada'), findsNothing);
-      expect(find.byIcon(Icons.print_disabled_outlined), findsOneWidget);
-      expect(tester.takeException(), isNull);
     });
   });
 }

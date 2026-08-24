@@ -56,51 +56,13 @@
       </div>
     </div>
 
-    <!-- ── STEP 2: Selecionar mesa / cliente ─────────────────────── -->
+    <!-- ── STEP 2: Selecionar comanda, mesa vinculada ou cliente ── -->
     <div v-if="step === 'context'" class="pdv__step pdv__step--context">
       <div class="pdv__step-header">
         <button class="pdv__back" type="button" @click="navigateStep('type')">
           <AppIcon name="arrow-left" :size="16" /> Voltar
         </button>
         <h2>{{ contextTitle }}</h2>
-      </div>
-
-      <!-- Seleção de mesa -->
-      <div v-if="orderType === 'table'" class="pdv__tables">
-        <div v-if="loadingTables" class="pdv__loading">Carregando mesas...</div>
-        <template v-else>
-          <div class="pdv__tables-bar">
-            <span class="pdv__tables-count">
-              <span class="pdv__dot pdv__dot--free" />
-              {{ freeTables.length }} {{ freeTables.length === 1 ? "mesa livre" : "mesas livres" }} · toque numa ocupada para editar o pedido
-            </span>
-          </div>
-          <div class="pdv__table-grid">
-            <button
-              v-for="table in selectableTables"
-              :key="table.id"
-              class="pdv__table-card"
-              :class="[
-                `pdv__table-card--${table.status || 'free'}`,
-                { 'pdv__table-card--selected': selectedTable?.id === table.id },
-                { 'pdv__table-card--busy': creatingOrder && selectedTable?.id === table.id },
-              ]"
-              type="button"
-              :disabled="creatingOrder"
-              @click="pickTable(table)"
-            >
-              <span class="pdv__table-top">
-                <strong class="pdv__table-number">{{ table.number }}</strong>
-                <span class="pdv__table-status">{{ pdvTableStatus(table.status) }}</span>
-              </span>
-              <span class="pdv__table-meta">
-                <small>{{ table.capacity }} lugares</small>
-                <small>{{ table.sector_name || "Sem setor" }}</small>
-              </span>
-            </button>
-            <div v-if="!selectableTables.length" class="pdv__empty">Nenhuma mesa cadastrada.</div>
-          </div>
-        </template>
       </div>
 
       <!-- Seleção de comanda (self-service) -->
@@ -144,6 +106,18 @@
               {{ allCommands.length ? "Nenhuma comanda encontrada." : "Nenhuma comanda cadastrada." }}
             </div>
           </div>
+          <div v-if="selectedCommand" class="pdv__step-footer">
+            <label class="pdv__field-label" for="pdv-command-table">Mesa vinculada</label>
+            <select id="pdv-command-table" v-model="selectedTable" class="pdv__category-select">
+              <option :value="null">Sem mesa</option>
+              <option v-for="table in linkableTables" :key="table.id" :value="table">
+                Mesa {{ table.number }} · {{ pdvTableStatus(table.status) }}
+              </option>
+            </select>
+            <button class="pdv__btn pdv__btn--primary" type="button" :disabled="creatingOrder" @click="startOrder">
+              {{ creatingOrder ? "Abrindo pedido..." : "Abrir comanda" }}
+            </button>
+          </div>
         </template>
       </div>
 
@@ -177,9 +151,7 @@
         </div>
       </div>
 
-      <!-- Mesa/comanda abrem direto ao tocar no card; balcão/delivery/retirada
-           ainda usam o botão (não há card que dispare a abertura). -->
-      <div v-if="!['table', 'command'].includes(orderType)" class="pdv__step-footer">
+      <div v-if="orderType !== 'command'" class="pdv__step-footer">
         <button
           class="pdv__btn pdv__btn--primary"
           type="button"
@@ -251,7 +223,7 @@
         <div class="pdv__cart-header">
           <div class="pdv__order-info">
             <strong>Pedido #{{ currentOrder?.sequence }}</strong>
-            <span>{{ orderTypeLabel }}{{ tableLabel }}{{ commandLabel }}</span>
+            <span>{{ orderTypeLabel }}{{ tableLabel }}</span>
           </div>
           <div v-if="currentOrder" class="pdv__order-badges">
             <span class="pdv__badge pdv__badge--prod" :class="`pdv__prod--${currentOrder.production_status}`">
@@ -535,7 +507,7 @@
         <div class="pdv__pay-order">
           <div>
             <strong>Pedido #{{ currentOrder?.sequence }}</strong>
-            <small>{{ orderTypeLabel }}{{ tableLabel }}{{ commandLabel }}</small>
+            <small>{{ orderTypeLabel }}{{ tableLabel }}</small>
           </div>
           <span v-if="selectedCustomer?.name || currentOrder?.customer_name">{{ selectedCustomer?.name || currentOrder?.customer_name }}</span>
         </div>
@@ -926,8 +898,7 @@ const confirmingWeigh = ref(false);
 const auth = useAuthStore();
 const orderTypes = computed(() => {
   const types = [
-    { value: "table", label: "Mesa", icon: "pi-th-large", hint: "Atendimento em mesa" },
-    { value: "command", label: "Comanda", icon: "pi-qrcode", hint: "Cartão de comanda (self-service)" },
+    { value: "command", label: "Comanda", icon: "pi-qrcode", hint: "Salão ou cartão de comanda" },
     { value: "counter", label: "Balcao", icon: "pi-building", hint: "Entrega imediata no balcao" },
   ];
   // Delivery/Retirada só quando o módulo de Entrega está ativo.
@@ -940,14 +911,12 @@ const orderTypes = computed(() => {
 
 // ── Computed ─────────────────────────────────────────────────────
 const contextTitle = computed(() => {
-  if (orderType.value === "table") return "Selecionar mesa";
   if (orderType.value === "command") return "Selecionar comanda";
   if (["delivery", "takeaway"].includes(orderType.value)) return "Selecionar cliente (opcional)";
   return "Confirmar tipo";
 });
 
 const canProceedContext = computed(() => {
-  if (orderType.value === "table") return !!selectedTable.value;
   if (orderType.value === "command") return !!selectedCommand.value;
   return true;
 });
@@ -973,9 +942,9 @@ function pdvCommandStatus(status) {
   return COMMAND_STATUS[status] || "Livre";
 }
 
-const freeTables = computed(() => allTables.value.filter((t) => t.status === "free" && t.is_active));
-// Todas as mesas ativas: livres para abrir e ocupadas para EDITAR o pedido aberto.
-const selectableTables = computed(() => allTables.value.filter((t) => t.is_active));
+const linkableTables = computed(() =>
+  allTables.value.filter((table) => table.is_active && table.status !== "cleaning"),
+);
 
 const TABLE_STATUS = { free: "Livre", occupied: "Ocupada", reserved: "Reservada", cleaning: "Limpeza" };
 function pdvTableStatus(status) {
@@ -999,9 +968,12 @@ const requiresVariation = computed(() => Boolean(configuringProduct.value?.requi
 const pendingItems = computed(() => cartItems.value.filter((i) => i.status === "pending"));
 const sentItems = computed(() => cartItems.value.filter((i) => i.status !== "pending" && i.status !== "cancelled"));
 
-const orderTypeLabel = computed(() => orderTypes.value.find((t) => t.value === orderType.value)?.label || "");
+const orderTypeLabel = computed(() =>
+  selectedCommand.value
+    ? `Comanda ${selectedCommand.value.number}`
+    : orderTypes.value.find((t) => t.value === orderType.value)?.label || "",
+);
 const tableLabel = computed(() => (selectedTable.value ? ` — Mesa ${selectedTable.value.number}` : ""));
-const commandLabel = computed(() => (selectedCommand.value ? ` — Comanda ${selectedCommand.value.number}` : ""));
 
 const finalTotal = computed(() => Math.max(0, Number(currentOrder.value?.total || 0)));
 const previewServiceFee = computed(() => {
@@ -1041,38 +1013,29 @@ function selectType(type) {
   navigateStep("context");
   // Atualiza o grid ao entrar no contexto para refletir o status atual
   // (mesa/comanda podem ter mudado desde o carregamento inicial).
-  if (type === "table") loadTables();
-  else if (type === "command") loadCommands();
+  if (type === "command") Promise.all([loadCommands(), loadTables()]);
 }
 
-// Clique numa mesa/comanda já abre o pedido (sem passo extra de "Abrir pedido").
-function pickTable(table) {
-  if (creatingOrder.value) return;
-  selectedTable.value = table;
-  startOrder();
-}
 function pickCommand(command) {
   if (creatingOrder.value) return;
   selectedCommand.value = command;
-  startOrder();
+  selectedTable.value =
+    allTables.value.find((table) => table.id === command.current_table) || null;
 }
 
 async function startOrder() {
   if (creatingOrder.value) return;
   creatingOrder.value = true;
   try {
-    // Mesa: usa a ação dedicada do backend (`open-table`). Ela cria OU retoma o
-    // pedido aberto da mesa no servidor, resolvendo o restaurante pela própria
-    // mesa. Evita o filtro `GET /orders/?table=` (FK tenant-scoped que dá 400
-    // "Faça uma escolha válida" sob async — ver tenant-scope-not-in-filterset).
-    if (orderType.value === "table" && selectedTable.value) {
-      const { data: order } = await api.post("/orders/open-table/", { table: selectedTable.value.id });
-      await resumeTableOrder(order);
-      return;
-    }
-
     // Comanda: ação dedicada (cria se livre, retoma se em uso).
     if (orderType.value === "command" && selectedCommand.value) {
+      if (selectedTable.value) {
+        await api.post(`/commands/${selectedCommand.value.id}/link-table/`, {
+          table_id: selectedTable.value.id,
+        });
+      } else if (selectedCommand.value.current_table) {
+        await api.post(`/commands/${selectedCommand.value.id}/unlink-table/`, {});
+      }
       const { data: order } = await api.post("/orders/open-command/", { command: selectedCommand.value.id });
       await resumeTableOrder(order);
       return;

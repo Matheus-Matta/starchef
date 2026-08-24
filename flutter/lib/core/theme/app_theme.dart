@@ -10,6 +10,7 @@ import 'app_colors.dart';
 /// fluxos de operação.
 abstract final class AppTheme {
   static const radius = BorderRadius.all(Radius.circular(4));
+  static const controlHeight = 40.0;
 
   static ThemeData light() => _buildMaterial(Brightness.light);
   static ThemeData dark() => _buildMaterial(Brightness.dark);
@@ -132,12 +133,19 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
+        isDense: true,
         fillColor: surface,
         hintStyle: TextStyle(color: muted, fontWeight: FontWeight.w400),
         labelStyle: TextStyle(color: muted),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 13,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        constraints: const BoxConstraints(minHeight: controlHeight),
+        prefixIconConstraints: const BoxConstraints(
+          minWidth: controlHeight,
+          minHeight: controlHeight,
+        ),
+        suffixIconConstraints: const BoxConstraints(
+          minWidth: controlHeight,
+          minHeight: controlHeight,
         ),
         border: OutlineInputBorder(
           borderRadius: radius,
@@ -174,7 +182,7 @@ abstract final class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 40),
+          minimumSize: const Size(0, controlHeight),
           backgroundColor: primary,
           foregroundColor: Colors.white,
           disabledBackgroundColor: scheme.surfaceContainerHigh,
@@ -185,7 +193,7 @@ abstract final class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 40),
+          minimumSize: const Size(0, controlHeight),
           foregroundColor: scheme.onSurface,
           side: BorderSide(color: border),
           shape: const RoundedRectangleBorder(borderRadius: radius),

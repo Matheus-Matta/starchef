@@ -10,6 +10,7 @@ from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.accounts.views import (
     AccountViewSet,
+    AdminAuthorizationView,
     CookieTokenRefreshView,
     GlobalSystemConfigViewSet,
     LoginView,
@@ -139,6 +140,11 @@ urlpatterns = [
     path("api/v1/auth/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("api/v1/auth/me/", MeView.as_view(), name="auth_me"),
+    path(
+        "api/v1/auth/authorize-admin/",
+        AdminAuthorizationView.as_view(),
+        name="authorize_admin",
+    ),
     path("api/v1/auth/logout/", LogoutView.as_view(), name="logout"),
     path("api/v1/auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path("api/v1/auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),

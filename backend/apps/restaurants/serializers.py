@@ -20,7 +20,9 @@ class RestaurantSerializer(TenantModelSerializer):
     cnpj = serializers.CharField(max_length=18, required=False, allow_null=True, allow_blank=True, default=None)
     # Senha de ações do caixa: entra em texto (write-only), sai só como booleano.
     cash_action_password = serializers.CharField(
-        write_only=True, required=False, allow_blank=True,
+        write_only=True,
+        required=False,
+        allow_blank=True,
         style={"input_type": "password"},
         help_text="Senha para autorizar ações do caixa. Enviada em texto; armazenada com hash.",
     )
@@ -81,6 +83,7 @@ class CommandSerializer(TenantModelSerializer):
     # sequencial do restaurante. `code` idem (derivado do numero).
     number = serializers.IntegerField(required=False, min_value=1)
     code = serializers.CharField(required=False, allow_blank=True, max_length=40)
+    current_table_number = serializers.CharField(source="current_table.number", read_only=True, default=None)
 
     class Meta:
         model = Command
@@ -88,6 +91,15 @@ class CommandSerializer(TenantModelSerializer):
         # status, current_order_id e current_table sao geridos pelo ciclo de vida
         # (pedido/pagamento e endpoints de mesa), nunca definidos direto pelo CRUD cliente.
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id", "current_table"]
+
+    def validate(self, attrs):
+        if (
+            attrs.get("is_active") is False
+            and self.instance is not None
+            and (self.instance.current_order_id or self.instance.current_table_id)
+        ):
+            raise serializers.ValidationError({"is_active": "Desvincule e encerre a comanda antes de desativá-la."})
+        return attrs
 
 
 class TableSerializer(TenantModelSerializer):
@@ -121,4 +133,3 @@ class DeliverymanSerializer(TenantModelSerializer):
         model = Deliveryman
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
-

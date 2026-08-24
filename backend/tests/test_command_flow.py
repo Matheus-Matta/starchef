@@ -46,24 +46,39 @@ def test_occupied_command_cannot_open_second_order(restaurant, branch, command, 
     create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=waiter_user)
 
     with pytest.raises(ValidationError):
-        create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=waiter_user)
+        create_order(
+            restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=waiter_user
+        )
 
 
 @pytest.mark.django_db
-def test_payment_frees_and_resets_command(restaurant, branch, command, product, payment_method, manager_user):
-    order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=manager_user)
+def test_payment_frees_command_and_unlinks_table(
+    restaurant, branch, table, command, product, payment_method, manager_user
+):
+    command.current_table = table
+    command.save(update_fields=["current_table", "updated_at"])
+    order = create_order(
+        restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=manager_user
+    )
     add_order_item(order=order, product=product, quantity=1, user=manager_user)
     order = close_order(order, manager_user)
     open_cash_register(branch=branch, user=manager_user, opening_amount=Decimal("100.00"))
 
     register_payment(order=order, user=manager_user, payment_method_id=payment_method.id, amount=order.total)
     command.refresh_from_db()
+    table.refresh_from_db()
+    order.refresh_from_db()
 
     # Zerada e livre para reuso; o número/código do cartão permanecem.
     assert command.status == Command.STATUS_FREE
     assert command.current_order_id is None
+    assert command.current_table_id is None
     assert command.customer_name == ""
     assert command.number == 1
+    assert table.status == table.STATUS_FREE
+    assert table.current_order_id is None
+    # O pedido pago preserva a mesa como histórico para relatório e recibo.
+    assert order.table_id == table.id
 
 
 @pytest.mark.django_db
@@ -93,7 +108,9 @@ def test_bulk_create_via_api(api_client, restaurant, manager_user):
 
 @pytest.mark.django_db
 def test_cancel_frees_command(restaurant, branch, command, product, manager_user):
-    order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=manager_user)
+    order = create_order(
+        restaurant=restaurant, branch=branch, order_type=Order.TYPE_COMMAND, command=command, user=manager_user
+    )
     add_order_item(order=order, product=product, quantity=1, user=manager_user)
 
     cancel_order(order, manager_user, reason="cliente desistiu")

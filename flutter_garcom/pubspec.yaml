@@ -1,0 +1,33 @@
+name: starchef_garcom
+description: "StarChef Garçom — pedidos no salão, pelo Caixa Principal."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  # Assinatura HMAC-SHA256 do relay com o Caixa Principal (mesmo esquema do PDV).
+  crypto: ^3.0.6
+  # Token do backend e chave de pareamento ficam no cofre do sistema, nunca em
+  # SharedPreferences: o aparelho do garçom circula pelo salão.
+  flutter_secure_storage: ^10.3.1
+  # O .env do app guarda só o endereço do backend — no celular não existe
+  # arquivo ao lado do executável, então ele é embarcado como asset.
+  flutter_dotenv: ^6.0.0
+  shadcn_ui: 0.56.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env

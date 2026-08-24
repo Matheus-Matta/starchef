@@ -359,7 +359,6 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
       return 'Alteração de cliente';
     }
     if (path == '/orders/' && method == 'POST') return 'Novo pedido';
-    if (path == '/orders/open-table/') return 'Abertura de pedido na mesa';
     if (path == '/orders/open-command/') return 'Abertura de pedido na comanda';
     if (RegExp(r'^/orders/[^/]+/items/$').hasMatch(path)) {
       final body = operation['body'];

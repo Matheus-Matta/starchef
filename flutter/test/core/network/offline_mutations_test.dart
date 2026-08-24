@@ -7,10 +7,6 @@ void main() {
   group('operações que podem esperar na fila', () {
     test('o atendimento inteiro cabe offline', () {
       expect(OfflineMutations.isQueueable('POST', '/orders/'), isTrue);
-      expect(
-        OfflineMutations.isQueueable('POST', '/orders/open-table/'),
-        isTrue,
-      );
       // Abrir por comanda segue a mesma regra da mesa: é o começo do
       // atendimento e recusar aqui travaria a venda enquanto a rede não volta.
       expect(
@@ -88,7 +84,6 @@ void main() {
         '$_order/pay/',
         '$_order/items/',
         '/orders/',
-        '/orders/open-table/',
         '/orders/open-command/',
       ]) {
         expect(

@@ -1,4 +1,6 @@
 import django_filters
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.hashers import check_password
 from django.core.exceptions import ValidationError
 from django.db.models import CharField, Q
 from django.db.models.functions import Cast
@@ -7,6 +9,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.viewsets import BaseTenantViewSet
+from apps.core.access import is_tenant_admin
+from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.printers.models import ScaleReading
@@ -21,7 +25,48 @@ from apps.orders.services import (
     update_order_item_status,
     void_order_item,
 )
-from apps.restaurants.models import Command, Table
+from apps.restaurants.models import Command
+
+User = get_user_model()
+
+
+def _can_authorize_order_cancellation(request, order):
+    """Valida a autorização no mesmo request que altera o pedido.
+
+    A senha nunca entra na fila offline: cancelamento exige resposta imediata
+    do servidor, evitando guardar credenciais em texto puro no terminal.
+    """
+
+    cash_password = str(request.data.get("cash_password") or "")
+    if cash_password:
+        stored = order.restaurant.cash_action_password or ""
+        return check_password(cash_password, stored) if stored else cash_password == "12345678"
+
+    login = str(request.data.get("authorization_username") or "").strip()
+    password = str(request.data.get("authorization_password") or "")
+    if not login or not password:
+        return False
+
+    username = login
+    if "@" in login:
+        matched = (
+            User.objects.filter(
+                email__iexact=login,
+                profile__account_id=order.account_id,
+            )
+            .only("username")
+            .first()
+        )
+        if matched is not None:
+            username = matched.get_username()
+    authorizer = authenticate(request=request, username=username, password=password)
+    if authorizer is None:
+        return False
+    profile = getattr(authorizer, "profile", None)
+    if not profile or not profile.is_active or profile.account_id != order.account_id:
+        return False
+    codes = effective_permission_codes(authorizer)
+    return is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
 
 
 class OrderFilterSet(django_filters.FilterSet):
@@ -68,122 +113,13 @@ class OrderViewSet(BaseTenantViewSet):
         # A anotacao precisa ser aplicada aqui, e nao no `queryset` da classe:
         # o mixin de tenant remonta a consulta a partir do model e descartaria
         # qualquer annotate declarado la em cima.
-        return super().get_queryset().annotate(
-            sequence_text=Cast("sequence", CharField()),
-            command_number_text=Cast("command__number", CharField()),
-        )
-
-    @action(detail=True, methods=["post"], url_path="link-table")
-    def link_table(self, request, pk=None):
-        order = self.get_object()
-        table_id = request.data.get("table")
-        if not table_id:
-            return Response(
-                {"detail": "Selecione uma mesa para vincular a comanda."},
-                status=status.HTTP_400_BAD_REQUEST,
+        return (
+            super()
+            .get_queryset()
+            .annotate(
+                sequence_text=Cast("sequence", CharField()),
+                command_number_text=Cast("command__number", CharField()),
             )
-            
-        profile = getattr(request.user, "profile", None)
-        from apps.core.access import is_tenant_admin
-        # Apenas perfis autorizados (garcom, admin, manager, owner)
-        if not is_tenant_admin(request.user) and profile.profile_type not in {"manager", "garcom"}:
-            return Response(
-                {"detail": "Apenas garçons e gerentes podem vincular comandas a mesas."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        table = Table.objects.filter(
-            pk=table_id,
-            account=getattr(request, "account", None),
-            is_active=True,
-        ).first()
-        if table is None:
-            return Response(
-                {"detail": "A mesa selecionada não existe ou está inativa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-            
-        # Capacidade permitida = dobro
-        max_capacity = table.capacity * 2
-        active_orders_count = table.orders.filter(
-            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-        ).count()
-        
-        from apps.orders.services import link_order_to_table
-        
-        try:
-            order = link_order_to_table(order, table, request.user)
-        except ValidationError as e:
-            return Response({"detail": str(e.message if hasattr(e, 'message') else e.messages[0])}, status=status.HTTP_400_BAD_REQUEST)
-            
-        serializer = self.get_serializer(order)
-        response_data = serializer.data
-        
-        if active_orders_count >= max_capacity:
-            response_data["_warning"] = f"Atenção: A mesa {table.number} já atingiu a capacidade máxima (limite {max_capacity} comandas)."
-            
-        return Response(response_data)
-
-    @action(detail=False, methods=["post"], url_path="open-table")
-    def open_table(self, request):
-        table_id = request.data.get("table")
-        if not table_id:
-            return Response(
-                {"detail": "Selecione uma mesa para abrir o pedido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        table = (
-            Table.objects.select_related("restaurant")
-            .filter(
-                pk=table_id,
-                account=getattr(request, "account", None),
-                is_active=True,
-            )
-            .first()
-        )
-        if table is None:
-            return Response(
-                {"detail": "A mesa selecionada não existe ou está inativa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        profile = getattr(request.user, "profile", None)
-        from apps.core.access import is_tenant_admin
-
-        if (
-            not is_tenant_admin(request.user)
-            and getattr(profile, "restaurant_id", None) != table.restaurant_id
-        ):
-            return Response(
-                {"detail": "A mesa selecionada pertence a outro restaurante."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if table.current_order_id:
-            existing = Order.objects.filter(
-                pk=table.current_order_id,
-                account=getattr(request, "account", None),
-                restaurant=table.restaurant,
-                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
-            ).first()
-            if existing:
-                return Response(self.get_serializer(existing).data)
-
-        try:
-            order = create_order(
-                restaurant=table.restaurant,
-                branch=None,
-                order_type=Order.TYPE_TABLE,
-                table=table,
-                user=request.user,
-            )
-        except ValidationError as exc:
-            return Response(
-                {"detail": exc.messages},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return Response(
-            self.get_serializer(order).data,
-            status=status.HTTP_201_CREATED,
         )
 
     @action(detail=False, methods=["post"], url_path="open-command")
@@ -400,8 +336,19 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
+        order = self.get_object()
+        if not _can_authorize_order_cancellation(request, order):
+            return Response(
+                {
+                    "detail": (
+                        "Informe a senha de operação do restaurante ou as "
+                        "credenciais de um usuário com permissão para cancelar pedidos."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         try:
-            order = cancel_order(self.get_object(), request.user, request.data.get("reason", ""))
+            order = cancel_order(order, request.user, request.data.get("reason", ""))
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)

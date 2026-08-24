@@ -25,7 +25,17 @@ def get_open_cash_register(restaurant, user=None, station=None):
 
 
 @transaction.atomic
-def open_cash_register(*, restaurant=None, user, opening_amount=Decimal("0.00"), notes="", station="PDV principal", device_identifier="", branch=None, cash_station=None):
+def open_cash_register(
+    *,
+    restaurant=None,
+    user,
+    opening_amount=Decimal("0.00"),
+    notes="",
+    station="PDV principal",
+    device_identifier="",
+    branch=None,
+    cash_station=None,
+):
     # `branch` existe apenas para compatibilidade durante a migração; todo o
     # escopo operacional é resolvido pelo restaurante.
     restaurant = restaurant or getattr(branch, "restaurant", None)
@@ -38,22 +48,49 @@ def open_cash_register(*, restaurant=None, user, opening_amount=Decimal("0.00"),
             raise ValidationError("O operador não está vinculado a este caixa.")
         station = cash_station.name
     with tenant_context(restaurant.account):
-        existing = CashRegister.objects.filter(restaurant=restaurant, cash_station=cash_station).exclude(
-            status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]
-        ).first()
+        existing = (
+            CashRegister.objects.filter(restaurant=restaurant, cash_station=cash_station)
+            .exclude(
+                status__in=[
+                    CashRegister.STATUS_CLOSED,
+                    CashRegister.STATUS_CLOSED_DIFFERENCE,
+                    CashRegister.STATUS_CANCELLED,
+                ]
+            )
+            .first()
+        )
         if existing:
             raise ValidationError("Já existe uma sessão aberta para este caixa.")
-        operator_session = CashRegister.objects.filter(restaurant=restaurant, opened_by=user).exclude(
-            status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]
-        ).select_related("cash_station").first()
+        operator_session = (
+            CashRegister.objects.filter(restaurant=restaurant, opened_by=user)
+            .exclude(
+                status__in=[
+                    CashRegister.STATUS_CLOSED,
+                    CashRegister.STATUS_CLOSED_DIFFERENCE,
+                    CashRegister.STATUS_CANCELLED,
+                ]
+            )
+            .select_related("cash_station")
+            .first()
+        )
         if operator_session:
-            current_name = operator_session.cash_station.name if operator_session.cash_station else operator_session.station
-            raise ValidationError(f"Você já possui uma sessão em andamento no caixa {current_name}. Feche-a antes de abrir outro caixa.")
+            current_name = (
+                operator_session.cash_station.name if operator_session.cash_station else operator_session.station
+            )
+            raise ValidationError(
+                f"Você já possui uma sessão em andamento no caixa {current_name}. Feche-a antes de abrir outro caixa."
+            )
 
         counted = Decimal(str(opening_amount))
-        previous = CashRegister.objects.filter(restaurant=restaurant, cash_station=cash_station, status__in=[
-            CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE
-        ]).order_by("-closed_at").first()
+        previous = (
+            CashRegister.objects.filter(
+                restaurant=restaurant,
+                cash_station=cash_station,
+                status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE],
+            )
+            .order_by("-closed_at")
+            .first()
+        )
         expected = previous.actual_amount if previous and previous.actual_amount is not None else counted
         is_initial = previous is None
         matches = counted == expected
@@ -98,12 +135,16 @@ def close_cash_register(*, cash_register, user, actual_amount, notes=""):
         if cash_register.status == CashRegister.STATUS_CLOSED:
             raise ValidationError("O caixa já está fechado.")
 
-        expected = cash_register.movements.filter(status="approved").aggregate(value=Sum("amount"))["value"] or Decimal("0.00")
+        expected = cash_register.movements.filter(status="approved").aggregate(value=Sum("amount"))["value"] or Decimal(
+            "0.00"
+        )
         actual_amount = Decimal(str(actual_amount))
         cash_register.expected_amount = expected
         cash_register.actual_amount = actual_amount
         cash_register.difference_amount = actual_amount - expected
-        cash_register.status = CashRegister.STATUS_CLOSED if cash_register.difference_amount == 0 else CashRegister.STATUS_PENDING_APPROVAL
+        cash_register.status = (
+            CashRegister.STATUS_CLOSED if cash_register.difference_amount == 0 else CashRegister.STATUS_PENDING_APPROVAL
+        )
         cash_register.pending_operation = "" if cash_register.difference_amount == 0 else "closing"
         cash_register.closed_by = user
         cash_register.closed_at = timezone.now() if cash_register.difference_amount == 0 else None
@@ -123,7 +164,9 @@ def close_cash_register(*, cash_register, user, actual_amount, notes=""):
             created_by=user,
             updated_by=user,
         )
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=cash_register, actor=user, metadata={"event": "close_cash"})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED, instance=cash_register, actor=user, metadata={"event": "close_cash"}
+        )
         return cash_register
 
 
@@ -151,11 +194,18 @@ def create_cash_movement(*, cash_register, user, movement_type, amount, reason, 
             raise ValidationError("Informe um valor maior que zero e o motivo.")
         needs_approval = movement_type in {CashMovement.TYPE_WITHDRAWAL, CashMovement.TYPE_SUPPLY}
         movement = CashMovement.objects.create(
-            account=cash_register.account, restaurant=cash_register.restaurant, branch=cash_register.branch,
-            cash_register=cash_register, operator=user, movement_type=movement_type,
+            account=cash_register.account,
+            restaurant=cash_register.restaurant,
+            branch=cash_register.branch,
+            cash_register=cash_register,
+            operator=user,
+            movement_type=movement_type,
             amount=-amount if movement_type == CashMovement.TYPE_WITHDRAWAL else amount,
-            reason=reason, destination=destination, status="pending" if needs_approval else "approved",
-            created_by=user, updated_by=user,
+            reason=reason,
+            destination=destination,
+            status="pending" if needs_approval else "approved",
+            created_by=user,
+            updated_by=user,
         )
         record_audit(action=AuditLog.ACTION_CREATED, instance=movement, actor=user, metadata={"event": movement_type})
         return movement
@@ -187,7 +237,11 @@ def approve_cash_operation(*, cash_register, user, reason, movement=None, cash_p
             movement.status = "approved"
             movement.authorized_by = user
             movement.approved_at = timezone.now()
-            movement.metadata = {**movement.metadata, "manager_reason": reason, "authorized_by_cash_password": authorized_by_password}
+            movement.metadata = {
+                **movement.metadata,
+                "manager_reason": reason,
+                "authorized_by_cash_password": authorized_by_password,
+            }
             movement.save()
             return movement
         if not authorized_by_password and cash_register.opened_by_id == user.id and not _is_account_owner(user):
@@ -195,7 +249,11 @@ def approve_cash_operation(*, cash_register, user, reason, movement=None, cash_p
         cash_register.approved_by = user
         cash_register.approved_at = timezone.now()
         cash_register.approval_reason = reason
-        cash_register.status = CashRegister.STATUS_OPEN if cash_register.pending_operation == "opening" else CashRegister.STATUS_CLOSED_DIFFERENCE
+        cash_register.status = (
+            CashRegister.STATUS_OPEN
+            if cash_register.pending_operation == "opening"
+            else CashRegister.STATUS_CLOSED_DIFFERENCE
+        )
         if cash_register.status == CashRegister.STATUS_CLOSED_DIFFERENCE:
             cash_register.closed_at = timezone.now()
             cash_register.closed_by = user
@@ -223,11 +281,7 @@ def register_payment(
 
         # PostgreSQL rejeita FOR UPDATE quando o JOIN inclui o lado nullable.
         # O `of` mantém o eager loading, mas restringe o lock ao pedido.
-        order = (
-            Order.objects.select_related("branch")
-            .select_for_update(of=("self",))
-            .get(pk=order.pk)
-        )
+        order = Order.objects.select_related("branch").select_for_update(of=("self",)).get(pk=order.pk)
         if order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
             raise ValidationError("Pedidos cancelados ou estornados não podem ser pagos.")
         if order.payment_status == Order.PAYMENT_PAID:
@@ -254,7 +308,9 @@ def register_payment(
         amount = Decimal(str(amount))
         if amount <= 0:
             raise ValidationError("Informe um valor de pagamento maior que zero.")
-        paid_before = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))["value"] or Decimal("0.00")
+        paid_before = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
+            "value"
+        ] or Decimal("0.00")
         remaining = order.total - paid_before
         if payment_method.method_type != PaymentMethod.TYPE_CASH and amount > remaining:
             raise ValidationError("Somente pagamentos em dinheiro podem ter valor recebido maior que o restante.")
@@ -330,15 +386,17 @@ def register_payment(
 def cancel_payment(*, payment, user):
     """Cancela um recebimento lançado no PDV e desfaz seus efeitos operacionais."""
     with tenant_context(payment.account):
-        payment = Payment.objects.select_for_update().select_related(
-            "order__restaurant", "order__table", "order__command"
-        ).get(pk=payment.pk)
+        payment = (
+            Payment.objects.select_for_update()
+            .select_related("order__restaurant", "order__table", "order__command")
+            .get(pk=payment.pk)
+        )
         if payment.status != Payment.STATUS_APPROVED:
             raise ValidationError("Este pagamento já foi cancelado ou estornado.")
 
-        order = Order.objects.select_for_update().select_related(
-            "restaurant", "table", "command"
-        ).get(pk=payment.order_id)
+        order = (
+            Order.objects.select_for_update().select_related("restaurant", "table", "command").get(pk=payment.order_id)
+        )
         was_paid = order.payment_status == Order.PAYMENT_PAID
 
         payment.status = Payment.STATUS_CANCELLED
@@ -346,9 +404,9 @@ def cancel_payment(*, payment, user):
         payment.save(update_fields=["status", "updated_by", "updated_at"])
         payment.cash_movements.filter(status="approved").update(status="cancelled", updated_by=user)
 
-        paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(
-            value=Sum("amount")
-        )["value"] or Decimal("0.00")
+        paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
+            "value"
+        ] or Decimal("0.00")
         order.payment_status = Order.PAYMENT_PARTIAL if paid_total > 0 else Order.PAYMENT_PENDING
         order.status = Order.STATUS_AWAITING_PAYMENT
         order.closed_at = None
@@ -356,7 +414,9 @@ def cancel_payment(*, payment, user):
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
 
         if was_paid:
-            if order.table_id:
+            if order.order_type == Order.TYPE_TABLE and order.table_id:
+                # Apenas para reabrir registros legados; novas vendas de salão
+                # são sempre comandas vinculadas a uma mesa.
                 table = Table.objects.select_for_update().get(pk=order.table_id)
                 table.status = Table.STATUS_OCCUPIED
                 table.current_order_id = order.id
@@ -368,20 +428,36 @@ def cancel_payment(*, payment, user):
                 command.status = Command.STATUS_OCCUPIED
                 command.current_order_id = order.id
                 command.customer_name = order.customer.name if order.customer_id else ""
-                command.save(update_fields=["status", "current_order_id", "customer_name", "updated_at"])
+                command.current_table = order.table
+                command.save(
+                    update_fields=[
+                        "status",
+                        "current_order_id",
+                        "customer_name",
+                        "current_table",
+                        "updated_at",
+                    ]
+                )
+                if order.table_id:
+                    table = Table.objects.select_for_update().get(pk=order.table_id)
+                    table.status = Table.STATUS_OCCUPIED
+                    table.current_order_id = None
+                    table.save(update_fields=["status", "current_order_id", "updated_at"])
 
             if order.restaurant.stock_deduction_timing == "payment":
                 from apps.stock.models import StockMovement
 
-                stock_effects = StockMovement.objects.filter(
-                    order_item__order=order,
-                    reason__in=[
-                        f"Auto deduction from order {order.sequence}",
-                        f"Payment cancellation from order {order.sequence}",
-                    ],
-                ).values(
-                    "account", "restaurant", "branch", "ingredient", "location", "order_item", "unit_cost"
-                ).annotate(quantity_total=Sum("quantity"), cost_total=Sum("total_cost"))
+                stock_effects = (
+                    StockMovement.objects.filter(
+                        order_item__order=order,
+                        reason__in=[
+                            f"Auto deduction from order {order.sequence}",
+                            f"Payment cancellation from order {order.sequence}",
+                        ],
+                    )
+                    .values("account", "restaurant", "branch", "ingredient", "location", "order_item", "unit_cost")
+                    .annotate(quantity_total=Sum("quantity"), cost_total=Sum("total_cost"))
+                )
                 for effect in stock_effects:
                     if not effect["quantity_total"] and not effect["cost_total"]:
                         continue

@@ -14,7 +14,6 @@ class Order(TenantModel):
     TYPE_INTERNAL = "internal"
 
     TYPE_CHOICES = [
-        (TYPE_TABLE, "Table"),
         (TYPE_COMMAND, "Command"),
         (TYPE_COUNTER, "Counter"),
         (TYPE_DELIVERY, "Delivery"),

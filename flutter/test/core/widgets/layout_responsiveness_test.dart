@@ -101,7 +101,11 @@ void main() {
         tester,
         size: const Size(320, 480),
         textScaleFactor: 1.15,
-        open: (context) => ApiUrlSettingsDialog.show(context, preferences),
+        open: (context) => ApiUrlSettingsDialog.show(
+          context,
+          preferences,
+          'https://api.starchef.com.br/api/v1',
+        ),
       );
 
       expect(find.text('URL da API'), findsWidgets);
@@ -189,6 +193,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'página operacional pode ocultar o cabeçalho sem perder o corpo',
+    (tester) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(900, 600),
+        textScaleFactor: 1,
+        child: const AppPageScaffold(
+          title: 'Configuração da balança',
+          description: 'Selecione os equipamentos.',
+          showHeader: false,
+          padding: EdgeInsets.zero,
+          body: Text('Operação em andamento'),
+        ),
+      );
+
+      expect(find.text('Configuração da balança'), findsNothing);
+      expect(find.text('Operação em andamento'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   group('matriz responsiva dos pedidos', () {
     testWidgets(
       'cancelamento de item cabe com nome e escala de texto grandes',
@@ -249,6 +275,46 @@ void main() {
 
       await tester.tap(find.text('Cancelar'));
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('produto por quilo solicita peso em vez de quantidade', (
+      tester,
+    ) async {
+      ProductConfigResult? result;
+      await _openDialog(
+        tester,
+        size: const Size(420, 560),
+        textScaleFactor: 1,
+        open: (context) async {
+          result = await showProductConfigDialog(context, {
+            'id': 'product-kg',
+            'name': 'Buffet por quilo',
+            'pricing_unit': 'kg',
+            'variations': <Map<String, dynamic>>[],
+            'addons': <Map<String, dynamic>>[],
+          });
+        },
+      );
+
+      expect(find.text('Peso'), findsOneWidget);
+      expect(find.text('kg'), findsOneWidget);
+      expect(find.text('Quantidade'), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Adicionar'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.enterText(find.byKey(const Key('product-weight')), '0,375');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+      await tester.pumpAndSettle();
+
+      expect(result?.quantity, closeTo(.375, .0001));
       expect(tester.takeException(), isNull);
     });
   });
@@ -412,6 +478,36 @@ void main() {
 
     expect(find.text('Estação de balança'), findsOneWidget);
     expect(find.text('Restaurante'), findsOneWidget);
+    expect(find.byIcon(Icons.fullscreen_exit), findsNothing);
+    expect(find.byIcon(Icons.fullscreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('operação da Balança Rápida usa grade 25 50 25', (tester) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(1200, 700),
+      textScaleFactor: 1,
+      child: const ScaleOperationGrid(
+        items: ColoredBox(color: Colors.blue),
+        catalog: ColoredBox(color: Colors.orange),
+        command: ColoredBox(color: Colors.green),
+      ),
+    );
+
+    final itemsWidth = tester
+        .getSize(find.byKey(const Key('scale-items-column')))
+        .width;
+    final catalogWidth = tester
+        .getSize(find.byKey(const Key('scale-catalog-column')))
+        .width;
+    final commandWidth = tester
+        .getSize(find.byKey(const Key('scale-command-column')))
+        .width;
+
+    expect(itemsWidth, closeTo(300, .01));
+    expect(catalogWidth, closeTo(600, .01));
+    expect(commandWidth, closeTo(300, .01));
     expect(tester.takeException(), isNull);
   });
 
@@ -496,7 +592,6 @@ void main() {
           ],
         },
         onBack: () {},
-        onOpenTableOrder: () {},
         onLinkCommand: () {},
         onUnlinkCommand: (_) {},
         onTransferCommand: (_) {},

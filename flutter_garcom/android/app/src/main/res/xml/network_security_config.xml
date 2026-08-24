@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  O app precisa falar HTTP em claro com o Caixa Principal: ele é um PDV na rede
+  da loja (http://192.168.x.x:47832), sem certificado nem nome de domínio para
+  emitir um. Do Android 9 (API 28) em diante isso é bloqueado por padrão, e o
+  sintoma seria "não foi possível alcançar o caixa" mesmo com tudo certo na
+  rede.
+
+  O IP do principal é digitado pelo garçom no login e muda de loja para loja, e
+  a configuração do Android não aceita faixas (CIDR) em `domain-config` — só
+  domínios/IPs literais. Por isso a permissão é do app inteiro.
+
+  O que segura o risco: o tráfego em claro só existe dentro da LAN da loja (o
+  próprio principal recusa conexões que não venham de IPv4 privado), cada
+  requisição vai assinada em HMAC-SHA256 e a resposta é verificada — um
+  interceptador na rede não consegue forjar nem um pedido nem uma confirmação.
+  A retaguarda continua em HTTPS (ver BACKEND_URL no .env).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

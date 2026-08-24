@@ -8,15 +8,14 @@ class AppConfig {
     this.sentryDsn,
   });
 
-  static const _fallbackApiUrl = 'http://localhost:8000/api/v1';
+  /// API oficial usada pelos builds de produção quando não há override.
+  static const productionApiBaseUrl = 'https://api.starchef.com.br/api/v1';
 
   final String apiBaseUrl;
   final String? envFilePath;
 
-  /// True quando nenhuma URL de API foi configurada (nem --dart-define, nem
-  /// .env) e o app caiu no fallback de desenvolvimento. Um terminal real
-  /// nessa condição "funciona" apontando para lugar nenhum — quem chama
-  /// [load] deve tornar isso visível em vez de deixar passar em silêncio.
+  /// Mantido para sinalizar apenas configurações inválidas. A ausência de
+  /// override não é erro: o app usa [productionApiBaseUrl].
   final bool usedFallbackApiUrl;
 
   /// DSN do Sentry (opcional). Sem ela, `main.dart` não inicializa o Sentry —
@@ -49,25 +48,27 @@ class AppConfig {
           ? definedDsn
           : await _sentryDsnFromEnvFile();
       return AppConfig(
-        apiBaseUrl: _normalizeUrl(manualOverrideUrl),
+        apiBaseUrl: normalizeApiBaseUrl(manualOverrideUrl),
         sentryDsn: _orNull(dsn),
       );
     }
 
-    if (definedUrl.isNotEmpty) {
+    if (_absoluteHttpUrl(definedUrl)) {
       // --dart-define resolve a API diretamente; ainda assim tenta achar um
       // .env só para pegar PDV_SENTRY_DSN, se a DSN não veio por --dart-define.
       final dsn = definedDsn.isNotEmpty
           ? definedDsn
           : await _sentryDsnFromEnvFile();
-      return AppConfig(apiBaseUrl: definedUrl, sentryDsn: _orNull(dsn));
+      return AppConfig(
+        apiBaseUrl: normalizeApiBaseUrl(definedUrl),
+        sentryDsn: _orNull(dsn),
+      );
     }
 
     final envFile = await EnvFileLoader.find();
     if (envFile == null) {
       return AppConfig(
-        apiBaseUrl: _fallbackApiUrl,
-        usedFallbackApiUrl: true,
+        apiBaseUrl: productionApiBaseUrl,
         sentryDsn: _orNull(definedDsn),
       );
     }
@@ -78,24 +79,30 @@ class AppConfig {
         'VITE_API_BASE_URL',
         'VITE_BACKEND_TARGET',
         'API_BASE_URL',
+        'API_URL',
         'PDV_SENTRY_DSN',
       },
     );
     final explicitApiUrl = values['API_BASE_URL'];
+    final sharedApiUrl = values['API_URL'];
     final viteApiUrl = values['VITE_API_BASE_URL'];
     final backendTarget = values['VITE_BACKEND_TARGET'];
     final apiUrl = _absoluteHttpUrl(explicitApiUrl)
         ? explicitApiUrl
+        : _absoluteHttpUrl(sharedApiUrl)
+        ? sharedApiUrl
         : _absoluteHttpUrl(viteApiUrl)
         ? viteApiUrl
         : _absoluteHttpUrl(backendTarget)
-        ? '${_normalizeUrl(backendTarget!)}/api/v1'
-        : _fallbackApiUrl;
+        ? normalizeApiBaseUrl(backendTarget!)
+        : productionApiBaseUrl;
     return AppConfig(
-      apiBaseUrl: _normalizeUrl(apiUrl!),
+      apiBaseUrl: normalizeApiBaseUrl(apiUrl!),
       envFilePath: envFile.path,
-      usedFallbackApiUrl: apiUrl == _fallbackApiUrl,
-      sentryDsn: _orNull(definedDsn.isNotEmpty ? definedDsn : values['PDV_SENTRY_DSN']),
+      usedFallbackApiUrl: false,
+      sentryDsn: _orNull(
+        definedDsn.isNotEmpty ? definedDsn : values['PDV_SENTRY_DSN'],
+      ),
     );
   }
 
@@ -120,8 +127,16 @@ class AppConfig {
         uri.host.isNotEmpty;
   }
 
-  static String _normalizeUrl(String value) =>
-      value.trim().replaceFirst(RegExp(r'/$'), '');
+  /// Aceita tanto a URL completa da API quanto apenas o domínio. Sem caminho,
+  /// acrescenta o namespace usado por todos os endpoints do PDV.
+  static String normalizeApiBaseUrl(String value) {
+    final normalized = value.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.parse(normalized);
+    if (uri.path.isEmpty || uri.path == '/') {
+      return '$normalized/api/v1';
+    }
+    return normalized;
+  }
 }
 
 abstract final class EnvFileLoader {

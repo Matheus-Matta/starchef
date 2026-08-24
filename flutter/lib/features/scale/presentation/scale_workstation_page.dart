@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/errors/app_error.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/widgets/touch_keypad.dart';
 import '../../../core/hardware/scale/scale_protocol.dart';
@@ -34,8 +35,7 @@ class ScaleWorkstationPage extends StatefulWidget {
     required this.products,
     required this.onRestaurantChanged,
     required this.preferences,
-    this.isFullScreen = false,
-    this.onToggleFullScreen,
+    this.onRunningChanged,
   });
 
   final ApiClient api;
@@ -45,8 +45,7 @@ class ScaleWorkstationPage extends StatefulWidget {
   final List<Map<String, dynamic>> products;
   final Future<void> Function(String restaurantId) onRestaurantChanged;
   final LocalPreferences preferences;
-  final bool isFullScreen;
-  final VoidCallback? onToggleFullScreen;
+  final ValueChanged<bool>? onRunningChanged;
 
   @override
   State<ScaleWorkstationPage> createState() => _ScaleWorkstationPageState();
@@ -431,6 +430,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       errorMessage = null;
       started = true;
     });
+    widget.onRunningChanged?.call(true);
     await _attachReader();
     machine.start();
     clock?.cancel();
@@ -457,6 +457,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         message: 'Estação parada.',
       );
     });
+    widget.onRunningChanged?.call(false);
   }
 
   /// Abre a porta serial desta janela e passa a receber o peso localmente.
@@ -646,6 +647,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   : '${printJob['id']}'
             : null;
       });
+      if (widget.preferences.autoPrint && lastPrintJobId != null) {
+        await _monitorPrintJob(lastPrintJobId!);
+        if (!mounted) return;
+      }
       machine.onOrderCreated();
       await Future<void>.delayed(const Duration(seconds: 2));
       if (!mounted || !started) return;
@@ -686,6 +691,63 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
+  /// Aguarda a confirmação do agente de impressão. Criar o PrintJob não
+  /// significa que a impressora recebeu o cupom; sem acompanhar o estado, uma
+  /// falha de rede ficava invisível e a tela dizia apenas “pedido concluído”.
+  Future<void> _monitorPrintJob(String jobId) async {
+    for (var attempt = 0; attempt < 16; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      try {
+        final job = await widget.api.get(
+          '/print-jobs/$jobId/',
+          accessToken: widget.accessToken,
+        );
+        if (!mounted) return;
+        final status = '${job['status'] ?? ''}';
+        if (status == 'printed') {
+          showAppToast(context, 'Pedido concluído e comanda impressa.');
+          return;
+        }
+        if (status == 'failed') {
+          final detail = '${job['error_message'] ?? ''}'.trim();
+          ErrorCenterScope.read(context).report(
+            AppError(
+              title: 'Pedido concluído, mas a impressão falhou',
+              message: detail.isEmpty
+                  ? 'A impressora não confirmou o recebimento da comanda.'
+                  : detail,
+              origin: AppErrorOrigin.peripheral,
+              recommendedAction:
+                  'Confira o IP, a porta e a energia da impressora e use Reimprimir.',
+              dedupeKey: 'scale-print-$jobId',
+            ),
+          );
+          return;
+        }
+      } on ApiException catch (error) {
+        AppLogger.instance.warning(
+          'scale_print_status_failed',
+          data: {'print_job': jobId, 'message': error.message},
+        );
+      }
+    }
+    if (!mounted) return;
+    ErrorCenterScope.read(context).report(
+      AppError(
+        title: 'Pedido concluído; impressão aguardando confirmação',
+        message:
+            'O trabalho foi criado, mas o agente de impressão ainda não confirmou a comanda.',
+        origin: AppErrorOrigin.peripheral,
+        severity: AppErrorSeverity.warning,
+        recommendedAction:
+            'Confira se o PDV principal está aberto e use Reimprimir se necessário.',
+        dedupeKey: 'scale-print-$jobId',
+      ),
+    );
+  }
+
   /// Reimprime o último cupom sem criar outro pedido.
   ///
   /// Reenfileira o mesmo trabalho de impressão em vez de gerar um novo a
@@ -702,7 +764,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         accessToken: widget.accessToken,
       );
       if (!mounted) return;
-      showAppToast(context, 'Reimpressão enviada para a impressora.');
+      await _monitorPrintJob(jobId);
+      if (!mounted) return;
       AppLogger.instance.info('scale_reprint', data: {'print_job': jobId});
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -1119,30 +1182,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           // cardápio — porque é onde o operador passa a maior parte do
           // tempo: pesar, conferir os extras e ler a comanda. O cardápio
           // fica à direita, como destino de toque, não de leitura constante.
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                // Três colunas: itens pesados/extras à esquerda (com
-                // excluir), cardápio de extras no meio — o alvo de toque
-                // principal — e a comanda (código + teclado + finalizar)
-                // isolada à direita. Antes a comanda ficava empilhada
-                // dentro da mesma coluna dos itens, o que misturava duas
-                // etapas distintas: pesar/escolher extras e ler a comanda.
-                final itemsWidth = (constraints.maxWidth * 0.28).clamp(
-                  320.0,
-                  420.0,
-                );
-                final commandWidth = (constraints.maxWidth * 0.22).clamp(
-                  300.0,
-                  380.0,
-                );
-                return Row(
-                  children: [
-                    SizedBox(width: itemsWidth, child: _itemsPanel()),
-                    Expanded(child: _catalog()),
-                    SizedBox(width: commandWidth, child: _commandPanel()),
-                  ],
-                );
-              },
+          : ScaleOperationGrid(
+              items: _itemsPanel(),
+              catalog: _catalog(),
+              command: _commandPanel(),
             ),
     );
   }
@@ -1167,7 +1210,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final id = '${product['id']}';
     final config = await showProductConfigDialog(context, product);
     if (config == null) return;
-    machine.addExtra(id, config.quantity);
+    machine.addExtra(id, config.quantity.round());
     extraConfigs[id] = config;
   }
 
@@ -1569,16 +1612,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
           ),
-          if (widget.onToggleFullScreen != null)
-            IconButton(
-              tooltip: widget.isFullScreen
-                  ? 'Sair da tela cheia (F11)'
-                  : 'Usar tela cheia (F11)',
-              onPressed: widget.onToggleFullScreen,
-              icon: Icon(
-                widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-              ),
-            ),
           IconButton(
             tooltip: 'Trocar restaurante ou balança',
             onPressed: machine.state == HandsFreeState.creatingOrder
@@ -2122,6 +2155,32 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         ),
       ),
     ),
+  );
+}
+
+/// Grade operacional da Balança Rápida: resumo 25%, catálogo 50% e
+/// comanda 25%. `Expanded` é o equivalente adequado a uma grade de colunas
+/// para painéis únicos no Flutter.
+class ScaleOperationGrid extends StatelessWidget {
+  const ScaleOperationGrid({
+    super.key,
+    required this.items,
+    required this.catalog,
+    required this.command,
+  });
+
+  final Widget items;
+  final Widget catalog;
+  final Widget command;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(key: const Key('scale-items-column'), child: items),
+      Expanded(key: const Key('scale-catalog-column'), flex: 2, child: catalog),
+      Expanded(key: const Key('scale-command-column'), child: command),
+    ],
   );
 }
 

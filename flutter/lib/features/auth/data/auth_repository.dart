@@ -27,6 +27,25 @@ class AuthRepository {
   // Sincroniza/guarda o hash da senha de ações do caixa para uso offline.
   final CashAuthRepository? cashAuth;
 
+  /// Valida no servidor um administrador da mesma conta sem substituir a
+  /// sessão atual do operador e sem guardar as credenciais informadas.
+  Future<void> authorizeAdministrator({
+    required AuthSession currentSession,
+    required String username,
+    required String password,
+    String? requiredPermission,
+  }) async {
+    await apiClient.post(
+      '/auth/authorize-admin/',
+      accessToken: currentSession.accessToken,
+      body: {
+        'username': username.trim(),
+        'password': password,
+        'permission': ?requiredPermission,
+      },
+    );
+  }
+
   /// Compatibilidade para consumidores que só precisam da sessão.
   Future<AuthSession> login({
     required String username,

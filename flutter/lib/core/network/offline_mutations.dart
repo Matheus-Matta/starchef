@@ -42,7 +42,6 @@ abstract final class OfflineMutations {
       method == 'POST' &&
       (path == '/customers/' ||
           path == '/orders/' ||
-          path == '/orders/open-table/' ||
           path == '/orders/open-command/' ||
           RegExp('^/orders/$_localId/items/\$').hasMatch(path) ||
           // Um pagamento tambem cria um recurso. Dar a ele um ID temporario
@@ -54,7 +53,6 @@ abstract final class OfflineMutations {
     if (method == 'POST') {
       return path == '/customers/' ||
           path == '/orders/' ||
-          path == '/orders/open-table/' ||
           // Abrir pedido por comanda entra na fila pelo mesmo motivo da mesa:
           // é o começo do atendimento, e recusar aqui deixaria o operador sem
           // conseguir lançar nada enquanto a rede não volta.

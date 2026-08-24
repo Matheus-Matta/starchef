@@ -3,7 +3,6 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../devices/services/local_device_agent.dart';
 
 /// Destinos da barra lateral.
 ///
@@ -326,16 +325,20 @@ class PdvConnectionBadge extends StatelessWidget {
       NetworkSyncPhase.online => (
         'Online',
         Icons.cloud_done_outlined,
-        const Color(0xFF167A3E),
-        const Color(0xFFE8F7EE),
+        Colors.white,
+        const Color(0xFF166534),
       ),
     };
+    final hoverBackground = status.phase == NetworkSyncPhase.online
+        ? const Color(0xFF14532D)
+        : null;
 
     final content = ShadBadge.raw(
       variant: ShadBadgeVariant.outline,
       onPressed: onPressed,
       padding: const EdgeInsets.symmetric(horizontal: 11),
       backgroundColor: background,
+      hoverBackgroundColor: hoverBackground,
       foregroundColor: foreground,
       shape: RoundedRectangleBorder(
         borderRadius: AppTheme.radius,
@@ -371,71 +374,6 @@ class PdvConnectionBadge extends StatelessWidget {
                 'Conectado ao servidor e sem operações pendentes.',
       child: content,
     );
-  }
-}
-
-/// Estado do periférico de impressão acompanhado pelo agente local.
-class PdvPrinterBadge extends StatelessWidget {
-  const PdvPrinterBadge({
-    super.key,
-    required this.status,
-    this.compact = false,
-  });
-
-  final PrinterAvailability status;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final available = status.phase == PrinterAvailabilityPhase.available;
-    final checking = status.phase == PrinterAvailabilityPhase.checking;
-    final foreground = checking
-        ? scheme.onSurfaceVariant
-        : available
-        ? const Color(0xFF167A3E)
-        : scheme.error;
-    final background = checking
-        ? scheme.surfaceContainer
-        : available
-        ? const Color(0xFFE8F7EE)
-        : scheme.errorContainer;
-    final icon = checking
-        ? Icons.sync
-        : available
-        ? Icons.print_rounded
-        : Icons.print_disabled_outlined;
-    final content = ShadBadge.raw(
-      variant: ShadBadgeVariant.outline,
-      padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 11),
-      backgroundColor: background,
-      foregroundColor: foreground,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppTheme.radius,
-        side: BorderSide(color: foreground.withValues(alpha: .18)),
-      ),
-      child: SizedBox(
-        height: 36,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 17, color: foreground),
-            if (!compact) ...[
-              const SizedBox(width: 7),
-              Text(
-                status.message,
-                style: TextStyle(
-                  color: foreground,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-    return Tooltip(message: status.message, child: content);
   }
 }
 

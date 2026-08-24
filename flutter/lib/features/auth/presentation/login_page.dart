@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../../../core/config/app_config.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
@@ -49,6 +50,27 @@ class _LoginPageState extends State<LoginPage> {
       username: _username.text,
       password: _password.text,
       remember: _remember,
+    );
+  }
+
+  Future<void> _configureApi() async {
+    final saved = await ApiUrlSettingsDialog.show(
+      context,
+      widget.preferences,
+      widget.controller.apiBaseUrl,
+    );
+    if (!mounted || !saved) return;
+
+    final config = await AppConfig.load(
+      manualOverrideUrl: widget.preferences.apiBaseUrlOverride,
+    );
+    await widget.controller.updateApiBaseUrl(config.apiBaseUrl);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('API alterada para ${config.apiBaseUrl}.'),
+        duration: const Duration(seconds: 4),
+      ),
     );
   }
 
@@ -104,10 +126,7 @@ class _LoginPageState extends State<LoginPage> {
                       children: [
                         IconButton.outlined(
                           tooltip: 'URL da API',
-                          onPressed: () => ApiUrlSettingsDialog.show(
-                            context,
-                            widget.preferences,
-                          ),
+                          onPressed: _configureApi,
                           icon: const Icon(Icons.settings_outlined),
                         ),
                         const SizedBox(width: 8),

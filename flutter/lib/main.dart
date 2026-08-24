@@ -5,7 +5,6 @@ import 'package:window_manager/window_manager.dart';
 import 'app/scale_window_app.dart';
 import 'app/starchef_app.dart';
 import 'core/config/app_config.dart';
-import 'core/errors/app_error.dart';
 import 'core/errors/error_center.dart';
 import 'core/logging/app_logger.dart';
 import 'core/network/api_client.dart';
@@ -24,26 +23,6 @@ Future<void> main(List<String> arguments) async {
     manualOverrideUrl: preferences.apiBaseUrlOverride,
   );
   final errorCenter = ErrorCenter();
-
-  if (config.usedFallbackApiUrl) {
-    // Sem --dart-define nem .env, o app "funciona" apontando para
-    // localhost:8000 — em um terminal mal instalado isso é silencioso e só
-    // aparece como "nada carrega". Torna o problema visível no boot.
-    errorCenter.report(
-      AppError(
-        title: 'URL da API não configurada',
-        message:
-            'Nenhuma URL de API foi configurada; usando o padrão de '
-            'desenvolvimento (${config.apiBaseUrl}).',
-        origin: AppErrorOrigin.application,
-        severity: AppErrorSeverity.warning,
-        recommendedAction:
-            'Configure API_BASE_URL (--dart-define ou .env) antes de usar '
-            'este terminal em produção.',
-        dedupeKey: 'api-url-fallback',
-      ),
-    );
-  }
 
   // Erros fora de um handler explícito ainda precisam chegar ao log; nenhum
   // deles pode desaparecer em silêncio durante uma venda.

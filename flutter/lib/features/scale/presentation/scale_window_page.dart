@@ -13,16 +13,12 @@ class ScaleWindowPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.preferences,
-    required this.isFullScreen,
-    required this.onToggleFullScreen,
     required this.onClose,
     this.preferredRestaurantId,
   });
 
   final AuthController controller;
   final LocalPreferences preferences;
-  final bool isFullScreen;
-  final VoidCallback onToggleFullScreen;
   final VoidCallback onClose;
   final String? preferredRestaurantId;
 
@@ -36,6 +32,7 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
   String? restaurantId;
   String? errorMessage;
   bool loading = true;
+  bool stationRunning = false;
 
   PdvRepository get repository => PdvRepository(
     api: widget.controller.repository.apiClient,
@@ -89,6 +86,8 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
       final selected = preferred != null && available.contains(preferred)
           ? preferred
           : '${loadedRestaurants.first['id']}';
+      widget.controller.setActiveRestaurant(selected);
+      await widget.controller.refreshSupervisorPassword(restaurantId: selected);
       final loadedProducts = await repository.list(
         '/menu/products/',
         query: {'page_size': 300, 'restaurant': selected, 'is_active': true},
@@ -119,13 +118,14 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
 
   List<Widget> _windowActions(BuildContext context) => [
     IconButton.outlined(
-      tooltip: widget.isFullScreen
-          ? 'Sair da tela cheia'
-          : 'Entrar em tela cheia',
-      onPressed: widget.onToggleFullScreen,
-      icon: Icon(
-        widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-      ),
+      tooltip: loading ? 'Recarregando dados...' : 'Recarregar dados',
+      onPressed: loading ? null : _load,
+      icon: loading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh),
     ),
     IconButton.outlined(
       tooltip: 'Encerrar sessão',
@@ -173,6 +173,8 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
       title: 'Estação de balança',
       description: 'Pesagem, adicionais e leitura de comandas em uma só tela.',
       actions: _windowActions(context),
+      showHeader: !stationRunning,
+      padding: stationRunning ? EdgeInsets.zero : const EdgeInsets.all(16),
       body: ScaleWorkstationPage(
         api: widget.controller.repository.apiClient,
         accessToken: widget.controller.session!.accessToken,
@@ -181,8 +183,11 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
         products: products,
         onRestaurantChanged: _changeRestaurant,
         preferences: widget.preferences,
-        isFullScreen: widget.isFullScreen,
-        onToggleFullScreen: widget.onToggleFullScreen,
+        onRunningChanged: (running) {
+          if (mounted && stationRunning != running) {
+            setState(() => stationRunning = running);
+          }
+        },
       ),
     );
   }

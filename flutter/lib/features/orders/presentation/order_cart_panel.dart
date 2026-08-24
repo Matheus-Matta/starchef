@@ -20,6 +20,7 @@ class OrderCartPanel extends StatelessWidget {
     required this.onVoidItem,
     required this.onFinish,
     required this.onPrint,
+    this.onCancel,
     this.onEmitInvoice,
     required this.printing,
     this.emittingInvoice = false,
@@ -34,6 +35,7 @@ class OrderCartPanel extends StatelessWidget {
   final ValueChanged<Map<String, dynamic>> onVoidItem;
   final VoidCallback onFinish;
   final VoidCallback onPrint;
+  final VoidCallback? onCancel;
   final VoidCallback? onEmitInvoice;
   final bool printing;
   final bool emittingInvoice;
@@ -170,6 +172,36 @@ class OrderCartPanel extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (order != null && !_readOnly && onCancel != null) ...[
+                const SizedBox(width: 4),
+                PopupMenuButton<String>(
+                  tooltip: 'Mais ações do pedido',
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (_) => onCancel?.call(),
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'cancel',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.cancel_outlined,
+                            size: 18,
+                            color: scheme.error,
+                          ),
+                          const SizedBox(width: 9),
+                          Text(
+                            'Cancelar pedido',
+                            style: TextStyle(
+                              color: scheme.error,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ],
@@ -319,12 +351,16 @@ class OrderCartPanel extends StatelessWidget {
 
   String _contextLabel() {
     final type = '${order?['order_type'] ?? ''}';
-    if (table != null) return 'Mesa ${table!['number']} · Salão';
     if (command != null) {
       final name = '${command!['customer_name'] ?? ''}'.trim();
       final label = 'Comanda ${command!['number']}';
-      return name.isEmpty ? '$label · Self-service' : '$label · $name';
+      final tableLabel = table == null ? '' : ' · Mesa ${table!['number']}';
+      final customerLabel = name.isEmpty
+          ? (table == null ? ' · Self-service' : '')
+          : ' · $name';
+      return '$label$tableLabel$customerLabel';
     }
+    if (table != null) return 'Mesa ${table!['number']} · Histórico';
     if (customer != null) {
       final phone = '${customer!['phone'] ?? ''}'.trim();
       return phone.isEmpty
@@ -339,13 +375,10 @@ class OrderCartPanel extends StatelessWidget {
   }
 
   Widget _empty(BuildContext context) {
-    final type = '${order?['order_type'] ?? ''}';
     return AppEmptyState(
       icon: Icons.shopping_basket_outlined,
       title: 'O pedido está vazio',
-      description: type == 'table'
-          ? 'Toque em um produto para adicioná-lo à mesa.'
-          : 'Toque em um produto do cardápio para começar.',
+      description: 'Toque em um produto do cardápio para começar.',
     );
   }
 
@@ -433,7 +466,8 @@ class OrderCartPanel extends StatelessWidget {
   }
 
   static String _typeLabel(String type) => switch (type) {
-    'table' => 'Salão',
+    'command' => 'Comanda',
+    'table' => 'Mesa (legado)',
     'delivery' => 'Delivery',
     'takeaway' => 'Retirada',
     'counter' => 'Balcão',

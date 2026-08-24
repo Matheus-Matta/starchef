@@ -9,7 +9,6 @@
 
 /* ── Mapas de rotulo (valor do backend -> texto) ─────────────────────── */
 export const ORDER_TYPE_LABELS = {
-  table: "Mesa",
   command: "Comanda",
   counter: "Balcao",
   delivery: "Delivery",

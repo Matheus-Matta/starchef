@@ -69,6 +69,7 @@ export const DETAIL_META = {
     badge: (r) => ORDER_STATUS_LABELS[r.status] || r.status,
     metrics: [
       { label: "Total", key: "total", type: "money" },
+      { label: "Comanda", key: "command_number" },
       { label: "Mesa", key: "table_number" },
       { label: "Cliente", key: "customer_name" },
     ],

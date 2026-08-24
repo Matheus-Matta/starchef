@@ -57,11 +57,12 @@ class NetworkSyncStatus {
 
 class ApiClient {
   ApiClient({
-    required this.baseUrl,
+    required String baseUrl,
     http.Client? client,
     OfflineStore? offlineStore,
     this.requestTimeout = const Duration(seconds: 20),
-  }) : _client = client ?? http.Client(),
+  }) : _baseUrl = baseUrl,
+       _client = client ?? http.Client(),
        _offlineStore = offlineStore ?? OfflineStore();
 
   static const _flushDebounce = Duration(milliseconds: 450);
@@ -69,7 +70,8 @@ class ApiClient {
   static const _maxRetryDelay = Duration(minutes: 2);
   static const _maxOperationsPerCycle = 20;
 
-  final String baseUrl;
+  String _baseUrl;
+  String get baseUrl => _baseUrl;
   final http.Client _client;
   final OfflineStore _offlineStore;
   final Duration requestTimeout;
@@ -101,6 +103,22 @@ class ApiClient {
   Stream<NetworkSyncStatus> get syncStatusChanges =>
       _syncStatusController.stream;
   NetworkSyncStatus get syncStatus => _syncStatus;
+
+  /// Troca o servidor ainda na tela de login, sem exigir reiniciar o app.
+  /// O escopo autenticado é descartado para impedir que cache/fila de um
+  /// servidor seja associado ao próximo login feito em outro endereço.
+  Future<void> updateBaseUrl(String value) async {
+    final normalized = value.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (normalized.isEmpty || normalized == _baseUrl) return;
+    _retryTimer?.cancel();
+    _debounceTimer?.cancel();
+    _baseUrl = normalized;
+    _activeScope = null;
+    _lastAccessToken = null;
+    _lastConnectivityValue = null;
+    _retryAttempt = 0;
+    await _publishStatus(NetworkSyncPhase.unknown);
+  }
 
   void attachMutationRelay(MutationRelay? relay) {
     _mutationRelay = relay;

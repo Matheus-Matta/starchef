@@ -69,6 +69,11 @@ class CashStationSerializer(TenantModelSerializer):
 
 
 class PaymentMethodSerializer(TenantModelSerializer):
+    # Cada restaurante recebe o mesmo conjunto padrão de métodos
+    # (apps/payments/defaults.py), então a listagem tem vários "Dinheiro"/"PIX"
+    # homônimos: sem o nome do restaurante não dá para saber qual é qual.
+    restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True, default=None)
+
     class Meta:
         model = PaymentMethod
         fields = "__all__"

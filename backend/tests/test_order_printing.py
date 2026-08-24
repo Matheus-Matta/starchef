@@ -15,9 +15,7 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
     branch,
     product,
 ):
-    api_client.credentials(
-        HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}"
-    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
     manager_user.profile.branch = None
     manager_user.profile.save(update_fields=["branch", "updated_at"])
     printer = Printer.objects.create(
@@ -57,4 +55,7 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
     assert job.payload["manual_only"] is True
     assert job.payload["text_content"]
     assert product.name in job.payload["text_content"]
-    assert f"PEDIDO #{order.sequence}" in job.payload["text_content"]
+    text = job.payload["text_content"]
+    assert f"Pedido nº {order.sequence}" in text
+    assert "RECIBO DE VENDA - NAO E DOCUMENTO FISCAL" in text
+    assert "Mesa: - - Comanda: -" in text

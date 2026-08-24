@@ -9,7 +9,6 @@ class TableDetailsPanel extends StatelessWidget {
     super.key,
     required this.table,
     required this.onBack,
-    required this.onOpenTableOrder,
     required this.onLinkCommand,
     required this.onUnlinkCommand,
     required this.onTransferCommand,
@@ -19,7 +18,6 @@ class TableDetailsPanel extends StatelessWidget {
 
   final Map<String, dynamic> table;
   final VoidCallback onBack;
-  final VoidCallback onOpenTableOrder;
   final VoidCallback onLinkCommand;
   final ValueChanged<Map<String, dynamic>> onUnlinkCommand;
   final ValueChanged<Map<String, dynamic>> onTransferCommand;
@@ -30,8 +28,7 @@ class TableDetailsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final activeCommands = (table['active_commands'] as List? ?? const [])
         .cast<Map<String, dynamic>>();
-    final occupied =
-        table['current_order_id'] != null || activeCommands.isNotEmpty;
+    final occupied = activeCommands.isNotEmpty;
     final color = occupied ? Colors.orange : Colors.green;
     final scheme = Theme.of(context).colorScheme;
 
@@ -116,18 +113,6 @@ class TableDetailsPanel extends StatelessWidget {
                     icon: const Icon(Icons.add_link),
                     label: const Text('Vincular Comanda'),
                     style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 50),
-                    ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onOpenTableOrder,
-                    icon: const Icon(Icons.receipt_long),
-                    label: Text(
-                      table['current_order_id'] != null
-                          ? 'Abrir Pedido da Mesa'
-                          : 'Iniciar Pedido na Mesa',
-                    ),
-                    style: OutlinedButton.styleFrom(
                       minimumSize: const Size(0, 50),
                     ),
                   ),

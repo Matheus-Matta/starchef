@@ -102,6 +102,7 @@ class AppPageScaffold extends StatelessWidget {
     this.leading,
     this.actions = const [],
     this.padding = const EdgeInsets.all(16),
+    this.showHeader = true,
   });
 
   final String title;
@@ -110,6 +111,7 @@ class AppPageScaffold extends StatelessWidget {
   final Widget? leading;
   final List<Widget> actions;
   final EdgeInsetsGeometry padding;
+  final bool showHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -123,13 +125,16 @@ class AppPageScaffold extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                AppPageHeader(
-                  title: title,
-                  description: description,
-                  leading: leading,
-                  actions: actions,
+                Offstage(
+                  offstage: !showHeader,
+                  child: AppPageHeader(
+                    title: title,
+                    description: description,
+                    leading: leading,
+                    actions: actions,
+                  ),
                 ),
-                const SizedBox(height: 12),
+                SizedBox(height: showHeader ? 12 : 0),
                 Expanded(child: body),
               ],
             ),

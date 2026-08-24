@@ -70,6 +70,7 @@ export const resources = [
     columns: [
       { key: "sequence", label: "Pedido" },
       { key: "order_type", label: "Tipo", map: ORDER_TYPE_LABELS },
+      { key: "command_number", label: "Comanda" },
       { key: "table_number", label: "Mesa" },
       { key: "customer_name", label: "Cliente" },
       { key: "total", label: "Total", type: "money", align: "right" },
@@ -444,15 +445,20 @@ export const resources = [
 
   // ── Pagamentos ─────────────────────────────────────────────────────
   {
-    // Formas de pagamento são valores controlados pelo sistema — sem CRUD no MVP
-    // (STC-060). Apenas leitura: a tela lista os métodos ativos, sem criar/editar.
+    // A forma de pagamento pertence a UM restaurante (PaymentMethod é TenantModel) e
+    // todo restaurante novo nasce com o mesmo conjunto padrão (apps/payments/defaults.py):
+    // com mais de um restaurante a conta tem vários "Dinheiro"/"PIX" homônimos. Por isso
+    // NÃO é `globalScope` — a lista segue o restaurante do seletor do topo e o formulário
+    // ganha o campo "Restaurante" (injetado por ResourceFormView) — e a coluna
+    // `restaurant_name` distingue os homônimos quando o escopo é "Todos".
     name: "formas-pagamento",
     title: "Formas de Pagamento",
     endpoint: "/payments/methods/",
-    globalScope: true,
     columns: [
       { key: "name", label: "Forma" },
+      { key: "restaurant_name", label: "Restaurante" },
       { key: "method_type", label: "Tipo", map: PAYMENT_METHOD_TYPE_LABELS },
+      { key: "requires_reference", label: "Exige referencia", type: "boolean" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -606,24 +612,6 @@ export const resources = [
       { name: "username", label: "Nome de usuario", type: "text", required: true, section: "Acesso" },
       { name: "email", label: "Email", type: "text", inputType: "email", required: true, section: "Acesso" },
       { name: "password", label: "Senha", type: "password", section: "Acesso" },
-      // Só superusuário vê isso (ResourceFormView filtra por `superuserOnly`).
-      // Não vai no corpo do POST/PATCH — vira o header X-Account-ID, que é
-      // como o backend decide em qual conta o usuário é criado (ver
-      // TenantMiddleware.resolve_account). Sem escolher, cai na própria
-      // conta do superusuário — por isso esse campo existe.
-      {
-        name: "account_scope",
-        label: "Conta",
-        type: "remote-dropdown",
-        endpoint: "/accounts/",
-        optionLabel: "name",
-        optionValue: "id",
-        placeholder: "Sua própria conta",
-        globalScope: true,
-        superuserOnly: true,
-        header: "X-Account-ID",
-        section: "Acesso",
-      },
       { name: "first_name", label: "Nome", type: "text", section: "Identificação" },
       { name: "last_name", label: "Sobrenome", type: "text", section: "Identificação" },
       { name: "profile.phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Identificação" },

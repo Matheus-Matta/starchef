@@ -13,6 +13,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
+import '../../../core/widgets/supervisor_close_dialog.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
@@ -370,6 +371,7 @@ class _HomePageState extends State<HomePage> {
       categories = catalog.categories;
       tables = catalog.tables;
       commands = catalog.commands;
+      paymentMethods = catalog.paymentMethods;
       try {
         await _ensureTopology();
       } catch (error) {
@@ -877,7 +879,8 @@ class _HomePageState extends State<HomePage> {
   PdvDestination get _selectedDestination {
     if (flowStep == 'scale-workstation') return PdvDestination.scale;
     if (flowStep == 'orders') return PdvDestination.orders;
-    if (flowStep == 'context' || orderType == 'table') {
+    if (flowStep == 'table_details' ||
+        (flowStep == 'context' && orderType != 'command')) {
       return PdvDestination.tables;
     }
     return PdvDestination.menu;
@@ -900,7 +903,7 @@ class _HomePageState extends State<HomePage> {
           selectedCustomer = null;
           orderItems = [];
           registeredPayments = [];
-          orderType = 'table';
+          orderType = 'table_view';
           flowStep = 'context';
         });
         return;
@@ -1408,96 +1411,10 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _chooseTable() async {
-    final table = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => AppDialog(
-        title: const Text('Selecionar mesa'),
-        content: SizedBox(
-          width: 620,
-          child: GridView.builder(
-            shrinkWrap: true,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              childAspectRatio: 1.25,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-            ),
-            itemCount: tables.length,
-            itemBuilder: (_, index) {
-              final item = tables[index];
-              final occupied = item['current_order_id'] != null;
-              return InkWell(
-                borderRadius: AppTheme.radius,
-                onTap: () => Navigator.pop(context, item),
-                child: Ink(
-                  decoration: BoxDecoration(
-                    color: occupied
-                        ? Colors.orange.shade50
-                        : Colors.green.shade50,
-                    borderRadius: AppTheme.radius,
-                    border: Border.all(
-                      color: occupied
-                          ? Colors.orange.shade300
-                          : Colors.green.shade300,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '${item['number']}',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        occupied ? 'Em uso' : 'Livre',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-    if (table == null) return;
-    await _openTable(table);
-  }
-
   Future<void> _openTable(Map<String, dynamic> table) async {
     setState(() {
       selectedTable = table;
       flowStep = 'table_details';
-    });
-  }
-
-  Future<void> _openTableOrder(Map<String, dynamic> table) async {
-    await _work(() async {
-      selectedTable = table;
-      final currentId = table['current_order_id'];
-      final order = currentId != null
-          ? await api.get('/orders/$currentId/', accessToken: token)
-          : await api.post(
-              '/orders/open-table/',
-              body: {'table': table['id']},
-              accessToken: token,
-            );
-      activeOrder = _completeOfflineOrder(order, type: 'table', table: table);
-      if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
-        table['status'] = 'occupied';
-        table['current_order_id'] = activeOrder!['id'];
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
-      }
-      flowStep = 'order';
     });
   }
 
@@ -1585,8 +1502,8 @@ class _HomePageState extends State<HomePage> {
         try {
           setState(() => busy = true);
           await api.post(
-            '/commands/${command['id']}/link_table/',
-            body: {'table': selectedTable!['id']},
+            '/commands/${command['id']}/link-table/',
+            body: {'table_id': selectedTable!['id']},
             accessToken: token,
           );
           if (!mounted) return;
@@ -1605,7 +1522,7 @@ class _HomePageState extends State<HomePage> {
     try {
       setState(() => busy = true);
       await api.post(
-        '/commands/${command['id']}/unlink_table/',
+        '/commands/${command['id']}/unlink-table/',
         body: const {},
         accessToken: token,
       );
@@ -1656,8 +1573,8 @@ class _HomePageState extends State<HomePage> {
       try {
         setState(() => busy = true);
         await api.post(
-          '/commands/${command['id']}/link_table/',
-          body: {'table': destTable['id']},
+          '/commands/${command['id']}/link-table/',
+          body: {'table_id': destTable['id']},
           accessToken: token,
         );
         if (!mounted) return;
@@ -1708,8 +1625,8 @@ class _HomePageState extends State<HomePage> {
       try {
         setState(() => busy = true);
         await api.post(
-          '/tables/${selectedTable!['id']}/transfer_commands/',
-          body: {'destination_table_id': destTable['id']},
+          '/tables/${selectedTable!['id']}/transfer-commands/',
+          body: {'to_table_id': destTable['id']},
           accessToken: token,
         );
         if (!mounted) return;
@@ -1731,6 +1648,13 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openCommand(Map<String, dynamic> command) async {
     await _work(() async {
       selectedCommand = command;
+      final linkedTableId = command['current_table'];
+      selectedTable = linkedTableId == null
+          ? null
+          : tables.cast<Map<String, dynamic>?>().firstWhere(
+              (table) => '${table?['id']}' == '$linkedTableId',
+              orElse: () => null,
+            );
       final currentId = command['current_order_id'];
       final order = currentId != null
           ? await api.get('/orders/$currentId/', accessToken: token)
@@ -1743,6 +1667,7 @@ class _HomePageState extends State<HomePage> {
         order,
         type: 'command',
         command: command,
+        table: selectedTable,
       );
       if (_isOfflinePending(activeOrder)) {
         orderItems = [];
@@ -1759,7 +1684,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _selectOrderType(String type) async {
     orderType = type;
-    if (type == 'table' || type == 'command') {
+    if (type == 'command') {
       setState(() {
         commandSearch = '';
         flowStep = 'context';
@@ -2028,10 +1953,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startOrder(String type) async {
-    if (type == 'table') {
-      await _chooseTable();
-      return;
-    }
     await _work(() async {
       selectedTable = null;
       activeOrder = await api.post(
@@ -2181,11 +2102,15 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     if (activeOrder == null) {
-      await _chooseTable();
-      if (activeOrder == null) return;
+      setState(() {
+        orderType = 'command';
+        commandSearch = '';
+        flowStep = 'context';
+      });
+      return;
     }
     if (!mounted) return;
-    if (product['pricing_unit'] == 'kg') {
+    if (isProductSoldByWeight(product)) {
       await _weighProduct(product);
       return;
     }
@@ -2196,7 +2121,7 @@ class _HomePageState extends State<HomePage> {
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
-          'quantity': config.quantity,
+          'quantity': config.quantity.round(),
           'variations': config.variationId == null ? [] : [config.variationId],
           'addons': config.addonIds,
           'expected_unit_price': OrderPresenter.expectedUnitPrice(
@@ -2214,7 +2139,7 @@ class _HomePageState extends State<HomePage> {
         _addOfflineItem(
           response,
           product,
-          quantity: config.quantity.toDouble(),
+          quantity: config.quantity.roundToDouble(),
           customerNote: config.customerNote,
         );
       } else {
@@ -2487,6 +2412,88 @@ class _HomePageState extends State<HomePage> {
         await _refreshOrder();
       }
     });
+  }
+
+  Future<void> _cancelOrder() async {
+    final order = activeOrder;
+    if (order == null ||
+        const {
+          'paid',
+          'cancelled',
+          'refunded',
+        }.contains('${order['status']}')) {
+      return;
+    }
+
+    final reason = await ItemVoidReasonDialog.show(
+      context,
+      itemName: 'Pedido #${order['sequence']}',
+      title: 'Cancelar pedido',
+      confirmLabel: 'Continuar',
+    );
+    if (!mounted || reason == null) return;
+
+    String? cashPassword;
+    String? authorizationUsername;
+    String? authorizationPassword;
+    final authorized = await showSupervisorCloseDialog(
+      context: context,
+      title: 'Autorizar cancelamento',
+      description:
+          'Confirme com a senha de operação do restaurante ou com o login '
+          'de um administrador/usuário que tenha permissão para cancelar pedidos.',
+      confirmLabel: 'Cancelar pedido',
+      cancelLabel: 'Voltar',
+      confirmIcon: Icons.cancel_outlined,
+      credentialRoleLabel: 'usuário autorizado',
+      verifyPassword: (password) async {
+        final valid = await widget.controller.verifySupervisorClosePassword(
+          password,
+        );
+        if (valid) cashPassword = password;
+        return valid;
+      },
+      verifyAdminCredentials: (username, password) async {
+        final failure = await widget.controller
+            .verifyOrderCancellationCredentials(username, password);
+        if (failure == null) {
+          authorizationUsername = username;
+          authorizationPassword = password;
+        }
+        return failure;
+      },
+      onInvalidPassword: () => widget.controller.refreshSupervisorPassword(
+        restaurantId: restaurantId,
+      ),
+    );
+    if (!mounted ||
+        !authorized ||
+        '${activeOrder?['id']}' != '${order['id']}') {
+      return;
+    }
+
+    final cancelled = await _work(
+      () => api.post(
+        '/orders/${order['id']}/cancel/',
+        body: {
+          'reason': reason,
+          'cash_password': ?cashPassword,
+          'authorization_username': ?authorizationUsername,
+          'authorization_password': ?authorizationPassword,
+        },
+        accessToken: token,
+      ),
+      errorTitle: 'Não foi possível cancelar o pedido',
+    );
+    if (!mounted || cancelled == null) return;
+
+    final scope = api.sessionScope;
+    if (scope != null) {
+      await orderStore.saveFromServer(cancelled, scope: scope);
+    }
+    if (!mounted) return;
+    showAppToast(context, 'Pedido cancelado. Motivo: $reason');
+    await _goHome();
   }
 
   Future<void> _finishOrder() async {
@@ -3888,19 +3895,6 @@ class _HomePageState extends State<HomePage> {
                           : null,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 2,
-                    ),
-                    child: ValueListenableBuilder<PrinterAvailability>(
-                      valueListenable: deviceAgent.printerAvailability,
-                      builder: (_, status, _) => PdvPrinterBadge(
-                        status: status,
-                        compact: compactHeader,
-                      ),
-                    ),
-                  ),
                   if (isSecondaryStation)
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -4015,7 +4009,6 @@ class _HomePageState extends State<HomePage> {
                     TableDetailsPanel(
                       table: selectedTable!,
                       onBack: () => setState(() => flowStep = 'context'),
-                      onOpenTableOrder: () => _openTableOrder(selectedTable!),
                       onLinkCommand: _linkCommandDialog,
                       onUnlinkCommand: _unlinkCommand,
                       onTransferCommand: _transferCommandDialog,
@@ -4243,7 +4236,6 @@ class _HomePageState extends State<HomePage> {
             decoration: const InputDecoration(labelText: 'Tipo'),
             items: const [
               DropdownMenuItem(value: null, child: Text('Todos os tipos')),
-              DropdownMenuItem(value: 'table', child: Text('Mesa')),
               DropdownMenuItem(value: 'command', child: Text('Comanda')),
               DropdownMenuItem(value: 'counter', child: Text('Balcão')),
               DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
@@ -4547,7 +4539,7 @@ class _HomePageState extends State<HomePage> {
                               columns: const [
                                 DataColumn(label: Text('Pedido')),
                                 DataColumn(label: Text('Tipo')),
-                                DataColumn(label: Text('Cliente/Mesa')),
+                                DataColumn(label: Text('Comanda/Mesa/Cliente')),
                                 DataColumn(label: Text('Status')),
                                 DataColumn(label: Text('Pagamento')),
                                 DataColumn(label: Text('Total')),
@@ -4584,8 +4576,12 @@ class _HomePageState extends State<HomePage> {
 
   Widget _startPanel() {
     final options = [
-      ('table', 'Mesa', 'Atendimento no salão', Icons.table_restaurant),
-      ('command', 'Comanda', 'Cartão de comanda', Icons.qr_code_2),
+      (
+        'command',
+        'Comanda',
+        'Atendimento no salão ou cartão de comanda',
+        Icons.qr_code_2,
+      ),
       ('counter', 'Balcão', 'Consumo rápido no local', Icons.storefront),
       (
         'takeaway',
@@ -4597,7 +4593,11 @@ class _HomePageState extends State<HomePage> {
     ];
     final scheme = Theme.of(context).colorScheme;
     final availableTables = tables
-        .where((item) => item['current_order_id'] == null)
+        .where(
+          (item) =>
+              (item['active_commands'] as List? ?? const []).isEmpty &&
+              item['status'] == 'free',
+        )
         .length;
     final availableCommands = commands
         .where(
@@ -4841,7 +4841,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 5),
             Text(
-              'Mesas ocupadas retomam o pedido atual.',
+              'A mesa fica ocupada enquanto houver uma comanda vinculada.',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -4858,7 +4858,9 @@ class _HomePageState extends State<HomePage> {
                 itemCount: tables.length,
                 itemBuilder: (_, index) {
                   final table = tables[index];
-                  final occupied = table['current_order_id'] != null;
+                  final occupied =
+                      (table['active_commands'] as List? ?? const [])
+                          .isNotEmpty;
                   final color = occupied ? Colors.orange : Colors.green;
                   return ShadCard(
                     padding: EdgeInsets.zero,
@@ -5516,6 +5518,7 @@ class _HomePageState extends State<HomePage> {
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,
+    onCancel: _cancelOrder,
     onEmitInvoice: activeOrder == null
         ? null
         : () => _emitFiscalInvoice(activeOrder!),

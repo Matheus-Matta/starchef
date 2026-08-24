@@ -67,9 +67,11 @@ class OrderBatchSerializer(TenantModelSerializer):
 
 class OrderSerializer(TenantModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    table_number = serializers.CharField(source="table.number", read_only=True)
-    customer_name = serializers.CharField(source="customer.name", read_only=True)
-    customer_document = serializers.CharField(source="customer.document", read_only=True)
+    table_number = serializers.CharField(source="table.number", read_only=True, default=None)
+    command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
+    command_code = serializers.CharField(source="command.code", read_only=True, default=None)
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
+    customer_document = serializers.CharField(source="customer.document", read_only=True, default=None)
 
     class Meta:
         model = Order
@@ -91,3 +93,10 @@ class OrderSerializer(TenantModelSerializer):
             "production_status",
             "change_history",
         ]
+
+    def validate_order_type(self, value):
+        if value == Order.TYPE_TABLE:
+            raise serializers.ValidationError(
+                "Pedidos de salão devem ser abertos por uma comanda e depois vinculados à mesa."
+            )
+        return value

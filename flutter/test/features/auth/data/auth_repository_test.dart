@@ -354,4 +354,62 @@ void main() {
     expect(offline.authenticationAttempts, 0);
     await api.dispose();
   });
+
+  test('autorização administrativa usa a API sem trocar a sessão', () async {
+    late http.Request received;
+    final api = clientWith(
+      MockClient((request) async {
+        received = request;
+        return http.Response(
+          jsonEncode({'authorized': true}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final repository = AuthRepository(
+      apiClient: api,
+      sessionStore: FakeSessionStore(),
+    );
+    final current = sessionWith(access: 'token-operador');
+
+    await repository.authorizeAdministrator(
+      currentSession: current,
+      username: ' admin@starchef.test ',
+      password: 'senha-admin',
+    );
+
+    expect(received.url.path, '/api/v1/auth/authorize-admin/');
+    expect(received.headers['Authorization'], 'Bearer token-operador');
+    expect(jsonDecode(received.body), {
+      'username': 'admin@starchef.test',
+      'password': 'senha-admin',
+    });
+    expect(current.accessToken, 'token-operador');
+    await api.dispose();
+  });
+
+  test('autoriza cancelamento com a permissão específica do pedido', () async {
+    late http.Request received;
+    final api = clientWith(
+      MockClient((request) async {
+        received = request;
+        return http.Response('{"authorized":true}', 200);
+      }),
+    );
+    final repository = AuthRepository(
+      apiClient: api,
+      sessionStore: FakeSessionStore(),
+    );
+
+    await repository.authorizeAdministrator(
+      currentSession: sessionWith(access: 'token-operador'),
+      username: 'gerente',
+      password: 'senha',
+      requiredPermission: 'orders.cancel',
+    );
+
+    expect(jsonDecode(received.body)['permission'], 'orders.cancel');
+    await api.dispose();
+  });
 }

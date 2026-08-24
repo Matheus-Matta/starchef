@@ -74,10 +74,37 @@ void main() {
     expect(result.selectedRestaurantId, 'restaurant-1');
     expect(initialCashLookupCount, 0);
   });
+
+  test(
+    'carrega as formas de pagamento junto dos dados locais do PDV',
+    () async {
+      final api = _apiWithCatalog(
+        cashStations: const [],
+        paymentMethods: const [
+          {
+            'id': 'payment-pix',
+            'restaurant': 'restaurant-1',
+            'name': 'PIX',
+            'method_type': 'pix',
+            'is_active': true,
+          },
+        ],
+      );
+      addTearDown(api.dispose);
+
+      final result = await PdvPresenter(
+        PdvRepository(api: api, accessToken: 'token'),
+      ).load(selectedRestaurantId: 'restaurant-1');
+
+      expect(result.catalog.paymentMethods, hasLength(1));
+      expect(result.catalog.paymentMethods.single['name'], 'PIX');
+    },
+  );
 }
 
 ApiClient _apiWithCatalog({
   required List<Map<String, dynamic>> cashStations,
+  List<Map<String, dynamic>> paymentMethods = const [],
   void Function()? onInitialCashLookup,
 }) => ApiClient(
   baseUrl: 'http://starchef.test/api/v1',
@@ -100,6 +127,9 @@ ApiClient _apiWithCatalog({
         path.endsWith('/tables/') ||
         path.endsWith('/commands/')) {
       return _page(const []);
+    }
+    if (path.endsWith('/payments/methods/')) {
+      return _page(paymentMethods);
     }
     return http.Response('{}', 404);
   }),

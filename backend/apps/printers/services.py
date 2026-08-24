@@ -106,42 +106,51 @@ def _establishment_lines(info, width=LARGURA_CUPOM):
 
 
 def _customer_receipt_text(order):
+    """Converte o recibo web para o equivalente monoespaçado de 80 mm.
+
+    A ordem e o conteúdo seguem ``receipt.html``. Somente recursos exclusivos
+    do navegador (CSS, imagem e tags) são substituídos por alinhamento em texto
+    e pelo comando ESC/POS de código de barras enviado pelo agente local.
+    """
     info = _establishment_info(order)
-    lines = _establishment_lines(info)
+    lines = [
+        info["trade_name"].upper().center(LARGURA_CUPOM),
+        "RECIBO DE VENDA - NAO E DOCUMENTO FISCAL".center(LARGURA_CUPOM),
+    ]
+    document_line = f"CNPJ: {info['cnpj'] or '-'}"
+    if info["state_registration"]:
+        document_line += f" - IE: {info['state_registration']}"
+    lines.append(document_line[:LARGURA_CUPOM])
+    address_line = f"{info['address']} {info['city']}".strip()
+    if info["state"]:
+        address_line += f"/{info['state']}"
+    if info["zip_code"]:
+        address_line += f" - CEP {info['zip_code']}"
+    if address_line:
+        lines.append(address_line[:LARGURA_CUPOM])
+    if info["phone"]:
+        lines.append(f"Telefone: {info['phone']}"[:LARGURA_CUPOM])
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
-            f"PEDIDO #{order.sequence}",
-            f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}",
+            f"Pedido nº {order.sequence}",
+            (
+                f"Mesa: {order.table.number if order.table_id else '-'} - "
+                f"Comanda: {order.command.code if order.command_id else '-'}"
+            ),
         ]
     )
-    if order.table_id:
-        lines.append(f"Mesa: {order.table.number}")
-    if order.command_id:
-        lines.append(f"Comanda: {order.command.code}")
-    if order.customer_id:
-        lines.append(f"Cliente: {order.customer.name}"[:LARGURA_CUPOM])
-        if order.customer.phone:
-            lines.append(f"Telefone: {order.customer.phone}"[:LARGURA_CUPOM])
     if order.responsible_user_id:
         operator = order.responsible_user.get_full_name() or order.responsible_user.username
         lines.append(f"Operador: {operator}"[:LARGURA_CUPOM])
+    lines.append(f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}")
     lines.append("-" * LARGURA_CUPOM)
     for item in order.items.select_related("product").prefetch_related("addons__addon"):
         if item.status == item.STATUS_CANCELLED:
             continue
-        lines.append(f"{item.quantity:g}x {item.product.name}"[:LARGURA_CUPOM])
+        lines.append(f"{item.quantity:g} x {item.product.name}"[:LARGURA_CUPOM])
         if item.product.is_weighed:
-            lines.append(
-                f"  {item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM]
-            )
-        for variation in item.variations or []:
-            name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:LARGURA_CUPOM])
-        for addon in item.addons.all():
-            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:LARGURA_CUPOM])
-        if item.customer_note:
-            lines.append(f"  OBS: {item.customer_note}"[:LARGURA_CUPOM])
+            lines.append(f"{item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM])
         lines.append(_linha_valor("", item.total_price))
     lines.extend(
         [
@@ -155,15 +164,11 @@ def _customer_receipt_text(order):
     )
     payments = order.payments.select_related("payment_method").order_by("created_at")
     if payments.exists():
-        lines.extend(["-" * LARGURA_CUPOM, "PAGAMENTOS"])
+        lines.extend(["-" * LARGURA_CUPOM, "FORMA(S) DE PAGAMENTO"])
         for payment in payments:
             lines.append(_linha_valor(payment.payment_method.name, payment.amount))
             if payment.change_amount:
-                received = payment.metadata.get("received_amount", payment.amount)
-                lines.append(_linha_valor("Recebido", received))
                 lines.append(_linha_valor("Troco", payment.change_amount))
-    if order.general_notes:
-        lines.extend(["-" * LARGURA_CUPOM, f"OBS: {order.general_notes}"[:LARGURA_CUPOM]])
     barcode_value = _order_command_barcode(order)["value"]
     if barcode_value:
         # So o valor: o agente local (LocalDeviceAgent) reconhece este mesmo
@@ -173,13 +178,11 @@ def _customer_receipt_text(order):
         lines.extend(
             [
                 "-" * LARGURA_CUPOM,
-                "COMANDA".center(LARGURA_CUPOM),
+                "COMANDA - CODE128".center(LARGURA_CUPOM),
                 barcode_value.center(LARGURA_CUPOM),
             ]
         )
-    lines.extend(
-        ["-" * LARGURA_CUPOM, "Obrigado pela preferência!".center(LARGURA_CUPOM), ""]
-    )
+    lines.extend(["-" * LARGURA_CUPOM, "Obrigado pela preferência!".center(LARGURA_CUPOM), ""])
     return "\n".join(lines)
 
 
@@ -240,9 +243,7 @@ def register_print_job(
                 "payload_version": 2,
                 "barcode": {"symbology": barcode["symbology"], "value": barcode["value"]},
                 "text_content": (
-                    _customer_receipt_text(order)
-                    if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL}
-                    else ""
+                    _customer_receipt_text(order) if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL} else ""
                 ),
             },
             html_content=html,
@@ -258,11 +259,7 @@ def _kitchen_ticket_text(*, order, batch, sector, items):
     where = (
         f"Mesa {order.table.number}"
         if order.table_id
-        else (
-            f"Comanda {order.command.code}"
-            if order.command_id
-            else order.get_order_type_display()
-        )
+        else (f"Comanda {order.command.code}" if order.command_id else order.get_order_type_display())
     )
     lines = [
         str(sector.name).upper().center(32),
@@ -292,17 +289,13 @@ def register_kitchen_batch_print_jobs(*, batch, user):
     order = batch.order
     with tenant_context(order.account):
         items = list(
-            batch.items.select_related("product__sector")
-            .prefetch_related("addons__addon")
-            .order_by("launched_at")
+            batch.items.select_related("product__sector").prefetch_related("addons__addon").order_by("launched_at")
         )
         by_sector = {}
         for item in items:
             sector = item.product.sector
             if sector is not None:
-                by_sector.setdefault(sector.id, {"sector": sector, "items": []})[
-                    "items"
-                ].append(item)
+                by_sector.setdefault(sector.id, {"sector": sector, "items": []})["items"].append(item)
 
         jobs = []
         for group in by_sector.values():
@@ -442,27 +435,17 @@ def _resolve_weigh_printer(*, order, scale):
         restaurant=order.restaurant,
         is_active=True,
     ).first()
-    same_branch = not (
-        printer
-        and scale.branch_id
-        and printer.branch_id
-        and printer.branch_id != scale.branch_id
-    )
+    same_branch = not (printer and scale.branch_id and printer.branch_id and printer.branch_id != scale.branch_id)
     if printer is None or not same_branch:
         raise ValidationError(
-            "A impressora configurada na balanca esta inativa ou fora do mesmo "
-            "restaurante/filial."
+            "A impressora configurada na balanca esta inativa ou fora do mesmo " "restaurante/filial."
         )
     return printer
 
 
 def _weigh_ticket_items(order):
     excluded = {"cancelled", "comped"}
-    return list(
-        order.items.select_related("product")
-        .exclude(status__in=excluded)
-        .order_by("launched_at", "id")
-    )
+    return list(order.items.select_related("product").exclude(status__in=excluded).order_by("launched_at", "id"))
 
 
 def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
@@ -528,11 +511,7 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     where = (
         f"Mesa {order.table.number}"
         if order.table_id
-        else (
-            f"Comanda {order.command.code}"
-            if order.command_id
-            else "Balcao"
-        )
+        else (f"Comanda {order.command.code}" if order.command_id else "Balcao")
     )
     lines = _establishment_lines(_establishment_info(order))
     lines.extend(
@@ -547,14 +526,9 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     for ticket_item in items:
         lines.append(ticket_item.product.name[:LARGURA_CUPOM])
         if ticket_item.product.is_weighed:
-            lines.append(
-                f"{Decimal(ticket_item.quantity):.3f} kg x "
-                f"R$ {ticket_item.unit_price}/kg"
-            )
+            lines.append(f"{Decimal(ticket_item.quantity):.3f} kg x " f"R$ {ticket_item.unit_price}/kg")
         else:
-            lines.append(
-                f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}"
-            )
+            lines.append(f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}")
         lines.append(_linha_valor("VALOR", ticket_item.total_price))
         lines.append("-" * LARGURA_CUPOM)
     lines.append(_linha_valor("TOTAL DO PEDIDO", order.total))
@@ -625,7 +599,9 @@ def register_weigh_print(*, order, item, scale, user=None):
             created_by=user,
             updated_by=user,
         )
-        record_audit(action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": PrintJob.TYPE_WEIGH})
+        record_audit(
+            action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": PrintJob.TYPE_WEIGH}
+        )
         return job
 
 
