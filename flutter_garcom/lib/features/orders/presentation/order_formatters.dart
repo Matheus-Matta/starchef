@@ -11,6 +11,32 @@ double amount(Object? value) {
 /// Valor em reais, no formato que o garçom lê na comanda.
 String money(Object? value) => 'R\$ ${amount(value).toStringAsFixed(2).replaceAll('.', ',')}';
 
+/// Preço de uma unidade do produto com a variação e os adicionais escolhidos:
+/// base + delta da variação (se houver) + soma dos adicionais marcados.
+///
+/// Mesma fórmula do PDV desktop (`OrderPresenter.expectedUnitPrice`) — é só
+/// uma prévia para o garçom conferir antes de lançar; quem cobra de verdade é
+/// o backend, na hora de gravar o item.
+double expectedUnitPrice(
+  Map<String, dynamic> product, {
+  String? variationId,
+  Iterable<String> addonIds = const [],
+}) {
+  var total = amount(product['sale_price']);
+  for (final variation in (product['variations'] as List? ?? const [])) {
+    if (variation is Map && '${variation['id']}' == variationId) {
+      total += amount(variation['price_delta']);
+    }
+  }
+  final addonSet = addonIds.toSet();
+  for (final addon in (product['addons'] as List? ?? const [])) {
+    if (addon is Map && addonSet.contains('${addon['id']}')) {
+      total += amount(addon['price']);
+    }
+  }
+  return total;
+}
+
 /// Como o pedido é chamado no salão.
 ///
 /// A comanda vem antes da mesa: é ela que identifica o atendimento — a mesa é

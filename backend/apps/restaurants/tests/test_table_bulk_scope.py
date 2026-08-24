@@ -81,8 +81,34 @@ def test_admin_sector_uses_branch_from_selected_restaurant(admin_client, account
     assert sector.branch_id == second_branch.id
 
 
-def test_bulk_commands_choose_next_number_per_restaurant(admin_client, account, restaurant):
+def test_bulk_tables_rejects_sector_from_another_selected_restaurant(
+    admin_client, account, restaurant, branch
+):
     second_restaurant, _ = _second_restaurant(account)
+    sector = TableSector.all_objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Salão interno",
+    )
+
+    response = admin_client.post(
+        "/api/v1/tables/bulk-create/",
+        {
+            "restaurant": str(second_restaurant.id),
+            "sector": str(sector.id),
+            "from_number": 1,
+            "to_number": 20,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert "não pertence ao restaurante" in str(response.data)
+
+
+def test_bulk_commands_choose_next_number_per_restaurant(admin_client, account, restaurant):
+    second_restaurant, second_branch = _second_restaurant(account)
 
     first_response = admin_client.post(
         "/api/v1/commands/bulk-create/",
@@ -101,3 +127,38 @@ def test_bulk_commands_choose_next_number_per_restaurant(admin_client, account, 
     assert second_response.data["created"] == 20
     assert Command.all_objects.filter(restaurant=restaurant, number__range=(1, 20)).count() == 20
     assert Command.all_objects.filter(restaurant=second_restaurant, number__range=(1, 20)).count() == 20
+    assert not Command.all_objects.filter(restaurant=second_restaurant).exclude(branch=second_branch).exists()
+
+
+def test_link_table_repairs_legacy_command_branch(admin_client, account, branch):
+    second_restaurant, second_branch = _second_restaurant(account)
+    sector = TableSector.all_objects.create(
+        account=account,
+        restaurant=second_restaurant,
+        branch=second_branch,
+        name="Salão B",
+    )
+    table = Table.all_objects.create(
+        account=account,
+        restaurant=second_restaurant,
+        branch=second_branch,
+        sector=sector,
+        number="1",
+    )
+    legacy_command = Command.all_objects.create(
+        account=account,
+        restaurant=second_restaurant,
+        branch=branch,
+        number=1,
+    )
+
+    response = admin_client.post(
+        f"/api/v1/commands/{legacy_command.id}/link-table/",
+        {"table_id": str(table.id)},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    legacy_command.refresh_from_db()
+    assert legacy_command.branch_id == second_branch.id
+    assert legacy_command.current_table_id == table.id

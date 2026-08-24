@@ -12,16 +12,22 @@ class ProductChoice {
     required this.productId,
     required this.productName,
     required this.quantity,
+    this.variationId,
+    this.addonIds = const [],
     this.note = '',
   });
 
   final String productId;
   final String productName;
   final int quantity;
+  final String? variationId;
+  final List<String> addonIds;
   final String note;
 }
 
-/// Busca do catálogo (paginada) e, na sequência, quantidade e observação.
+/// Busca do catálogo (paginada) e, na sequência, variação, adicionais,
+/// quantidade e observação — mesma pergunta que o PDV desktop faz
+/// (`product_config_dialog.dart`), só que numa folha em vez de um diálogo.
 Future<ProductChoice?> showProductPicker(
   BuildContext context,
   OrdersRepository repository,
@@ -97,9 +103,7 @@ class _ProductPickerState extends State<_ProductPicker> {
           },
           itemBuilder: (context, product) => PickerTile(
             title: '${product['name'] ?? ''}',
-            subtitle: '${product['internal_code'] ?? ''}'.trim().isEmpty
-                ? null
-                : '#${product['internal_code']}',
+            subtitle: _pickerSubtitle(product),
             trailing: Text(
               money(product['sale_price']),
               style: const TextStyle(fontWeight: FontWeight.w700),
@@ -110,7 +114,34 @@ class _ProductPickerState extends State<_ProductPicker> {
       ),
     ],
   );
+
+  static String? _pickerSubtitle(Map<String, dynamic> product) {
+    final code = '${product['internal_code'] ?? ''}'.trim();
+    final opcoes = _activeVariations(product).length + _activeAddons(product).length;
+    final partes = [
+      if (code.isNotEmpty) '#$code',
+      if (opcoes > 0) '$opcoes opção${opcoes == 1 ? '' : 'ões'}',
+    ];
+    return partes.isEmpty ? null : partes.join(' · ');
+  }
 }
+
+/// Variações/adicionais ativos do produto — mesmo filtro do PDV
+/// (`product_config_dialog.dart`): o cadastro pode ter itens desativados sem
+/// removê-los do histórico de pedidos antigos.
+List<Map<String, dynamic>> _activeVariations(Map<String, dynamic> product) =>
+    (product['variations'] as List? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .where((item) => item['is_active'] != false)
+        .toList();
+
+List<Map<String, dynamic>> _activeAddons(Map<String, dynamic> product) =>
+    (product['addons'] as List? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .where((item) => item['is_active'] != false)
+        .toList();
 
 class _ProductConfig extends StatefulWidget {
   const _ProductConfig({required this.product, required this.onBack});
@@ -125,12 +156,27 @@ class _ProductConfig extends StatefulWidget {
 class _ProductConfigState extends State<_ProductConfig> {
   final _note = TextEditingController();
   int _quantity = 1;
+  String? _variationId;
+  final Set<String> _selectedAddons = {};
+
+  late final List<Map<String, dynamic>> _variations = _activeVariations(
+    widget.product,
+  );
+  late final List<Map<String, dynamic>> _addons = _activeAddons(
+    widget.product,
+  );
 
   @override
   void dispose() {
     _note.dispose();
     super.dispose();
   }
+
+  double get _unitPrice => expectedUnitPrice(
+    widget.product,
+    variationId: _variationId,
+    addonIds: _selectedAddons,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -159,6 +205,55 @@ class _ProductConfigState extends State<_ProductConfig> {
               Text(money(product['sale_price'])),
             ],
           ),
+          if (_variations.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const _SectionLabel('Variação'),
+            RadioGroup<String>(
+              groupValue: _variationId,
+              onChanged: (value) => setState(() => _variationId = value),
+              child: Column(
+                children: _variations
+                    .map(
+                      (item) => RadioListTile<String>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: '${item['id']}',
+                        title: Text('${item['name']}'),
+                        secondary: Text(
+                          '+ ${money(item['price_delta'])}',
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+          ],
+          if (_addons.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const _SectionLabel('Adicionais'),
+            ..._addons.map(
+              (item) => CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: _selectedAddons.contains('${item['id']}'),
+                onChanged: (checked) => setState(() {
+                  final id = '${item['id']}';
+                  if (checked == true) {
+                    _selectedAddons.add(id);
+                  } else {
+                    _selectedAddons.remove(id);
+                  }
+                }),
+                title: Text('${item['name']}'),
+                secondary: Text(
+                  '+ ${money(item['price'])}',
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -201,8 +296,7 @@ class _ProductConfigState extends State<_ProductConfig> {
           ),
           const SizedBox(height: 20),
           Text(
-            'Total do item: '
-            '${money(amount(product['sale_price']) * _quantity)}',
+            'Total do item: ${money(_unitPrice * _quantity)}',
             textAlign: TextAlign.center,
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),
@@ -215,6 +309,8 @@ class _ProductConfigState extends State<_ProductConfig> {
                 productId: '${product['id']}',
                 productName: '${product['name'] ?? ''}',
                 quantity: _quantity,
+                variationId: _variationId,
+                addonIds: _selectedAddons.toList(),
                 note: _note.text.trim(),
               ),
             ),
@@ -224,4 +320,19 @@ class _ProductConfigState extends State<_ProductConfig> {
       ),
     );
   }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 2),
+    child: Text(
+      text,
+      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+    ),
+  );
 }

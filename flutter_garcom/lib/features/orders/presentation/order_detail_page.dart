@@ -132,6 +132,8 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         productId: choice.productId,
         productName: choice.productName,
         quantity: choice.quantity,
+        variationId: choice.variationId,
+        addonIds: choice.addonIds,
         customerNote: choice.note,
       ),
       'Item lançado.',

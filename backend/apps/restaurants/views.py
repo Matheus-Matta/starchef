@@ -123,6 +123,9 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         sector = TableSector.objects.filter(pk=sector_id, account=account).first()
         if not sector:
             raise ValidationError({"sector": "Setor não encontrado nesta conta."})
+        restaurant_id = request.data.get("restaurant")
+        if restaurant_id and str(sector.restaurant_id) != str(restaurant_id):
+            raise ValidationError({"sector": "O setor não pertence ao restaurante selecionado."})
 
         # Dados antigos podiam guardar um setor do restaurante B com a filial
         # herdada do restaurante A. Corrige o vínculo antes de verificar/criar
@@ -303,13 +306,20 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 pk=table_id,
                 account=command.account,
                 restaurant=command.restaurant,
-                branch=command.branch,
                 is_active=True,
             )
             .first()
         )
         if not table:
-            raise ValidationError({"table_id": "Mesa não encontrada nesta filial."})
+            raise ValidationError({"table_id": "Mesa não encontrada neste restaurante."})
+
+        # A mesa é a fonte de verdade da filial do vínculo. Isso repara tanto
+        # comandas antigas com filial herdada de outra unidade quanto bases que
+        # ainda possuem mais de uma filial histórica no mesmo restaurante.
+        if command.branch_id != table.branch_id:
+            command.branch = table.branch
+            command.updated_by = request.user
+            command.save(update_fields=["branch", "updated_by", "updated_at"])
 
         if command.current_table_id == table.id:
             return Response(self.get_serializer(command).data)
@@ -432,6 +442,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         account = getattr(request, "account", None)
         profile = getattr(request.user, "profile", None)
         restaurant = self._resolve_bulk_restaurant(request, account, profile)
+        target_branch = sync_branch_for_restaurant(restaurant)
 
         to_number = request.data.get("to_number")
         if to_number is None:
@@ -459,7 +470,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 Command(
                     account=account,
                     restaurant=restaurant,
-                    branch=getattr(profile, "branch", None),
+                    branch=target_branch,
                     number=number,
                     code=default_command_code(number),
                     created_by=request.user,
@@ -474,7 +485,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                     resource="restaurants.command",
                     action="created",
                     restaurant_id=restaurant.id,
-                    branch_id=getattr(profile, "branch_id", None),
+                    branch_id=target_branch.id,
                     changed_fields={"collection"},
                 )
             )
