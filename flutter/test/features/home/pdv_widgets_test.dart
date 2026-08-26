@@ -3,12 +3,43 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/theme/app_theme.dart';
+import 'package:starchef_pdv/core/update/pdv_update_service.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
 import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart';
 
 void main() {
   group('PdvSidebar', () {
+    testWidgets('mostra versão instalada e atualização disponível', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(800, 640),
+        child: PdvSidebar(
+          expanded: true,
+          selected: PdvDestination.menu,
+          onToggle: () {},
+          onSelected: (_) {},
+          userName: 'Operador',
+          userSubtitle: '@operador',
+          onLogout: () {},
+          versionStatus: const PdvUpdateStatus(
+            phase: PdvUpdatePhase.updateAvailable,
+            installed: PdvInstalledVersion(
+              version: '1.0.33',
+              buildNumber: '31',
+            ),
+            latestVersion: '1.0.34',
+          ),
+        ),
+      );
+
+      expect(find.text('v1.0.33+31'), findsOneWidget);
+      expect(find.text('Nova v1.0.34 disponível'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('expõe destinos e encaminha ações', (tester) async {
       PdvDestination? selected;
       var toggles = 0;

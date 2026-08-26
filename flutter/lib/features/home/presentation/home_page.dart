@@ -10,6 +10,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
@@ -134,6 +135,8 @@ class _HomePageState extends State<HomePage> {
   PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
+  late final PdvUpdateService updateService;
+  PdvUpdateStatus versionStatus = const PdvUpdateStatus.checking();
 
   /// Cópia local dos pedidos, com as edições offline já aplicadas.
   final LocalOrderStore orderStore = LocalOrderStore();
@@ -216,6 +219,8 @@ class _HomePageState extends State<HomePage> {
     deviceAgent.printerAvailability.addListener(_onPrinterStatusChanged);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
+    updateService = PdvUpdateService();
+    unawaited(_checkPdvVersion());
     networkStatus = api.syncStatus;
     syncStatusSubscription = api.syncStatusChanges.listen((status) {
       if (!mounted) return;
@@ -250,6 +255,18 @@ class _HomePageState extends State<HomePage> {
         .where((topic) => topic.startsWith('realtime:'))
         .listen(_scheduleRealtimeRefresh);
     _load();
+  }
+
+  Future<void> _checkPdvVersion() async {
+    if (mounted) {
+      setState(
+        () => versionStatus = PdvUpdateStatus.checking(
+          installed: versionStatus.installed,
+        ),
+      );
+    }
+    final result = await updateService.check();
+    if (mounted) setState(() => versionStatus = result);
   }
 
   void _scheduleRealtimeRefresh(String signal) {
@@ -1440,6 +1457,7 @@ class _HomePageState extends State<HomePage> {
     paymentAmount.dispose();
     ordersSearchDebounce?.cancel();
     ordersSearchController.dispose();
+    updateService.dispose();
     super.dispose();
   }
 
@@ -3929,6 +3947,8 @@ class _HomePageState extends State<HomePage> {
                 widget.controller.session!.user.canManageOrders ||
                 widget.controller.session!.user.canProcessPayments,
             showSettings: true,
+            versionStatus: versionStatus,
+            onCheckVersion: () => unawaited(_checkPdvVersion()),
           ),
           Expanded(
             child: Scaffold(
