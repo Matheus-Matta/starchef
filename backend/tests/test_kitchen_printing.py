@@ -1,9 +1,13 @@
+from datetime import timedelta
+
 import pytest
+from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import (
     add_order_item,
     create_order,
+    dispatch_kitchen_batch,
     send_order_to_kitchen,
     update_order_item_status,
 )
@@ -42,6 +46,17 @@ def test_kitchen_prints_only_new_batch_items_for_product_sector(
     send_order_to_kitchen(order, manager_user)
     first_job = PrintJob.objects.get(order=order)
     assert first_job.payload["item_ids"] == [str(first_item.id)]
+    assert "NOVO PEDIDO" in first_job.payload["text_content"]
+    assert "MESA: 1" in first_job.payload["text_content"]
+    assert "X-Burger" in first_job.payload["text_content"]
+    assert "RODADA" not in first_job.payload["text_content"]
+    assert "TIPO" not in first_job.payload["text_content"]
+    assert "NOVO PEDIDO" in first_job.html_content
+    assert "Mesa: 1" in first_job.html_content
+    first_item.refresh_from_db()
+    first_item.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
+    first_item.batch.save(update_fields=["dispatch_at", "updated_at"])
+    dispatch_kitchen_batch(first_item.batch)
 
     update_order_item_status(
         first_item,
@@ -61,6 +76,44 @@ def test_kitchen_prints_only_new_batch_items_for_product_sector(
     assert jobs[1].payload["batch_number"] == 2
     assert jobs[1].payload["item_ids"] == [str(second_item.id)]
     assert str(first_item.id) not in jobs[1].payload["item_ids"]
+    assert "2x X-Burger" in jobs[1].payload["text_content"]
+    assert "1x X-Burger" not in jobs[1].payload["text_content"]
+    assert jobs[1].html_content.count("X-Burger") == 1
+
+
+@pytest.mark.django_db
+def test_kitchen_new_order_note_shows_command_and_table_when_present(
+    account, restaurant, branch, table, command, product, manager_user
+):
+    product.sector = table.sector
+    product.save(update_fields=["sector", "updated_at"])
+    Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        sector=table.sector,
+        name="Cozinha",
+        endpoint="Teste",
+        auto_print=True,
+    )
+    command.current_table = table
+    command.save(update_fields=["current_table", "updated_at"])
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COMMAND,
+        command=command,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    send_order_to_kitchen(order, manager_user)
+
+    job = PrintJob.objects.get(order=order)
+    assert f"COMANDA: {command.code}" in job.payload["text_content"]
+    assert "MESA: 1" in job.payload["text_content"]
+    assert f"Comanda: {command.code}" in job.html_content
+    assert "Mesa: 1" in job.html_content
 
 
 @pytest.mark.django_db

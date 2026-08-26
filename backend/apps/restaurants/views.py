@@ -104,7 +104,7 @@ class TableSectorViewSet(BaseTenantViewSet):
 
 class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
     serializer_class = TableSerializer
-    queryset = Table.objects.select_related("restaurant", "branch", "sector").all()
+    queryset = Table.objects.select_related("restaurant", "branch", "sector").prefetch_related("active_commands").all()
     filterset_fields = ["sector", "status", "is_active"]
     search_fields = ["number", "code"]
     ordering_fields = ["number", "status", "updated_at"]

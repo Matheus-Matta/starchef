@@ -9,19 +9,11 @@ class TableDetailsPanel extends StatelessWidget {
     super.key,
     required this.table,
     required this.onBack,
-    required this.onLinkCommand,
-    required this.onUnlinkCommand,
-    required this.onTransferCommand,
-    required this.onTransferAllCommands,
     required this.onOpenCommand,
   });
 
   final Map<String, dynamic> table;
   final VoidCallback onBack;
-  final VoidCallback onLinkCommand;
-  final ValueChanged<Map<String, dynamic>> onUnlinkCommand;
-  final ValueChanged<Map<String, dynamic>> onTransferCommand;
-  final VoidCallback onTransferAllCommands;
   final ValueChanged<Map<String, dynamic>> onOpenCommand;
 
   @override
@@ -104,31 +96,6 @@ class TableDetailsPanel extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 22),
-              AppResponsiveFields(
-                breakpoint: 720,
-                spacing: 12,
-                children: [
-                  FilledButton.icon(
-                    onPressed: onLinkCommand,
-                    icon: const Icon(Icons.add_link),
-                    label: const Text('Vincular Comanda'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 50),
-                    ),
-                  ),
-                  if (activeCommands.isNotEmpty) ...[
-                    OutlinedButton.icon(
-                      onPressed: onTransferAllCommands,
-                      icon: const Icon(Icons.move_up),
-                      label: const Text('Transferir Mesa'),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(0, 50),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 22),
               Text(
                 'Comandas Vinculadas (${activeCommands.length})',
                 style: const TextStyle(
@@ -189,45 +156,7 @@ class TableDetailsPanel extends StatelessWidget {
                                   ),
                                 ),
                                 onTap: () => onOpenCommand(command),
-                                trailing: PopupMenuButton<String>(
-                                  onSelected: (val) {
-                                    if (val == 'unlink') {
-                                      onUnlinkCommand(command);
-                                    }
-                                    if (val == 'transfer') {
-                                      onTransferCommand(command);
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    const PopupMenuItem(
-                                      value: 'transfer',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.move_up, size: 20),
-                                          SizedBox(width: 8),
-                                          Text('Transferir'),
-                                        ],
-                                      ),
-                                    ),
-                                    const PopupMenuItem(
-                                      value: 'unlink',
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.link_off,
-                                            size: 20,
-                                            color: Colors.red,
-                                          ),
-                                          SizedBox(width: 8),
-                                          Text(
-                                            'Desvincular',
-                                            style: TextStyle(color: Colors.red),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                trailing: const Icon(Icons.chevron_right),
                               ),
                             ),
                           );

@@ -99,6 +99,22 @@ class CashRegisterViewSet(BaseTenantViewSet):
             status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]
         ).order_by("-opened_at").first()
         if register is None:
+            # Logout ends authentication, not the physical cash session. Any
+            # operator assigned to this station can safely resume it.
+            register = (
+                self.get_queryset()
+                .filter(cash_station__operators=request.user, cash_station__is_active=True)
+                .exclude(
+                    status__in=[
+                        CashRegister.STATUS_CLOSED,
+                        CashRegister.STATUS_CLOSED_DIFFERENCE,
+                        CashRegister.STATUS_CANCELLED,
+                    ]
+                )
+                .order_by("-opened_at")
+                .first()
+            )
+        if register is None:
             return Response({"detail": "O operador não possui uma sessão de caixa em andamento."}, status=status.HTTP_404_NOT_FOUND)
         return Response(self.get_serializer(register).data)
 

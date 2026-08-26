@@ -9,6 +9,7 @@ import '../data/orders_repository.dart';
 import 'order_formatters.dart';
 import 'orders_page.dart' show describeFailure;
 import 'sync_banner.dart';
+import 'table_picker_sheet.dart';
 
 /// Um pedido aberto: o que já foi lançado, o que falta enviar e o que
 /// acrescentar.
@@ -154,6 +155,64 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     );
   }
 
+  Future<void> _manageTable() async {
+    final order = _order;
+    final commandId = '${order?['command'] ?? ''}'.trim();
+    if (order == null || commandId.isEmpty || commandId == 'null') return;
+    final hasTable =
+        '${order['table'] ?? ''}'.trim().isNotEmpty && order['table'] != null;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.table_restaurant_outlined),
+              title: Text(hasTable ? 'Trocar de mesa' : 'Vincular a uma mesa'),
+              onTap: () => Navigator.pop(context, 'link'),
+            ),
+            if (hasTable)
+              ListTile(
+                leading: const Icon(Icons.link_off_outlined),
+                title: const Text('Desvincular da mesa'),
+                onTap: () => Navigator.pop(context, 'unlink'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'unlink') {
+      await _work(
+        () => widget.repository.unlinkTable(commandId: commandId),
+        'Comanda desvinculada da mesa.',
+      );
+      return;
+    }
+    try {
+      final tables = await widget.repository.tables();
+      if (!mounted) return;
+      final table = await showTablePicker(
+        context,
+        tables,
+        commandLabel: orderTitle(order),
+      );
+      if (table == null || !mounted) return;
+      await _work(
+        () => widget.repository.linkTable(
+          commandId: commandId,
+          tableId: '${table['id']}',
+          tableLabel: '${table['number']}',
+        ),
+        hasTable ? 'Comanda transferida de mesa.' : 'Comanda vinculada à mesa.',
+      );
+    } catch (error) {
+      if (mounted) _toast(describeFailure(error));
+    }
+  }
+
   Future<String?> _askReason(Map<String, dynamic> item) {
     final controller = TextEditingController();
     return showDialog<String>(
@@ -188,7 +247,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
 
   Future<void> _sendToKitchen() => _work(
     () => widget.repository.sendToKitchen(widget.orderId),
-    'Enviado para a cozinha. O caixa já está imprimindo.',
+    'Envio confirmado. Você tem 60 segundos para corrigir antes da impressão.',
   );
 
   void _toast(String message) {
@@ -210,14 +269,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         .whereType<String>()
         .toSet();
     final sendQueued = ordersPending.any((m) => m.kind == 'send_to_kitchen');
-    final pending = order == null
-        ? 0
-        : pendingItems(order) + addPending.length;
+    final pending = order == null ? 0 : pendingItems(order) + addPending.length;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(order == null ? 'Pedido' : orderTitle(order)),
         actions: [
+          if (order?['command'] != null)
+            IconButton(
+              tooltip: 'Vincular ou trocar mesa',
+              onPressed: _working ? null : _manageTable,
+              icon: const Icon(Icons.table_restaurant_outlined),
+            ),
           IconButton(
             tooltip: 'Atualizar',
             onPressed: _loading ? null : _load,
@@ -309,7 +372,7 @@ class _ItemTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final note = '${item['customer_note'] ?? ''}'.trim();
-    final pending = item['status'] == 'pending';
+    final cancellable = !{'cancelled', 'comped'}.contains('${item['status']}');
     return ShadCard(
       radius: AppTheme.radius,
       columnCrossAxisAlignment: CrossAxisAlignment.stretch,
@@ -368,11 +431,11 @@ class _ItemTile extends StatelessWidget {
               ],
             ),
           ),
-          // Só item pendente some sem rastro; o que já foi para a cozinha
-          // exige cancelamento com motivo — e isso é decisão do caixa.
-          if (pending && !voiding && onVoid != null)
+          if (cancellable && !voiding && onVoid != null)
             IconButton(
-              tooltip: 'Cancelar item',
+              tooltip: item['status'] == 'queued'
+                  ? 'Cancelar antes da impressão'
+                  : 'Cancelar item',
               onPressed: onVoid,
               icon: Icon(Icons.close, color: scheme.error, size: 20),
             ),
@@ -463,10 +526,7 @@ class _Actions extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text(
-                  'Total',
-                  style: TextStyle(color: scheme.onSurfaceVariant),
-                ),
+                Text('Total', style: TextStyle(color: scheme.onSurfaceVariant)),
                 const Spacer(),
                 Text(
                   money(total),

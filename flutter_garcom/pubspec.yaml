@@ -1,7 +1,7 @@
 name: starchef_garcom
 description: "StarChef Garçom — pedidos no salão, pelo Caixa Principal."
 publish_to: 'none'
-version: 1.6.0+7
+version: 1.6.2+9
 
 environment:
   sdk: ^3.12.2
@@ -42,16 +42,15 @@ flutter:
     - assets/icon/master.png
 
 # Config do flutter_launcher_icons (lido pelo `dart run flutter_launcher_icons`).
-# Fonte em assets/icon/*.svg — os .png são o resultado já rasterizado.
+# assets/icon/master.png é uma cópia EXATA (mesmo md5) de
+# frontend/public/logoicon.png — não é redesenhado nem recortado, é o mesmo
+# arquivo usado tal como está, inclusive para a camada de frente do ícone
+# adaptativo do Android (o fundo sólido por trás cobre os cantos
+# transparentes do PNG original com a mesma cor, sem costura visível).
 flutter_launcher_icons:
   android: true
   ios: true
-  # Ícone legado (Android <8 / iOS): arte cheia num quadrado opaco — cada SO
-  # aplica seu próprio recorte, por isso este PNG não pode ter cantos
-  # arredondados nem transparência (a Apple rejeita alpha no ícone da loja).
   image_path: "assets/icon/master.png"
-  # Ícone adaptativo (Android 8+): camadas separadas para o SO poder animar e
-  # recortar em qualquer formato de launcher (círculo, "squircle" etc.).
   adaptive_icon_background: "#EA580C"
-  adaptive_icon_foreground: "assets/icon/foreground.png"
+  adaptive_icon_foreground: "assets/icon/master.png"
   min_sdk_android: 21

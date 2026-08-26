@@ -1,5 +1,8 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 from apps.core.models import TenantModel
 
@@ -183,6 +186,7 @@ class ScaleReading(TenantModel):
 class PrintJob(TenantModel):
     TYPE_KITCHEN = "kitchen_ticket"
     TYPE_BAR = "bar_ticket"
+    TYPE_KITCHEN_CANCEL = "kitchen_cancellation"
     TYPE_TABLE_BILL = "table_bill"
     TYPE_RECEIPT = "receipt"
     # Recibo e comprovante de pagamento sao o mesmo documento do cliente.
@@ -191,13 +195,30 @@ class PrintJob(TenantModel):
     TYPE_WEIGH = "weigh_ticket"  # nota de pesagem (balanca por kilo)
     TYPE_FISCAL = "fiscal_danfe"  # cupom fiscal DANFE NFC-e
 
+    STATUS_SCHEDULED = "scheduled"
     STATUS_PENDING = "pending"
     STATUS_RENDERED = "rendered"
     STATUS_PRINTED = "printed"
     STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
 
+    serial = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     printer = models.ForeignKey(Printer, null=True, blank=True, related_name="jobs", on_delete=models.SET_NULL)
     order = models.ForeignKey("orders.Order", null=True, blank=True, related_name="print_jobs", on_delete=models.SET_NULL)
+    original_job = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="cancellation_jobs",
+        on_delete=models.PROTECT,
+    )
+    cancelled_item = models.ForeignKey(
+        "orders.OrderItem",
+        null=True,
+        blank=True,
+        related_name="cancellation_print_jobs",
+        on_delete=models.PROTECT,
+    )
     job_type = models.CharField(max_length=32, default=TYPE_RECEIPT, db_index=True)
     status = models.CharField(max_length=24, default=STATUS_RENDERED, db_index=True)
     payload = models.JSONField(default=dict, blank=True)
@@ -211,8 +232,16 @@ class PrintJob(TenantModel):
         on_delete=models.SET_NULL,
     )
     printed_at = models.DateTimeField(null=True, blank=True)
+    available_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["original_job", "cancelled_item"],
+                condition=Q(original_job__isnull=False, cancelled_item__isnull=False),
+                name="unique_cancel_job_per_original_item",
+            ),
+        ]
         indexes = [
             models.Index(fields=["branch", "job_type", "status", "created_at"]),
         ]

@@ -106,12 +106,20 @@ class TableSerializer(TenantModelSerializer):
     sector_name = serializers.CharField(source="sector.name", read_only=True)
     code = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
     active_commands = CommandSerializer(many=True, read_only=True)
+    status = serializers.SerializerMethodField()
 
     class Meta:
         model = Table
         fields = "__all__"
         # Estado e vinculo com pedido pertencem ao fluxo transacional, nao ao CRUD.
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id"]
+
+    def get_status(self, obj):
+        # O vínculo é a fonte de verdade operacional. Bases antigas podem ter
+        # mantido `status=free`; a API nunca deve desenhar essa mesa como livre.
+        commands = getattr(obj, "_prefetched_objects_cache", {}).get("active_commands")
+        occupied = bool(commands) if commands is not None else obj.active_commands.exists()
+        return Table.STATUS_OCCUPIED if occupied else obj.status
 
 
 class CommandMovementLogSerializer(TenantModelSerializer):

@@ -199,6 +199,12 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "America/Sao_Paulo"
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-due-kitchen-batches": {
+        "task": "orders.dispatch_due_kitchen_batches",
+        "schedule": 5.0,
+    },
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (

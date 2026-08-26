@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../data/local_topology_store.dart';
@@ -198,6 +199,63 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
                               prefixIcon: Icon(Icons.settings_ethernet),
                             ),
                           ),
+                          if (mode == LocalTopologyMode.principal &&
+                              secretController.text.trim().isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: AppTheme.radius,
+                                border: Border.all(
+                                  color: scheme.outlineVariant,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  QrImageView(
+                                    data: secretController.text.trim(),
+                                    size: 132,
+                                    backgroundColor: Colors.white,
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Pareamento do app do garçom',
+                                          style: TextStyle(
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        const Text(
+                                          'Leia este QR Code para obter a chave de pareamento deste Caixa Principal.',
+                                          style: TextStyle(
+                                            color: Colors.black54,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        SelectableText(
+                                          secretController.text.trim(),
+                                          maxLines: 2,
+                                          style: const TextStyle(
+                                            color: Colors.black87,
+                                            fontFamily: 'monospace',
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           TextField(
                             controller: secretController,

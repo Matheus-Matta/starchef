@@ -34,6 +34,7 @@ class AuthRepository {
         'username': username.trim(),
         'password': password,
         'no_cookie': true,
+        'client': 'waiter_app',
       },
     );
 

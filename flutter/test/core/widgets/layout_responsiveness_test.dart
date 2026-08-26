@@ -567,7 +567,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('detalhes da mesa empilham cabeçalho e ações no compacto', (
+  testWidgets('detalhes da mesa permanecem legíveis no compacto', (
     tester,
   ) async {
     await _pumpAtSize(
@@ -592,16 +592,13 @@ void main() {
           ],
         },
         onBack: () {},
-        onLinkCommand: () {},
-        onUnlinkCommand: (_) {},
-        onTransferCommand: (_) {},
-        onTransferAllCommands: () {},
         onOpenCommand: (_) {},
       ),
     );
 
     expect(find.text('Mesa 128'), findsOneWidget);
-    expect(find.text('Transferir Mesa'), findsOneWidget);
+    expect(find.text('Comandas Vinculadas (1)'), findsOneWidget);
+    expect(find.text('Transferir Mesa'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

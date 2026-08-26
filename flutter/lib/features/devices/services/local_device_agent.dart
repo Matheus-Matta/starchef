@@ -344,6 +344,7 @@ class LocalDeviceAgent {
   Future<void>? _deviceSyncInFlight;
   List<Map<String, dynamic>> _printers = const [];
   Timer? _availabilityTimer;
+  Timer? _scheduledPrintTimer;
 
   void start({required String token, required String restaurantId}) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
@@ -355,6 +356,8 @@ class LocalDeviceAgent {
     _lastDeviceSync = null;
     _backoffUntil = null;
     _availabilityTimer?.cancel();
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
     printerAvailability.value = const PrinterAvailability(
       PrinterAvailabilityPhase.checking,
       'Verificando impressora...',
@@ -383,6 +386,8 @@ class LocalDeviceAgent {
     _stopRealtime();
     _availabilityTimer?.cancel();
     _availabilityTimer = null;
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
     _token = null;
     _restaurantId = null;
     _lastTemplateSync = null;
@@ -512,6 +517,8 @@ class LocalDeviceAgent {
   }
 
   Future<void> _processPrintJobs() async {
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
     await _syncDevicesIfNeeded();
     final availablePrinters = <String, Map<String, dynamic>>{
       for (final printer in _printers)
@@ -519,7 +526,8 @@ class LocalDeviceAgent {
           '${printer['id']}': printer,
     };
 
-    for (final status in ['pending', 'rendered']) {
+    DateTime? nextScheduledAt;
+    for (final status in ['scheduled', 'pending', 'rendered']) {
       final jobs = await _list(
         '/print-jobs/',
         query: {
@@ -530,6 +538,18 @@ class LocalDeviceAgent {
         },
       );
       for (final job in jobs) {
+        if ('${job['status']}' == 'scheduled') {
+          final availableAt = DateTime.tryParse(
+            '${job['available_at'] ?? ''}',
+          )?.toLocal();
+          if (availableAt != null && availableAt.isAfter(DateTime.now())) {
+            if (nextScheduledAt == null ||
+                availableAt.isBefore(nextScheduledAt)) {
+              nextScheduledAt = availableAt;
+            }
+          }
+          continue;
+        }
         final printer = availablePrinters['${job['printer']}'];
         if (printer == null) continue;
         final payload = job['payload'] as Map<String, dynamic>? ?? const {};
@@ -565,6 +585,15 @@ class LocalDeviceAgent {
           );
         }
       }
+    }
+    if (nextScheduledAt != null && _token != null) {
+      final wait = nextScheduledAt.difference(DateTime.now());
+      _scheduledPrintTimer = Timer(
+        wait.isNegative
+            ? const Duration(milliseconds: 100)
+            : wait + const Duration(milliseconds: 150),
+        () => unawaited(_guarded(_processPrintJobs)),
+      );
     }
   }
 

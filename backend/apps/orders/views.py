@@ -21,6 +21,7 @@ from apps.orders.services import (
     close_order,
     comp_order_item,
     create_order,
+    create_order_with_item,
     send_order_to_kitchen,
     update_order_item_status,
     void_order_item,
@@ -171,6 +172,75 @@ class OrderViewSet(BaseTenantViewSet):
                 order_type=Order.TYPE_COMMAND,
                 command=command,
                 user=request.user,
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="create-with-item")
+    def create_with_item(self, request):
+        """Creates the order and first item in one transaction.
+
+        This is the waiter-app entry point: dismissing a picker never leaves an
+        empty counter/delivery/takeaway/command order behind.
+        """
+        profile = getattr(request.user, "profile", None)
+        restaurant = getattr(profile, "restaurant", None)
+        if restaurant is None:
+            return Response({"detail": "Usuário sem restaurante vinculado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        order_type = request.data.get("order_type")
+        if order_type not in {Order.TYPE_COMMAND, Order.TYPE_COUNTER, Order.TYPE_DELIVERY, Order.TYPE_TAKEAWAY}:
+            return Response({"order_type": "Tipo de pedido inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        command = None
+        table = None
+        if order_type == Order.TYPE_COMMAND:
+            command = Command.objects.filter(
+                pk=request.data.get("command"),
+                restaurant=restaurant,
+                is_active=True,
+            ).first()
+            if command is None:
+                return Response({"command": "Selecione uma comanda válida."}, status=status.HTTP_400_BAD_REQUEST)
+            if command.current_order_id:
+                return Response(
+                    {"detail": "A comanda já possui um pedido. Reabra-o para adicionar itens."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if request.data.get("table"):
+                from apps.restaurants.models import Table
+
+                table = Table.objects.filter(
+                    pk=request.data["table"],
+                    restaurant=restaurant,
+                    is_active=True,
+                ).first()
+                if table is None:
+                    return Response({"table": "Selecione uma mesa válida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_item = request.data.get("item")
+        if not isinstance(raw_item, dict) or not raw_item.get("product"):
+            return Response({"item": "Adicione o primeiro item do pedido."}, status=status.HTTP_400_BAD_REQUEST)
+        product = Product.objects.filter(pk=raw_item["product"], restaurants=restaurant, is_active=True).first()
+        if product is None:
+            return Response({"item": "O produto selecionado não está disponível."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = create_order_with_item(
+                restaurant=restaurant,
+                order_type=order_type,
+                command=command,
+                table=table,
+                product=product,
+                user=request.user,
+                item_data={
+                    "quantity": raw_item.get("quantity"),
+                    "variations": raw_item.get("variations", []),
+                    "addons": raw_item.get("addons", []),
+                    "customer_note": raw_item.get("customer_note", ""),
+                    "expected_unit_price": raw_item.get("expected_unit_price"),
+                },
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)

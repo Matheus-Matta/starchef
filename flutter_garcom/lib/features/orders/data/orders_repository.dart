@@ -140,6 +140,36 @@ class OrdersRepository {
         body: {'order_type': orderType},
       );
 
+  /// Materializa um rascunho somente junto com o primeiro item confirmado.
+  Future<Map<String, dynamic>> createOrderWithItem({
+    required String orderType,
+    required String productId,
+    required int quantity,
+    required List<String> addonIds,
+    String? variationId,
+    String customerNote = '',
+    String? commandId,
+    String? tableId,
+  }) => principalClient.mutate(
+    principal,
+    session.identity,
+    method: 'POST',
+    path: '/orders/create-with-item/',
+    operationId: RelaySignature.randomId(),
+    body: {
+      'order_type': orderType,
+      ...commandId == null ? const {} : {'command': commandId},
+      ...tableId == null ? const {} : {'table': tableId},
+      'item': {
+        'product': productId,
+        'quantity': quantity,
+        'variations': variationId == null ? const [] : [variationId],
+        'addons': addonIds,
+        'customer_note': customerNote,
+      },
+    },
+  );
+
   /// Vincula a comanda a uma mesa (onde o cliente sentou). Entra na fila se o
   /// caixa estiver fora do ar.
   Future<Map<String, dynamic>> linkTable({
@@ -153,6 +183,14 @@ class OrdersRepository {
     summary: 'Vincular à mesa $tableLabel',
     body: {'table_id': tableId},
   );
+
+  Future<Map<String, dynamic>> unlinkTable({required String commandId}) =>
+      _mutate(
+        method: 'POST',
+        path: '/commands/$commandId/unlink-table/',
+        kind: 'unlink_table',
+        summary: 'Desvincular comanda da mesa',
+      );
 
   /// Entra na fila se o caixa estiver fora do ar.
   Future<Map<String, dynamic>> addItem({

@@ -7,6 +7,7 @@ import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/presentation/principal_setup_page.dart';
 import '../../auth/presentation/session_controller.dart';
+import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
 import 'command_picker_sheet.dart';
 import 'new_order_sheet.dart';
@@ -81,10 +82,17 @@ class _OrdersPageState extends State<OrdersPage> {
       await _openByCommand();
       return;
     }
-    // Balcão, delivery e retirada não passam por comanda: o pedido nasce
-    // direto com o tipo escolhido.
+    final item = await showProductPicker(context, widget.repository);
+    if (item == null || !mounted) return;
     try {
-      final order = await widget.repository.createOrder(kind.orderType);
+      final order = await widget.repository.createOrderWithItem(
+        orderType: kind.orderType,
+        productId: item.productId,
+        quantity: item.quantity,
+        variationId: item.variationId,
+        addonIds: item.addonIds,
+        customerNote: item.note,
+      );
       if (!mounted) return;
       await _openOrder(order);
     } catch (error) {
@@ -97,68 +105,56 @@ class _OrdersPageState extends State<OrdersPage> {
     final command = await showCommandPicker(context, widget.repository);
     if (command == null || !mounted) return;
 
-    late final Map<String, dynamic> order;
-    try {
-      order = await widget.repository.openCommandOrder('${command['id']}');
-    } catch (error) {
-      if (!mounted) return;
-      _toast(describeFailure(error));
+    final currentOrderId = '${command['current_order_id'] ?? ''}'.trim();
+    if (currentOrderId.isNotEmpty && currentOrderId != 'null') {
+      await _openOrder({'id': currentOrderId});
       return;
     }
-    if (!mounted) return;
 
-    // Comanda que já estava vinculada a uma mesa não pergunta de novo: o
-    // cliente já está sentado, e reperguntar a cada item atrasaria o
-    // atendimento.
+    Map<String, dynamic>? table;
     final jaVinculada = '${command['current_table'] ?? ''}'.trim();
     if (jaVinculada.isEmpty || jaVinculada == 'null') {
-      await _askForTable(command);
+      table = await _chooseTable(command);
       if (!mounted) return;
     }
-    await _openOrder(order);
+    final item = await showProductPicker(context, widget.repository);
+    if (item == null || !mounted) return;
+    try {
+      final order = await widget.repository.createOrderWithItem(
+        orderType: 'command',
+        commandId: '${command['id']}',
+        tableId: table == null ? null : '${table['id']}',
+        productId: item.productId,
+        quantity: item.quantity,
+        variationId: item.variationId,
+        addonIds: item.addonIds,
+        customerNote: item.note,
+      );
+      if (mounted) await _openOrder(order);
+    } catch (error) {
+      if (mounted) _toast(describeFailure(error));
+    }
   }
 
   /// Pergunta a mesa DEPOIS de a comanda estar aberta — o vínculo é do
   /// atendimento, não a forma de abrir o pedido.
-  Future<void> _askForTable(Map<String, dynamic> command) async {
+  Future<Map<String, dynamic>?> _chooseTable(
+    Map<String, dynamic> command,
+  ) async {
     late final List<Map<String, dynamic>> tables;
     try {
       tables = await widget.repository.tables();
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return null;
       _toast(describeFailure(error));
-      return;
+      return null;
     }
-    if (!mounted) return;
-    final table = await showTablePicker(
+    if (!mounted) return null;
+    return showTablePicker(
       context,
       tables,
       commandLabel: 'Comanda ${command['number'] ?? ''}',
     );
-    if (table == null || !mounted) return;
-    try {
-      await widget.repository.linkTable(
-        commandId: '${command['id']}',
-        tableId: '${table['id']}',
-        tableLabel: '${table['number']}',
-      );
-      if (mounted) _toast('Comanda vinculada à mesa ${table['number']}.');
-    } on MutationQueued {
-      // Sem conexão com o caixa: o vínculo foi salvo e vai ser reenviado
-      // sozinho — não é uma falha do atendimento.
-      if (mounted) {
-        _toast('Sem conexão: o vínculo com a mesa será enviado assim que o '
-            'Caixa Principal responder.');
-      }
-    } catch (error) {
-      // O pedido já existe: falhar o vínculo não pode cancelar o atendimento.
-      if (mounted) {
-        _toast(
-          'Pedido aberto, mas a mesa não foi vinculada: '
-          '${describeFailure(error)}',
-        );
-      }
-    }
   }
 
   /// Reabre o pareamento sem deslogar: a loja pode ter trocado o computador do

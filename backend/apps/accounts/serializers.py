@@ -203,6 +203,17 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not profile.is_active:
             raise AuthenticationFailed("Perfil inativo.", code="profile_inactive")
 
+        request = self.context.get("request")
+        if (
+            request is not None
+            and request.data.get("client") == "waiter_app"
+            and profile.profile_type != UserProfile.PROFILE_WAITER
+        ):
+            raise AuthenticationFailed(
+                "Use uma conta com perfil de garçom para entrar neste aplicativo.",
+                code="waiter_profile_required",
+            )
+
         data["user"] = {
             "id": str(self.user.id),
             "username": self.user.username,

@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -186,18 +188,24 @@ class Order(TenantModel):
 class OrderBatch(TenantModel):
     """Production round — group of items sent to kitchen at once within a single order."""
 
+    STATUS_SCHEDULED = "scheduled"
     STATUS_SENT = "sent"
     STATUS_DONE = "done"
+    STATUS_CANCELLED = "cancelled"
 
     STATUS_CHOICES = [
+        (STATUS_SCHEDULED, "Scheduled"),
         (STATUS_SENT, "Sent"),
         (STATUS_DONE, "Done"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     order = models.ForeignKey(Order, related_name="batches", on_delete=models.CASCADE)
+    serial = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     batch_number = models.PositiveIntegerField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SENT)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SCHEDULED)
     sent_at = models.DateTimeField()
+    dispatch_at = models.DateTimeField(null=True, blank=True, db_index=True)
     sent_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -219,6 +227,7 @@ class OrderBatch(TenantModel):
 
 class OrderItem(TenantModel):
     STATUS_PENDING = "pending"
+    STATUS_QUEUED = "queued"
     STATUS_SENT = "sent"
     STATUS_PREPARING = "preparing"
     STATUS_READY = "ready"
@@ -228,6 +237,7 @@ class OrderItem(TenantModel):
 
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
+        (STATUS_QUEUED, "Queued during grace period"),
         (STATUS_SENT, "Sent"),
         (STATUS_PREPARING, "Preparing"),
         (STATUS_READY, "Ready"),

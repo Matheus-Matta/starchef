@@ -9,7 +9,8 @@ double amount(Object? value) {
 }
 
 /// Valor em reais, no formato que o garçom lê na comanda.
-String money(Object? value) => 'R\$ ${amount(value).toStringAsFixed(2).replaceAll('.', ',')}';
+String money(Object? value) =>
+    'R\$ ${amount(value).toStringAsFixed(2).replaceAll('.', ',')}';
 
 /// Preço de uma unidade do produto com a variação e os adicionais escolhidos:
 /// base + delta da variação (se houver) + soma dos adicionais marcados.
@@ -83,9 +84,8 @@ String _text(Object? value) {
 ///
 /// É o número que decide se o botão "Enviar para a cozinha" tem o que fazer:
 /// sem itens pendentes, mandar de novo só geraria impressão repetida.
-int pendingItems(Map<String, dynamic> order) => orderItems(
-  order,
-).where((item) => item['status'] == 'pending').length;
+int pendingItems(Map<String, dynamic> order) =>
+    orderItems(order).where((item) => item['status'] == 'pending').length;
 
 List<Map<String, dynamic>> orderItems(Map<String, dynamic> order) {
   final items = order['items'];
@@ -102,6 +102,7 @@ List<Map<String, dynamic>> orderItems(Map<String, dynamic> order) {
 /// Rótulo do estado do item na cozinha.
 String itemStatusLabel(Object? status) => switch ('$status') {
   'pending' => 'A enviar',
+  'queued' => 'Aguardando 60 s',
   'sent' => 'Na cozinha',
   'preparing' => 'Preparando',
   'ready' => 'Pronto',

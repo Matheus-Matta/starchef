@@ -38,6 +38,14 @@ class KitchenOrderViewSet(ReadOnlyTenantViewSet):
     filterset_fields = ["status", "production_status", "order_type", "items__production_sector"]
     ordering_fields = ["opened_at", "sequence"]
 
+    def list(self, request, *args, **kwargs):
+        from apps.orders.services import dispatch_due_kitchen_batches
+
+        account = getattr(request, "account", None)
+        if account is not None:
+            dispatch_due_kitchen_batches(account_id=account.id)
+        return super().list(request, *args, **kwargs)
+
 
 class KitchenItemFilter(django_filters.FilterSet):
     """Filtro do KDS: setor/status + intervalo de datas (por data de lançamento)."""
@@ -59,6 +67,14 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
     )
     filterset_class = KitchenItemFilter
     ordering_fields = ["launched_at", "ready_at", "sent_to_kitchen_at"]
+
+    def list(self, request, *args, **kwargs):
+        from apps.orders.services import dispatch_due_kitchen_batches
+
+        account = getattr(request, "account", None)
+        if account is not None:
+            dispatch_due_kitchen_batches(account_id=account.id)
+        return super().list(request, *args, **kwargs)
 
     def get_queryset(self):
         return super().get_queryset().filter(status__in=_ACTIVE_ITEM_STATUSES)

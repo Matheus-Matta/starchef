@@ -59,18 +59,27 @@ class SessionController extends ChangeNotifier {
   Future<void> restore() async {
     // O pareamento é do aparelho: é lido mesmo sem sessão, para o garçom
     // seguinte cair direto na lista de pedidos depois de entrar.
-    _session = await store.readSession();
+    final restored = await store.readSession();
+    if (restored != null && restored.user.profileType != 'waiter') {
+      // Versões antigas aceitavam a mesma sessão do PDV. Não restaura essa
+      // credencial depois que o app passou a exigir uma conta de garçom.
+      await store.clearSession();
+      _session = null;
+    } else {
+      _session = restored;
+    }
     _principal = await store.readPrincipal();
     _restoring = false;
     notifyListeners();
   }
 
-  Future<bool> login({
-    required String username,
-    required String password,
-  }) => _run(() async {
-    _session = await _repository.login(username: username, password: password);
-  });
+  Future<bool> login({required String username, required String password}) =>
+      _run(() async {
+        _session = await _repository.login(
+          username: username,
+          password: password,
+        );
+      });
 
   Future<bool> pair({
     required String host,

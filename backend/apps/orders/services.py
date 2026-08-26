@@ -16,6 +16,7 @@ from apps.restaurants.models import Command, Table
 
 TWO_PLACES = Decimal("0.01")
 THREE_PLACES = Decimal("0.001")
+KITCHEN_DISPATCH_GRACE_SECONDS = 60
 
 
 def next_order_sequence(restaurant):
@@ -343,6 +344,7 @@ def send_order_to_kitchen(order, user):
             raise ValidationError("Não há itens pendentes para enviar à cozinha.")
 
         now = timezone.now()
+        dispatch_at = now + timedelta(seconds=KITCHEN_DISPATCH_GRACE_SECONDS)
 
         # Each send creates a new production round
         last_batch_number = order.batches.aggregate(value=Max("batch_number"))["value"] or 0
@@ -352,66 +354,237 @@ def send_order_to_kitchen(order, user):
             branch=order.branch,
             order=order,
             batch_number=last_batch_number + 1,
-            status=OrderBatch.STATUS_SENT,
+            status=OrderBatch.STATUS_SCHEDULED,
             sent_at=now,
+            dispatch_at=dispatch_at,
             sent_by=user,
             created_by=user,
             updated_by=user,
         )
 
         for item in items:
-            item.status = OrderItem.STATUS_SENT
+            item.status = OrderItem.STATUS_QUEUED
             item.batch = batch
-            item.sent_to_kitchen_at = now
+            item.sent_to_kitchen_at = None
             item.updated_by = user
             item.save(update_fields=["status", "batch", "sent_to_kitchen_at", "updated_by", "updated_at"])
-            broadcast_kitchen_event(
-                order.account_id,
-                order.branch_id,
-                item.production_sector,
-                "order_item.sent",
-                serialize_kitchen_item(item),
-            )
 
-        order.production_status = Order.PROD_SENT
         order.updated_by = user
-        order.save(update_fields=["production_status", "updated_by", "updated_at"])
+        order.save(update_fields=["updated_by", "updated_at"])
         record_audit(
             action=AuditLog.ACTION_UPDATED,
             instance=order,
             actor=user,
-            metadata={"event": "send_to_kitchen", "batch": batch.batch_number},
+            metadata={
+                "event": "kitchen_dispatch_scheduled",
+                "batch": batch.batch_number,
+                "batch_serial": str(batch.serial),
+                "dispatch_at": dispatch_at.isoformat(),
+                "grace_seconds": KITCHEN_DISPATCH_GRACE_SECONDS,
+            },
         )
 
         from apps.printers.services import register_kitchen_batch_print_jobs
 
         register_kitchen_batch_print_jobs(batch=batch, user=user)
 
-        if order.restaurant.stock_deduction_timing == "kitchen":
-            from apps.stock.services import deduct_order_stock
-
-            deduct_order_stock(order=order, user=user)
-
         return order
 
 
 @transaction.atomic
+def create_order_with_item(
+    *,
+    restaurant,
+    order_type,
+    product,
+    user,
+    command=None,
+    table=None,
+    item_data=None,
+):
+    """Atomically creates a real order only when its first item is valid."""
+    item_data = dict(item_data or {})
+    with tenant_context(restaurant.account):
+        if command is not None and table is not None:
+            command = Command.objects.select_for_update().get(pk=command.pk)
+            table = Table.objects.select_for_update().get(pk=table.pk)
+            if table.restaurant_id != restaurant.id or table.status == Table.STATUS_CLEANING:
+                raise ValidationError("A mesa selecionada não está disponível neste restaurante.")
+            old_table_id = command.current_table_id
+            command.current_table = table
+            command.branch = table.branch
+            command.updated_by = user
+            command.save(update_fields=["current_table", "branch", "updated_by", "updated_at"])
+            table.status = Table.STATUS_OCCUPIED
+            table.current_order_id = None
+            table.save(update_fields=["status", "current_order_id", "updated_at"])
+
+            from apps.restaurants.models import CommandMovementLog
+
+            CommandMovementLog.objects.create(
+                account=command.account,
+                restaurant=command.restaurant,
+                branch=command.branch,
+                command=command,
+                action=CommandMovementLog.ACTION_LINKED,
+                table=table,
+                from_table_id=old_table_id,
+                waiter=user,
+            )
+            if old_table_id and old_table_id != table.id:
+                free_table_if_empty(Table.objects.get(pk=old_table_id))
+
+        order = create_order(
+            restaurant=restaurant,
+            order_type=order_type,
+            command=command,
+            user=user,
+        )
+        add_order_item(order=order, product=product, user=user, **item_data)
+        return Order.objects.prefetch_related("items__product", "items__addons", "items__batch").get(pk=order.pk)
+
+
+@transaction.atomic
+def dispatch_kitchen_batch(batch, *, now=None):
+    """Release a scheduled round to KDS/printers after the grace period."""
+    now = now or timezone.now()
+    with tenant_context(batch.account):
+        batch = (
+            OrderBatch.objects.select_for_update()
+            .select_related("order__restaurant", "sent_by")
+            .get(pk=batch.pk)
+        )
+        if batch.status != OrderBatch.STATUS_SCHEDULED:
+            return batch
+        if batch.dispatch_at and batch.dispatch_at > now:
+            return batch
+
+        items = list(
+            batch.items.select_for_update()
+            .select_related("order", "product")
+            .filter(status=OrderItem.STATUS_QUEUED)
+        )
+        if not items:
+            batch.status = OrderBatch.STATUS_CANCELLED
+            batch.save(update_fields=["status", "updated_at"])
+            from apps.printers.models import PrintJob
+
+            PrintJob.objects.filter(
+                payload__batch_id=str(batch.id),
+                status=PrintJob.STATUS_SCHEDULED,
+            ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
+            return batch
+
+        for item in items:
+            item.status = OrderItem.STATUS_SENT
+            item.sent_to_kitchen_at = now
+            item.save(update_fields=["status", "sent_to_kitchen_at", "updated_at"])
+            transaction.on_commit(
+                lambda current=item: broadcast_kitchen_event(
+                    current.account_id,
+                    current.branch_id,
+                    current.production_sector,
+                    "order_item.sent",
+                    serialize_kitchen_item(current),
+                )
+            )
+
+        batch.status = OrderBatch.STATUS_SENT
+        batch.sent_at = now
+        batch.save(update_fields=["status", "sent_at", "updated_at"])
+
+        order = batch.order
+        order.production_status = Order.PROD_SENT
+        order.updated_by = batch.sent_by
+        order.save(update_fields=["production_status", "updated_by", "updated_at"])
+
+        from apps.printers.models import PrintJob
+
+        PrintJob.objects.filter(
+            payload__batch_id=str(batch.id),
+            status=PrintJob.STATUS_SCHEDULED,
+        ).update(status=PrintJob.STATUS_RENDERED, available_at=now, updated_at=now)
+
+        if order.restaurant.stock_deduction_timing == "kitchen":
+            from apps.stock.services import deduct_order_stock
+
+            deduct_order_stock(order=order, user=batch.sent_by)
+
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=order,
+            actor=batch.sent_by,
+            metadata={
+                "event": "kitchen_dispatch_released",
+                "batch": batch.batch_number,
+                "batch_serial": str(batch.serial),
+            },
+        )
+        return batch
+
+
+def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=None):
+    """Release all due rounds; safe for Celery and read-time fallback."""
+    now = now or timezone.now()
+    due = OrderBatch.all_objects.filter(
+        status=OrderBatch.STATUS_SCHEDULED,
+        dispatch_at__lte=now,
+        deleted_at__isnull=True,
+    )
+    if account_id:
+        due = due.filter(account_id=account_id)
+    if restaurant_id:
+        due = due.filter(restaurant_id=restaurant_id)
+    batch_ids = list(due.values_list("id", flat=True)[:500])
+    for batch_id in batch_ids:
+        batch = OrderBatch.all_objects.select_related("account").get(pk=batch_id)
+        dispatch_kitchen_batch(batch, now=now)
+    return len(batch_ids)
+
+
+@transaction.atomic
 def void_order_item(item, user, reason=""):
-    """Cancel a pending item before it is sent to kitchen."""
+    """Cancel an item, printing a linked cancellation only after dispatch."""
     if not reason.strip():
         raise ValidationError("Informe o motivo do cancelamento do item.")
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        item = OrderItem.objects.select_for_update().select_related("order", "batch").get(pk=item.pk)
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
-        if item.status != OrderItem.STATUS_PENDING:
-            raise ValidationError("Somente itens pendentes podem ser cancelados. Para itens já enviados, use cortesia.")
+        if item.status in {OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
+            raise ValidationError("Este item já foi cancelado ou retirado da conta.")
+
+        within_grace = item.status == OrderItem.STATUS_QUEUED
+        if within_grace and item.batch and item.batch.dispatch_at and item.batch.dispatch_at <= timezone.now():
+            dispatch_kitchen_batch(item.batch)
+            item.refresh_from_db()
+            within_grace = item.status == OrderItem.STATUS_QUEUED
+
+        was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
         item.status = OrderItem.STATUS_CANCELLED
         item.void_reason = reason
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
         recalculate_order(item.order)
-        record_audit(action=AuditLog.ACTION_CANCELLED, instance=item, actor=user, reason=reason)
+        if within_grace and item.batch_id:
+            from apps.printers.services import refresh_scheduled_kitchen_batch_jobs
+
+            refresh_scheduled_kitchen_batch_jobs(batch=item.batch, user=user)
+        elif was_dispatched:
+            from apps.printers.services import register_kitchen_item_cancellation_jobs
+
+            register_kitchen_item_cancellation_jobs(item=item, user=user, reason=reason)
+        record_audit(
+            action=AuditLog.ACTION_CANCELLED,
+            instance=item,
+            actor=user,
+            reason=reason,
+            metadata={
+                "event": "order_item_cancelled",
+                "within_print_grace_period": within_grace,
+                "cancellation_ticket_required": was_dispatched,
+            },
+        )
         return item
 
 
@@ -454,6 +627,10 @@ def update_order_item_status(item, new_status, user, reason=""):
             return void_order_item(item, user, reason)
         if new_status == OrderItem.STATUS_COMPED:
             return comp_order_item(item, user, reason)
+        if item.status == OrderItem.STATUS_QUEUED:
+            raise ValidationError(
+                "O item ainda está no prazo de correção de 60 segundos e não entrou na cozinha."
+            )
 
         if item.status == OrderItem.STATUS_READY and new_status != OrderItem.STATUS_DELIVERED:
             profile = getattr(user, "profile", None)

@@ -16,6 +16,7 @@ from apps.printers.models import Printer, PrintJob
 _TEMPLATE_BY_TYPE = {
     PrintJob.TYPE_KITCHEN: "printers/kitchen_ticket.html",
     PrintJob.TYPE_BAR: "printers/kitchen_ticket.html",
+    PrintJob.TYPE_KITCHEN_CANCEL: "printers/kitchen_ticket.html",
     PrintJob.TYPE_WEIGH: "printers/weigh_ticket.html",
     PrintJob.TYPE_RECEIPT: "printers/receipt.html",
     PrintJob.TYPE_TABLE_BILL: "printers/receipt.html",
@@ -255,32 +256,34 @@ def register_print_job(
         return job
 
 
+def _kitchen_quantity(value):
+    return format(Decimal(value).normalize(), "f")
+
+
 def _kitchen_ticket_text(*, order, batch, sector, items):
-    where = (
-        f"Mesa {order.table.number}"
-        if order.table_id
-        else (f"Comanda {order.command.code}" if order.command_id else order.get_order_type_display())
-    )
     lines = [
-        str(sector.name).upper().center(32),
-        f"PEDIDO #{order.sequence}".center(32),
-        f"RODADA #{batch.batch_number}".center(32),
-        "-" * 32,
-        where,
-        timezone.localtime(batch.sent_at).strftime("%d/%m/%Y %H:%M:%S"),
+        "NOVO PEDIDO".center(32),
         "-" * 32,
     ]
+    if order.table_id:
+        lines.append(f"MESA: {order.table.number}"[:32])
+    if order.command_id:
+        lines.append(f"COMANDA: {order.command.code}"[:32])
+    if order.table_id or order.command_id:
+        lines.append("-" * 32)
     for item in items:
-        lines.append(f"{item.quantity:g}x {item.product.name}"[:32])
+        lines.append(f"{_kitchen_quantity(item.quantity)}x {item.product.name}"[:32])
         for variation in item.variations or []:
             name = variation.get("name", variation) if isinstance(variation, dict) else variation
             lines.append(f"  VAR: {name}"[:32])
         for addon in item.addons.all():
-            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:32])
+            lines.append(f"  + {_kitchen_quantity(addon.quantity)}x {addon.addon.name}"[:32])
         if item.customer_note:
             lines.append(f"  OBS: {item.customer_note}"[:32])
         lines.append("-" * 32)
-    lines.extend(["", "FIM DA RODADA".center(32), ""])
+    # Mantém uma referência curta no rodapé para que um eventual cancelamento
+    # posterior possa ser ligado exatamente a esta impressão.
+    lines.extend([f"REF: {batch.serial}", ""])
     return "\n".join(lines)
 
 
@@ -289,7 +292,10 @@ def register_kitchen_batch_print_jobs(*, batch, user):
     order = batch.order
     with tenant_context(order.account):
         items = list(
-            batch.items.select_related("product__sector").prefetch_related("addons__addon").order_by("launched_at")
+            batch.items.select_related("product__sector")
+            .prefetch_related("addons__addon")
+            .filter(status="queued")
+            .order_by("launched_at")
         )
         by_sector = {}
         for item in items:
@@ -327,13 +333,19 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                     printer=printer,
                     order=order,
                     job_type=PrintJob.TYPE_KITCHEN,
-                    status=PrintJob.STATUS_RENDERED,
+                    status=(
+                        PrintJob.STATUS_SCHEDULED
+                        if batch.status == batch.STATUS_SCHEDULED
+                        else PrintJob.STATUS_RENDERED
+                    ),
+                    available_at=batch.dispatch_at,
                     payload={
                         "account_id": str(order.account_id),
                         "order_id": str(order.id),
                         "sequence": order.sequence,
                         "batch_id": str(batch.id),
                         "batch_number": batch.batch_number,
+                        "batch_serial": str(batch.serial),
                         "sector_id": str(sector.id),
                         "sector_name": sector.name,
                         "item_ids": [str(item.id) for item in sector_items],
@@ -353,6 +365,120 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                         "job_type": PrintJob.TYPE_KITCHEN,
                         "batch": batch.batch_number,
                         "sector": str(sector.id),
+                    },
+                )
+        return jobs
+
+
+def refresh_scheduled_kitchen_batch_jobs(*, batch, user):
+    """Rebuild a not-yet-released ticket after an item is cancelled.
+
+    The previous immutable jobs remain as cancelled audit evidence and are
+    never exposed to the printer agent.
+    """
+    with tenant_context(batch.account):
+        now = timezone.now()
+        PrintJob.objects.filter(
+            payload__batch_id=str(batch.id),
+            status=PrintJob.STATUS_SCHEDULED,
+        ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
+        if not batch.items.filter(status="queued").exists():
+            batch.status = batch.STATUS_CANCELLED
+            batch.save(update_fields=["status", "updated_at"])
+            return []
+        jobs = register_kitchen_batch_print_jobs(batch=batch, user=user)
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=batch,
+            actor=user,
+            metadata={
+                "event": "scheduled_kitchen_ticket_rebuilt",
+                "batch_serial": str(batch.serial),
+                "printed_cancellation": False,
+            },
+        )
+        return jobs
+
+
+def _kitchen_cancellation_text(*, item, original_job, reason):
+    order = item.order
+    batch = item.batch
+    where = (
+        f"Mesa {order.table.number}"
+        if order.table_id
+        else (f"Comanda {order.command.code}" if order.command_id else order.get_order_type_display())
+    )
+    return "\n".join(
+        [
+            "CANCELAMENTO".center(32),
+            f"PEDIDO #{order.sequence}".center(32),
+            f"ORIGINAL {original_job.serial}".center(32),
+            f"RODADA {batch.serial if batch else '-'}".center(32),
+            "-" * 32,
+            where,
+            f"CANCELAR {_kitchen_quantity(item.quantity)}x {item.product.name}"[:32],
+            f"MOTIVO: {reason}"[:32],
+            timezone.localtime().strftime("%d/%m/%Y %H:%M:%S"),
+            "-" * 32,
+            "FIM DO CANCELAMENTO".center(32),
+            "",
+        ]
+    )
+
+
+def register_kitchen_item_cancellation_jobs(*, item, user, reason):
+    """Create one immediate, idempotent cancellation per original ticket."""
+    with tenant_context(item.account):
+        originals = PrintJob.objects.filter(
+            order=item.order,
+            job_type=PrintJob.TYPE_KITCHEN,
+        ).exclude(status=PrintJob.STATUS_CANCELLED)
+        originals = [
+            job
+            for job in originals
+            if str(job.payload.get("batch_id", "")) == str(item.batch_id)
+            and str(item.id) in {str(value) for value in job.payload.get("item_ids", [])}
+        ]
+        jobs = []
+        for original in originals:
+            text = _kitchen_cancellation_text(item=item, original_job=original, reason=reason)
+            job, created = PrintJob.objects.get_or_create(
+                original_job=original,
+                cancelled_item=item,
+                defaults={
+                    "account": item.account,
+                    "restaurant": item.restaurant,
+                    "branch": item.branch,
+                    "printer": original.printer,
+                    "order": item.order,
+                    "job_type": PrintJob.TYPE_KITCHEN_CANCEL,
+                    "status": PrintJob.STATUS_RENDERED,
+                    "available_at": timezone.now(),
+                    "payload": {
+                        "account_id": str(item.account_id),
+                        "order_id": str(item.order_id),
+                        "original_print_serial": str(original.serial),
+                        "batch_serial": str(item.batch.serial) if item.batch_id else "",
+                        "cancelled_item_id": str(item.id),
+                        "reason": reason,
+                        "text_content": text,
+                    },
+                    "printed_by": user,
+                    "created_by": user,
+                    "updated_by": user,
+                },
+            )
+            jobs.append(job)
+            if created:
+                record_audit(
+                    action=AuditLog.ACTION_PRINTED,
+                    instance=job,
+                    actor=user,
+                    reason=reason,
+                    metadata={
+                        "event": "kitchen_cancellation_scheduled",
+                        "original_print_serial": str(original.serial),
+                        "cancelled_item_id": str(item.id),
                     },
                 )
         return jobs

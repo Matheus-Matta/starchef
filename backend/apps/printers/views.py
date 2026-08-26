@@ -452,6 +452,16 @@ class PrintJobViewSet(BaseTenantViewSet):
     filterset_fields = ["restaurant", "printer", "job_type", "status"]
     ordering_fields = ["created_at", "printed_at"]
 
+    def list(self, request, *args, **kwargs):
+        # Fallback operacional: mesmo sem Celery, a consulta feita pelo agente
+        # libera rodadas cujo prazo de 60 segundos terminou.
+        from apps.orders.services import dispatch_due_kitchen_batches
+
+        account = getattr(request, "account", None)
+        if account is not None:
+            dispatch_due_kitchen_batches(account_id=account.id)
+        return super().list(request, *args, **kwargs)
+
     def get_throttles(self):
         if self.action == "list":
             return [DevicePollingRateThrottle()]

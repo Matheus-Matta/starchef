@@ -32,7 +32,6 @@ import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
 import '../data/pdv_repository.dart';
-import 'command_table_selection_dialog.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
@@ -481,10 +480,10 @@ class _HomePageState extends State<HomePage> {
           '/cash-register/current/',
           accessToken: token,
         );
-        final stationIds = stations.map((item) => '${item['id']}').toSet();
-        cashSession = stationIds.contains('${currentSession['cash_station']}')
-            ? currentSession
-            : null;
+        // A sessão aberta no servidor é a fonte de verdade. Descartá-la por
+        // divergência momentânea do catálogo deixava a tela pedindo abertura,
+        // mas a API recusava porque o caixa já estava aberto.
+        cashSession = currentSession;
         final movements = (cashSession?['movements'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
         pendingCashMovement = movements
@@ -1512,6 +1511,9 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  // Kept temporarily for compatibility with queued mutations from older PDV
+  // builds; no current PDV surface calls these waiter-only actions.
+  // ignore: unused_element
   Future<void> _linkCommandDialog() async {
     final searchController = TextEditingController();
     final action = await showDialog<String>(
@@ -1612,6 +1614,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _unlinkCommand(Map<String, dynamic> command) async {
     try {
       setState(() => busy = true);
@@ -1630,6 +1633,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _transferCommandDialog(Map<String, dynamic> command) async {
     final tablesList = tables
         .where((t) => t['id'] != selectedTable?['id'])
@@ -1682,6 +1686,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _transferAllCommandsDialog() async {
     final tablesList = tables
         .where((t) => t['id'] != selectedTable?['id'])
@@ -1742,41 +1747,17 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openCommand(Map<String, dynamic> command) async {
     if (busy) return;
     final linkedTableId = command['current_table'];
-    final needsTableSelection = commandNeedsTableSelection(command);
-    Map<String, dynamic>? table = needsTableSelection
+    final table = linkedTableId == null
         ? null
         : tables.cast<Map<String, dynamic>?>().firstWhere(
             (item) => '${item?['id']}' == '$linkedTableId',
             orElse: () => null,
           );
 
-    // Uma comanda pode ganhar mesa mesmo depois que o pedido já foi aberto.
-    // Por isso a pergunta depende apenas do vínculo, não do status da comanda.
-    if (needsTableSelection) {
-      final selection = await showDialog<CommandTableSelection>(
-        context: context,
-        builder: (_) =>
-            CommandTableSelectionDialog(command: command, tables: tables),
-      );
-      if (selection == null || !mounted) return;
-      table = selection.table;
-    }
-
     final tableForCommand = table;
     await _work(() async {
       selectedCommand = command;
       selectedTable = tableForCommand;
-      if (needsTableSelection && tableForCommand != null) {
-        await api.post(
-          '/commands/${command['id']}/link-table/',
-          body: {'table_id': tableForCommand['id']},
-          accessToken: token,
-        );
-        // Mantém a lista coerente inclusive quando a mutação foi apenas
-        // enfileirada pelo modo offline.
-        command['current_table'] = tableForCommand['id'];
-        command['current_table_number'] = tableForCommand['number'];
-      }
       final currentId = command['current_order_id'];
       final order = currentId != null
           ? await api.get('/orders/$currentId/', accessToken: token)
@@ -4131,10 +4112,6 @@ class _HomePageState extends State<HomePage> {
                     TableDetailsPanel(
                       table: selectedTable!,
                       onBack: () => setState(() => flowStep = 'context'),
-                      onLinkCommand: _linkCommandDialog,
-                      onUnlinkCommand: _unlinkCommand,
-                      onTransferCommand: _transferCommandDialog,
-                      onTransferAllCommands: _transferAllCommandsDialog,
                       onOpenCommand: (cmd) => _openCommand(cmd),
                     )
                   else if (flowStep == 'payment')
@@ -4981,6 +4958,7 @@ class _HomePageState extends State<HomePage> {
                 itemBuilder: (_, index) {
                   final table = tables[index];
                   final occupied =
+                      table['status'] == 'occupied' ||
                       (table['active_commands'] as List? ?? const [])
                           .isNotEmpty;
                   final color = occupied ? Colors.orange : Colors.green;
