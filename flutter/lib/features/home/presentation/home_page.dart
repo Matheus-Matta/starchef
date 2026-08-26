@@ -265,7 +265,14 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     }
-    final result = await updateService.check();
+    final result = await updateService.check(
+      onInstalled: (installed) {
+        if (!mounted) return;
+        setState(
+          () => versionStatus = PdvUpdateStatus.checking(installed: installed),
+        );
+      },
+    );
     if (mounted) setState(() => versionStatus = result);
   }
 

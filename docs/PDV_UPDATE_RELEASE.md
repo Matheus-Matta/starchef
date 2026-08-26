@@ -12,7 +12,7 @@ atualização sozinho.
 - ao entrar na tela principal, o PDV identifica sua versão instalada;
 - consulta o `latest.json` do último GitHub Release;
 - compara a versão instalada com a versão publicada;
-- mostra o resultado na parte inferior da barra lateral;
+- mostra `STARCHEF vX.Y.Z` e o estado por ícone no cabeçalho da barra lateral;
 - permite clicar no indicador para consultar novamente;
 - uma falha de internet ou do GitHub não impede vendas nem bloqueia o PDV;
 - download, encerramento do processo e substituição dos arquivos continuam
@@ -160,14 +160,15 @@ recente sem precisar alterar ou recompilar os terminais a cada versão.
 
 | Estado | Significado |
 | --- | --- |
-| `Verificando atualização` | versão local identificada; consulta ainda em andamento |
-| `Atualizado` | versão instalada é igual ou superior à versão do manifesto |
-| `Nova vX.Y.Z disponível` | manifesto possui uma versão semântica superior |
-| `Atualização não verificada` | falha de rede, HTTP, JSON, versão ou pacote da plataforma |
+| ícone neutro giratório | consulta ainda em andamento |
+| ícone verde com check | versão instalada é igual ou superior à versão do manifesto |
+| ícone vermelho | manifesto possui uma versão semântica superior |
+| ícone neutro com interrogação | falha de rede, HTTP, JSON, versão ou pacote da plataforma |
 
-A versão instalada aparece como `vX.Y.Z+N`, por exemplo `v1.0.34+32`. O clique
-no indicador repete a consulta. O timeout e qualquer erro ficam isolados do
-fluxo de vendas.
+A versão instalada aparece ao lado do produto, por exemplo
+`STARCHEF v1.0.34`, sem exibir o build number. Os detalhes ficam no tooltip do
+ícone. O clique no ícone repete a consulta. O timeout e qualquer erro ficam
+isolados do fluxo de vendas.
 
 ## Configuração do GitHub
 
@@ -316,8 +317,8 @@ latest.json
 ```
 
 Abra o `latest.json` e confirme `version`, `tag`, `commit`, nomes e URLs.
-Depois instale em um terminal de homologação e confira se a barra lateral muda
-para `Atualizado`.
+Depois instale em um terminal de homologação e confira se o cabeçalho mostra a
+tag instalada com o ícone verde.
 
 ### 7. Distribuir aos terminais
 

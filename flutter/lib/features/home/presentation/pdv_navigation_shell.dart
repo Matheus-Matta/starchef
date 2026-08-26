@@ -127,31 +127,9 @@ class PdvSidebar extends StatelessWidget {
                         if (expanded) ...[
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'STARCHEF',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: scheme.primary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: .8,
-                                  ),
-                                ),
-                                Text(
-                                  'Ponto de venda',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: scheme.onSurfaceVariant,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                            child: _PdvVersionIndicator(
+                              status: versionStatus,
+                              onPressed: onCheckVersion,
                             ),
                           ),
                         ],
@@ -249,14 +227,6 @@ class PdvSidebar extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                 child: Column(
                   children: [
-                    if (versionStatus != null) ...[
-                      PdvVersionBadge(
-                        expanded: expanded,
-                        status: versionStatus!,
-                        onPressed: onCheckVersion,
-                      ),
-                      const SizedBox(height: 5),
-                    ],
                     _SidebarAction(
                       expanded: expanded,
                       label: expanded ? 'Recolher menu' : 'Expandir menu',
@@ -294,116 +264,79 @@ class PdvSidebar extends StatelessWidget {
   }
 }
 
-class PdvVersionBadge extends StatelessWidget {
-  const PdvVersionBadge({
-    super.key,
-    required this.expanded,
-    required this.status,
-    this.onPressed,
-  });
+class _PdvVersionIndicator extends StatelessWidget {
+  const _PdvVersionIndicator({required this.status, this.onPressed});
 
-  final bool expanded;
-  final PdvUpdateStatus status;
+  final PdvUpdateStatus? status;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final (icon, foreground, background, stateLabel) = switch (status.phase) {
+    final installedVersion = status?.installed?.version;
+    final label = installedVersion == null
+        ? 'STARCHEF'
+        : 'STARCHEF v$installedVersion';
+    final (icon, color, stateLabel) = switch (status?.phase) {
       PdvUpdatePhase.checking => (
         Icons.sync_rounded,
         scheme.onSurfaceVariant,
-        scheme.surfaceContainer,
         'Verificando atualização',
       ),
       PdvUpdatePhase.upToDate => (
-        Icons.verified_outlined,
-        const Color(0xFF166534),
-        const Color(0xFFDCFCE7),
+        Icons.check_circle,
+        const Color(0xFF16A34A),
         'Atualizado',
       ),
       PdvUpdatePhase.updateAvailable => (
-        Icons.system_update_alt,
-        const Color(0xFF9A5B00),
-        const Color(0xFFFFF3D6),
-        'Nova v${status.latestVersion} disponível',
+        Icons.cancel,
+        const Color(0xFFDC2626),
+        'Desatualizado · v${status?.latestVersion} disponível',
       ),
       PdvUpdatePhase.unavailable => (
-        Icons.info_outline,
+        Icons.help_outline,
         scheme.onSurfaceVariant,
-        scheme.surfaceContainer,
         'Atualização não verificada',
       ),
+      null => (null, scheme.onSurfaceVariant, 'Versão não verificada'),
     };
-    final installed = status.installed;
-    final versionLabel = installed == null
-        ? 'Versão do PDV'
-        : 'v${installed.display}';
     final tooltip = [
-      '$versionLabel · $stateLabel',
-      if (status.artifact != null)
-        'Pacote: ${status.artifact!.format.toUpperCase()}',
-      if (status.detail != null) status.detail!,
+      stateLabel,
+      if (status?.detail != null) status!.detail!,
       if (onPressed != null) 'Clique para verificar novamente.',
     ].join('\n');
 
-    final content = Material(
-      color: background,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppTheme.radius,
-        side: BorderSide(color: foreground.withValues(alpha: .18)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        child: SizedBox(
-          width: expanded ? 204 : 56,
-          height: expanded ? 50 : 44,
-          child: Row(
-            mainAxisAlignment: expanded
-                ? MainAxisAlignment.start
-                : MainAxisAlignment.center,
-            children: [
-              if (expanded) const SizedBox(width: 12),
-              Icon(icon, size: 19, color: foreground),
-              if (expanded) ...[
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        versionLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: foreground,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      Text(
-                        stateLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: foreground,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ],
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: scheme.primary,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .35,
+            ),
           ),
         ),
-      ),
+        if (icon != null) ...[
+          const SizedBox(width: 5),
+          Tooltip(
+            message: tooltip,
+            child: InkResponse(
+              onTap: onPressed,
+              radius: 15,
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(icon, size: 16, color: color),
+              ),
+            ),
+          ),
+        ],
+      ],
     );
-    return Tooltip(message: tooltip, child: content);
   }
 }
 

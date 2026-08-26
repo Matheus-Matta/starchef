@@ -10,7 +10,41 @@ import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart'
 
 void main() {
   group('PdvSidebar', () {
-    testWidgets('mostra versão instalada e atualização disponível', (
+    testWidgets(
+      'mostra somente a tag atual e ícone vermelho quando desatualizado',
+      (tester) async {
+        await _pumpAtSize(
+          tester,
+          size: const Size(800, 640),
+          child: PdvSidebar(
+            expanded: true,
+            selected: PdvDestination.menu,
+            onToggle: () {},
+            onSelected: (_) {},
+            userName: 'Operador',
+            userSubtitle: '@operador',
+            onLogout: () {},
+            versionStatus: const PdvUpdateStatus(
+              phase: PdvUpdatePhase.updateAvailable,
+              installed: PdvInstalledVersion(
+                version: '1.0.33',
+                buildNumber: '31',
+              ),
+              latestVersion: '1.0.34',
+            ),
+          ),
+        );
+
+        expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+        expect(find.textContaining('+31'), findsNothing);
+        expect(find.textContaining('Nova v1.0.34'), findsNothing);
+        final icon = tester.widget<Icon>(find.byIcon(Icons.cancel));
+        expect(icon.color, const Color(0xFFDC2626));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('usa ícone verde quando a versão está atualizada', (
       tester,
     ) async {
       await _pumpAtSize(
@@ -25,18 +59,16 @@ void main() {
           userSubtitle: '@operador',
           onLogout: () {},
           versionStatus: const PdvUpdateStatus(
-            phase: PdvUpdatePhase.updateAvailable,
-            installed: PdvInstalledVersion(
-              version: '1.0.33',
-              buildNumber: '31',
-            ),
-            latestVersion: '1.0.34',
+            phase: PdvUpdatePhase.upToDate,
+            installed: PdvInstalledVersion(version: '1.0.33'),
+            latestVersion: '1.0.33',
           ),
         ),
       );
 
-      expect(find.text('v1.0.33+31'), findsOneWidget);
-      expect(find.text('Nova v1.0.34 disponível'), findsOneWidget);
+      expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+      final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+      expect(icon.color, const Color(0xFF16A34A));
       expect(tester.takeException(), isNull);
     });
 

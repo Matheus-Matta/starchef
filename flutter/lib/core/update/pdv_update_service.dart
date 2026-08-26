@@ -180,10 +180,13 @@ class PdvUpdateService {
   final PdvInstalledVersionLoader _installedVersionLoader;
   final Duration timeout;
 
-  Future<PdvUpdateStatus> check() async {
+  Future<PdvUpdateStatus> check({
+    void Function(PdvInstalledVersion installed)? onInstalled,
+  }) async {
     PdvInstalledVersion installed;
     try {
       installed = await _installedVersionLoader();
+      onInstalled?.call(installed);
     } catch (error) {
       return PdvUpdateStatus(
         phase: PdvUpdatePhase.unavailable,
