@@ -56,10 +56,15 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` e
   pode ser substituída por `PDV_UPDATE_MANIFEST_URL` no build.
 - O APK do aplicativo do garçom não faz parte do manifesto do PDV.
+- O workflow Flutter também testa `flutter_garcom/` e publica o APK universal
+  como asset separado. Em tags, a assinatura exige os quatro Secrets
+  `GARCOM_*`; nunca publique APK de produção com a chave de debug.
 
 ## Arquivos que precisam permanecer coerentes
 
 - `.github/workflows/flutter.yml`;
+- `flutter_garcom/pubspec.yaml`, `flutter_garcom/android/app/build.gradle.kts`
+  e `flutter_garcom/README.md`;
 - `flutter/pubspec.yaml` e `flutter/pubspec.lock`;
 - `flutter/lib/core/update/pdv_update_service.dart`;
 - `flutter/lib/features/home/presentation/pdv_navigation_shell.dart`;

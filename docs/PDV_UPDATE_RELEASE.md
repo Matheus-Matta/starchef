@@ -24,7 +24,9 @@ o instalador automático.
 
 Esta atualização se aplica somente ao **PDV desktop**. O APK do aplicativo do
 garçom possui versionamento e distribuição próprios e não está no
-`latest.json` do PDV.
+`latest.json` do PDV. O mesmo workflow gera o APK universal e o anexa ao
+GitHub Release apenas para centralizar a distribuição; a versão do APK continua
+vindo de `flutter_garcom/pubspec.yaml`.
 
 ## Visão do fluxo
 
@@ -35,14 +37,16 @@ pubspec.yaml: 1.0.34+32
           │
           ▼
 GitHub Actions
-  ├── valida tag x pubspec
-  ├── executa analyze e testes
+  ├── valida tag x pubspec do PDV
+  ├── executa analyze e testes do PDV e do app do garçom
   ├── compila Windows
   │     ├── StarChef-PDV-Setup-1.0.34.exe
   │     └── StarChef-PDV-Windows-v1.0.34.zip
   ├── compila Linux
   │     └── StarChef-PDV-Linux-v1.0.34.zip
-  ├── calcula SHA-256 e tamanho dos três arquivos
+  ├── compila o APK universal do garçom
+  │     └── StarChef-Garcom-v1.6.2.apk
+  ├── calcula SHA-256 e tamanho dos três pacotes do PDV
   ├── gera latest.json
   └── publica tudo no GitHub Release v1.0.34
                     │
@@ -81,6 +85,7 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 | Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | recomendado; atualiza a instalação Inno Setup existente |
 | Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | alternativa portátil ou distribuição sem instalador |
 | Linux | `StarChef-PDV-Linux-vX.Y.Z.zip` | pacote principal com o bundle completo |
+| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom; não participa do `latest.json` |
 | Todos | `latest.json` | manifesto consumido pelo verificador do PDV |
 
 No Windows, prefira o instalador quando o terminal já foi instalado por EXE.
@@ -181,6 +186,10 @@ Configure no repositório:
 | Variable | `PDV_API_BASE_URL` | sim | URL da API incorporada aos builds |
 | Secret | `PDV_SENTRY_DSN` | não | telemetria do PDV |
 | Variable | `PDV_UPDATE_MANIFEST_URL` | não | substitui a URL padrão do GitHub |
+| Secret | `GARCOM_KEYSTORE_BASE64` | sim para tag | JKS do app do garçom codificado em Base64 |
+| Secret | `GARCOM_KEYSTORE_PASSWORD` | sim para tag | senha do keystore Android |
+| Secret | `GARCOM_KEY_ALIAS` | sim para tag | alias da chave de assinatura |
+| Secret | `GARCOM_KEY_PASSWORD` | sim para tag | senha da chave de assinatura |
 
 Sem `PDV_UPDATE_MANIFEST_URL`, o Actions calcula automaticamente:
 
@@ -191,6 +200,24 @@ https://github.com/<owner>/<repository>/releases/latest/download/latest.json
 O override é útil se o manifesto passar a ser entregue por domínio próprio ou
 CDN. Ele é incorporado no binário por `--dart-define`; não é um segredo.
 
+Em uma tag, os quatro Secrets `GARCOM_*` são obrigatórios. O job falha se
+estiverem ausentes ou incompletos, evitando publicar um APK assinado com a
+chave de debug que não conseguiria atualizar os aparelhos já instalados. Em um
+`workflow_dispatch` sem esses Secrets, é permitido gerar um APK de homologação
+assinado com a chave de debug, e o Actions mostra um aviso explícito.
+
+Para cadastrar o JKS local no GitHub sem versioná-lo, gere o Base64 no
+PowerShell e copie somente a saída para o Secret `GARCOM_KEYSTORE_BASE64`:
+
+```powershell
+[Convert]::ToBase64String(
+  [IO.File]::ReadAllBytes("flutter_garcom/android/starchef-garcom-release.jks")
+)
+```
+
+Cadastre os quatro valores em **Settings → Secrets and variables → Actions →
+Secrets**. Nunca adicione `key.properties`, o JKS ou suas senhas ao Git.
+
 ## Por que aparecem vários processos no Actions
 
 Abrir um Pull Request e enviar uma tag são dois eventos independentes. Se os
@@ -200,7 +227,7 @@ dois acontecerem próximos um do outro, é normal aparecerem seis execuções:
 | --- | --- | --- |
 | Pull Request | `backend` | testes, lint e migrations; não publica imagem |
 | Pull Request | `frontend` | lint, testes, build e auditoria; não publica imagem |
-| Pull Request | `flutter` | analyze e testes; jobs de release ficam ignorados |
+| Pull Request | `flutter` | analyze e testes dos dois apps e APK temporário de homologação; não publica release |
 | tag `vX.Y.Z` | `backend` | testa e publica imagens no GHCR |
 | tag `vX.Y.Z` | `frontend` | testa e publica imagens no GHCR |
 | tag `vX.Y.Z` | `flutter` | testa, compila Windows/Linux e publica o Release |
@@ -209,10 +236,11 @@ Portanto, as execuções do Pull Request não duplicam o release. Elas são as
 verificações exigidas para aprovar o merge. Somente as execuções iniciadas pela
 tag entram nos jobs de publicação.
 
-Na página do workflow Flutter de um Pull Request, os nomes `release-metadata`,
-`build-windows`, `build-linux` e `publish-release` podem aparecer na lista, mas
-ficam como ignorados porque a condição exige tag ou disparo manual. Na execução
-da tag, esses jobs são liberados em sequência depois de `test`.
+Na página do workflow Flutter de um Pull Request, `release-metadata` e
+`build-garcom-apk` executam e deixam o APK nos artefatos temporários do Actions.
+`build-windows`, `build-linux` e `publish-release` ficam ignorados porque exigem
+tag ou disparo manual. Na execução da tag, todos os jobs são liberados em
+sequência depois dos testes.
 
 ## Como publicar uma nova atualização
 
@@ -295,11 +323,11 @@ conjunto completo estiver pronto para produção.
 
 No workflow `flutter`, os jobs executam nesta ordem:
 
-1. `test`: dependências, `flutter analyze` e `flutter test` no Windows;
-2. `release-metadata`: lê o `pubspec` e compara com a tag;
-3. `build-windows`: gera instalador e ZIP;
-4. `build-linux`: gera o ZIP Linux;
-5. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
+1. `test` e `test-garcom`: dependências, analyze e testes dos dois apps;
+2. `release-metadata`: lê as duas versões e compara a versão do PDV com a tag;
+3. `build-windows`, `build-linux` e `build-garcom-apk`: geram instalador, ZIPs
+   e o APK universal;
+4. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
    publica o GitHub Release.
 
 Se qualquer job falhar, `publish-release` não roda e o novo `latest.json` não é
@@ -313,9 +341,11 @@ O release deve conter exatamente estes arquivos para a versão:
 StarChef-PDV-Setup-X.Y.Z.exe
 StarChef-PDV-Windows-vX.Y.Z.zip
 StarChef-PDV-Linux-vX.Y.Z.zip
+StarChef-Garcom-vA.B.C.apk
 latest.json
 ```
 
+`A.B.C` é a versão independente declarada em `flutter_garcom/pubspec.yaml`.
 Abra o `latest.json` e confirme `version`, `tag`, `commit`, nomes e URLs.
 Depois instale em um terminal de homologação e confira se o cabeçalho mostra a
 tag instalada com o ícone verde.
@@ -339,7 +369,8 @@ O botão **Run workflow** permite executar `workflow_dispatch`. Ele aceita:
 - `sentry_dsn`;
 - `update_manifest_url`.
 
-O disparo manual gera artefatos temporários do Actions para Windows e Linux,
+O disparo manual gera artefatos temporários do Actions para Windows, Linux e o
+APK do garçom,
 mas não executa `publish-release`: não cria tag, não cria GitHub Release e não
 altera o `latest.json`. Use-o para homologação de build, nunca como substituto
 da tag de produção.

@@ -63,7 +63,12 @@ Ordem de inicialização (única entry point para os dois modos):
 8. `ApiClient` + `AuthRepository` (com `SecureSessionStore` e `CashAuthRepository`) criados.
 9. `runApp(...)` — dentro de `SentryFlutter.init` se houver DSN configurada, senão direto.
 
-Nenhum token é passado via linha de comando — só `--scale-workstation` e `--restaurant=<uuid>`; a janela de balança restaura a própria sessão do cofre do SO.
+Nenhum token é passado via linha de comando. No Windows, a janela restaura a
+sessão do cofre do SO. No Linux, onde uma segunda instância pode não reler o
+GNOME Keyring imediatamente, o PDV também cria uma transferência efêmera em
+`~/.local/share/StarChef/scale-session-handoffs`: diretório `0700`, arquivo
+`0600`, nome aleatório no argumento `--session-handoff` e conteúdo consumido e
+apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 ## 4. Autenticação e sessão
 
@@ -92,9 +97,9 @@ Nenhum token é passado via linha de comando — só `--scale-workstation` e `--
 
 ## 7. Duas janelas, um executável
 
-A janela "Balança Rápida" **não é um app separado** — `ScaleWindowLauncher.open()` relança o **mesmo executável compilado** (`Platform.resolvedExecutable`) como processo totalmente destacado (`Process.start(..., mode: ProcessStartMode.detached)`) com `--scale-workstation --restaurant=<uuid>`. Se o `Process.start` falhar, o PDV cai para uma visão embutida da estação de balança.
+A janela "Balança Rápida" **não é um app separado** — `ScaleWindowLauncher.open()` relança o **mesmo executável compilado** (`Platform.resolvedExecutable`) como processo totalmente destacado (`Process.start(..., mode: ProcessStartMode.detached)`) com `--scale-workstation --restaurant=<uuid>` e, no Linux, o nome aleatório da transferência efêmera. Se a proteção da transferência ou o `Process.start` falhar, o PDV cai para uma visão embutida da estação de balança.
 
-As duas janelas compartilham o mesmo arquivo `offline_data.sqlite` (o `sqlite_async` coordena múltiplos processos no mesmo arquivo) e o mesmo cofre de sessão do SO — cada uma restaura a própria sessão, o token nunca trafega por linha de comando. Não há supervisor: se a janela de balança travar, nada a reabre sozinha (limitação conhecida, documentada — a fila de impressão/leitura não depende do processo principal continuar aberto).
+As duas janelas compartilham o mesmo arquivo `offline_data.sqlite` (o `sqlite_async` coordena múltiplos processos no mesmo arquivo) e o mesmo cofre de sessão do SO. No Linux, a transferência efêmera garante a primeira autenticação sem expor o token na linha de comando. Não há supervisor: se a janela de balança travar, nada a reabre sozinha (limitação conhecida, documentada — a fila de impressão/leitura não depende do processo principal continuar aberto).
 
 ## 8. Erros e logging
 

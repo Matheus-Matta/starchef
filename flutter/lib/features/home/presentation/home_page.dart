@@ -606,7 +606,10 @@ class _HomePageState extends State<HomePage> {
       await widget.controller.repository.sessionStore.save(
         widget.controller.session!,
       );
-      final opened = await ScaleWindowLauncher.open(restaurantId: restaurantId);
+      final opened = await ScaleWindowLauncher.open(
+        restaurantId: restaurantId,
+        session: widget.controller.session!,
+      );
       if (!mounted) return;
       if (opened) {
         showAppToast(

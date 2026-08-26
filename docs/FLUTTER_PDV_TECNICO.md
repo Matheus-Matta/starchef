@@ -91,8 +91,12 @@ Ordem de inicialização e o motivo de cada passo:
    exigência de "nenhuma perda silenciosa" vale também para bugs de UI.
 6. `runApp` com `StarChefApp` ou `ScaleWindowApp`.
 
-O token **nunca** vai na linha de comando: a janela de balança restaura a sessão
-do cofre do sistema. O único argumento além do modo é `--restaurant=<uuid>`.
+O token **nunca** vai na linha de comando. A janela de balança restaura a sessão
+do cofre do sistema e, no Linux, recebe também uma transferência efêmera em
+arquivo `0600`, porque uma segunda instância pode não reler o GNOME Keyring a
+tempo. O argumento `--session-handoff=<nome-aleatório>` revela somente o nome;
+o arquivo é consumido e apagado no boot. O restaurante continua em
+`--restaurant=<uuid>`.
 
 ---
 
@@ -482,7 +486,8 @@ O sistema libera a trava sozinho quando o processo morre — uma janela encerrad
   JSON truncado impedindo o próximo boot. O valor novo vale em memória
   imediatamente; o disco alcança depois.
 - `session_store.dart` — `flutter_secure_storage` para access, refresh e o
-  usuário serializado.
+  usuário serializado; a primeira leitura da janela filha prioriza a sessão
+  efêmera recebida do processo pai e depois volta a usar somente o cofre.
 
 ### 4.7 `core/logging/app_logger.dart`
 
@@ -664,7 +669,8 @@ foi persistido: se o equipamento na COM mudou, exige novo vínculo. O
 que dois slots reservem a mesma porta deliberadamente.
 
 **`services/scale_window_launcher.dart`** — abre a estação como processo
-independente.
+independente. No Linux, prepara a transferência de sessão com diretório `0700`,
+arquivo `0600`, validade de um minuto e remoção após a primeira leitura.
 
 ### 5.4 `devices`
 

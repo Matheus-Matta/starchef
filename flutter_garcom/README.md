@@ -119,6 +119,20 @@ flutter build apk --release --split-per-abi   # 3 APKs menores, um por arquitetu
 flutter build apk --release                   # 1 APK universal (serve em qualquer aparelho)
 ```
 
+### APK pelo GitHub Actions
+
+O workflow `.github/workflows/flutter.yml` executa analyze e testes do app e,
+em toda execução, gera o APK universal
+`StarChef-Garcom-vA.B.C.apk`. `A.B.C` vem deste `pubspec.yaml`, pois a versão do
+app do garçom é independente da versão do PDV. Em Pull Request ou push ele
+aparece nos artefatos temporários do job `build-garcom-apk`; em uma tag
+`vX.Y.Z`, também é anexado aos assets do GitHub Release.
+
+Uma tag exige os Secrets `GARCOM_KEYSTORE_BASE64`,
+`GARCOM_KEYSTORE_PASSWORD`, `GARCOM_KEY_ALIAS` e `GARCOM_KEY_PASSWORD`. O
+procedimento completo para cadastrá-los e publicar está em
+[`../docs/PDV_UPDATE_RELEASE.md`](../docs/PDV_UPDATE_RELEASE.md).
+
 Para instalar no aparelho do garçom: **arm64** cobre praticamente todo celular
 atual; **arm32** só para aparelhos antigos; o **universal** é o à prova de erro,
 ao custo de ~50 MB. Como a instalação é fora da Play Store, o aparelho precisa

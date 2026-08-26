@@ -6,10 +6,12 @@ on:
     tags: ["v*.*.*"]
     paths:
       - "flutter/**"
+      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
   pull_request:
     paths:
       - "flutter/**"
+      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
   workflow_dispatch:
     inputs:
@@ -49,14 +51,35 @@ jobs:
       - name: Testes
         run: flutter test
 
+  test-garcom:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_garcom
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências do app do garçom
+        run: flutter pub get
+
+      - name: Analyze do app do garçom
+        run: flutter analyze
+
+      - name: Testes do app do garçom
+        run: flutter test
+
   # O pubspec é a fonte da versão do binário e a tag é a fonte da versão do
   # release. O pipeline para antes do build se os dois valores divergirem.
   release-metadata:
-    needs: test
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
+    needs: [test, test-garcom]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      garcom_version: ${{ steps.version.outputs.garcom_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,7 +100,14 @@ jobs:
               exit 1
             fi
           fi
+          garcom_full_version="$(awk '/^version:/{print $2; exit}' ../flutter_garcom/pubspec.yaml)"
+          garcom_version="${garcom_full_version%%+*}"
+          if [[ ! "$garcom_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida no flutter_garcom/pubspec.yaml: $garcom_full_version" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "garcom_version=$garcom_version" >> "$GITHUB_OUTPUT"
 
   build-windows:
     needs: release-metadata
@@ -200,10 +230,84 @@ jobs:
           path: artifacts/StarChef-PDV-Linux-v*.zip
           if-no-files-found: error
 
-  # Um único job reúne os três pacotes, calcula os hashes e publica o manifesto
-  # junto do Release. /releases/latest/download/latest.json permanece estável.
+  build-garcom-apk:
+    needs: release-metadata
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_garcom
+    env:
+      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
+      GARCOM_KEYSTORE_BASE64: ${{ secrets.GARCOM_KEYSTORE_BASE64 }}
+      GARCOM_KEYSTORE_PASSWORD: ${{ secrets.GARCOM_KEYSTORE_PASSWORD }}
+      GARCOM_KEY_ALIAS: ${{ secrets.GARCOM_KEY_ALIAS }}
+      GARCOM_KEY_PASSWORD: ${{ secrets.GARCOM_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências do app do garçom
+        run: flutter pub get
+
+      - name: Configurar assinatura do APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          values=(
+            "${GARCOM_KEYSTORE_BASE64:-}"
+            "${GARCOM_KEYSTORE_PASSWORD:-}"
+            "${GARCOM_KEY_ALIAS:-}"
+            "${GARCOM_KEY_PASSWORD:-}"
+          )
+          present=0
+          for value in "${values[@]}"; do
+            if [[ -n "$value" ]]; then
+              present=$((present + 1))
+            fi
+          done
+          if [[ "$present" -ne 0 && "$present" -ne 4 ]]; then
+            echo "Configure todos os quatro Secrets GARCOM_*; a configuração está incompleta." >&2
+            exit 1
+          fi
+          if [[ "$present" -eq 0 ]]; then
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              echo "A tag exige os Secrets GARCOM_* para publicar um APK atualizável." >&2
+              exit 1
+            fi
+            echo "::warning::APK de homologação será assinado com a chave de debug."
+            exit 0
+          fi
+          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks
+          {
+            printf 'storeFile=starchef-garcom-release.jks\n'
+            printf 'storePassword=%s\n' "$GARCOM_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$GARCOM_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build do APK universal do garçom
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk --release
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+
+      - name: Upload do APK do garçom
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
+          path: artifacts/StarChef-Garcom-v*.apk
+          if-no-files-found: error
+
+  # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes do PDV
+  # e publica o manifesto junto do Release. O APK não entra no latest.json.
   publish-release:
-    needs: [release-metadata, build-windows, build-linux]
+    needs: [release-metadata, build-windows, build-linux, build-garcom-apk]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -217,6 +321,12 @@ jobs:
           pattern: starchef-pdv-*-${{ needs.release-metadata.outputs.version }}
           path: release-assets
           merge-multiple: true
+
+      - name: Baixar APK do app do garçom
+        uses: actions/download-artifact@v4
+        with:
+          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
+          path: release-assets
 
       - name: Gerar latest.json com SHA-256
         shell: python

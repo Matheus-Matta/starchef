@@ -17,6 +17,9 @@ import 'features/scale/services/scale_window_launcher.dart';
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
   final scaleWindow = ScaleWindowLauncher.isScaleWindow(arguments);
+  final inheritedSession = scaleWindow
+      ? await ScaleWindowLauncher.takeSession(arguments)
+      : null;
   final preferences = LocalPreferences();
   await preferences.load();
   final config = await AppConfig.load(
@@ -80,7 +83,7 @@ Future<void> main(List<String> arguments) async {
   final apiClient = ApiClient(baseUrl: config.apiBaseUrl);
   final repository = AuthRepository(
     apiClient: apiClient,
-    sessionStore: SecureSessionStore(),
+    sessionStore: SecureSessionStore(initialSession: inheritedSession),
     cashAuth: CashAuthRepository(apiClient: apiClient),
   );
 

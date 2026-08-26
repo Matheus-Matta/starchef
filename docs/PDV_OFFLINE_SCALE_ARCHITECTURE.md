@@ -156,7 +156,16 @@ Ao selecionar Balança Rápida, o PDV salva a sessão atual no cofre do sistema 
 --scale-workstation --restaurant=<uuid>
 ```
 
-O token não é colocado na linha de comando. O novo processo restaura a sessão pelo `flutter_secure_storage`, cria seu próprio `ApiClient` e permite escolher restaurante e balança. É possível abrir mais de uma instância. Se o processo não puder ser criado, o PDV abre a estação embutida como fallback.
+O token não é colocado na linha de comando. O novo processo restaura a sessão
+pelo `flutter_secure_storage`. No Linux, o PDV também grava uma transferência
+efêmera em `scale-session-handoffs`, protegida com diretório `0700` e arquivo
+`0600`, e passa somente `--session-handoff=<nome-aleatório>`. A janela consome e
+apaga o arquivo no boot; entradas não consumidas expiram em um minuto. Isso
+evita a tela de login quando a segunda instância do Ubuntu ainda não consegue
+reler o GNOME Keyring. Depois, ela cria seu próprio `ApiClient` e permite
+escolher restaurante e balança. É possível abrir mais de uma instância. Se a
+transferência não puder ser protegida ou o processo não puder ser criado, o PDV
+abre a estação embutida como fallback.
 
 A janela dedicada inicia com 1180 × 760 px e mínimo de 900 × 650 px. Cada processo tem ciclo de vida próprio, portanto fechar ou travar uma janela de balança não fecha a interface principal.
 
@@ -363,6 +372,7 @@ Entre no PDV com rede disponível e carregue o restaurante/cardápio ao menos um
 | leitor não aparece | dispositivo em modo USB-CDC/serial e driver que exponha uma COM |
 | porta do leitor ocupada | feche a outra janela/processo ou remova o vínculo anterior |
 | checkout recusado | comanda ativa, permissão e API online |
+| Balança Rápida abre no login no Ubuntu | use um pacote que contenha a transferência efêmera de sessão; confira permissão de escrita em `~/.local/share/StarChef` e a presença do comando `chmod` |
 | impressão não sai | processo principal aberto, impressora vinculada à balança, ativa, endpoint/IP/COM e job no backend |
 | barras não aparecem | usar driver ESC/POS por TCP/serial; spool do Windows recebe fallback textual |
 
