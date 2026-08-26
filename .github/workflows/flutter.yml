@@ -273,11 +273,7 @@ jobs:
             exit 1
           fi
           if [[ "$present" -eq 0 ]]; then
-            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-              echo "A tag exige os Secrets GARCOM_* para publicar um APK atualizável." >&2
-              exit 1
-            fi
-            echo "::warning::APK de homologação será assinado com a chave de debug."
+            echo "::warning::Secrets GARCOM_* ausentes; publicando APK assinado com a chave de debug (sem atualização in-place garantida)."
             exit 0
           fi
           printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks

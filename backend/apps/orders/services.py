@@ -693,9 +693,15 @@ def close_order(
         if not order.service_fee_enabled:
             order.service_fee = Decimal("0.00")
         elif service_fee is not None:
-            order.service_fee = Decimal(str(service_fee))
+            order.service_fee = Decimal(str(service_fee)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         elif order.restaurant.default_service_fee_percent:
-            order.service_fee = (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
+            # Arredonda aqui, e não deixa para o campo do banco: SQLite não trunca
+            # DecimalField como o Postgres, então o total recalculado a seguir
+            # divergia do total previsto pelo cliente (que já soma a taxa
+            # arredondada), derrubando o fechamento por "total mudou offline".
+            order.service_fee = (
+                (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
+            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         order.status = Order.STATUS_AWAITING_PAYMENT
         order.closed_by = user
         order.updated_by = user

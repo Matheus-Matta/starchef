@@ -154,7 +154,11 @@ abstract final class OrderPresenter {
     required double serviceFeePercent,
   }) {
     final subtotal = ValueFormatters.number(order['subtotal']);
-    final fee = serviceFeeEnabled ? subtotal * serviceFeePercent / 100 : 0.0;
+    // Arredonda a taxa isoladamente, como o backend faz ao gravar, para que o
+    // total previsto aqui bata com o total recalculado no fechamento — do
+    // contrário o servidor rejeitava o fechamento por divergência de total.
+    final rawFee = serviceFeeEnabled ? subtotal * serviceFeePercent / 100 : 0.0;
+    final fee = double.parse(rawFee.toStringAsFixed(2));
     final discount = ValueFormatters.number(order['discount']);
     final delivery = ValueFormatters.number(order['delivery_fee']);
     final total = (subtotal + fee + delivery - discount).clamp(

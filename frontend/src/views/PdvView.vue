@@ -1032,7 +1032,10 @@ const previewServiceFee = computed(() => {
   const current = Number(currentOrder.value?.service_fee || 0);
   if (current > 0) return current;
   const percent = Number(currentRestaurant.value?.default_service_fee_percent || 0);
-  return Number(currentOrder.value?.subtotal || 0) * percent / 100;
+  // Arredonda a taxa isoladamente, como o backend faz ao gravar, para que o
+  // expected_total enviado no fechamento bata com o total recalculado.
+  const rawFee = Number(currentOrder.value?.subtotal || 0) * percent / 100;
+  return Math.round(rawFee * 100) / 100;
 });
 const orderPreviewTotal = computed(() => {
   const subtotal = Number(currentOrder.value?.subtotal || 0);

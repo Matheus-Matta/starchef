@@ -2720,6 +2720,7 @@ class _HomePageState extends State<HomePage> {
       final order = await api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
+          'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
           'expected_total': localClosed['total'],
         },
@@ -5080,6 +5081,23 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
+  /// Abre a comanda direto quando o leitor bipa o código e envia Enter.
+  ///
+  /// Prioriza um match exato de número/código: com a lista já filtrada por
+  /// [visibleCommands], vários cartões podem compartilhar prefixo (comanda 1
+  /// e 10, por exemplo) e o texto digitado por um humano nunca dispara Enter.
+  void _onCommandSearchSubmitted(String value) {
+    final term = value.trim();
+    if (term.isEmpty) return;
+    final matches = visibleCommands;
+    final exact = matches.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['number']}' == term || '${item?['code'] ?? ''}' == term,
+      orElse: () => null,
+    );
+    final command = exact ?? (matches.length == 1 ? matches.first : null);
+    if (command != null) _openCommand(command);
+  }
+
   Widget _commandContextPanel() {
     final visible = visibleCommands;
     final free = commands
@@ -5120,6 +5138,7 @@ class _HomePageState extends State<HomePage> {
               TextField(
                 autofocus: true,
                 onChanged: (value) => setState(() => commandSearch = value),
+                onSubmitted: _onCommandSearchSubmitted,
                 decoration: const InputDecoration(
                   prefixIcon: Icon(Icons.search_rounded),
                   hintText: 'Buscar por número, código ou cliente...',

@@ -199,10 +199,10 @@ Configure no repositório:
 | Variable | `PDV_API_BASE_URL` | sim | URL da API incorporada aos builds |
 | Secret | `PDV_SENTRY_DSN` | não | telemetria do PDV |
 | Variable | `PDV_UPDATE_MANIFEST_URL` | não | substitui a URL padrão do GitHub |
-| Secret | `GARCOM_KEYSTORE_BASE64` | sim para tag | JKS do app do garçom codificado em Base64 |
-| Secret | `GARCOM_KEYSTORE_PASSWORD` | sim para tag | senha do keystore Android |
-| Secret | `GARCOM_KEY_ALIAS` | sim para tag | alias da chave de assinatura |
-| Secret | `GARCOM_KEY_PASSWORD` | sim para tag | senha da chave de assinatura |
+| Secret | `GARCOM_KEYSTORE_BASE64` | não | JKS do app do garçom codificado em Base64 |
+| Secret | `GARCOM_KEYSTORE_PASSWORD` | não | senha do keystore Android |
+| Secret | `GARCOM_KEY_ALIAS` | não | alias da chave de assinatura |
+| Secret | `GARCOM_KEY_PASSWORD` | não | senha da chave de assinatura |
 
 Sem `PDV_UPDATE_MANIFEST_URL`, o Actions calcula automaticamente:
 
@@ -213,11 +213,13 @@ https://github.com/<owner>/<repository>/releases/latest/download/latest.json
 O override é útil se o manifesto passar a ser entregue por domínio próprio ou
 CDN. Ele é incorporado no binário por `--dart-define`; não é um segredo.
 
-Em uma tag, os quatro Secrets `GARCOM_*` são obrigatórios. O job falha se
-estiverem ausentes ou incompletos, evitando publicar um APK assinado com a
-chave de debug que não conseguiria atualizar os aparelhos já instalados. Em um
-`workflow_dispatch` sem esses Secrets, é permitido gerar um APK de homologação
-assinado com a chave de debug, e o Actions mostra um aviso explícito.
+Os quatro Secrets `GARCOM_*` são opcionais, em tag ou em `workflow_dispatch`.
+Sem eles, o job publica o APK assinado com a chave de debug do Flutter e o
+Actions mostra um aviso explícito — o app do garçom ainda não depende de
+atualização in-place, então essa assinatura variável não bloqueia o release do
+PDV. Configure os quatro Secrets somente quando o APK precisar reinstalar por
+cima de uma versão já instalada (mesma assinatura entre builds). Se apenas
+parte dos quatro estiver definida, o job falha por configuração incompleta.
 
 Para cadastrar o JKS local no GitHub sem versioná-lo, gere o Base64 no
 PowerShell e copie somente a saída para o Secret `GARCOM_KEYSTORE_BASE64`:
