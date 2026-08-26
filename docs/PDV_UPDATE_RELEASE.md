@@ -6,21 +6,32 @@ atualização.
 
 ## Estado atual
 
-O PDV possui **verificação automática de versão**, mas ainda não instala a
-atualização sozinho.
+O PDV possui **atualização automática transacional** no Windows e no Linux.
 
-- ao entrar na tela principal, o PDV identifica sua versão instalada;
-- consulta o `latest.json` do último GitHub Release;
+- ao iniciar, consulta o `latest.json` do último GitHub Release sem bloquear o
+  login quando a rede ou o GitHub estiverem indisponíveis;
 - compara a versão instalada com a versão publicada;
-- mostra `STARCHEF vX.Y.Z` e o estado por ícone no cabeçalho da barra lateral;
-- permite clicar no indicador para consultar novamente;
-- uma falha de internet ou do GitHub não impede vendas nem bloqueia o PDV;
-- download, encerramento do processo e substituição dos arquivos continuam
-  manuais.
+- quando existe versão nova, escolhe o ZIP portátil da plataforma, bloqueia
+  temporariamente a operação e baixa o bundle completo;
+- confere o tamanho e o SHA-256 antes de aceitar o download;
+- descompacta em uma pasta nova, sem alterar a instalação em uso;
+- inicia um processo auxiliar, encerra o PDV e todas as janelas da Balança
+  Rápida que usam o mesmo executável;
+- troca as pastas, inicia a versão nova e a observa por oito segundos;
+- se a versão nova encerrar durante essa validação, restaura a pasta anterior e
+  reinicia automaticamente o PDV antigo;
+- mostra `STARCHEF vX.Y.Z` e o estado por ícone na barra lateral.
 
-O manifesto já publica URL, tamanho e SHA-256 de cada pacote. Esses dados
-permitem validar downloads manuais e são a base para implementar, futuramente,
-o instalador automático.
+O instalador EXE continua publicado para primeira instalação e atualização
+manual. A atualização automática usa o ZIP também no Windows porque a troca de
+diretório permite rollback integral; executar o Inno Setup por cima da versão
+existente alteraria também os metadados do instalador e impediria um rollback
+realmente transacional.
+
+> A versão `1.0.34` é o bootstrap desse mecanismo. Terminais em `1.0.33` ou
+> anteriores ainda precisam receber `StarChef-PDV-Setup-1.0.34.exe` no Windows
+> ou o bundle Linux `1.0.34` manualmente uma vez. A partir de um PDV que já
+> contenha este atualizador, os releases superiores são aplicados sozinhos.
 
 Esta atualização se aplica somente ao **PDV desktop**. O APK do aplicativo do
 garçom possui versionamento e distribuição próprios e não está no
@@ -52,8 +63,9 @@ GitHub Actions
                     │
                     ▼
 PDV consulta /releases/latest/download/latest.json
-  ├── Windows escolhe o instalador EXE como recomendado
-  └── Linux escolhe o ZIP como recomendado
+  ├── Windows baixa o ZIP portátil para atualização automática
+  ├── Linux baixa o ZIP portátil para atualização automática
+  └── EXE de Windows permanece disponível para instalação manual
 ```
 
 ## Fonte da versão
@@ -82,23 +94,24 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 
 | Sistema | Arquivo | Papel |
 | --- | --- | --- |
-| Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | recomendado; atualiza a instalação Inno Setup existente |
-| Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | alternativa portátil ou distribuição sem instalador |
+| Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | primeira instalação ou atualização manual pelo Inno Setup |
+| Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | bundle usado pelo atualizador automático transacional |
 | Linux | `StarChef-PDV-Linux-vX.Y.Z.zip` | pacote principal com o bundle completo |
 | Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom; não participa do `latest.json` |
 | Todos | `latest.json` | manifesto consumido pelo verificador do PDV |
 
-No Windows, prefira o instalador quando o terminal já foi instalado por EXE.
-O `AppId` permanece estável, o diretório anterior é reaproveitado e o
-instalador bloqueia instalação de versão igual ou inferior.
+No Windows, prefira o instalador para a primeira instalação. O `AppId` permanece
+estável e o instalador bloqueia instalação de versão igual ou inferior. Depois
+disso, o próprio PDV usa o ZIP nos próximos releases.
 
 O ZIP de Windows deve ser tratado como um bundle completo. Feche todas as
 janelas do PDV e da Balança Rápida antes de trocar a pasta; não copie somente o
 `.exe`, porque DLLs e plugins fazem parte da mesma versão.
 
-No Linux, feche o PDV, extraia o ZIP completo em uma nova pasta e só então
-troque o diretório ou link usado para iniciar o aplicativo. Manter a pasta
-anterior até validar a nova versão torna o retorno mais seguro.
+No Linux, a pasta do bundle e a pasta pai precisam ser graváveis pelo usuário
+que executa o PDV. Instalações protegidas por `root`, como `/opt` sem permissão
+de escrita, não podem ser substituídas automaticamente; nesse caso o PDV mantém
+a versão atual e registra a falha em `pdv.log`.
 
 ## Formato do `latest.json`
 
@@ -358,8 +371,10 @@ Faça rollout gradual:
 2. um terminal de operação com baixo risco;
 3. demais terminais após validar login, caixa, pedido e impressão.
 
-Para Windows instalado por Inno Setup, distribua o EXE. Use o ZIP somente para
-instalações portáteis. Para Linux, distribua o ZIP completo.
+Na primeira instalação do Windows, distribua o EXE. Nos terminais já
+instalados, basta iniciar o PDV: ele encontrará o release mais recente e usará
+automaticamente o ZIP correspondente. No Linux, inicie o executável por um
+bundle instalado em pasta gravável pelo mesmo usuário.
 
 ## Build manual sem publicar release
 
@@ -390,8 +405,9 @@ sha256sum StarChef-PDV-Linux-v1.0.34.zip
 ```
 
 Compare o resultado com o `sha256` do mesmo arquivo no `latest.json`. O hash
-protege contra arquivo incompleto ou diferente do publicado. Hoje o PDV não
-baixa o pacote automaticamente, portanto essa verificação é manual.
+protege contra arquivo incompleto ou diferente do publicado. O PDV faz essa
+conferência automaticamente para o ZIP; os comandos continuam úteis para
+auditar manualmente um release ou validar o EXE do instalador.
 
 ## Diagnóstico
 
@@ -434,8 +450,13 @@ novamente depois de corrigir a rede.
 
 ### Release existe, mas o PDV ainda mostra a versão antiga
 
+- abra `%LOCALAPPDATA%\StarChef\pdv.log` no Windows ou
+  `~/.local/share/StarChef/pdv.log` no Linux e procure
+  `pdv_auto_update_failed`;
+- confira `updates/<versão>/update.log` no mesmo diretório de dados para saber
+  se houve troca, rollback ou falha ao reiniciar;
+- no Linux, confirme permissão de escrita na pasta do bundle e na pasta pai;
 - confirme que o terminal executa o arquivo da pasta atualizada;
-- feche também processos da Balança Rápida antes de substituir arquivos;
 - no Windows, confira as propriedades do `starchef_pdv.exe`;
 - no Linux, confira se o atalho ou serviço aponta para a pasta nova;
 - compare o hash do pacote baixado com o manifesto.
@@ -446,6 +467,17 @@ O instalador ainda não possui assinatura de código. O alerta pode continuar at
 que um certificado de code signing seja incorporado ao pipeline.
 
 ## Rollback e correção de release
+
+Durante a atualização automática, o helper renomeia a instalação atual para
+`<pasta>.starchef-backup-<versão>-<pid>`, move o bundle preparado para o caminho
+original e inicia o novo executável. A pasta anterior só é apagada depois que o
+novo processo permanece ativo por oito segundos. Se a troca ou a inicialização
+falhar, o helper remove somente a pasta nova controlada pela transação, restaura
+o backup e reinicia a versão anterior.
+
+Esse rollback local protege o terminal de falha de arquivo, permissão ou
+inicialização. Ele não transforma um release defeituoso em release válido para
+os demais terminais. Para corrigir o release publicado:
 
 Não sobrescreva assets, não mova uma tag publicada e não reutilize uma versão.
 O caminho seguro é:

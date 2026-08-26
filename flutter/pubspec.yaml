@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.33+31
+version: 1.0.34+32
 
 environment:
   sdk: ^3.12.2
@@ -40,6 +40,7 @@ dependencies:
   window_manager: ^0.5.2
   # Verificação offline da senha do caixa (PBKDF2-HMAC-SHA256, formato do Django).
   crypto: ^3.0.6
+  archive: ^4.2.0
   sqlite_async: 0.14.4
   flutter_libserialport: 0.6.0
   sentry_flutter: ^8.14.2

@@ -9,6 +9,7 @@ import '../core/errors/app_error_host.dart';
 import '../core/errors/error_center.dart';
 import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
+import '../core/update/pdv_auto_updater.dart';
 import '../core/widgets/app_window_frame.dart';
 import '../core/widgets/responsive_scale.dart';
 import '../core/widgets/supervisor_close_dialog.dart';
@@ -23,11 +24,13 @@ class StarChefApp extends StatefulWidget {
     required this.authRepository,
     required this.preferences,
     required this.errorCenter,
+    required this.autoUpdater,
   });
 
   final AuthRepository authRepository;
   final LocalPreferences preferences;
   final ErrorCenter errorCenter;
+  final PdvAutoUpdater autoUpdater;
 
   @override
   State<StarChefApp> createState() => _StarChefAppState();
@@ -47,6 +50,14 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(widget.autoUpdater.start(closePdv: _closeForUpdate));
+    });
+  }
+
+  Future<void> _closeForUpdate() async {
+    await windowManager.setPreventClose(false);
+    await windowManager.destroy();
   }
 
   Future<void> _toggleFullScreen() async {
@@ -109,6 +120,7 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
   @override
   void dispose() {
     windowManager.removeListener(this);
+    widget.autoUpdater.dispose();
     _auth.dispose();
     super.dispose();
   }
@@ -141,14 +153,14 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
                 ? ResponsiveScale(
                     child: AppErrorHost(
                       center: widget.errorCenter,
-                      child: child!,
+                      child: _withUpdateOverlay(child!),
                     ),
                   )
                 : AppWindowFrame(
                     child: ResponsiveScale(
                       child: AppErrorHost(
                         center: widget.errorCenter,
-                        child: child!,
+                        child: _withUpdateOverlay(child!),
                       ),
                     ),
                   ),
@@ -183,5 +195,52 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
               );
       },
     ),
+  );
+
+  Widget _withUpdateOverlay(Widget child) => ListenableBuilder(
+    listenable: widget.autoUpdater,
+    child: child,
+    builder: (context, child) {
+      if (!widget.autoUpdater.blocksInteraction) return child!;
+      final message = switch (widget.autoUpdater.phase) {
+        PdvAutoUpdatePhase.downloading => 'Baixando atualização segura…',
+        PdvAutoUpdatePhase.preparing => 'Preparando atualização…',
+        PdvAutoUpdatePhase.restarting => 'Reiniciando o StarChef…',
+        _ => 'Atualizando o StarChef…',
+      };
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          child!,
+          ColoredBox(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Center(
+              child: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.system_update_alt, size: 54),
+                    const SizedBox(height: 20),
+                    Text(
+                      message,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(value: widget.autoUpdater.progress),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Não desligue o computador. Se a nova versão não abrir, '
+                      'a versão anterior será restaurada automaticamente.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
   );
 }

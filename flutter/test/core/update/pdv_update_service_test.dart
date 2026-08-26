@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -19,7 +21,7 @@ void main() {
   });
 
   group('PdvUpdateService', () {
-    test('indica atualização e escolhe instalador no Windows', () async {
+    test('indica atualização e escolhe ZIP transacional no Windows', () async {
       final service = PdvUpdateService(
         manifestUri: Uri.parse('https://updates.example/latest.json'),
         platform: 'windows',
@@ -39,8 +41,8 @@ void main() {
       expect(status.phase, PdvUpdatePhase.updateAvailable);
       expect(status.installed?.display, '1.0.32+30');
       expect(status.latestVersion, '1.0.33');
-      expect(status.artifact?.kind, 'installer');
-      expect(status.artifact?.format, 'exe');
+      expect(status.artifact?.kind, 'portable');
+      expect(status.artifact?.format, 'zip');
       service.dispose();
     });
 
@@ -78,6 +80,56 @@ void main() {
       expect(status.detail, contains('HTTP 503'));
       service.dispose();
     });
+
+    test('baixa apenas quando tamanho e SHA-256 conferem', () async {
+      final bytes = utf8.encode('bundle-starchef');
+      final directory = await Directory.systemTemp.createTemp('pdv-update-');
+      final artifact = PdvReleaseArtifact(
+        kind: 'portable',
+        format: 'zip',
+        name: 'pdv.zip',
+        url: Uri.parse('https://updates.example/pdv.zip'),
+        sha256: sha256.convert(bytes).toString(),
+        size: bytes.length,
+        recommended: true,
+      );
+      final service = PdvUpdateService(
+        client: MockClient((_) async => http.Response.bytes(bytes, 200)),
+      );
+
+      final result = await service.downloadAndVerify(artifact, directory);
+
+      expect(await result.file.readAsBytes(), bytes);
+      expect(File('${result.file.path}.part').existsSync(), isFalse);
+      service.dispose();
+      await directory.delete(recursive: true);
+    });
+
+    test('remove download quando o SHA-256 diverge', () async {
+      final bytes = utf8.encode('conteúdo adulterado');
+      final directory = await Directory.systemTemp.createTemp('pdv-update-');
+      final artifact = PdvReleaseArtifact(
+        kind: 'portable',
+        format: 'zip',
+        name: 'pdv.zip',
+        url: Uri.parse('https://updates.example/pdv.zip'),
+        sha256: '0' * 64,
+        size: bytes.length,
+        recommended: true,
+      );
+      final service = PdvUpdateService(
+        client: MockClient((_) async => http.Response.bytes(bytes, 200)),
+      );
+
+      await expectLater(
+        service.downloadAndVerify(artifact, directory),
+        throwsFormatException,
+      );
+
+      expect(File('${directory.path}/pdv.zip.part').existsSync(), isFalse);
+      service.dispose();
+      await directory.delete(recursive: true);
+    });
   });
 }
 
@@ -96,6 +148,7 @@ Map<String, dynamic> _manifest({String version = '1.0.33'}) => {
           'url':
               'https://github.com/example/starchef/releases/download/v$version/StarChef-PDV-Setup-$version.exe',
           'sha256': 'a' * 64,
+          'size': 120,
           'recommended': true,
         },
         {
@@ -105,6 +158,7 @@ Map<String, dynamic> _manifest({String version = '1.0.33'}) => {
           'url':
               'https://github.com/example/starchef/releases/download/v$version/StarChef-PDV-Windows-v$version.zip',
           'sha256': 'b' * 64,
+          'size': 100,
           'recommended': false,
         },
       ],
@@ -118,6 +172,7 @@ Map<String, dynamic> _manifest({String version = '1.0.33'}) => {
           'url':
               'https://github.com/example/starchef/releases/download/v$version/StarChef-PDV-Linux-v$version.zip',
           'sha256': 'c' * 64,
+          'size': 100,
           'recommended': true,
         },
       ],

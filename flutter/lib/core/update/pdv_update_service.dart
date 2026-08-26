@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -33,6 +34,7 @@ class PdvReleaseArtifact {
     required this.name,
     required this.url,
     required this.sha256,
+    required this.size,
     required this.recommended,
   });
 
@@ -41,23 +43,33 @@ class PdvReleaseArtifact {
   final String name;
   final Uri url;
   final String sha256;
+  final int size;
   final bool recommended;
 
   factory PdvReleaseArtifact.fromJson(Map<String, dynamic> json) {
     final url = Uri.tryParse('${json['url'] ?? ''}');
     final hash = '${json['sha256'] ?? ''}'.trim().toLowerCase();
-    if (url == null || !url.hasScheme || url.host.isEmpty) {
+    if (url == null || url.scheme != 'https' || url.host.isEmpty) {
       throw const FormatException('URL de artefato inválida');
     }
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
       throw const FormatException('SHA-256 de artefato inválido');
     }
+    final size = json['size'];
+    if (size is! int || size <= 0) {
+      throw const FormatException('Tamanho de artefato inválido');
+    }
+    final name = _requiredText(json, 'name');
+    if (name.contains('/') || name.contains(r'\')) {
+      throw const FormatException('Nome de artefato inválido');
+    }
     return PdvReleaseArtifact(
       kind: _requiredText(json, 'kind'),
       format: _requiredText(json, 'format'),
-      name: _requiredText(json, 'name'),
+      name: name,
       url: url,
       sha256: hash,
+      size: size,
       recommended: json['recommended'] == true,
     );
   }
@@ -134,6 +146,27 @@ class PdvReleaseManifest {
       orElse: () => packages.first,
     );
   }
+
+  /// O atualizador transacional usa o bundle completo. No Windows, o EXE
+  /// continua indicado para instalação manual; o ZIP permite rollback total.
+  PdvReleaseArtifact? automaticArtifactFor(String platform) {
+    final packages = platforms[platform.toLowerCase()];
+    if (packages == null || packages.isEmpty) return null;
+    for (final artifact in packages) {
+      if (artifact.format.toLowerCase() == 'zip' &&
+          artifact.kind.toLowerCase() == 'portable') {
+        return artifact;
+      }
+    }
+    return null;
+  }
+}
+
+class PdvDownloadedArtifact {
+  const PdvDownloadedArtifact({required this.artifact, required this.file});
+
+  final PdvReleaseArtifact artifact;
+  final File file;
 }
 
 class PdvUpdateStatus {
@@ -211,9 +244,9 @@ class PdvUpdateService {
       final manifest = PdvReleaseManifest.fromJson(
         Map<String, dynamic>.from(decoded),
       );
-      final artifact = manifest.recommendedArtifactFor(platform);
+      final artifact = manifest.automaticArtifactFor(platform);
       if (artifact == null) {
-        throw FormatException('Release sem pacote para $platform');
+        throw FormatException('Release sem ZIP portátil para $platform');
       }
       final hasUpdate =
           comparePdvVersions(manifest.version, installed.version) > 0;
@@ -232,6 +265,70 @@ class PdvUpdateService {
         installed: installed,
         detail: 'Não foi possível consultar a versão mais recente: $error',
       );
+    }
+  }
+
+  Future<PdvDownloadedArtifact> downloadAndVerify(
+    PdvReleaseArtifact artifact,
+    Directory destination, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    await destination.create(recursive: true);
+    final finalFile = File(
+      '${destination.path}${Platform.pathSeparator}${artifact.name}',
+    );
+    final partialFile = File('${finalFile.path}.part');
+    if (await partialFile.exists()) await partialFile.delete();
+
+    IOSink? sink;
+    try {
+      final request = http.Request('GET', artifact.url)
+        ..headers['Accept'] = 'application/octet-stream';
+      final response = await _client.send(request).timeout(timeout);
+      if (response.statusCode != 200) {
+        throw HttpException(
+          'Download respondeu HTTP ${response.statusCode}',
+          uri: artifact.url,
+        );
+      }
+      final announcedLength = response.contentLength;
+      if (announcedLength != null && announcedLength != artifact.size) {
+        throw const FormatException('Tamanho anunciado difere do manifesto');
+      }
+
+      sink = partialFile.openWrite();
+      var received = 0;
+      await for (final chunk in response.stream.timeout(timeout)) {
+        received += chunk.length;
+        if (received > artifact.size) {
+          throw const FormatException(
+            'Download excedeu o tamanho definido no manifesto',
+          );
+        }
+        sink.add(chunk);
+        onProgress?.call(received, artifact.size);
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+
+      final downloadedSize = await partialFile.length();
+      if (downloadedSize != artifact.size) {
+        throw FormatException(
+          'Download incompleto: $downloadedSize de ${artifact.size} bytes',
+        );
+      }
+      final digest = await sha256.bind(partialFile.openRead()).first;
+      if (digest.toString().toLowerCase() != artifact.sha256) {
+        throw const FormatException('SHA-256 do download não confere');
+      }
+      if (await finalFile.exists()) await finalFile.delete();
+      await partialFile.rename(finalFile.path);
+      return PdvDownloadedArtifact(artifact: artifact, file: finalFile);
+    } catch (_) {
+      await sink?.close();
+      if (await partialFile.exists()) await partialFile.delete();
+      rethrow;
     }
   }
 

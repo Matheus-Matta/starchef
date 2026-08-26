@@ -10,6 +10,7 @@ import 'core/logging/app_logger.dart';
 import 'core/network/api_client.dart';
 import 'core/storage/local_preferences.dart';
 import 'core/storage/session_store.dart';
+import 'core/update/pdv_auto_updater.dart';
 import 'features/auth/data/auth_repository.dart';
 import 'features/cash/data/cash_auth_repository.dart';
 import 'features/scale/services/scale_window_launcher.dart';
@@ -98,6 +99,7 @@ Future<void> main(List<String> arguments) async {
           authRepository: repository,
           preferences: preferences,
           errorCenter: errorCenter,
+          autoUpdater: PdvAutoUpdater(),
         );
 
   // Sentry só é inicializado se houver DSN configurada (--dart-define ou

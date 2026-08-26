@@ -41,14 +41,18 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 
 ## Contrato de atualização atual
 
-- O PDV verifica automaticamente se existe versão nova ao carregar a tela
-  principal.
+- O PDV verifica automaticamente se existe versão nova durante a inicialização.
 - A verificação nunca deve bloquear login, venda, caixa ou impressão quando a
   rede/GitHub estiver indisponível.
-- Download e instalação ainda são manuais. Não descreva o sistema como
-  auto-instalação enquanto esse comportamento não estiver implementado e
-  testado.
+- Quando existe uma versão nova, o PDV baixa o ZIP portátil da plataforma,
+  valida tamanho e SHA-256, prepara o bundle e bloqueia a operação somente
+  durante esse fluxo de atualização.
+- Um processo auxiliar fecha as janelas do mesmo executável, troca o bundle,
+  reinicia o PDV e restaura a versão anterior se a nova encerrar durante a
+  validação inicial.
 - Windows publica instalador EXE recomendado e ZIP portátil alternativo.
+- O EXE é destinado à instalação manual; o atualizador automático do Windows
+  escolhe o ZIP para permitir rollback transacional.
 - Linux publica ZIP como pacote recomendado.
 - O Release publica `latest.json` com versão, tag, commit, URLs, tamanhos e
   SHA-256.
@@ -67,6 +71,8 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   e `flutter_garcom/README.md`;
 - `flutter/pubspec.yaml` e `flutter/pubspec.lock`;
 - `flutter/lib/core/update/pdv_update_service.dart`;
+- `flutter/lib/core/update/pdv_auto_updater.dart`;
+- `flutter/lib/core/update/pdv_update_installer.dart`;
 - `flutter/lib/features/home/presentation/pdv_navigation_shell.dart`;
 - `flutter/windows/installer/build_installer.ps1`;
 - `flutter/windows/installer/starchef_pdv.iss`;
