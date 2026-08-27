@@ -2746,27 +2746,7 @@ class _HomePageState extends State<HomePage> {
         await _goHome();
         return;
       }
-      // O pedido já foi fechado acima. A nota é um efeito colateral: se a
-      // impressora falhar, o operador não pode ficar preso na tela do pedido
-      // com uma venda que, do ponto de vista do caixa, já terminou.
-      var printed = false;
-      try {
-        final printJob = await api.post(
-          '/orders/${closed['id']}/print/',
-          body: const {'job_type': 'receipt'},
-          accessToken: token,
-        );
-        await _handlePrintJob(printJob);
-        printed = true;
-      } catch (error) {
-        if (mounted) {
-          _error(
-            error,
-            title: 'O pedido foi fechado, mas a nota não saiu',
-            action: 'Reimprima pela tela de Pedidos quando quiser.',
-          );
-        }
-      }
+      final printed = await _printConferenceReceipt(closed);
       if (mounted) {
         showAppToast(
           context,
@@ -2778,7 +2758,38 @@ class _HomePageState extends State<HomePage> {
       await _goHome();
       return;
     }
+    // Nota de conferência antes de cobrar: o cliente confere os valores e
+    // confirma antes de o caixa seguir para o teclado de pagamento.
+    await _printConferenceReceipt(closed);
     await _paymentDialog();
+  }
+
+  /// Imprime a nota de conferência (não fiscal) do pedido recém-fechado.
+  ///
+  /// É efeito colateral, igual ao recibo pós-pagamento: se a impressora
+  /// falhar, o caixa segue o atendimento e reimprime depois pela tela de
+  /// Pedidos — travar a venda numa nota que não saiu seria pior para o
+  /// cliente que já está esperando para pagar.
+  Future<bool> _printConferenceReceipt(Map<String, dynamic> order) async {
+    if (_isOfflinePending(order)) return false;
+    try {
+      final printJob = await api.post(
+        '/orders/${order['id']}/print/',
+        body: const {'job_type': 'receipt'},
+        accessToken: token,
+      );
+      await _handlePrintJob(printJob);
+      return true;
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'O pedido foi fechado, mas a nota de conferência não saiu',
+          action: 'Reimprima pela tela de Pedidos quando quiser.',
+        );
+      }
+      return false;
+    }
   }
 
   /// Imprime a NOTA COMPLETA DO CLIENTE (receipt: itens + valores + total) do
@@ -2854,7 +2865,16 @@ class _HomePageState extends State<HomePage> {
   /// conexão real com o backend — `ApiClient._requiresOnline` já bloqueia o
   /// enfileiramento offline dessas rotas, então uma falha aqui chega como
   /// [ApiException] normal, tratada pelo [_error] de sempre.
-  Future<void> _emitFiscalInvoice(Map<String, dynamic> order) async {
+  ///
+  /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
+  /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
+  /// após cada pagamento, isso spammaria caixas que nem usam NFC-e ainda.
+  /// Qualquer outra falha (SEFAZ fora do ar, certificado vencido) continua
+  /// visível, porque nesse caso o DANFE realmente não saiu para o cliente.
+  Future<void> _emitFiscalInvoice(
+    Map<String, dynamic> order, {
+    bool silentIfUnconfigured = false,
+  }) async {
     if (emittingInvoice) return;
     setState(() => emittingInvoice = true);
     try {
@@ -2871,6 +2891,15 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         ),
         errorTitle: 'Não foi possível emitir a NFC-e',
+        onError: silentIfUnconfigured
+            ? (error) {
+                if (!'$error'.toLowerCase().contains(
+                  'configuracao fiscal',
+                )) {
+                  _error(error, title: 'Não foi possível emitir a NFC-e');
+                }
+              }
+            : null,
       );
       if (invoice == null || !mounted) return;
 
@@ -3170,6 +3199,11 @@ class _HomePageState extends State<HomePage> {
             action: 'Reimprima pela tela de Pedidos quando quiser.',
           );
         }
+      }
+      // Emite a NFC-e assim que o pagamento fecha, em vez de depender do
+      // caixa lembrar de voltar no histórico do pedido para emitir manual.
+      if (mounted) {
+        await _emitFiscalInvoice(activeOrder!, silentIfUnconfigured: true);
       }
     }
 
