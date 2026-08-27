@@ -54,6 +54,11 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
 
     assert response.status_code == 200, response.data
     assert response.data["printer"]["id"] == str(printer.id)
+    # O agente local do PDV le o texto pronto direto desta resposta (nao
+    # busca o PrintJob de novo); sem "payload" aqui ele caia pro conversor
+    # generico de HTML, que gruda rotulo e valor ("SubtotalR$ 237,00").
+    assert response.data["payload"]["text_content"]
+    assert product.name in response.data["payload"]["text_content"]
     job = PrintJob.all_objects.get(pk=response.data["print_job_id"])
     assert job.payload["manual_only"] is True
     assert job.payload["text_content"]

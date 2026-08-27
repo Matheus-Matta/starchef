@@ -296,6 +296,47 @@ void main() {
     });
   });
 
+  group('LocalDeviceAgent conversão de HTML para texto (último recurso)', () {
+    test(
+      'não gruda rótulo e valor quando a linha de tabela vem compacta',
+      () {
+        // POST /orders/{id}/print/ não devolve text_content — só html — e o
+        // template Django escreve a linha de subtotal numa única linha de
+        // código-fonte, sem espaço nenhum entre as tags.
+        const html =
+            '<table><tr><td>Subtotal</td><td>R\$ 237,00</td></tr></table>';
+        expect(
+          LocalDeviceAgent.htmlToText(html),
+          'Subtotal  R\$ 237,00',
+        );
+      },
+    );
+
+    test(
+      'produz o mesmo resultado independente da indentação do HTML de origem',
+      () {
+        // A mesma linha, mas quebrada em várias linhas de código-fonte (como
+        // o bloco de itens do template) — antes disso produzia uma quebra de
+        // linha diferente da versão compacta, um acidente de formatação.
+        const html = '<table>\n  <tr>\n    <td>1 x xtudo</td>\n'
+            '    <td>R\$ 49,00</td>\n  </tr>\n</table>';
+        expect(
+          LocalDeviceAgent.htmlToText(html),
+          '1 x xtudo  R\$ 49,00',
+        );
+      },
+    );
+
+    test('remove CSS/JS e normaliza entidades comuns', () {
+      const html =
+          '<style>td{padding:2px}</style><p>Ol&aacute; &amp; adeus</p>';
+      expect(
+        LocalDeviceAgent.htmlToText(html),
+        'Ol&aacute; & adeus',
+      );
+    });
+  });
+
   group('LocalDeviceAgent barcode text fallback', () {
     test('adds an explicit fallback when raw barcode is unavailable', () {
       expect(

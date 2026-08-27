@@ -455,6 +455,11 @@ class OrderViewSet(BaseTenantViewSet):
             {
                 "print_job_id": str(job.id),
                 "html": job.html_content,
+                # O agente local usa payload.text_content (e barcode/QR) como
+                # texto pronto pro cupom termico; sem isso ele caia pro
+                # conversor generico de HTML, que nao entende tabela e gruda
+                # rotulo com valor ("SubtotalR$ 237,00").
+                "payload": job.payload,
                 "status": job.status,
                 "printer": (
                     {

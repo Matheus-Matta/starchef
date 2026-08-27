@@ -582,7 +582,7 @@ class LocalDeviceAgent {
           final readyText = '${payload['text_content'] ?? ''}'.trim();
           final text = readyText.isNotEmpty
               ? readyText
-              : _htmlToText('${job['html_content'] ?? ''}');
+              : htmlToText('${job['html_content'] ?? ''}');
           if (text.trim().isEmpty) {
             throw const FormatException('O trabalho não possui conteúdo.');
           }
@@ -636,7 +636,7 @@ class LocalDeviceAgent {
     final readyText = '${payload['text_content'] ?? ''}'.trim();
     final text = readyText.isNotEmpty
         ? readyText
-        : _htmlToText('${job['html'] ?? job['html_content'] ?? ''}');
+        : htmlToText('${job['html'] ?? job['html_content'] ?? ''}');
     if (text.isEmpty) {
       throw StateError('O trabalho não possui conteúdo para impressão.');
     }
@@ -1075,7 +1075,18 @@ class LocalDeviceAgent {
     }
   }
 
-  String _htmlToText(String html) => html
+  /// Último recurso quando o job não trouxe `text_content` pronto (ex.:
+  /// `POST /orders/{id}/print/` não devolve o payload, só o HTML).
+  ///
+  /// Colapsa primeiro o espaço em branco ENTRE tags: a indentação do
+  /// template Django é inconsistente (algumas linhas de tabela quebradas em
+  /// várias linhas de código-fonte, outras compactas numa linha só), e sem
+  /// isso o resultado dependia de acidente de formatação do HTML — uma
+  /// célula ganhava quebra de linha de graça, a vizinha colava direto no
+  /// valor ("SubtotalR$ 237,00"). Cada `</td>` fechado sempre vira o mesmo
+  /// separador, não importa como o HTML de origem foi indentado.
+  static String htmlToText(String html) => html
+      .replaceAll(RegExp(r'>\s+<'), '><')
       // CSS/JS nao sao conteudo imprimivel. Sem esta remocao, o fallback de
       // jobs antigos imprimia regras como "td { padding... }" junto aos itens.
       .replaceAll(
@@ -1083,6 +1094,7 @@ class LocalDeviceAgent {
         '',
       )
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</td>', caseSensitive: false), '  ')
       .replaceAll(
         RegExp(r'</(p|div|tr|li|h[1-6])>', caseSensitive: false),
         '\n',
@@ -1092,6 +1104,7 @@ class LocalDeviceAgent {
       .replaceAll('&amp;', '&')
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>')
+      .replaceAll(RegExp(r'[ \t]+\n'), '\n')
       .replaceAll(RegExp(r'\n{3,}'), '\n\n')
       .trim();
 }
