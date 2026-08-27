@@ -189,9 +189,13 @@ empilhava um cartão e enterrava a tela.
    antes de tocar na fila. Sem esse gate, um ciclo com a rede caída gastaria o
    `attempt_count` de cada operação e levaria o backoff ao teto sem chance real
    de entrega.
-2. Reivindica uma operação por vez com lease (`claimNext`), preservando ordem
-   causal — pular um item bloqueado enviaria um dependente antes de o ID
-   temporário do pai ser mapeado.
+2. Reivindica uma operação por vez com lease (`claimNext`). A varredura respeita
+   a ordem de criação, mas **pula** o que não pode rodar agora (bloqueado, em
+   backoff ou com lease de outra janela): antes, uma única operação travada na
+   frente segurava a fila inteira, inclusive operações sem nenhuma relação com
+   ela. A ordem causal continua garantida pelo dado, não pela posição — quem
+   ainda cita um ID temporário (`offline-…`) não mapeado espera a sua vez, para
+   não enviar um item antes de o pedido que o contém existir no servidor.
 3. Envia no máximo 20 por ciclo, uma requisição por vez.
 4. Sucesso: mapeia ID temporário → real e remove da fila.
 5. Falha temporária (408/425/429/5xx, socket, timeout): `retry` com backoff

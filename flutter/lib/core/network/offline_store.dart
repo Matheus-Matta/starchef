@@ -21,6 +21,10 @@ class OfflineStore {
   static const _maxCacheEntries = 300;
   static const _schemaVersion = 2;
 
+  /// Prefixo dos IDs criados localmente enquanto a operação não sobe — o
+  /// mesmo usado por `OrderPresenter.isOffline` e por `resolveReferences`.
+  static const _temporaryIdPrefix = 'offline-';
+
   final File _file;
   final File? _legacyFile;
   late final SqliteDatabase _database;
@@ -181,33 +185,51 @@ class OfflineStore {
     Duration leaseDuration = const Duration(seconds: 30),
   }) async {
     await _ready;
+    // O mapa de IDs é lido antes da transação para descobrir quais
+    // identificadores temporários já viraram reais.
+    final idMap = await _database.getAll(
+      'SELECT local_id, remote_id FROM offline_id_map WHERE scope = ?',
+      [scope],
+    );
     return _database.writeTransaction((tx) async {
       final now = DateTime.now().toUtc();
-      final row = await tx.getOptional(
+      // Varre a fila em ordem em vez de olhar só a primeira linha: uma
+      // operação bloqueada (ou aguardando backoff) na frente segurava TODAS
+      // as outras, inclusive as que não tinham nada a ver com ela — uma venda
+      // recusada por regra de negócio parava a fila inteira até alguém
+      // resolver na mão.
+      final rows = await tx.getAll(
         '''
-        SELECT queue_id, state, next_attempt_at, lease_until
+        SELECT queue_id, state, next_attempt_at, lease_until,
+               path, query_json, body_json
         FROM offline_outbox
         WHERE scope = ?
         ORDER BY created_at, queue_id
-        LIMIT 1
+        LIMIT 200
         ''',
         [scope],
       );
-      if (row == null) return null;
-      final state = '${row['state']}';
-      if (state != 'pending' && state != 'retry') return null;
-      final nextAttemptAt = DateTime.tryParse(
-        '${row['next_attempt_at'] ?? ''}',
-      )?.toUtc();
-      if (nextAttemptAt != null && nextAttemptAt.isAfter(now)) return null;
-      final leaseUntil = DateTime.tryParse(
-        '${row['lease_until'] ?? ''}',
-      )?.toUtc();
-      if (leaseUntil != null && leaseUntil.isAfter(now)) return null;
 
-      // Preserve causal order. Skipping a leased, delayed or blocked parent
-      // could send a dependent item before its temporary order ID is mapped.
-      final queueId = '${row['queue_id']}';
+      String? queueId;
+      for (final row in rows) {
+        final state = '${row['state']}';
+        if (state != 'pending' && state != 'retry') continue;
+        final nextAttemptAt = DateTime.tryParse(
+          '${row['next_attempt_at'] ?? ''}',
+        )?.toUtc();
+        if (nextAttemptAt != null && nextAttemptAt.isAfter(now)) continue;
+        final leaseUntil = DateTime.tryParse(
+          '${row['lease_until'] ?? ''}',
+        )?.toUtc();
+        if (leaseUntil != null && leaseUntil.isAfter(now)) continue;
+        // A ordem causal continua garantida pelo dado, não pela posição:
+        // quem ainda cita um ID temporário depende de uma operação anterior
+        // que não subiu, e por isso espera a sua vez.
+        if (_hasUnresolvedReference(row, idMap)) continue;
+        queueId = '${row['queue_id']}';
+        break;
+      }
+      if (queueId == null) return null;
       await tx.execute(
         '''
         UPDATE offline_outbox
@@ -222,6 +244,29 @@ class OfflineStore {
       );
       return claimed == null ? null : _outboxRow(claimed);
     });
+  }
+
+  /// A operação ainda aponta para um ID temporário que não virou real?
+  ///
+  /// É o que distingue "esta operação depende de outra que não subiu" de
+  /// "esta operação é independente e pode passar na frente". Sem esse teste,
+  /// pular a fila enviaria, por exemplo, a inclusão de um item antes de o
+  /// pedido que o contém existir no servidor.
+  static bool _hasUnresolvedReference(
+    Map<String, dynamic> row,
+    List<Map<String, dynamic>> idMap,
+  ) {
+    final encoded = [
+      '${row['path'] ?? ''}',
+      '${row['query_json'] ?? ''}',
+      '${row['body_json'] ?? ''}',
+    ].join(' ');
+    if (!encoded.contains(_temporaryIdPrefix)) return false;
+    var pending = encoded;
+    for (final entry in idMap) {
+      pending = pending.replaceAll('${entry['local_id']}', '');
+    }
+    return pending.contains(_temporaryIdPrefix);
   }
 
   Future<OutboxSummary> summary({String? scope}) async {

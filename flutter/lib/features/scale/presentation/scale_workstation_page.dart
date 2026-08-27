@@ -425,13 +425,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   // ------------------------------------------------------- ciclo da estação
 
   Future<void> _startStation() async {
-    if (scaleId == null || weighedProduct == null || printerId == null) {
+    // A impressora é opcional: sem ela a estação pesa e lança o pedido
+    // normalmente, só não emite o ticket. Exigi-la aqui impedia de operar um
+    // terminal que ainda não tem impressora vinculada.
+    if (scaleId == null || weighedProduct == null) {
       setState(() {
         errorMessage = scaleId == null
             ? 'Selecione uma balança.'
-            : weighedProduct == null
-            ? 'A balança precisa ter um produto por kg configurado.'
-            : 'Selecione a impressora padrão desta balança.';
+            : 'A balança precisa ter um produto por kg configurado.';
       });
       return;
     }
@@ -641,7 +642,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                 };
               })
               .toList(),
-          'print': widget.preferences.autoPrint,
+          // Sem impressora vinculada não há ticket a emitir: pedir impressão
+          // aqui faria o servidor recusar o lançamento inteiro
+          // (`_resolve_weigh_printer` exige a impressora da balança).
+          'print': widget.preferences.autoPrint && printerId != null,
         },
         accessToken: widget.accessToken,
       );
@@ -1304,10 +1308,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                         : null,
                     isExpanded: true,
                     decoration: InputDecoration(
-                      labelText: 'Impressora padrão da balança',
+                      labelText: 'Impressora da balança (opcional)',
                       prefixIcon: const Icon(Icons.print_outlined),
                       helperText:
-                          'O ticket de pesagem sempre será enviado para esta impressora.',
+                          'Sem impressora a estação pesa e lança o pedido normalmente, só não emite o ticket.',
                       suffixIcon: loadingPrinters
                           ? const Padding(
                               padding: EdgeInsets.all(12),
