@@ -27,6 +27,12 @@ void main() {
         isTrue,
       );
       expect(OfflineMutations.isQueueable('POST', '$_order/pay/'), isTrue);
+      // O garçom materializa o rascunho junto com o primeiro item — mesmo
+      // início de atendimento que `/orders/`.
+      expect(
+        OfflineMutations.isQueueable('POST', '/orders/create-with-item/'),
+        isTrue,
+      );
     });
 
     test('cadastro de cliente entra, com criação e edição', () {
@@ -85,6 +91,10 @@ void main() {
         '$_order/items/',
         '/orders/',
         '/orders/open-command/',
+        // Regressão: faltava aqui, então o Caixa Principal recusava a
+        // criação vinda do app do garçom com "Envelope da operação local
+        // inválido" — só pedidos já existentes funcionavam.
+        '/orders/create-with-item/',
       ]) {
         expect(
           OfflineMutations.isRelayable('POST', path),
@@ -146,6 +156,13 @@ void main() {
       // os itens lançados offline se pendurarem nele.
       expect(
         OfflineMutations.createsResource('POST', '/orders/open-command/'),
+        isTrue,
+      );
+      expect(
+        OfflineMutations.createsResource(
+          'POST',
+          '/orders/create-with-item/',
+        ),
         isTrue,
       );
 

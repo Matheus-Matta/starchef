@@ -43,6 +43,9 @@ abstract final class OfflineMutations {
       (path == '/customers/' ||
           path == '/orders/' ||
           path == '/orders/open-command/' ||
+          // O garçom materializa o rascunho junto com o primeiro item
+          // confirmado — mesmo resultado de `/orders/`, um pedido novo.
+          path == '/orders/create-with-item/' ||
           RegExp('^/orders/$_localId/items/\$').hasMatch(path) ||
           // Um pagamento tambem cria um recurso. Dar a ele um ID temporario
           // permite reconciliar o recebimento otimista com o Payment real e
@@ -57,6 +60,12 @@ abstract final class OfflineMutations {
           // é o começo do atendimento, e recusar aqui deixaria o operador sem
           // conseguir lançar nada enquanto a rede não volta.
           path == '/orders/open-command/' ||
+          // O app do garçom materializa o rascunho junto com o primeiro item
+          // (`OrdersRepository.createOrderWithItem`); sem esta linha o
+          // Caixa Principal recusava a criação com "Envelope da operação
+          // local inválido" e o garçom só conseguia trabalhar em pedidos já
+          // existentes.
+          path == '/orders/create-with-item/' ||
           RegExp('^/orders/$id/items/\$').hasMatch(path) ||
           // Fechar, mandar para a cozinha e registrar pagamento: o resto do
           // atendimento, para que uma queda de rede não impeça a venda de
