@@ -168,12 +168,9 @@ void main() {
           barcode,
         );
         expect(bytes.sublist(barcodeStart + barcode.length), [
-          10,
-          10,
-          10,
-          10,
-          10,
-          10,
+          0x1b,
+          0x64,
+          0x04,
           29,
           86,
           0,
@@ -294,7 +291,7 @@ void main() {
       expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
       expect(
         bytes.sublist(qrStart + qr.length),
-        [10, 10, 10, 10, 10, 10, 29, 86, 0],
+        [0x1b, 0x64, 0x04, 29, 86, 0],
       );
     });
   });
@@ -338,8 +335,8 @@ void main() {
 
       expect(parts.content, isNotEmpty);
       expect(
-        parts.content.sublist(parts.content.length - 6),
-        [10, 10, 10, 10, 10, 10],
+        parts.content.sublist(parts.content.length - 3),
+        [0x1b, 0x64, 0x04],
       );
       expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
     });

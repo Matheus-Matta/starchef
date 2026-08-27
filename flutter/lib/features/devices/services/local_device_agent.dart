@@ -217,10 +217,14 @@ class LocalDeviceAgent {
       ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
-      // A distância entre a cabeça de impressão e a guilhotina varia por
-      // modelo; 3 linhas não bastava em impressoras genéricas e cortava
-      // texto/código de barras que ainda não tinha saído.
-      if (isEscPos) ...const [10, 10, 10, 10, 10, 10, ...escPosCutBytes],
+      // ESC d 4 (avança 4 linhas) em vez de LF soltos: LF respeita o
+      // espaçamento de linha customizado (ESC 3 34) setado no cabeçalho do
+      // cupom, então 6 LFs avançavam bem mais que 4 linhas reais e, nessa
+      // impressora (MP-4200 HS), empurravam o papel além do limite de
+      // auto-corte do próprio firmware — cortava sozinha e de novo com o
+      // comando GS V explícito logo em seguida. ESC d é um avanço físico de
+      // n linhas, não LF: comportamento validado nesse hardware.
+      if (isEscPos) ...const [0x1b, 0x64, 0x04, ...escPosCutBytes],
     ];
   }
 
