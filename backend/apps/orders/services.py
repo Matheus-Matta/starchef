@@ -16,7 +16,6 @@ from apps.restaurants.models import Command, Table
 
 TWO_PLACES = Decimal("0.01")
 THREE_PLACES = Decimal("0.001")
-KITCHEN_DISPATCH_GRACE_SECONDS = 60
 
 
 def next_order_sequence(restaurant):
@@ -334,6 +333,7 @@ def recalculate_order(order):
 
 @transaction.atomic
 def send_order_to_kitchen(order, user):
+    """Send pending items to production and release printing immediately."""
     with tenant_context(order.account):
         order = Order.objects.select_for_update().prefetch_related("items__product").get(pk=order.pk)
         if order.is_locked:
@@ -344,7 +344,7 @@ def send_order_to_kitchen(order, user):
             raise ValidationError("Não há itens pendentes para enviar à cozinha.")
 
         now = timezone.now()
-        dispatch_at = now + timedelta(seconds=KITCHEN_DISPATCH_GRACE_SECONDS)
+        dispatch_at = now
 
         # Each send creates a new production round
         last_batch_number = order.batches.aggregate(value=Max("batch_number"))["value"] or 0
@@ -376,17 +376,20 @@ def send_order_to_kitchen(order, user):
             instance=order,
             actor=user,
             metadata={
-                "event": "kitchen_dispatch_scheduled",
+                "event": "kitchen_dispatch_requested",
                 "batch": batch.batch_number,
                 "batch_serial": str(batch.serial),
                 "dispatch_at": dispatch_at.isoformat(),
-                "grace_seconds": KITCHEN_DISPATCH_GRACE_SECONDS,
+                "immediate": True,
             },
         )
 
         from apps.printers.services import register_kitchen_batch_print_jobs
 
         register_kitchen_batch_print_jobs(batch=batch, user=user)
+
+        dispatch_kitchen_batch(batch, now=now)
+        order.refresh_from_db()
 
         return order
 
@@ -629,7 +632,7 @@ def update_order_item_status(item, new_status, user, reason=""):
             return comp_order_item(item, user, reason)
         if item.status == OrderItem.STATUS_QUEUED:
             raise ValidationError(
-                "O item ainda está no prazo de correção de 60 segundos e não entrou na cozinha."
+                "O item ainda está sendo liberado para produção. Atualize e tente novamente."
             )
 
         if item.status == OrderItem.STATUS_READY and new_status != OrderItem.STATUS_DELIVERED:

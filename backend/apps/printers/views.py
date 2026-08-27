@@ -453,8 +453,8 @@ class PrintJobViewSet(BaseTenantViewSet):
     ordering_fields = ["created_at", "printed_at"]
 
     def list(self, request, *args, **kwargs):
-        # Fallback operacional: mesmo sem Celery, a consulta feita pelo agente
-        # libera rodadas cujo prazo de 60 segundos terminou.
+        # Compatibilidade operacional: libera qualquer rodada agendada por uma
+        # versao anterior que ainda esteja pendente, mesmo sem Celery.
         from apps.orders.services import dispatch_due_kitchen_batches
 
         account = getattr(request, "account", None)

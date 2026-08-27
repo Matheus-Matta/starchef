@@ -131,7 +131,15 @@ def test_checkout_command_prints_complete_recalculated_ticket_with_code128(
         assert expected in job.payload["text_content"]
         assert expected in job.html_content
     assert "39.95" in job.payload["text_content"]
+    text_lines = job.payload["text_content"].splitlines()
+    weighed_line = next(line for line in text_lines if weighed.name in line)
+    drink_line = next(line for line in text_lines if drink.name in line)
+    assert len(weighed_line) == 42
+    assert weighed_line.endswith("R$ 29.95")
+    assert len(drink_line) == 42
+    assert drink_line.endswith("R$ 10.00")
     assert "39,95" in job.html_content
+    assert f"{weighed.name}</span><span>R$ 29,95" in job.html_content
     assert "CODE128" in job.payload["text_content"]
     assert 'data-symbology="CODE128"' in job.html_content
     assert "data:image/png;base64," in job.html_content

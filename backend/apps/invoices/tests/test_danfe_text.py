@@ -35,6 +35,9 @@ def test_danfe_text_contains_key_fields(account, restaurant, branch, manager_use
         text = _danfe_nfce_text(invoice, config)
 
     assert "X-Burger" in text
+    product_line = next(line for line in text.splitlines() if "X-Burger" in line)
+    assert len(product_line) == 48
+    assert product_line.endswith("R$ 25.00")
     assert invoice.number in text
     assert "HOMOLOGACAO" in text
     assert "AGUARDANDO AUTORIZACAO" in text

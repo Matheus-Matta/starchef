@@ -68,6 +68,9 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
     assert f"Pedido nº {order.sequence}" in text
     assert "RECIBO DE VENDA - NAO E DOCUMENTO FISCAL" in text
     assert "BALCAO" in text
+    product_line = next(line for line in text.splitlines() if product.name in line)
+    assert len(product_line) == 42
+    assert product_line.endswith("R$ 50.00")
 
 
 @pytest.mark.django_db

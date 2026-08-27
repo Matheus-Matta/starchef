@@ -72,7 +72,12 @@ class LocalDeviceAgent {
        _delay = delay ?? Future<void>.delayed;
 
   static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
-  static const List<int> escPosBottomMarginBytes = [0x1b, 0x4a, 0x14];
+  static const List<int> escPosBottomMarginBytes = [
+    0x1b,
+    0x33,
+    0x14,
+    0x0a,
+  ];
 
   static String? code128ValueFromPayload(Map<String, dynamic> payload) {
     final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
@@ -222,26 +227,23 @@ class LocalDeviceAgent {
       ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
-      // ESC d 4 (avança 4 linhas) em vez de LF soltos: LF respeita o
-      // espaçamento de linha customizado (ESC 3 34) setado no cabeçalho do
-      // cupom, então 6 LFs avançavam bem mais que 4 linhas reais e, nessa
-      // impressora (MP-4200 HS), empurravam o papel além do limite de
-      // auto-corte do próprio firmware — cortava sozinha e de novo com o
-      // comando GS V explícito logo em seguida. ESC d é um avanço físico de
-      // n linhas, não LF: comportamento validado nesse hardware.
+      // A primeira sequência configura 20 pontos e envia um LF real para a
+      // margem solicitada. ESC d 4 mantém a folga mecânica da guilhotina sem
+      // repetir vários LFs sob o espaçamento de 34 pontos usado no cupom —
+      // combinação que causava corte duplo na MP-4200 HS.
       if (isEscPos) ...const [
+        ...escPosBottomMarginBytes,
         0x1b,
         0x64,
         0x04,
-        ...escPosBottomMarginBytes,
         ...escPosCutBytes,
       ],
     ];
   }
 
   /// Acrescenta uma linha vazia ao caminho de spool, que aceita somente texto.
-  /// Nos transportes ESC/POS, a margem exata de 20 pontos e aplicada por
-  /// [escPosBottomMarginBytes] antes do corte.
+  /// Nos transportes ESC/POS, a margem usa uma quebra de linha real com
+  /// espaçamento de 20 pontos antes do avanço de segurança e do corte.
   static String textWithBottomMargin(String content) => '$content\n\n';
 
   /// Separa o comando de corte para que o transporte possa drenar o conteúdo

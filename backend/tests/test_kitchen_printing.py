@@ -1,13 +1,9 @@
-from datetime import timedelta
-
 import pytest
-from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import (
     add_order_item,
     create_order,
-    dispatch_kitchen_batch,
     send_order_to_kitchen,
     update_order_item_status,
 )
@@ -54,9 +50,6 @@ def test_kitchen_prints_only_new_batch_items_for_product_sector(
     assert "NOVO PEDIDO" in first_job.html_content
     assert "Mesa: 1" in first_job.html_content
     first_item.refresh_from_db()
-    first_item.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
-    first_item.batch.save(update_fields=["dispatch_at", "updated_at"])
-    dispatch_kitchen_batch(first_item.batch)
 
     update_order_item_status(
         first_item,

@@ -247,7 +247,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
 
   Future<void> _sendToKitchen() => _work(
     () => widget.repository.sendToKitchen(widget.orderId),
-    'Envio confirmado. Você tem 60 segundos para corrigir antes da impressão.',
+    'Pedido enviado para produção e impressão.',
   );
 
   void _toast(String message) {

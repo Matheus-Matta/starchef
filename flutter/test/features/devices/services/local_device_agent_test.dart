@@ -169,11 +169,12 @@ void main() {
         );
         expect(bytes.sublist(barcodeStart + barcode.length), [
           0x1b,
+          0x33,
+          0x14,
+          0x0a,
+          0x1b,
           0x64,
           0x04,
-          0x1b,
-          0x4a,
-          0x14,
           29,
           86,
           0,
@@ -294,11 +295,12 @@ void main() {
       expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
       expect(bytes.sublist(qrStart + qr.length), [
         0x1b,
+        0x33,
+        0x14,
+        0x0a,
+        0x1b,
         0x64,
         0x04,
-        0x1b,
-        0x4a,
-        0x14,
         29,
         86,
         0,
@@ -393,13 +395,14 @@ void main() {
       final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
 
       expect(parts.content, isNotEmpty);
-      expect(parts.content.sublist(parts.content.length - 6), [
+      expect(parts.content.sublist(parts.content.length - 7), [
+        0x1b,
+        0x33,
+        0x14,
+        0x0a,
         0x1b,
         0x64,
         0x04,
-        0x1b,
-        0x4a,
-        0x14,
       ]);
       expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
     });

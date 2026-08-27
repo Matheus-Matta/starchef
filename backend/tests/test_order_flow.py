@@ -1,12 +1,10 @@
-from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
-from apps.orders.services import add_order_item, close_order, create_order, dispatch_kitchen_batch, send_order_to_kitchen, update_order_item_status
+from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen, update_order_item_status
 from apps.payments.models import PaymentMethod
 from apps.payments.services import cancel_payment, open_cash_register, register_payment
 from apps.restaurants.models import Table
@@ -33,10 +31,6 @@ def test_create_order_and_send_to_kitchen(restaurant, branch, table, product, wa
 
     send_order_to_kitchen(order, waiter_user)
     item.refresh_from_db()
-    assert item.status == OrderItem.STATUS_QUEUED
-    item.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
-    item.batch.save(update_fields=["dispatch_at", "updated_at"])
-    dispatch_kitchen_batch(item.batch)
     order.refresh_from_db()
     item.refresh_from_db()
     table.refresh_from_db()
@@ -55,9 +49,6 @@ def test_change_kitchen_item_status(restaurant, branch, table, product, manager_
     item = add_order_item(order=order, product=product, quantity=1, user=manager_user)
     send_order_to_kitchen(order, manager_user)
     item.refresh_from_db()
-    item.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
-    item.batch.save(update_fields=["dispatch_at", "updated_at"])
-    dispatch_kitchen_batch(item.batch)
 
     update_order_item_status(item, OrderItem.STATUS_PREPARING, manager_user)
     update_order_item_status(item, OrderItem.STATUS_READY, manager_user)

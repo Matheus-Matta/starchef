@@ -250,7 +250,9 @@ _DANFE_WIDTH = 48  # mesma largura (fonte A, bobina 80mm) usada pelos outros cup
 
 def _danfe_linha_valor(rotulo, valor):
     quantia = f"R$ {valor}"
-    return f"{rotulo:<{_DANFE_WIDTH - 14}}{quantia:>14}"
+    largura_rotulo = _DANFE_WIDTH - 14
+    rotulo = str(rotulo)[:largura_rotulo]
+    return f"{rotulo:<{largura_rotulo}}{quantia:>14}"
 
 
 def _danfe_nfce_text(invoice, config):
@@ -284,9 +286,13 @@ def _danfe_nfce_text(invoice, config):
     lines.append("-" * _DANFE_WIDTH)
 
     for item in invoice.items.all():
-        lines.append(f"{item.line_number} {item.code or '-'} {item.description}"[:_DANFE_WIDTH])
+        lines.append(
+            _danfe_linha_valor(
+                f"{item.line_number} {item.code or '-'} {item.description}",
+                item.total_price,
+            )
+        )
         lines.append(f"  {item.quantity:.3f} {item.unit} x R$ {item.unit_price}"[:_DANFE_WIDTH])
-        lines.append(_danfe_linha_valor("", item.total_price))
 
     lines.append("-" * _DANFE_WIDTH)
     lines.append(_danfe_linha_valor("Valor dos produtos", invoice.products_total))

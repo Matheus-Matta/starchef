@@ -41,7 +41,9 @@ def _linha_valor(rotulo, valor):
     LARGURA_CUPOM colunas — o mesmo formato usado em toda linha de item,
     subtotal, total e pagamento do cupom."""
     quantia = f"R$ {valor}"
-    return f"{rotulo:<{LARGURA_CUPOM - _COLUNA_VALOR}}{quantia:>{_COLUNA_VALOR}}"
+    largura_rotulo = LARGURA_CUPOM - _COLUNA_VALOR
+    rotulo = str(rotulo)[:largura_rotulo]
+    return f"{rotulo:<{largura_rotulo}}{quantia:>{_COLUNA_VALOR}}"
 
 
 def _establishment_info(order):
@@ -198,10 +200,14 @@ def _customer_receipt_text(order):
     for item in order.items.select_related("product").prefetch_related("addons__addon"):
         if item.status == item.STATUS_CANCELLED:
             continue
-        lines.append(f"{item.quantity:g} x {item.product.name}"[:LARGURA_CUPOM])
+        lines.append(
+            _linha_valor(
+                f"{item.quantity:g} x {item.product.name}",
+                item.total_price,
+            )
+        )
         if item.product.is_weighed:
             lines.append(f"{item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM])
-        lines.append(_linha_valor("", item.total_price))
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
@@ -726,12 +732,11 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
         ]
     )
     for ticket_item in items:
-        lines.append(ticket_item.product.name[:LARGURA_CUPOM])
+        lines.append(_linha_valor(ticket_item.product.name, ticket_item.total_price))
         if ticket_item.product.is_weighed:
             lines.append(f"{Decimal(ticket_item.quantity):.3f} kg x " f"R$ {ticket_item.unit_price}/kg")
         else:
             lines.append(f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}")
-        lines.append(_linha_valor("VALOR", ticket_item.total_price))
         lines.append("-" * LARGURA_CUPOM)
     lines.append(_linha_valor("TOTAL DO PEDIDO", order.total))
     if barcode["value"]:

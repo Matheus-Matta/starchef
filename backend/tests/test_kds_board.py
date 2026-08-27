@@ -1,13 +1,10 @@
 """Quadro do KDS: colunas por estação, mover card (drag) e efeitos de status."""
-from datetime import timedelta
-
 import pytest
-from django.utils import timezone
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.kitchen.models import KdsColumn, KdsStation
 from apps.orders.models import Order, OrderItem
-from apps.orders.services import add_order_item, create_order, dispatch_kitchen_batch, send_order_to_kitchen
+from apps.orders.services import add_order_item, create_order, send_order_to_kitchen
 
 pytestmark = pytest.mark.django_db
 
@@ -32,10 +29,6 @@ def sent_item(restaurant, branch, table, product, manager_user):
     order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_TABLE, table=table, user=manager_user)
     item = add_order_item(order=order, product=product, quantity=1, user=manager_user)
     send_order_to_kitchen(order, manager_user)
-    item.refresh_from_db()
-    item.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
-    item.batch.save(update_fields=["dispatch_at", "updated_at"])
-    dispatch_kitchen_batch(item.batch)
     item.refresh_from_db()
     return item
 

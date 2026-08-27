@@ -1,4 +1,3 @@
-from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -11,7 +10,6 @@ from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.orders.services import (
     add_order_item,
     create_order,
-    dispatch_due_kitchen_batches,
     send_order_to_kitchen,
     void_order_item,
 )
@@ -87,7 +85,7 @@ def test_create_with_item_never_leaves_an_empty_order(api_client, manager_user, 
     assert OrderItem.all_objects.filter(order_id=created.data["id"]).count() == 1
 
 
-def test_kitchen_grace_cancels_silently_then_prints_linked_cancellation(
+def test_immediate_kitchen_dispatch_prints_linked_cancellation(
     account,
     restaurant,
     branch,
@@ -97,45 +95,102 @@ def test_kitchen_grace_cancels_silently_then_prints_linked_cancellation(
 ):
     _printer_for_product(account, restaurant, branch, product, table)
     order = create_order(restaurant=restaurant, order_type=Order.TYPE_COUNTER, user=manager_user)
-    first = add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    item = add_order_item(order=order, product=product, quantity=1, user=manager_user)
 
     send_order_to_kitchen(order, manager_user)
-    first.refresh_from_db()
-    first_batch = first.batch
-    assert first.status == OrderItem.STATUS_QUEUED
-    assert first_batch.status == OrderBatch.STATUS_SCHEDULED
-    assert first_batch.dispatch_at > timezone.now()
-    assert PrintJob.objects.filter(order=order, status=PrintJob.STATUS_SCHEDULED).count() == 1
-
-    void_order_item(first, manager_user, "Cliente corrigiu antes da impressão")
-    assert not PrintJob.objects.filter(order=order, job_type=PrintJob.TYPE_KITCHEN_CANCEL).exists()
-    audit = AuditLog.all_objects.filter(entity="OrderItem", object_id=str(first.id)).first()
-    assert audit.metadata["within_print_grace_period"] is True
-
-    second = add_order_item(order=order, product=product, quantity=2, user=manager_user)
-    send_order_to_kitchen(order, manager_user)
-    second.refresh_from_db()
-    second.batch.dispatch_at = timezone.now() - timedelta(seconds=1)
-    second.batch.save(update_fields=["dispatch_at", "updated_at"])
-
-    assert dispatch_due_kitchen_batches(account_id=account.id) == 1
-    second.refresh_from_db()
+    item.refresh_from_db()
     original = PrintJob.objects.get(
         order=order,
         job_type=PrintJob.TYPE_KITCHEN,
         status=PrintJob.STATUS_RENDERED,
     )
-    assert second.status == OrderItem.STATUS_SENT
+    assert item.status == OrderItem.STATUS_SENT
+    assert item.batch.status == OrderBatch.STATUS_SENT
 
-    void_order_item(second, manager_user, "Cliente desistiu depois do envio")
+    void_order_item(item, manager_user, "Cliente desistiu depois do envio")
     cancellation = PrintJob.objects.get(
         original_job=original,
-        cancelled_item=second,
+        cancelled_item=item,
         job_type=PrintJob.TYPE_KITCHEN_CANCEL,
     )
     assert cancellation.status == PrintJob.STATUS_RENDERED
     assert cancellation.payload["original_print_serial"] == str(original.serial)
     assert str(original.serial) in cancellation.payload["text_content"]
+    audit = AuditLog.all_objects.filter(entity="OrderItem", object_id=str(item.id)).first()
+    assert audit.metadata["within_print_grace_period"] is False
+
+
+def test_pdv_and_waiter_app_dispatch_immediately(
+    api_client,
+    account,
+    restaurant,
+    branch,
+    manager_user,
+    waiter_user,
+    product,
+    table,
+):
+    _printer_for_product(account, restaurant, branch, product, table)
+
+    pdv_order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    pdv_item = add_order_item(
+        order=pdv_order,
+        product=product,
+        quantity=1,
+        user=manager_user,
+    )
+    api_client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(manager_user).access_token}"
+    )
+
+    pdv_response = api_client.post(
+        f"/api/v1/orders/{pdv_order.id}/send-to-kitchen/",
+        {},
+        format="json",
+    )
+
+    assert pdv_response.status_code == 200, pdv_response.data
+    pdv_item.refresh_from_db()
+    pdv_job = PrintJob.all_objects.get(order=pdv_order)
+    assert pdv_item.status == OrderItem.STATUS_SENT
+    assert pdv_item.batch.status == OrderBatch.STATUS_SENT
+    assert pdv_job.status == PrintJob.STATUS_RENDERED
+    assert pdv_job.available_at <= timezone.now()
+
+    waiter_order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=waiter_user,
+    )
+    waiter_item = add_order_item(
+        order=waiter_order,
+        product=product,
+        quantity=1,
+        user=waiter_user,
+    )
+    api_client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(waiter_user).access_token}"
+    )
+
+    waiter_response = api_client.post(
+        f"/api/v1/orders/{waiter_order.id}/send-to-kitchen/",
+        {},
+        format="json",
+    )
+
+    assert waiter_response.status_code == 200, waiter_response.data
+    waiter_item.refresh_from_db()
+    waiter_job = PrintJob.all_objects.get(order=waiter_order)
+    assert waiter_item.status == OrderItem.STATUS_SENT
+    assert waiter_item.batch.status == OrderBatch.STATUS_SENT
+    assert waiter_job.status == PrintJob.STATUS_RENDERED
+    assert waiter_job.available_at <= timezone.now()
 
 
 def test_table_api_derives_occupied_status_from_linked_command(api_client, manager_user, table, command):

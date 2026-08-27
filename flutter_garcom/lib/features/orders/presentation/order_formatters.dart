@@ -102,7 +102,7 @@ List<Map<String, dynamic>> orderItems(Map<String, dynamic> order) {
 /// Rótulo do estado do item na cozinha.
 String itemStatusLabel(Object? status) => switch ('$status') {
   'pending' => 'A enviar',
-  'queued' => 'Aguardando 60 s',
+  'queued' => 'Enviando para produção',
   'sent' => 'Na cozinha',
   'preparing' => 'Preparando',
   'ready' => 'Pronto',
