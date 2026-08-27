@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
+import 'package:starchef_pdv/core/storage/local_preferences.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 
 void main() {
@@ -382,6 +384,52 @@ void main() {
       );
       await api.dispose();
     });
+
+    test(
+      'aplica o override local de porta antes de abrir a serial de verdade',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'starchef-device-agent-prefs',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final preferences = LocalPreferences(
+          file: File('${directory.path}/preferences.json'),
+        );
+        await preferences.load();
+        await preferences.setSerialPort(
+          kind: 'printer',
+          deviceId: 'printer-1',
+          value: '/dev/ttyACM0',
+        );
+
+        String? probedEndpoint;
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        final agent = LocalDeviceAgent(
+          api: api,
+          preferences: preferences,
+          availabilityProbe: (target) async {
+            probedEndpoint = target.endpoint;
+            return false;
+          },
+        );
+
+        // O cadastro no backend continua com o endpoint genérico; o override
+        // deste terminal precisa vencer antes da checagem de disponibilidade
+        // e da abertura real da porta — do contrário a impressão real ignora
+        // a configuração local mesmo com ela salva, como aconteceu em
+        // produção (o teste avulso passava, mas a nota de verdade falhava).
+        await expectLater(
+          agent.printForPrinter({
+            'id': 'printer-1',
+            'connection_type': 'serial',
+            'endpoint': '/dev/starchef-printer',
+          }, 'RECIBO'),
+          throwsA(isA<PrinterCommunicationException>()),
+        );
+        expect(probedEndpoint, '/dev/ttyACM0');
+        await api.dispose();
+      },
+    );
 
     test('impressão IP não abre uma conexão de teste antes do envio', () async {
       final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');

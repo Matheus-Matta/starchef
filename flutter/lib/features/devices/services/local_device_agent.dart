@@ -700,7 +700,14 @@ class LocalDeviceAgent {
     String? barcodeValue,
     String? qrValue,
   }) async {
-    final target = PrinterEndpoint.fromJson(printer);
+    // O cadastro no backend guarda um endpoint só (ex.: /dev/starchef-printer),
+    // mas o nome real do dispositivo varia por terminal — sem aplicar o
+    // override local aqui, um trabalho de impressão de verdade ignorava a
+    // porta configurada nas Preferências deste terminal e falhava mesmo
+    // quando o teste de conexão (que já passava por outra tela) funcionava.
+    final resolvedPrinter =
+        preferences?.applySerialPort(printer, kind: 'printer') ?? printer;
+    final target = PrinterEndpoint.fromJson(resolvedPrinter);
     final missing = target.missingConfiguration;
     if (missing != null) {
       printerAvailability.value = const PrinterAvailability(
@@ -719,7 +726,7 @@ class LocalDeviceAgent {
       // impressoras térmicas aceitarem a primeira sessão e ignorarem a
       // segunda. Serial e spool ainda precisam da checagem prévia local.
       if (target.connection != PrinterConnection.network &&
-          !await checkPrinterAvailability(printer)) {
+          !await checkPrinterAvailability(resolvedPrinter)) {
         throw const PrinterCommunicationException(
           message:
               'Falha ao comunicar com a impressora: dispositivo não encontrado.',

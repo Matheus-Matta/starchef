@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
@@ -480,7 +481,16 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   }
 
   Future<List<String>> _loadWindowsSerialPorts() async {
-    if (!Platform.isWindows) return const [];
+    if (!Platform.isWindows) {
+      // No Linux/macOS o nome já vem estável do SO (/dev/ttyACM0 etc.) — a
+      // mesma biblioteca que a balança e o leitor usam para detectar porta
+      // serve aqui, sem depender de PowerShell.
+      try {
+        return SerialPort.availablePorts;
+      } catch (_) {
+        return const [];
+      }
+    }
     try {
       final result = await Process.run('powershell.exe', const [
         '-NoProfile',
