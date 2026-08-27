@@ -95,14 +95,18 @@ class CashRegisterViewSet(BaseTenantViewSet):
 
     @action(detail=False, methods=["get"], url_path="current")
     def current(self, request):
-        register = self.get_queryset().filter(opened_by=request.user).exclude(
+        queryset = self.get_queryset()
+        restaurant_id = request.query_params.get("restaurant")
+        if restaurant_id:
+            queryset = queryset.filter(restaurant_id=restaurant_id)
+        register = queryset.filter(opened_by=request.user).exclude(
             status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]
         ).order_by("-opened_at").first()
         if register is None:
             # Logout ends authentication, not the physical cash session. Any
             # operator assigned to this station can safely resume it.
             register = (
-                self.get_queryset()
+                queryset
                 .filter(cash_station__operators=request.user, cash_station__is_active=True)
                 .exclude(
                     status__in=[
@@ -115,6 +119,11 @@ class CashRegisterViewSet(BaseTenantViewSet):
                 .first()
             )
         if register is None:
+            # Sem filtro por restaurante, o caixa aberto em outra unidade
+            # aparecia como "aberto" ao trocar de restaurante no PDV — o caixa
+            # é físico e pertence a uma única unidade, então trocar a unidade
+            # sem um caixa aberto lá precisa bloquear a tela, não herdar o
+            # caixa de outro lugar.
             return Response({"detail": "O operador não possui uma sessão de caixa em andamento."}, status=status.HTTP_404_NOT_FOUND)
         return Response(self.get_serializer(register).data)
 

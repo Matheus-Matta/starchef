@@ -502,6 +502,10 @@ class _HomePageState extends State<HomePage> {
       try {
         final currentSession = await api.get(
           '/cash-register/current/',
+          query: {
+            if (selectedRestaurantId != null)
+              'restaurant': selectedRestaurantId,
+          },
           accessToken: token,
         );
         // A sessão aberta no servidor é a fonte de verdade. Descartá-la por
@@ -3125,6 +3129,10 @@ class _HomePageState extends State<HomePage> {
         try {
           cashSession = await api.get(
             '/cash-register/current/',
+            query: {
+              if (selectedRestaurantId != null)
+                'restaurant': selectedRestaurantId,
+            },
             accessToken: token,
           );
         } on ApiException {

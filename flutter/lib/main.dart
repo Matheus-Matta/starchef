@@ -79,6 +79,11 @@ Future<void> main(List<String> arguments) async {
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
     await windowManager.focus();
+    // No Linux, o WM às vezes ignora `fullScreen` passado na criação da
+    // janela (aplica só depois de mapeada) — sem isto, a Balança Rápida abria
+    // como uma janela pequena flutuando sobre o PDV, deixando sidebar e
+    // header do PDV visíveis ao redor dela.
+    await windowManager.setFullScreen(true);
   });
 
   final apiClient = ApiClient(baseUrl: config.apiBaseUrl);

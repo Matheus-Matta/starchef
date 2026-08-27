@@ -40,6 +40,7 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
   late double toleranceGrams = widget.preferences.stabilityToleranceKg * 1000;
   late bool audibleAlerts = widget.preferences.audibleAlerts;
   late bool autoPrint = widget.preferences.autoPrint;
+  late bool showCatalog = widget.preferences.showScaleCatalog;
 
   Future<void> _save() async {
     final preferences = widget.preferences;
@@ -49,6 +50,7 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
     await preferences.setStabilityToleranceKg(toleranceGrams / 1000);
     await preferences.setAudibleAlerts(audibleAlerts);
     await preferences.setAutoPrint(autoPrint);
+    await preferences.setShowScaleCatalog(showCatalog);
     if (mounted) Navigator.pop(context);
   }
 
@@ -120,6 +122,16 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
               subtitle: const Text(
                 'Desligue apenas se o cupom for emitido por outro caminho; '
                 'o pedido continua sendo lançado normalmente.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: showCatalog,
+              onChanged: (value) => setState(() => showCatalog = value),
+              title: const Text('Mostrar cardápio de extras'),
+              subtitle: const Text(
+                'Desligue em terminais que só pesam e leem a comanda, sem '
+                'vender extras — a coluna some em vez de ficar vazia.',
               ),
             ),
             const SizedBox(height: 18),

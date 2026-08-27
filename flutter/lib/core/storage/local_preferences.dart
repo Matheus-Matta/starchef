@@ -24,6 +24,7 @@ class LocalPreferences {
   static const _stabilityToleranceKey = 'scale_stability_tolerance_kg';
   static const _audibleAlertsKey = 'scale_audible_alerts';
   static const _autoPrintKey = 'scale_auto_print';
+  static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _serialPortOverridesKey = 'serial_port_overrides';
 
@@ -79,6 +80,15 @@ class LocalPreferences {
   bool get autoPrint => _values[_autoPrintKey] as bool? ?? true;
 
   Future<void> setAutoPrint(bool value) => _write(_autoPrintKey, value);
+
+  /// Mostra a coluna de cardápio (extras) na Balança Rápida.
+  ///
+  /// Terminais que só pesam e leem a comanda — sem vender extras do balcão —
+  /// preferem esconder essa coluna, que sobra vazia no meio da tela.
+  bool get showScaleCatalog => _values[_showCatalogKey] as bool? ?? true;
+
+  Future<void> setShowScaleCatalog(bool value) =>
+      _write(_showCatalogKey, value);
 
   /// URL da API definida manualmente na tela de login (sobrescreve o que veio
   /// de --dart-define/.env — ver `AppConfig.load`). `null`/vazio significa

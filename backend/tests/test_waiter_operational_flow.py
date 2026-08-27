@@ -18,7 +18,7 @@ from apps.orders.services import (
 from apps.payments.models import CashStation
 from apps.payments.services import open_cash_register
 from apps.printers.models import Printer, PrintJob
-from apps.restaurants.models import Table
+from apps.restaurants.models import Restaurant, Table
 
 pytestmark = pytest.mark.django_db
 
@@ -176,3 +176,42 @@ def test_assigned_operator_resumes_open_cash_session(
     response = client.get("/api/v1/cash-register/current/")
     assert response.status_code == 200, response.content
     assert response.json()["id"] == str(opened.id)
+
+
+def test_current_cash_register_does_not_leak_across_restaurants(
+    account,
+    restaurant,
+    manager_user,
+):
+    """O caixa e' fisico e pertence a uma unica unidade: trocar de restaurante
+    no PDV sem um caixa aberto la' precisa bloquear a tela, nao herdar o caixa
+    aberto em outro restaurante do mesmo operador/conta."""
+    other_restaurant = Restaurant.objects.create(
+        account=account,
+        legal_name="Outra Unidade LTDA",
+        trade_name="Outra Unidade",
+        cnpj="11.111.111/0001-11",
+    )
+    station = CashStation.objects.create(
+        account=account,
+        restaurant=restaurant,
+        name="PDV 1",
+        code="PDV1",
+    )
+    station.operators.add(manager_user)
+    opened = open_cash_register(
+        restaurant=restaurant,
+        cash_station=station,
+        user=manager_user,
+        opening_amount=Decimal("50.00"),
+    )
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(manager_user).access_token}")
+
+    same_restaurant = client.get("/api/v1/cash-register/current/", {"restaurant": str(restaurant.id)})
+    assert same_restaurant.status_code == 200, same_restaurant.content
+    assert same_restaurant.json()["id"] == str(opened.id)
+
+    other = client.get("/api/v1/cash-register/current/", {"restaurant": str(other_restaurant.id)})
+    assert other.status_code == 404, other.content

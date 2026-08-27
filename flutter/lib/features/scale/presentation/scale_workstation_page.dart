@@ -1184,7 +1184,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           // fica à direita, como destino de toque, não de leitura constante.
           : ScaleOperationGrid(
               items: _itemsPanel(),
-              catalog: _catalog(),
+              catalog: widget.preferences.showScaleCatalog ? _catalog() : null,
               command: _commandPanel(),
             ),
     );
@@ -1610,6 +1610,21 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             child: Text(
               'Balança rápida',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+          ),
+          IconButton(
+            tooltip: widget.preferences.showScaleCatalog
+                ? 'Ocultar cardápio'
+                : 'Mostrar cardápio',
+            onPressed: () {
+              final next = !widget.preferences.showScaleCatalog;
+              unawaited(widget.preferences.setShowScaleCatalog(next));
+              setState(() {});
+            },
+            icon: Icon(
+              widget.preferences.showScaleCatalog
+                  ? Icons.view_column_outlined
+                  : Icons.view_column_rounded,
             ),
           ),
           IconButton(
@@ -2161,6 +2176,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 /// Grade operacional da Balança Rápida: resumo 25%, catálogo 50% e
 /// comanda 25%. `Expanded` é o equivalente adequado a uma grade de colunas
 /// para painéis únicos no Flutter.
+///
+/// Com [catalog] nulo (coluna ocultada nas preferências do terminal), o
+/// espaço dela é redistribuído entre itens e comanda — em vez de reservar um
+/// `Expanded` vazio no meio da tela.
 class ScaleOperationGrid extends StatelessWidget {
   const ScaleOperationGrid({
     super.key,
@@ -2170,7 +2189,7 @@ class ScaleOperationGrid extends StatelessWidget {
   });
 
   final Widget items;
-  final Widget catalog;
+  final Widget? catalog;
   final Widget command;
 
   @override
@@ -2178,7 +2197,12 @@ class ScaleOperationGrid extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Expanded(key: const Key('scale-items-column'), child: items),
-      Expanded(key: const Key('scale-catalog-column'), flex: 2, child: catalog),
+      if (catalog != null)
+        Expanded(
+          key: const Key('scale-catalog-column'),
+          flex: 2,
+          child: catalog!,
+        ),
       Expanded(key: const Key('scale-command-column'), child: command),
     ],
   );
