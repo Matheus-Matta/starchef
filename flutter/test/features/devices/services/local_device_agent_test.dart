@@ -462,6 +462,7 @@ void main() {
 
       expect(
         () => agent.printForPrinter({
+          'name': 'Cozinha',
           'connection_type': 'serial',
           'endpoint': 'COM99',
         }, 'RECIBO'),
@@ -469,7 +470,9 @@ void main() {
           isA<PrinterCommunicationException>().having(
             (error) => error.message,
             'message',
-            contains('Falha ao comunicar com a impressora'),
+            // O aviso precisa dizer QUAL impressora falhou: o terminal tem
+            // mais de uma, e "impressora desconectada" sozinho não ajuda.
+            allOf(contains('Cozinha'), contains('COM99')),
           ),
         ),
       );

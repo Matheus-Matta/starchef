@@ -359,15 +359,19 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onPrinterStatusChanged() {
-    final next = deviceAgent.printerAvailability.value.phase;
+    final status = deviceAgent.printerAvailability.value;
     final disconnectedAfterUse =
-        next == PrinterAvailabilityPhase.unavailable &&
+        status.phase == PrinterAvailabilityPhase.unavailable &&
         lastPrinterPhase == PrinterAvailabilityPhase.available;
-    lastPrinterPhase = next;
+    lastPrinterPhase = status.phase;
     if (!mounted || !disconnectedAfterUse) return;
+    // O aviso carrega a causa vinda do agente (qual impressora e por quê): o
+    // texto genérico anterior mandava conferir cabo e porta mesmo quando o
+    // problema era outro — impressora do sistema com nome errado, por
+    // exemplo — e não dizia qual das impressoras do terminal falhou.
     showAppToast(
       context,
-      'Falha ao comunicar com a impressora. Confira o cabo e a porta; o PDV continua disponível.',
+      '${status.message} O PDV continua disponível.',
       title: 'Impressora desconectada',
       severity: AppErrorSeverity.warning,
     );

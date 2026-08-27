@@ -1047,14 +1047,20 @@ class LocalDeviceAgent {
     final resolvedPrinter =
         preferences?.applySerialPort(printer, kind: 'printer') ?? printer;
     final target = PrinterEndpoint.fromJson(resolvedPrinter);
+    // O aviso na tela é um só para todas as impressoras do terminal, então
+    // precisa dizer QUAL falhou e por quê: "Impressora desconectada" sozinho
+    // não distingue o cupom do caixa da comanda da cozinha, nem diz o motivo.
+    final label = '${resolvedPrinter['name'] ?? ''}'.trim().isEmpty
+        ? target.label
+        : '${resolvedPrinter['name']} (${target.label})';
     final missing = target.missingConfiguration;
     if (missing != null) {
-      printerAvailability.value = const PrinterAvailability(
+      printerAvailability.value = PrinterAvailability(
         PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
+        '$label: $missing',
       );
       throw PrinterCommunicationException(
-        message: 'Falha ao comunicar com a impressora. $missing',
+        message: 'Falha ao comunicar com $label. $missing',
         recommendedAction: 'Revise a configuração local da impressora.',
       );
     }
@@ -1066,9 +1072,8 @@ class LocalDeviceAgent {
       // segunda. Serial e spool ainda precisam da checagem prévia local.
       if (target.connection != PrinterConnection.network &&
           !await checkPrinterAvailability(resolvedPrinter)) {
-        throw const PrinterCommunicationException(
-          message:
-              'Falha ao comunicar com a impressora: dispositivo não encontrado.',
+        throw PrinterCommunicationException(
+          message: 'Não foi possível abrir $label: dispositivo não encontrado.',
           recommendedAction:
               'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
         );
@@ -1109,19 +1114,20 @@ class LocalDeviceAgent {
         PrinterAvailabilityPhase.available,
         'Impressora disponível',
       );
-    } on PrinterCommunicationException {
-      printerAvailability.value = const PrinterAvailability(
+    } on PrinterCommunicationException catch (error) {
+      printerAvailability.value = PrinterAvailability(
         PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
+        error.message,
       );
       rethrow;
     } catch (error) {
-      printerAvailability.value = const PrinterAvailability(
+      final message = 'Falha ao comunicar com $label: $error';
+      printerAvailability.value = PrinterAvailability(
         PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
+        message,
       );
       throw PrinterCommunicationException(
-        message: 'Falha ao comunicar com a impressora: $error',
+        message: message,
         recommendedAction:
             'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
       );
