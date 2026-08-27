@@ -3,11 +3,33 @@ import uuid
 from django.db import migrations, models
 
 
+def populate_order_batch_serials(apps, schema_editor):
+    order_batch = apps.get_model("orders", "OrderBatch")
+    pending = []
+    for batch in order_batch.objects.filter(serial__isnull=True).iterator(chunk_size=1000):
+        batch.serial = uuid.uuid4()
+        pending.append(batch)
+        if len(pending) == 1000:
+            order_batch.objects.bulk_update(pending, ["serial"])
+            pending.clear()
+    if pending:
+        order_batch.objects.bulk_update(pending, ["serial"])
+
+
 class Migration(migrations.Migration):
     dependencies = [("orders", "0003_replace_active_table_orders_with_commands")]
 
     operations = [
         migrations.AddField(
+            model_name="orderbatch",
+            name="serial",
+            field=models.UUIDField(editable=False, null=True),
+        ),
+        migrations.RunPython(
+            populate_order_batch_serials,
+            reverse_code=migrations.RunPython.noop,
+        ),
+        migrations.AlterField(
             model_name="orderbatch",
             name="serial",
             field=models.UUIDField(default=uuid.uuid4, editable=False, unique=True),
