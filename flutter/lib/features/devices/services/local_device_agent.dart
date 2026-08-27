@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/realtime_client.dart';
@@ -458,6 +459,19 @@ class LocalDeviceAgent {
     final restaurantId = _restaurantId;
     if (restaurantId == null) return;
     api.applyRealtimeEvent(event, restaurantId: restaurantId);
+    if (event.payload['resource'] == 'printers.printjob') {
+      // Loga mesmo quando o restaurante não bate: um evento chegando com o
+      // restaurant_id errado (ou vazio, quando não deveria estar) explicaria
+      // a impressão nunca disparar sem nenhum erro visível na tela.
+      AppLogger.instance.info(
+        'realtime_printjob_event',
+        data: {
+          'event_restaurant': event.payload['restaurant_id'],
+          'agent_restaurant': restaurantId,
+          'matched': isPrintJobEvent(event, restaurantId),
+        },
+      );
+    }
     if (isPrintJobEvent(event, restaurantId)) {
       unawaited(_onPrintJobEvent());
     }
@@ -547,6 +561,7 @@ class LocalDeviceAgent {
     };
 
     DateTime? nextScheduledAt;
+    var attempted = 0;
     for (final status in ['scheduled', 'pending', 'rendered']) {
       final jobs = await _list(
         '/print-jobs/',
@@ -555,6 +570,18 @@ class LocalDeviceAgent {
           'status': status,
           'page_size': 100,
           'ordering': 'created_at',
+        },
+      );
+      // Sem isto, um job pulado (impressora não cadastrada localmente,
+      // auto_print desligado, marcado manual_only) desaparecia em silêncio:
+      // não havia como saber, sem acesso à tela, se o agente sequer chegou a
+      // ver o trabalho.
+      AppLogger.instance.info(
+        'print_jobs_poll',
+        data: {
+          'status': status,
+          'found': jobs.length,
+          'restaurant': _restaurantId,
         },
       );
       for (final job in jobs) {
@@ -571,13 +598,24 @@ class LocalDeviceAgent {
           continue;
         }
         final printer = availablePrinters['${job['printer']}'];
-        if (printer == null) continue;
+        if (printer == null) {
+          AppLogger.instance.warning(
+            'print_job_skipped_printer_unavailable',
+            data: {'job_id': job['id'], 'printer_id': job['printer']},
+          );
+          continue;
+        }
         final payload = job['payload'] as Map<String, dynamic>? ?? const {};
         if (payload['manual_only'] == true) continue;
         final isAutomaticWeighTicket = '${job['job_type']}' == 'weigh_ticket';
         if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
+          AppLogger.instance.info(
+            'print_job_skipped_auto_print_off',
+            data: {'job_id': job['id'], 'printer_id': printer['id']},
+          );
           continue;
         }
+        attempted++;
         try {
           final readyText = '${payload['text_content'] ?? ''}'.trim();
           final text = readyText.isNotEmpty
@@ -597,7 +635,24 @@ class LocalDeviceAgent {
             body: const {},
             accessToken: _token,
           );
+          AppLogger.instance.info(
+            'print_job_printed',
+            data: {
+              'job_id': job['id'],
+              'job_type': job['job_type'],
+              'printer_id': printer['id'],
+            },
+          );
         } catch (error) {
+          AppLogger.instance.error(
+            'print_job_failed',
+            cause: error,
+            data: {
+              'job_id': job['id'],
+              'job_type': job['job_type'],
+              'printer_id': printer['id'],
+            },
+          );
           await api.post(
             '/print-jobs/${job['id']}/mark-failed/',
             body: {'error': 'Falha no PDV Desktop: $error'},
@@ -608,11 +663,23 @@ class LocalDeviceAgent {
     }
     if (nextScheduledAt != null && _token != null) {
       final wait = nextScheduledAt.difference(DateTime.now());
+      AppLogger.instance.info(
+        'print_jobs_next_scheduled',
+        data: {
+          'available_at': nextScheduledAt.toIso8601String(),
+          'wait_ms': wait.inMilliseconds,
+        },
+      );
       _scheduledPrintTimer = Timer(
         wait.isNegative
             ? const Duration(milliseconds: 100)
             : wait + const Duration(milliseconds: 150),
         () => unawaited(_guarded(_processPrintJobs)),
+      );
+    } else if (attempted == 0) {
+      AppLogger.instance.info(
+        'print_jobs_poll_idle',
+        data: {'restaurant': _restaurantId},
       );
     }
   }

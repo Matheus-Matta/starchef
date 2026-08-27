@@ -46,6 +46,7 @@ dependencies:
   sentry_flutter: ^8.14.2
   shadcn_ui: 0.56.1
   qr_flutter: ^4.1.0
+  wakelock_plus: ^1.7.0
 
 dev_dependencies:
   flutter_test:

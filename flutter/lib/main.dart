@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app/scale_window_app.dart';
@@ -17,6 +20,12 @@ import 'features/scale/services/scale_window_launcher.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Um caixa (ou o Caixa Principal, que retransmite pedidos do app do
+  // garçom pela rede local) nunca pode ir para suspensão: no Linux, o
+  // gerenciamento de energia da tela/Wi-Fi desktop costuma suspender o
+  // processo e a conexão de rede quando ninguém toca no terminal, e a
+  // impressão automática só retomava quando alguém mexia na tela de novo.
+  unawaited(WakelockPlus.enable());
   final scaleWindow = ScaleWindowLauncher.isScaleWindow(arguments);
   final inheritedSession = scaleWindow
       ? await ScaleWindowLauncher.takeSession(arguments)
