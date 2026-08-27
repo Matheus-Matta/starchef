@@ -348,6 +348,7 @@ class LocalDeviceAgent {
   List<Map<String, dynamic>> _printers = const [];
   Timer? _availabilityTimer;
   Timer? _scheduledPrintTimer;
+  Timer? _printJobsPollTimer;
 
   void start({required String token, required String restaurantId}) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
@@ -361,6 +362,7 @@ class LocalDeviceAgent {
     _availabilityTimer?.cancel();
     _scheduledPrintTimer?.cancel();
     _scheduledPrintTimer = null;
+    _printJobsPollTimer?.cancel();
     printerAvailability.value = const PrinterAvailability(
       PrinterAvailabilityPhase.checking,
       'Verificando impressora...',
@@ -369,6 +371,15 @@ class LocalDeviceAgent {
     _availabilityTimer = Timer.periodic(
       const Duration(seconds: 15),
       (_) => unawaited(refreshPrinterAvailability(useCachedDevices: true)),
+    );
+    // Rede de segurança independente do WS: o evento em tempo real que
+    // liberaria a rodada da cozinha pode se perder numa reconexão, e sem
+    // isto a impressão automática ficava sem nenhum outro gatilho até o
+    // operador tocar em alguma tela que reconsultasse `/print-jobs/` por
+    // conta própria.
+    _printJobsPollTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => unawaited(_guarded(_processPrintJobs)),
     );
     _stopRealtime();
     final realtime = RealtimeClient(
@@ -391,6 +402,8 @@ class LocalDeviceAgent {
     _availabilityTimer = null;
     _scheduledPrintTimer?.cancel();
     _scheduledPrintTimer = null;
+    _printJobsPollTimer?.cancel();
+    _printJobsPollTimer = null;
     _token = null;
     _restaurantId = null;
     _lastTemplateSync = null;
