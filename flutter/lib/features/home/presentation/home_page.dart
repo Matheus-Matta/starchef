@@ -370,7 +370,6 @@ class _HomePageState extends State<HomePage> {
       'Falha ao comunicar com a impressora. Confira o cabo e a porta; o PDV continua disponível.',
       title: 'Impressora desconectada',
       severity: AppErrorSeverity.warning,
-      autoDismissAfter: const Duration(seconds: 8),
     );
   }
 
@@ -495,7 +494,6 @@ class _HomePageState extends State<HomePage> {
             'A rede local não iniciou: $error',
             title: 'Rede local indisponível',
             severity: AppErrorSeverity.warning,
-            autoDismissAfter: const Duration(seconds: 8),
           );
         }
       }
@@ -615,13 +613,7 @@ class _HomePageState extends State<HomePage> {
         session: widget.controller.session!,
       );
       if (!mounted) return;
-      if (opened) {
-        showAppToast(
-          context,
-          'Balança Rápida aberta em uma janela independente.',
-        );
-        return;
-      }
+      if (opened) return;
     } catch (_) {
       // O fallback embutido mantém a operação disponível em plataformas sem
       // suporte a processos desktop ou quando o cofre local está indisponível.
@@ -1073,7 +1065,27 @@ class _HomePageState extends State<HomePage> {
     if (selection == 'scale') _openDeviceSettings(DeviceKind.scale);
     if (selection == 'topology') await _openTopologySettings();
     if (selection == 'preferences' && mounted) {
-      await TerminalPreferencesDialog.show(context, widget.preferences);
+      List<Map<String, dynamic>> printersForPreferences = const [];
+      try {
+        printersForPreferences = await _list(
+          '/printers/',
+          query: {
+            'restaurant': restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          },
+        );
+      } catch (_) {
+        // Sem impressoras carregadas, o diálogo só perde a lista da master —
+        // as demais preferências continuam editáveis normalmente.
+      }
+      if (mounted) {
+        await TerminalPreferencesDialog.show(
+          context,
+          widget.preferences,
+          printers: printersForPreferences,
+        );
+      }
     }
     if (selection == 'outbox' && mounted) await _openOutboxReview();
     if (selection == 'theme') widget.onToggleTheme();
@@ -1090,7 +1102,6 @@ class _HomePageState extends State<HomePage> {
         'Saia e entre novamente antes de configurar a rede local.',
         title: 'Sessão incompleta',
         severity: AppErrorSeverity.warning,
-        autoDismissAfter: const Duration(seconds: 6),
       );
       return;
     }
@@ -1108,19 +1119,14 @@ class _HomePageState extends State<HomePage> {
       _onTopologyChanged();
       final degraded =
           candidate.mode == LocalTopologyMode.client && !service.status.ready;
-      showAppToast(
-        context,
-        degraded
-            ? 'Modo Cliente salvo, mas o Caixa Principal está indisponível.'
-            : candidate.mode == LocalTopologyMode.client
-            ? 'Modo Cliente salvo. O agente físico local foi pausado.'
-            : 'Configuração da rede local aplicada.',
-        title: 'Rede local',
-        severity: degraded ? AppErrorSeverity.warning : AppErrorSeverity.info,
-        autoDismissAfter: degraded
-            ? const Duration(seconds: 6)
-            : const Duration(milliseconds: 2200),
-      );
+      if (degraded) {
+        showAppToast(
+          context,
+          'Modo Cliente salvo, mas o Caixa Principal está indisponível.',
+          title: 'Rede local',
+          severity: AppErrorSeverity.warning,
+        );
+      }
     } catch (error) {
       if (mounted) _error(error);
     } finally {
@@ -1635,7 +1641,6 @@ class _HomePageState extends State<HomePage> {
             accessToken: token,
           );
           if (!mounted) return;
-          showAppToast(context, 'Comanda vinculada com sucesso.');
           await _load();
         } catch (e) {
           _error(e);
@@ -1656,7 +1661,6 @@ class _HomePageState extends State<HomePage> {
         accessToken: token,
       );
       if (!mounted) return;
-      showAppToast(context, 'Comanda desvinculada.');
       await _load();
     } catch (e) {
       _error(e);
@@ -1708,7 +1712,6 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         );
         if (!mounted) return;
-        showAppToast(context, 'Comanda transferida.');
         await _load();
       } catch (e) {
         _error(e);
@@ -1761,7 +1764,6 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         );
         if (!mounted) return;
-        showAppToast(context, 'Comandas transferidas.');
         await _load();
       } catch (e) {
         _error(e);
@@ -2627,8 +2629,102 @@ class _HomePageState extends State<HomePage> {
       await orderStore.saveFromServer(cancelled, scope: scope);
     }
     if (!mounted) return;
-    showAppToast(context, 'Pedido cancelado. Motivo: $reason');
     await _goHome();
+  }
+
+  /// Envia os itens pendentes para produção. Quando a rede está fora, imprime
+  /// a comanda direto na impressora do setor em vez de esperar o backend
+  /// renderizar o `PrintJob` — a cozinha não pode esperar a internet voltar
+  /// pra saber que tem pedido novo.
+  ///
+  /// `offline_printed` só acompanha o envio se a comanda tiver saído mesmo:
+  /// essa flag faz o backend registrar os `PrintJob` como já impressos, então
+  /// mandá-la depois de uma impressão que falhou deixaria a cozinha sem
+  /// comanda nenhuma — nem agora, nem quando a fila sincronizasse.
+  Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
+    List<Map<String, dynamic>> pendingItems,
+  ) async {
+    final batchSerial = OrderPresenter.generateBatchSerial();
+    if (!api.syncStatus.hasConnection) {
+      final printed = await _printKitchenTicketsOffline(
+        pendingItems,
+        batchSerial,
+      );
+      return api.post(
+        '/orders/${activeOrder!['id']}/send-to-kitchen/',
+        body: {
+          'client_batch_serial': batchSerial,
+          if (printed) 'offline_printed': true,
+        },
+        accessToken: token,
+      );
+    }
+    final response = await api.post(
+      '/orders/${activeOrder!['id']}/send-to-kitchen/',
+      body: {'client_batch_serial': batchSerial},
+      accessToken: token,
+    );
+    if (_isOfflinePending(response)) {
+      // Corrida rara: a conexão caiu entre o check acima e o POST, então a
+      // fila já guardou a chamada sem a flag — o backend também vai imprimir
+      // quando sincronizar. Preferimos o risco pequeno de uma comanda
+      // repetida a nenhuma comanda sair agora.
+      await _printKitchenTicketsOffline(pendingItems, batchSerial);
+    }
+    return response;
+  }
+
+  /// Monta e imprime a comanda localmente. Devolve `true` se pelo menos uma
+  /// impressora aceitou o cupom.
+  Future<bool> _printKitchenTicketsOffline(
+    List<Map<String, dynamic>> pendingItems,
+    String batchSerial,
+  ) async {
+    // As impressoras vêm da lista que o agente mantém em memória: reler
+    // `/printers/` aqui só funcionaria se aquela consulta exata já estivesse
+    // no cache de respostas, o que não se pode assumir com a rede fora.
+    final printersForTickets = await deviceAgent.ensurePrinters();
+    final tickets = OrderPresenter.buildOfflineKitchenTickets(
+      table: selectedTable,
+      command: selectedCommand,
+      pendingItems: pendingItems,
+      products: products,
+      printers: printersForTickets,
+      batchSerial: batchSerial,
+    );
+    var printedAny = false;
+    Object? lastFailure;
+    for (final ticket in tickets) {
+      try {
+        await deviceAgent.printForPrinter(ticket.printer, ticket.text);
+        printedAny = true;
+      } catch (error) {
+        // Uma impressora falhar não pode travar as outras.
+        lastFailure = error;
+      }
+    }
+    if (!mounted || printedAny) return printedAny;
+    // A mensagem precisa dizer o que de fato impediu a impressão: culpar a
+    // internet quando o problema é roteamento de setor manda o caixa
+    // procurar no lugar errado.
+    showAppToast(
+      context,
+      switch ((tickets.isEmpty, lastFailure)) {
+        (true, _) =>
+          'Nenhuma impressora de setor atende os itens deste pedido. '
+              'Confira o setor dos produtos e o setor das impressoras em '
+              'Configurações e avise a cozinha manualmente.',
+        (false, final failure?) =>
+          'A comanda não pôde ser enviada à impressora do setor: $failure. '
+              'Avise a cozinha manualmente.',
+        _ =>
+          'A comanda não pôde ser impressa agora. Avise a cozinha '
+              'manualmente.',
+      },
+      title: 'Comanda não impressa',
+      severity: AppErrorSeverity.warning,
+    );
+    return false;
   }
 
   Future<void> _finishOrder() async {
@@ -2704,10 +2800,8 @@ class _HomePageState extends State<HomePage> {
         (item) => item['status'] == 'pending',
       );
       if (hasPendingItems) {
-        final kitchenResponse = await api.post(
-          '/orders/${activeOrder!['id']}/send-to-kitchen/',
-          body: const {},
-          accessToken: token,
+        final kitchenResponse = await _sendPendingItemsToKitchen(
+          orderItems.where((item) => item['status'] == 'pending').toList(),
         );
         if (_isOfflinePending(kitchenResponse)) {
           activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
@@ -2745,55 +2839,18 @@ class _HomePageState extends State<HomePage> {
           showAppToast(
             context,
             'Pedido salvo para sincronização e deixado pendente de pagamento.',
+            severity: AppErrorSeverity.warning,
           );
         }
-        await _goHome();
-        return;
-      }
-      final printed = await _printConferenceReceipt(closed);
-      if (mounted) {
-        showAppToast(
-          context,
-          printed
-              ? 'Pedido deixado pendente de pagamento. Nota gerada.'
-              : 'Pedido deixado pendente de pagamento.',
-        );
       }
       await _goHome();
       return;
     }
-    // Nota de conferência antes de cobrar: o cliente confere os valores e
-    // confirma antes de o caixa seguir para o teclado de pagamento.
-    await _printConferenceReceipt(closed);
+    // A impressão fica só para depois do pagamento (cupom fiscal) ou para o
+    // fluxo automático setorizado da cozinha — não existe "nota de
+    // conferência" fora desses dois: aqui só falta o caixa seguir para o
+    // teclado de pagamento.
     await _paymentDialog();
-  }
-
-  /// Imprime a nota de conferência (não fiscal) do pedido recém-fechado.
-  ///
-  /// É efeito colateral, igual ao recibo pós-pagamento: se a impressora
-  /// falhar, o caixa segue o atendimento e reimprime depois pela tela de
-  /// Pedidos — travar a venda numa nota que não saiu seria pior para o
-  /// cliente que já está esperando para pagar.
-  Future<bool> _printConferenceReceipt(Map<String, dynamic> order) async {
-    if (_isOfflinePending(order)) return false;
-    try {
-      final printJob = await api.post(
-        '/orders/${order['id']}/print/',
-        body: const {'job_type': 'receipt'},
-        accessToken: token,
-      );
-      await _handlePrintJob(printJob);
-      return true;
-    } catch (error) {
-      if (mounted) {
-        _error(
-          error,
-          title: 'O pedido foi fechado, mas a nota de conferência não saiu',
-          action: 'Reimprima pela tela de Pedidos quando quiser.',
-        );
-      }
-      return false;
-    }
   }
 
   /// Imprime a NOTA COMPLETA DO CLIENTE (receipt: itens + valores + total) do
@@ -2822,16 +2879,21 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-      final printerId = await showDialog<String>(
-        context: context,
-        builder: (_) => PrinterSelectionDialog(
-          printers: printers,
-          title: 'Imprimir recibo de venda',
-          summary: 'Pedido #${order['sequence']} · ${_money(order['total'])}',
-          description:
-              'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
-        ),
-      );
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      final printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir recibo de venda',
+                summary:
+                    'Pedido #${order['sequence']} · ${_money(order['total'])}',
+                description:
+                    'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
+              ),
+            );
       if (printerId == null) return;
       final printJob = await _work(
         () => api.post(
@@ -2852,13 +2914,10 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-      final result = await _work(() async {
+      await _work(() async {
         await deviceAgent.printJobManually(printJob, printer);
         return true;
       });
-      if (result == true && mounted) {
-        showAppToast(context, 'Recibo de venda impresso com sucesso.');
-      }
     } finally {
       if (mounted) setState(() => printingReceipt = false);
     }
@@ -2897,9 +2956,7 @@ class _HomePageState extends State<HomePage> {
         errorTitle: 'Não foi possível emitir a NFC-e',
         onError: silentIfUnconfigured
             ? (error) {
-                if (!'$error'.toLowerCase().contains(
-                  'configuracao fiscal',
-                )) {
+                if (!'$error'.toLowerCase().contains('configuracao fiscal')) {
                   _error(error, title: 'Não foi possível emitir a NFC-e');
                 }
               }
@@ -2907,14 +2964,24 @@ class _HomePageState extends State<HomePage> {
       );
       if (invoice == null || !mounted) return;
 
+      if (invoice['emitted'] == false) {
+        if (!silentIfUnconfigured) {
+          showAppToast(
+            context,
+            '${invoice['message'] ?? 'Nota fiscal não emitida: o provedor fiscal não está configurado.'}',
+            severity: AppErrorSeverity.warning,
+          );
+        }
+        return;
+      }
+
       if (invoice['emission_type'] == '9') {
         showAppToast(
           context,
           'NFC-e emitida em contingência — será retransmitida quando a conexão com a SEFAZ voltar.',
+          severity: AppErrorSeverity.warning,
         );
-      } else if (invoice['status'] == 'issued') {
-        showAppToast(context, 'NFC-e autorizada.');
-      } else {
+      } else if (invoice['status'] != 'issued') {
         showAppToast(context, 'NFC-e emitida, aguardando autorização.');
       }
 
@@ -2927,17 +2994,24 @@ class _HomePageState extends State<HomePage> {
         },
       );
       if (!mounted || printers.isEmpty) return;
-      final printerId = await showDialog<String>(
-        context: context,
-        builder: (_) => PrinterSelectionDialog(
-          printers: printers,
-          title: 'Imprimir DANFE NFC-e',
-          summary:
-              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-          description:
-              'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
-        ),
-      );
+      // O DANFE sai logo depois do pagamento, no mesmo gesto do cupom: se o
+      // caixa fixou uma impressora master, perguntar de novo aqui aparece
+      // para ele como "o sistema ignorou a master".
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      final printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir DANFE NFC-e',
+                summary:
+                    'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+                description:
+                    'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+              ),
+            );
       if (printerId == null) return;
       final printJob = await _work(
         () => api.post(
@@ -2954,13 +3028,10 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-      final result = await _work(() async {
+      await _work(() async {
         await deviceAgent.printJobManually(printJob, printer);
         return true;
       });
-      if (result == true && mounted) {
-        showAppToast(context, 'DANFE impresso com sucesso.');
-      }
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
     }
@@ -3006,6 +3077,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _preparePaymentPage() async {
+    // O teclado nasce preenchido com o restante, então o total precisa ser o
+    // que o servidor tem agora — não uma cópia anterior à retirada da taxa de
+    // serviço, que faria o caixa cobrar o valor cheio sem perceber. Uma falha
+    // aqui não pode impedir o recebimento: seguimos com o que já está em mão.
+    try {
+      await _refreshOrder();
+    } catch (_) {}
     paymentMethods = await _list(
       '/payments/methods/',
       query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
@@ -3187,18 +3265,61 @@ class _HomePageState extends State<HomePage> {
         showAppToast(
           context,
           'Venda salva localmente. O recibo ficará disponível após a sincronização.',
+          severity: AppErrorSeverity.warning,
         );
       }
     } else {
       // O pagamento já foi registrado. O recibo é um efeito colateral: uma
       // falha de impressão não pode reabrir uma venda concluída.
       try {
-        final printJob = await api.post(
-          '/orders/${activeOrder!['id']}/print/',
-          body: const {'job_type': 'receipt'},
-          accessToken: token,
+        final printers = await _list(
+          '/printers/',
+          query: {
+            'restaurant': restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          },
         );
-        await _handlePrintJob(printJob);
+        if (!mounted) return;
+        if (printers.isEmpty) {
+          _error(
+            const ApiException(
+              'Nenhuma impressora ativa foi cadastrada para este restaurante.',
+            ),
+            title: 'O pagamento foi registrado, mas o recibo não saiu',
+          );
+        } else {
+          final master = widget.preferences.masterPrinterId;
+          final hasMaster = printers.any((p) => '${p['id']}' == master);
+          final printerId = hasMaster
+              ? master
+              : await showDialog<String>(
+                  context: context,
+                  builder: (_) => PrinterSelectionDialog(
+                    printers: printers,
+                    title: 'Imprimir cupom fiscal',
+                    summary:
+                        'Pedido #${activeOrder?['sequence']} · ${_money(activeOrder?['total'])}',
+                    description:
+                        'O cupom contém itens, pagamentos e totais do pedido.',
+                  ),
+                );
+          if (printerId != null && mounted) {
+            final printJob = await api.post(
+              '/orders/${activeOrder!['id']}/print/',
+              body: {
+                'job_type': 'receipt',
+                'printer': printerId,
+                'manual_only': true,
+              },
+              accessToken: token,
+            );
+            final printer = printJob['printer'] as Map<String, dynamic>?;
+            if (printer != null) {
+              await deviceAgent.printJobManually(printJob, printer);
+            }
+          }
+        }
       } catch (error) {
         if (mounted) {
           _error(
@@ -3227,59 +3348,6 @@ class _HomePageState extends State<HomePage> {
       flowStep = 'type';
     });
     unawaited(_load());
-  }
-
-  Future<void> _handlePrintJob(Map<String, dynamic> job) async {
-    if (!mounted) return;
-    final printer = job['printer'] as Map<String, dynamic>?;
-    if (printer == null) {
-      _error(
-        const ApiException(
-          'Nenhuma impressora ativa foi encontrada para este restaurante.',
-          statusCode: 422,
-        ),
-        title: 'Impressão automática não configurada',
-        action: 'Ative uma impressora compatível com esta filial.',
-      );
-      return;
-    }
-    if (printer['auto_print'] == true) return;
-
-    final shouldPrint = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AppDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.print_outlined),
-            SizedBox(width: 10),
-            Expanded(child: Text('Impressão manual')),
-          ],
-        ),
-        content: Text(
-          'A impressão automática está desativada para '
-          '${printer['name']}. Deseja imprimir agora?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Agora não'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.print),
-            label: const Text('Imprimir agora'),
-          ),
-        ],
-      ),
-    );
-    if (shouldPrint != true) return;
-    final result = await _work(() async {
-      await deviceAgent.printJobManually(job, printer);
-      return <String, dynamic>{'printed': true};
-    });
-    if (result != null && mounted) {
-      showAppToast(context, 'Impressão enviada com sucesso.');
-    }
   }
 
   Future<void> _openCash() async {
@@ -5136,7 +5204,8 @@ class _HomePageState extends State<HomePage> {
     if (term.isEmpty) return;
     final matches = visibleCommands;
     final exact = matches.cast<Map<String, dynamic>?>().firstWhere(
-      (item) => '${item?['number']}' == term || '${item?['code'] ?? ''}' == term,
+      (item) =>
+          '${item?['number']}' == term || '${item?['code'] ?? ''}' == term,
       orElse: () => null,
     );
     final command = exact ?? (matches.length == 1 ? matches.first : null);

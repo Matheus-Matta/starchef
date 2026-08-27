@@ -15,7 +15,6 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../devices/domain/printer_endpoint.dart';
@@ -52,6 +51,16 @@ class ScaleWorkstationPage extends StatefulWidget {
 }
 
 class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
+  /// Altura fixa do cabeçalho das colunas da balança e da comanda — sem isso,
+  /// a segunda linha (código da comanda) deixava aquele cabeçalho mais alto
+  /// que o da balança e as duas colunas ficavam desalinhadas.
+  static const double _panelHeaderHeight = 66;
+
+  /// Altura mínima do rodapé das duas colunas, para que uma comanda ainda sem
+  /// ação (rodapé vazio) não colapse a quase zero ao lado do rodapé da
+  /// balança, que sempre mostra pelo menos o total.
+  static const double _panelFooterMinHeight = 92;
+
   List<Map<String, dynamic>> scales = [];
   List<Map<String, dynamic>> printers = [];
   String? scaleId;
@@ -502,7 +511,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     reader = next;
     sampleSubscription = next.samples.listen(_onSample);
     linkSubscription = next.statusChanges.listen((status) {
-      if (mounted) setState(() => linkStatus = status);
+      if (!mounted) return;
+      setState(() {
+        linkStatus = status;
+        // O equipamento reconectou sozinho e voltou a transmitir: um erro de
+        // porta/leitura anterior (acima do rodapé) ficava preso na tela para
+        // sempre, mesmo já resolvido, porque nada disparava a limpeza dele.
+        if (status.state == ScaleLinkState.connected) errorMessage = null;
+      });
     });
     await next.start();
   }
@@ -543,11 +559,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           'A estação precisa estar em operação para falar com a balança.',
       };
       setState(() => errorMessage = message);
-      if (result == ScaleWeightRequest.sent) {
-        // A resposta chega pelo fluxo; um retorno vazio depois de alguns
-        // segundos aparece no cartão de diagnóstico como "sem resposta".
-        showAppToast(context, 'Peso solicitado à balança.');
-      }
     } finally {
       if (mounted) setState(() => requestingWeight = false);
     }
@@ -707,7 +718,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         if (!mounted) return;
         final status = '${job['status'] ?? ''}';
         if (status == 'printed') {
-          showAppToast(context, 'Pedido concluído e comanda impressa.');
           return;
         }
         if (status == 'failed') {
@@ -1558,6 +1568,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state);
+    final showWeightActions =
+        machine.state == HandsFreeState.idle ||
+        machine.state == HandsFreeState.waitingWeight;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
       child: AppSection(
@@ -1571,6 +1584,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                 children: [
                   _weightBlock(compact: waitingCommand),
+                  // As ações de peso moram no corpo rolável, não no rodapé —
+                  // um rodapé com botão de altura variável nunca alinharia
+                  // com o rodapé da comanda, que só mostra total e produto.
+                  if (showWeightActions) ...[
+                    const SizedBox(height: 14),
+                    ..._weightActions(),
+                  ],
                   // O estado da porta some da tela quando a balança está
                   // saudável e a etapa é outra: o que o operador precisa ver
                   // aí são os itens, não a conexão que já está funcionando.
@@ -1586,6 +1606,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               ),
             ),
             Container(
+              constraints: const BoxConstraints(
+                minHeight: _panelFooterMinHeight,
+              ),
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerLowest,
                 border: Border(top: BorderSide(color: scheme.outlineVariant)),
@@ -1602,8 +1626,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Widget _itemsHeader() {
     final scheme = Theme.of(context).colorScheme;
     return Container(
+      height: _panelHeaderHeight,
       color: scheme.surfaceContainerLowest,
-      padding: const EdgeInsets.fromLTRB(16, 14, 10, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 10, 0),
+      alignment: Alignment.centerLeft,
       child: Row(
         children: [
           const Expanded(
@@ -1639,9 +1665,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     );
   }
 
-  /// Total e as ações ligadas ao peso (pegar/digitar/reimprimir) — as ações
-  /// de comanda (finalizar/cancelar) ficam no rodapé de [_commandPanel].
+  /// Só o essencial para bater com o rodapé da comanda: produto (quando já
+  /// pesado) e total. As ações de peso ficam no corpo rolável — ver
+  /// [_itemsPanel] — porque um botão ali faria o rodapé variar de altura e
+  /// desalinhar da coluna ao lado.
   Widget _itemsFooter() {
+    final scheme = Theme.of(context).colorScheme;
     final item = machine.weighedItem;
     var total = item?.total ?? 0;
     for (final entry in machine.extras.entries) {
@@ -1652,13 +1681,24 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       );
       total += ValueFormatters.number(product?['current_price']) * entry.value;
     }
-    final showWeightActions =
-        machine.state == HandsFreeState.idle ||
-        machine.state == HandsFreeState.waitingWeight;
+    final productName = weighedProduct?['name'] as String?;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (productName != null) ...[
+          Text(
+            productName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1672,10 +1712,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             ),
           ],
         ),
-        if (showWeightActions) ...[
-          const SizedBox(height: 10),
-          ..._weightActions(),
-        ],
       ],
     );
   }
@@ -1744,6 +1780,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               ),
             ),
             Container(
+              constraints: const BoxConstraints(
+                minHeight: _panelFooterMinHeight,
+              ),
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerLowest,
                 border: Border(top: BorderSide(color: scheme.outlineVariant)),
@@ -1761,9 +1801,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final scheme = Theme.of(context).colorScheme;
     final code = commandController.text.trim();
     return Container(
+      height: _panelHeaderHeight,
       color: scheme.surfaceContainerLowest,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      alignment: Alignment.centerLeft,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
@@ -2192,19 +2235,22 @@ class ScaleOperationGrid extends StatelessWidget {
   final Widget? catalog;
   final Widget command;
 
+  static const double _gap = 10;
+
   @override
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Expanded(key: const Key('scale-items-column'), child: items),
-      if (catalog == null)
-        const SizedBox(key: Key('scale-columns-gap'), width: 10),
-      if (catalog != null)
+      const SizedBox(key: Key('scale-columns-gap'), width: _gap),
+      if (catalog != null) ...[
         Expanded(
           key: const Key('scale-catalog-column'),
           flex: 2,
           child: catalog!,
         ),
+        const SizedBox(key: Key('scale-columns-gap-2'), width: _gap),
+      ],
       Expanded(key: const Key('scale-command-column'), child: command),
     ],
   );

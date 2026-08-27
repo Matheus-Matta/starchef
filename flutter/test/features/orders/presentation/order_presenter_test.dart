@@ -101,4 +101,126 @@ void main() {
       isTrue,
     );
   });
+
+  group('buildOfflineKitchenTickets', () {
+    final products = [
+      {'id': 'product-1', 'name': 'X-Burger', 'sector': 'sector-1'},
+      {'id': 'product-2', 'name': 'Refrigerante', 'sector': null},
+    ];
+
+    test('ignora item cujo produto não tem setor', () {
+      final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        table: null,
+        command: null,
+        pendingItems: [
+          {'product': 'product-2', 'product_name': 'Refrigerante', 'quantity': 1},
+        ],
+        products: products,
+        printers: [
+          {'id': 'printer-1', 'sector': 'sector-1', 'is_active': true},
+        ],
+        batchSerial: 'batch-serial-1',
+      );
+
+      expect(tickets, isEmpty);
+    });
+
+    test('setor sem impressora ativa não gera ticket', () {
+      final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        table: null,
+        command: null,
+        pendingItems: [
+          {'product': 'product-1', 'product_name': 'X-Burger', 'quantity': 1},
+        ],
+        products: products,
+        printers: [
+          {'id': 'printer-1', 'sector': 'sector-1', 'is_active': false},
+        ],
+        batchSerial: 'batch-serial-1',
+      );
+
+      expect(tickets, isEmpty);
+    });
+
+    test('duas impressoras no mesmo setor recebem o mesmo texto', () {
+      final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        table: {'number': '7'},
+        command: null,
+        pendingItems: [
+          {'product': 'product-1', 'product_name': 'X-Burger', 'quantity': 2},
+        ],
+        products: products,
+        printers: [
+          {'id': 'printer-1', 'sector': 'sector-1', 'is_active': true},
+          {'id': 'printer-2', 'sector': 'sector-1', 'is_active': true},
+        ],
+        batchSerial: 'batch-serial-1',
+      );
+
+      expect(tickets, hasLength(2));
+      expect(tickets[0].text, tickets[1].text);
+      expect(
+        tickets.map((ticket) => ticket.printer['id']),
+        containsAll(['printer-1', 'printer-2']),
+      );
+    });
+
+    test(
+      'texto traz mesa/comanda, variações, adicionais, observação e REF',
+      () {
+        final tickets = OrderPresenter.buildOfflineKitchenTickets(
+          table: {'number': '7'},
+          command: {'code': '0012'},
+          pendingItems: [
+            {
+              'product': 'product-1',
+              'product_name': 'X-Burger',
+              'quantity': 1.5,
+              'variations': [
+                {'name': 'Grande'},
+              ],
+              'addons': [
+                {'addon_name': 'Bacon', 'quantity': 2},
+              ],
+              'customer_note': 'Sem cebola',
+            },
+          ],
+          products: products,
+          printers: [
+            {'id': 'printer-1', 'sector': 'sector-1', 'is_active': true},
+          ],
+          batchSerial: 'batch-serial-1',
+        );
+
+        final text = tickets.single.text;
+        final mesaLine = text.indexOf('MESA: 7');
+        final comandaLine = text.indexOf('COMANDA: 0012');
+        final itemLine = text.indexOf('1.5x X-Burger');
+        final variationLine = text.indexOf('VAR: Grande');
+        final addonLine = text.indexOf('+ 2x Bacon');
+        final noteLine = text.indexOf('OBS: Sem cebola');
+        final refLine = text.indexOf('REF: batch-serial-1');
+
+        expect(mesaLine, greaterThanOrEqualTo(0));
+        expect(comandaLine, greaterThan(mesaLine));
+        expect(itemLine, greaterThan(comandaLine));
+        expect(variationLine, greaterThan(itemLine));
+        expect(addonLine, greaterThan(variationLine));
+        expect(noteLine, greaterThan(addonLine));
+        expect(refLine, greaterThan(noteLine));
+      },
+    );
+  });
+
+  test('generateBatchSerial gera um UUID v4 novo a cada chamada', () {
+    final first = OrderPresenter.generateBatchSerial();
+    final second = OrderPresenter.generateBatchSerial();
+    final uuidV4 = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    );
+
+    expect(first, isNot(equals(second)));
+    expect(uuidV4.hasMatch(first), isTrue);
+    expect(uuidV4.hasMatch(second), isTrue);
+  });
 }

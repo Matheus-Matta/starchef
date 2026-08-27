@@ -340,7 +340,12 @@ class OrderViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="send-to-kitchen")
     def send_to_kitchen(self, request, pk=None):
         try:
-            order = send_order_to_kitchen(self.get_object(), request.user)
+            order = send_order_to_kitchen(
+                self.get_object(),
+                request.user,
+                client_batch_serial=request.data.get("client_batch_serial"),
+                offline_printed=bool(request.data.get("offline_printed")),
+            )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)

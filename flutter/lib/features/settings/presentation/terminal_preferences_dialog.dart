@@ -17,17 +17,26 @@ class TerminalPreferencesDialog extends StatefulWidget {
     super.key,
     required this.preferences,
     this.detectedPorts,
+    this.printers = const [],
   });
 
   final LocalPreferences preferences;
   final List<String>? detectedPorts;
 
+  /// Impressoras ativas do restaurante, para escolher a impressora master do
+  /// recibo de pagamento e do recibo do cliente.
+  final List<Map<String, dynamic>> printers;
+
   static Future<void> show(
     BuildContext context,
-    LocalPreferences preferences,
-  ) => showDialog<void>(
+    LocalPreferences preferences, {
+    List<Map<String, dynamic>> printers = const [],
+  }) => showDialog<void>(
     context: context,
-    builder: (_) => TerminalPreferencesDialog(preferences: preferences),
+    builder: (_) => TerminalPreferencesDialog(
+      preferences: preferences,
+      printers: printers,
+    ),
   );
 
   @override
@@ -41,6 +50,7 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
   late bool audibleAlerts = widget.preferences.audibleAlerts;
   late bool autoPrint = widget.preferences.autoPrint;
   late bool showCatalog = widget.preferences.showScaleCatalog;
+  late String? masterPrinterId = widget.preferences.masterPrinterId;
 
   Future<void> _save() async {
     final preferences = widget.preferences;
@@ -51,6 +61,7 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
     await preferences.setAudibleAlerts(audibleAlerts);
     await preferences.setAutoPrint(autoPrint);
     await preferences.setShowScaleCatalog(showCatalog);
+    await preferences.setMasterPrinterId(masterPrinterId);
     if (mounted) Navigator.pop(context);
   }
 
@@ -133,6 +144,45 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
                 'Desligue em terminais que só pesam e leem a comanda, sem '
                 'vender extras — a coluna some em vez de ficar vazia.',
               ),
+            ),
+            const SizedBox(height: 18),
+            _section('Impressão', scheme),
+            DropdownButtonFormField<String>(
+              initialValue: widget.printers.any(
+                    (printer) => '${printer['id']}' == masterPrinterId,
+                  )
+                  ? masterPrinterId
+                  : null,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Impressora master',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: null,
+                  child: Text(
+                    'Nenhuma (perguntar sempre)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                for (final printer in widget.printers)
+                  DropdownMenuItem<String>(
+                    value: '${printer['id']}',
+                    child: Text(
+                      '${printer['name']}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (value) => setState(() => masterPrinterId = value),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Com uma impressora master definida, o recibo de pagamento e o '
+              'recibo do cliente saem direto nela, sem perguntar qual usar. '
+              'Sem master, continua perguntando como hoje.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 18),
             _section('Diagnóstico do terminal', scheme),

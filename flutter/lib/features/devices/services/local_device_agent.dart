@@ -12,6 +12,114 @@ import '../../../core/storage/local_preferences.dart';
 import '../domain/printer_endpoint.dart';
 import 'print_template_cache.dart';
 
+/// Script que entrega bytes crus à fila de impressão do Windows.
+///
+/// `Out-Printer` passa pelo driver gráfico, que reescreve o cupom conforme o
+/// tamanho de papel do Windows e descarta avanço e corte. A API do spooler
+/// com tipo de dado `RAW` entrega os bytes exatamente como foram montados —
+/// é o mesmo `RawPrinterHelper` que a documentação da Microsoft descreve.
+///
+/// Fica em arquivo temporário, e não em `-Command`, para o C# não depender do
+/// escape de aspas do PowerShell. A linha `'@` precisa começar na coluna 0.
+const _windowsRawSpoolScript = r'''
+param([Parameter(Mandatory=$true)][string]$PrinterName,
+      [Parameter(Mandatory=$true)][string]$FilePath)
+$ErrorActionPreference = 'Stop'
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class StarchefRawPrinter
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private class DOCINFOW
+    {
+        [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
+    }
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool OpenPrinter(string src, out IntPtr hPrinter, IntPtr pd);
+
+    [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool ClosePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool StartDocPrinter(IntPtr hPrinter, int level,
+        [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOW di);
+
+    [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool EndDocPrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool StartPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool EndPagePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", SetLastError = true)]
+    private static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes,
+        int dwCount, out int dwWritten);
+
+    public static void Send(string printerName, byte[] bytes)
+    {
+        IntPtr hPrinter;
+        if (!OpenPrinter(printerName, out hPrinter, IntPtr.Zero))
+        {
+            throw new Exception("Nao foi possivel abrir a impressora '" +
+                printerName + "' (erro " + Marshal.GetLastWin32Error() + ").");
+        }
+        try
+        {
+            DOCINFOW di = new DOCINFOW();
+            di.pDocName = "StarChef Cupom";
+            di.pDataType = "RAW";
+            if (!StartDocPrinter(hPrinter, 1, di))
+            {
+                throw new Exception("StartDocPrinter falhou (erro " +
+                    Marshal.GetLastWin32Error() + ").");
+            }
+            try
+            {
+                if (!StartPagePrinter(hPrinter))
+                {
+                    throw new Exception("StartPagePrinter falhou (erro " +
+                        Marshal.GetLastWin32Error() + ").");
+                }
+                try
+                {
+                    IntPtr buffer = Marshal.AllocCoTaskMem(bytes.Length);
+                    try
+                    {
+                        Marshal.Copy(bytes, 0, buffer, bytes.Length);
+                        int written;
+                        if (!WritePrinter(hPrinter, buffer, bytes.Length, out written))
+                        {
+                            throw new Exception("WritePrinter falhou (erro " +
+                                Marshal.GetLastWin32Error() + ").");
+                        }
+                        if (written != bytes.Length)
+                        {
+                            throw new Exception("A fila aceitou apenas " + written +
+                                " de " + bytes.Length + " bytes.");
+                        }
+                    }
+                    finally { Marshal.FreeCoTaskMem(buffer); }
+                }
+                finally { EndPagePrinter(hPrinter); }
+            }
+            finally { EndDocPrinter(hPrinter); }
+        }
+        finally { ClosePrinter(hPrinter); }
+    }
+}
+'@
+
+[StarchefRawPrinter]::Send($PrinterName, [System.IO.File]::ReadAllBytes($FilePath))
+''';
+
 class PrinterCommunicationException implements Exception {
   const PrinterCommunicationException({
     required this.message,
@@ -66,17 +174,29 @@ class LocalDeviceAgent {
     Future<void> Function(Duration duration)? delay,
     Future<void> Function(PrinterEndpoint target, List<int> bytes)?
     networkWriter,
-    this.cutDelay = const Duration(milliseconds: 650),
+    this.cutDelay = const Duration(milliseconds: 350),
   }) : _availabilityProbe = availabilityProbe,
        _networkWriter = networkWriter,
        _delay = delay ?? Future<void>.delayed;
 
+  /// `GS V 0` — corte total. O byte final aceita tanto `0x00` quanto `'0'`
+  /// (0x30) no padrão ESC/POS; mantemos `0x00`, que é o que as térmicas
+  /// vendidas aqui já vinham aceitando.
   static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
-  static const List<int> escPosBottomMarginBytes = [
-    0x1b,
-    0x33,
-    0x14,
-    0x0a,
+
+  /// Avanço de papel obrigatório entre a última linha e a guilhotina.
+  ///
+  /// A lâmina fica 2 a 3 cm acima da cabeça térmica: acionar o corte logo
+  /// depois do texto corta o rodapé ao meio — ou empurra o final do cupom
+  /// para o começo do próximo. `ESC 3 40` fixa o passo em 40 pontos (5 mm a
+  /// 203 dpi) e `ESC d 6` avança seis linhas, ~30 mm, folga suficiente para
+  /// o fim do cupom ultrapassar a lâmina em qualquer térmica de 80 mm.
+  ///
+  /// Um único `ESC d` em vez de vários `LF` soltos é deliberado: foi a
+  /// sequência de LFs repetidos que causou o corte duplo na MP-4200 HS.
+  static const List<int> escPosFeedBeforeCutBytes = [
+    0x1b, 0x33, 40, // ESC 3 40: passo de 40 pontos só para o avanço final.
+    0x1b, 0x64, 6, // ESC d 6: seis avanços de linha (~30 mm).
   ];
 
   static String? code128ValueFromPayload(Map<String, dynamic> payload) {
@@ -227,24 +347,29 @@ class LocalDeviceAgent {
       ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
-      // A primeira sequência configura 20 pontos e envia um LF real para a
-      // margem solicitada. ESC d 4 mantém a folga mecânica da guilhotina sem
-      // repetir vários LFs sob o espaçamento de 34 pontos usado no cupom —
-      // combinação que causava corte duplo na MP-4200 HS.
-      if (isEscPos) ...const [
-        ...escPosBottomMarginBytes,
-        0x1b,
-        0x64,
-        0x04,
-        ...escPosCutBytes,
-      ],
+      // Margem em branco no fim de toda nota, depois do código de barras e
+      // antes do avanço mecânico. É espaço de CONTEÚDO: a folga da guilhotina
+      // continua sendo [escPosFeedBeforeCutBytes], que não muda.
+      if (isEscPos) ...List<int>.filled(finalBlankLines, 0x0a),
+      // Ordem obrigatória para qualquer cupom: conteúdo, avanço até a lâmina
+      // e só então a guilhotina — ver [escPosFeedBeforeCutBytes].
+      if (isEscPos) ...[...escPosFeedBeforeCutBytes, ...escPosCutBytes],
     ];
   }
 
-  /// Acrescenta uma linha vazia ao caminho de spool, que aceita somente texto.
-  /// Nos transportes ESC/POS, a margem usa uma quebra de linha real com
-  /// espaçamento de 20 pontos antes do avanço de segurança e do corte.
-  static String textWithBottomMargin(String content) => '$content\n\n';
+  /// Linhas em branco impressas ao final de toda nota, como respiro entre o
+  /// último dado e o corte. Não substitui o avanço mecânico da guilhotina.
+  static const int finalBlankLines = 5;
+
+  /// Margem inferior do caminho que só aceita texto (driver gráfico do
+  /// sistema e transportes não-ESC/POS).
+  ///
+  /// Sem comando de corte para enviar, o papel precisa subir sozinho antes de
+  /// o driver acionar a guilhotina no fim do documento — mesma folga de ~2 a
+  /// 3 cm que [escPosFeedBeforeCutBytes] garante no caminho RAW, aqui obtida
+  /// com seis linhas em branco.
+  static String textWithBottomMargin(String content) =>
+      '$content${'\n' * 6}';
 
   /// Separa o comando de corte para que o transporte possa drenar o conteúdo
   /// antes de enviá-lo. O retorno mantém os avanços de papel junto ao corpo.
@@ -283,7 +408,7 @@ class LocalDeviceAgent {
       final normalized = line.trim().toUpperCase();
       final prominent = firstTextLine || normalized.startsWith('TOTAL');
       result.addAll([0x1b, 0x21, prominent ? 0x10 : 0x00]);
-      result.addAll(_encodeCp850(line));
+      result.addAll(_encodePrintable(line));
       result.add(0x0a);
       if (normalized.isNotEmpty) firstTextLine = false;
     }
@@ -291,56 +416,55 @@ class LocalDeviceAgent {
     return result;
   }
 
-  /// Codifica o texto na pagina PC850 usada pelas termicas vendidas no Brasil.
-  /// Caracteres fora da pagina viram equivalentes seguros, evitando que os
-  /// bytes UTF-8 aparecam impressos como "Ã", "Â" ou trechos de estilo.
-  static List<int> _encodeCp850(String value) {
-    const extended = <int, int>{
-      0x00c7: 0x80,
-      0x00fc: 0x81,
-      0x00e9: 0x82,
-      0x00e2: 0x83,
-      0x00e4: 0x84,
-      0x00e0: 0x85,
-      0x00e7: 0x87,
-      0x00ea: 0x88,
-      0x00eb: 0x89,
-      0x00e8: 0x8a,
-      0x00ef: 0x8b,
-      0x00ee: 0x8c,
-      0x00ec: 0x8d,
-      0x00c4: 0x8e,
-      0x00c9: 0x90,
-      0x00f4: 0x93,
-      0x00f6: 0x94,
-      0x00f2: 0x95,
-      0x00fb: 0x96,
-      0x00f9: 0x97,
-      0x00d6: 0x99,
-      0x00dc: 0x9a,
-      0x00e1: 0xa0,
-      0x00ed: 0xa1,
-      0x00f3: 0xa2,
-      0x00fa: 0xa3,
-      0x00e3: 0xc6,
-      0x00c3: 0xc7,
-      0x00f5: 0xe4,
-      0x00d5: 0xe5,
+  /// Reduz o texto a ASCII imprimível antes de enviar à impressora.
+  ///
+  /// As térmicas em uso não renderizam a página de código estendida: um "Ç"
+  /// enviado como byte alto sai como "?" no papel, e a palavra fica pior do
+  /// que sem o acento. Trocar pela letra base ("Ç" -> "C", "ã" -> "a") sai
+  /// legível em qualquer equipamento, que é o que importa num cupom.
+  static List<int> _encodePrintable(String value) {
+    const equivalents = <int, String>{
+      // Latim acentuado -> letra base.
+      0x00c0: 'A', 0x00c1: 'A', 0x00c2: 'A', 0x00c3: 'A', 0x00c4: 'A',
+      0x00c5: 'A', 0x00c7: 'C',
+      0x00c8: 'E', 0x00c9: 'E', 0x00ca: 'E', 0x00cb: 'E',
+      0x00cc: 'I', 0x00cd: 'I', 0x00ce: 'I', 0x00cf: 'I',
+      0x00d1: 'N',
+      0x00d2: 'O', 0x00d3: 'O', 0x00d4: 'O', 0x00d5: 'O', 0x00d6: 'O',
+      0x00d9: 'U', 0x00da: 'U', 0x00db: 'U', 0x00dc: 'U', 0x00dd: 'Y',
+      0x00e0: 'a', 0x00e1: 'a', 0x00e2: 'a', 0x00e3: 'a', 0x00e4: 'a',
+      0x00e5: 'a', 0x00e7: 'c',
+      0x00e8: 'e', 0x00e9: 'e', 0x00ea: 'e', 0x00eb: 'e',
+      0x00ec: 'i', 0x00ed: 'i', 0x00ee: 'i', 0x00ef: 'i',
+      0x00f1: 'n',
+      0x00f2: 'o', 0x00f3: 'o', 0x00f4: 'o', 0x00f5: 'o', 0x00f6: 'o',
+      0x00f9: 'u', 0x00fa: 'u', 0x00fb: 'u', 0x00fc: 'u',
+      0x00fd: 'y', 0x00ff: 'y',
+      0x00c6: 'AE', 0x00e6: 'ae', 0x00df: 'ss',
+      0x00aa: 'a', 0x00ba: 'o',
+      // Pontuação tipográfica que às vezes chega do template.
+      0x00a0: ' ', 0x00b7: '-', 0x00d7: 'x',
+      0x2013: '-', 0x2014: '-',
+      0x2018: "'", 0x2019: "'", 0x201c: '"', 0x201d: '"',
+      0x2026: '...', 0x20ac: 'EUR',
     };
-    const replacements = <int, int>{
-      0x2013: 0x2d,
-      0x2014: 0x2d,
-      0x2018: 0x27,
-      0x2019: 0x27,
-      0x201c: 0x22,
-      0x201d: 0x22,
-      0x00b7: 0x2d,
-      0x00d7: 0x78,
-    };
-    return value.runes.map((rune) {
-      if (rune <= 0x7f) return rune;
-      return extended[rune] ?? replacements[rune] ?? 0x3f;
-    }).toList();
+    final result = <int>[];
+    for (final rune in value.runes) {
+      if (rune <= 0x7f) {
+        result.add(rune);
+        continue;
+      }
+      // Texto decomposto (NFD) chega como letra + acento combinante. A letra
+      // já foi escrita acima; o acento sozinho viraria "?" no papel.
+      if (rune >= 0x0300 && rune <= 0x036f) continue;
+      final equivalent = equivalents[rune];
+      if (equivalent != null) {
+        result.addAll(equivalent.codeUnits);
+        continue;
+      }
+      result.add(0x3f);
+    }
+    return result;
   }
 
   final ApiClient api;
@@ -349,6 +473,14 @@ class LocalDeviceAgent {
   final Future<void> Function(PrinterEndpoint target, List<int> bytes)?
   _networkWriter;
   final Future<void> Function(Duration duration) _delay;
+
+  /// Pausa entre o conteúdo e o comando de corte, só para o transporte
+  /// terminar de drenar os bytes já enviados.
+  ///
+  /// Não é o que resolve o corte no lugar errado — quem faz isso é o avanço
+  /// de papel em [escPosFeedBeforeCutBytes]. Enquanto o avanço era curto,
+  /// esta pausa era usada para compensar; com os ~30 mm corretos ela volta a
+  /// ser só a margem de drenagem que sempre deveria ter sido.
   final Duration cutDelay;
   final ValueNotifier<PrinterAvailability> printerAvailability =
       ValueNotifier<PrinterAvailability>(
@@ -798,6 +930,71 @@ class LocalDeviceAgent {
     }
   }
 
+  /// Envia bytes ESC/POS crus para uma impressora da fila do sistema.
+  ///
+  /// O driver gráfico (`Out-Printer`, GDI) reinterpreta o cupom pelo tamanho
+  /// de papel configurado no Windows e descarta os comandos de avanço e
+  /// corte — é ele o motivo de a nota sair cortada no meio mesmo com o
+  /// avanço correto no fluxo. RAW entrega os bytes exatamente como montados.
+  ///
+  /// No Windows isso exige a API do spooler (`winspool.drv`) com o tipo de
+  /// dado `RAW`, chamada por um script PowerShell temporário — passar o C#
+  /// inline em `-Command` seria refém do escape de aspas. No CUPS,
+  /// `lp -o raw` já faz o mesmo.
+  Future<void> printRawToSpool(String printerName, List<int> bytes) async {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final separator = Platform.pathSeparator;
+    final temp = File('${Directory.systemTemp.path}${separator}starchef-$stamp.bin');
+    await temp.writeAsBytes(bytes, flush: true);
+    File? script;
+    try {
+      final ProcessResult result;
+      if (Platform.isWindows) {
+        script = File(
+          '${Directory.systemTemp.path}${separator}starchef-raw-$stamp.ps1',
+        );
+        await script.writeAsString(_windowsRawSpoolScript, flush: true);
+        result = await Process.run('powershell.exe', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          script.path,
+          '-PrinterName',
+          printerName,
+          '-FilePath',
+          temp.path,
+        ]).timeout(const Duration(seconds: 30));
+      } else {
+        result = await Process.run('lp', [
+          '-d',
+          printerName,
+          '-o',
+          'raw',
+          '--',
+          temp.path,
+        ]).timeout(const Duration(seconds: 20));
+      }
+      if (result.exitCode != 0) {
+        final detail = '${result.stderr}'.trim().isEmpty
+            ? '${result.stdout}'.trim()
+            : '${result.stderr}'.trim();
+        throw ProcessException(
+          Platform.isWindows ? 'powershell.exe' : 'lp',
+          const [],
+          detail.isEmpty
+              ? 'A fila de impressão recusou o trabalho RAW.'
+              : detail,
+          result.exitCode,
+        );
+      }
+    } finally {
+      if (await temp.exists()) await temp.delete();
+      if (script != null && await script.exists()) await script.delete();
+    }
+  }
+
   /// Entrega o conteúdo pela via configurada na impressora.
   ///
   /// Rede e serial escrevem os bytes diretamente e funcionam igual em Windows
@@ -843,8 +1040,9 @@ class LocalDeviceAgent {
         );
       }
 
-      if (target.connection == PrinterConnection.spool) {
-        // O spool recebe texto puro (Out-Printer/lp não renderizam imagem).
+      if (target.connection == PrinterConnection.spool && !target.isEscPos) {
+        // Impressora comum na fila do sistema (driver gráfico): só texto,
+        // com a margem inferior fazendo o papel do avanço antes do corte.
         await printText(
           target.endpoint,
           textWithBarcodeFallback(content, barcodeValue),
@@ -856,7 +1054,13 @@ class LocalDeviceAgent {
           barcodeValue: barcodeValue,
           qrValue: qrValue,
         );
-        if (target.connection == PrinterConnection.network) {
+        if (target.connection == PrinterConnection.spool) {
+          // Térmica instalada como impressora do sistema: os bytes ESC/POS
+          // vão RAW para a fila, sem passar pelo driver gráfico — é ele que
+          // reescreve o cupom pelo tamanho de papel do Windows e ignora o
+          // nosso avanço antes da guilhotina.
+          await printRawToSpool(target.endpoint, printBytes);
+        } else if (target.connection == PrinterConnection.network) {
           final writer = _networkWriter;
           if (writer == null) {
             await _writeToNetworkPrinter(target, printBytes);
@@ -1122,6 +1326,31 @@ class LocalDeviceAgent {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Impressoras que este terminal já conhece, com o override local de porta
+  /// aplicado.
+  ///
+  /// Vive em memória depois da primeira sincronização, então continua
+  /// disponível com a rede fora — que é exatamente quando a comanda precisa
+  /// ser montada e impressa aqui, sem esperar o backend renderizar o job.
+  /// Depender de uma releitura de `/printers/` nessa hora não funciona: o
+  /// cache de resposta só responde se aquela consulta exata já tiver sido
+  /// feita on-line antes.
+  List<Map<String, dynamic>> get knownPrinters => List.unmodifiable(_printers);
+
+  /// Devolve as impressoras conhecidas, sincronizando se ainda não houver
+  /// nenhuma. Nunca lança: sem rede e sem cache, devolve o que existir.
+  Future<List<Map<String, dynamic>>> ensurePrinters() async {
+    if (_printers.isEmpty) {
+      try {
+        await _syncDevicesIfNeeded();
+      } catch (_) {
+        // Segue com a lista em memória, mesmo vazia — quem chama decide o
+        // que dizer ao operador.
+      }
+    }
+    return knownPrinters;
   }
 
   Future<void> _syncDevicesIfNeeded() async {

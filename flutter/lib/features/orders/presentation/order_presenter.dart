@@ -1,6 +1,16 @@
+import 'dart:math';
+
 import '../../../core/formatters/value_formatters.dart';
 
 typedef JsonMap = Map<String, dynamic>;
+
+/// Uma comanda de cozinha pronta para `LocalDeviceAgent.printForPrinter`.
+class KitchenTicket {
+  const KitchenTicket({required this.printer, required this.text});
+
+  final JsonMap printer;
+  final String text;
+}
 
 /// Regras de apresentação de um pedido local/offline.
 ///
@@ -174,6 +184,117 @@ abstract final class OrderPresenter {
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       '_offline_pending': true,
     };
+  }
+
+  /// Referência da rodada de produção, gerada no terminal quando a rede está
+  /// fora — o backend usa este valor como `OrderBatch.serial` (em vez de
+  /// sortear um) para que o `REF:` já impresso na comanda offline bata com o
+  /// registro criado quando a fila sincronizar.
+  static String generateBatchSerial() {
+    final bytes = List<int>.generate(16, (_) => Random.secure().nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    String hex(int start, int end) => bytes
+        .sublist(start, end)
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex(0, 4)}-${hex(4, 6)}-${hex(6, 8)}-${hex(8, 10)}-${hex(10, 16)}';
+  }
+
+  /// Monta uma comanda por combinação setor×impressora ativa, espelhando
+  /// `register_kitchen_batch_print_jobs`/`_kitchen_ticket_text`
+  /// (`backend/apps/printers/services.py:345-396`) — inclusive os "pulos
+  /// silenciosos": item sem setor no produto, ou setor sem impressora ativa,
+  /// simplesmente não geram ticket, sem erro. Só é chamado quando a rede caiu
+  /// e a impressão não pode esperar o backend renderizar o `PrintJob`.
+  static List<KitchenTicket> buildOfflineKitchenTickets({
+    required JsonMap? table,
+    required JsonMap? command,
+    required List<JsonMap> pendingItems,
+    required List<JsonMap> products,
+    required List<JsonMap> printers,
+    required String batchSerial,
+  }) {
+    final productsById = {
+      for (final product in products) '${product['id']}': product,
+    };
+    final itemsBySector = <String, List<JsonMap>>{};
+    for (final item in pendingItems) {
+      final product = productsById['${item['product']}'];
+      final sector = product?['sector'];
+      if (sector == null) continue;
+      itemsBySector.putIfAbsent('$sector', () => []).add(item);
+    }
+    if (itemsBySector.isEmpty) return const [];
+
+    final tickets = <KitchenTicket>[];
+    for (final entry in itemsBySector.entries) {
+      final sectorPrinters = printers.where(
+        (printer) =>
+            printer['is_active'] != false &&
+            '${printer['sector'] ?? ''}' == entry.key,
+      );
+      if (sectorPrinters.isEmpty) continue;
+      final text = _kitchenTicketText(
+        table: table,
+        command: command,
+        items: entry.value,
+        batchSerial: batchSerial,
+      );
+      for (final printer in sectorPrinters) {
+        tickets.add(KitchenTicket(printer: printer, text: text));
+      }
+    }
+    return tickets;
+  }
+
+  static String _kitchenTicketText({
+    required JsonMap? table,
+    required JsonMap? command,
+    required List<JsonMap> items,
+    required String batchSerial,
+  }) {
+    String clip(String value) => value.length > 32 ? value.substring(0, 32) : value;
+    const separator = '--------------------------------';
+    final lines = <String>[clip(_center('NOVO PEDIDO', 32)), separator];
+    if (table != null) lines.add(clip('MESA: ${table['number']}'));
+    if (command != null) lines.add(clip('COMANDA: ${command['code']}'));
+    if (table != null || command != null) lines.add(separator);
+    for (final item in items) {
+      final quantity = _formatQuantity(item['quantity']);
+      lines.add(clip('${quantity}x ${item['product_name']}'));
+      for (final variation in (item['variations'] as List? ?? const [])) {
+        final name = variation is Map ? variation['name'] : variation;
+        lines.add(clip('  VAR: $name'));
+      }
+      for (final addon in (item['addons'] as List? ?? const [])) {
+        if (addon is! Map) continue;
+        final addonQuantity = _formatQuantity(addon['quantity']);
+        lines.add(clip('  + ${addonQuantity}x ${addon['addon_name']}'));
+      }
+      final note = '${item['customer_note'] ?? ''}';
+      if (note.isNotEmpty) lines.add(clip('  OBS: $note'));
+      lines.add(separator);
+    }
+    lines.addAll(['REF: $batchSerial', '']);
+    return lines.join('\n');
+  }
+
+  static String _center(String text, int width) {
+    if (text.length >= width) return text;
+    final padding = width - text.length;
+    final left = padding ~/ 2;
+    return '${' ' * left}$text${' ' * (padding - left)}';
+  }
+
+  static String _formatQuantity(dynamic value) {
+    final number = ValueFormatters.number(value);
+    if (number == number.roundToDouble()) return number.toInt().toString();
+    var text = number.toStringAsFixed(3);
+    while (text.endsWith('0')) {
+      text = text.substring(0, text.length - 1);
+    }
+    return text.endsWith('.') ? text.substring(0, text.length - 1) : text;
   }
 
   static JsonMap withItems(JsonMap order, List<JsonMap> items) {

@@ -27,6 +27,7 @@ class LocalPreferences {
   static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _serialPortOverridesKey = 'serial_port_overrides';
+  static const _masterPrinterIdKey = 'master_printer_id';
 
   final File _file;
   Map<String, dynamic> _values = const {};
@@ -100,6 +101,19 @@ class LocalPreferences {
 
   Future<void> setApiBaseUrlOverride(String? value) => _write(
     _apiBaseUrlOverrideKey,
+    (value == null || value.trim().isEmpty) ? null : value.trim(),
+  );
+
+  /// Impressora fixada pelo caixa para o recibo de pagamento e o recibo do
+  /// cliente. `null` significa "sem master, pergunta qual impressora usar"
+  /// — o comportamento de hoje.
+  String? get masterPrinterId {
+    final value = _values[_masterPrinterIdKey] as String?;
+    return (value == null || value.trim().isEmpty) ? null : value.trim();
+  }
+
+  Future<void> setMasterPrinterId(String? value) => _write(
+    _masterPrinterIdKey,
     (value == null || value.trim().isEmpty) ? null : value.trim(),
   );
 

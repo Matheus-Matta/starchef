@@ -55,22 +55,28 @@ void showAppError(
 ///
 /// Substitui o `SnackBar` de rodapé espalhado pela interface: um único lugar
 /// para tudo que aparece sozinho na tela, avisos de verdade e confirmações
-/// juntos. Diferente de [showAppError], soma sozinho depois de
-/// [autoDismissAfter] — o operador não precisa fechar um "impresso com
-/// sucesso" no `X`.
+/// juntos. Uma confirmação (`info`) some sozinha depois de [autoDismissAfter]
+/// — o operador não precisa fechar um "impresso com sucesso" no `X`. Um
+/// `warning`, por padrão, **não** some sozinho: assim como uma falha de
+/// verdade, fica até o operador dispensar, em vez de sumir em 3s sem ele ter
+/// visto.
 void showAppToast(
   BuildContext context,
   String message, {
   String? title,
   AppErrorSeverity severity = AppErrorSeverity.info,
-  Duration autoDismissAfter = const Duration(milliseconds: 2200),
+  Duration? autoDismissAfter,
 }) {
   ErrorCenterScope.read(context).report(
     AppError(
       title: title ?? (severity == AppErrorSeverity.warning ? 'Atenção' : 'Concluído'),
       message: message,
       severity: severity,
-      autoDismissAfter: autoDismissAfter,
+      autoDismissAfter:
+          autoDismissAfter ??
+          (severity == AppErrorSeverity.warning
+              ? null
+              : const Duration(milliseconds: 2200)),
     ),
   );
 }

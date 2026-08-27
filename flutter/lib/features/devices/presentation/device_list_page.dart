@@ -650,12 +650,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         body: const {},
         accessToken: widget.token,
       );
-      if (mounted) {
-        showAppToast(
-          context,
-          'Conexão confirmada. A nota de teste foi impressa.',
-        );
-      }
     } catch (error) {
       final jobId = job?['print_job_id'];
       if (jobId != null) {

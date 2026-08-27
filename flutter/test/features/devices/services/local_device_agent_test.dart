@@ -167,37 +167,58 @@ void main() {
           bytes.sublist(barcodeStart, barcodeStart + barcode.length),
           barcode,
         );
+        // Depois do código de barras vem a margem em branco da nota e só
+        // então o avanço de ~30 mm até a lâmina (ESC 3 40 + ESC d 6) e o
+        // GS V 0 — cortar antes disso parte o rodapé do cupom ao meio.
         expect(bytes.sublist(barcodeStart + barcode.length), [
-          0x1b,
-          0x33,
-          0x14,
-          0x0a,
-          0x1b,
-          0x64,
-          0x04,
-          29,
-          86,
-          0,
+          ...List<int>.filled(LocalDeviceAgent.finalBlankLines, 0x0a),
+          ...LocalDeviceAgent.escPosFeedBeforeCutBytes,
+          ...LocalDeviceAgent.escPosCutBytes,
         ]);
       },
     );
 
-    test(
-      'selects PC850 and encodes Brazilian accents without UTF-8 mojibake',
-      () {
-        final bytes = LocalDeviceAgent.rawTransportBytes(
-          'Serviço · preferência',
-          isEscPos: true,
-        );
+    test('troca acento pela letra base em vez de mandar byte alto', () {
+      // A impressora não renderiza a página de código estendida: "Ç" enviado
+      // como byte alto sai "?" no papel, então vale mais "Servico" legível.
+      final bytes = LocalDeviceAgent.rawTransportBytes(
+        'Serviço · preferência',
+        isEscPos: true,
+      );
 
-        expect(bytes, containsAllInOrder([0x1b, 0x74, 0x02]));
-        expect(
-          bytes,
-          containsAllInOrder([0x53, 0x65, 0x72, 0x76, 0x69, 0x87, 0x6f]),
-        );
-        expect(bytes, isNot(containsAllInOrder(utf8.encode('Serviço'))));
-      },
-    );
+      expect(bytes, containsAllInOrder(utf8.encode('Servico')));
+      expect(bytes, containsAllInOrder(utf8.encode('preferencia')));
+      // Nada de byte alto nem de "?" no lugar dos acentos.
+      expect(bytes.sublist(0, bytes.length - 3), isNot(contains(0x3f)));
+      expect(bytes, isNot(containsAllInOrder(utf8.encode('Serviço'))));
+    });
+
+    test('acento combinante (NFD) não vira "?" no papel', () {
+      // "Ç" pode chegar decomposto: "C" + cedilha combinante (U+0327).
+      final bytes = LocalDeviceAgent.rawTransportBytes(
+        'SERVIÇO',
+        isEscPos: true,
+      );
+
+      expect(bytes, containsAllInOrder(utf8.encode('SERVICO')));
+      expect(bytes, isNot(contains(0x3f)));
+    });
+
+    test('toda nota termina com margem em branco antes do corte', () {
+      final bytes = LocalDeviceAgent.rawTransportBytes(
+        'CUPOM',
+        isEscPos: true,
+      );
+      final tail = LocalDeviceAgent.escPosFeedBeforeCutBytes.length +
+          LocalDeviceAgent.escPosCutBytes.length;
+      final margin = bytes.sublist(
+        bytes.length - tail - LocalDeviceAgent.finalBlankLines,
+        bytes.length - tail,
+      );
+
+      expect(margin, everyElement(0x0a));
+      expect(LocalDeviceAgent.finalBlankLines, greaterThanOrEqualTo(4));
+    });
   });
 
   group('LocalDeviceAgent QR payload (DANFE NFC-e)', () {
@@ -294,16 +315,9 @@ void main() {
       expect(bytes, containsAllInOrder(utf8.encode('DANFE')));
       expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
       expect(bytes.sublist(qrStart + qr.length), [
-        0x1b,
-        0x33,
-        0x14,
-        0x0a,
-        0x1b,
-        0x64,
-        0x04,
-        29,
-        86,
-        0,
+        ...List<int>.filled(LocalDeviceAgent.finalBlankLines, 0x0a),
+        ...LocalDeviceAgent.escPosFeedBeforeCutBytes,
+        ...LocalDeviceAgent.escPosCutBytes,
       ]);
     });
   });
@@ -375,13 +389,21 @@ void main() {
 
       expect(
         utf8.decode(bytes),
-        'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42\n\n',
+        'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42${'\n' * 6}',
       );
     });
 
-    test('adds a final blank line to receipts sent through the spool', () {
-      expect(LocalDeviceAgent.textWithBottomMargin('TICKET'), 'TICKET\n\n');
-      expect(LocalDeviceAgent.textWithBottomMargin('TICKET\n'), 'TICKET\n\n\n');
+    test('avança o papel até a guilhotina no caminho que só aceita texto', () {
+      // Sem comando de corte para enviar, as linhas em branco são o que
+      // empurra o fim do cupom para além da lâmina antes de o driver cortar.
+      expect(
+        LocalDeviceAgent.textWithBottomMargin('TICKET'),
+        'TICKET${'\n' * 6}',
+      );
+      expect(
+        LocalDeviceAgent.textWithBottomMargin('TICKET\n'),
+        'TICKET\n${'\n' * 6}',
+      );
     });
   });
 
@@ -395,15 +417,12 @@ void main() {
       final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
 
       expect(parts.content, isNotEmpty);
-      expect(parts.content.sublist(parts.content.length - 7), [
-        0x1b,
-        0x33,
-        0x14,
-        0x0a,
-        0x1b,
-        0x64,
-        0x04,
-      ]);
+      // O avanço fica com o conteúdo; só a guilhotina é separada, para o
+      // transporte drenar o papel antes de acionar a lâmina.
+      expect(
+        parts.content.sublist(parts.content.length - 6),
+        LocalDeviceAgent.escPosFeedBeforeCutBytes,
+      );
       expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
     });
 

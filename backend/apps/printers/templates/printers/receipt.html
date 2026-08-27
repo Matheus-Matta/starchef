@@ -51,7 +51,8 @@
   <table>
     {% for item in items %}{% if item.status != "cancelled" %}
       <tr>
-        <td>{{ item.quantity|floatformat:"-3" }} × {{ item.product.name }}{% if item.product.is_weighed %}<br><span class="small">{{ item.quantity|floatformat:3 }} kg × R$ {{ item.unit_price }}/kg</span>{% endif %}</td>
+        {# Por peso, a quantidade aparece uma vez só: o preço por kg completa a mesma linha. #}
+        <td>{{ item.quantity|floatformat:"-3" }} × {{ item.product.name }}{% if item.product.is_weighed %} {{ item.unit_price }}/kg{% endif %}</td>
         <td>R$ {{ item.total_price }}</td>
       </tr>
     {% endif %}{% endfor %}

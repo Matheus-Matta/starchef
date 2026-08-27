@@ -495,19 +495,21 @@ void main() {
       ),
     );
 
-    final itemsWidth = tester
-        .getSize(find.byKey(const Key('scale-items-column')))
-        .width;
-    final catalogWidth = tester
-        .getSize(find.byKey(const Key('scale-catalog-column')))
-        .width;
-    final commandWidth = tester
-        .getSize(find.byKey(const Key('scale-command-column')))
-        .width;
+    final items = tester.getRect(find.byKey(const Key('scale-items-column')));
+    final catalog = tester.getRect(
+      find.byKey(const Key('scale-catalog-column')),
+    );
+    final command = tester.getRect(
+      find.byKey(const Key('scale-command-column')),
+    );
 
-    expect(itemsWidth, closeTo(300, .01));
-    expect(catalogWidth, closeTo(600, .01));
-    expect(commandWidth, closeTo(300, .01));
+    // 1200 px menos os dois espaçamentos de 10 px entre as três colunas,
+    // divididos na proporção 25/50/25 — as colunas não ficam mais coladas.
+    expect(items.width, closeTo(295, .01));
+    expect(catalog.width, closeTo(590, .01));
+    expect(command.width, closeTo(295, .01));
+    expect(catalog.left - items.right, 10);
+    expect(command.left - catalog.right, 10);
     expect(tester.takeException(), isNull);
   });
 

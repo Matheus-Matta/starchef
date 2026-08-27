@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -332,8 +333,14 @@ def recalculate_order(order):
 
 
 @transaction.atomic
-def send_order_to_kitchen(order, user):
-    """Send pending items to production and release printing immediately."""
+def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_printed=False):
+    """Send pending items to production and release printing immediately.
+
+    ``client_batch_serial``/``offline_printed`` existem para o PDV que já
+    imprimiu a comanda localmente porque a rede estava fora: o serial garante
+    que o `REF:` do ticket impresso offline bate com este lote, e a flag evita
+    que o backend gere um segundo `PrintJob` de verdade para o mesmo pedido.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().prefetch_related("items__product").get(pk=order.pk)
         if order.is_locked:
@@ -345,6 +352,13 @@ def send_order_to_kitchen(order, user):
 
         now = timezone.now()
         dispatch_at = now
+
+        batch_serial = None
+        if client_batch_serial:
+            try:
+                batch_serial = uuid.UUID(str(client_batch_serial))
+            except (ValueError, AttributeError, TypeError):
+                batch_serial = None
 
         # Each send creates a new production round
         last_batch_number = order.batches.aggregate(value=Max("batch_number"))["value"] or 0
@@ -360,6 +374,7 @@ def send_order_to_kitchen(order, user):
             sent_by=user,
             created_by=user,
             updated_by=user,
+            **({"serial": batch_serial} if batch_serial else {}),
         )
 
         for item in items:
@@ -386,7 +401,7 @@ def send_order_to_kitchen(order, user):
 
         from apps.printers.services import register_kitchen_batch_print_jobs
 
-        register_kitchen_batch_print_jobs(batch=batch, user=user)
+        register_kitchen_batch_print_jobs(batch=batch, user=user, offline_printed=offline_printed)
 
         dispatch_kitchen_batch(batch, now=now)
         order.refresh_from_db()

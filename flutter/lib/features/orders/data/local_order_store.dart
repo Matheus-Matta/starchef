@@ -282,7 +282,13 @@ class LocalOrderStore {
       0,
       (sum, item) => sum + ValueFormatters.number(item['total_price']),
     );
-    final serviceFee = ValueFormatters.number(order['service_fee']);
+    // Um pedido que teve a taxa retirada no fechamento não pode vê-la voltar
+    // no recálculo local — é assim que o teclado de pagamento acabava
+    // pré-preenchido com o valor cheio. Mesma regra de
+    // `OrderPresenter.withItems`.
+    final serviceFee = order['service_fee_enabled'] == false
+        ? 0.0
+        : ValueFormatters.number(order['service_fee']);
     final deliveryFee = ValueFormatters.number(order['delivery_fee']);
     final discount = ValueFormatters.number(order['discount']);
     final total = subtotal + serviceFee + deliveryFee - discount;

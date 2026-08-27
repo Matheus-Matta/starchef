@@ -1,6 +1,8 @@
+import uuid
+
 import pytest
 
-from apps.orders.models import Order, OrderItem
+from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.orders.services import (
     add_order_item,
     create_order,
@@ -107,6 +109,49 @@ def test_kitchen_new_order_note_shows_command_and_table_when_present(
     assert "MESA: 1" in job.payload["text_content"]
     assert f"Comanda: {command.code}" in job.html_content
     assert "Mesa: 1" in job.html_content
+
+
+@pytest.mark.django_db
+def test_kitchen_offline_printed_reuses_client_serial_and_skips_reprint(
+    account, restaurant, branch, table, product, manager_user
+):
+    """PDV sem internet já imprimiu a comanda localmente antes de sincronizar."""
+    product.sector = table.sector
+    product.save(update_fields=["sector", "updated_at"])
+    Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        sector=table.sector,
+        name="Cozinha",
+        endpoint="Teste",
+        auto_print=True,
+    )
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    client_serial = uuid.uuid4()
+    send_order_to_kitchen(
+        order,
+        manager_user,
+        client_batch_serial=str(client_serial),
+        offline_printed=True,
+    )
+
+    batch = OrderBatch.objects.get(order=order)
+    assert batch.serial == client_serial
+
+    job = PrintJob.objects.get(order=order)
+    assert job.status == PrintJob.STATUS_PRINTED
+    assert job.printed_at is not None
+    assert job.payload["offline_printed"] is True
+    assert f"REF: {client_serial}" in job.payload["text_content"]
 
 
 @pytest.mark.django_db

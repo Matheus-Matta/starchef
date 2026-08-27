@@ -200,14 +200,14 @@ def _customer_receipt_text(order):
     for item in order.items.select_related("product").prefetch_related("addons__addon"):
         if item.status == item.STATUS_CANCELLED:
             continue
-        lines.append(
-            _linha_valor(
-                f"{item.quantity:g} x {item.product.name}",
-                item.total_price,
-            )
-        )
+        # Produto por peso resolve tudo em uma linha só: repetir a quantidade
+        # numa segunda linha ("0,024 kg x ...") mostrava o mesmo peso duas
+        # vezes no cupom.
         if item.product.is_weighed:
-            lines.append(f"{item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM])
+            descricao = f"{item.quantity:g} x {item.product.name} {item.unit_price}/kg"
+        else:
+            descricao = f"{item.quantity:g} x {item.product.name}"
+        lines.append(_linha_valor(descricao, item.total_price))
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
@@ -369,8 +369,16 @@ def _kitchen_ticket_text(*, order, batch, sector, items):
     return "\n".join(lines)
 
 
-def register_kitchen_batch_print_jobs(*, batch, user):
-    """Cria um ticket por impressora/setor contendo apenas os itens da rodada."""
+def register_kitchen_batch_print_jobs(*, batch, user, offline_printed=False):
+    """Cria um ticket por impressora/setor contendo apenas os itens da rodada.
+
+    ``offline_printed=True`` significa que o PDV já imprimiu essa comanda
+    localmente (rede fora quando o pedido foi mandado à cozinha): os
+    `PrintJob` continuam sendo criados — a auditoria e o cancelamento
+    (`register_kitchen_item_cancellation_jobs`) dependem deles — mas já
+    nascem `STATUS_PRINTED`, para o `LocalDeviceAgent` (que só faz polling de
+    `scheduled|pending|rendered`) nunca mandar os bytes de novo.
+    """
     order = batch.order
     with tenant_context(order.account):
         items = list(
@@ -408,6 +416,12 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                     sector=sector,
                     items=sector_items,
                 )
+                if offline_printed:
+                    job_status = PrintJob.STATUS_PRINTED
+                elif batch.status == batch.STATUS_SCHEDULED:
+                    job_status = PrintJob.STATUS_SCHEDULED
+                else:
+                    job_status = PrintJob.STATUS_RENDERED
                 job = PrintJob.objects.create(
                     account=order.account,
                     restaurant=order.restaurant,
@@ -415,11 +429,8 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                     printer=printer,
                     order=order,
                     job_type=PrintJob.TYPE_KITCHEN,
-                    status=(
-                        PrintJob.STATUS_SCHEDULED
-                        if batch.status == batch.STATUS_SCHEDULED
-                        else PrintJob.STATUS_RENDERED
-                    ),
+                    status=job_status,
+                    printed_at=timezone.now() if offline_printed else None,
                     available_at=batch.dispatch_at,
                     payload={
                         "account_id": str(order.account_id),
@@ -432,6 +443,7 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                         "sector_name": sector.name,
                         "item_ids": [str(item.id) for item in sector_items],
                         "text_content": text,
+                        "offline_printed": offline_printed,
                     },
                     html_content=html,
                     printed_by=user,
