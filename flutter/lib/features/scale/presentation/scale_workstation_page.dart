@@ -321,11 +321,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         },
         accessToken: widget.accessToken,
       );
+      // A porta vem do cadastro da balança, como qualquer outro detalhe de
+      // protocolo (baud rate, protocolo, timeout): é o cadastro que descreve
+      // o equipamento, não uma cópia local que envelhece.
       final values = (response['results'] as List? ?? const [])
           .cast<Map<String, dynamic>>()
-          .map(
-            (item) => widget.preferences.applySerialPort(item, kind: 'scale'),
-          )
           .toList();
       if (!mounted) return;
       setState(() {
@@ -358,9 +358,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       );
       final values = (response['results'] as List? ?? const [])
           .cast<Map<String, dynamic>>()
-          .map(
-            (item) => widget.preferences.applySerialPort(item, kind: 'printer'),
-          )
           .toList();
       if (mounted) setState(() => printers = values);
     } on ApiException catch (error) {

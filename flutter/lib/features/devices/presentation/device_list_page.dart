@@ -67,15 +67,11 @@ class _DeviceListPageState extends State<DeviceListPage> {
         query: {'restaurant': widget.restaurantId, 'page_size': 300},
         accessToken: widget.token,
       );
+      // A lista mostra o cadastro como ele está: é ele que vale na hora de
+      // abrir a porta, então a tela não pode exibir outra coisa.
       rows = ((data['results'] ?? const []) as List)
           .cast<Map<String, dynamic>>()
           .where((item) => '${item['restaurant']}' == widget.restaurantId)
-          .map(
-            (item) => widget.preferences.applySerialPort(
-              item,
-              kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
-            ),
-          )
           .toList();
     } on ApiException catch (error) {
       loadError = error.message;
@@ -593,13 +589,13 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       }
       final savedId = '${saved['id'] ?? widget.item?['id'] ?? ''}'.trim();
       if (savedId.isNotEmpty) {
-        final usesSerial =
-            widget.kind == DeviceKind.scale ||
-            (widget.kind == DeviceKind.printer && connectionType == 'serial');
-        await widget.preferences.setSerialPort(
+        // Limpa qualquer porta que versões anteriores tenham guardado neste
+        // terminal: quem descreve o equipamento é o cadastro, e uma cópia
+        // local esquecida aqui foi o que fez a impressão real abrir um
+        // dispositivo diferente do que a tela mostrava.
+        await widget.preferences.clearSerialPortOverride(
           kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
           deviceId: savedId,
-          value: usesSerial ? connection.text : null,
         );
       }
       if (mounted) Navigator.pop(context, true);

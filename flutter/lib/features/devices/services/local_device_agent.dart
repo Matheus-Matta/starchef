@@ -1039,13 +1039,13 @@ class LocalDeviceAgent {
     String? barcodeValue,
     String? qrValue,
   }) async {
-    // O cadastro no backend guarda um endpoint só (ex.: /dev/starchef-printer),
-    // mas o nome real do dispositivo varia por terminal — sem aplicar o
-    // override local aqui, um trabalho de impressão de verdade ignorava a
-    // porta configurada nas Preferências deste terminal e falhava mesmo
-    // quando o teste de conexão (que já passava por outra tela) funcionava.
-    final resolvedPrinter =
-        preferences?.applySerialPort(printer, kind: 'printer') ?? printer;
+    // Toda impressão usa o que está no cadastro da impressora — sem override
+    // por terminal. O override existia para o caso de o mesmo equipamento
+    // receber caminhos diferentes em cada máquina, mas criava a divergência
+    // pior: uma porta salva localmente ficava desatualizada em relação ao
+    // cadastro, e a impressão real abria um dispositivo diferente do que o
+    // teste de conexão abria — teste passando e cupom não saindo.
+    final resolvedPrinter = printer;
     final target = PrinterEndpoint.fromJson(resolvedPrinter);
     // O aviso na tela é um só para todas as impressoras do terminal, então
     // precisa dizer QUAL falhou e por quê: "Impressora desconectada" sozinho
@@ -1411,13 +1411,8 @@ class LocalDeviceAgent {
             'page_size': 100,
           },
         ).then(
-          (printers) => _printers = printers
-              .map(
-                (printer) =>
-                    preferences?.applySerialPort(printer, kind: 'printer') ??
-                    printer,
-              )
-              .toList(),
+          // Sem override local: a impressora vale como está cadastrada.
+          (printers) => _printers = printers,
         );
     _deviceSyncInFlight = sync;
     try {

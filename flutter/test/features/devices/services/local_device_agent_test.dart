@@ -480,7 +480,7 @@ void main() {
     });
 
     test(
-      'aplica o override local de porta antes de abrir a serial de verdade',
+      'usa a porta do cadastro, ignorando override local antigo',
       () async {
         final directory = await Directory.systemTemp.createTemp(
           'starchef-device-agent-prefs',
@@ -489,12 +489,11 @@ void main() {
         final preferences = LocalPreferences(
           file: File('${directory.path}/preferences.json'),
         );
-        await preferences.load();
-        await preferences.setSerialPort(
-          kind: 'printer',
-          deviceId: 'printer-1',
-          value: '/dev/ttyACM0',
+        // Override gravado por uma versão anterior do PDV.
+        await File('${directory.path}/preferences.json').writeAsString(
+          '{"serial_port_overrides":{"printer:printer-1":"/dev/porta-antiga"}}',
         );
+        await preferences.load();
 
         String? probedEndpoint;
         final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
@@ -507,16 +506,15 @@ void main() {
           },
         );
 
-        // O cadastro no backend continua com o endpoint genérico; o override
-        // deste terminal precisa vencer antes da checagem de disponibilidade
-        // e da abertura real da porta — do contrário a impressão real ignora
-        // a configuração local mesmo com ela salva, como aconteceu em
-        // produção (o teste avulso passava, mas a nota de verdade falhava).
+        // Toda impressão abre a porta do cadastro. Enquanto o override
+        // vencia, uma porta salva neste PC ficava desatualizada em relação ao
+        // cadastro e a impressão real abria um dispositivo diferente do que o
+        // teste de conexão abria — teste passando e cupom não saindo.
         await expectLater(
           agent.printForPrinter({
             'id': 'printer-1',
             'connection_type': 'serial',
-            'endpoint': '/dev/starchef-printer',
+            'endpoint': '/dev/ttyACM0',
           }, 'RECIBO'),
           throwsA(isA<PrinterCommunicationException>()),
         );

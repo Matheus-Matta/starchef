@@ -117,14 +117,18 @@ class LocalPreferences {
     (value == null || value.trim().isEmpty) ? null : value.trim(),
   );
 
-  /// Porta serial escolhida especificamente neste terminal.
+  /// Porta guardada por versões antigas para este equipamento neste terminal.
   ///
-  /// O cadastro do equipamento continua sincronizado com a Retaguarda, mas a
-  /// mesma balanca/impressora pode receber nomes diferentes do sistema
-  /// operacional em cada caixa (por exemplo, COM4 no Windows e
-  /// /dev/ttyUSB0 no Linux). O override local evita que um terminal altere o
-  /// caminho usado pelos demais.
-  String? serialPortFor({required String kind, required String deviceId}) {
+  /// O override existiu para o caso de o mesmo equipamento receber caminhos
+  /// diferentes em cada máquina, mas criava um problema pior: a porta salva
+  /// aqui envelhecia em relação ao cadastro e a impressão real abria um
+  /// dispositivo diferente do que a tela mostrava. Hoje quem descreve o
+  /// equipamento — protocolo, IP e porta, caminho serial — é sempre o
+  /// cadastro. Isto sobrevive apenas para limpar o que ficou gravado.
+  String? legacySerialPortOverride({
+    required String kind,
+    required String deviceId,
+  }) {
     final overrides = _values[_serialPortOverridesKey];
     if (overrides is! Map) return null;
     final value = overrides['$kind:$deviceId'];
@@ -132,38 +136,15 @@ class LocalPreferences {
     return normalized.isEmpty ? null : normalized;
   }
 
-  Future<void> setSerialPort({
+  Future<void> clearSerialPortOverride({
     required String kind,
     required String deviceId,
-    required String? value,
   }) {
     final current = _values[_serialPortOverridesKey];
-    final overrides = current is Map
-        ? Map<String, dynamic>.from(current)
-        : <String, dynamic>{};
-    final key = '$kind:$deviceId';
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) {
-      overrides.remove(key);
-    } else {
-      overrides[key] = normalized;
-    }
+    if (current is! Map) return Future.value();
+    final overrides = Map<String, dynamic>.from(current);
+    if (overrides.remove('$kind:$deviceId') == null) return Future.value();
     return _write(_serialPortOverridesKey, overrides);
-  }
-
-  /// Aplica o caminho local sem descartar os demais campos recebidos da API.
-  Map<String, dynamic> applySerialPort(
-    Map<String, dynamic> device, {
-    required String kind,
-  }) {
-    final id = '${device['id'] ?? ''}'.trim();
-    if (id.isEmpty) return device;
-    final local = serialPortFor(kind: kind, deviceId: id);
-    if (local == null) return device;
-    return {
-      ...device,
-      if (kind == 'printer') 'endpoint': local else 'port': local,
-    };
   }
 
   int _int(
