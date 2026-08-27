@@ -208,12 +208,15 @@ abstract final class OrderPresenter {
   /// simplesmente não geram ticket, sem erro. Só é chamado quando a rede caiu
   /// e a impressão não pode esperar o backend renderizar o `PrintJob`.
   static List<KitchenTicket> buildOfflineKitchenTickets({
+    required JsonMap? order,
     required JsonMap? table,
     required JsonMap? command,
     required List<JsonMap> pendingItems,
     required List<JsonMap> products,
     required List<JsonMap> printers,
     required String batchSerial,
+    String operatorName = '',
+    DateTime? now,
   }) {
     final productsById = {
       for (final product in products) '${product['id']}': product,
@@ -229,38 +232,90 @@ abstract final class OrderPresenter {
 
     final tickets = <KitchenTicket>[];
     for (final entry in itemsBySector.entries) {
-      final sectorPrinters = printers.where(
-        (printer) =>
-            printer['is_active'] != false &&
-            '${printer['sector'] ?? ''}' == entry.key,
-      );
+      final sectorPrinters = printers
+          .where(
+            (printer) =>
+                printer['is_active'] != false &&
+                '${printer['sector'] ?? ''}' == entry.key,
+          )
+          .toList();
       if (sectorPrinters.isEmpty) continue;
-      final text = _kitchenTicketText(
-        table: table,
-        command: command,
-        items: entry.value,
-        batchSerial: batchSerial,
-      );
       for (final printer in sectorPrinters) {
-        tickets.add(KitchenTicket(printer: printer, text: text));
+        tickets.add(
+          KitchenTicket(
+            printer: printer,
+            text: _kitchenTicketText(
+              order: order,
+              table: table,
+              command: command,
+              items: entry.value,
+              batchSerial: batchSerial,
+              // O nome do setor vem da própria impressora: o cadastro já
+              // devolve `sector_name`, então não precisa de outra consulta.
+              sectorName: '${printer['sector_name'] ?? ''}',
+              operatorName: operatorName,
+              now: now ?? DateTime.now(),
+            ),
+          ),
+        );
       }
     }
     return tickets;
   }
 
+  /// Rótulos do tipo de atendimento, iguais aos de `TIPO_ATENDIMENTO_COMANDA`
+  /// no backend — as choices do modelo estão em inglês e não servem aqui.
+  static const _kitchenOrderTypeLabels = <String, String>{
+    'table': 'MESA',
+    'command': 'COMANDA',
+    'counter': 'BALCAO',
+    'delivery': 'DELIVERY',
+    'takeaway': 'RETIRADA',
+  };
+
   static String _kitchenTicketText({
+    required JsonMap? order,
     required JsonMap? table,
     required JsonMap? command,
     required List<JsonMap> items,
     required String batchSerial,
+    required String sectorName,
+    required String operatorName,
+    required DateTime now,
   }) {
-    String clip(String value) => value.length > 32 ? value.substring(0, 32) : value;
+    const width = 32;
+    String clip(String value) =>
+        value.length > width ? value.substring(0, width) : value;
     const separator = '--------------------------------';
-    final lines = <String>[clip(_center('NOVO PEDIDO', 32)), separator];
+
+    final lines = <String>[clip(_center('NOVO PEDIDO', width))];
+    if (sectorName.trim().isNotEmpty) {
+      lines.add(clip(_center(sectorName.toUpperCase(), width)));
+    }
+    lines.add(separator);
+    // Sem número de rodada aqui: quem numera a rodada é o backend, ao
+    // processar a fila. Inventar um número localmente sairia errado no papel.
+    final sequence = '${order?['sequence'] ?? ''}'.trim();
+    if (sequence.isNotEmpty) lines.add(clip('PEDIDO #$sequence'));
+    lines.add(_formatTicketTimestamp(now));
+    lines.add(separator);
+
+    final orderType = '${order?['order_type'] ?? ''}';
+    if (orderType.isNotEmpty && orderType != 'table' && orderType != 'command') {
+      lines.add(clip(_kitchenOrderTypeLabels[orderType] ?? orderType.toUpperCase()));
+    }
     if (table != null) lines.add(clip('MESA: ${table['number']}'));
     if (command != null) lines.add(clip('COMANDA: ${command['code']}'));
-    if (table != null || command != null) lines.add(separator);
+    final customer = '${order?['customer_name'] ?? ''}'.trim();
+    if (customer.isNotEmpty) lines.add(clip('CLIENTE: $customer'));
+    if (operatorName.trim().isNotEmpty) {
+      lines.add(clip('ATENDENTE: ${operatorName.trim()}'));
+    }
+    lines.add(separator);
+
+    var totalItems = 0.0;
     for (final item in items) {
+      totalItems += ValueFormatters.number(item['quantity']);
       final quantity = _formatQuantity(item['quantity']);
       lines.add(clip('${quantity}x ${item['product_name']}'));
       for (final variation in (item['variations'] as List? ?? const [])) {
@@ -276,8 +331,20 @@ abstract final class OrderPresenter {
       if (note.isNotEmpty) lines.add(clip('  OBS: $note'));
       lines.add(separator);
     }
+    lines.add(_twoColumns('TOTAL DE ITENS', _formatQuantity(totalItems), width));
     lines.addAll(['REF: $batchSerial', '']);
     return lines.join('\n');
+  }
+
+  static String _twoColumns(String left, String right, int width) {
+    final gap = width - left.length - right.length;
+    return gap < 1 ? '$left $right' : '$left${' ' * gap}$right';
+  }
+
+  static String _formatTicketTimestamp(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} '
+        '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
   }
 
   static String _center(String text, int width) {

@@ -110,6 +110,7 @@ void main() {
 
     test('ignora item cujo produto não tem setor', () {
       final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        order: const {'sequence': 9, 'order_type': 'table'},
         table: null,
         command: null,
         pendingItems: [
@@ -127,6 +128,7 @@ void main() {
 
     test('setor sem impressora ativa não gera ticket', () {
       final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        order: const {'sequence': 9, 'order_type': 'table'},
         table: null,
         command: null,
         pendingItems: [
@@ -144,6 +146,7 @@ void main() {
 
     test('duas impressoras no mesmo setor recebem o mesmo texto', () {
       final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        order: const {'sequence': 9, 'order_type': 'table'},
         table: {'number': '7'},
         command: null,
         pendingItems: [
@@ -169,6 +172,7 @@ void main() {
       'texto traz mesa/comanda, variações, adicionais, observação e REF',
       () {
         final tickets = OrderPresenter.buildOfflineKitchenTickets(
+          order: const {'sequence': 9, 'order_type': 'table'},
           table: {'number': '7'},
           command: {'code': '0012'},
           pendingItems: [
@@ -210,6 +214,46 @@ void main() {
         expect(refLine, greaterThan(noteLine));
       },
     );
+
+    test('cabeçalho identifica pedido, setor, atendente e total de itens', () {
+      final tickets = OrderPresenter.buildOfflineKitchenTickets(
+        order: const {
+          'sequence': 45,
+          'order_type': 'delivery',
+          'customer_name': 'Joao',
+        },
+        table: null,
+        command: null,
+        pendingItems: [
+          {'product': 'product-1', 'product_name': 'X-Burger', 'quantity': 2},
+          {'product': 'product-1', 'product_name': 'X-Burger', 'quantity': 1},
+        ],
+        products: products,
+        printers: [
+          {
+            'id': 'printer-1',
+            'sector': 'sector-1',
+            'sector_name': 'Cozinha',
+            'is_active': true,
+          },
+        ],
+        batchSerial: 'batch-serial-1',
+        operatorName: 'Maria',
+        now: DateTime(2026, 8, 27, 20, 30, 15),
+      );
+
+      final text = tickets.single.text;
+      expect(text, contains('COZINHA'));
+      expect(text, contains('PEDIDO #45'));
+      expect(text, contains('27/08/2026 20:30:15'));
+      // Entrega precisa estar explícita: sem mesa nem comanda, a cozinha não
+      // teria como saber que o pedido não é do salão.
+      expect(text, contains('DELIVERY'));
+      expect(text, contains('CLIENTE: Joao'));
+      expect(text, contains('ATENDENTE: Maria'));
+      expect(text, contains('TOTAL DE ITENS'));
+      expect(text, contains('3'));
+    });
   });
 
   test('generateBatchSerial gera um UUID v4 novo a cada chamada', () {

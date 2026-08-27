@@ -963,6 +963,9 @@ class _HomePageState extends State<HomePage> {
           };
     await _refreshOrder();
     if (mounted) setState(() => flowStep = 'order');
+    // Editar um pedido de comanda também é hora de perguntar a mesa: a
+    // comanda pode ter sido aberta avulsa e o cliente já ter sentado.
+    await _ensureCommandTable();
   }
 
   Future<void> _payOrder(Map<String, dynamic> order) async {
@@ -1817,6 +1820,107 @@ class _HomePageState extends State<HomePage> {
       }
       flowStep = 'order';
     });
+    // Fora do `_work` acima de propósito: ele marca `busy`, e o vínculo da
+    // mesa faz a própria chamada de API.
+    await _ensureCommandTable();
+  }
+
+  /// Pergunta em que mesa a comanda está sentada, quando ela ainda não tem
+  /// vínculo.
+  ///
+  /// Vale tanto ao abrir um pedido novo quanto ao retomar um existente: sem
+  /// isso uma comanda avulsa seguia o atendimento inteiro sem mesa, e o salão
+  /// não tinha como saber onde entregar. Continua sendo possível seguir sem
+  /// mesa — self-service é um caso legítimo —, mas agora é uma escolha
+  /// explícita do operador, não um silêncio.
+  Future<void> _ensureCommandTable() async {
+    final command = selectedCommand;
+    if (!mounted ||
+        command == null ||
+        selectedTable != null ||
+        command['current_table'] != null) {
+      return;
+    }
+    final available = tables
+        .where((table) => '${table['status']}' != 'inactive')
+        .toList(growable: false);
+    if (available.isEmpty) return;
+
+    final chosen = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AppDialog(
+        title: Text('Comanda ${command['code'] ?? command['number'] ?? ''}'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Em qual mesa esta comanda está?'),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: available.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final table = available[index];
+                    final occupied =
+                        (table['active_commands'] as List? ?? const []).length;
+                    final capacity = _number(table['capacity']).round();
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.table_restaurant_outlined),
+                      title: Text('Mesa ${table['number']}'),
+                      subtitle: Text(
+                        [
+                          '${table['sector_name'] ?? ''}'.trim(),
+                          if (capacity > 0) '$occupied/$capacity comandas',
+                        ].where((part) => part.isNotEmpty).join(' · '),
+                      ),
+                      onTap: () => Navigator.pop(dialogContext, table),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Seguir sem mesa'),
+          ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+
+    try {
+      await api.post(
+        '/commands/${command['id']}/link-table/',
+        body: {'table_id': chosen['id']},
+        accessToken: token,
+      );
+      if (!mounted) return;
+      setState(() {
+        selectedTable = chosen;
+        command['current_table'] = chosen['id'];
+        activeOrder = {
+          ...?activeOrder,
+          'table': chosen['id'],
+          'table_number': chosen['number'],
+        };
+      });
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'Não foi possível vincular a comanda à mesa',
+          action: 'O pedido segue aberto; tente vincular de novo pela mesa.',
+        );
+      }
+    }
   }
 
   Future<void> _selectOrderType(String type) async {
@@ -2641,11 +2745,16 @@ class _HomePageState extends State<HomePage> {
   /// essa flag faz o backend registrar os `PrintJob` como já impressos, então
   /// mandá-la depois de uma impressão que falhou deixaria a cozinha sem
   /// comanda nenhuma — nem agora, nem quando a fila sincronizasse.
+  ///
+  /// A condição é `phase == offline`, e não "sem conexão": `unknown` (antes da
+  /// primeira resposta) e `degraded` (servidor instável, mas respondendo)
+  /// também contam como "sem conexão" e levavam a imprimir aqui um pedido que
+  /// o backend ia imprimir de novo — duas comandas para a mesma rodada.
   Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
     List<Map<String, dynamic>> pendingItems,
   ) async {
     final batchSerial = OrderPresenter.generateBatchSerial();
-    if (!api.syncStatus.hasConnection) {
+    if (api.syncStatus.phase == NetworkSyncPhase.offline) {
       final printed = await _printKitchenTicketsOffline(
         pendingItems,
         batchSerial,
@@ -2684,13 +2793,18 @@ class _HomePageState extends State<HomePage> {
     // `/printers/` aqui só funcionaria se aquela consulta exata já estivesse
     // no cache de respostas, o que não se pode assumir com a rede fora.
     final printersForTickets = await deviceAgent.ensurePrinters();
+    final user = widget.controller.session?.user;
     final tickets = OrderPresenter.buildOfflineKitchenTickets(
+      order: activeOrder,
       table: selectedTable,
       command: selectedCommand,
       pendingItems: pendingItems,
       products: products,
       printers: printersForTickets,
       batchSerial: batchSerial,
+      operatorName: (user?.name ?? '').trim().isNotEmpty
+          ? user!.name
+          : (user?.username ?? ''),
     );
     var printedAny = false;
     Object? lastFailure;

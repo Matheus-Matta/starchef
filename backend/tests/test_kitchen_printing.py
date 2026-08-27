@@ -47,8 +47,14 @@ def test_kitchen_prints_only_new_batch_items_for_product_sector(
     assert "NOVO PEDIDO" in first_job.payload["text_content"]
     assert "MESA: 1" in first_job.payload["text_content"]
     assert "X-Burger" in first_job.payload["text_content"]
-    assert "RODADA" not in first_job.payload["text_content"]
-    assert "TIPO" not in first_job.payload["text_content"]
+    # A comanda identifica de onde veio: pedido, rodada, setor e hora. Sem
+    # isso a cozinha recebia so a lista de produtos, sem saber o pedido.
+    assert f"PEDIDO #{order.sequence}" in first_job.payload["text_content"]
+    assert "RODADA 1" in first_job.payload["text_content"]
+    assert "SALAO" in first_job.payload["text_content"]
+    assert "TOTAL DE ITENS" in first_job.payload["text_content"]
+    # Mesa/comanda ja dizem que e do salao: repetir o tipo seria ruido.
+    assert "TABLE" not in first_job.payload["text_content"]
     assert "NOVO PEDIDO" in first_job.html_content
     assert "Mesa: 1" in first_job.html_content
     first_item.refresh_from_db()

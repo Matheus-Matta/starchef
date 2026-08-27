@@ -34,6 +34,19 @@ _WITH_PAYMENTS = {PrintJob.TYPE_RECEIPT}
 # alguma margem em branco nas impressoras que realmente tem 48 colunas.
 LARGURA_CUPOM = 42
 _COLUNA_VALOR = 14
+# A comanda de producao usa 32 colunas: ela sai em fonte expandida na cozinha,
+# entao cabe menos texto por linha do que no cupom do cliente.
+LARGURA_COMANDA = 32
+
+# `Order.TYPE_CHOICES` guarda rotulos em ingles (e nem lista `table`), entao
+# `get_order_type_display()` imprimiria "TABLE" na comanda da cozinha.
+TIPO_ATENDIMENTO_COMANDA = {
+    "table": "MESA",
+    "command": "COMANDA",
+    "counter": "BALCAO",
+    "delivery": "DELIVERY",
+    "takeaway": "RETIRADA",
+}
 
 
 def _linha_valor(rotulo, valor):
@@ -342,27 +355,64 @@ def _kitchen_quantity(value):
     return format(Decimal(value).normalize(), "f")
 
 
+def _kitchen_two_columns(left, right, width=LARGURA_COMANDA):
+    """Rotulo a esquerda e valor a direita na mesma linha da comanda."""
+    left, right = str(left), str(right)
+    espaco = width - len(left) - len(right)
+    if espaco < 1:
+        return f"{left} {right}"[:width]
+    return f"{left}{' ' * espaco}{right}"
+
+
 def _kitchen_ticket_text(*, order, batch, sector, items):
+    """Comanda de producao: o que a cozinha precisa pra montar o pedido.
+
+    Alem dos itens, identifica de qual pedido/rodada a comanda veio, a que
+    horas foi lancada, o tipo de atendimento (salao, balcao, entrega...),
+    mesa/comanda, cliente e quem lancou. Sem isso a cozinha recebia uma lista
+    solta de produtos, sem saber a origem nem se era pra entrega.
+    """
+    total_itens = sum((Decimal(item.quantity) for item in items), Decimal("0"))
+    enviado_em = batch.sent_at or timezone.now()
     lines = [
-        "NOVO PEDIDO".center(32),
-        "-" * 32,
+        "NOVO PEDIDO".center(LARGURA_COMANDA),
+        str(sector.name).upper().center(LARGURA_COMANDA)[:LARGURA_COMANDA],
+        "-" * LARGURA_COMANDA,
+        _kitchen_two_columns(
+            f"PEDIDO #{order.sequence}",
+            f"RODADA {batch.batch_number}",
+        ),
+        timezone.localtime(enviado_em).strftime("%d/%m/%Y %H:%M:%S"),
+        "-" * LARGURA_COMANDA,
     ]
+    # Balcao/entrega/retirada nao tem mesa nem comanda: sem esta linha a
+    # cozinha nao sabe que o pedido nao e do salao. No salao, as linhas de
+    # mesa/comanda abaixo ja dizem o tipo, entao repetir seria ruido.
+    if order.order_type not in {"table", "command"}:
+        lines.append(
+            TIPO_ATENDIMENTO_COMANDA.get(order.order_type, str(order.order_type).upper())[:LARGURA_COMANDA]
+        )
     if order.table_id:
-        lines.append(f"MESA: {order.table.number}"[:32])
+        lines.append(f"MESA: {order.table.number}"[:LARGURA_COMANDA])
     if order.command_id:
-        lines.append(f"COMANDA: {order.command.code}"[:32])
-    if order.table_id or order.command_id:
-        lines.append("-" * 32)
+        lines.append(f"COMANDA: {order.command.code}"[:LARGURA_COMANDA])
+    if order.customer_id:
+        lines.append(f"CLIENTE: {order.customer.name}"[:LARGURA_COMANDA])
+    if order.responsible_user_id:
+        atendente = order.responsible_user.get_full_name() or order.responsible_user.username
+        lines.append(f"ATENDENTE: {atendente}"[:LARGURA_COMANDA])
+    lines.append("-" * LARGURA_COMANDA)
     for item in items:
-        lines.append(f"{_kitchen_quantity(item.quantity)}x {item.product.name}"[:32])
+        lines.append(f"{_kitchen_quantity(item.quantity)}x {item.product.name}"[:LARGURA_COMANDA])
         for variation in item.variations or []:
             name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:32])
+            lines.append(f"  VAR: {name}"[:LARGURA_COMANDA])
         for addon in item.addons.all():
-            lines.append(f"  + {_kitchen_quantity(addon.quantity)}x {addon.addon.name}"[:32])
+            lines.append(f"  + {_kitchen_quantity(addon.quantity)}x {addon.addon.name}"[:LARGURA_COMANDA])
         if item.customer_note:
-            lines.append(f"  OBS: {item.customer_note}"[:32])
-        lines.append("-" * 32)
+            lines.append(f"  OBS: {item.customer_note}"[:LARGURA_COMANDA])
+        lines.append("-" * LARGURA_COMANDA)
+    lines.append(_kitchen_two_columns("TOTAL DE ITENS", _kitchen_quantity(total_itens)))
     # Mantém uma referência curta no rodapé para que um eventual cancelamento
     # posterior possa ser ligado exatamente a esta impressão.
     lines.extend([f"REF: {batch.serial}", ""])
