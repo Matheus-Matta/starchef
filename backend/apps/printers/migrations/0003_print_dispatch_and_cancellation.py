@@ -5,6 +5,19 @@ from django.db import migrations, models
 from django.db.models import Q
 
 
+def populate_print_job_serials(apps, schema_editor):
+    print_job = apps.get_model("printers", "PrintJob")
+    pending = []
+    for job in print_job.objects.filter(serial__isnull=True).iterator(chunk_size=1000):
+        job.serial = uuid.uuid4()
+        pending.append(job)
+        if len(pending) == 1000:
+            print_job.objects.bulk_update(pending, ["serial"])
+            pending.clear()
+    if pending:
+        print_job.objects.bulk_update(pending, ["serial"])
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("orders", "0004_kitchen_dispatch_grace_period"),
@@ -13,6 +26,15 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
+            model_name="printjob",
+            name="serial",
+            field=models.UUIDField(editable=False, null=True),
+        ),
+        migrations.RunPython(
+            populate_print_job_serials,
+            reverse_code=migrations.RunPython.noop,
+        ),
+        migrations.AlterField(
             model_name="printjob",
             name="serial",
             field=models.UUIDField(default=uuid.uuid4, editable=False, unique=True),
