@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.template.loader import render_to_string
 from django.utils import timezone
 
@@ -260,6 +261,8 @@ def register_print_job(
             raise ValueError("Printer does not belong to the order account.")
         if printer is None:
             active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
+            if order.branch_id:
+                active = active.filter(Q(branch_id=order.branch_id) | Q(branch__isnull=True))
             if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
                 sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
                 printer = (
@@ -268,13 +271,27 @@ def register_print_job(
                     or active.order_by("name").first()
                 )
             else:
-                # Recibo/conta/fechamento nunca podem cair numa impressora de
-                # setor: ela tem auto_print ligado pra despachar só a rodada
-                # nova da cozinha, e um recibo lista o pedido inteiro — sem
-                # impressora genérica cadastrada, o job fica sem impressora
-                # (erro amigável de "nenhuma impressora encontrada") em vez de
-                # imprimir tudo de novo, sem querer, no bilhete da cozinha.
+                # Recibo/conta/fechamento preferem uma impressora sem setor,
+                # evitando enviar o pedido inteiro a uma cozinha por engano.
                 printer = active.filter(sector=None).order_by("name").first()
+                if printer is None:
+                    # Restaurantes pequenos frequentemente usam uma única
+                    # impressora física no caixa e na cozinha. Se só há uma
+                    # opção compatível com a filial, a escolha é inequívoca
+                    # mesmo que ela esteja vinculada a um setor.
+                    candidates = list(active.order_by("name")[:2])
+                    if len(candidates) == 1:
+                        printer = candidates[0]
+
+        if printer is None:
+            if active.exists():
+                raise ValidationError(
+                    "Há mais de uma impressora setorizada ativa. Cadastre uma "
+                    "impressora sem setor para ser o destino automático dos recibos."
+                )
+            raise ValidationError(
+                "Nenhuma impressora ativa foi encontrada para este restaurante e filial."
+            )
 
         barcode = _order_command_barcode(order)
         html = render_print_html(

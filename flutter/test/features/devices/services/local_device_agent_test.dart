@@ -171,6 +171,9 @@ void main() {
           0x1b,
           0x64,
           0x04,
+          0x1b,
+          0x4a,
+          0x14,
           29,
           86,
           0,
@@ -289,10 +292,17 @@ void main() {
 
       expect(bytes, containsAllInOrder(utf8.encode('DANFE')));
       expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
-      expect(
-        bytes.sublist(qrStart + qr.length),
-        [0x1b, 0x64, 0x04, 29, 86, 0],
-      );
+      expect(bytes.sublist(qrStart + qr.length), [
+        0x1b,
+        0x64,
+        0x04,
+        0x1b,
+        0x4a,
+        0x14,
+        29,
+        86,
+        0,
+      ]);
     });
   });
 
@@ -361,7 +371,15 @@ void main() {
         barcodeValue: 'CMD-42',
       );
 
-      expect(utf8.decode(bytes), 'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42');
+      expect(
+        utf8.decode(bytes),
+        'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42\n\n',
+      );
+    });
+
+    test('adds a final blank line to receipts sent through the spool', () {
+      expect(LocalDeviceAgent.textWithBottomMargin('TICKET'), 'TICKET\n\n');
+      expect(LocalDeviceAgent.textWithBottomMargin('TICKET\n'), 'TICKET\n\n\n');
     });
   });
 
@@ -375,10 +393,14 @@ void main() {
       final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
 
       expect(parts.content, isNotEmpty);
-      expect(
-        parts.content.sublist(parts.content.length - 3),
-        [0x1b, 0x64, 0x04],
-      );
+      expect(parts.content.sublist(parts.content.length - 6), [
+        0x1b,
+        0x64,
+        0x04,
+        0x1b,
+        0x4a,
+        0x14,
+      ]);
       expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
     });
 

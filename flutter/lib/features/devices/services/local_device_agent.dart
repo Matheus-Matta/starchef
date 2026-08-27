@@ -72,6 +72,7 @@ class LocalDeviceAgent {
        _delay = delay ?? Future<void>.delayed;
 
   static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
+  static const List<int> escPosBottomMarginBytes = [0x1b, 0x4a, 0x14];
 
   static String? code128ValueFromPayload(Map<String, dynamic> payload) {
     final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
@@ -211,9 +212,12 @@ class LocalDeviceAgent {
     final printableContent = barcodeBytes == null
         ? textWithBarcodeFallback(content, barcodeValue)
         : content;
+    final transportContent = isEscPos
+        ? printableContent
+        : textWithBottomMargin(printableContent);
     final contentBytes = isEscPos
-        ? _readableReceiptBytes(printableContent)
-        : utf8.encode(printableContent);
+        ? _readableReceiptBytes(transportContent)
+        : utf8.encode(transportContent);
     return <int>[
       ...contentBytes,
       ...?barcodeBytes,
@@ -225,9 +229,20 @@ class LocalDeviceAgent {
       // auto-corte do próprio firmware — cortava sozinha e de novo com o
       // comando GS V explícito logo em seguida. ESC d é um avanço físico de
       // n linhas, não LF: comportamento validado nesse hardware.
-      if (isEscPos) ...const [0x1b, 0x64, 0x04, ...escPosCutBytes],
+      if (isEscPos) ...const [
+        0x1b,
+        0x64,
+        0x04,
+        ...escPosBottomMarginBytes,
+        ...escPosCutBytes,
+      ],
     ];
   }
+
+  /// Acrescenta uma linha vazia ao caminho de spool, que aceita somente texto.
+  /// Nos transportes ESC/POS, a margem exata de 20 pontos e aplicada por
+  /// [escPosBottomMarginBytes] antes do corte.
+  static String textWithBottomMargin(String content) => '$content\n\n';
 
   /// Separa o comando de corte para que o transporte possa drenar o conteúdo
   /// antes de enviá-lo. O retorno mantém os avanços de papel junto ao corpo.
@@ -739,7 +754,11 @@ class LocalDeviceAgent {
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
       'starchef-${DateTime.now().microsecondsSinceEpoch}.txt',
     );
-    await temp.writeAsString(content, encoding: utf8, flush: true);
+    await temp.writeAsString(
+      textWithBottomMargin(content),
+      encoding: utf8,
+      flush: true,
+    );
     try {
       final ProcessResult result;
       if (Platform.isWindows) {

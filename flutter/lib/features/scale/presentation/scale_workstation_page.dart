@@ -2197,6 +2197,8 @@ class ScaleOperationGrid extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Expanded(key: const Key('scale-items-column'), child: items),
+      if (catalog == null)
+        const SizedBox(key: Key('scale-columns-gap'), width: 10),
       if (catalog != null)
         Expanded(
           key: const Key('scale-catalog-column'),

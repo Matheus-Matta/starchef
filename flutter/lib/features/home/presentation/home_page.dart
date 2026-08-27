@@ -3236,7 +3236,10 @@ class _HomePageState extends State<HomePage> {
       _error(
         const ApiException(
           'Nenhuma impressora ativa foi encontrada para este restaurante.',
+          statusCode: 422,
         ),
+        title: 'Impressão automática não configurada',
+        action: 'Ative uma impressora compatível com esta filial.',
       );
       return;
     }

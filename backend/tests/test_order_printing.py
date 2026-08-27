@@ -1,4 +1,5 @@
 import pytest
+from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.customers.models import Customer, CustomerAddress
@@ -125,13 +126,9 @@ def test_receipt_header_matches_delivery_with_address(account, restaurant, branc
 
 
 @pytest.mark.django_db
-def test_receipt_never_falls_back_to_a_sector_printer(account, restaurant, branch, manager_user, product):
-    """Sem impressora genérica cadastrada, o recibo precisa ficar sem
-    impressora (erro amigável na tela) em vez de cair na impressora da
-    cozinha — essa tem auto_print ligado pra despachar só a rodada nova, e
-    reimprimiria o pedido inteiro toda vez que o recibo fosse gerado."""
+def test_automatic_receipt_uses_the_only_active_sector_printer(account, restaurant, branch, manager_user, product):
     sector = TableSector.objects.create(account=account, restaurant=restaurant, branch=branch, name="Cozinha")
-    Printer.objects.create(
+    printer = Printer.objects.create(
         account=account,
         restaurant=restaurant,
         branch=branch,
@@ -146,4 +143,43 @@ def test_receipt_never_falls_back_to_a_sector_printer(account, restaurant, branc
 
     job = register_print_job(order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT)
 
-    assert job.printer_id is None
+    assert job.printer == printer
+
+
+@pytest.mark.django_db
+def test_automatic_receipt_rejects_ambiguous_sector_printers(
+    account, restaurant, branch, manager_user, product
+):
+    for name in ("Cozinha", "Bar"):
+        sector = TableSector.objects.create(
+            account=account,
+            restaurant=restaurant,
+            branch=branch,
+            name=name,
+        )
+        Printer.objects.create(
+            account=account,
+            restaurant=restaurant,
+            branch=branch,
+            name=name,
+            endpoint=f"Impressora {name}",
+            sector=sector,
+            is_active=True,
+            auto_print=True,
+        )
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    with pytest.raises(ValidationError, match="mais de uma impressora setorizada"):
+        register_print_job(
+            order=order,
+            user=manager_user,
+            job_type=PrintJob.TYPE_RECEIPT,
+        )
+
+    assert not PrintJob.objects.filter(order=order).exists()

@@ -511,6 +511,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'Balança Rápida mantém gap de 10 px quando o catálogo está oculto',
+    (tester) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(1200, 700),
+        textScaleFactor: 1,
+        child: const ScaleOperationGrid(
+          items: ColoredBox(color: Colors.blue),
+          catalog: null,
+          command: ColoredBox(color: Colors.green),
+        ),
+      );
+
+      final items = tester.getRect(find.byKey(const Key('scale-items-column')));
+      final command = tester.getRect(
+        find.byKey(const Key('scale-command-column')),
+      );
+
+      expect(find.byKey(const Key('scale-columns-gap')), findsOneWidget);
+      expect(command.left - items.right, 10);
+      expect(items.width, closeTo(595, .01));
+      expect(command.width, closeTo(595, .01));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Financeiro empilha ações em janela estreita', (tester) async {
     await _openDialog(
       tester,

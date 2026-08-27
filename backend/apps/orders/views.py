@@ -174,7 +174,10 @@ class OrderViewSet(BaseTenantViewSet):
                 user=request.user,
             )
         except ValidationError as exc:
-            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": " ".join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="create-with-item")
@@ -443,13 +446,16 @@ class OrderViewSet(BaseTenantViewSet):
                     {"detail": "A impressora selecionada não existe, está inativa ou pertence a outro restaurante."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        job = register_print_job(
-            order=order,
-            user=request.user,
-            job_type=request.data.get("job_type", "receipt"),
-            printer=printer,
-            manual_only=bool(request.data.get("manual_only", False)),
-        )
+        try:
+            job = register_print_job(
+                order=order,
+                user=request.user,
+                job_type=request.data.get("job_type", "receipt"),
+                printer=printer,
+                manual_only=bool(request.data.get("manual_only", False)),
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         printer = job.printer
         return Response(
             {
