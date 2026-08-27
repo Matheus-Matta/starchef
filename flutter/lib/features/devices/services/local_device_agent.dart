@@ -1169,6 +1169,10 @@ class LocalDeviceAgent {
     List<int> bytes,
   ) async {
     final port = SerialPort(target.endpoint);
+    // O passo é registrado para a mensagem de erro dizer ONDE falhou: abrir,
+    // configurar e escrever têm causas e soluções completamente diferentes,
+    // e "Argumento inválido" sozinho não distingue nenhuma delas.
+    var step = 'abrir';
     try {
       // Alguns drivers COM virtuais do Windows rejeitam um handle aberto
       // somente para escrita com ERROR_INVALID_HANDLE, embora aceitem o modo
@@ -1176,41 +1180,56 @@ class LocalDeviceAgent {
       if (!port.openReadWrite()) {
         throw _serialCommunicationError(
           target,
+          step,
           SerialPort.lastError?.message ?? 'porta ocupada ou inexistente',
         );
       }
+      step = 'configurar';
       port.config = SerialPortConfig()
         ..baudRate = target.baudRate
         ..bits = 8
         ..parity = SerialPortParity.none
         ..stopBits = 1;
       final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
+      step = 'enviar o cupom';
       _writeAllSerial(port, target, payload.content);
-      // `drain` aguarda a transmissão física e `bytesToWrite` confirma que o
-      // buffer do driver realmente chegou a zero antes da guilhotina.
-      port.drain();
-      if (port.bytesToWrite != 0) {
-        throw _serialCommunicationError(
-          target,
-          '${port.bytesToWrite} bytes ainda estavam no buffer de saída',
-        );
-      }
+      _settleSerialWrite(port, target);
       if (payload.cut.isNotEmpty) {
         await _delay(cutDelay); // pausa física antes da guilhotina
+        step = 'enviar o corte';
         _writeAllSerial(port, target, payload.cut);
-        port.drain();
-        if (port.bytesToWrite != 0) {
-          throw _serialCommunicationError(
-            target,
-            '${port.bytesToWrite} bytes do corte ficaram no buffer de saída',
-          );
-        }
+        _settleSerialWrite(port, target);
       }
     } on SerialPortError catch (error) {
-      throw _serialCommunicationError(target, error.message);
+      throw _serialCommunicationError(target, step, error.message);
     } finally {
       if (port.isOpen) port.close();
       port.dispose();
+    }
+  }
+
+  /// Aguarda o driver esvaziar o buffer de saída — quando ele souber dizer.
+  ///
+  /// `drain` (`tcdrain`) e `bytesToWrite` (`TIOCOUTQ`) são **confirmação**, não
+  /// a escrita em si. Impressoras USB que aparecem como CDC-ACM
+  /// (`/dev/ttyACM*`) costumam não implementar essas duas chamadas e devolvem
+  /// "Argumento inválido" — e abortar aí descartava como falha um cupom que já
+  /// tinha sido entregue à porta. Por isso a falha aqui só é registrada.
+  void _settleSerialWrite(SerialPort port, PrinterEndpoint target) {
+    try {
+      port.drain();
+      final remaining = port.bytesToWrite;
+      if (remaining > 0) {
+        AppLogger.instance.warning(
+          'serial_write_buffer_not_empty',
+          data: {'port': target.endpoint, 'bytes': remaining},
+        );
+      }
+    } on SerialPortError catch (error) {
+      AppLogger.instance.info(
+        'serial_drain_unsupported',
+        data: {'port': target.endpoint, 'message': error.message},
+      );
     }
   }
 
@@ -1227,20 +1246,22 @@ class LocalDeviceAgent {
     if (written < bytes.length) {
       throw _serialCommunicationError(
         target,
-        'foram enviados apenas $written de ${bytes.length} bytes',
+        'enviar dados para',
+        'foram aceitos apenas $written de ${bytes.length} bytes',
       );
     }
   }
 
   PrinterCommunicationException _serialCommunicationError(
     PrinterEndpoint target,
+    String step,
     String reason,
   ) {
     final available = SerialPort.availablePorts;
     final detected = available.isEmpty ? 'nenhuma' : available.join(', ');
     return PrinterCommunicationException(
       message:
-          'Falha ao comunicar pela porta ${target.endpoint} '
+          'Falha ao $step a porta ${target.endpoint} '
           '(${target.baudRate} baud, 8N1). Motivo: $reason. '
           'Portas seriais detectadas: $detected.',
       recommendedAction: Platform.isWindows
