@@ -755,7 +755,16 @@ class LocalDeviceAgent {
           continue;
         }
         final payload = job['payload'] as Map<String, dynamic>? ?? const {};
-        if (payload['manual_only'] == true) continue;
+        if (payload['manual_only'] == true) {
+          // Sem este registro, um trabalho marcado como manual sumia sem
+          // deixar rastro: "não imprimiu e não deu erro" ficava impossível de
+          // diagnosticar sem acesso ao banco.
+          AppLogger.instance.info(
+            'print_job_skipped_manual_only',
+            data: {'job_id': job['id'], 'printer_id': job['printer']},
+          );
+          continue;
+        }
         final isAutomaticWeighTicket = '${job['job_type']}' == 'weigh_ticket';
         if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
           AppLogger.instance.info(
@@ -765,6 +774,7 @@ class LocalDeviceAgent {
           continue;
         }
         attempted++;
+        var printed = false;
         try {
           final readyText = '${payload['text_content'] ?? ''}'.trim();
           final text = readyText.isNotEmpty
@@ -779,6 +789,7 @@ class LocalDeviceAgent {
             barcodeValue: code128ValueFromPayload(payload),
             qrValue: qrValueFromPayload(payload),
           );
+          printed = true;
           await api.post(
             '/print-jobs/${job['id']}/mark-printed/',
             body: const {},
@@ -793,6 +804,16 @@ class LocalDeviceAgent {
             },
           );
         } catch (error) {
+          // Se o cupom já saiu, o problema foi só avisar o servidor. Marcar
+          // como falha aqui deixaria o trabalho elegível para imprimir de
+          // novo no próximo ciclo — a mesma nota saindo duas vezes.
+          if (printed) {
+            AppLogger.instance.warning(
+              'print_job_printed_but_not_confirmed',
+              data: {'job_id': job['id'], 'message': '$error'},
+            );
+            continue;
+          }
           AppLogger.instance.error(
             'print_job_failed',
             cause: error,
@@ -856,6 +877,11 @@ class LocalDeviceAgent {
     if (text.isEmpty) {
       throw StateError('O trabalho não possui conteúdo para impressão.');
     }
+    // O papel já ter saído e o servidor não ter sido avisado são coisas
+    // diferentes: tratar as duas como "falha na impressão" mostrava erro numa
+    // nota que o operador tinha na mão e ainda marcava o trabalho como
+    // falho — deixando-o elegível para sair de novo.
+    var printed = false;
     try {
       await printForPrinter(
         printer,
@@ -863,12 +889,20 @@ class LocalDeviceAgent {
         barcodeValue: code128ValueFromPayload(payload),
         qrValue: qrValueFromPayload(payload),
       );
+      printed = true;
       await api.post(
         '/print-jobs/$jobId/mark-printed/',
         body: const {},
         accessToken: token,
       );
     } catch (error) {
+      if (printed) {
+        AppLogger.instance.warning(
+          'print_job_printed_but_not_confirmed',
+          data: {'job_id': jobId, 'message': '$error'},
+        );
+        return;
+      }
       await api.post(
         '/print-jobs/$jobId/mark-failed/',
         body: {'error': 'Falha na impressão manual: $error'},

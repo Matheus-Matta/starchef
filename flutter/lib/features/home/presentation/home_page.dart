@@ -2909,6 +2909,28 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     if (nextStep == null) return;
+    // "Pagar depois" manda os itens para a produção e devolve o operador ao
+    // pedido: o cliente segue consumindo, então fechar aqui (status
+    // `aguardando pagamento`) travaria o lançamento de novos itens. O
+    // fechamento acontece só no caminho do pagamento.
+    if (nextStep == 'later') {
+      await _work(() async {
+        final pending = orderItems
+            .where((item) => item['status'] == 'pending')
+            .toList();
+        if (pending.isEmpty) return <String, dynamic>{};
+        final kitchenResponse = await _sendPendingItemsToKitchen(pending);
+        if (_isOfflinePending(kitchenResponse)) {
+          activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
+          await _persistOfflineOrder();
+        }
+        return activeOrder ?? <String, dynamic>{};
+      });
+      if (!mounted) return;
+      await _refreshOrder();
+      if (mounted) setState(() => flowStep = 'order');
+      return;
+    }
     final closed = await _work(() async {
       final hasPendingItems = orderItems.any(
         (item) => item['status'] == 'pending',
@@ -2947,19 +2969,6 @@ class _HomePageState extends State<HomePage> {
       return activeOrder!;
     });
     if (closed == null) return;
-    if (nextStep == 'later') {
-      if (_isOfflinePending(closed)) {
-        if (mounted) {
-          showAppToast(
-            context,
-            'Pedido salvo para sincronização e deixado pendente de pagamento.',
-            severity: AppErrorSeverity.warning,
-          );
-        }
-      }
-      await _goHome();
-      return;
-    }
     // A impressão fica só para depois do pagamento (cupom fiscal) ou para o
     // fluxo automático setorizado da cozinha — não existe "nota de
     // conferência" fora desses dois: aqui só falta o caixa seguir para o
@@ -3429,9 +3438,15 @@ class _HomePageState extends State<HomePage> {
               accessToken: token,
             );
             final printer = printJob['printer'] as Map<String, dynamic>?;
-            if (printer != null) {
-              await deviceAgent.printJobManually(printJob, printer);
+            if (printer == null) {
+              // `manual_only` tira este trabalho do laço automático do
+              // agente: se ninguém imprimir aqui, ninguém imprime — e antes
+              // isso passava em silêncio, sem cupom e sem aviso.
+              throw const ApiException(
+                'O trabalho de impressão voltou sem impressora.',
+              );
             }
+            await deviceAgent.printJobManually(printJob, printer);
           }
         }
       } catch (error) {
