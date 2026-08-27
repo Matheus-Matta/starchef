@@ -5,7 +5,7 @@ from django.contrib.auth.models import Group, User
 from unfold.admin import ModelAdmin
 
 from apps.accounts.admin_forms import ACCOUNT_FIELDS, MODULE_FIELDS, AccountChangeForm, AccountCreationForm
-from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
 from apps.core.admin_mixins import TenantModelAdmin
 
 
@@ -93,6 +93,14 @@ class AccountAdmin(ModelAdmin):
         # Ao criar, provisiona o primeiro usuario administrador vinculado a conta.
         if not change and isinstance(form, AccountCreationForm):
             form.create_admin_user(obj)
+
+
+@admin.register(FocusNfeConfig)
+class FocusNfeConfigAdmin(ModelAdmin):
+    list_display = ("account", "production_url", "homologation_url", "auto_sync", "company_dry_run", "updated_at")
+    list_filter = ("auto_sync", "company_dry_run")
+    search_fields = ("account__name", "account__slug")
+    exclude = ("master_token", "webhook_authorization")
 
 
 @admin.register(Subscription)

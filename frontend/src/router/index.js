@@ -14,6 +14,7 @@ const OrderEditView = () => import("../views/OrderEditView.vue");
 const CashRegisterView = () => import("../views/CashRegisterView.vue");
 const ReportsView = () => import("../views/ReportsView.vue");
 const KdsStationsView = () => import("../views/KdsStationsView.vue");
+const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 
@@ -103,6 +104,7 @@ export const router = createRouter({
         { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
         { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds", fullWidth: true } },
         { path: "kds-estacoes", name: "kds-estacoes", component: KdsStationsView, meta: { requiresAuth: true, title: "Estações KDS", nav: "kds-estacoes" } },
+        { path: "configuracao-focus", name: "configuracao-focus", component: FocusNfeConfigView, meta: { requiresAuth: true, title: "Configuração Focus NFe", nav: "configuracao-focus", module: "financeiro" } },
         { path: "relatorios", name: "relatorios", redirect: { name: "relatorio-vendas" } },
         { path: "relatorios/vendas", name: "relatorio-vendas", component: ReportsView, props: { section: "sales" }, meta: { requiresAuth: true, title: "Relatório de vendas", nav: "relatorio-vendas" } },
         { path: "relatorios/pedidos", name: "relatorio-pedidos", component: ReportsView, props: { section: "orders" }, meta: { requiresAuth: true, title: "Relatório de pedidos", nav: "relatorio-pedidos" } },

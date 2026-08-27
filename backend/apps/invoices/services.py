@@ -25,7 +25,7 @@ from apps.invoices.fiscal import (
     only_digits,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
-from apps.invoices.providers import get_provider
+from apps.invoices.providers import fiscal_provider_unavailable_reason, get_provider
 from apps.orders.models import Order, OrderItem
 
 
@@ -44,6 +44,16 @@ def _resolve_fiscal_config(restaurant, branch=None):
         if config:
             return config
     return FiscalConfig.objects.filter(branch__restaurant=restaurant, is_active=True).first()
+
+
+def fiscal_emission_unavailable_reason(order):
+    """Explica por que a API nao deve tentar transmitir uma nota deste pedido."""
+
+    with tenant_context(order.account):
+        config = _resolve_fiscal_config(order.restaurant, order.branch)
+        if config is None:
+            return "O restaurante nao possui configuracao fiscal ativa."
+        return fiscal_provider_unavailable_reason(config)
 
 
 @transaction.atomic
@@ -123,10 +133,15 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
                 code=order_item.product.internal_code,
                 description=order_item.product.name,
                 ncm=(profile.ncm if profile else ""),
+                cest=(profile.cest if profile else ""),
                 cfop=(profile.cfop if profile else ""),
                 csosn=(profile.csosn if profile else ""),
                 cst_icms=(profile.cst_icms if profile else ""),
                 origem=(profile.origem if profile else "0"),
+                pis_cst=(profile.pis_cst if profile else "49"),
+                pis_rate=(profile.pis_rate if profile else 0),
+                cofins_cst=(profile.cofins_cst if profile else "49"),
+                cofins_rate=(profile.cofins_rate if profile else 0),
                 unit=unit,
                 quantity=order_item.quantity,
                 unit_price=order_item.unit_price,

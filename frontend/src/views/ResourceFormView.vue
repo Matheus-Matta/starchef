@@ -15,7 +15,7 @@
         <template v-if="isView">
           <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
           <Button v-if="isOrder" label="Imprimir recibo" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
-          <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir NFC-e / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
+          <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir nota fiscal / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
           <Button v-if="isOrder && ['open', 'awaiting_payment'].includes(record?.status)" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
           <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
         </template>
@@ -350,6 +350,7 @@
           ref="fiscalSectionRef"
           :key="`fiscal-${recordId}`"
           :restaurant-id="recordId"
+          :provider="formData.fiscal_provider || 'manual'"
           :readonly="isView"
         />
         <p v-else class="rpage__hint">Salve o restaurante para poder configurar os dados fiscais.</p>
@@ -634,7 +635,7 @@ async function printOrder() {
   }
 }
 
-/** Emite a NFC-e do pedido visualizado e abre o DANFE para impressao. */
+/** Emite a NF-e/NFC-e configurada e abre o DANFE para impressao. */
 async function emitOrderInvoice() {
   if (!recordId.value || emittingInvoice.value) return;
   emittingInvoice.value = true;
@@ -644,6 +645,15 @@ async function emitOrderInvoice() {
       ...(record.value?.customer_document ? { cpf: record.value.customer_document } : {}),
       ...(record.value?.customer_name ? { cpf_name: record.value.customer_name } : {}),
     });
+    if (invoice.emitted === false) {
+      toast.add({
+        severity: "warn",
+        summary: "Nota fiscal não emitida",
+        detail: invoice.message || "O provedor fiscal selecionado não está configurado.",
+        life: 5000,
+      });
+      return;
+    }
     const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
     const win = window.open("", "_blank", "width=420,height=720");
     if (!win) {
@@ -654,9 +664,9 @@ async function emitOrderInvoice() {
     win.document.close();
     win.focus();
     win.print();
-    toast.add({ severity: "success", summary: "NFC-e emitida", detail: "DANFE preparado para impressão.", life: 4000 });
+    toast.add({ severity: "success", summary: "Nota fiscal emitida", detail: "DANFE preparado para impressão.", life: 4000 });
   } catch (err) {
-    toast.add({ severity: "error", summary: "Não foi possível emitir a NFC-e", detail: normalizeApiError(err).message, life: 5000 });
+    toast.add({ severity: "error", summary: "Não foi possível emitir a nota fiscal", detail: normalizeApiError(err).message, life: 5000 });
   } finally {
     emittingInvoice.value = false;
   }

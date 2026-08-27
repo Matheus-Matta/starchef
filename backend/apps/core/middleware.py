@@ -25,6 +25,7 @@ PUBLIC_URL_NAMES = {
     "token_verify",
     "password-reset",
     "password-reset-confirm",
+    "focus-nfe-webhook",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin

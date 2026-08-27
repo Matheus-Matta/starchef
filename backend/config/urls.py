@@ -12,6 +12,7 @@ from apps.accounts.views import (
     AccountViewSet,
     AdminAuthorizationView,
     CookieTokenRefreshView,
+    FocusNfeConfigView,
     GlobalSystemConfigViewSet,
     LoginView,
     LogoutView,
@@ -25,7 +26,7 @@ from apps.accounts.views import (
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
-from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
+from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, FocusNfeWebhookView, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
 from apps.sla.views import ServiceLevelAgreementViewSet
 from apps.menu.views import (
@@ -159,6 +160,8 @@ urlpatterns = [
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
+    path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
+    path("api/v1/integrations/focus-nfe/webhook/", FocusNfeWebhookView.as_view(), name="focus-nfe-webhook"),
     path("api/v1/", include(router.urls)),
 ]
 

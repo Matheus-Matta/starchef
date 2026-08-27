@@ -35,7 +35,7 @@ backend/
     payments/              formas de pagamento, pagamentos, caixa (CashRegister/CashMovement)
     printers/              impressoras, balanças, leituras de peso, fila de impressão (PrintJob)
     stock/                 locais de estoque e movimentações
-    invoices/               perfil/config fiscal e notas fiscais (contrato, sem emissor real)
+    invoices/               perfil/config fiscal, notas e provedores Manual + Focus NFe
     integrations/           contratos de integração externa (ex.: FiscalProvider)
     reports/                endpoints de relatórios agregados
     sla/                    acordos de nível de serviço operacionais
@@ -50,6 +50,8 @@ backend/
 ```
 
 Cada app de domínio segue o padrão: `models.py`, `serializers.py`, `views.py` (ViewSets DRF), `admin.py`, e `services.py` quando há regra transacional não trivial (ex.: `orders/services.py`, `payments/services.py`, `printers/services.py`).
+
+As credenciais da Focus NFe ficam em `accounts.FocusNfeConfig`, numa relação `OneToOne` com `Account`. O `.env` apenas provisiona esse registro na migration/criação da conta; chamadas externas nunca usam o `.env` como fallback.
 
 ## 3. Como rodar em desenvolvimento
 

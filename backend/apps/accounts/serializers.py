@@ -3,7 +3,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
 from apps.core.modules import ALL_MODULES, account_active_modules
 from apps.core.serializers import TIMESTAMP_READ_ONLY_FIELDS, TenantModelSerializer
 
@@ -36,6 +36,63 @@ class AccountSerializer(serializers.ModelSerializer):
         model = Account
         fields = "__all__"
         read_only_fields = TIMESTAMP_READ_ONLY_FIELDS
+
+
+class FocusNfeConfigSerializer(serializers.ModelSerializer):
+    master_token_configured = serializers.SerializerMethodField()
+    webhook_authorization_configured = serializers.SerializerMethodField()
+    clear_master_token = serializers.BooleanField(write_only=True, required=False, default=False)
+    clear_webhook_authorization = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    class Meta:
+        model = FocusNfeConfig
+        fields = [
+            "id",
+            "account",
+            "master_token",
+            "master_token_configured",
+            "production_url",
+            "homologation_url",
+            "timeout_seconds",
+            "auto_sync",
+            "company_dry_run",
+            "webhook_url",
+            "webhook_authorization",
+            "webhook_authorization_configured",
+            "webhook_authorization_header",
+            "clear_master_token",
+            "clear_webhook_authorization",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "account", "created_at", "updated_at"]
+        extra_kwargs = {
+            "master_token": {"write_only": True, "required": False, "allow_blank": True, "trim_whitespace": False},
+            "webhook_authorization": {
+                "write_only": True,
+                "required": False,
+                "allow_blank": True,
+                "trim_whitespace": False,
+            },
+        }
+
+    def get_master_token_configured(self, obj):
+        return bool(obj.master_token)
+
+    def get_webhook_authorization_configured(self, obj):
+        return bool(obj.webhook_authorization)
+
+    def update(self, instance, validated_data):
+        clear_master_token = validated_data.pop("clear_master_token", False)
+        clear_webhook_authorization = validated_data.pop("clear_webhook_authorization", False)
+        for secret_field in ("master_token", "webhook_authorization"):
+            if validated_data.get(secret_field) == "":
+                validated_data.pop(secret_field)
+        if clear_master_token:
+            validated_data["master_token"] = ""
+        if clear_webhook_authorization:
+            validated_data["webhook_authorization"] = ""
+        return super().update(instance, validated_data)
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):

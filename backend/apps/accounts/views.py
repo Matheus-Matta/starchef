@@ -15,9 +15,10 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from apps.core.cookies import clear_auth_cookies, set_auth_cookies
 
 from apps.accounts.limits import assert_can_create_user
-from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription
+from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription
 from apps.accounts.serializers import (
     AccountSerializer,
+    FocusNfeConfigSerializer,
     GlobalSystemConfigSerializer,
     PermissionSerializer,
     PlanSerializer,
@@ -31,6 +32,35 @@ from apps.core.access import is_tenant_admin
 from apps.core.viewsets import BaseTenantViewSet
 
 User = get_user_model()
+
+
+class FocusNfeConfigView(APIView):
+    """Consulta e edita a configuracao Focus da conta autenticada."""
+
+    required_module = "financeiro"
+
+    def _account_config(self, request):
+        account = getattr(request, "account", None)
+        if account is None:
+            raise PermissionDenied("Conta nao identificada.")
+        config, _ = FocusNfeConfig.objects.get_or_create(account=account)
+        return config
+
+    def _assert_admin(self, request):
+        if not is_tenant_admin(request.user):
+            raise PermissionDenied("Apenas administradores da conta podem configurar a Focus NFe.")
+
+    def get(self, request):
+        self._assert_admin(request)
+        return Response(FocusNfeConfigSerializer(self._account_config(request)).data)
+
+    def patch(self, request):
+        self._assert_admin(request)
+        config = self._account_config(request)
+        serializer = FocusNfeConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class LoginView(TokenObtainPairView):

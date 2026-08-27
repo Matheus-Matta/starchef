@@ -148,6 +148,11 @@ middleware devolvia 403 para token expirado, a renovação — que dispara em 40
 nunca acontecia, e o operador via "Permissão insuficiente: solicite a permissão
 ao responsável" quando na verdade sua sessão apenas tinha vencido.
 
+**Emissão fiscal não configurada.** `POST /invoices/emit/` pode responder HTTP
+200 com `{"emitted": false, "message": "..."}` quando o provedor da conta não
+está pronto. O PDV não tenta imprimir nesse caso; no acionamento manual mostra a
+mensagem e, na tentativa automática após o pagamento, permanece silencioso.
+
 **Escopo.** Cache e outbox são namespaced por
 `autoridade-da-URL | account_id|user_id|sub do JWT`. Isso impede que a sessão de
 uma conta consuma a fila de outra no mesmo terminal. Sem essas claims o escopo

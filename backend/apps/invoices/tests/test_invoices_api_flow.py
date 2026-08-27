@@ -13,11 +13,30 @@ from decimal import Decimal
 import pytest
 
 from apps.invoices.models import FiscalConfig, Invoice
+from apps.invoices.providers import FiscalProvider, register_provider
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 
 pytestmark = pytest.mark.django_db
+
+
+@register_provider
+class _ApiFlowProvider(FiscalProvider):
+    name = "test_api_flow"
+
+    def emit(self, invoice, config):
+        invoice.provider = self.name
+        invoice.status = Invoice.STATUS_PENDING
+        return invoice
+
+    def cancel(self, invoice, reason):
+        invoice.status = Invoice.STATUS_CANCELLED
+        invoice.error_message = reason or ""
+        return invoice
+
+    def status(self, invoice):
+        return invoice.status
 
 
 @pytest.fixture
@@ -42,14 +61,58 @@ def order_with_item(restaurant, branch, product, manager_user):
     return order
 
 
-def test_emit_without_fiscal_config_returns_400(api_client, account_with_financeiro, order_with_item):
+def test_emit_without_fiscal_config_returns_200_without_invoice(api_client, account_with_financeiro, order_with_item):
     resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    assert resp.data["emitted"] is False
+    assert "nao emitida" in resp.data["message"]
+    assert not Invoice.all_objects.filter(order=order_with_item).exists()
 
 
 def test_emit_unknown_order_returns_404(api_client, account_with_financeiro):
     resp = api_client.post("/api/v1/invoices/emit/", {"order": str(uuid.uuid4())}, format="json")
     assert resp.status_code == 404
+
+
+def test_manual_provider_returns_200_without_creating_invoice(
+    api_client, account_with_financeiro, account, restaurant, branch, order_with_item
+):
+    FiscalConfig.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        provider=FiscalConfig.PROVIDER_MANUAL,
+        cnpj="11222333000181",
+        uf="SP",
+    )
+
+    resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
+
+    assert resp.status_code == 200
+    assert resp.data["emitted"] is False
+    assert "Manual" in resp.data["message"]
+    assert not Invoice.all_objects.filter(order=order_with_item).exists()
+
+
+def test_focus_without_account_credentials_returns_200_without_creating_invoice(
+    api_client, account_with_financeiro, account, restaurant, branch, order_with_item
+):
+    FiscalConfig.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        provider=FiscalConfig.PROVIDER_FOCUS_NFE,
+        cnpj="11222333000181",
+        uf="SP",
+        focus_token_homologation="",
+    )
+
+    resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
+
+    assert resp.status_code == 200
+    assert resp.data["emitted"] is False
+    assert "nao emitida" in resp.data["message"]
+    assert not Invoice.all_objects.filter(order=order_with_item).exists()
 
 
 def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_financeiro, restaurant, branch):
@@ -59,18 +122,33 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
             "restaurant": str(restaurant.id), "branch": str(branch.id),
             "corporate_name": "Restaurante Teste LTDA", "cnpj": "11222333000181", "uf": "SP",
             "environment": FiscalConfig.ENV_HOMOLOGATION, "series": 1,
+            "provider": FiscalConfig.PROVIDER_FOCUS_NFE,
             "provider_token": "segredo-super-secreto",
             "csc_token": "csc-secreto",
+            "focus_certificate_base64": "certificado-base64",
+            "focus_certificate_password": "senha-certificado",
         },
         format="json",
     )
     assert resp.status_code == 201, resp.data
     assert "provider_token" not in resp.data
     assert "csc_token" not in resp.data
+    assert "focus_token_production" not in resp.data
+    assert "focus_token_homologation" not in resp.data
+    assert "focus_certificate_base64" not in resp.data
+    assert "focus_certificate_password" not in resp.data
 
     listed = api_client.get("/api/v1/fiscal/config/")
     assert listed.status_code == 200
-    assert all("provider_token" not in row and "csc_token" not in row for row in listed.data["results"])
+    assert all(
+        "provider_token" not in row
+        and "csc_token" not in row
+        and "focus_token_production" not in row
+        and "focus_token_homologation" not in row
+        and "focus_certificate_base64" not in row
+        and "focus_certificate_password" not in row
+        for row in listed.data["results"]
+    )
 
 
 def test_fiscal_profile_crud_via_api(api_client, account_with_financeiro, restaurant, branch):
@@ -98,7 +176,7 @@ class TestFullEmissionFlow:
     def setup(self, api_client, account, restaurant, branch, account_with_financeiro, order_with_item):
         FiscalConfig.objects.create(
             account=account, restaurant=restaurant, branch=branch,
-            provider="manual", cnpj="11222333000181", uf="SP",
+            provider=_ApiFlowProvider.name, cnpj="11222333000181", uf="SP",
             environment=FiscalConfig.ENV_HOMOLOGATION, series=1, next_number=1,
         )
         self.client = api_client
@@ -111,6 +189,7 @@ class TestFullEmissionFlow:
             format="json",
         )
         assert resp.status_code == 201, resp.data
+        assert resp.data["emitted"] is True
         assert resp.data["access_key"]
         assert resp.data["access_key_formatted"]
         assert resp.data["status"] == Invoice.STATUS_PENDING

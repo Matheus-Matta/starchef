@@ -4,7 +4,7 @@
          visualmente os dados do restaurante dos dados fiscais abaixo. -->
     <div class="fs__head">
       <h2>Configuração fiscal</h2>
-      <p>{{ readonly ? "Somente leitura." : "CNPJ e integrador da NFC-e deste restaurante. Salva junto com o cadastro." }}</p>
+      <p>{{ readonly ? "Somente leitura." : "Dados e integrador de NF-e/NFC-e deste restaurante. Salva junto com o cadastro." }}</p>
     </div>
 
     <div v-if="loading" class="fs__hint">Carregando configuração fiscal...</div>
@@ -55,16 +55,29 @@
       <div class="fs__section">
         <h3 class="fs__title">Integração</h3>
         <div class="fs__grid">
-          <div class="fs__field">
-            <label for="fs-provider" class="fs__label">
-              Provedor de emissão
-              <i v-tooltip.top="'Sem conta em um integrador real, deixe em Manual — a nota fica pronta pra impressão mas sem transmitir à SEFAZ.'" class="pi pi-question-circle fs__help-icon" aria-hidden="true" />
-            </label>
-            <Dropdown id="fs-provider" v-model="form.provider" :options="FISCAL_PROVIDER_OPTIONS" option-label="label" option-value="value" class="fs__select" :disabled="readonly" fluid />
-          </div>
-          <div class="fs__field">
+          <div v-if="provider !== 'focus_nfe'" class="fs__field">
             <label for="fs-provider_token" class="fs__label">Token/credencial do provedor</label>
             <Password id="fs-provider_token" v-model="form.provider_token" placeholder="Deixe em branco para não alterar" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+          </div>
+          <div v-else class="fs__field fs__field--full fs__focus-status">
+            <div>
+              <span class="fs__label">Empresa na Focus NFe</span>
+              <p class="fs__section-desc">{{ focusStatusText }}</p>
+              <p v-if="form.focus_sync_error" class="fs__focus-error">{{ form.focus_sync_error }}</p>
+            </div>
+            <div class="fs__focus-actions">
+              <Tag :value="focusStatusLabel" :severity="focusStatusSeverity" rounded />
+              <Button v-if="!readonly && configId" label="Sincronizar agora" icon="pi pi-sync" size="small" outlined :loading="focusSyncing" @click="syncFocus" />
+            </div>
+          </div>
+          <div v-if="provider === 'focus_nfe'" class="fs__field">
+            <label for="fs-focus-certificate" class="fs__label">Certificado A1 (.pfx/.p12)</label>
+            <input id="fs-focus-certificate" class="fs__file" type="file" accept=".pfx,.p12,application/x-pkcs12" :disabled="readonly" @change="onCertificateSelected" />
+            <small class="fs__field-hint">Enviado somente para a Focus e removido do StarChef apos sincronizar.</small>
+          </div>
+          <div v-if="provider === 'focus_nfe'" class="fs__field">
+            <label for="fs-focus-certificate-password" class="fs__label">Senha do certificado A1</label>
+            <Password id="fs-focus-certificate-password" v-model="form.focus_certificate_password" placeholder="Senha do PFX/P12" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
           </div>
           <div class="fs__field">
             <label for="fs-csc_id" class="fs__label">ID do CSC (idToken)</label>
@@ -140,7 +153,7 @@
  * campos, sem card/fundo próprio) — só o botão de salvar é independente,
  * porque são dois modelos/endpoints diferentes.
  */
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
 import InputText from "primevue/inputtext";
@@ -151,17 +164,18 @@ import { useToast } from "primevue/usetoast";
 
 import FiscalProfileDialog from "./FiscalProfileDialog.vue";
 import { ResourceService } from "../../services/ResourceService";
+import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
 import { resolveBranchIdForRestaurant } from "../../utils/fiscalBranch";
 import {
   FISCAL_CRT_OPTIONS,
   FISCAL_DOCUMENT_MODEL_OPTIONS,
   FISCAL_ENVIRONMENT_OPTIONS,
-  FISCAL_PROVIDER_OPTIONS,
 } from "../../config/enums";
 
 const props = defineProps({
   restaurantId: { type: String, required: true },
+  provider: { type: String, default: "manual" },
   readonly: { type: Boolean, default: false },
 });
 
@@ -175,6 +189,7 @@ const loading = ref(true);
 const branchId = ref(null);
 const configId = ref(null);
 const saving = ref(false);
+const focusSyncing = ref(false);
 const formError = ref("");
 const profiles = ref([]);
 const profileDialogOpen = ref(false);
@@ -193,6 +208,8 @@ function emptyForm() {
     series: 1,
     provider: "manual",
     provider_token: "",
+    focus_certificate_base64: "",
+    focus_certificate_password: "",
     csc_id: "",
     csc_token: "",
     certificate_ref: "",
@@ -202,6 +219,64 @@ function emptyForm() {
 }
 
 const form = reactive(emptyForm());
+
+function onCertificateSelected(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    formError.value = "O certificado deve ter no maximo 5 MB.";
+    event.target.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    form.focus_certificate_base64 = String(reader.result || "").split(",").pop() || "";
+  };
+  reader.onerror = () => { formError.value = "Nao foi possivel ler o certificado."; };
+  reader.readAsDataURL(file);
+}
+
+const focusStatusLabel = computed(() => ({
+  synced: "Sincronizado",
+  pending: "Sincronizando",
+  error: "Erro",
+  not_configured: "Nao sincronizado",
+}[form.focus_sync_status] || "Nao sincronizado"));
+const focusStatusSeverity = computed(() => ({
+  synced: "success",
+  pending: "warn",
+  error: "danger",
+}[form.focus_sync_status] || "secondary"));
+const focusStatusText = computed(() => {
+  if (form.focus_company_id) return `Empresa Focus #${form.focus_company_id}`;
+  return "A empresa sera criada automaticamente com os dados fiscais deste restaurante.";
+});
+
+async function syncFocus() {
+  if (!configId.value || focusSyncing.value) return;
+  focusSyncing.value = true;
+  formError.value = "";
+  try {
+    const { data } = await api.post(`/fiscal/config/${configId.value}/focus-sync/`, {});
+    const syncedConfig = data.config || data;
+    Object.assign(form, syncedConfig, {
+      provider_token: "",
+      csc_token: "",
+      focus_certificate_base64: "",
+      focus_certificate_password: "",
+    });
+    toast.add({
+      severity: data.synced === false ? "warn" : "success",
+      summary: data.synced === false ? "Empresa não sincronizada" : "Empresa sincronizada com a Focus NFe",
+      detail: data.message || undefined,
+      life: data.synced === false ? 5000 : 3000,
+    });
+  } catch (err) {
+    formError.value = normalizeApiError(err).message;
+  } finally {
+    focusSyncing.value = false;
+  }
+}
 
 async function loadProfiles() {
   const list = await profileService.list({ page_size: 200 });
@@ -223,7 +298,12 @@ onMounted(async () => {
     const existing = (configs.results || []).find((c) => c.restaurant === props.restaurantId);
     if (existing) {
       configId.value = existing.id;
-      Object.assign(form, existing, { provider_token: "", csc_token: "" });
+      Object.assign(form, existing, {
+        provider_token: "",
+        csc_token: "",
+        focus_certificate_base64: "",
+        focus_certificate_password: "",
+      });
     }
 
     await loadProfiles();
@@ -272,6 +352,7 @@ async function removeProfile(profile) {
 function buildPayload() {
   const payload = {
     ...form,
+    provider: props.provider,
     restaurant: props.restaurantId,
     branch: branchId.value,
     series: Number(form.series) || 1,
@@ -289,6 +370,8 @@ function buildPayload() {
   // "não alterar" (mesmo padrão de cash_action_password no cadastro do restaurante).
   if (!payload.provider_token) delete payload.provider_token;
   if (!payload.csc_token) delete payload.csc_token;
+  if (!payload.focus_certificate_base64) delete payload.focus_certificate_base64;
+  if (!payload.focus_certificate_password) delete payload.focus_certificate_password;
   return payload;
 }
 
@@ -303,12 +386,20 @@ async function save() {
   saving.value = true;
   formError.value = "";
   try {
+    // O formulario principal salva o restaurante antes desta secao. Recarrega
+    // para espelhar na configuracao fiscal exatamente os dados recem-gravados.
+    restaurant.value = await restaurantService.retrieve(props.restaurantId);
     const payload = buildPayload();
     const saved = configId.value
       ? await configService.update(configId.value, payload)
       : await configService.create(payload);
     configId.value = saved.id;
-    Object.assign(form, saved, { provider_token: "", csc_token: "" });
+    Object.assign(form, saved, {
+      provider_token: "",
+      csc_token: "",
+      focus_certificate_base64: "",
+      focus_certificate_password: "",
+    });
     return true;
   } catch (err) {
     formError.value = normalizeApiError(err).message;
@@ -377,6 +468,11 @@ defineExpose({ save });
   font: var(--weight-medium) var(--control-font)/1 var(--font-sans);
 }
 .fs__select, .fs__password { width: 100%; }
+.fs__file { width: 100%; min-height: var(--control-h); padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--text-body); }
+.fs__field-hint { color: var(--text-muted); font: var(--weight-medium) 11.5px/1.35 var(--font-sans); }
+.fs__focus-status { flex-direction: row; align-items: center; justify-content: space-between; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.fs__focus-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.fs__focus-error { margin-top: 4px; color: #dc2626; font: var(--weight-medium) 12px/1.4 var(--font-sans); }
 
 .fs__alert {
   display: flex;

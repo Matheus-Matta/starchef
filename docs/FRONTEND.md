@@ -70,6 +70,7 @@ frontend/
 | `/pedidos/:id/editar-itens` | `OrderEditView` | Wrapper fino sobre `PdvView` em modo edição |
 | `/kds` | `KdsView` | Painel de cozinha ao vivo |
 | `/kds-estacoes` | `KdsStationsView` | Cadastro de estações/colunas do KDS — tela própria |
+| `/configuracao-focus` | `FocusNfeConfigView` | Credenciais, endpoints e webhook Focus isolados por conta |
 | `/relatorios/{vendas,pedidos,produtos,pagamentos,garcons,restaurantes}` | `ReportsView` | Uma view compartilhada, `section` muda o conteúdo |
 | `/<resource>`, `/<resource>/create`, `/<resource>/:id`, `/<resource>/:id/edit` | `ResourceListViewPro` / `ResourceFormView` | Geradas automaticamente a partir de `config/resources.js` |
 

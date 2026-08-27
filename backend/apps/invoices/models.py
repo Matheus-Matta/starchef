@@ -46,6 +46,22 @@ class FiscalConfig(TenantModel):
     """
 
     PROVIDER_MANUAL = "manual"  # sem transmissao SEFAZ (scaffold/contingencia)
+    PROVIDER_FOCUS_NFE = "focus_nfe"
+    PROVIDER_CHOICES = [
+        (PROVIDER_MANUAL, "Manual (sem transmissao)"),
+        (PROVIDER_FOCUS_NFE, "Focus NFe"),
+    ]
+
+    FOCUS_SYNC_NOT_CONFIGURED = "not_configured"
+    FOCUS_SYNC_PENDING = "pending"
+    FOCUS_SYNC_SYNCED = "synced"
+    FOCUS_SYNC_ERROR = "error"
+    FOCUS_SYNC_CHOICES = [
+        (FOCUS_SYNC_NOT_CONFIGURED, "Nao configurado"),
+        (FOCUS_SYNC_PENDING, "Aguardando sincronizacao"),
+        (FOCUS_SYNC_SYNCED, "Sincronizado"),
+        (FOCUS_SYNC_ERROR, "Erro de sincronizacao"),
+    ]
 
     MODEL_NFCE = "65"
     MODEL_NFE = "55"
@@ -69,7 +85,12 @@ class FiscalConfig(TenantModel):
         (CRT_NORMAL, "Regime Normal"),
     ]
 
-    provider = models.CharField(max_length=40, default=PROVIDER_MANUAL, help_text="Provedor de emissao.")
+    provider = models.CharField(
+        max_length=40,
+        choices=PROVIDER_CHOICES,
+        default=PROVIDER_MANUAL,
+        help_text="Provedor de emissao.",
+    )
     document_model = models.CharField(max_length=2, choices=MODEL_CHOICES, default=MODEL_NFCE)
     environment = models.CharField(max_length=1, choices=ENV_CHOICES, default=ENV_HOMOLOGATION)
     crt = models.CharField(max_length=1, choices=CRT_CHOICES, default=CRT_SIMPLES)
@@ -96,6 +117,19 @@ class FiscalConfig(TenantModel):
     provider_token = models.CharField(
         max_length=255, blank=True, help_text="Credencial/token do integrador fiscal (ex.: Focus NFe)."
     )
+    focus_company_id = models.CharField(max_length=80, blank=True, db_index=True)
+    focus_token_production = models.CharField(max_length=255, blank=True)
+    focus_token_homologation = models.CharField(max_length=255, blank=True)
+    focus_certificate_base64 = models.TextField(blank=True)
+    focus_certificate_password = models.CharField(max_length=255, blank=True)
+    focus_sync_status = models.CharField(
+        max_length=24,
+        choices=FOCUS_SYNC_CHOICES,
+        default=FOCUS_SYNC_NOT_CONFIGURED,
+    )
+    focus_sync_error = models.TextField(blank=True)
+    focus_synced_at = models.DateTimeField(null=True, blank=True)
+    focus_remote_data = models.JSONField(default=dict, blank=True)
 
     default_profile = models.ForeignKey(
         FiscalProfile, null=True, blank=True, related_name="+", on_delete=models.SET_NULL
@@ -113,6 +147,13 @@ class FiscalConfig(TenantModel):
     @property
     def is_ready(self):
         """True quando o minimo para emissao real esta preenchido (senao, scaffold)."""
+        if self.provider == self.PROVIDER_FOCUS_NFE:
+            token = (
+                self.focus_token_production
+                if self.environment == self.ENV_PRODUCTION
+                else self.focus_token_homologation
+            )
+            return bool(self.cnpj and self.uf and token)
         return bool(self.cnpj and self.uf and self.csc_token and self.certificate_ref)
 
 
@@ -137,6 +178,7 @@ class Invoice(TenantModel):
     phase = models.CharField(max_length=20, default=PHASE_RECEIPT)
     status = models.CharField(max_length=20, default=STATUS_DRAFT, db_index=True)
     provider = models.CharField(max_length=80, blank=True)
+    provider_reference = models.CharField(max_length=120, blank=True, db_index=True)
 
     # Identificacao do documento
     document_model = models.CharField(max_length=2, blank=True)
@@ -197,6 +239,7 @@ class InvoiceItem(TenantModel):
     code = models.CharField(max_length=60, blank=True)
     description = models.CharField(max_length=180)
     ncm = models.CharField(max_length=8, blank=True)
+    cest = models.CharField(max_length=7, blank=True)
     cfop = models.CharField(max_length=4, blank=True)
     csosn = models.CharField(max_length=3, blank=True)
     cst_icms = models.CharField(max_length=2, blank=True)
@@ -210,7 +253,11 @@ class InvoiceItem(TenantModel):
     icms_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     icms_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     icms_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    pis_cst = models.CharField(max_length=2, default="49")
+    pis_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     pis_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cofins_cst = models.CharField(max_length=2, default="49")
+    cofins_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     cofins_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     approx_tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 

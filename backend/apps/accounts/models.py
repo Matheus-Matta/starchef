@@ -85,6 +85,32 @@ class Account(TimeStampedModel):
         return module_key in (self.enabled_modules or [])
 
 
+class FocusNfeConfig(TimeStampedModel):
+    """Credenciais e endpoints da Focus NFe isolados por conta StarChef."""
+
+    account = models.OneToOneField(
+        Account,
+        related_name="focus_nfe_config",
+        on_delete=models.CASCADE,
+    )
+    master_token = models.CharField(max_length=255, blank=True)
+    production_url = models.URLField(blank=True)
+    homologation_url = models.URLField(blank=True)
+    timeout_seconds = models.PositiveSmallIntegerField(default=30)
+    auto_sync = models.BooleanField(default=True)
+    company_dry_run = models.BooleanField(default=False)
+    webhook_url = models.URLField(blank=True)
+    webhook_authorization = models.CharField(max_length=255, blank=True)
+    webhook_authorization_header = models.CharField(max_length=120, blank=True, default="Authorization")
+
+    class Meta:
+        verbose_name = "configuracao Focus NFe"
+        verbose_name_plural = "configuracoes Focus NFe"
+
+    def __str__(self):
+        return f"Focus NFe - {self.account}"
+
+
 class FirstAccessState(models.Model):
     """Marcador permanente que impede reabrir o bootstrap administrativo."""
 

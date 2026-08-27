@@ -10,6 +10,7 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import pytest
+from rest_framework.test import APIClient
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FocusNfeProvider
@@ -30,9 +31,13 @@ def _make_product(account, restaurant, branch):
 
 
 def _make_fiscal_config(account, restaurant, branch):
+    account_config = account.focus_nfe_config
+    account_config.homologation_url = "https://homologacao.focusnfe.com.br"
+    account_config.production_url = "https://api.focusnfe.com.br"
+    account_config.save(update_fields=["homologation_url", "production_url", "updated_at"])
     return FiscalConfig.objects.create(
         account=account, restaurant=restaurant, branch=branch,
-        provider=FocusNfeProvider.name, provider_token="fake-token",
+        provider=FocusNfeProvider.name, focus_token_homologation="fake-token",
         cnpj="11222333000181", uf="SP",
         environment=FiscalConfig.ENV_HOMOLOGATION, series=1, next_number=1,
     )
@@ -164,3 +169,59 @@ def test_network_error_falls_back_to_contingency(mock_post, account, restaurant,
 
     assert invoice.emission_type == Invoice.EMISSION_CONTINGENCY
     assert invoice.status == Invoice.STATUS_PENDING
+
+
+@patch("requests.post")
+def test_nfe_model_uses_nfe_endpoint_and_synced_environment_token(
+    mock_post, account, restaurant, branch, manager_user
+):
+    mock_post.return_value = _fake_response(202, {"status": "processando_autorizacao"})
+    product = _make_product(account, restaurant, branch)
+    config = _make_fiscal_config(account, restaurant, branch)
+    config.document_model = FiscalConfig.MODEL_NFE
+    config.provider_token = ""
+    config.focus_token_homologation = "empresa-homologacao"
+    config.save(update_fields=["document_model", "provider_token", "focus_token_homologation", "updated_at"])
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.provider_reference == f"starchef-{invoice.id}"
+    assert "/v2/nfe?ref=starchef-" in mock_post.call_args.args[0]
+    assert mock_post.call_args.kwargs["auth"] == ("empresa-homologacao", "")
+
+
+@patch("requests.post")
+def test_focus_webhook_updates_async_invoice(mock_post, account, restaurant, branch, manager_user):
+    account_config = account.focus_nfe_config
+    account_config.webhook_authorization = "webhook-secret"
+    account_config.webhook_authorization_header = "X-Focus-Auth"
+    account_config.save(update_fields=["webhook_authorization", "webhook_authorization_header", "updated_at"])
+    mock_post.return_value = _fake_response(202, {"status": "processando_autorizacao"})
+    product = _make_product(account, restaurant, branch)
+    config = _make_fiscal_config(account, restaurant, branch)
+    config.document_model = FiscalConfig.MODEL_NFE
+    config.save(update_fields=["document_model", "updated_at"])
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    response = APIClient().post(
+        "/api/v1/integrations/focus-nfe/webhook/",
+        {
+            "ref": invoice.provider_reference,
+            "status": "autorizado",
+            "chave_nfe": "35" + "1" * 42,
+            "protocolo": "135250000000002",
+            "numero": "99",
+            "serie": "2",
+        },
+        format="json",
+        HTTP_X_FOCUS_AUTH="webhook-secret",
+    )
+
+    assert response.status_code == 200, response.data
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.number == "99"
+    assert invoice.series == 2
+    assert invoice.authorization_protocol == "135250000000002"

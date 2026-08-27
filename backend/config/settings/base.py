@@ -93,6 +93,23 @@ EMAIL_USE_SSL = config("DJANGO_EMAIL_USE_SSL", default=False, cast=bool)
 DEFAULT_FROM_EMAIL = config("DJANGO_DEFAULT_FROM_EMAIL", default="StarChef <no-reply@localhost>")
 PASSWORD_RESET_TIMEOUT_MINUTES = config("PASSWORD_RESET_TIMEOUT_MINUTES", default=30, cast=int)
 
+# Focus NFe. Estes valores servem somente para popular FocusNfeConfig na
+# migracao e no signal de criacao de Account. A integracao em runtime consulta
+# exclusivamente a configuracao persistida da conta.
+FOCUS_NFE_MASTER_TOKEN = config("FOCUS_NFE_MASTER_TOKEN", default="")
+FOCUS_NFE_PRODUCTION_URL = config("FOCUS_NFE_PRODUCTION_URL", default="https://api.focusnfe.com.br").rstrip("/")
+FOCUS_NFE_HOMOLOGATION_URL = config(
+    "FOCUS_NFE_HOMOLOGATION_URL", default="https://homologacao.focusnfe.com.br"
+).rstrip("/")
+FOCUS_NFE_TIMEOUT_SECONDS = config("FOCUS_NFE_TIMEOUT_SECONDS", default=30, cast=int)
+FOCUS_NFE_AUTO_SYNC = config("FOCUS_NFE_AUTO_SYNC", default=True, cast=bool)
+FOCUS_NFE_COMPANY_DRY_RUN = config("FOCUS_NFE_COMPANY_DRY_RUN", default=False, cast=bool)
+FOCUS_NFE_WEBHOOK_URL = config("FOCUS_NFE_WEBHOOK_URL", default="")
+FOCUS_NFE_WEBHOOK_AUTHORIZATION = config("FOCUS_NFE_WEBHOOK_AUTHORIZATION", default="")
+FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER = config(
+    "FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER", default="Authorization"
+)
+
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",

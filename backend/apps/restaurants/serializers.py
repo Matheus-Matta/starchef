@@ -27,6 +27,11 @@ class RestaurantSerializer(TenantModelSerializer):
         help_text="Senha para autorizar ações do caixa. Enviada em texto; armazenada com hash.",
     )
     has_cash_action_password = serializers.SerializerMethodField()
+    fiscal_provider = serializers.ChoiceField(
+        choices=("manual", "focus_nfe"),
+        required=False,
+        default="manual",
+    )
 
     class Meta:
         model = Restaurant
@@ -35,6 +40,14 @@ class RestaurantSerializer(TenantModelSerializer):
 
     def get_has_cash_action_password(self, obj):
         return bool(obj.cash_action_password)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from apps.invoices.models import FiscalConfig
+
+        config = FiscalConfig.objects.filter(restaurant=instance, is_active=True).order_by("created_at").first()
+        data["fiscal_provider"] = config.provider if config else FiscalConfig.PROVIDER_MANUAL
+        return data
 
     def validate_cnpj(self, value):
         return value or None
@@ -50,11 +63,53 @@ class RestaurantSerializer(TenantModelSerializer):
             )
         return validated_data
 
+    def _sync_fiscal_config(self, restaurant, provider=None):
+        from apps.invoices.focus import enqueue_focus_company_sync
+        from apps.invoices.models import FiscalConfig
+
+        branch = restaurant.branches.order_by("created_at").first()
+        if branch is None:
+            return None
+        user = getattr(self.context.get("request"), "user", None)
+        defaults = {
+            "account": restaurant.account,
+            "restaurant": restaurant,
+            "provider": provider or FiscalConfig.PROVIDER_MANUAL,
+            "cnpj": restaurant.cnpj or "",
+            "ie": restaurant.state_registration,
+            "corporate_name": restaurant.legal_name,
+            "trade_name": restaurant.trade_name,
+            "address_line": restaurant.address,
+            "city": restaurant.city,
+            "uf": restaurant.state,
+            "zip_code": restaurant.zip_code,
+            "created_by": user,
+            "updated_by": user,
+        }
+        config = FiscalConfig.objects.filter(branch=branch).first()
+        if config is None:
+            config = FiscalConfig.objects.create(branch=branch, **defaults)
+        else:
+            for field, value in defaults.items():
+                if field not in {"account", "restaurant", "created_by"}:
+                    setattr(config, field, value)
+            if provider is not None:
+                config.provider = provider
+            config.save()
+        enqueue_focus_company_sync(config)
+        return config
+
     def create(self, validated_data):
-        return super().create(self._hash_cash_password(validated_data))
+        provider = validated_data.pop("fiscal_provider", "manual")
+        restaurant = super().create(self._hash_cash_password(validated_data))
+        self._sync_fiscal_config(restaurant, provider)
+        return restaurant
 
     def update(self, instance, validated_data):
-        return super().update(instance, self._hash_cash_password(validated_data))
+        provider = validated_data.pop("fiscal_provider", None)
+        restaurant = super().update(instance, self._hash_cash_password(validated_data))
+        self._sync_fiscal_config(restaurant, provider)
+        return restaurant
 
     def validate_default_service_fee_percent(self, value):
         if value < 0:

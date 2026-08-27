@@ -16,6 +16,7 @@ import {
   CHANNEL_OPTIONS,
   COMMAND_STATUS_LABELS,
   EMISSION_TYPE_LABELS,
+  FISCAL_PROVIDER_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
   MOVEMENT_TYPE_LABELS,
@@ -590,6 +591,7 @@ export const resources = [
       { name: "city", label: "Cidade", type: "text" },
       { name: "state", label: "UF", type: "text", placeholder: "SP" },
       { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
+      { name: "fiscal_provider", label: "Provedor fiscal", type: "dropdown", options: FISCAL_PROVIDER_OPTIONS, default: "manual", section: "Fiscal", full: true, hint: "Focus NFe cria e sincroniza automaticamente a empresa e transmite NF-e/NFC-e pela API. Manual mantem o fluxo atual sem transmissao." },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
       // Senha para autorizar ações do caixa (armazenada com hash; usada no app offline).

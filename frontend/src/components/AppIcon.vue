@@ -80,6 +80,7 @@ const icons = {
   "scale": "pi-gauge",
   "save": "pi-save",
   "search": "pi-search",
+  "settings": "pi-cog",
   "shield-check": "pi-shield",
   "shopping-bag": "pi-shopping-bag",
   "shopping-cart": "pi-shopping-cart",
