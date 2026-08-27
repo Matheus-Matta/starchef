@@ -1,7 +1,9 @@
 import uuid
+from decimal import Decimal
 
 import pytest
 
+from apps.menu.models import Product
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.orders.services import (
     add_order_item,
@@ -10,6 +12,67 @@ from apps.orders.services import (
     update_order_item_status,
 )
 from apps.printers.models import Printer, PrintJob
+from apps.restaurants.models import TableSector
+
+
+@pytest.mark.django_db
+def test_kitchen_agrupa_por_setor_e_envia_a_cada_impressora_do_setor(
+    account, restaurant, branch, table, category, product, manager_user
+):
+    """Dois itens da cozinha saem num cupom so; o do bar sai separado.
+
+    Cada setor imprime em TODAS as suas impressoras ativas, escolhidas pelo
+    id do setor (o nome e so referencia).
+    """
+    cozinha = table.sector
+    bar = TableSector.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="Bar"
+    )
+    product.sector = cozinha
+    product.save(update_fields=["sector", "updated_at"])
+    coca = Product.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        category=category,
+        sector=bar,
+        name="Coca-Cola",
+        internal_code="COCA",
+        sale_price=Decimal("7.00"),
+    )
+    # Duas impressoras no MESMO setor: o cupom da cozinha sai nas duas.
+    for nome in ("Cozinha 1", "Cozinha 2"):
+        Printer.objects.create(
+            account=account, restaurant=restaurant, branch=branch,
+            sector=cozinha, name=nome, endpoint="T", auto_print=True,
+        )
+    Printer.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        sector=bar, name="Bar 1", endpoint="T", auto_print=True,
+    )
+
+    order = create_order(
+        restaurant=restaurant, branch=branch, order_type=Order.TYPE_TABLE,
+        table=table, user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=2, user=manager_user)
+    add_order_item(order=order, product=coca, quantity=1, user=manager_user)
+
+    send_order_to_kitchen(order, manager_user)
+
+    jobs = list(PrintJob.objects.filter(order=order))
+    por_impressora = {job.printer.name: job.payload["text_content"] for job in jobs}
+
+    # Um cupom por impressora: duas da cozinha + uma do bar.
+    assert sorted(por_impressora) == ["Bar 1", "Cozinha 1", "Cozinha 2"]
+    # As duas impressoras da cozinha recebem o MESMO cupom, com o item da
+    # cozinha e sem o do bar.
+    assert por_impressora["Cozinha 1"] == por_impressora["Cozinha 2"]
+    assert "2x X-Burger" in por_impressora["Cozinha 1"]
+    assert "Coca-Cola" not in por_impressora["Cozinha 1"]
+    # E o bar recebe so o que e dele.
+    assert "1x Coca-Cola" in por_impressora["Bar 1"]
+    assert "X-Burger" not in por_impressora["Bar 1"]
 
 
 @pytest.mark.django_db
