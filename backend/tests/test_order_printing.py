@@ -1,9 +1,12 @@
 import pytest
 from rest_framework_simplejwt.tokens import AccessToken
 
+from apps.customers.models import Customer, CustomerAddress
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 from apps.printers.models import Printer, PrintJob
+from apps.printers.services import _order_context_lines, register_print_job
+from apps.restaurants.models import TableSector
 
 
 @pytest.mark.django_db
@@ -58,4 +61,84 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
     text = job.payload["text_content"]
     assert f"Pedido nº {order.sequence}" in text
     assert "RECIBO DE VENDA - NAO E DOCUMENTO FISCAL" in text
-    assert "Mesa: - - Comanda: -" in text
+    assert "BALCAO" in text
+
+
+@pytest.mark.django_db
+def test_receipt_header_matches_table_and_command(account, restaurant, branch, table, command, manager_user):
+    command.current_table = table
+    command.save(update_fields=["current_table", "updated_at"])
+    order = create_order(
+        restaurant=restaurant,
+        order_type=Order.TYPE_COMMAND,
+        user=manager_user,
+        command=command,
+    )
+    assert _order_context_lines(order) == [f"Mesa: {table.number} - Comanda: {command.code}"]
+
+
+@pytest.mark.django_db
+def test_receipt_header_matches_counter_with_customer(account, restaurant, branch, manager_user):
+    customer = Customer.objects.create(account=account, restaurant=restaurant, branch=branch, name="Joana", phone="11999990000")
+    order = create_order(
+        restaurant=restaurant,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+        customer=customer,
+    )
+    assert _order_context_lines(order) == ["BALCAO", "Cliente: Joana"]
+
+
+@pytest.mark.django_db
+def test_receipt_header_matches_delivery_with_address(account, restaurant, branch, manager_user):
+    customer = Customer.objects.create(account=account, restaurant=restaurant, branch=branch, name="Joana", phone="11999990000")
+    address = CustomerAddress.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        customer=customer,
+        street="Rua das Flores",
+        number="123",
+        district="Centro",
+        city="Sao Paulo",
+        state="SP",
+    )
+    order = create_order(
+        restaurant=restaurant,
+        order_type=Order.TYPE_DELIVERY,
+        user=manager_user,
+        customer=customer,
+        delivery_address=address,
+    )
+    assert _order_context_lines(order) == [
+        "DELIVERY",
+        "Cliente: Joana",
+        "Telefone: 11999990000",
+        "Rua das Flores, 123",
+        "Centro - Sao Paulo/SP",
+    ]
+
+
+@pytest.mark.django_db
+def test_receipt_never_falls_back_to_a_sector_printer(account, restaurant, branch, manager_user, product):
+    """Sem impressora genérica cadastrada, o recibo precisa ficar sem
+    impressora (erro amigável na tela) em vez de cair na impressora da
+    cozinha — essa tem auto_print ligado pra despachar só a rodada nova, e
+    reimprimiria o pedido inteiro toda vez que o recibo fosse gerado."""
+    sector = TableSector.objects.create(account=account, restaurant=restaurant, branch=branch, name="Cozinha")
+    Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Cozinha",
+        endpoint="Impressora Cozinha",
+        sector=sector,
+        is_active=True,
+        auto_print=True,
+    )
+    order = create_order(restaurant=restaurant, order_type=Order.TYPE_COUNTER, user=manager_user)
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    job = register_print_job(order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT)
+
+    assert job.printer_id is None

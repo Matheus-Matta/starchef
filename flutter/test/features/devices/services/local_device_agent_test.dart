@@ -171,6 +171,9 @@ void main() {
           10,
           10,
           10,
+          10,
+          10,
+          10,
           29,
           86,
           0,
@@ -289,7 +292,10 @@ void main() {
 
       expect(bytes, containsAllInOrder(utf8.encode('DANFE')));
       expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
-      expect(bytes.sublist(qrStart + qr.length), [10, 10, 10, 29, 86, 0]);
+      expect(
+        bytes.sublist(qrStart + qr.length),
+        [10, 10, 10, 10, 10, 10, 29, 86, 0],
+      );
     });
   });
 
@@ -331,7 +337,10 @@ void main() {
       final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
 
       expect(parts.content, isNotEmpty);
-      expect(parts.content.sublist(parts.content.length - 3), [10, 10, 10]);
+      expect(
+        parts.content.sublist(parts.content.length - 6),
+        [10, 10, 10, 10, 10, 10],
+      );
       expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
     });
 

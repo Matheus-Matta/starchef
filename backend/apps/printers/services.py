@@ -24,10 +24,14 @@ _TEMPLATE_BY_TYPE = {
 }
 _WITH_PAYMENTS = {PrintJob.TYPE_RECEIPT}
 
-# 48 colunas: padrao de fonte A em bobina de 80mm (a largura mais comum de
-# impressora termica no Brasil). 32 colunas era pensado pra bobina de 58mm e
-# deixava sobrando quase metade da largura em branco numa impressora de 80mm.
-LARGURA_CUPOM = 48
+# 42 colunas: largura de Fonte A mais compativel entre as impressoras
+# termicas genericas de 80mm vendidas no Brasil. 48 colunas parecia certo no
+# papel, mas varias dessas impressoras so cabem 42~47 caracteres reais por
+# linha nessa fonte — o excedente nao trunca, ele QUEBRA pra linha de baixo,
+# entao um cupom de 48 colunas cortava o ultimo digito do valor pra uma linha
+# vazia só com "0". 42 fica seguro mesmo nas mais estreitas, ao custo de
+# alguma margem em branco nas impressoras que realmente tem 48 colunas.
+LARGURA_CUPOM = 42
 _COLUNA_VALOR = 14
 
 
@@ -106,6 +110,53 @@ def _establishment_lines(info, width=LARGURA_CUPOM):
     return lines
 
 
+def _order_context_lines(order, width=LARGURA_CUPOM):
+    """Linhas que identificam o pedido, especificas por tipo.
+
+    Mesa/comanda so fazem sentido pra atendimento no salao; balcao, retirada
+    e delivery mostravam sempre "Mesa: - Comanda: -", que nao diz nada sobre
+    o pedido de verdade e ainda escondia pra quem era a entrega.
+    """
+    if order.order_type == "delivery":
+        lines = ["DELIVERY"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+            if order.customer.phone:
+                lines.append(f"Telefone: {order.customer.phone}"[:width])
+        if order.delivery_address_id:
+            address = order.delivery_address
+            street_line = f"{address.street}, {address.number}".strip(", ")
+            if address.complement:
+                street_line += f" - {address.complement}"
+            lines.append(street_line[:width])
+            district_line = f"{address.district} - {address.city}/{address.state}".strip(" -")
+            lines.append(district_line[:width])
+            if address.reference:
+                lines.append(f"Ref: {address.reference}"[:width])
+        return lines
+    if order.order_type == "takeaway":
+        lines = ["RETIRADA"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+            if order.customer.phone:
+                lines.append(f"Telefone: {order.customer.phone}"[:width])
+        return lines
+    if order.order_type == "counter":
+        lines = ["BALCAO"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+        return lines
+    table_part = f"Mesa: {order.table.number}" if order.table_id else None
+    command_part = f"Comanda: {order.command.code}" if order.command_id else None
+    if table_part and command_part:
+        return [f"{table_part} - {command_part}"[:width]]
+    if table_part:
+        return [table_part]
+    if command_part:
+        return [command_part]
+    return ["Mesa: - Comanda: -"]
+
+
 def _customer_receipt_text(order):
     """Converte o recibo web para o equivalente monoespaçado de 80 mm.
 
@@ -135,10 +186,7 @@ def _customer_receipt_text(order):
         [
             "-" * LARGURA_CUPOM,
             f"Pedido nº {order.sequence}",
-            (
-                f"Mesa: {order.table.number if order.table_id else '-'} - "
-                f"Comanda: {order.command.code if order.command_id else '-'}"
-            ),
+            *_order_context_lines(order),
         ]
     )
     if order.responsible_user_id:
@@ -214,8 +262,19 @@ def register_print_job(
             active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
             if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
                 sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
-                printer = active.filter(sector_id__in=sector_ids).order_by("name").first()
-            printer = printer or active.filter(sector=None).order_by("name").first() or active.order_by("name").first()
+                printer = (
+                    active.filter(sector_id__in=sector_ids).order_by("name").first()
+                    or active.filter(sector=None).order_by("name").first()
+                    or active.order_by("name").first()
+                )
+            else:
+                # Recibo/conta/fechamento nunca podem cair numa impressora de
+                # setor: ela tem auto_print ligado pra despachar só a rodada
+                # nova da cozinha, e um recibo lista o pedido inteiro — sem
+                # impressora genérica cadastrada, o job fica sem impressora
+                # (erro amigável de "nenhuma impressora encontrada") em vez de
+                # imprimir tudo de novo, sem querer, no bilhete da cozinha.
+                printer = active.filter(sector=None).order_by("name").first()
 
         barcode = _order_command_barcode(order)
         html = render_print_html(

@@ -217,7 +217,10 @@ class LocalDeviceAgent {
       ...contentBytes,
       ...?barcodeBytes,
       ...?qrBytes,
-      if (isEscPos) ...const [10, 10, 10, ...escPosCutBytes],
+      // A distância entre a cabeça de impressão e a guilhotina varia por
+      // modelo; 3 linhas não bastava em impressoras genéricas e cortava
+      // texto/código de barras que ainda não tinha saído.
+      if (isEscPos) ...const [10, 10, 10, 10, 10, 10, ...escPosCutBytes],
     ];
   }
 

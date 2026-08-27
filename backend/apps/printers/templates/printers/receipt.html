@@ -28,7 +28,23 @@
   {% if establishment.phone %}<p>Telefone: {{ establishment.phone }}</p>{% endif %}
   <div class="line"></div>
   <p><strong>Pedido nº {{ order.sequence }}</strong></p>
-  <p>Mesa: {{ order.table.number|default:"-" }} · Comanda: {{ order.command.code|default:"-" }}</p>
+  {% if order.order_type == "delivery" %}
+    <p><strong>DELIVERY</strong></p>
+    {% if order.customer %}<p>Cliente: {{ order.customer.name }}{% if order.customer.phone %} · Tel: {{ order.customer.phone }}{% endif %}</p>{% endif %}
+    {% if order.delivery_address %}
+      <p>{{ order.delivery_address.street }}, {{ order.delivery_address.number }}{% if order.delivery_address.complement %} - {{ order.delivery_address.complement }}{% endif %}</p>
+      <p>{{ order.delivery_address.district }} - {{ order.delivery_address.city }}/{{ order.delivery_address.state }}</p>
+      {% if order.delivery_address.reference %}<p>Ref: {{ order.delivery_address.reference }}</p>{% endif %}
+    {% endif %}
+  {% elif order.order_type == "takeaway" %}
+    <p><strong>RETIRADA</strong></p>
+    {% if order.customer %}<p>Cliente: {{ order.customer.name }}{% if order.customer.phone %} · Tel: {{ order.customer.phone }}{% endif %}</p>{% endif %}
+  {% elif order.order_type == "counter" %}
+    <p><strong>BALCÃO</strong></p>
+    {% if order.customer %}<p>Cliente: {{ order.customer.name }}</p>{% endif %}
+  {% else %}
+    <p>Mesa: {{ order.table.number|default:"-" }} · Comanda: {{ order.command.code|default:"-" }}</p>
+  {% endif %}
   <p>Operador: {{ order.responsible_user.get_full_name|default:order.responsible_user.username }}</p>
   <p>Data: {{ order.opened_at|date:"d/m/Y H:i" }}</p>
   <div class="line"></div>
