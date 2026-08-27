@@ -10,6 +10,10 @@
          em Configurações → Conectar ao caixa. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Atualização própria: baixa o APK novo e abre o instalador do
+         Android por cima dele (Configurações → Instalar apps desconhecidos
+         → StarChef Garçom precisa estar liberado pelo usuário uma vez). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="StarChef Garçom"
         android:name="${applicationName}"

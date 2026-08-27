@@ -310,6 +310,7 @@ jobs:
       contents: write
     env:
       APP_VERSION: ${{ needs.release-metadata.outputs.version }}
+      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
     steps:
       - name: Baixar pacotes dos builds
         uses: actions/download-artifact@v4
@@ -338,6 +339,7 @@ jobs:
           root = Path(os.environ["GITHUB_WORKSPACE"])
           assets = root / "release-assets"
           version = os.environ["APP_VERSION"]
+          garcom_version = os.environ["GARCOM_VERSION"]
           tag = os.environ["GITHUB_REF_NAME"]
           repository = os.environ["GITHUB_REPOSITORY"]
 
@@ -345,6 +347,7 @@ jobs:
               "windows_installer": f"StarChef-PDV-Setup-{version}.exe",
               "windows_zip": f"StarChef-PDV-Windows-v{version}.zip",
               "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
+              "garcom_apk": f"StarChef-Garcom-v{garcom_version}.apk",
           }
           for name in names.values():
               if not (assets / name).is_file():
@@ -383,6 +386,14 @@ jobs:
                           package("linux_zip", "portable", "zip", True),
                       ]
                   },
+              },
+              # App do garcom: versionamento proprio (flutter_garcom/pubspec.yaml),
+              # nao participa de "platforms" porque nao roda no PDV. O app
+              # consulta esta chave direto pra saber se ha versao nova pra
+              # baixar e instalar por cima da atual.
+              "garcom": {
+                  "version": garcom_version,
+                  "package": package("garcom_apk", "apk", "apk", True),
               },
           }
           (assets / "latest.json").write_text(

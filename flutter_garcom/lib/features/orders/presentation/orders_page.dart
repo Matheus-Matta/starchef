@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -5,6 +7,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/update/garcom_update_controller.dart';
 import '../../auth/presentation/principal_setup_page.dart';
 import '../../auth/presentation/session_controller.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
@@ -15,6 +18,7 @@ import 'order_detail_page.dart';
 import 'order_formatters.dart';
 import 'sync_banner.dart';
 import 'table_picker_sheet.dart';
+import 'update_banner.dart';
 
 /// Tela inicial: os pedidos abertos do salão.
 class OrdersPage extends StatefulWidget {
@@ -35,11 +39,19 @@ class _OrdersPageState extends State<OrdersPage> {
   List<Map<String, dynamic>> _orders = const [];
   bool _loading = true;
   String? _error;
+  final _updateController = GarcomUpdateController();
 
   @override
   void initState() {
     super.initState();
     _load();
+    unawaited(_updateController.checkForUpdate());
+  }
+
+  @override
+  void dispose() {
+    _updateController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -235,6 +247,11 @@ class _OrdersPageState extends State<OrdersPage> {
         animation: gateway,
         builder: (context, _) => Column(
           children: [
+            ListenableBuilder(
+              listenable: _updateController,
+              builder: (context, _) =>
+                  UpdateBanner(controller: _updateController),
+            ),
             SyncBanner(
               gateway: gateway,
               onOpenFailed: () => showFailedMutationsSheet(context, gateway),
