@@ -15,6 +15,10 @@
 	     negada sem explicação. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>O app envia os pedidos do salão para o Caixa Principal da loja, na mesma rede Wi-Fi.</string>
+	<!-- Leitura do QR Code de pareamento (IP/porta/chave do Caixa Principal)
+	     em Configurações → Conectar ao caixa. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Usada para ler o QR Code de pareamento com o Caixa Principal.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

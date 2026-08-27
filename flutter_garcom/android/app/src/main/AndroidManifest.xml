@@ -6,6 +6,10 @@
          permissão o Android 13+ nega o acesso ao Wi-Fi da loja em alguns
          fabricantes antes mesmo de tentar conectar. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Leitura do QR Code de pareamento (IP/porta/chave do Caixa Principal)
+         em Configurações → Conectar ao caixa. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="StarChef Garçom"
         android:name="${applicationName}"

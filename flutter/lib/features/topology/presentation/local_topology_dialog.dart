@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -55,6 +57,32 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
     portController.dispose();
     secretController.dispose();
     super.dispose();
+  }
+
+  /// Endereço IPv4 deste caixa na rede local, sem a porta.
+  ///
+  /// Vem do status já calculado ao abrir o servidor — o mesmo mostrado no
+  /// card de status — e não do que o operador digitou, porque em modo
+  /// principal este caixa é quem está sendo apontado, não um destino.
+  String? _lanHost() {
+    if (widget.status.addresses.isEmpty) return null;
+    final address = widget.status.addresses.first;
+    final separator = address.lastIndexOf(':');
+    return separator > 0 ? address.substring(0, separator) : address;
+  }
+
+  /// Conteúdo do QR Code de pareamento.
+  ///
+  /// Com IP conhecido, vai o JSON `{host, port, secret}` que o app do garçom
+  /// lê para preencher o formulário inteiro sozinho. Sem IP (porta ainda não
+  /// aberta), cai para a chave sozinha — pior que nada, mas ainda útil para
+  /// colar manualmente.
+  String _pairingQrPayload() {
+    final host = _lanHost();
+    final secret = secretController.text.trim();
+    if (host == null) return secret;
+    final port = int.tryParse(portController.text.trim()) ?? widget.initial.port;
+    return jsonEncode({'host': host, 'port': port, 'secret': secret});
   }
 
   void _save() {
@@ -214,7 +242,7 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
                               child: Row(
                                 children: [
                                   QrImageView(
-                                    data: secretController.text.trim(),
+                                    data: _pairingQrPayload(),
                                     size: 132,
                                     backgroundColor: Colors.white,
                                   ),
@@ -232,9 +260,11 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
                                           ),
                                         ),
                                         const SizedBox(height: 5),
-                                        const Text(
-                                          'Leia este QR Code para obter a chave de pareamento deste Caixa Principal.',
-                                          style: TextStyle(
+                                        Text(
+                                          _lanHost() == null
+                                              ? 'Leia este QR Code para obter a chave de pareamento deste Caixa Principal.'
+                                              : 'Leia este QR Code no app do garçom (Conectar ao caixa → Ler QR Code) para preencher IP, porta e chave sozinho.',
+                                          style: const TextStyle(
                                             color: Colors.black54,
                                             fontSize: 12,
                                           ),

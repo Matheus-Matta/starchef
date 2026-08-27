@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/labeled_field.dart';
 import 'auth_scaffold.dart';
 import 'diagnostics_sheet.dart';
+import 'principal_qr_scanner_page.dart';
 import 'session_controller.dart';
 
 /// Pareamento do aparelho com o Caixa Principal — depois do login.
@@ -69,6 +70,20 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
       secret: _secret.text,
     );
     if (paired && mounted) widget.onDone?.call();
+  }
+
+  /// Lê o QR Code mostrado no PDV (Configurações → Rede local) e preenche
+  /// IP, porta e chave sozinho — em vez de o gerente ditar cada campo.
+  Future<void> _scanQrCode() async {
+    if (widget.controller.loading) return;
+    FocusScope.of(context).unfocus();
+    final scanned = await showPrincipalQrScannerPage(context);
+    if (scanned == null || !mounted) return;
+    setState(() {
+      _host.text = scanned.host;
+      if (scanned.port != null) _port.text = '${scanned.port}';
+      _secret.text = scanned.secret;
+    });
   }
 
   /// Testa a ligação com o que está digitado AGORA, sem gravar nada.
@@ -205,6 +220,13 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
               child: Text(
                 controller.loading ? 'Testando...' : 'Conectar',
               ),
+            ),
+            const SizedBox(height: 8),
+            ShadButton.outline(
+              onPressed: controller.loading ? null : _scanQrCode,
+              height: AppTheme.controlHeight,
+              leading: const Icon(Icons.qr_code_scanner_outlined, size: 18),
+              child: const Text('Ler QR Code'),
             ),
             const SizedBox(height: 8),
             ShadButton.ghost(

@@ -24,6 +24,7 @@ dependencies:
   # Diretório de dados do app (fila offline) — não existe forma pura em
   # dart:io de achar esse caminho em Android/iOS.
   path_provider: ^2.1.5
+  mobile_scanner: ^7.4.0
 
 dev_dependencies:
   flutter_test:
