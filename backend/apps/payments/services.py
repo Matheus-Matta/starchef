@@ -387,15 +387,17 @@ def cancel_payment(*, payment, user):
     """Cancela um recebimento lançado no PDV e desfaz seus efeitos operacionais."""
     with tenant_context(payment.account):
         payment = (
-            Payment.objects.select_for_update()
-            .select_related("order__restaurant", "order__table", "order__command")
+            Payment.objects.select_related("order__restaurant", "order__table", "order__command")
+            .select_for_update(of=("self",))
             .get(pk=payment.pk)
         )
         if payment.status != Payment.STATUS_APPROVED:
             raise ValidationError("Este pagamento já foi cancelado ou estornado.")
 
         order = (
-            Order.objects.select_for_update().select_related("restaurant", "table", "command").get(pk=payment.order_id)
+            Order.objects.select_related("restaurant", "table", "command")
+            .select_for_update(of=("self",))
+            .get(pk=payment.order_id)
         )
         was_paid = order.payment_status == Order.PAYMENT_PAID
 

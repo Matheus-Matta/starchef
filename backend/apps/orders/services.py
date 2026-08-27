@@ -453,8 +453,10 @@ def dispatch_kitchen_batch(batch, *, now=None):
     now = now or timezone.now()
     with tenant_context(batch.account):
         batch = (
-            OrderBatch.objects.select_for_update()
-            .select_related("order__restaurant", "sent_by")
+            OrderBatch.objects.select_related("order__restaurant", "sent_by")
+            # `sent_by` is nullable. PostgreSQL rejects FOR UPDATE on the
+            # nullable side of the LEFT JOIN unless the locked table is scoped.
+            .select_for_update(of=("self",))
             .get(pk=batch.pk)
         )
         if batch.status != OrderBatch.STATUS_SCHEDULED:
@@ -463,8 +465,8 @@ def dispatch_kitchen_batch(batch, *, now=None):
             return batch
 
         items = list(
-            batch.items.select_for_update()
-            .select_related("order", "product")
+            batch.items.select_related("order", "product")
+            .select_for_update(of=("self",))
             .filter(status=OrderItem.STATUS_QUEUED)
         )
         if not items:
@@ -551,7 +553,11 @@ def void_order_item(item, user, reason=""):
     if not reason.strip():
         raise ValidationError("Informe o motivo do cancelamento do item.")
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order", "batch").get(pk=item.pk)
+        item = (
+            OrderItem.objects.select_related("order", "batch")
+            .select_for_update(of=("self",))
+            .get(pk=item.pk)
+        )
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if item.status in {OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
@@ -595,7 +601,7 @@ def void_order_item(item, user, reason=""):
 def comp_order_item(item, user, reason=""):
     """Mark a sent/in-production item as comped (courtesy) — does not deduct from bill."""
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        item = OrderItem.objects.select_related("order").select_for_update(of=("self",)).get(pk=item.pk)
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if item.status in {OrderItem.STATUS_PENDING, OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
@@ -621,7 +627,7 @@ def comp_order_item(item, user, reason=""):
 @transaction.atomic
 def update_order_item_status(item, new_status, user, reason=""):
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        item = OrderItem.objects.select_related("order").select_for_update(of=("self",)).get(pk=item.pk)
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
 
