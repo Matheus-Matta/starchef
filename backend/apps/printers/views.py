@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 
 from django.core.exceptions import ValidationError
@@ -253,10 +254,16 @@ class ScaleViewSet(BaseTenantViewSet):
 
         command_code = str(request.data.get("command_code", "")).strip()
         reading_id = request.data.get("scale_reading")
+        # Peso bruto e a alternativa para o REPLAY de uma pesagem feita com o
+        # PDV offline: nesse momento nao existe `ScaleReading`, porque criar
+        # uma exige servidor. O terminal ja converteu a leitura em item na
+        # copia local; aqui a leitura e materializada junto, para o historico
+        # da balanca continuar completo.
+        offline_weight = request.data.get("weight_kg")
         extras = request.data.get("extras") or []
         if not command_code:
             return Response({"detail": "Leia ou informe o codigo da comanda."}, status=status.HTTP_400_BAD_REQUEST)
-        if not reading_id:
+        if not reading_id and offline_weight in (None, ""):
             return Response({"detail": "A leitura da balanca e obrigatoria."}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(extras, list) or len(extras) > 20:
             return Response({"detail": "Informe no maximo 20 produtos adicionais."}, status=status.HTTP_400_BAD_REQUEST)
@@ -298,19 +305,39 @@ class ScaleViewSet(BaseTenantViewSet):
                         user=request.user,
                     )
 
-                reading = (
-                    ScaleReading.objects.select_for_update()
-                    .filter(
-                        pk=reading_id,
-                        account=scale.account,
-                        scale=scale,
-                        is_stable=True,
-                        order_item__isnull=True,
+                if reading_id:
+                    reading = (
+                        ScaleReading.objects.select_for_update()
+                        .filter(
+                            pk=reading_id,
+                            account=scale.account,
+                            scale=scale,
+                            is_stable=True,
+                            order_item__isnull=True,
+                        )
+                        .first()
                     )
-                    .first()
-                )
-                if reading is None:
-                    raise ValidationError("Leitura invalida, instavel ou ja utilizada.")
+                    if reading is None:
+                        raise ValidationError("Leitura invalida, instavel ou ja utilizada.")
+                else:
+                    try:
+                        peso = Decimal(str(offline_weight))
+                    except (InvalidOperation, TypeError) as exc:
+                        raise ValidationError("Peso informado invalido.") from exc
+                    if peso <= 0:
+                        raise ValidationError("O peso precisa ser maior que zero.")
+                    reading = ScaleReading.objects.create(
+                        account=scale.account,
+                        restaurant=scale.restaurant,
+                        branch=scale.branch,
+                        scale=scale,
+                        weight_kg=peso,
+                        tare_kg=Decimal(str(request.data.get("tare_kg") or "0")),
+                        is_stable=True,
+                        source="agent",
+                        created_by=request.user,
+                        updated_by=request.user,
+                    )
 
                 weighed_item, _ = weigh_to_order(
                     scale=scale,
@@ -366,6 +393,7 @@ class ScaleViewSet(BaseTenantViewSet):
                         item=weighed_item,
                         scale=scale,
                         user=request.user,
+                        offline_printed=bool(request.data.get("offline_printed")),
                     )
                     if request.data.get("print", True)
                     else None

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:starchef_garcom/core/network/api_client.dart';
 import 'package:starchef_garcom/core/relay/principal_client.dart';
 import 'package:starchef_garcom/core/relay/relay_gateway.dart';
 import 'package:starchef_garcom/core/relay/relay_signature.dart';
@@ -47,7 +46,6 @@ void main() {
       store: OfflineQueueStore(testFile: _tempFile()),
     )..updateContext(config: principalConfig, identity: session.identity);
     repository = OrdersRepository(
-      api: ApiClient(baseUrl: 'http://backend.local/api/v1'),
       principalClient: PrincipalClient(),
       gateway: gateway,
       session: session,
@@ -73,6 +71,91 @@ void main() {
         expect(principal.lastRelay['path'], '/orders/');
         expect(principal.lastRelay['body'], {'order_type': tipo});
       }
+    });
+  });
+
+  group('aparelho operando como caixa secundário (§8, §9)', () {
+    test('fechar a conta passa pelo Caixa Principal', () async {
+      await repository.closeOrder(orderId: 'pedido-1');
+
+      expect(principal.lastRelay['method'], 'POST');
+      expect(principal.lastRelay['path'], '/orders/pedido-1/close/');
+      expect(principal.lastRelay['body'], {
+        'service_fee_enabled': true,
+        'discount': '0',
+      });
+    });
+
+    test('recebimento carrega o identificador que evita cobrança dupla', () async {
+      await repository.pay(
+        orderId: 'pedido-1',
+        paymentMethodId: 'pix-1',
+        amount: '25.00',
+        reference: 'NSU-9',
+      );
+
+      final body = principal.lastRelay['body'] as Map<String, dynamic>;
+      expect(principal.lastRelay['path'], '/orders/pedido-1/pay/');
+      expect(body['payment_method'], 'pix-1');
+      expect(body['amount'], '25.00');
+      // O id nasce no aparelho: um reenvio depois de um timeout devolve o
+      // mesmo recebimento em vez de cobrar de novo.
+      expect('${body['client_payment_id']}', startsWith('offline-'));
+      expect((body['metadata'] as Map)['reference'], 'NSU-9');
+    });
+
+    test('recebimento em dinheiro informa o caixa aberto', () async {
+      await repository.pay(
+        orderId: 'pedido-1',
+        paymentMethodId: 'dinheiro-1',
+        amount: '10.00',
+        cashRegisterId: 'sessao-1',
+      );
+
+      final body = principal.lastRelay['body'] as Map<String, dynamic>;
+      expect(body['cash_register'], 'sessao-1');
+    });
+
+    test('formas de pagamento e caixa aberto vêm do principal', () async {
+      principal.readPayload = {
+        'results': [
+          {'id': 'pix-1', 'name': 'PIX', 'method_type': 'pix'},
+        ],
+      };
+
+      final methods = await repository.paymentMethods();
+
+      expect(principal.lastRead['path'], '/payments/methods/');
+      expect(methods.single['name'], 'PIX');
+    });
+
+    test('sem caixa aberto o principal responde vazio, não erro', () async {
+      principal.readPayload = const {'detail': 'Nenhuma sessão aberta.'};
+
+      expect(await repository.currentCashRegister(), isNull);
+    });
+
+    test('vínculo de mesa usa o campo que o backend espera', () async {
+      // O backend valida `table_id` (ver `CommandViewSet.link_table`); mandar
+      // `table` devolvia 400 com a mesa "não informada".
+      await repository.linkTable(
+        commandId: 'comanda-1',
+        tableId: 'mesa-3',
+        tableLabel: '3',
+      );
+
+      expect((principal.lastRelay['body'] as Map)['table_id'], 'mesa-3');
+    });
+  });
+
+  group('isolamento da nuvem (§9)', () {
+    test('sem o Caixa Principal, a leitura falha em vez de ir à API', () async {
+      await principal.stop();
+
+      await expectLater(
+        repository.openOrders(),
+        throwsA(isA<PrincipalUnavailable>()),
+      );
     });
   });
 
@@ -185,6 +268,11 @@ File _tempFile() {
   return File('${dir.path}${Platform.pathSeparator}outbox.json');
 }
 
+/// §9: nenhum aplicativo fala com a API externa. Sem o Caixa Principal no ar,
+/// a leitura falha com o motivo — antes ela caía para a nuvem, e era aí que o
+/// garçom via uma comanda desatualizada: a nuvem não conhecia os pedidos
+/// lançados desde a queda, e um item lançado sobre esse retrato ia para o
+/// pedido errado.
 /// Caixa Principal de mentira que guarda o que recebeu.
 class _RelaySpy {
   _RelaySpy({required this.secret});

@@ -5,6 +5,12 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import '../data/entity_catalog.dart';
+import '../logging/app_logger.dart';
+import '../data/offline_first_gateway.dart';
+import '../data/relay_sync_transport.dart';
+import '../data/sync_operation.dart';
+import '../data/sync_service.dart';
 import 'api_exception.dart';
 import 'data_signals.dart';
 import 'realtime_client.dart';
@@ -97,6 +103,18 @@ class ApiClient {
   AccessTokenRefresher? _tokenRefresher;
   Future<String?>? _refreshInFlight;
 
+  /// Armazenamento operacional local. Quando presente, ele — e não a rede —
+  /// responde as rotas de entidade (§1). Continua opcional para que a janela
+  /// da Balança Rápida e os testes possam usar o cliente sem banco.
+  OfflineFirstGateway? _gateway;
+  SyncService? _syncService;
+  StreamSubscription<SyncSnapshot>? _syncSnapshotSubscription;
+
+  /// Contexto extra da próxima escrita local (mesa, comanda, forma de
+  /// pagamento). Passado explicitamente pela tela na chamada.
+  OfflineFirstGateway? get localStore => _gateway;
+  SyncService? get syncService => _syncService;
+
   /// Avisos de dados atualizados, para as telas relerem sem esperar a rede.
   final DataSignals signals = DataSignals();
 
@@ -122,8 +140,99 @@ class ApiClient {
     await _publishStatus(NetworkSyncPhase.unknown);
   }
 
+  /// Define o papel deste terminal na rede local.
+  ///
+  /// Com um relay anexado, ele é um **Caixa Secundário**: continua gravando no
+  /// próprio SQLite e enfileirando, mas quem recebe a fila é o Caixa
+  /// Principal, não a nuvem (§8). Antes o secundário não tinha fila nenhuma —
+  /// com o principal fora do ar, cada operação era recusada na hora e o
+  /// operador ficava sem vender até alguém religar o outro computador.
   void attachMutationRelay(MutationRelay? relay) {
     _mutationRelay = relay;
+    _gateway?.relayOnly = relay != null;
+    _syncService?.useTransport(syncTransport);
+  }
+
+  /// Liga o cliente ao banco operacional e ao serviço de sincronização.
+  ///
+  /// A partir daqui o PDV é offline-first: leitura vem do SQLite e escrita vai
+  /// para o SQLite + fila. O `ApiClient` deixa de ser a fonte de dados e passa
+  /// a ser o transporte que o [SyncService] usa para conversar com o backend.
+  void attachLocalStore({
+    OfflineFirstGateway? gateway,
+    SyncService? syncService,
+  }) {
+    _gateway = gateway;
+    gateway?.relayOnly = _mutationRelay != null;
+    gateway?.connectivity = () => _syncStatus.hasConnection;
+    unawaited(_syncSnapshotSubscription?.cancel());
+    _syncSnapshotSubscription = null;
+    _syncService = syncService;
+    // Quem descobre que a rede caiu passou a ser o `SyncService`, ao tentar
+    // entregar a fila. Sem trazer esse resultado de volta para cá, o
+    // `syncStatus` ficava congelado em "sincronizando" com a internet fora — e
+    // é ele que decide se a comanda de cozinha sai na impressora local ou se o
+    // backend vai gerar o `PrintJob`. O sintoma seria o pior possível: a
+    // cozinha não recebe comanda nenhuma.
+    _syncSnapshotSubscription = syncService?.snapshots.listen(
+      (snapshot) => unawaited(_applySyncSnapshot(snapshot)),
+    );
+  }
+
+  Future<void> _applySyncSnapshot(SyncSnapshot snapshot) async {
+    if (_disposed) return;
+    await _publishStatus(
+      switch (snapshot.phase) {
+        SyncPhase.offline => NetworkSyncPhase.offline,
+        SyncPhase.degraded => NetworkSyncPhase.degraded,
+        SyncPhase.blocked => NetworkSyncPhase.blocked,
+        SyncPhase.syncing => NetworkSyncPhase.syncing,
+        SyncPhase.idle => NetworkSyncPhase.online,
+      },
+      error: snapshot.lastError,
+      nextRetryAt: snapshot.nextRetryAt,
+    );
+  }
+
+  /// Espera, por no máximo [timeout], a operação sair da fila local.
+  ///
+  /// `true` significa que ela chegou ao servidor; `false`, que continua
+  /// pendente (ou foi recusada). É o que permite decidir quem imprime uma
+  /// comanda de cozinha sem depender de um palpite sobre a conexão: se a
+  /// operação subiu, o backend cria o `PrintJob` e o agente imprime; se não,
+  /// quem imprime é este terminal.
+  Future<bool> awaitDelivery(
+    String operationId, {
+    Duration timeout = const Duration(seconds: 3),
+    Duration pollInterval = const Duration(milliseconds: 150),
+  }) async {
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null || operationId.isEmpty) return false;
+    _syncService?.schedulePush(delay: Duration.zero);
+    final deadline = DateTime.now().add(timeout);
+    while (!_disposed) {
+      final pending = await gateway.queue.isPending(
+        scope: scope,
+        operationId: operationId,
+      );
+      if (!pending) return true;
+      if (!DateTime.now().isBefore(deadline)) return false;
+      await Future<void>.delayed(pollInterval);
+    }
+    return false;
+  }
+
+  /// Para onde a fila deste terminal entrega.
+  ///
+  /// No Caixa Principal (e num terminal sozinho), o backend. Num Caixa
+  /// Secundário, o Caixa Principal pela rede local — ele nunca fala com a
+  /// nuvem.
+  SyncTransport get syncTransport {
+    final relay = _mutationRelay;
+    return relay == null
+        ? _ApiSyncTransport(this)
+        : RelaySyncTransport(relay);
   }
 
   /// Registra quem sabe trocar o refresh token por um novo access token.
@@ -158,15 +267,52 @@ class ApiClient {
     return '$wsBase/ws/pdv/$restaurantId/';
   }
 
-  /// Converte um evento remoto em sinais locais, mantendo a separação por
-  /// restaurante como defesa adicional ao filtro feito pelo servidor.
+  /// Aplica um evento do WebSocket ao **banco local**, e só depois avisa as
+  /// telas (§11).
+  ///
+  /// Antes, o evento só emitia um sinal e cada tela reconsultava a API por
+  /// conta própria — com a internet fora, o aviso não virava dado nenhum e a
+  /// alteração feita na retaguarda simplesmente não existia no caixa. Agora o
+  /// registro é lido e persistido; a interface reage à mudança do SQLite.
+  ///
+  /// A gravação é marcada como REMOTE, portanto **não** gera operação de
+  /// saída: é o que corta o laço backend -> WS -> SQLite -> fila -> backend
+  /// descrito em §12.
   void applyRealtimeEvent(RealtimeEvent event, {required String restaurantId}) {
     final eventRestaurant = '${event.payload['restaurant_id'] ?? ''}';
     if (eventRestaurant.isNotEmpty && eventRestaurant != restaurantId) return;
     final resource = '${event.payload['resource'] ?? ''}';
+    unawaited(_persistRealtimeEvent(event, resource));
     for (final topic in DataSignals.topicsForRealtimeResource(resource)) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
+    }
+  }
+
+  Future<void> _persistRealtimeEvent(
+    RealtimeEvent event,
+    String resource,
+  ) async {
+    final sync = _syncService;
+    final entityType = EntityCatalog.typeForRealtimeResource(resource);
+    if (sync == null || entityType == null) return;
+    final entityId = '${event.payload['id'] ?? ''}';
+    // Evento de coleção (`bulk_create`/`update` não passam por signals e vêm
+    // sem id): a reconciliação por tipo cobre o caso.
+    if (entityId.isEmpty) {
+      final descriptor = EntityCatalog.byType(entityType);
+      if (descriptor != null) unawaited(sync.pull(descriptor));
+      return;
+    }
+    final applied = await sync.pullEntity(
+      entityType: entityType,
+      entityId: entityId,
+      deleted: '${event.payload['action'] ?? ''}' == 'deleted',
+    );
+    if (applied) {
+      for (final topic in DataSignals.topicsForRealtimeResource(resource)) {
+        signals.emit(topic);
+      }
     }
   }
 
@@ -199,23 +345,48 @@ class ApiClient {
     String? accessToken,
   }) => _request('GET', path, query: query, accessToken: accessToken);
 
+  /// `localContext` carrega o que só a tela sabe e o corpo da requisição não
+  /// diz: a mesa/comanda de um pedido novo, a forma de pagamento escolhida, o
+  /// caixa selecionado. É usado apenas para montar o registro local completo —
+  /// nada disso é enviado ao servidor.
   Future<Map<String, dynamic>> post(
     String path, {
     required Map<String, dynamic> body,
     String? accessToken,
-  }) => _request('POST', path, body: body, accessToken: accessToken);
+    Map<String, dynamic>? localContext,
+  }) => _request(
+    'POST',
+    path,
+    body: body,
+    accessToken: accessToken,
+    localContext: localContext,
+  );
 
   Future<Map<String, dynamic>> patch(
     String path, {
     required Map<String, dynamic> body,
     String? accessToken,
-  }) => _request('PATCH', path, body: body, accessToken: accessToken);
+    Map<String, dynamic>? localContext,
+  }) => _request(
+    'PATCH',
+    path,
+    body: body,
+    accessToken: accessToken,
+    localContext: localContext,
+  );
 
   Future<Map<String, dynamic>> delete(
     String path, {
     Map<String, dynamic>? body,
     String? accessToken,
-  }) => _request('DELETE', path, body: body, accessToken: accessToken);
+    Map<String, dynamic>? localContext,
+  }) => _request(
+    'DELETE',
+    path,
+    body: body,
+    accessToken: accessToken,
+    localContext: localContext,
+  );
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -223,8 +394,49 @@ class ApiClient {
     Map<String, dynamic>? query,
     Map<String, dynamic>? body,
     String? accessToken,
+    Map<String, dynamic>? localContext,
   }) async {
     _rememberSession(accessToken);
+
+    // ------------------------------------------------------------------
+    // Caminho offline-first (§3, §4). Vale para os dois papéis: o que muda é
+    // para onde a fila entrega. O principal entrega ao backend; o secundário
+    // entrega ao principal — e, em ambos, a tela é atendida pelo SQLite deste
+    // terminal, sem esperar rede.
+    // ------------------------------------------------------------------
+    final gateway = _gateway;
+    if (gateway != null && gateway.scope != null) {
+      if (method == 'GET' && gateway.handlesRead(path)) {
+        final local = await _readLocalFirst(gateway, path, query: query);
+        if (local != null) return local;
+      } else if (method != 'GET' &&
+          gateway.handlesWrite(method, path, body)) {
+        final result = await gateway.write(
+          method,
+          path,
+          body: body,
+          query: query,
+          context: localContext,
+        );
+        _signal(path);
+        await _publishStatus(
+          _syncStatus.hasConnection
+              ? NetworkSyncPhase.syncing
+              : _syncStatus.phase,
+        );
+        _syncService?.schedulePush();
+        return {
+          ...result.payload,
+          '_local_first': true,
+          // Diferente de `_offline_pending` (que só diz "ainda não subiu"),
+          // isto significa "não havia conexão no momento da gravação". É o
+          // que a impressão de cozinha usa para decidir imprimir aqui em vez
+          // de esperar o `PrintJob` do backend — marcar sempre faria sair
+          // duas comandas para a mesma rodada.
+          if (!_syncStatus.hasConnection) '_queued_offline': true,
+        };
+      }
+    }
     final cacheKey = _cacheKey(path, query, accessToken);
     final operationId = method == 'GET' ? null : _nextOperationId();
     final queueableMutation = method != 'GET' && _canQueue(method, path, body);
@@ -378,6 +590,110 @@ class ApiClient {
         isConnectivity: true,
       );
     }
+  }
+
+  /// Leitura servida pelo SQLite, com sincronização em paralelo (§3).
+  ///
+  /// A única exceção é a "partida a frio": quando o recurso nunca foi
+  /// sincronizado neste terminal, esperar UMA leitura de rede é melhor do que
+  /// mostrar a tela vazia na primeira abertura. Depois disso a resposta é
+  /// sempre imediata.
+  Future<Map<String, dynamic>?> _readLocalFirst(
+    OfflineFirstGateway gateway,
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    final local = await gateway.read(path, query: query);
+    final missing = local['_empty'] == true;
+    final emptyPage =
+        local['results'] is List && (local['results'] as List).isEmpty;
+    final entityType = EntityCatalog.resolve(path)?.type;
+    final neverSynced =
+        entityType == null || await gateway.lastSyncAt(entityType) == null;
+
+    if (!(missing || (emptyPage && neverSynced))) {
+      unawaited(_refreshFromServer(gateway, path, query: query));
+      _syncService?.schedulePush();
+      return {...local, '_local_first': true};
+    }
+
+    try {
+      // Pelo mesmo transporte da fila: no Caixa Principal, o backend; num
+      // secundário, o Caixa Principal. Buscar direto na nuvem aqui faria um
+      // secundário falar com o servidor pelas costas do principal (§8).
+      final remote = await syncTransport.send('GET', path, query: query);
+      _retryAttempt = 0;
+      await _publishStatus(NetworkSyncPhase.online);
+      await _storeRemote(gateway, path, remote);
+      _signal(path);
+      return remote;
+    } on TransientSyncFailure catch (error) {
+      await _publishStatus(
+        error.offline ? NetworkSyncPhase.offline : NetworkSyncPhase.degraded,
+        error: error.message,
+      );
+      _scheduleRetry(serverDelay: error.retryAfter);
+      if (missing) {
+        // Um detalhe que não existe local nem remotamente precisa continuar
+        // sendo um erro para quem chamou — devolver um mapa vazio faria a
+        // tela desenhar um pedido fantasma.
+        throw ApiException(
+          '${local['detail'] ?? 'Registro indisponível offline.'} '
+          '${error.message}',
+          statusCode: 404,
+          isConnectivity: true,
+        );
+      }
+      return {...local, '_local_first': true};
+    }
+  }
+
+  /// Atualiza o SQLite com a versão do servidor, sem ninguém esperando.
+  ///
+  /// Ninguém aguarda este future, então nenhuma falha aqui pode escapar: a
+  /// tela já foi atendida pela cópia local. O caso comum de erro é o próprio
+  /// aplicativo sendo encerrado no meio da reconciliação.
+  Future<void> _refreshFromServer(
+    OfflineFirstGateway gateway,
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    if (_disposed) return;
+    try {
+      final remote = await syncTransport.send('GET', path, query: query);
+      if (_disposed) return;
+      _retryAttempt = 0;
+      await _publishStatus(NetworkSyncPhase.online);
+      await _storeRemote(gateway, path, remote);
+      _signal(path);
+    } on TransientSyncFailure catch (error) {
+      if (_disposed) return;
+      await _publishStatus(
+        error.offline ? NetworkSyncPhase.offline : NetworkSyncPhase.degraded,
+        error: error.message,
+      );
+      _scheduleRetry(serverDelay: error.retryAfter);
+    } on ApiException {
+      // O servidor respondeu e recusou (403/404). A cópia local já foi
+      // entregue à tela; insistir aqui não muda nada.
+    } catch (error) {
+      AppLogger.instance.warning(
+        'reconciliacao_em_paralelo_falhou',
+        data: {'path': path, 'causa': '$error'},
+      );
+    }
+  }
+
+  Future<void> _storeRemote(
+    OfflineFirstGateway gateway,
+    String path,
+    Map<String, dynamic> response,
+  ) async {
+    if (response['results'] is List) {
+      await gateway.applyRemoteCollection(path, response);
+      return;
+    }
+    await gateway.applyRemoteDetail(path, response);
   }
 
   /// Envia a requisição e, diante de um 401, renova o token uma única vez.
@@ -596,11 +912,15 @@ class ApiClient {
     return {...response, '_relayed_to_principal': true};
   }
 
-  /// Accepts one authenticated LAN mutation on the principal checkout.
+  /// Executa, no Caixa Principal, uma operação pedida por outro aparelho da
+  /// rede local (§8, §9).
   ///
-  /// Only the same conservative allowlist used by the local outbox is exposed.
-  /// Dependent operations carrying a principal temporary ID are queued without
-  /// first sending an invalid temporary reference to the cloud.
+  /// O caminho é o mesmo de uma operação feita no próprio principal: SQLite
+  /// primeiro, fila depois. Antes esta função tentava a nuvem na hora e só
+  /// enfileirava se a rede falhasse — o resultado era que, com a internet
+  /// instável, o garçom esperava o timeout do backend para ver o item entrar
+  /// na comanda. Agora a resposta é imediata e o principal continua sendo o
+  /// único que fala com a nuvem.
   Future<Map<String, dynamic>> acceptRelayedMutation(
     RelayMutation mutation, {
     required String accessToken,
@@ -612,24 +932,29 @@ class ApiClient {
       );
     }
     _rememberSession(accessToken);
-    if (_containsPrincipalTemporaryId(
-      mutation.path,
-      mutation.query,
-      mutation.body,
-    )) {
-      final queued = await _queueMutation(
-        method: mutation.method,
-        path: mutation.path,
-        operationId: mutation.operationId,
-        query: mutation.query,
+
+    final gateway = _gateway;
+    if (gateway != null &&
+        gateway.scope != null &&
+        gateway.handlesWrite(mutation.method, mutation.path, mutation.body)) {
+      final result = await gateway.write(
+        mutation.method,
+        mutation.path,
         body: mutation.body,
-        accessToken: accessToken,
-        failurePhase: NetworkSyncPhase.syncing,
-        temporaryIdPrefix: 'offline-relay-',
+        query: mutation.query,
       );
-      _scheduleFlush();
-      return queued;
+      _signal(mutation.path);
+      _syncService?.schedulePush();
+      return {
+        ...result.payload,
+        '_local_first': true,
+        if (!_syncStatus.hasConnection) '_queued_offline': true,
+      };
     }
+
+    // Rota que o armazenamento local não sabe aplicar (aprovação de
+    // supervisor, trabalho de impressão): segue exigindo o servidor, e o
+    // aparelho recebe o erro de verdade em vez de uma confirmação falsa.
     try {
       final response = await _requestWithSessionRecovery(
         mutation.method,
@@ -833,7 +1158,19 @@ class ApiClient {
     String? error,
     DateTime? nextRetryAt,
   }) async {
-    final summary = await _offlineStore.summary(scope: _activeScope);
+    final legacy = await _offlineStore.summary(scope: _activeScope);
+    // O indicador da barra soma as duas filas. Mostrar só a legada faria o
+    // PDV parecer "tudo sincronizado" com vendas esperando na fila nova.
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    final current = gateway == null || scope == null
+        ? const SyncQueueSummary()
+        : await gateway.queue.summary(scope: scope);
+    final summary = OutboxSummary(
+      pending: legacy.pending + current.pending + current.processing,
+      retrying: legacy.retrying,
+      blocked: legacy.blocked + current.failed,
+    );
     final phase =
         summary.blocked > 0 && requestedPhase != NetworkSyncPhase.offline
         ? NetworkSyncPhase.blocked
@@ -868,7 +1205,14 @@ class ApiClient {
   void _rememberSession(String? accessToken) {
     if (accessToken == null) return;
     _lastAccessToken = accessToken;
-    _activeScope = _outboxScope(accessToken);
+    final scope = _outboxScope(accessToken);
+    if (_activeScope == scope) return;
+    _activeScope = scope;
+    // O banco local é vinculado assim que a sessão fica conhecida, e não na
+    // abertura do app: antes do login não existe conta, e dados de duas
+    // contas não podem compartilhar o mesmo escopo no mesmo terminal.
+    _gateway?.bindSession(scope: scope);
+    _syncService?.start();
   }
 
   bool _canCache(String path) {
@@ -1082,6 +1426,9 @@ class ApiClient {
     if (scope != null) await _offlineStore.retryNow(scope: scope);
     _retryTimer?.cancel();
     await _flushPending();
+    // A fila legada (`offline_outbox`) só existe para entregar o que ficou
+    // pendente antes desta versão. A fila operacional é a nova `sync_queue`.
+    await _syncService?.syncNow();
   }
 
   /// IDs temporários que já receberam um ID definitivo no servidor.
@@ -1094,27 +1441,86 @@ class ApiClient {
   /// Acrescenta campos ao corpo de uma mutação que ainda está na fila,
   /// identificada pelo `queue_id` devolvido em `_offline_queue_id` na
   /// resposta otimista. Sem efeito se ela já foi enviada.
-  Future<void> patchQueuedBody(
+  /// Devolve `true` quando a operação AINDA estava na fila e foi corrigida.
+  ///
+  /// `false` significa que ela já subiu — quem chama precisa saber disso: é a
+  /// diferença entre "eu imprimo esta comanda" e "o backend vai imprimir".
+  Future<bool> patchQueuedBody(
     String queueId,
     Map<String, dynamic> patch,
-  ) => _offlineStore.patchBody(queueId, patch);
+  ) async {
+    final gateway = _gateway;
+    if (gateway != null &&
+        gateway.scope != null &&
+        await gateway.queue.patchPayload(queueId, patch)) {
+      return true;
+    }
+    // Fila legada: só continua atendendo o que ficou pendente antes desta
+    // versão e as operações retransmitidas por um caixa secundário.
+    await _offlineStore.patchBody(queueId, patch);
+    return false;
+  }
 
-  Future<int> pendingOperations() async =>
-      (await _offlineStore.summary(scope: _activeScope)).total;
+  Future<int> pendingOperations() async {
+    final legacy = await _offlineStore.summary(scope: _activeScope);
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null) return legacy.total;
+    return legacy.total + (await gateway.queue.summary(scope: scope)).total;
+  }
 
   /// Operações da sessão atual, para a tela de revisão da fila.
+  ///
+  /// Junta as duas filas: a operacional (`sync_queue`) e a legada
+  /// (`offline_outbox`), que só continua existindo para entregar o que ficou
+  /// pendente antes desta versão. A tela de revisão precisa mostrar as duas —
+  /// uma venda presa na fila antiga é tão invisível quanto uma presa na nova.
   Future<List<Map<String, dynamic>>> outboxOperations({
     bool onlyBlocked = false,
   }) async {
     final scope = _activeScope;
     if (scope == null) return const [];
-    final items = await _offlineStore.pending(scope: scope, limit: 200);
+    final legacy = await _offlineStore.pending(scope: scope, limit: 200);
+    final gateway = _gateway;
+    final current = gateway == null || gateway.scope == null
+        ? const <Map<String, dynamic>>[]
+        : (await gateway.queue.entries(scope: scope)).map(_queueEntryAsOutbox);
+    final items = [...current, ...legacy];
     if (!onlyBlocked) return items;
     return items.where((item) => item['state'] == 'blocked').toList();
   }
 
+  /// Traduz uma entrada da fila operacional para o formato que a tela de
+  /// revisão já sabe desenhar.
+  static Map<String, dynamic> _queueEntryAsOutbox(SyncQueueEntry entry) => {
+    'queue_id': entry.operationId,
+    'scope': '',
+    'method': entry.method,
+    'path': entry.path,
+    'query': entry.query,
+    'body': entry.payload,
+    'temporary_id': entry.entityId,
+    'idempotency_key': entry.operationId,
+    'created_at': entry.createdAt.toIso8601String(),
+    'state': switch (entry.status) {
+      SyncQueueStatus.failed => 'blocked',
+      SyncQueueStatus.pending => entry.attempts > 0 ? 'retry' : 'pending',
+      _ => 'pending',
+    },
+    'attempt_count': entry.attempts,
+    'next_attempt_at': entry.nextRetryAt?.toIso8601String(),
+    'last_error': entry.lastError,
+  };
+
   /// Recoloca uma operação bloqueada na fila após o operador corrigir a causa.
   Future<void> retryBlockedOperation(String queueId) async {
+    final entry = await _findQueueEntry(queueId);
+    if (entry != null) {
+      await _gateway!.queue.retryFailed(entry.id);
+      _syncService?.schedulePush(delay: Duration.zero);
+      await _publishStatus(_syncStatus.phase);
+      return;
+    }
     await _offlineStore.unblock(queueId);
     await _publishStatus(_syncStatus.phase);
     _scheduleFlush();
@@ -1122,9 +1528,26 @@ class ApiClient {
 
   /// Descarta uma operação bloqueada. A remoção é definitiva e registrada.
   Future<bool> discardBlockedOperation(String queueId) async {
+    final entry = await _findQueueEntry(queueId);
+    if (entry != null) {
+      final removed = await _gateway!.queue.discardFailed(entry.id);
+      if (removed) await _publishStatus(_syncStatus.phase);
+      return removed;
+    }
     final removed = await _offlineStore.discardBlocked(queueId);
     if (removed) await _publishStatus(_syncStatus.phase);
     return removed;
+  }
+
+  Future<SyncQueueEntry?> _findQueueEntry(String operationId) async {
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null) return null;
+    final entries = await gateway.queue.entries(scope: scope);
+    for (final entry in entries) {
+      if (entry.operationId == operationId) return entry;
+    }
+    return null;
   }
 
   Future<void> clearSession() async {
@@ -1133,6 +1556,8 @@ class ApiClient {
     _lastAccessToken = null;
     _activeScope = null;
     _retryAttempt = 0;
+    _syncService?.stop();
+    _gateway?.clearSession();
     await _publishStatus(NetworkSyncPhase.unknown);
   }
 
@@ -1141,11 +1566,56 @@ class ApiClient {
     _disposed = true;
     _retryTimer?.cancel();
     _debounceTimer?.cancel();
+    // Os ciclos de sincronização param junto: um timer sobrevivente tentaria
+    // ler um banco já fechado no encerramento do aplicativo.
+    await _syncSnapshotSubscription?.cancel();
+    await _syncService?.dispose();
     _client.close();
     await _offlineStore.close();
     await _connectivityController.close();
     await _syncStatusController.close();
     await signals.close();
+  }
+}
+
+/// Adapta o [ApiClient] ao [SyncTransport] esperado pelo [SyncService].
+///
+/// A diferença para os métodos públicos é que aqui NÃO se passa pelo
+/// armazenamento local: este é o caminho que efetivamente fala com o backend.
+/// Sem essa separação, drenar a fila reentraria no gateway e a operação seria
+/// gravada de novo, gerando o laço descrito em §12.
+class _ApiSyncTransport implements SyncTransport {
+  const _ApiSyncTransport(this._api);
+
+  final ApiClient _api;
+
+  @override
+  Future<bool> ping() => _api.ping();
+
+  @override
+  Future<Map<String, dynamic>> send(
+    String method,
+    String path, {
+    Map<String, dynamic>? query,
+    Map<String, dynamic>? body,
+    String? idempotencyKey,
+  }) async {
+    try {
+      return await _api._requestWithSessionRecovery(
+        method,
+        path,
+        query: query,
+        body: body,
+        accessToken: _api._lastAccessToken,
+        operationId: idempotencyKey,
+      );
+    } on _NetworkUnavailable catch (error) {
+      throw TransientSyncFailure(
+        error.message,
+        retryAfter: error.retryAfter,
+        offline: error.isOffline,
+      );
+    }
   }
 }
 

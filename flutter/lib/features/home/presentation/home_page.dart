@@ -5,6 +5,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/value_formatters.dart';
@@ -16,6 +17,7 @@ import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../../core/widgets/supervisor_close_dialog.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../devices/domain/local_print_renderer.dart';
 import '../../devices/presentation/device_list_page.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
@@ -29,6 +31,7 @@ import '../../scale/presentation/scale_workstation_page.dart';
 import '../../settings/presentation/terminal_preferences_dialog.dart';
 import '../../sync/presentation/outbox_review_dialog.dart';
 import '../../scale/services/scale_window_launcher.dart';
+import '../../topology/data/local_topology_store.dart';
 import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
@@ -138,8 +141,9 @@ class _HomePageState extends State<HomePage> {
   late final PdvUpdateService updateService;
   PdvUpdateStatus versionStatus = const PdvUpdateStatus.checking();
 
-  /// Cópia local dos pedidos, com as edições offline já aplicadas.
-  final LocalOrderStore orderStore = LocalOrderStore();
+  /// Porta de entrada da tela para os pedidos guardados no banco do Caixa
+  /// Principal. Não é mais um banco à parte (ver [LocalOrderStore]).
+  late final LocalOrderStore orderStore = LocalOrderStore(api: api);
   StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
   StreamSubscription<void>? ordersSignalSubscription;
   StreamSubscription<String>? realtimeSignalSubscription;
@@ -425,6 +429,14 @@ class _HomePageState extends State<HomePage> {
       accountId: accountId,
       actorId: widget.controller.session!.user.id,
       restaurantId: selected,
+      // A chave de pareamento tem a mesma exigência do login: perder ela ao
+      // fechar o PDV desconecta todos os caixas secundários. Guarda nas mesmas
+      // camadas duráveis, incluindo o banco operacional.
+      store: LocalTopologyStore(
+        secretStorage: SecureTopologySecretStorage(
+          valueStore: widget.controller.repository.credentials,
+        ),
+      ),
     );
     try {
       await service.start();
@@ -478,6 +490,13 @@ class _HomePageState extends State<HomePage> {
       restaurants = bootstrap.restaurants;
       selectedRestaurantId = bootstrap.selectedRestaurantId;
       widget.controller.setActiveRestaurant(selectedRestaurantId);
+      // O banco local precisa saber de qual unidade são os dados que ele
+      // sincroniza, e o fechamento offline precisa da taxa de serviço
+      // cadastrada — sem isso o total calculado aqui não bateria com o do
+      // servidor quando a operação subisse.
+      api.localStore
+        ?..bindRestaurant(selectedRestaurantId)
+        ..serviceFeePercent = defaultServiceFeePercent;
       await widget.controller.repository.cashAuth?.trySync(
         widget.controller.session!,
         restaurantId: selectedRestaurantId,
@@ -527,7 +546,11 @@ class _HomePageState extends State<HomePage> {
                   }.contains('${item?['movement_type']}'),
               orElse: () => null,
             );
-        cashSessionFromCache = currentSession['_offline_cache'] == true;
+        // A leitura agora vem sempre do banco local (§3); o que interessa
+        // avisar é quando ela não pôde ser confirmada com o servidor.
+        cashSessionFromCache =
+            currentSession['_local_first'] == true &&
+            !api.syncStatus.hasConnection;
       } on ApiException catch (error) {
         // 404 significa "nenhum caixa aberto". Sem rede e sem cache prévio o
         // terminal também não sabe o estado do caixa; em ambos os casos ele
@@ -560,6 +583,12 @@ class _HomePageState extends State<HomePage> {
         // de rede depois não impeça de reabrir um pedido lançado em outro
         // caixa. Fora do caminho crítico: o operador não espera por isso.
         unawaited(_warmOrdersCache());
+        // Carga completa do catálogo operacional em segundo plano (§24): a
+        // tela já está utilizável e não espera por ela.
+        final restaurantForSync = restaurantId;
+        if (restaurantForSync != null) {
+          unawaited(api.syncService?.pullAll(restaurantId: restaurantForSync));
+        }
         if (restaurantId != null &&
             topologyService?.config?.mode != LocalTopologyMode.client) {
           deviceAgent.start(token: token, restaurantId: restaurantId!);
@@ -776,33 +805,25 @@ class _HomePageState extends State<HomePage> {
     await _reloadOrders();
   }
 
-  /// Busca a lista com os filtros atuais, caindo para o cache quando sem rede.
+  /// Busca a lista com os filtros atuais.
+  ///
+  /// A consulta é servida pelo armazenamento local (§3), que já traz tanto os
+  /// pedidos confirmados quanto os que ainda estão na fila — não há mais o
+  /// vai-e-vem de "buscar no servidor, gravar, reler de cada pedido" que
+  /// existia para não apagar da tela um lançamento offline.
   Future<void> _reloadOrders() async {
     final scope = api.sessionScope;
     try {
       final loaded = await _list('/orders/', query: _ordersServerQuery);
-      final ofRestaurant = loaded
+      orders = loaded
           .where((item) => '${item['restaurant']}' == restaurantId)
+          .where(_matchesStatusFilter)
           .toList();
-      if (scope != null) {
-        await orderStore.saveAllFromServer(ofRestaurant, scope: scope);
-        // A ordem e a seleção vêm do servidor, mas cada pedido é relido do
-        // store para não apagar da tela uma edição feita offline que ainda
-        // não subiu. Reler a lista inteira do store desfaria o filtro.
-        final merged = <Map<String, dynamic>>[];
-        for (final order in ofRestaurant) {
-          final stored = await orderStore.read('${order['id']}', scope: scope);
-          merged.add(stored ?? order);
-        }
-        orders = merged.where(_matchesStatusFilter).toList();
-      } else {
-        orders = ofRestaurant.where(_matchesStatusFilter).toList();
-      }
-      ordersPartial = false;
+      // Sem conexão, um pedido antigo pode simplesmente ainda não ter descido
+      // para este terminal. A lista continua útil — o operador precisa achar o
+      // pedido aberto agora —, mas a tela avisa que pode faltar algo.
+      ordersPartial = !api.syncStatus.hasConnection;
     } catch (error) {
-      // Sem rede a busca vale só para o que já está guardado. A lista continua
-      // útil — o operador precisa achar o pedido aberto agora —, mas a tela
-      // avisa que o resultado pode estar incompleto.
       final localCopy = scope == null
           ? const <Map<String, dynamic>>[]
           : await _ordersFromStore(scope);
@@ -853,13 +874,6 @@ class _HomePageState extends State<HomePage> {
     for (final entry in mappings.entries) {
       await orderStore.replaceId(entry.key, entry.value, scope: scope);
     }
-  }
-
-  Future<void> _persistOfflineOrder() async {
-    final scope = api.sessionScope;
-    final order = activeOrder;
-    if (scope == null || order == null) return;
-    activeOrder = await orderStore.saveLocal(order, scope: scope);
   }
 
   /// Carrega o pedido para edição/pagamento, com o que houver disponível.
@@ -1338,13 +1352,9 @@ class _HomePageState extends State<HomePage> {
                           // restaurante e aprova — sem precisar de login de gerente.
                           if (cashMode) {
                             try {
-                              cashSession = await api.post(
-                                '/cash-register/${cashSession!['id']}/approve/',
-                                body: {
-                                  'reason': reason.text.trim(),
-                                  'cash_password': cashPassword.text,
-                                },
-                                accessToken: token,
+                              cashSession = await _approveWithCashPassword(
+                                reason: reason.text.trim(),
+                                password: cashPassword.text,
                               );
                               if (dialogContext.mounted) {
                                 Navigator.pop(dialogContext);
@@ -1821,6 +1831,12 @@ class _HomePageState extends State<HomePage> {
               '/orders/open-command/',
               body: {'command': command['id']},
               accessToken: token,
+              // Mesa e comanda só existem na tela; o repositório precisa
+              // delas para montar o pedido local completo.
+              localContext: {
+                'command': command,
+                'table': ?selectedTable,
+              },
             );
       activeOrder = _completeOfflineOrder(
         order,
@@ -1829,14 +1845,10 @@ class _HomePageState extends State<HomePage> {
         table: selectedTable,
       );
       if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
         command['status'] = 'occupied';
         command['current_order_id'] = activeOrder!['id'];
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
       }
+      await _refreshOrder();
       flowStep = 'order';
     });
     // Fora do `_work` acima de propósito: ele marca `busy`, e o vínculo da
@@ -2225,43 +2237,25 @@ class _HomePageState extends State<HomePage> {
         accessToken: token,
       );
       activeOrder = _completeOfflineOrder(activeOrder!, type: type);
-      if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
-      }
+      await _refreshOrder();
       flowStep = 'order';
     });
   }
 
+  /// Relê o pedido da fonte operacional local.
+  ///
+  /// `api.get` é offline-first: responde do SQLite na hora e reconcilia com o
+  /// servidor em paralelo (§3). Por isso não há mais dois caminhos aqui — o
+  /// pedido criado offline e o pedido vindo do servidor moram no mesmo lugar.
   Future<void> _refreshOrder() async {
     if (activeOrder == null) return;
-    if (_isOfflinePending(activeOrder) ||
-        '${activeOrder!['id']}'.startsWith('offline-')) {
-      final items = activeOrder!['items'] as List? ?? orderItems;
-      orderItems = items.cast<Map<String, dynamic>>();
-      if (mounted) setState(() {});
-      return;
-    }
-    final scope = api.sessionScope;
     try {
-      final fresh = await api.get(
+      activeOrder = await api.get(
         '/orders/${activeOrder!['id']}/',
         accessToken: token,
       );
-      activeOrder = scope == null
-          ? fresh
-          : await orderStore.saveFromServer(fresh, scope: scope);
     } on ApiException catch (error) {
-      // Sem rede, a cópia local é a versão boa: ela tem as edições que ainda
-      // não subiram. Esvaziar a tela aqui perderia o trabalho do operador.
       if (!error.isConnectivity) rethrow;
-      final local = scope == null
-          ? null
-          : await orderStore.read('${activeOrder!['id']}', scope: scope);
-      if (local != null) activeOrder = local;
       if (mounted) _warnLocalOrderData();
     }
     final items = activeOrder!['items'] as List? ?? [];
@@ -2288,58 +2282,6 @@ class _HomePageState extends State<HomePage> {
       table: table,
       command: command,
     );
-  }
-
-  /// Registra o item lançado sem rede na memória **e** no disco.
-  ///
-  /// Guardar só em memória fazia a edição sumir ao sair da tela e voltar: a
-  /// releitura pegava a cópia antiga, que não conhecia o item.
-  Future<void> _addOfflineItem(
-    Map<String, dynamic> response,
-    Map<String, dynamic> product, {
-    required double quantity,
-    String customerNote = '',
-  }) async {
-    final item = OrderPresenter.offlineItem(
-      response: response,
-      product: product,
-      quantity: quantity,
-      customerNote: customerNote,
-    );
-    orderItems = [...orderItems, item];
-    activeOrder = OrderPresenter.withItems(activeOrder!, orderItems);
-
-    final scope = api.sessionScope;
-    if (scope != null) {
-      final persisted = await orderStore.addItem(
-        '${activeOrder!['id']}',
-        item,
-        scope: scope,
-      );
-      // O store recalcula os totais; usar o resultado dele mantém a tela e o
-      // disco com exatamente o mesmo valor.
-      if (persisted != null) activeOrder = persisted;
-    }
-    if (mounted) setState(() {});
-  }
-
-  /// Marca o item como cancelado na cópia local.
-  Future<void> _voidOfflineItem(String itemId) async {
-    final scope = api.sessionScope;
-    final order = activeOrder;
-    if (scope == null || order == null) return;
-    final persisted = await orderStore.voidItem(
-      '${order['id']}',
-      itemId,
-      scope: scope,
-    );
-    if (persisted == null) return;
-    activeOrder = persisted;
-    orderItems = (persisted['items'] as List? ?? const [])
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['status'] != 'voided')
-        .toList();
-    if (mounted) setState(() {});
   }
 
   Future<void> _configureProduct(Map<String, dynamic> product) async {
@@ -2377,7 +2319,7 @@ class _HomePageState extends State<HomePage> {
     final config = await showProductConfigDialog(context, product);
     if (config == null) return;
     await _work(() async {
-      final response = await api.post(
+      await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
@@ -2395,16 +2337,9 @@ class _HomePageState extends State<HomePage> {
         },
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        _addOfflineItem(
-          response,
-          product,
-          quantity: config.quantity.roundToDouble(),
-          customerNote: config.customerNote,
-        );
-      } else {
-        await _refreshOrder();
-      }
+      // O item já foi lançado e os totais recalculados pelo
+      // `OrderRepository`; a tela apenas relê o pedido do banco local.
+      await _refreshOrder();
     });
   }
 
@@ -2626,7 +2561,7 @@ class _HomePageState extends State<HomePage> {
     );
     if (accepted != true) return;
     await _work(() async {
-      final response = await api.post(
+      await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
@@ -2640,16 +2575,7 @@ class _HomePageState extends State<HomePage> {
         },
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        _addOfflineItem(
-          response,
-          product,
-          quantity: weight,
-          customerNote: note.text.trim(),
-        );
-      } else {
-        await _refreshOrder();
-      }
+      await _refreshOrder();
     });
   }
 
@@ -2676,12 +2602,90 @@ class _HomePageState extends State<HomePage> {
         body: {'reason': reason},
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        await _voidOfflineItem('${item['id']}');
-      } else {
-        await _refreshOrder();
+      // Item que já estava na produção precisa de cupom no setor para a
+      // cozinha parar de fazê-lo. Quem imprime segue a mesma regra da comanda:
+      // se a operação subiu, o backend cria o `PrintJob`; se ficou na fila,
+      // quem imprime é este terminal — senão o prato continuaria sendo feito
+      // depois de o cliente desistir.
+      if (inProduction) {
+        await _printCancellationIfQueued(item, reason, response);
       }
+      await _refreshOrder();
     });
+  }
+
+  /// Imprime o cupom de cancelamento aqui quando a operação não chegou ao
+  /// servidor.
+  ///
+  /// Reivindica a impressão marcando o corpo AINDA enfileirado antes de mandar
+  /// papel: se a operação subir nesse instante, a marcação falha e quem
+  /// imprime é o backend. É a mesma trava que impede a comanda de cozinha de
+  /// sair duas vezes.
+  Future<void> _printCancellationIfQueued(
+    Map<String, dynamic> item,
+    String reason,
+    Map<String, dynamic> response,
+  ) async {
+    final operationId = '${response['_sync_operation_id'] ?? ''}';
+    if (operationId.isEmpty) return;
+    final janela = api.syncStatus.hasConnection
+        ? const Duration(seconds: 3)
+        : const Duration(milliseconds: 400);
+    if (await api.awaitDelivery(operationId, timeout: janela)) return;
+    if (!await api.patchQueuedBody(operationId, {'offline_printed': true})) {
+      return;
+    }
+    final printed = await _printCancellationTicket(item, reason);
+    if (!printed) {
+      await api.patchQueuedBody(operationId, {'offline_printed': false});
+    }
+  }
+
+  /// Monta e imprime o cupom de cancelamento nas impressoras do setor do
+  /// produto. Devolve `true` se pelo menos uma aceitou.
+  Future<bool> _printCancellationTicket(
+    Map<String, dynamic> item,
+    String reason,
+  ) async {
+    final order = activeOrder;
+    if (order == null) return false;
+    final text = LocalPrintRenderer.cancellationTicket(
+      order: order,
+      item: item,
+      reason: reason,
+      table: selectedTable,
+      command: selectedCommand,
+      operatorName: widget.controller.session?.user.name ?? '',
+    );
+    final product = products.cast<Map<String, dynamic>?>().firstWhere(
+      (candidate) => '${candidate?['id']}' == '${item['product']}',
+      orElse: () => null,
+    );
+    final sector = '${product?['sector'] ?? ''}';
+    var printed = false;
+    for (final printer in await _list(
+      '/printers/',
+      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+    )) {
+      // Mesma regra da comanda: o cupom sai no setor que recebeu o item. Um
+      // produto sem setor, ou um setor sem impressora, simplesmente não gera
+      // cupom — sem erro, como no backend.
+      if (sector.isEmpty || '${printer['sector'] ?? ''}' != sector) continue;
+      try {
+        // O cupom entra na fila local: mesmo que esta impressora esteja sem
+        // papel agora, ele sai quando ela voltar.
+        if ((await deviceAgent.enqueueLocalPrint(
+          printer: printer,
+          jobType: 'kitchen_cancel',
+          content: text,
+        )).accepted) {
+          printed = true;
+        }
+      } catch (_) {
+        // Outra impressora do setor ainda pode aceitar.
+      }
+    }
+    return printed;
   }
 
   Future<void> _cancelOrder() async {
@@ -2783,41 +2787,48 @@ class _HomePageState extends State<HomePage> {
     List<Map<String, dynamic>> pendingItems,
   ) async {
     final batchSerial = OrderPresenter.generateBatchSerial();
-    if (api.syncStatus.phase == NetworkSyncPhase.offline) {
-      final printed = await _printKitchenTicketsOffline(
-        pendingItems,
-        batchSerial,
-      );
-      return api.post(
-        '/orders/${activeOrder!['id']}/send-to-kitchen/',
-        body: {
-          'client_batch_serial': batchSerial,
-          if (printed) 'offline_printed': true,
-        },
-        accessToken: token,
-      );
-    }
     final response = await api.post(
       '/orders/${activeOrder!['id']}/send-to-kitchen/',
       body: {'client_batch_serial': batchSerial},
       accessToken: token,
     );
-    if (_isOfflinePending(response)) {
-      // Corrida rara: a conexão caiu entre o check acima e o POST, então a
-      // fila já guardou a chamada sem a flag `offline_printed`. Sem corrigir
-      // o corpo já enfileirado, quando ele enfim sincronizasse o backend não
-      // saberia que a comanda já saiu aqui e criaria um PrintJob novo — que o
-      // agente local imprimiria de novo sozinho assim que a rede voltasse
-      // ("impressão automática duplicada"). Imprime local e, se deu certo,
-      // marca a MESMA operação já na fila como já impressa.
-      final printed = await _printKitchenTicketsOffline(
-        pendingItems,
-        batchSerial,
-      );
-      final queueId = '${response['_offline_queue_id'] ?? ''}';
-      if (printed && queueId.isNotEmpty) {
-        await api.patchQueuedBody(queueId, {'offline_printed': true});
-      }
+    final operationId = '${response['_sync_operation_id'] ?? ''}';
+    // Sem operação na fila, quem executou foi o servidor (ou o Caixa
+    // Principal, num caixa secundário): o `PrintJob` já existe lá.
+    if (operationId.isEmpty) return response;
+
+    // Quem imprime a comanda não pode ser decidido por um palpite sobre a
+    // conexão. Antes a escolha era feita ANTES do POST, olhando o último
+    // estado conhecido da rede; com o PDV offline-first toda escrita passa
+    // pela fila, e um estado velho levava aos dois piores resultados
+    // possíveis: duas comandas para a mesma rodada, ou nenhuma. Agora a
+    // pergunta é factual — a operação chegou ao servidor?
+    // Com a rede de pé, três segundos são de sobra para a fila entregar. Com
+    // ela reconhecidamente fora, esperar tanto só atrasaria a cozinha — mas a
+    // pergunta continua sendo feita, porque o indicador pode estar um
+    // instante atrás da realidade.
+    final janela = api.syncStatus.hasConnection
+        ? const Duration(seconds: 3)
+        : const Duration(milliseconds: 400);
+    if (await api.awaitDelivery(operationId, timeout: janela)) return response;
+
+    // Ela continua na fila. Reivindica a impressão marcando o corpo ANTES de
+    // imprimir: se a operação subir neste instante, a marcação falha e quem
+    // imprime é o backend. Sem isso, a janela entre imprimir e marcar deixava
+    // sair a segunda comanda.
+    final claimed = await api.patchQueuedBody(operationId, {
+      'offline_printed': true,
+    });
+    if (!claimed) return response;
+
+    final printed = await _printKitchenTicketsOffline(
+      pendingItems,
+      batchSerial,
+    );
+    if (!printed) {
+      // Não saiu papel aqui. Devolve a impressão ao backend, senão a cozinha
+      // ficaria sem comanda agora e também quando a fila sincronizasse.
+      await api.patchQueuedBody(operationId, {'offline_printed': false});
     }
     return response;
   }
@@ -2849,8 +2860,18 @@ class _HomePageState extends State<HomePage> {
     Object? lastFailure;
     for (final ticket in tickets) {
       try {
-        await deviceAgent.printForPrinter(ticket.printer, ticket.text);
-        printedAny = true;
+        // Pela fila local: uma impressora sem papel agora não perde a
+        // comanda — ela sai assim que o papel voltar, sem depender de um
+        // evento do servidor que, offline, nunca chega.
+        // `accepted`, não `printed`: com o cupom na fila, este terminal já é
+        // o responsável — mesmo que a impressora só aceite daqui a pouco.
+        if ((await deviceAgent.enqueueLocalPrint(
+          printer: ticket.printer,
+          jobType: 'kitchen',
+          content: ticket.text,
+        )).accepted) {
+          printedAny = true;
+        }
       } catch (error) {
         // Uma impressora falhar não pode travar as outras.
         lastFailure = error;
@@ -2958,11 +2979,9 @@ class _HomePageState extends State<HomePage> {
             .where((item) => item['status'] == 'pending')
             .toList();
         if (pending.isEmpty) return <String, dynamic>{};
-        final kitchenResponse = await _sendPendingItemsToKitchen(pending);
-        if (_isOfflinePending(kitchenResponse)) {
-          activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
-          await _persistOfflineOrder();
-        }
+        // O `OrderRepository` já marcou a rodada como enviada e gravou; a
+        // tela relê logo abaixo.
+        await _sendPendingItemsToKitchen(pending);
         return activeOrder ?? <String, dynamic>{};
       });
       if (!mounted) return;
@@ -2975,36 +2994,23 @@ class _HomePageState extends State<HomePage> {
         (item) => item['status'] == 'pending',
       );
       if (hasPendingItems) {
-        final kitchenResponse = await _sendPendingItemsToKitchen(
+        await _sendPendingItemsToKitchen(
           orderItems.where((item) => item['status'] == 'pending').toList(),
         );
-        if (_isOfflinePending(kitchenResponse)) {
-          activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
-          orderItems = (activeOrder!['items'] as List)
-              .cast<Map<String, dynamic>>();
-          await _persistOfflineOrder();
-        }
+        await _refreshOrder();
       }
-      final localClosed = OrderPresenter.closeOfflineOrder(
-        activeOrder!,
-        serviceFeeEnabled: chargeService,
-        serviceFeePercent: defaultServiceFeePercent,
-      );
-      final order = await api.post(
+      // O fechamento (taxa de serviço, desconto, total) é aplicado pelo
+      // `OrderRepository` com a MESMA conta usada aqui — `expected_total`
+      // acompanha para o servidor conferir quando a operação subir.
+      activeOrder = await api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
           'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
-          'expected_total': localClosed['total'],
         },
         accessToken: token,
       );
-      if (_isOfflinePending(order)) {
-        activeOrder = {...localClosed, ...order, 'id': activeOrder!['id']};
-        await _persistOfflineOrder();
-      } else {
-        activeOrder = order;
-      }
+      await _refreshOrder();
       return activeOrder!;
     });
     if (closed == null) return;
@@ -3057,8 +3063,12 @@ class _HomePageState extends State<HomePage> {
               ),
             );
       if (printerId == null) return;
-      final printJob = await _work(
-        () => api.post(
+      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => '${item?['id']}' == printerId,
+        orElse: () => null,
+      );
+      try {
+        final printJob = await api.post(
           '/orders/${order['id']}/print/',
           body: {
             'job_type': 'receipt',
@@ -3066,30 +3076,140 @@ class _HomePageState extends State<HomePage> {
             'manual_only': true,
           },
           accessToken: token,
-        ),
-      );
-      if (printJob == null) return;
-      final printer = printJob['printer'] as Map<String, dynamic>?;
-      if (printer == null) {
-        _error(
-          const ApiException('A impressora selecionada não foi encontrada.'),
         );
-        return;
+        final printer =
+            printJob['printer'] as Map<String, dynamic>? ?? chosen;
+        if (printer == null) {
+          _error(
+            const ApiException('A impressora selecionada não foi encontrada.'),
+          );
+          return;
+        }
+        await _work(() async {
+          await deviceAgent.printJobManually(printJob, printer);
+          return true;
+        });
+      } on ApiException catch (error) {
+        // Sem backend não há `PrintJob` para renderizar, mas o cliente está
+        // com a mão estendida esperando o comprovante. O cupom é montado aqui
+        // com o mesmo layout do servidor e sai na mesma impressora.
+        if (!error.isConnectivity || chosen == null) rethrow;
+        await _work(() async {
+          // Pela fila local: se a impressora estiver sem papel, o cupom
+          // espera e sai sozinho quando ela voltar, em vez de se perder.
+          final result = await deviceAgent.enqueueLocalPrint(
+            printer: chosen,
+            jobType: 'receipt',
+            content: await _localReceiptText(order),
+            barcodeValue: LocalPrintRenderer.commandBarcode(
+              order,
+              selectedCommand,
+            ),
+          );
+          // Quem pediu o recibo está olhando a impressora: o silêncio faria
+          // o operador achar que o papel vem e mandar o cliente embora.
+          if (!result.printed && mounted) {
+            showAppToast(
+              context,
+              result.accepted
+                  ? 'A impressora não respondeu agora. O recibo está na fila e '
+                        'sai assim que ela voltar.'
+                  : 'O recibo não pôde ser impresso. Confira a configuração '
+                        'da impressora.',
+              severity: AppErrorSeverity.warning,
+            );
+          }
+          return true;
+        });
       }
-      await _work(() async {
-        await deviceAgent.printJobManually(printJob, printer);
-        return true;
-      });
     } finally {
       if (mounted) setState(() => printingReceipt = false);
     }
   }
 
-  /// Operação fiscal separada da comanda: emite a NFC-e (POST /invoices/emit)
-  /// e, se conseguir, imprime o DANFE (POST /invoices/{id}/print). Exige
-  /// conexão real com o backend — `ApiClient._requiresOnline` já bloqueia o
-  /// enfileiramento offline dessas rotas, então uma falha aqui chega como
-  /// [ApiException] normal, tratada pelo [_error] de sempre.
+  /// Autoriza a divergência do caixa com a senha de ações do restaurante.
+  ///
+  /// Com rede, a senha vai ao servidor como sempre. Sem rede, ela é conferida
+  /// aqui contra o hash já sincronizado e o que sobe é uma **prova** de que
+  /// este terminal conhece esse hash — a senha em texto nunca é gravada na
+  /// fila. Sem isto, um caixa que fechasse com diferença ficava travado até a
+  /// internet voltar, com o operador impedido de encerrar o turno.
+  Future<Map<String, dynamic>> _approveWithCashPassword({
+    required String reason,
+    required String password,
+  }) async {
+    final sessionId = '${cashSession!['id']}';
+    final cashAuth = widget.controller.repository.cashAuth;
+    final restaurant = restaurantId;
+
+    if (api.syncStatus.hasConnection || cashAuth == null || restaurant == null) {
+      return api.post(
+        '/cash-register/$sessionId/approve/',
+        body: {'reason': reason, 'cash_password': password},
+        accessToken: token,
+      );
+    }
+
+    if (!await cashAuth.verify(password, restaurantId: restaurant)) {
+      throw const ApiException('Senha de ações do caixa inválida.');
+    }
+    final nonce = LocalId.uuid();
+    final proof = await cashAuth.passwordProof(
+      restaurantId: restaurant,
+      cashRegisterId: sessionId,
+      nonce: nonce,
+    );
+    if (proof == null) {
+      throw const ApiException(
+        'A senha de ações do caixa ainda não foi sincronizada neste '
+        'terminal. Conecte-se uma vez para autorizar sem internet.',
+      );
+    }
+    return api.post(
+      '/cash-register/$sessionId/approve/',
+      body: {
+        'reason': reason,
+        'cash_password_proof': proof,
+        'proof_nonce': nonce,
+      },
+      accessToken: token,
+      localContext: {
+        'approver_name': widget.controller.session?.user.name,
+      },
+    );
+  }
+
+  /// Monta o recibo do cliente com os dados que este terminal já tem.
+  ///
+  /// Restaurante, itens e recebimentos vêm do SQLite local, então o cupom sai
+  /// completo mesmo com a rede fora — inclusive os pagamentos que ainda estão
+  /// na fila.
+  Future<String> _localReceiptText(Map<String, dynamic> order) async {
+    final orderId = '${order['id']}';
+    final store = api.localStore;
+    final payments = store == null
+        ? registeredPayments
+        : await store.orders.payments(orderId);
+    return LocalPrintRenderer.customerReceipt(
+      order: order,
+      restaurant: selectedRestaurant,
+      payments: payments,
+      table: selectedTable,
+      command: selectedCommand,
+      customer: selectedCustomer,
+      operatorName: widget.controller.session?.user.name ?? '',
+    );
+  }
+
+  /// Operação fiscal separada da venda (§16): emite a NFC-e
+  /// (POST /invoices/emit) e, se conseguir, imprime o DANFE
+  /// (POST /invoices/{id}/print).
+  ///
+  /// A venda NÃO depende disto. Sem conexão, a emissão entra na fila fiscal e
+  /// o documento fica `PENDING` enquanto o pedido já está pago — antes, a
+  /// mesma situação devolvia um erro no meio do recebimento, como se a venda
+  /// tivesse falhado. A impressão do DANFE continua exigindo o servidor: sem
+  /// nota autorizada não há o que imprimir.
   ///
   /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
   /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
@@ -3125,6 +3245,21 @@ class _HomePageState extends State<HomePage> {
             : null,
       );
       if (invoice == null || !mounted) return;
+
+      // Emissão adiada (§16): a venda já está concluída e o documento entrou
+      // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
+      // quando a nota for autorizada.
+      if (invoice['_fiscal_pending'] == true) {
+        if (!silentIfUnconfigured) {
+          showAppToast(
+            context,
+            'Venda concluída. A NFC-e ficou pendente e será emitida assim que '
+            'a conexão com o provedor fiscal voltar.',
+            severity: AppErrorSeverity.warning,
+          );
+        }
+        return;
+      }
 
       if (invoice['emitted'] == false) {
         if (!silentIfUnconfigured) {
@@ -3217,18 +3352,10 @@ class _HomePageState extends State<HomePage> {
         '/orders/${activeOrder!['id']}/payments/',
         accessToken: token,
       );
-      final server =
-          ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
-              .cast<Map<String, dynamic>>();
-      if (response['_offline_cache'] != true) return server;
-      final local = (activeOrder?['offline_payments'] as List? ?? const [])
-          .whereType<Map>()
-          .map((value) => Map<String, dynamic>.from(value));
-      final ids = server.map((payment) => '${payment['id']}').toSet();
-      return [
-        ...server,
-        ...local.where((payment) => !ids.contains('${payment['id']}')),
-      ];
+      // A leitura já vem do banco local e traz tanto os recebimentos
+      // confirmados quanto os que ainda estão na fila (§3).
+      return ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
+          .cast<Map<String, dynamic>>();
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;
       return (activeOrder?['offline_payments'] as List? ?? registeredPayments)
@@ -3300,8 +3427,6 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _addSplitPayment() async {
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
-    final remainingBefore = remainingTotal;
-    final receivedBefore = paymentValue;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
@@ -3333,38 +3458,18 @@ class _HomePageState extends State<HomePage> {
           },
         },
         accessToken: token,
+        // O tipo da forma de pagamento decide se há troco; só a tela sabe
+        // qual foi escolhida.
+        localContext: {'payment_method': method},
       ),
     );
     if (result == null) return;
-    if (_isOfflinePending(result)) {
-      final change = method['method_type'] == 'cash'
-          ? (receivedBefore - remainingBefore).clamp(0, double.infinity)
-          : 0.0;
-      final applied = receivedBefore - change;
-      final optimisticPayment = {
-        ...result,
-        'payment_method_name': method['name'],
-        'method_type': method['method_type'],
-        'amount': applied.toStringAsFixed(2),
-        'change_amount': change.toStringAsFixed(2),
-        'received_amount': receivedBefore.toStringAsFixed(2),
-      };
-      registeredPayments = [...registeredPayments, optimisticPayment];
-      final paid = remainingTotal <= .009;
-      final scope = api.sessionScope;
-      if (scope != null && activeOrder != null) {
-        final persisted = await orderStore.patch('${activeOrder!['id']}', {
-          'offline_payments': registeredPayments
-              .where((payment) => payment['_offline_pending'] == true)
-              .toList(),
-          'payment_status': paid ? 'paid' : 'partial',
-          'status': paid ? 'paid' : 'awaiting_payment',
-          '_offline_pending': true,
-        }, scope: scope);
-        if (persisted != null) activeOrder = persisted;
-      }
-    } else {
-      registeredPayments = await _loadRegisteredPayments();
+    // O recebimento (valor aplicado, troco, situação de pagamento) é
+    // registrado pelo `OrderRepository` na mesma transação da fila; aqui só
+    // se relê o que ficou gravado.
+    await _refreshOrder();
+    registeredPayments = await _loadRegisteredPayments();
+    if (result['_queued_offline'] != true) {
       if (method['method_type'] == 'cash') {
         try {
           cashSession = await api.get(
@@ -3607,6 +3712,16 @@ class _HomePageState extends State<HomePage> {
             'notes': notes.text.trim(),
           },
           accessToken: token,
+          // Abrir caixa passou a funcionar sem internet (§30): o repositório
+          // precisa do nome do caixa e do operador para montar a sessão local
+          // completa enquanto a operação espera na fila.
+          localContext: {
+            'cash_station': stations.cast<Map<String, dynamic>?>().firstWhere(
+              (item) => '${item?['id']}' == stationId,
+              orElse: () => null,
+            ),
+            'operator_name': widget.controller.session?.user.name,
+          },
         );
         setState(() {});
         return cashSession;

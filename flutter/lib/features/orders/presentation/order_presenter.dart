@@ -377,10 +377,16 @@ abstract final class OrderPresenter {
   }
 
   static JsonMap withItems(JsonMap order, List<JsonMap> items) {
-    final subtotal = items.fold<double>(
-      0,
-      (total, item) => total + ValueFormatters.number(item['total_price']),
-    );
+    // Item cancelado continua na lista (a tela mostra o histórico e o servidor
+    // precisa saber do cancelamento), mas não entra na conta. A tela já
+    // passava só os ativos; o repositório passa a lista inteira, e sem este
+    // filtro o total ficava com o valor do item que o cliente desistiu.
+    final subtotal = items
+        .where((item) => item['status'] != 'voided')
+        .fold<double>(
+          0,
+          (total, item) => total + ValueFormatters.number(item['total_price']),
+        );
     final serviceFee = order['service_fee_enabled'] == false
         ? 0.0
         : ValueFormatters.number(order['service_fee']);

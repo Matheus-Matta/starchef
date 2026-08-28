@@ -3,6 +3,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
+import '../data/orders_repository.dart';
 
 /// Faixa que avisa sobre pendências: o que está esperando a conexão voltar, e
 /// o que o caixa recusou de vez.
@@ -242,4 +243,59 @@ class PendingBadge extends StatelessWidget {
       ],
     ),
   );
+}
+
+
+/// Aviso de que a tela está mostrando um retrato, não a verdade de agora.
+///
+/// Aparece quando o Caixa Principal não respondeu e a leitura saiu da cópia
+/// local. É o aviso que impede o erro mais caro do modo offline: lançar um
+/// item sobre um pedido que outro terminal já fechou.
+class StaleDataBanner extends StatelessWidget {
+  const StaleDataBanner({super.key, required this.origin, this.onRetry});
+
+  final ReadOrigin origin;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!origin.fromCache) return const SizedBox.shrink();
+    final at = origin.at;
+    final color = origin.stale ? AppColors.danger : AppColors.warning;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .12),
+          borderRadius: AppTheme.radius,
+          border: Border.all(color: color.withValues(alpha: .35)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.cloud_off_outlined, size: 18, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                at == null
+                    ? 'Caixa Principal fora do ar. Mostrando os últimos dados '
+                          'recebidos.'
+                    : 'Caixa Principal fora do ar. Dados de '
+                          '${_clock(at)} — pode ter mudado.',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+            if (onRetry != null)
+              TextButton(onPressed: onRetry, child: const Text('Tentar')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _clock(DateTime value) {
+    final local = value.toLocal();
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(local.hour)}:${two(local.minute)}';
+  }
 }

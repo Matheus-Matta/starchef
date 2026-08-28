@@ -142,6 +142,41 @@ def test_receipt_detalha_variacao_no_produto_e_adicional_com_valor(
 
 
 @pytest.mark.django_db
+def test_printer_test_connection_job_is_manual_only(
+    api_client, manager_user, account, restaurant, branch
+):
+    """A nota de teste não pode disparar sozinha pelo agente automático.
+
+    Sem `manual_only=True` no payload, o job (status RENDERED, um dos que o
+    LocalDeviceAgent varre automaticamente) saía impresso duas vezes: uma
+    pela tela de teste (que imprime e confirma na hora) e outra pelo mesmo
+    agente reagindo ao evento de tempo real desta MESMA criação.
+    """
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
+    # `test-connection` exige `CanUseOrManageDevices`; um manager comum não
+    # tem `devices.manage` por padrão.
+    manager_user.profile.profile_type = "owner"
+    manager_user.profile.branch = None
+    manager_user.profile.save(update_fields=["profile_type", "branch", "updated_at"])
+    printer = Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Caixa",
+        endpoint="Impressora Caixa",
+        is_active=True,
+    )
+
+    response = api_client.post(f"/api/v1/printers/{printer.id}/test-connection/")
+
+    assert response.status_code == 201, response.data
+    assert response.data["payload"]["manual_only"] is True
+    job = PrintJob.all_objects.get(pk=response.data["print_job_id"])
+    assert job.payload["manual_only"] is True
+    assert job.status == PrintJob.STATUS_RENDERED
+
+
+@pytest.mark.django_db
 def test_receipt_header_matches_table_and_command(account, restaurant, branch, table, command, manager_user):
     command.current_table = table
     command.save(update_fields=["current_table", "updated_at"])

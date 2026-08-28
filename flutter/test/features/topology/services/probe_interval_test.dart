@@ -83,6 +83,37 @@ void main() {
     return service;
   }
 
+  /// Abre o Caixa Principal numa porta realmente livre.
+  ///
+  /// A porta era escolhida por `microsecond % 90`, sem checar se estava
+  /// disponível: com três testes neste arquivo e outros arquivos abrindo
+  /// servidores em paralelo, a colisão era questão de tempo — e o sintoma era
+  /// um teste que falhava sozinho de vez em quando, tornando a suíte inútil
+  /// justamente quando ela deveria acusar um problema real.
+  Future<int> openPrincipal(
+    LocalTopologyService principal,
+    String secret,
+  ) async {
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = socket.port;
+      await socket.close();
+      await principal.reconfigure(
+        LocalTopologyConfig(
+          mode: LocalTopologyMode.principal,
+          nodeId: LocalTopologyStore.generateNodeId(),
+          port: port,
+          pairingSecret: secret,
+          trustedNetworkAcknowledged: true,
+        ),
+      );
+      if (principal.status.phase == LocalTopologyPhase.principalReady) {
+        return port;
+      }
+    }
+    fail('Nenhuma porta livre para abrir o Caixa Principal do teste.');
+  }
+
   test('sem o principal, o teste de conexão é frequente', () async {
     final service = serviceWith(
       apiWith(),
@@ -97,8 +128,6 @@ void main() {
 
   test('com o principal respondendo, o teste espaça e a leitura funciona', () async {
     final secret = LocalTopologyStore.generatePairingSecret();
-    final port = 47900 + (DateTime.now().microsecond % 90);
-
     // Caixa Principal de verdade, servindo do próprio ApiClient.
     final principalApi = apiWith(
       MockClient(
@@ -114,16 +143,7 @@ void main() {
       ),
     );
     final principal = serviceWith(principalApi, secret);
-    await principal.reconfigure(
-      LocalTopologyConfig(
-        mode: LocalTopologyMode.principal,
-        nodeId: LocalTopologyStore.generateNodeId(),
-        port: port,
-        pairingSecret: secret,
-        trustedNetworkAcknowledged: true,
-      ),
-    );
-    expect(principal.status.phase, LocalTopologyPhase.principalReady);
+    final port = await openPrincipal(principal, secret);
 
     // Caixa secundário apontando para ele.
     final client = serviceWith(apiWith(), secret);
@@ -150,22 +170,12 @@ void main() {
 
   test('o ritmo volta a acelerar quando o principal cai', () async {
     final secret = LocalTopologyStore.generatePairingSecret();
-    final port = 47800 + (DateTime.now().microsecond % 90);
-
     final principal = serviceWith(apiWith(MockClient((_) async {
       return http.Response('{}', 200, headers: {
         'content-type': 'application/json',
       });
     })), secret);
-    await principal.reconfigure(
-      LocalTopologyConfig(
-        mode: LocalTopologyMode.principal,
-        nodeId: LocalTopologyStore.generateNodeId(),
-        port: port,
-        pairingSecret: secret,
-        trustedNetworkAcknowledged: true,
-      ),
-    );
+    final port = await openPrincipal(principal, secret);
 
     final client = serviceWith(apiWith(), secret);
     await client.reconfigure(

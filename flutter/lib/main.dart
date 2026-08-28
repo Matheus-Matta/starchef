@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -8,16 +9,22 @@ import 'package:window_manager/window_manager.dart';
 import 'app/scale_window_app.dart';
 import 'app/starchef_app.dart';
 import 'core/config/app_config.dart';
+import 'core/data/payload_cipher.dart';
+import 'core/data/pdv_runtime.dart';
+import 'core/data/sqlite_secure_value_store.dart';
 import 'core/errors/app_error.dart';
 import 'core/errors/error_center.dart';
 import 'core/logging/app_logger.dart';
 import 'core/network/api_client.dart';
 import 'core/storage/app_paths.dart';
+import 'core/storage/durable_secure_store.dart';
 import 'core/storage/local_preferences.dart';
 import 'core/storage/session_store.dart';
 import 'core/update/pdv_auto_updater.dart';
 import 'features/auth/data/auth_repository.dart';
+import 'features/auth/data/offline_login_store.dart';
 import 'features/cash/data/cash_auth_repository.dart';
+import 'features/cash/data/cash_auth_store.dart';
 import 'features/scale/services/scale_window_launcher.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -117,11 +124,95 @@ Future<void> main(List<String> arguments) async {
   });
 
   final apiClient = ApiClient(baseUrl: config.apiBaseUrl);
+  // Núcleo operacional local (§24): SQLite, migrations, integridade, fila e
+  // sincronização. A interface não espera por nada disso — se houver um banco
+  // válido, o PDV abre e vende.
+  PdvRuntime? runtime;
+  try {
+    runtime = await PdvRuntime.start(
+      api: apiClient,
+      // O cifrador usa só o cofre do sistema: ele não pode depender do banco
+      // que a camada de credenciais em SQLite usa, ou uma leitura chamaria a
+      // outra em círculo.
+      cipherStore: DurableSecureStore(),
+    );
+  } catch (error, stackTrace) {
+    AppLogger.instance.error(
+      'pdv_runtime_falhou',
+      cause: error,
+      stackTrace: stackTrace,
+    );
+    errorCenter.report(
+      AppError(
+        title: 'Armazenamento operacional indisponível',
+        message:
+            'O banco local do PDV não pôde ser aberto. O terminal continua '
+            'funcionando pela rede, mas não conseguirá operar sem internet.',
+        severity: AppErrorSeverity.failure,
+        recommendedAction:
+            'Feche o PDV, confira o espaço em disco e as permissões da pasta '
+            'local e abra novamente.',
+        technicalDetails: '$error\n$stackTrace',
+        dedupeKey: 'pdv-runtime-unavailable',
+      ),
+    );
+  }
+  // Credenciais guardadas nas mesmas camadas duráveis dos dados de caixa.
+  //
+  // Em Ubuntu, o cofre do sistema falta com frequência (autostart sem sessão
+  // gráfica, keyring bloqueado, pacote sem Secret Service) e a cópia em
+  // arquivo ainda depende de `chmod` funcionar no volume do `$HOME`. Quando os
+  // dois falhavam, o operador perdia o login ao fechar o PDV e não conseguia
+  // entrar no dia seguinte. O banco operacional é a terceira camada — o mesmo
+  // que já guarda pedidos, caixa e fila de impressão.
+  final credentialFile = Platform.isLinux || Platform.isMacOS
+      ? OwnerProtectedFileValueStore()
+      : null;
+  final credentials = DurableSecureStore(
+    fallback: credentialFile,
+    enablePlatformFallback: credentialFile != null,
+    extraFallbacks: [
+      ?(runtime == null
+          ? null
+          : SqliteSecureValueStore(
+              database: runtime.database,
+              cipher: PayloadCipher(store: DurableSecureStore()),
+            )),
+    ],
+  );
   final repository = AuthRepository(
     apiClient: apiClient,
-    sessionStore: SecureSessionStore(initialSession: inheritedSession),
-    cashAuth: CashAuthRepository(apiClient: apiClient),
+    sessionStore: SecureSessionStore(
+      initialSession: inheritedSession,
+      valueStore: credentials,
+    ),
+    cashAuth: CashAuthRepository(
+      apiClient: apiClient,
+      store: CashAuthStore(valueStore: credentials),
+    ),
+    offlineLoginStore: SecureOfflineLoginStore(valueStore: credentials),
+    credentials: credentials,
   );
+
+  // O arquivo de credenciais existe, mas ficou com a permissão padrão do
+  // usuário. Continuar é melhor do que perder o login — e o operador precisa
+  // saber para corrigir a instalação.
+  if (credentialFile?.permissionsUnenforced == true) {
+    errorCenter.report(
+      AppError(
+        title: 'Credenciais gravadas sem permissão restrita',
+        message:
+            'O PDV guardou a sessão, mas não conseguiu restringir o acesso ao '
+            'arquivo. Outro usuário do mesmo computador pode conseguir lê-lo.',
+        severity: AppErrorSeverity.warning,
+        recommendedAction:
+            'Confira se o comando "chmod" está disponível e se a pasta local '
+            'fica num sistema de arquivos que aceita permissões (não FAT/exFAT).',
+        technicalDetails: 'Diretório: ${AppPaths.dataDirectory().path}',
+        dedupeKey: 'credenciais-sem-permissao-restrita',
+      ),
+    );
+  }
 
   Widget buildApp() => scaleWindow
       ? ScaleWindowApp(

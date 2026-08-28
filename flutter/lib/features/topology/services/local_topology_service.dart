@@ -267,6 +267,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     });
   }
 
+  @override
   Future<bool> probe() async {
     final current = _config;
     if (_closed || current?.mode != LocalTopologyMode.client) return false;
@@ -385,24 +386,35 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
-  /// Responde uma leitura pedida por um caixa secundário.
+  /// Responde uma leitura pedida por um caixa secundário ou aplicativo.
   ///
-  /// O principal serve do próprio `ApiClient`: se ele tiver rede, a resposta
-  /// é fresca e o cache dele se atualiza no caminho; se não tiver, sai do
-  /// cache dele. Nos dois casos os dois caixas enxergam a mesma coisa, que é
-  /// o ponto de existir um principal.
+  /// O principal serve do **próprio SQLite** (§8, §10): `api.get` é
+  /// offline-first, então a resposta sai do banco local na hora e a
+  /// reconciliação com a nuvem acontece em paralelo. É por isso que, com a
+  /// internet fora e a rede local de pé, o garçom continua enxergando o mesmo
+  /// pedido que o caixa.
   Future<Map<String, dynamic>> _serveRead(RelayRead request) async {
-    if (!_validReadPath(request.path)) {
+    final path = normalizeLocalPath(request.path);
+    if (!_validReadPath(path)) {
       throw const ApiException(
         'Leitura não autorizada no relay local.',
         statusCode: 400,
       );
     }
-    return api.get(
-      request.path,
-      query: request.query,
-      accessToken: accessToken,
-    );
+    return api.get(path, query: request.query, accessToken: accessToken);
+  }
+
+  /// Traduz o prefixo `/local/...` da API local (§10) para a rota de recurso
+  /// que o resto do sistema já conhece.
+  ///
+  /// `GET /local/orders` e `GET /orders/` são a mesma coisa: um alias mais
+  /// legível para quem escreve o cliente de um aparelho novo, sem criar um
+  /// segundo conjunto de rotas para manter.
+  static String normalizeLocalPath(String path) {
+    if (!path.startsWith('/local/')) return path;
+    final rest = path.substring('/local/'.length);
+    final normalized = rest.startsWith('/') ? rest.substring(1) : rest;
+    return normalized.endsWith('/') ? '/$normalized' : '/$normalized/';
   }
 
   /// Só rotas de leitura conhecidas, e sem travessia de caminho.
@@ -661,6 +673,51 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
         return;
       }
+      // API local do restaurante (§10). `GET /local/orders` e
+      // `POST /local/orders` são a mesma coisa que `/v1/read` e `/v1/relay`,
+      // com uma rota mais direta para quem escreve o cliente de um aparelho
+      // novo. Os dois caminhos passam pelo mesmo SQLite e pela mesma fila.
+      if (path.startsWith('/local/')) {
+        final resourcePath = normalizeLocalPath(path);
+        if (request.method == 'GET') {
+          final result = await _serveRead(
+            RelayRead(
+              path: resourcePath,
+              query: request.uri.queryParameters.isEmpty
+                  ? null
+                  : Map<String, dynamic>.from(request.uri.queryParameters),
+            ),
+          );
+          await _respond(request, HttpStatus.ok, {
+            'ok': true,
+            'result': result,
+          });
+          return;
+        }
+        final decodedLocal = body.isEmpty ? const {} : jsonDecode(body);
+        final payloadLocal = decodedLocal is Map
+            ? Map<String, dynamic>.from(decodedLocal)
+            : <String, dynamic>{};
+        final mutationLocal = RelayMutation(
+          method: request.method.toUpperCase(),
+          path: resourcePath,
+          // A chave de idempotência é do aparelho que pediu: repetir o mesmo
+          // POST depois de um timeout não pode criar dois pedidos (§7).
+          operationId:
+              request.headers.value('x-starchef-operation') ??
+              '${payloadLocal['operation_id'] ?? ''}',
+          query: request.uri.queryParameters.isEmpty
+              ? null
+              : Map<String, dynamic>.from(request.uri.queryParameters),
+          body: payloadLocal.isEmpty ? null : payloadLocal,
+        );
+        if (!_validMutationEnvelope(mutationLocal)) {
+          throw const FormatException('Envelope da operação local inválido.');
+        }
+        final result = await _serialRelay(mutationLocal, authenticated);
+        await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
+        return;
+      }
       if (request.method != 'POST' || path != '/v1/relay') {
         await _respond(
           request,
@@ -721,9 +778,22 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   }
 
   Future<Map<String, dynamic>> _serialRelay(
-    RelayMutation mutation,
+    RelayMutation rawMutation,
     _AuthenticatedNode authenticated,
   ) {
+    // O alias `/local/...` é resolvido em um lugar só: daqui para baixo
+    // existe apenas a rota de recurso, e o recibo de idempotência fica
+    // associado a ela — senão o mesmo pedido enviado pelos dois caminhos
+    // pareceria duas operações diferentes.
+    final mutation = rawMutation.path.startsWith('/local/')
+        ? RelayMutation(
+            method: rawMutation.method,
+            path: normalizeLocalPath(rawMutation.path),
+            operationId: rawMutation.operationId,
+            query: rawMutation.query,
+            body: rawMutation.body,
+          )
+        : rawMutation;
     if (_queuedRelays >= _maximumQueuedRelays) {
       throw ApiException(
         'O Caixa Principal está processando muitas operações locais.',
@@ -897,13 +967,13 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   }
 
   bool _validMutationEnvelope(RelayMutation mutation) {
-    final uri = Uri.tryParse(mutation.path);
+    final uri = Uri.tryParse(normalizeLocalPath(mutation.path));
     if (uri == null ||
         uri.hasScheme ||
         uri.hasAuthority ||
         uri.hasQuery ||
         uri.hasFragment ||
-        uri.path != mutation.path ||
+        uri.path != normalizeLocalPath(mutation.path) ||
         uri.pathSegments.contains('..')) {
       return false;
     }
@@ -915,7 +985,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final restaurantMatches =
         (bodyRestaurant.isEmpty || bodyRestaurant == _restaurantId) &&
         (queryRestaurant.isEmpty || queryRestaurant == _restaurantId);
-    return OfflineMutations.isRelayable(mutation.method, mutation.path) &&
+    return OfflineMutations.isRelayable(
+          mutation.method,
+          normalizeLocalPath(mutation.path),
+        ) &&
         restaurantMatches &&
         mutation.path.length <= 500 &&
         RegExp(r'^[A-Za-z0-9._:-]{8,160}$').hasMatch(mutation.operationId);

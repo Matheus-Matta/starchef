@@ -178,6 +178,8 @@ class CashRegisterViewSet(BaseTenantViewSet):
             result = approve_cash_operation(
                 cash_register=self.get_object(), user=request.user,
                 reason=request.data.get("reason", ""), movement=movement,
+                cash_password_proof=request.data.get("cash_password_proof"),
+                proof_nonce=request.data.get("proof_nonce", ""),
                 cash_password=request.data.get("cash_password") or None,
             )
         except ValidationError as exc:

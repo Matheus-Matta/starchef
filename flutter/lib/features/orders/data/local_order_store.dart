@@ -1,124 +1,56 @@
-import 'dart:convert';
-import 'dart:io';
+import '../../../core/data/local_id.dart';
+import '../../../core/data/order_repository.dart';
+import '../../../core/network/api_client.dart';
 
-import 'package:sqlite_async/sqlite_async.dart';
-
-import '../../../core/formatters/value_formatters.dart';
-import '../../../core/storage/app_paths.dart';
-
-/// Cópia local dos pedidos, com as alterações feitas sem rede já aplicadas.
+/// Acesso da tela de pedidos ao armazenamento operacional local.
 ///
-/// O cache do `ApiClient` guarda **respostas HTTP**. Isso basta para ler, mas
-/// não para editar: incluir um item offline alterava só a memória da tela, e
-/// ao sair e voltar o operador via o pedido antigo de novo — a resposta
-/// guardada não conhecia a mudança.
+/// Antes esta classe era um segundo banco SQLite (`local_orders.sqlite`) com o
+/// seu próprio esquema e a sua própria cópia das regras de total. Duas bases
+/// para o mesmo dado significavam duas verdades: o cache HTTP conhecia uma
+/// versão do pedido, este arquivo conhecia outra, e a fila de sincronização
+/// uma terceira.
 ///
-/// Este store guarda o **pedido**, não a resposta. As mutações offline são
-/// aplicadas aqui e os totais recalculados, então a tela mostra o mesmo antes
-/// e depois de navegar. A fila de sincronização continua sendo a fonte da
-/// verdade para o servidor; aqui fica o que o terminal precisa exibir enquanto
-/// a rede não volta.
+/// Agora é apenas a porta de entrada da tela para o [OrderRepository] — que
+/// grava no banco único do Caixa Principal (§1, §27). A assinatura foi
+/// preservada de propósito: as telas continuam chamando os mesmos métodos,
+/// sem saber que a implementação embaixo mudou.
 class LocalOrderStore {
-  LocalOrderStore({File? file}) : _file = file ?? _defaultFile() {
-    _database = SqliteDatabase(path: _file.path);
-    _ready = _initialize();
-  }
+  LocalOrderStore({required this.api});
 
-  /// Pedidos guardados por escopo; o suficiente para o movimento recente.
-  static const _maximumOrders = 200;
+  final ApiClient api;
 
-  final File _file;
-  late final SqliteDatabase _database;
-  late final Future<void> _ready;
-  bool _closed = false;
+  OrderRepository? get _repository => api.localStore?.orders;
 
-  static File _defaultFile() => AppPaths.dataFile('local_orders.sqlite');
-
-  Future<void> _initialize() async {
-    await _file.parent.create(recursive: true);
-    final migrations = SqliteMigrations()
-      ..createDatabase = SqliteMigration(1, _createSchema)
-      ..add(SqliteMigration(1, _createSchema));
-    await migrations.migrate(_database);
-  }
-
-  static Future<void> _createSchema(SqliteWriteContext tx) async {
-    await tx.execute('''
-      CREATE TABLE IF NOT EXISTS local_orders (
-        scope TEXT NOT NULL,
-        order_id TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        has_local_changes INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (scope, order_id)
-      )
-    ''');
-    await tx.execute('''
-      CREATE INDEX IF NOT EXISTS local_orders_recent_idx
-      ON local_orders(scope, updated_at DESC)
-    ''');
-  }
-
-  /// Guarda a versão vinda do servidor.
-  ///
-  /// Itens criados offline (id `offline-...`) que o servidor ainda não conhece
-  /// são preservados: eles estão na fila e sumiriam da tela até ela esvaziar,
-  /// dando ao operador a impressão de que o lançamento se perdeu.
+  /// Guarda a versão vinda do servidor preservando o que ainda não subiu.
   Future<Map<String, dynamic>> saveFromServer(
     Map<String, dynamic> order, {
     required String scope,
   }) async {
-    await _ready;
-    final id = '${order['id'] ?? ''}';
-    if (id.isEmpty) return order;
-
-    final stored = await read(id, scope: scope);
-    final pendingItems = stored == null
-        ? const <Map<String, dynamic>>[]
-        : _itemsOf(
-            stored,
-          ).where((item) => '${item['id']}'.startsWith('offline-')).toList();
-    final pendingPayments = stored == null
-        ? const <Map<String, dynamic>>[]
-        : _paymentsOf(stored)
-              .where((payment) => '${payment['id']}'.startsWith('offline-'))
-              .toList();
-
-    var merged = pendingItems.isEmpty
-        ? Map<String, dynamic>.from(order)
-        : _withItems(order, [..._itemsOf(order), ...pendingItems]);
-    if (pendingPayments.isNotEmpty) {
-      merged = {...merged, 'offline_payments': pendingPayments};
-    }
-    await _write(
-      merged,
-      scope: scope,
-      hasLocalChanges: pendingItems.isNotEmpty || pendingPayments.isNotEmpty,
-    );
-    return merged;
+    final repository = _repository;
+    if (repository == null) return order;
+    final record = await repository.applyRemote(order);
+    if (record != null) return record.toApiJson();
+    // Havia alteração local pendente: ela vale mais que a cópia do servidor,
+    // porque é o que o operador acabou de lançar e ainda está na fila.
+    final stored = await repository.read('${order['id'] ?? ''}');
+    return stored?.toApiJson() ?? order;
   }
 
-  /// Guarda vários pedidos de uma listagem.
   Future<void> saveAllFromServer(
     List<Map<String, dynamic>> orders, {
     required String scope,
   }) async {
-    for (final order in orders) {
-      await saveFromServer(order, scope: scope);
-    }
+    final repository = _repository;
+    if (repository == null) return;
+    await repository.applyRemoteList(orders);
   }
 
   Future<Map<String, dynamic>?> read(
     String orderId, {
     required String scope,
   }) async {
-    await _ready;
-    final row = await _database.getOptional(
-      'SELECT payload FROM local_orders WHERE scope = ? AND order_id = ?',
-      [scope, orderId],
-    );
-    if (row == null) return null;
-    return _decode(row['payload']);
+    final record = await _repository?.read(orderId);
+    return record?.toApiJson();
   }
 
   /// Pedidos guardados, do mais recente para o mais antigo.
@@ -126,75 +58,10 @@ class LocalOrderStore {
     required String scope,
     int limit = 50,
   }) async {
-    await _ready;
-    final rows = await _database.getAll(
-      '''
-      SELECT payload FROM local_orders
-      WHERE scope = ?
-      ORDER BY updated_at DESC
-      LIMIT ?
-      ''',
-      [scope, limit],
-    );
-    return rows
-        .map((row) => _decode(row['payload']))
-        .whereType<Map<String, dynamic>>()
-        .toList();
-  }
-
-  /// Acrescenta um item lançado sem rede e recalcula os totais.
-  Future<Map<String, dynamic>> saveLocal(
-    Map<String, dynamic> order, {
-    required String scope,
-  }) async {
-    final updated = _touch(order);
-    await _write(updated, scope: scope, hasLocalChanges: true);
-    return updated;
-  }
-
-  /// Acrescenta um item lançado sem rede e recalcula os totais.
-  Future<Map<String, dynamic>?> addItem(
-    String orderId,
-    Map<String, dynamic> item, {
-    required String scope,
-  }) async {
-    final order = await read(orderId, scope: scope);
-    if (order == null) return null;
-    final updated = _touch(_withItems(order, [..._itemsOf(order), item]));
-    await _write(updated, scope: scope, hasLocalChanges: true);
-    return updated;
-  }
-
-  /// Marca um item como cancelado, do mesmo jeito que o servidor faria.
-  Future<Map<String, dynamic>?> voidItem(
-    String orderId,
-    String itemId, {
-    required String scope,
-  }) async {
-    final order = await read(orderId, scope: scope);
-    if (order == null) return null;
-    final items = _itemsOf(order)
-        .map(
-          (item) =>
-              '${item['id']}' == itemId ? {...item, 'status': 'voided'} : item,
-        )
-        .toList();
-    final updated = _touch(_withItems(order, items));
-    await _write(updated, scope: scope, hasLocalChanges: true);
-    return updated;
-  }
-
-  /// Aplica uma mudança de estado do pedido (fechado, pago, na cozinha).
-  Future<Map<String, dynamic>?> patch(
-    String orderId,
-    Map<String, dynamic> changes, {
-    required String scope,
-  }) async {
-    final order = await read(orderId, scope: scope);
-    if (order == null) return null;
-    final updated = _touch({...order, ...changes});
-    await _write(updated, scope: scope, hasLocalChanges: true);
-    return updated;
+    final repository = _repository;
+    if (repository == null) return const [];
+    final page = await repository.list(query: {'page': 1, 'page_size': limit});
+    return page.results;
   }
 
   /// Troca o ID temporário pelo real depois que a fila sincroniza.
@@ -203,136 +70,14 @@ class LocalOrderStore {
     String realId, {
     required String scope,
   }) async {
-    await _ready;
-    if (temporaryId.isEmpty || realId.isEmpty) return;
-    await _database.writeTransaction((tx) async {
-      await tx.execute(
-        '''
-        UPDATE local_orders
-        SET payload = replace(payload, ?, ?),
-            order_id = CASE WHEN order_id = ? THEN ? ELSE order_id END
-        WHERE scope = ?
-        ''',
-        [temporaryId, realId, temporaryId, realId, scope],
-      );
-    });
+    if (!LocalId.isTemporary(temporaryId)) return;
+    await _repository?.replaceId(temporaryId, realId);
   }
 
   Future<void> remove(String orderId, {required String scope}) async {
-    await _ready;
-    await _database.execute(
-      'DELETE FROM local_orders WHERE scope = ? AND order_id = ?',
-      [scope, orderId],
-    );
+    await _repository?.markRemoteDeleted(orderId);
   }
 
-  Future<void> _write(
-    Map<String, dynamic> order, {
-    required String scope,
-    required bool hasLocalChanges,
-  }) async {
-    await _ready;
-    final id = '${order['id'] ?? ''}';
-    if (id.isEmpty) return;
-    final storedAt = hasLocalChanges
-        ? DateTime.now().millisecondsSinceEpoch
-        : _serverUpdatedAt(order);
-    await _database.writeTransaction((tx) async {
-      await tx.execute(
-        '''
-        INSERT INTO local_orders(
-          scope, order_id, payload, updated_at, has_local_changes
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(scope, order_id) DO UPDATE SET
-          payload = excluded.payload,
-          updated_at = excluded.updated_at,
-          has_local_changes = excluded.has_local_changes
-        ''',
-        [scope, id, jsonEncode(order), storedAt, hasLocalChanges ? 1 : 0],
-      );
-      // Mantém o banco pequeno: um PDV não precisa do histórico inteiro para
-      // operar offline, e pedidos antigos raramente voltam a ser editados.
-      await tx.execute(
-        '''
-        DELETE FROM local_orders
-        WHERE scope = ? AND order_id IN (
-          SELECT order_id FROM local_orders
-          WHERE scope = ? AND has_local_changes = 0
-          ORDER BY updated_at DESC
-          LIMIT -1 OFFSET ?
-        )
-        ''',
-        [scope, scope, _maximumOrders],
-      );
-    });
-  }
-
-  /// Recalcula subtotal e total a partir dos itens ativos.
-  ///
-  /// Taxas e desconto vêm do servidor e são preservados: o terminal não tem
-  /// como recalcular a regra de serviço ou uma promoção aplicada lá.
-  static Map<String, dynamic> _withItems(
-    Map<String, dynamic> order,
-    List<Map<String, dynamic>> items,
-  ) {
-    final active = items
-        .where((item) => item['status'] != 'voided')
-        .toList(growable: false);
-    final subtotal = active.fold<double>(
-      0,
-      (sum, item) => sum + ValueFormatters.number(item['total_price']),
-    );
-    // Um pedido que teve a taxa retirada no fechamento não pode vê-la voltar
-    // no recálculo local — é assim que o teclado de pagamento acabava
-    // pré-preenchido com o valor cheio. Mesma regra de
-    // `OrderPresenter.withItems`.
-    final serviceFee = order['service_fee_enabled'] == false
-        ? 0.0
-        : ValueFormatters.number(order['service_fee']);
-    final deliveryFee = ValueFormatters.number(order['delivery_fee']);
-    final discount = ValueFormatters.number(order['discount']);
-    final total = subtotal + serviceFee + deliveryFee - discount;
-    return {
-      ...order,
-      'items': items,
-      'subtotal': subtotal.toStringAsFixed(2),
-      'total': (total < 0 ? 0.0 : total).toStringAsFixed(2),
-    };
-  }
-
-  static List<Map<String, dynamic>> _itemsOf(Map<String, dynamic> order) =>
-      (order['items'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-
-  static List<Map<String, dynamic>> _paymentsOf(Map<String, dynamic> order) =>
-      (order['offline_payments'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-
-  static Map<String, dynamic> _touch(Map<String, dynamic> order) => {
-    ...order,
-    'updated_at': DateTime.now().toUtc().toIso8601String(),
-  };
-
-  static int _serverUpdatedAt(Map<String, dynamic> order) =>
-      DateTime.tryParse(
-        '${order['updated_at'] ?? ''}',
-      )?.millisecondsSinceEpoch ??
-      DateTime.now().millisecondsSinceEpoch;
-
-  static Map<String, dynamic>? _decode(Object? raw) {
-    if (raw is! String || raw.isEmpty) return null;
-    final decoded = jsonDecode(raw);
-    return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
-  }
-
-  Future<void> close() async {
-    if (_closed) return;
-    _closed = true;
-    await _ready;
-    await _database.close();
-  }
+  /// O banco pertence ao runtime do PDV, não a esta tela.
+  Future<void> close() async {}
 }

@@ -54,9 +54,9 @@ class ProductViewSet(BaseTenantViewSet):
         account = getattr(self.request, "account", None)
         if account is None or not self.request.user.is_authenticated:
             return Product.all_objects.none()
-        queryset = (
+        queryset = self.soft_delete_scope(
             Product.all_objects
-            .filter(account=account, deleted_at__isnull=True)
+            .filter(account=account)
             .select_related("restaurant", "branch", "category", "sector")
             .prefetch_related("variations", "restaurants")
         )

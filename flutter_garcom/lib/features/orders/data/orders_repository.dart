@@ -1,8 +1,10 @@
-import '../../../core/network/api_client.dart';
+import 'dart:async';
+
 import '../../../core/network/api_exception.dart';
 import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/relay/relay_signature.dart';
+import '../../../core/storage/principal_cache.dart';
 import '../../auth/domain/waiter_session.dart';
 
 /// Pedidos do salão, sempre pela ótica do Caixa Principal.
@@ -18,20 +20,35 @@ import '../../auth/domain/waiter_session.dart';
 /// que o garçom for lançando em seguida — a falha aparece na hora, com a
 /// mensagem de conexão.
 ///
-/// **Leitura**: tenta o principal primeiro (é a mesma verdade que o caixa
-/// enxerga, e funciona com a internet da loja caída) e cai para o backend
-/// quando o principal não responde.
+/// **Leitura**: SEMPRE pelo principal, nunca pela API externa (§9). Ele
+/// responde do próprio SQLite, então o app enxerga exatamente a mesma verdade
+/// que o caixa — inclusive com a internet da loja caída. O caminho antigo caía
+/// para a nuvem quando o principal não respondia, e era justamente aí que o
+/// garçom via uma comanda desatualizada: a nuvem não conhecia os pedidos
+/// lançados desde a queda, e um item lançado sobre esse retrato ia parar no
+/// pedido errado. Sem principal, a leitura falha com o motivo na tela.
 class OrdersRepository {
   OrdersRepository({
-    required this.api,
     required this.principalClient,
     required this.gateway,
     required this.session,
     required this.principal,
-  });
+    PrincipalCache? cache,
+  }) : cache = cache ?? PrincipalCache();
 
-  final ApiClient api;
   final PrincipalClient principalClient;
+
+  /// Cópia local das últimas leituras confirmadas pelo principal. É o que
+  /// mantém o salão trabalhando quando o caixa cai (§9).
+  final PrincipalCache cache;
+
+  /// De onde veio a última leitura: do Caixa Principal ou da cópia local.
+  ///
+  /// A tela consulta logo depois de aguardar a chamada, no mesmo passo — a
+  /// interface é uma linha de execução só, então não há leitura de outra tela
+  /// no meio. Existe para o garçom saber que está olhando um retrato, e de
+  /// quando ele é.
+  ReadOrigin lastReadOrigin = const ReadOrigin.live();
   final RelayGateway gateway;
   final WaiterSession session;
 
@@ -268,6 +285,91 @@ class OrdersRepository {
     body: {'reason': reason},
   );
 
+  /// Formas de pagamento ativas do restaurante, servidas pelo Caixa Principal.
+  Future<List<Map<String, dynamic>>> paymentMethods() async {
+    final page = await _read(
+      '/payments/methods/',
+      query: {
+        'restaurant': session.user.restaurantId,
+        'is_active': true,
+        'page_size': 100,
+      },
+    );
+    return _rows(page);
+  }
+
+  /// Recebimentos já registrados no pedido.
+  Future<List<Map<String, dynamic>>> payments(String orderId) async {
+    final page = await _read('/orders/$orderId/payments/');
+    return _rows(page);
+  }
+
+  /// Sessão de caixa aberta, quando existe.
+  ///
+  /// Um recebimento em dinheiro precisa entrar em algum caixa: é o principal
+  /// quem sabe qual está aberto. Devolve `null` quando não há nenhum — o
+  /// aparelho continua podendo receber nas outras formas.
+  Future<Map<String, dynamic>?> currentCashRegister() async {
+    try {
+      final response = await _read(
+        '/cash-register/current/',
+        query: {'restaurant': session.user.restaurantId},
+      );
+      final id = '${response['id'] ?? ''}';
+      // Um caixa "aberto" segundo uma cópia velha pode já ter sido fechado.
+      // Aceitar isso autorizaria um recebimento em dinheiro numa sessão que
+      // não existe mais — melhor recusar a forma dinheiro do que registrar
+      // numa sessão errada.
+      if (id.isEmpty || response['_from_cache'] == true) return null;
+      return response;
+    } on ApiException {
+      return null;
+    } on PrincipalUnavailable {
+      return null;
+    }
+  }
+
+  /// Fecha a conta: aplica taxa de serviço e desconto e trava novos itens.
+  ///
+  /// Entra na fila se o caixa estiver fora do ar — o fechamento é uma decisão
+  /// do atendimento, não uma operação que precise do servidor na hora.
+  Future<Map<String, dynamic>> closeOrder({
+    required String orderId,
+    bool serviceFeeEnabled = true,
+    String discount = '0',
+  }) => _mutate(
+    method: 'POST',
+    path: '/orders/$orderId/close/',
+    kind: 'close_order',
+    summary: 'Fechar a conta',
+    body: {'service_fee_enabled': serviceFeeEnabled, 'discount': discount},
+  );
+
+  /// Registra um recebimento.
+  ///
+  /// O identificador do pagamento nasce aqui, antes de qualquer chamada: é ele
+  /// que o backend usa para deduplicar. Um reenvio depois de um timeout
+  /// devolve o mesmo recebimento em vez de cobrar duas vezes.
+  Future<Map<String, dynamic>> pay({
+    required String orderId,
+    required String paymentMethodId,
+    required String amount,
+    String? cashRegisterId,
+    String reference = '',
+  }) => _mutate(
+    method: 'POST',
+    path: '/orders/$orderId/pay/',
+    kind: 'pay_order',
+    summary: 'Receber $amount',
+    body: {
+      'payment_method': paymentMethodId,
+      'amount': amount,
+      'cash_register': ?cashRegisterId,
+      'client_payment_id': 'offline-${RelaySignature.randomId()}',
+      'metadata': {'reference': reference, 'source': 'flutter_garcom'},
+    },
+  );
+
   /// Manda para a cozinha — é aqui que o principal imprime. Entra na fila se
   /// o caixa estiver fora do ar: a impressão acontece assim que ele voltar.
   Future<Map<String, dynamic>> sendToKitchen(String orderId) => _mutate(
@@ -293,26 +395,43 @@ class OrdersRepository {
     body: body,
   );
 
+  /// Lê pelo Caixa Principal e guarda o resultado.
+  ///
+  /// Com o principal fora do ar, devolve a última resposta confirmada, marcada
+  /// com `_from_cache` e a idade — a tela avisa que o dado pode ter mudado. É
+  /// deliberadamente uma cópia velha e assumida, não um palpite: um pedido
+  /// aberto em outro terminal depois da queda não aparece aqui, e o garçom
+  /// precisa saber disso antes de lançar item em cima.
   Future<Map<String, dynamic>> _read(
     String path, {
     Map<String, dynamic>? query,
   }) async {
+    final key = PrincipalCache.keyFor(path, query);
     try {
-      return await principalClient.read(
+      final fresh = await principalClient.read(
         principal,
         session.identity,
         path: path,
         query: query,
       );
+      await cache.write(key, fresh);
+      lastReadOrigin = const ReadOrigin.live();
+      return fresh;
     } on PrincipalUnavailable {
-      return api.get(path, query: query, accessToken: session.accessToken);
-    } on ApiException catch (error) {
-      // Um erro vindo do backend através do principal já é a resposta final —
-      // repetir pela nuvem só daria o mesmo erro mais devagar.
-      if (error.statusCode != null) rethrow;
-      return api.get(path, query: query, accessToken: session.accessToken);
+      final cached = await cache.read(key);
+      if (cached == null) rethrow;
+      lastReadOrigin = ReadOrigin.cached(cached.updatedAt);
+      return {
+        ...cached.payload,
+        '_from_cache': true,
+        '_cached_at': cached.updatedAt.toIso8601String(),
+        '_cache_stale': cached.age > PrincipalCache.staleAfter,
+      };
     }
   }
+
+  /// Quando foi a última vez que este aparelho falou com o Caixa Principal.
+  Future<DateTime?> lastSyncedAt() => cache.newestUpdatedAt();
 
   static List<Map<String, dynamic>> _rows(Map<String, dynamic> page) {
     final results = page['results'] ?? page['data'];
@@ -344,4 +463,21 @@ class ResourcePage {
       hasMore: payload['next'] != null,
     );
   }
+}
+
+
+/// De onde veio a última leitura servida ao aplicativo.
+class ReadOrigin {
+  const ReadOrigin.live() : fromCache = false, at = null;
+  const ReadOrigin.cached(DateTime this.at) : fromCache = true;
+
+  /// A resposta veio da cópia local, porque o Caixa Principal não respondeu.
+  final bool fromCache;
+
+  /// Quando o Caixa Principal confirmou esse dado pela última vez.
+  final DateTime? at;
+
+  /// Velho o bastante para o salão ter mudado de verdade nesse meio-tempo.
+  bool get stale =>
+      at != null && DateTime.now().difference(at!) > PrincipalCache.staleAfter;
 }

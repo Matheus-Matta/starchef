@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -8,15 +10,18 @@ import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
 import 'orders_page.dart' show describeFailure;
+import 'payment_sheet.dart';
 import 'sync_banner.dart';
 import 'table_picker_sheet.dart';
 
 /// Um pedido aberto: o que já foi lançado, o que falta enviar e o que
 /// acrescentar.
 ///
-/// **Não há pagamento aqui de propósito.** Receber é do caixa: ele tem a
-/// gaveta, a maquininha e a impressora fiscal. O app do garçom para no envio
-/// para a cozinha.
+/// O aparelho também opera como **caixa secundário** (§8, §9): fecha a conta
+/// e registra recebimentos. Ele nunca fala com a nuvem — entrega a operação ao
+/// Caixa Principal, que grava no SQLite dele e sincroniza depois. O que
+/// continua sendo só do caixa físico é o que depende de hardware: gaveta,
+/// impressora fiscal e o dinheiro em espécie fora de uma sessão aberta.
 ///
 /// **Sem conexão com o Caixa Principal**, lançar item, cancelar item, enviar
 /// para a cozinha e vincular mesa ficam salvos no aparelho (ver
@@ -49,6 +54,14 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   bool _working = false;
   String? _error;
   int _lastPendingCount = 0;
+
+  /// De onde veio o pedido na tela: do Caixa Principal ou da cópia local.
+  ReadOrigin _origin = const ReadOrigin.live();
+
+  /// Recebimentos já registrados neste pedido, vistos pelo Caixa Principal.
+  List<Map<String, dynamic>> _payments = const [];
+  List<Map<String, dynamic>> _paymentMethods = const [];
+  bool _cashRegisterOpen = false;
 
   /// Id efetivamente usado para buscar/gravar este pedido. Começa igual a
   /// [OrderDetailPage.orderId] e é trocado, sozinho, pelo id real assim que
@@ -117,9 +130,13 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       if (!mounted) return;
       setState(() {
         _order = order;
+        _origin = widget.repository.lastReadOrigin;
         _loading = false;
         _lastPendingCount = _gateway.pendingFor(_effectiveOrderId).length;
       });
+      // Fora do caminho crítico: o pedido já está na tela e o garçom pode
+      // lançar itens enquanto o contexto de recebimento carrega.
+      unawaited(_loadCashierContext());
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -278,6 +295,126 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     );
   }
 
+  /// Total já recebido, somando o que o principal confirmou.
+  double get _paid =>
+      _payments.fold<double>(0, (total, item) => total + amount(item['amount']));
+
+  double get _remaining {
+    final missing = amount(_order?['total']) - _paid;
+    return missing < 0 ? 0 : missing;
+  }
+
+  /// Fecha a conta: aplica taxa de serviço e trava novos itens.
+  ///
+  /// A partir daqui o aparelho age como caixa secundário — a operação vai
+  /// para o Caixa Principal, que grava e sincroniza (§8).
+  Future<void> _closeOrder() async {
+    final chargeService = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Fechar a conta'),
+        content: const Text(
+          'A taxa de serviço entra no total? Depois de fechar, o pedido não '
+          'aceita novos itens.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Voltar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Sem taxa'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Com taxa'),
+          ),
+        ],
+      ),
+    );
+    if (chargeService == null) return;
+    await _work(
+      () => widget.repository.closeOrder(
+        orderId: _effectiveOrderId,
+        serviceFeeEnabled: chargeService,
+      ),
+      'Conta fechada. Falta receber.',
+    );
+  }
+
+  Future<void> _receivePayment() async {
+    // As formas de pagamento e a sessão de caixa só são consultadas aqui, no
+    // momento em que o operador vai receber. Buscá-las a cada abertura de tela
+    // custava três consultas ao caixa por pedido — caro no Wi-Fi do salão, e
+    // inútil enquanto o garçom está só lançando itens.
+    if (_paymentMethods.isEmpty) await _loadPaymentOptions();
+    if (!mounted) return;
+    if (_paymentMethods.isEmpty) {
+      _toast('Formas de pagamento indisponíveis: o caixa não respondeu.');
+      return;
+    }
+    final request = await showPaymentSheet(
+      context,
+      methods: _paymentMethods,
+      remaining: _remaining,
+      cashRegisterOpen: _cashRegisterOpen,
+    );
+    if (request == null || !mounted) return;
+    await _work(
+      () => widget.repository.pay(
+        orderId: _effectiveOrderId,
+        paymentMethodId: request.methodId,
+        amount: request.amount,
+        cashRegisterId: _cashRegisterId,
+        reference: request.reference,
+      ),
+      'Recebimento registrado em ${request.methodName}.',
+    );
+  }
+
+  String? _cashRegisterId;
+
+  /// Lê o que o recebimento precisa saber, sem prender a tela.
+  ///
+  /// Tudo vem do Caixa Principal: formas de pagamento, recebimentos já feitos
+  /// e a sessão de caixa aberta. Uma falha aqui não impede o garçom de
+  /// continuar lançando itens — só esconde o botão de receber.
+  Future<void> _loadCashierContext() async {
+    // Só depois de a conta fechar: enquanto o pedido está aberto o garçom está
+    // lançando item, e o que já foi recebido não muda nada na tela.
+    if ('${_order?['status']}' != 'awaiting_payment') return;
+    try {
+      final payments = await widget.repository.payments(_effectiveOrderId);
+      if (!mounted) return;
+      setState(() => _payments = payments);
+    } catch (_) {
+      // O caixa não respondeu: o pedido continua utilizável para lançamento.
+    }
+  }
+
+  /// Consulta o que só o Caixa Principal sabe: quais formas de pagamento
+  /// existem e qual sessão de caixa está aberta.
+  Future<void> _loadPaymentOptions() async {
+    try {
+      final methods = await widget.repository.paymentMethods();
+      final session = await widget.repository.currentCashRegister();
+      if (!mounted) return;
+      setState(() {
+        _paymentMethods = methods;
+        _cashRegisterId = session == null ? null : '${session['id']}';
+        _cashRegisterOpen = _cashRegisterId != null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _paymentMethods = const [];
+          _cashRegisterOpen = false;
+        });
+      }
+    }
+  }
+
   Future<void> _sendToKitchen() => _work(
     () => widget.repository.sendToKitchen(_effectiveOrderId),
     'Pedido enviado para produção e impressão.',
@@ -325,13 +462,32 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
           ? null
           : _Actions(
               total: order['total'],
+              paid: _paid,
               pending: pending,
               busy: _working,
               queued: sendQueued,
               onAdd: _addItem,
               onSend: (pending > 0 && !sendQueued) ? _sendToKitchen : null,
+              // Fechar só depois de mandar tudo para a produção: itens
+              // pendentes travariam na cozinha com a conta já fechada.
+              onClose:
+                  '${order['status']}' == 'open' &&
+                      pending == 0 &&
+                      !_effectiveOrderId.startsWith('offline-')
+                  ? _closeOrder
+                  : null,
+              onReceive:
+                  '${order['status']}' == 'awaiting_payment' &&
+                      _remaining > 0.009
+                  ? _receivePayment
+                  : null,
             ),
-      body: _buildBody(addPending, voidingItemIds),
+      body: Column(
+        children: [
+          StaleDataBanner(origin: _origin, onRetry: _loading ? null : _load),
+          Expanded(child: _buildBody(addPending, voidingItemIds)),
+        ],
+      ),
     );
   }
 
@@ -528,14 +684,20 @@ class _PendingAddTile extends StatelessWidget {
 class _Actions extends StatelessWidget {
   const _Actions({
     required this.total,
+    required this.paid,
     required this.pending,
     required this.busy,
     required this.queued,
     required this.onAdd,
     required this.onSend,
+    required this.onClose,
+    required this.onReceive,
   });
 
   final Object? total;
+
+  /// Já recebido, somando o que o Caixa Principal confirmou.
+  final double paid;
   final int pending;
   final bool busy;
 
@@ -543,6 +705,11 @@ class _Actions extends StatelessWidget {
   final bool queued;
   final VoidCallback onAdd;
   final VoidCallback? onSend;
+
+  /// Fechar a conta e receber: o aparelho operando como caixa secundário.
+  /// `null` quando a etapa não se aplica ao estado atual do pedido.
+  final VoidCallback? onClose;
+  final VoidCallback? onReceive;
 
   @override
   Widget build(BuildContext context) {
@@ -570,6 +737,19 @@ class _Actions extends StatelessWidget {
                 ),
               ],
             ),
+            if (paid > 0) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Text(
+                    'Recebido',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                  const Spacer(),
+                  Text(money(paid)),
+                ],
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [
@@ -607,6 +787,23 @@ class _Actions extends StatelessWidget {
                 ),
               ],
             ),
+            if (onClose != null || onReceive != null) ...[
+              const SizedBox(height: 10),
+              ShadButton.secondary(
+                onPressed: busy ? null : (onReceive ?? onClose),
+                enabled: !busy,
+                height: AppTheme.controlHeight,
+                leading: Icon(
+                  onReceive != null
+                      ? Icons.payments_outlined
+                      : Icons.receipt_long_outlined,
+                  size: 18,
+                ),
+                child: Text(
+                  onReceive != null ? 'Receber' : 'Fechar a conta',
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -310,7 +310,12 @@ class OrderViewSet(BaseTenantViewSet):
         """Void a pending item (cancel before sending to kitchen)."""
         try:
             item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
-            item = void_order_item(item, request.user, reason=request.data.get("reason", ""))
+            item = void_order_item(
+                item,
+                request.user,
+                reason=request.data.get("reason", ""),
+                offline_printed=bool(request.data.get("offline_printed")),
+            )
         except OrderItem.DoesNotExist:
             return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValidationError as exc:

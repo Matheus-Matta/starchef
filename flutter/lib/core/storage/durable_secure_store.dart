@@ -67,15 +67,42 @@ class OwnerProtectedFileValueStore implements SecureValueStore {
     await _chmod(_directory.path, '700');
   }
 
+  /// Restringe as permissões, sem impedir a gravação quando não consegue.
+  ///
+  /// Antes uma falha aqui abortava a escrita inteira. Em Ubuntu isso acontece
+  /// mais do que parece: `chmod` ausente num empacotamento restrito, volume
+  /// montado que não aceita mudança de modo, `$HOME` em exFAT de um pendrive.
+  /// Com o keyring também indisponível — o caso comum num autostart sem
+  /// sessão gráfica —, o resultado era **perder o login ao fechar o PDV**.
+  ///
+  /// Um arquivo com a permissão padrão do usuário é um risco menor do que o
+  /// operador não conseguir entrar no caixa amanhã de manhã. A falha vira
+  /// registro e [permissionsUnenforced], para que o alerta de inicialização
+  /// possa mostrá-la.
   Future<void> _chmod(String path, String mode) async {
     if (!_enforceModes) return;
-    final result = await Process.run('chmod', [mode, path]);
-    if (result.exitCode != 0) {
-      throw FileSystemException(
-        'Não foi possível proteger o armazenamento local do StarChef.',
-        path,
-      );
+    try {
+      final result = await Process.run('chmod', [mode, path]);
+      if (result.exitCode == 0) return;
+      _reportUnprotected(path, 'chmod devolveu ${result.exitCode}');
+    } on ProcessException catch (error) {
+      _reportUnprotected(path, error.message);
     }
+  }
+
+  /// O armazenamento existe, mas não foi possível restringir as permissões.
+  bool get permissionsUnenforced => _permissionsUnenforced;
+  bool _permissionsUnenforced = false;
+  bool _reported = false;
+
+  void _reportUnprotected(String path, String cause) {
+    _permissionsUnenforced = true;
+    if (_reported) return;
+    _reported = true;
+    AppLogger.instance.error(
+      'secure_fallback_sem_permissao_restrita',
+      data: {'path': path, 'causa': cause},
+    );
   }
 
   @override
@@ -143,20 +170,29 @@ class DurableSecureStore implements SecureValueStore {
     SecureValueStore? primary,
     SecureValueStore? fallback,
     bool? enablePlatformFallback,
+    List<SecureValueStore> extraFallbacks = const [],
   }) : _primary = primary ?? FlutterSecureValueStore(),
-       _fallback =
-           fallback ??
-           ((enablePlatformFallback ?? Platform.isLinux)
-               ? OwnerProtectedFileValueStore()
-               : null);
+       _fallbacks = [
+         ?(fallback ??
+             ((enablePlatformFallback ?? Platform.isLinux)
+                 ? OwnerProtectedFileValueStore()
+                 : null)),
+         ...extraFallbacks,
+       ];
 
   final SecureValueStore _primary;
-  final SecureValueStore? _fallback;
+
+  /// Camadas duráveis, na ordem em que são consultadas.
+  ///
+  /// Mais de uma porque cada uma falha por um motivo diferente: o arquivo
+  /// depende de `chmod` e do volume onde fica o `$HOME`; o banco depende de o
+  /// SQLite ter aberto. Perder o login por causa de uma delas deixaria o
+  /// operador sem entrar no caixa no dia seguinte.
+  final List<SecureValueStore> _fallbacks;
 
   @override
   Future<String?> read(String key) async {
-    final fallback = _fallback;
-    if (fallback != null) {
+    for (final fallback in _fallbacks) {
       try {
         final local = await fallback.read(key);
         if (local != null) {
@@ -174,20 +210,22 @@ class DurableSecureStore implements SecureValueStore {
 
     try {
       final native = await _primary.read(key);
-      if (native != null && fallback != null) {
+      if (native != null) {
         // Migra instalações existentes sem exigir novo login: a primeira
-        // leitura bem-sucedida do keyring cria a cópia durável do Linux.
-        try {
-          await fallback.write(key, native);
-        } catch (error, stackTrace) {
-          // O cofre nativo ainda é uma fonte válida. Uma pasta local com
-          // permissão incorreta deve produzir o alerta do boot, mas não pode
-          // esconder uma sessão que o keyring conseguiu devolver.
-          AppLogger.instance.error(
-            'secure_fallback_migration_failed',
-            cause: error,
-            stackTrace: stackTrace,
-          );
+        // leitura bem-sucedida do keyring cria as cópias duráveis.
+        for (final fallback in _fallbacks) {
+          try {
+            await fallback.write(key, native);
+          } catch (error, stackTrace) {
+            // O cofre nativo ainda é uma fonte válida. Uma camada que recusa
+            // deve produzir o alerta do boot, mas não pode esconder uma sessão
+            // que o keyring conseguiu devolver.
+            AppLogger.instance.error(
+              'secure_fallback_migration_failed',
+              cause: error,
+              stackTrace: stackTrace,
+            );
+          }
         }
       }
       return native;
@@ -203,15 +241,16 @@ class DurableSecureStore implements SecureValueStore {
 
   @override
   Future<void> write(String key, String value) async {
-    Object? fallbackError;
-    final fallback = _fallback;
-    if (fallback != null) {
+    // Persiste primeiro onde não depende do keyring. Mesmo que o plugin
+    // nativo trave, o login desta abertura não será perdido na próxima.
+    var durableWrites = 0;
+    Object? lastFallbackError;
+    for (final fallback in _fallbacks) {
       try {
-        // Persiste primeiro onde não depende do keyring. Mesmo que o plugin
-        // nativo trave, o login desta abertura não será perdido na próxima.
         await fallback.write(key, value);
+        durableWrites++;
       } catch (error, stackTrace) {
-        fallbackError = error;
+        lastFallbackError = error;
         AppLogger.instance.error(
           'secure_fallback_write_failed',
           cause: error,
@@ -220,28 +259,37 @@ class DurableSecureStore implements SecureValueStore {
       }
     }
 
+    var nativeWritten = false;
     try {
       await _primary.write(key, value);
+      nativeWritten = true;
     } catch (error, stackTrace) {
       AppLogger.instance.warning(
         'secure_native_write_failed_using_linux_fallback',
         data: {'cause': '$error', 'stack': '$stackTrace'},
       );
-      if (fallback == null || fallbackError != null) rethrow;
-      return;
     }
-    if (fallbackError != null) throw fallbackError;
+
+    // Uma camada que gravou já garante o próximo boot. Só quando NENHUMA
+    // aceitou é que o chamador precisa saber: aí o login realmente não
+    // sobreviveria a fechar o PDV.
+    if (durableWrites > 0 || nativeWritten) return;
+    throw lastFallbackError ??
+        StateError('Nenhum armazenamento seguro aceitou gravar "$key".');
   }
 
   @override
   Future<void> delete(String key) async {
-    Object? fallbackError;
-    final fallback = _fallback;
-    if (fallback != null) {
+    // Apagar é tentado em TODAS as camadas: uma cópia esquecida faria a sessão
+    // do operador anterior voltar na próxima leitura.
+    Object? lastError;
+    var removed = 0;
+    for (final fallback in _fallbacks) {
       try {
         await fallback.delete(key);
+        removed++;
       } catch (error, stackTrace) {
-        fallbackError = error;
+        lastError = error;
         AppLogger.instance.error(
           'secure_fallback_delete_failed',
           cause: error,
@@ -252,15 +300,19 @@ class DurableSecureStore implements SecureValueStore {
 
     try {
       await _primary.delete(key);
+      removed++;
     } catch (error, stackTrace) {
+      lastError = error;
       AppLogger.instance.warning(
         'secure_native_delete_failed_using_linux_fallback',
         data: {'cause': '$error', 'stack': '$stackTrace'},
       );
-      if (fallback == null || fallbackError != null) rethrow;
-      return;
     }
-    if (fallbackError != null) throw fallbackError;
+
+    // Uma camada indisponível nunca guardou nada — falhar o logout por causa
+    // dela deixaria o operador preso na sessão anterior. Só quando NENHUMA
+    // aceitou é que o chamador precisa saber.
+    if (removed == 0 && lastError != null) throw lastError;
   }
 
   Future<void> _tryHealPrimary(String key, String value) async {

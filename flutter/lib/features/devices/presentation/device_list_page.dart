@@ -8,6 +8,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/shadcn_layout.dart';
+import '../domain/local_print_renderer.dart';
 import '../domain/printer_endpoint.dart';
 import '../services/local_device_agent.dart';
 
@@ -614,14 +615,23 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
     setState(() => testing = true);
     Map<String, dynamic>? job;
     try {
-      job = await widget.api.post(
-        '/printers/${item['id']}/test-connection/',
-        body: const {},
-        accessToken: widget.token,
-      );
+      try {
+        job = await widget.api.post(
+          '/printers/${item['id']}/test-connection/',
+          body: const {},
+          accessToken: widget.token,
+        );
+      } on ApiException catch (error) {
+        // O teste de impressora existe justamente para diagnosticar o
+        // equipamento — depender do backend para gerar a nota tornava
+        // impossível conferir uma impressora sem internet, que é quando o
+        // problema costuma aparecer.
+        if (!error.isConnectivity) rethrow;
+      }
       final apiPrinter =
-          job['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+          job?['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};
       final printer = <String, dynamic>{
+        ...item,
         ...apiPrinter,
         'connection_type': connectionType,
         'endpoint': connection.text.trim(),
@@ -638,14 +648,20 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
           'baudrate': int.tryParse(baudRate.text) ?? 9600,
         },
       };
-      final payload = job['payload'] as Map<String, dynamic>? ?? const {};
-      final text = '${payload['text_content'] ?? ''}'.trim();
+      final payload = job?['payload'] as Map<String, dynamic>? ?? const {};
+      final rendered = '${payload['text_content'] ?? ''}'.trim();
+      final text = rendered.isNotEmpty
+          ? rendered
+          : LocalPrintRenderer.printerTest(printer: printer);
       await LocalDeviceAgent(api: widget.api).printForPrinter(printer, text);
-      await widget.api.post(
-        '/print-jobs/${job['print_job_id']}/mark-printed/',
-        body: const {},
-        accessToken: widget.token,
-      );
+      final jobId = job?['print_job_id'];
+      if (jobId != null) {
+        await widget.api.post(
+          '/print-jobs/$jobId/mark-printed/',
+          body: const {},
+          accessToken: widget.token,
+        );
+      }
     } catch (error) {
       final jobId = job?['print_job_id'];
       if (jobId != null) {

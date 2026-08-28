@@ -6,6 +6,7 @@ import 'core/network/api_client.dart';
 import 'core/relay/principal_client.dart';
 import 'core/relay/relay_gateway.dart';
 import 'core/storage/offline_queue_store.dart';
+import 'core/storage/principal_cache.dart';
 import 'core/storage/session_store.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/login_page.dart';
@@ -42,16 +43,23 @@ class _GarcomAppState extends State<GarcomApp> {
   /// pendências tem que sobreviver a essas trocas — e a fechar e abrir o app.
   late final RelayGateway _gateway;
 
+  /// Pelo mesmo motivo: o cache das últimas leituras confirmadas pelo Caixa
+  /// Principal precisa ser um só. Duas instâncias sobre o mesmo arquivo
+  /// divergiriam em memória e uma sobrescreveria o que a outra guardou.
+  late final PrincipalCache _cache;
+
   @override
   void initState() {
     super.initState();
     _api = ApiClient(baseUrl: AppEnv.backendUrl);
     _principal = PrincipalClient();
     _gateway = RelayGateway(client: _principal, store: OfflineQueueStore());
+    _cache = PrincipalCache();
     _controller = SessionController(
       api: _api,
       principalClient: _principal,
       store: SecureSessionStore(),
+      cache: _cache,
     );
     _bootstrap();
   }
@@ -114,11 +122,11 @@ class _GarcomAppState extends State<GarcomApp> {
         SessionStage.ready => OrdersPage(
           controller: _controller,
           repository: OrdersRepository(
-            api: _api,
             principalClient: _principal,
             gateway: _gateway,
             session: _controller.session!,
             principal: _controller.principal!,
+            cache: _cache,
           ),
         ),
       },

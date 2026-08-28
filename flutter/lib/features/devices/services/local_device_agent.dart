@@ -9,6 +9,7 @@ import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/realtime_client.dart';
+import '../../../core/data/print_queue_service.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../domain/printer_endpoint.dart';
 import 'print_template_cache.dart';
@@ -525,13 +526,12 @@ class LocalDeviceAgent {
   Timer? _availabilityTimer;
   Timer? _scheduledPrintTimer;
 
-  /// Trabalhos já impressos fisicamente cujo `mark-printed` ainda não foi
-  /// confirmado pelo servidor. Continuam com status `pending` lá (ver
-  /// `_processPrintJobs`), então sem isto o próximo ciclo de polling os
-  /// encontraria de novo e imprimiria o mesmo cupom uma segunda vez — o
-  /// próprio cupom saindo duas vezes, não um erro visível para o operador.
-  final Set<String> _confirmingJobIds = {};
   Timer? _printJobsPollTimer;
+
+  /// Ritmo próprio da fila local: ela precisa girar mesmo sem rede, senão um
+  /// cupom que falhou por falta de papel só sairia no próximo evento do
+  /// WebSocket — que, offline, nunca chega.
+  Timer? _printQueueTimer;
 
   void start({required String token, required String restaurantId}) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
@@ -564,6 +564,14 @@ class LocalDeviceAgent {
       const Duration(minutes: 2),
       (_) => unawaited(_guarded(_processPrintJobs)),
     );
+    // A fila local gira sozinha, com ou sem rede. É o que faz um cupom que
+    // falhou por falta de papel sair assim que o papel volta, sem depender de
+    // um evento do servidor que, offline, nunca chega.
+    _printQueueTimer?.cancel();
+    _printQueueTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(drainPrintQueue()),
+    );
     _stopRealtime();
     final realtime = RealtimeClient(
       urlBuilder: () => api.pdvSocketUrl(_restaurantId!),
@@ -587,6 +595,8 @@ class LocalDeviceAgent {
     _scheduledPrintTimer = null;
     _printJobsPollTimer?.cancel();
     _printJobsPollTimer = null;
+    _printQueueTimer?.cancel();
+    _printQueueTimer = null;
     _token = null;
     _restaurantId = null;
     _lastTemplateSync = null;
@@ -740,10 +750,35 @@ class LocalDeviceAgent {
     return _processPrintJobs();
   }
 
+  /// Ciclo completo da impressão: buscar o que o servidor tem, colocar na
+  /// fila **local** e imprimir dela.
+  ///
+  /// A separação é o ponto. Antes, buscar e imprimir eram a mesma coisa, e por
+  /// isso a impressão dependia da rede: com a internet fora não havia o que
+  /// buscar — e nada saía no papel, nem um cupom montado aqui mesmo. Agora a
+  /// busca é opcional e a impressão é local.
   Future<void> _processPrintJobs() async {
     _scheduledPrintTimer?.cancel();
     _scheduledPrintTimer = null;
     await _syncDevicesIfNeeded();
+    await _ingestRemotePrintJobs();
+    await drainPrintQueue();
+    await _confirmPrintedJobs();
+  }
+
+  /// Fila local deste terminal, quando o armazenamento operacional já está
+  /// vinculado a uma sessão.
+  PrintQueueService? get _printQueue => api.localStore?.printQueue;
+
+  String? get _printScope => api.localStore?.scope;
+
+  /// Traz os trabalhos do servidor para a fila local, sem imprimir.
+  ///
+  /// Uma falha aqui significa apenas "não há novidade do servidor": o que já
+  /// está na fila continua saindo normalmente.
+  Future<void> _ingestRemotePrintJobs() async {
+    final queue = _printQueue;
+    final scope = _printScope;
     final availablePrinters = <String, Map<String, dynamic>>{
       for (final printer in _printers)
         if (PrinterEndpoint.fromJson(printer).isAddressable)
@@ -751,21 +786,23 @@ class LocalDeviceAgent {
     };
 
     DateTime? nextScheduledAt;
-    var attempted = 0;
+    var ingested = 0;
     for (final status in ['scheduled', 'pending', 'rendered']) {
-      final jobs = await _list(
-        '/print-jobs/',
-        query: {
-          'restaurant': _restaurantId,
-          'status': status,
-          'page_size': 100,
-          'ordering': 'created_at',
-        },
-      );
-      // Sem isto, um job pulado (impressora não cadastrada localmente,
-      // auto_print desligado, marcado manual_only) desaparecia em silêncio:
-      // não havia como saber, sem acesso à tela, se o agente sequer chegou a
-      // ver o trabalho.
+      final List<Map<String, dynamic>> jobs;
+      try {
+        jobs = await _list(
+          '/print-jobs/',
+          query: {
+            'restaurant': _restaurantId,
+            'status': status,
+            'page_size': 100,
+            'ordering': 'created_at',
+          },
+        );
+      } on ApiException catch (error) {
+        if (!error.isConnectivity) rethrow;
+        return;
+      }
       AppLogger.instance.info(
         'print_jobs_poll',
         data: {
@@ -787,11 +824,12 @@ class LocalDeviceAgent {
           }
           continue;
         }
+        final jobId = '${job['id']}';
         final printer = availablePrinters['${job['printer']}'];
         if (printer == null) {
           AppLogger.instance.warning(
             'print_job_skipped_printer_unavailable',
-            data: {'job_id': job['id'], 'printer_id': job['printer']},
+            data: {'job_id': jobId, 'printer_id': job['printer']},
           );
           continue;
         }
@@ -802,7 +840,7 @@ class LocalDeviceAgent {
           // diagnosticar sem acesso ao banco.
           AppLogger.instance.info(
             'print_job_skipped_manual_only',
-            data: {'job_id': job['id'], 'printer_id': job['printer']},
+            data: {'job_id': jobId, 'printer_id': job['printer']},
           );
           continue;
         }
@@ -810,96 +848,52 @@ class LocalDeviceAgent {
         if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
           AppLogger.instance.info(
             'print_job_skipped_auto_print_off',
-            data: {'job_id': job['id'], 'printer_id': printer['id']},
+            data: {'job_id': jobId, 'printer_id': printer['id']},
           );
           continue;
         }
-        final jobId = '${job['id']}';
-        attempted++;
-        // O trabalho já saiu da impressora num ciclo anterior; só o aviso ao
-        // servidor (`mark-printed`) não confirmou ainda, e por isso o job
-        // continua "pending" e voltaria a aparecer aqui. Reimprimir agora
-        // seria o mesmo cupom saindo pela segunda vez — só insiste em avisar.
-        if (_confirmingJobIds.contains(jobId)) {
-          try {
-            await api.post(
-              '/print-jobs/$jobId/mark-printed/',
-              body: const {},
-              accessToken: _token,
-            );
-            _confirmingJobIds.remove(jobId);
-            AppLogger.instance.info(
-              'print_job_confirmed_after_retry',
-              data: {'job_id': jobId, 'job_type': job['job_type']},
-            );
-          } catch (error) {
-            AppLogger.instance.warning(
-              'print_job_still_not_confirmed',
-              data: {'job_id': jobId, 'message': '$error'},
-            );
-          }
+        final readyText = '${payload['text_content'] ?? ''}'.trim();
+        final text = readyText.isNotEmpty
+            ? readyText
+            : htmlToText('${job['html_content'] ?? ''}');
+        if (text.trim().isEmpty) {
+          AppLogger.instance.warning(
+            'print_job_sem_conteudo',
+            data: {'job_id': jobId},
+          );
           continue;
         }
-        var printed = false;
-        try {
-          final readyText = '${payload['text_content'] ?? ''}'.trim();
-          final text = readyText.isNotEmpty
-              ? readyText
-              : htmlToText('${job['html_content'] ?? ''}');
-          if (text.trim().isEmpty) {
-            throw const FormatException('O trabalho não possui conteúdo.');
-          }
-          await printForPrinter(
-            printer,
-            text,
-            barcodeValue: code128ValueFromPayload(payload),
-            qrValue: qrValueFromPayload(payload),
+        if (queue == null || scope == null) {
+          // Caminho degradado: o banco local não abriu (disco cheio, arquivo
+          // corrompido). O PDV já avisou disso na inicialização; um
+          // restaurante com internet funcionando não pode ficar sem imprimir
+          // também por causa disso.
+          await _printWithoutQueue(
+            jobId: jobId,
+            printer: printer,
+            text: text,
+            payload: payload,
           );
-          printed = true;
-          await api.post(
-            '/print-jobs/$jobId/mark-printed/',
-            body: const {},
-            accessToken: _token,
-          );
-          AppLogger.instance.info(
-            'print_job_printed',
-            data: {
-              'job_id': jobId,
-              'job_type': job['job_type'],
-              'printer_id': printer['id'],
-            },
-          );
-        } catch (error) {
-          // Se o cupom já saiu, o problema foi só avisar o servidor. Marcar
-          // como falha aqui deixaria o trabalho elegível para imprimir de
-          // novo no próximo ciclo — a mesma nota saindo duas vezes. Em vez
-          // disso, lembra que este job já foi impresso (`_confirmingJobIds`)
-          // para que o próximo ciclo só reenvie a confirmação, sem reimprimir.
-          if (printed) {
-            _confirmingJobIds.add(jobId);
-            AppLogger.instance.warning(
-              'print_job_printed_but_not_confirmed',
-              data: {'job_id': jobId, 'message': '$error'},
-            );
-            continue;
-          }
-          AppLogger.instance.error(
-            'print_job_failed',
-            cause: error,
-            data: {
-              'job_id': job['id'],
-              'job_type': job['job_type'],
-              'printer_id': printer['id'],
-            },
-          );
-          await api.post(
-            '/print-jobs/${job['id']}/mark-failed/',
-            body: {'error': 'Falha no PDV Desktop: $error'},
-            accessToken: _token,
-          );
+          ingested++;
+          continue;
         }
+        // `remoteJobId` é a chave que impede o mesmo cupom de entrar duas
+        // vezes: enquanto o `mark-printed` não é confirmado, o trabalho volta
+        // a aparecer nesta consulta.
+        await queue.enqueue(
+          scope: scope,
+          jobId: jobId,
+          remoteJobId: jobId,
+          printer: printer,
+          jobType: '${job['job_type'] ?? 'receipt'}',
+          content: text,
+          barcode: code128ValueFromPayload(payload),
+          qr: qrValueFromPayload(payload),
+        );
+        ingested++;
       }
     }
+
     if (nextScheduledAt != null && _token != null) {
       final wait = nextScheduledAt.difference(DateTime.now());
       AppLogger.instance.info(
@@ -915,11 +909,250 @@ class LocalDeviceAgent {
             : wait + const Duration(milliseconds: 150),
         () => unawaited(_guarded(_processPrintJobs)),
       );
-    } else if (attempted == 0) {
+    } else if (ingested == 0) {
       AppLogger.instance.info(
         'print_jobs_poll_idle',
         data: {'restaurant': _restaurantId},
       );
+    }
+  }
+
+  /// Trabalhos já impressos cujo `mark-printed` ainda não foi aceito.
+  ///
+  /// Só do caminho degradado (sem banco local). Com a fila, quem lembra disso
+  /// é o estado `PRINTED` no disco — que sobrevive a fechar o PDV, enquanto
+  /// este conjunto se perde.
+  final Set<String> _confirmingJobIds = {};
+
+  /// Imprime um trabalho do servidor sem passar pela fila local.
+  ///
+  /// Existe só para o caso em que o banco local não abriu. Sem retentativa
+  /// durável: se a impressora recusar, o servidor é avisado e o trabalho volta
+  /// a aparecer no próximo ciclo — o comportamento que existia antes da fila.
+  Future<void> _printWithoutQueue({
+    required String jobId,
+    required Map<String, dynamic> printer,
+    required String text,
+    required Map<String, dynamic> payload,
+  }) async {
+    if (_confirmingJobIds.contains(jobId)) {
+      // O papel já saiu num ciclo anterior; só a confirmação não passou.
+      // Reimprimir aqui seria o mesmo cupom saindo pela segunda vez.
+      try {
+        await api.post(
+          '/print-jobs/$jobId/mark-printed/',
+          body: const {},
+          accessToken: _token,
+        );
+        _confirmingJobIds.remove(jobId);
+      } catch (_) {
+        // Continua pendente; o próximo ciclo tenta de novo.
+      }
+      return;
+    }
+    var printed = false;
+    try {
+      await printForPrinter(
+        printer,
+        text,
+        barcodeValue: code128ValueFromPayload(payload),
+        qrValue: qrValueFromPayload(payload),
+      );
+      printed = true;
+      await api.post(
+        '/print-jobs/$jobId/mark-printed/',
+        body: const {},
+        accessToken: _token,
+      );
+      AppLogger.instance.info(
+        'print_job_printed',
+        data: {'job_id': jobId, 'printer_id': printer['id'], 'fila': false},
+      );
+    } catch (error) {
+      if (printed) {
+        _confirmingJobIds.add(jobId);
+        AppLogger.instance.warning(
+          'print_job_printed_but_not_confirmed',
+          data: {'job_id': jobId, 'message': '$error'},
+        );
+        return;
+      }
+      AppLogger.instance.error(
+        'print_job_failed',
+        cause: error,
+        data: {'job_id': jobId, 'printer_id': printer['id']},
+      );
+      try {
+        await api.post(
+          '/print-jobs/$jobId/mark-failed/',
+          body: {'error': 'Falha no PDV Desktop: $error'},
+          accessToken: _token,
+        );
+      } catch (_) {
+        // Sem servidor não há o que avisar agora.
+      }
+    }
+  }
+
+  /// Coloca na fila local um cupom montado por este terminal e tenta
+  /// imprimi-lo agora.
+  ///
+  /// Devolve duas coisas diferentes de propósito:
+  ///
+  /// - `accepted`: este terminal assumiu a impressão. É o que decide se o
+  ///   backend deve ficar de fora (`offline_printed`). Uma impressora sem
+  ///   papel **não** muda isso: o trabalho está na fila e sai quando ela
+  ///   voltar. Usar "saiu o papel" aqui faria o backend imprimir uma segunda
+  ///   via quando a fila sincronizasse, e a fila local imprimiria a primeira
+  ///   depois — duas comandas para a mesma rodada.
+  /// - `printed`: o papel saiu agora. Interessa a quem está olhando a
+  ///   impressora esperando o cupom, para mostrar o erro na hora.
+  ///
+  /// Sem armazenamento local vinculado (uma janela ainda sem sessão), imprime
+  /// direto: melhor sair sem rede de segurança do que não sair. Aí as duas
+  /// respostas coincidem, porque não há fila para garantir a segunda chance.
+  Future<({bool accepted, bool printed})> enqueueLocalPrint({
+    required Map<String, dynamic> printer,
+    required String jobType,
+    required String content,
+    String? barcodeValue,
+    String? qrValue,
+  }) async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null) {
+      await printForPrinter(
+        printer,
+        content,
+        barcodeValue: barcodeValue,
+        qrValue: qrValue,
+      );
+      return (accepted: true, printed: true);
+    }
+    final jobId = await queue.enqueue(
+      scope: scope,
+      printer: printer,
+      jobType: jobType,
+      content: content,
+      barcode: barcodeValue,
+      qr: qrValue,
+    );
+    await drainPrintQueue();
+    final status = await queue.statusOf(jobId);
+    return (
+      // Recusa definitiva (impressora sem endereço) devolve a impressão ao
+      // backend: nenhuma repetição aqui resolveria.
+      accepted: status != PrintJobStatus.failed,
+      printed: status == PrintJobStatus.printed,
+    );
+  }
+
+  /// Imprime o que está na fila local, um trabalho de cada vez.
+  ///
+  /// Não depende de rede em nenhum ponto. Uma falha de comunicação com a
+  /// impressora — papel, cabo, equipamento desligado — devolve o trabalho para
+  /// a fila com espera crescente; antes ele simplesmente se perdia, e a
+  /// cozinha ficava sem a comanda sem ninguém saber.
+  Future<void> drainPrintQueue({int limit = 20}) async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null) return;
+
+    for (var processed = 0; processed < limit; processed++) {
+      final job = await queue.claimNext(scope: scope);
+      if (job == null) break;
+      try {
+        await printForPrinter(
+          job.printer,
+          job.content,
+          barcodeValue: job.barcode,
+          qrValue: job.qr,
+        );
+        await queue.markPrinted(job.id);
+        AppLogger.instance.info(
+          'print_job_printed',
+          data: {
+            'job_id': job.jobId,
+            'job_type': job.jobType,
+            'printer_id': job.printerId,
+          },
+        );
+      } on PrinterCommunicationException catch (error) {
+        final attempts = job.attempts + 1;
+        await queue.markRetry(job.id, attempts: attempts, error: error.message);
+        AppLogger.instance.warning(
+          'print_job_retry',
+          data: {
+            'job_id': job.jobId,
+            'tentativa': attempts,
+            'motivo': error.message,
+          },
+        );
+        // A próxima tentativa deste trabalho só faz sentido depois da espera,
+        // e insistir agora daria o mesmo erro para todos os outros da fila:
+        // a impressora é a mesma.
+        break;
+      } catch (error) {
+        // Erro que nenhuma repetição resolve (conteúdo inválido, configuração
+        // impossível): sai da rotação e fica visível para revisão.
+        await queue.markFailed(job.id, error: '$error');
+        AppLogger.instance.error(
+          'print_job_failed',
+          cause: error,
+          data: {'job_id': job.jobId, 'job_type': job.jobType},
+        );
+        await _reportRemoteFailure(job, error);
+      }
+    }
+    await queue.purgeConfirmed(scope: scope);
+  }
+
+  /// Avisa o servidor sobre os trabalhos que já saíram no papel.
+  ///
+  /// O papel ter saído e o servidor ter sido avisado são coisas diferentes.
+  /// Sem rede a confirmação espera, e o trabalho **não** volta a imprimir —
+  /// quem garante isso é o estado `PRINTED` na fila local, que antes só
+  /// existia na memória do processo e se perdia ao fechar o PDV.
+  Future<void> _confirmPrintedJobs() async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null) return;
+    for (final job in await queue.awaitingConfirmation(scope: scope)) {
+      try {
+        await api.post(
+          '/print-jobs/${job.remoteJobId}/mark-printed/',
+          body: const {},
+          accessToken: _token,
+        );
+        await queue.forget(job.id);
+      } on ApiException catch (error) {
+        if (!error.isConnectivity) {
+          // O servidor recusou (o trabalho já foi cancelado lá, por exemplo).
+          // Insistir não muda nada, e a nota já está com o cliente.
+          await queue.forget(job.id);
+          continue;
+        }
+        AppLogger.instance.info(
+          'print_job_confirmacao_adiada',
+          data: {'job_id': job.remoteJobId},
+        );
+        return;
+      }
+    }
+  }
+
+  Future<void> _reportRemoteFailure(PrintQueueEntry job, Object error) async {
+    final remoteId = job.remoteJobId;
+    if (remoteId == null) return;
+    try {
+      await api.post(
+        '/print-jobs/$remoteId/mark-failed/',
+        body: {'error': 'Falha no PDV Desktop: $error'},
+        accessToken: _token,
+      );
+    } on ApiException {
+      // Sem servidor não há o que avisar agora. O trabalho continua marcado
+      // como recusado aqui, que é o que a tela de revisão mostra.
     }
   }
 

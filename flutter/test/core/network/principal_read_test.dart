@@ -24,6 +24,9 @@ class FakePrincipal implements MutationRelay {
   final List<String> relayedPaths = [];
 
   @override
+  Future<bool> probe() async => available;
+
+  @override
   Future<Map<String, dynamic>> read(RelayRead request) async {
     if (!available) {
       throw const MutationRelayUnavailable('Principal fora do ar.');
@@ -283,6 +286,9 @@ void main() {
 }
 
 class _RefusingPrincipal implements MutationRelay {
+  @override
+  Future<bool> probe() async => true;
+
   @override
   Future<Map<String, dynamic>> read(RelayRead request) async =>
       throw const ApiException('Sem permissão.', statusCode: 403);

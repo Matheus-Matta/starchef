@@ -4,6 +4,8 @@ Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
 Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
 estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
 """
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
 from apps.core.access import is_tenant_admin
@@ -32,12 +34,14 @@ class TenantQuerySetMixin:
     def get_queryset(self):
         base_queryset = super().get_queryset()
         model = base_queryset.model
+        include_deleted = self._wants_deleted_records()
         if hasattr(model, "all_objects"):
             queryset = model.all_objects.all()
-            if model_has_field(model, "deleted_at"):
+            if model_has_field(model, "deleted_at") and not include_deleted:
                 queryset = queryset.filter(deleted_at__isnull=True)
         else:
             queryset = base_queryset
+        queryset = self._apply_delta_filter(queryset)
 
         user = self.request.user
         account = getattr(self.request, "account", None)
@@ -79,6 +83,60 @@ class TenantQuerySetMixin:
             elif model_has_field(queryset.model, self.tenant_restaurant_field):
                 filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
         return queryset.filter(**filters) if filters else queryset
+
+    def soft_delete_scope(self, queryset):
+        """Aplica (ou nao) o recorte de registros excluidos.
+
+        Exposto para os viewsets que montam o proprio queryset: e o unico jeito
+        de o delta sync enxergar uma exclusao, ja que um registro apagado
+        apenas some da listagem normal.
+        """
+        if not model_has_field(queryset.model, "deleted_at") or self._wants_deleted_records():
+            return queryset
+        return queryset.filter(deleted_at__isnull=True)
+
+    def _wants_deleted_records(self):
+        """O cliente pediu explicitamente os registros excluidos?
+
+        Serve ao delta sync do PDV (`?updated_after=...&include_deleted=1`):
+        sem isso o terminal offline nunca ficaria sabendo que um produto foi
+        removido na retaguarda — ele simplesmente pararia de aparecer na
+        listagem, e o registro antigo continuaria vendavel no caixa. So vale
+        junto de `updated_after`, para nao mudar o comportamento de nenhuma
+        listagem normal da aplicacao.
+        """
+        params = self.request.query_params
+        return bool(params.get("updated_after")) and str(
+            params.get("include_deleted", "")
+        ).lower() in {"1", "true", "yes"}
+
+    def _apply_delta_filter(self, queryset):
+        """Restringe a `updated_at > updated_after`, quando informado.
+
+        E o que permite o Caixa Principal reconciliar depois de horas offline
+        sem baixar a base inteira de novo (sincronizacao incremental). Um valor
+        invalido e ignorado: melhor devolver a listagem completa do que negar
+        os dados ao caixa por causa de um parametro malformado.
+        """
+        raw = self.request.query_params.get("updated_after")
+        if not raw or not model_has_field(queryset.model, "updated_at"):
+            return queryset
+        moment = parse_datetime(raw)
+        if moment is None:
+            return queryset
+        if timezone.is_naive(moment):
+            moment = timezone.make_aware(moment, timezone.get_default_timezone())
+        return queryset.filter(updated_at__gt=moment)
+
+    def filter_queryset(self, queryset):
+        """Aplica o recorte incremental depois dos filtros normais.
+
+        Fica aqui, e nao so em `get_queryset`, porque alguns viewsets montam o
+        proprio queryset sem chamar `super()` — e o delta sync precisa valer
+        para todos, senao o Caixa Principal rebaixaria justamente o cardapio
+        (o maior deles) por inteiro a cada reconexao.
+        """
+        return self._apply_delta_filter(super().filter_queryset(queryset))
 
     def get_object(self):
         obj = super().get_object()

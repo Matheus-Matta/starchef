@@ -563,8 +563,14 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
 
 
 @transaction.atomic
-def void_order_item(item, user, reason=""):
-    """Cancel an item, printing a linked cancellation only after dispatch."""
+def void_order_item(item, user, reason="", offline_printed=False):
+    """Cancela um item, com cupom de cancelamento so depois de despachado.
+
+    ``offline_printed=True`` vem do PDV que ja imprimiu o cupom na impressora
+    do setor porque a operacao ficou na fila local. O job continua sendo
+    criado para a auditoria, mas ja nasce impresso — senao o agente local
+    imprimiria o mesmo cancelamento de novo ao sincronizar.
+    """
     if not reason.strip():
         raise ValidationError("Informe o motivo do cancelamento do item.")
     with tenant_context(item.account):
@@ -597,7 +603,9 @@ def void_order_item(item, user, reason=""):
         elif was_dispatched:
             from apps.printers.services import register_kitchen_item_cancellation_jobs
 
-            register_kitchen_item_cancellation_jobs(item=item, user=user, reason=reason)
+            register_kitchen_item_cancellation_jobs(
+                item=item, user=user, reason=reason, offline_printed=offline_printed
+            )
         record_audit(
             action=AuditLog.ACTION_CANCELLED,
             instance=item,

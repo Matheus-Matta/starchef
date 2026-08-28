@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/relay/principal_client.dart';
+import '../../../core/storage/principal_cache.dart';
 import '../../../core/storage/session_store.dart';
 import '../data/auth_repository.dart';
 import '../domain/waiter_session.dart';
@@ -27,6 +28,7 @@ class SessionController extends ChangeNotifier {
     required this.api,
     required this.principalClient,
     required this.store,
+    this.cache,
   }) : _repository = AuthRepository(
          api: api,
          principalClient: principalClient,
@@ -36,6 +38,12 @@ class SessionController extends ChangeNotifier {
   final ApiClient api;
   final PrincipalClient principalClient;
   final SessionStorage store;
+
+  /// Cópia local das leituras confirmadas pelo Caixa Principal. Esvaziada ao
+  /// sair da sessão ou ao trocar de caixa: ela pertence a um operador e a um
+  /// restaurante, não ao aparelho.
+  final PrincipalCache? cache;
+
   final AuthRepository _repository;
 
   WaiterSession? _session;
@@ -105,8 +113,13 @@ class SessionController extends ChangeNotifier {
   }
 
   /// Sai da sessão mantendo o pareamento (ver [AuthRepository.logout]).
+  ///
+  /// A cópia local das leituras vai junto: ela pertence a um operador e a um
+  /// restaurante, não ao aparelho. Deixá-la mostraria ao próximo garçom os
+  /// pedidos do turno anterior como se fossem os dele.
   Future<void> logout() async {
     await _repository.logout();
+    await cache?.clear();
     _session = null;
     _error = null;
     notifyListeners();
@@ -116,6 +129,7 @@ class SessionController extends ChangeNotifier {
   /// caixa ou gera uma chave nova.
   Future<void> unpair() async {
     await store.clearPrincipal();
+    await cache?.clear();
     _principal = null;
     _error = null;
     notifyListeners();

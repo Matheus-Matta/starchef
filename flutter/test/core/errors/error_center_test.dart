@@ -92,15 +92,19 @@ void main() {
     );
 
     testWidgets(
-      'sem autoDismissAfter, o alerta fica até ser fechado manualmente',
+      'sem autoDismissAfter, o alerta some sozinho depois do tempo padrão',
       (tester) async {
         await tester.pumpWidget(const SizedBox());
         final center = ErrorCenter();
         center.reportApi(const ApiException('Sem rede.'));
-
-        await tester.pump(const Duration(minutes: 5));
-
         expect(center.visible, hasLength(1));
+
+        // Falha, aviso e confirmação somem sozinhos igualmente — o `X`
+        // só adianta o fechamento, não é a única saída.
+        await tester.pump(ErrorCenter.defaultAutoDismissAfter);
+        await tester.pump(const Duration(milliseconds: 1));
+
+        expect(center.visible, isEmpty);
       },
     );
 
@@ -234,6 +238,9 @@ void main() {
         expect(copied, contains('A impressora não respondeu.'));
         expect(copied, contains('Verifique o cabo'));
         expect(copied, contains('SocketException'));
+        // Cancela o timer de auto-dismiss ainda pendente: o binding de teste
+        // de widget não aceita terminar com um `Timer` agendado no ar.
+        center.dismissAll();
       },
     );
 
@@ -241,7 +248,16 @@ void main() {
       final center = ErrorCenter();
       await tester.pumpWidget(host(center));
 
-      center.reportApi(const ApiException('Falha qualquer.'));
+      // Tempo de sobra explícito: o teste segura o gesto por 2s para o
+      // tooltip aparecer, o que não pode competir com o próprio alerta
+      // sumindo sozinho no meio do gesto.
+      center.report(
+        AppError(
+          title: 'Falha qualquer',
+          message: 'Falha qualquer.',
+          autoDismissAfter: const Duration(minutes: 5),
+        ),
+      );
       await tester.pump();
 
       // `Tooltip` exige um `Overlay` ancestral. Como o host vive acima do
@@ -257,6 +273,7 @@ void main() {
 
       await gesture.up();
       await tester.pumpAndSettle();
+      center.dismissAll();
     });
 
     testWidgets('vários alertas empilham no topo direito, do mais novo ao mais velho', (
@@ -276,6 +293,7 @@ void main() {
 
       expect(find.text('Não foi possível fechar o caixa'), findsOneWidget);
       expect(find.text('Sangria divergente.'), findsOneWidget);
+      center.dismissAll();
     });
   });
 }

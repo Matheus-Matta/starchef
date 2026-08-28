@@ -30,9 +30,10 @@ class ErrorCenterScope extends InheritedNotifier<ErrorCenter> {
 
 /// Sobrepõe os alertas globais ao conteúdo do aplicativo.
 ///
-/// Os cartões ficam no topo, acima de qualquer tela, e permanecem até o
-/// operador fechá-los no `X`. Eles não bloqueiam a interface: o operador pode
-/// corrigir os dados com o alerta ainda visível.
+/// Os cartões ficam no topo, acima de qualquer tela, e somem sozinhos depois
+/// de `ErrorCenter.defaultAutoDismissAfter` (ou do tempo próprio de cada
+/// [AppError]) — o `X` só adianta o fechamento. Eles não bloqueiam a
+/// interface: o operador pode corrigir os dados com o alerta ainda visível.
 class AppErrorHost extends StatelessWidget {
   const AppErrorHost({super.key, required this.center, required this.child});
 

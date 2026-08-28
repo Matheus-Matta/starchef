@@ -590,8 +590,16 @@ def _kitchen_cancellation_text(*, item, original_job, reason, user=None):
     return "\n".join(lines)
 
 
-def register_kitchen_item_cancellation_jobs(*, item, user, reason):
-    """Create one immediate, idempotent cancellation per original ticket."""
+def register_kitchen_item_cancellation_jobs(*, item, user, reason, offline_printed=False):
+    """Cria um cancelamento imediato e idempotente por comanda original.
+
+    ``offline_printed=True`` significa que o PDV ja imprimiu esse cupom na
+    impressora do setor porque a operacao ficou na fila local — o mesmo
+    contrato de ``register_kitchen_batch_print_jobs``. O job continua sendo
+    criado (a auditoria depende dele), mas ja nasce impresso: sem isso, o
+    agente local imprimiria o mesmo cancelamento uma segunda vez assim que a
+    fila sincronizasse.
+    """
     with tenant_context(item.account):
         originals = PrintJob.objects.filter(
             order=item.order,
@@ -616,7 +624,8 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason):
                     "printer": original.printer,
                     "order": item.order,
                     "job_type": PrintJob.TYPE_KITCHEN_CANCEL,
-                    "status": PrintJob.STATUS_RENDERED,
+                    "status": PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_RENDERED,
+                    "printed_at": timezone.now() if offline_printed else None,
                     "available_at": timezone.now(),
                     "payload": {
                         "account_id": str(item.account_id),
@@ -625,6 +634,7 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason):
                         "batch_serial": str(item.batch.serial) if item.batch_id else "",
                         "cancelled_item_id": str(item.id),
                         "reason": reason,
+                        "offline_printed": offline_printed,
                         "text_content": text,
                     },
                     "printed_by": user,
@@ -696,7 +706,12 @@ def register_printer_test_job(*, printer, user):
             printer=printer,
             job_type="printer_test",
             status=PrintJob.STATUS_RENDERED,
-            payload={"text_content": text, "diagnostic": True},
+            # O docstring desta função promete "sem disparar automaticamente":
+            # sem `manual_only`, o job ficava com status pollável (RENDERED)
+            # e o `LocalDeviceAgent` do PDV principal — que também escuta o
+            # evento de tempo real desta MESMA criação — imprimia sozinho ao
+            # mesmo tempo que a tela de teste, e o operador via duas notas.
+            payload={"text_content": text, "diagnostic": True, "manual_only": True},
             html_content=html,
             printed_by=user,
             created_by=user,
@@ -841,12 +856,19 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     return "\n".join(lines)
 
 
-def register_weigh_print(*, order, item, scale, user=None):
-    """Gera a nota de pesagem (HTML + texto) como PrintJob PENDENTE na impressora da balanca.
+def register_weigh_print(*, order, item, scale, user=None, offline_printed=False):
+    """Gera a nota de pesagem (HTML + texto) como PrintJob na impressora da balanca.
 
     Fica pendente ate o agente local imprimir e chamar mark-printed. Como o modelo
     nao identifica uma impressora padrao, exige uma impressora ativa configurada
     explicitamente na balanca.
+
+    ``offline_printed=True`` significa que a estacao ja imprimiu essa nota
+    porque a pesagem foi fechada sem servidor — o mesmo contrato de
+    ``register_kitchen_batch_print_jobs``. O job continua sendo criado (a
+    auditoria depende dele), mas ja nasce impresso: sem isso, o agente local
+    imprimiria a mesma nota uma segunda vez quando a fila sincronizasse, e o
+    cliente levaria dois papeis do mesmo prato para o caixa.
     """
     with tenant_context(order.account):
         printer = _resolve_weigh_printer(order=order, scale=scale)
@@ -889,7 +911,8 @@ def register_weigh_print(*, order, item, scale, user=None):
             printer=printer,
             order=order,
             job_type=PrintJob.TYPE_WEIGH,
-            status=PrintJob.STATUS_PENDING,
+            status=PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_PENDING,
+            printed_at=timezone.now() if offline_printed else None,
             payload=payload,
             html_content=html,
             printed_by=user,

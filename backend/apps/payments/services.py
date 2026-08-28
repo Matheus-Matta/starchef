@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from decimal import Decimal
 
 from django.contrib.auth.hashers import check_password
@@ -212,12 +214,46 @@ def create_cash_movement(*, cash_register, user, movement_type, amount, reason, 
 
 
 @transaction.atomic
-def approve_cash_operation(*, cash_register, user, reason, movement=None, cash_password=None):
-    # Autorização por SENHA do caixa (definida no restaurante) substitui a exigência
-    # de um gerente logado — habilita a autorização mesmo sem outro gerente presente
-    # (e é a base do modo offline no app). Sem senha → exige gerente, como antes.
+def _cash_password_proof(stored_hash, cash_register_id, nonce):
+    """HMAC do hash da senha do caixa sobre a operação — ver docstring acima."""
+    return hmac.new(
+        str(stored_hash or "").encode("utf-8"),
+        f"{cash_register_id}:{nonce}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def approve_cash_operation(
+    *,
+    cash_register,
+    user,
+    reason,
+    movement=None,
+    cash_password=None,
+    cash_password_proof=None,
+    proof_nonce="",
+):
+    """Autoriza uma divergência de caixa ou uma movimentação pendente.
+
+    A autorização por SENHA do caixa (definida no restaurante) substitui a
+    exigência de um gerente logado — habilita a autorização mesmo sem outro
+    gerente presente. Sem senha nem prova → exige gerente, como antes.
+
+    ``cash_password_proof`` existe para o PDV que autorizou **offline**. O
+    terminal guarda o hash PBKDF2 da senha (é assim que ele já verifica sem
+    rede) e prova que o possui devolvendo um HMAC-SHA256 desse hash sobre
+    ``{cash_register_id}:{proof_nonce}``. Assim a senha em texto nunca é
+    gravada na fila local nem trafega no replay — guardá-la em disco seria pior
+    do que a espera que a autorização offline evita.
+    """
     authorized_by_password = False
-    if cash_password:
+    if cash_password_proof:
+        stored = cash_register.restaurant.cash_action_password
+        expected = _cash_password_proof(stored, cash_register.pk, proof_nonce)
+        if not stored or not hmac.compare_digest(expected, str(cash_password_proof)):
+            raise ValidationError("Autorização offline do caixa não pôde ser verificada.")
+        authorized_by_password = True
+    elif cash_password:
         stored = cash_register.restaurant.cash_action_password
         if not stored or not check_password(cash_password, stored):
             raise ValidationError("Senha de ações do caixa inválida.")

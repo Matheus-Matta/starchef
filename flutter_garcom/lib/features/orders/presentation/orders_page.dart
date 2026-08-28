@@ -40,6 +40,9 @@ class _OrdersPageState extends State<OrdersPage> {
   List<Map<String, dynamic>> _orders = const [];
   bool _loading = true;
   String? _error;
+
+  /// De onde vieram os pedidos na tela: do Caixa Principal ou da cópia local.
+  ReadOrigin _origin = const ReadOrigin.live();
   final _updateController = GarcomUpdateController();
 
   @override
@@ -65,6 +68,7 @@ class _OrdersPageState extends State<OrdersPage> {
       if (!mounted) return;
       setState(() {
         _orders = orders;
+        _origin = widget.repository.lastReadOrigin;
         _loading = false;
       });
     } catch (error) {
@@ -281,6 +285,7 @@ class _OrdersPageState extends State<OrdersPage> {
               builder: (context, _) =>
                   UpdateBanner(controller: _updateController),
             ),
+            StaleDataBanner(origin: _origin, onRetry: _loading ? null : _load),
             SyncBanner(
               gateway: gateway,
               onOpenFailed: () => showFailedMutationsSheet(context, gateway),

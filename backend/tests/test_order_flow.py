@@ -1,7 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen, update_order_item_status
@@ -218,7 +220,16 @@ def test_order_save_always_touches_updated_at(restaurant, branch, manager_user):
         order_type=Order.TYPE_COUNTER,
         user=manager_user,
     )
+    # Recua o carimbo antes de medir: as duas gravações caem no mesmo tique do
+    # relogio com frequencia (a granularidade no Windows passa de 10 ms), e o
+    # teste falhava sozinho em uma execucao a cada tres — o que torna o CI
+    # inutil justamente quando ele deveria acusar um problema real.
+    Order.all_objects.filter(pk=order.pk).update(
+        updated_at=timezone.now() - timedelta(minutes=1)
+    )
+    order.refresh_from_db()
     previous = order.updated_at
+
     order.general_notes = "Atualizado"
     order.save(update_fields=["general_notes"])
 

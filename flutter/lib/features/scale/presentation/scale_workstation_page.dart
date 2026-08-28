@@ -17,7 +17,9 @@ import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
+import '../../devices/domain/local_print_renderer.dart';
 import '../../devices/domain/printer_endpoint.dart';
+import '../../devices/services/local_device_agent.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../data/scanner_binding_store.dart';
@@ -113,6 +115,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   final Map<String, ProductConfigResult> extraConfigs = {};
 
   bool requestingWeight = false;
+
+  /// Restaurante selecionado, para o cabeçalho da nota impressa aqui.
+  Map<String, dynamic>? get _restaurant => widget.restaurants
+      .cast<Map<String, dynamic>?>()
+      .firstWhere(
+        (item) => '${item?['id']}' == widget.restaurantId,
+        orElse: () => null,
+      );
 
   Map<String, dynamic>? get selectedScale => scales
       .cast<Map<String, dynamic>?>()
@@ -613,22 +623,35 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final code = machine.commandCode;
     if (item == null || code == null || scaleId == null) return;
     try {
-      final reading = await widget.api.post(
-        '/scales/readings/',
-        body: {
-          'scale': scaleId,
-          'weight_kg': item.weightKg.toStringAsFixed(3),
-          'tare_kg': '0.000',
-          'is_stable': true,
-          'source': 'agent',
-        },
-        accessToken: widget.accessToken,
-      );
+      // A leitura é um registro do servidor. Com a rede fora ela não existe —
+      // e não pode existir: registrar um peso "de antes" mais tarde criaria
+      // uma leitura que nunca aconteceu naquele instante. O peso bruto segue
+      // na própria operação de fechamento, e o backend materializa a leitura
+      // no replay.
+      Map<String, dynamic>? reading;
+      try {
+        reading = await widget.api.post(
+          '/scales/readings/',
+          body: {
+            'scale': scaleId,
+            'weight_kg': item.weightKg.toStringAsFixed(3),
+            'tare_kg': '0.000',
+            'is_stable': true,
+            'source': 'agent',
+          },
+          accessToken: widget.accessToken,
+        );
+      } on ApiException catch (error) {
+        if (!error.isConnectivity) rethrow;
+      }
       final result = await widget.api.post(
         '/scales/$scaleId/checkout-command/',
         body: {
           'command_code': code,
-          'scale_reading': reading['id'],
+          if (reading != null)
+            'scale_reading': reading['id']
+          else
+            'weight_kg': item.weightKg.toStringAsFixed(3),
           'extras': machine.extras.entries
               .where((entry) => entry.value > 0)
               .map((entry) {
@@ -651,8 +674,18 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           'print': widget.preferences.autoPrint && printerId != null,
         },
         accessToken: widget.accessToken,
+        // O que a API resolveria pelo id: sem ela, o terminal precisa dizer
+        // qual é o produto pesado. A comanda o próprio gateway acha na cópia
+        // local, pelo código lido.
+        localContext: {'weighed_product': weighedProduct},
       );
       if (!mounted) return;
+      // Fechamento local: não existe `PrintJob` para o agente buscar, e a
+      // nota é o que o cliente leva até o caixa. Ela sai aqui, com o mesmo
+      // layout do servidor.
+      if (result['_local_first'] == true) {
+        await _printWeighTicketLocally(result);
+      }
       AppLogger.instance.info(
         'scale_checkout_ok',
         data: {'command': code, 'weight_kg': item.weightKg},
@@ -712,6 +745,65 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// Aguarda a confirmação do agente de impressão. Criar o PrintJob não
   /// significa que a impressora recebeu o cupom; sem acompanhar o estado, uma
   /// falha de rede ficava invisível e a tela dizia apenas “pedido concluído”.
+  /// Imprime a nota de pesagem montada neste terminal.
+  ///
+  /// Uma falha aqui não desfaz a venda: o item já está no pedido local e na
+  /// fila. O operador é avisado para conferir a impressora e pode reimprimir
+  /// pelo caixa.
+  Future<void> _printWeighTicketLocally(Map<String, dynamic> order) async {
+    final printer = printers.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == printerId,
+      orElse: () => null,
+    );
+    if (printer == null || !widget.preferences.autoPrint) return;
+    try {
+      final result = await LocalDeviceAgent(api: widget.api).enqueueLocalPrint(
+        printer: printer,
+        jobType: 'weigh_ticket',
+        content: LocalPrintRenderer.weighTicket(
+          order: order,
+          restaurant: _restaurant,
+        ),
+        barcodeValue: LocalPrintRenderer.commandBarcode(order, null),
+      );
+      // Este terminal assumiu a nota. Sem avisar o backend, ele criaria um
+      // `PrintJob` novo ao processar a fila e o cliente levaria dois papéis do
+      // mesmo prato para o caixa.
+      final operationId = '${order['_sync_operation_id'] ?? ''}';
+      if (result.accepted && operationId.isNotEmpty) {
+        await widget.api.patchQueuedBody(operationId, {
+          'offline_printed': true,
+        });
+      }
+      // O cliente está com o prato na mão esperando a nota para pagar no
+      // caixa: o silêncio o mandaria embora sem papel nenhum.
+      if (!result.printed) {
+        throw ApiException(
+          result.accepted
+              ? 'A impressora não respondeu agora. A nota está na fila e sai '
+                    'assim que ela voltar.'
+              : 'A nota não pôde ser impressa.',
+        );
+      }
+    } catch (error) {
+      AppLogger.instance.warning(
+        'nota_pesagem_local_falhou',
+        data: {'causa': '$error'},
+      );
+      if (mounted) {
+        ErrorCenterScope.read(context).reportApi(
+          ApiException(
+            'A pesagem foi lançada na comanda, mas a nota não saiu. $error',
+          ),
+          title: 'A nota de pesagem não foi impressa',
+          recommendedAction:
+              'Confira papel e cabo da impressora. O item já está no pedido e '
+              'pode ser reimpresso pelo caixa.',
+        );
+      }
+    }
+  }
+
   Future<void> _monitorPrintJob(String jobId) async {
     for (var attempt = 0; attempt < 16; attempt++) {
       if (attempt > 0) {

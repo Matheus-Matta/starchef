@@ -34,7 +34,6 @@ void main() {
       secretStorage: _MemorySecretStorage(),
     );
     secret = LocalTopologyStore.generatePairingSecret();
-    port = await _freePort();
     service = LocalTopologyService(
       api: ApiClient(baseUrl: 'http://127.0.0.1:9'),
       accessToken: 'token-do-principal',
@@ -43,15 +42,22 @@ void main() {
       restaurantId: restaurantId,
       store: store,
     );
-    await service.reconfigure(
-      LocalTopologyConfig(
-        mode: LocalTopologyMode.principal,
-        nodeId: 'caixa-principal',
-        port: port,
-        pairingSecret: secret,
-        trustedNetworkAcknowledged: true,
-      ),
-    );
+    // Entre descobrir uma porta livre e abri-la existe uma janela em que outro
+    // teste rodando em paralelo pode tomá-la. Tentar de novo em outra porta é
+    // mais honesto do que aceitar um teste que falha de vez em quando.
+    for (var attempt = 0; attempt < 5; attempt++) {
+      port = await _freePort();
+      await service.reconfigure(
+        LocalTopologyConfig(
+          mode: LocalTopologyMode.principal,
+          nodeId: 'caixa-principal',
+          port: port,
+          pairingSecret: secret,
+          trustedNetworkAcknowledged: true,
+        ),
+      );
+      if (service.status.phase == LocalTopologyPhase.principalReady) break;
+    }
     expect(service.status.phase, LocalTopologyPhase.principalReady);
   });
 

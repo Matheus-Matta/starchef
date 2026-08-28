@@ -31,6 +31,14 @@ class RelayMutation {
 abstract interface class MutationRelay {
   Future<Map<String, dynamic>> relay(RelayMutation mutation);
 
+  /// O Caixa Principal responde agora?
+  ///
+  /// A fila do caixa secundário consulta isto antes de gastar tentativas: sem
+  /// a checagem, um ciclo com o principal desligado levaria o backoff de cada
+  /// operação ao teto sem nenhuma chance real de entrega — exatamente o mesmo
+  /// motivo pelo qual o principal consulta a saúde do backend.
+  Future<bool> probe();
+
   /// Lê pelo Caixa Principal, que responde do próprio armazenamento local.
   ///
   /// É o que faz o secundário enxergar a mesma verdade que o principal. Sem
