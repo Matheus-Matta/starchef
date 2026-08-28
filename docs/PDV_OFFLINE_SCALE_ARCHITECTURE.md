@@ -685,6 +685,27 @@ A configuração é central; a execução é de quem alcança o equipamento (§1
 §19). Um Caixa Secundário com impressora USB própria imprime dela, e o backend
 externo nunca é necessário para isso.
 
+### Impressão em nome de quem não tem impressora
+
+O app do garçom não imprime nada por conta própria — ele manda o pedido para
+o Caixa Principal (`RelayPrintFallback`,
+`flutter/lib/features/topology/services/relay_print_fallback.dart`) e quem
+decide se sai papel é o terminal que tem a impressora física.
+
+A regra é a mesma usada em todo o resto do sistema (§17): a operação chegou
+ao backend? Se chegou, o `PrintJob` de lá cuida da impressão. Se ficou na
+fila, o Principal reivindica com `offline_printed` e imprime localmente,
+montando a comanda por setor (`send-to-kitchen`) ou o cupom de cancelamento
+(`items/<id>/void/`) a partir do próprio SQLite — sem depender de nenhum
+estado de tela, porque quem mandou a operação pode não ter UI nenhuma.
+
+Um Caixa Secundário continua se resolvendo sozinho, como na seção anterior.
+O responsável só age quando a operação chega **sem** `offline_printed` já
+marcado — ou seja, veio do app do garçom, ou veio de um Caixa Secundário que
+alcançou o Principal rápido o bastante para se considerar "entregue" sem
+saber que o Principal, por trás, estava sem internet para o backend. Nos dois
+casos, a marca de reivindicação impede a mesma comanda de sair duas vezes.
+
 ## Nota de pesagem
 
 A estação lista as impressoras ativas e permite selecionar a **impressora padrão daquela balança**. A escolha é persistida no campo `Scale.printer` por uma chamada `PATCH /scales/<id>/`. A impressora deve pertencer ao mesmo restaurante e, quando aplicável, à mesma filial. Não existe fallback genérico por restaurante: o backend não escolhe a primeira impressora disponível. Se a configuração for ausente ou inválida, a transação falha antes de consumir a leitura ou criar itens.

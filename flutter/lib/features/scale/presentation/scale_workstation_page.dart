@@ -757,14 +757,20 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     );
     if (printer == null || !widget.preferences.autoPrint) return;
     try {
-      final result = await LocalDeviceAgent(api: widget.api).enqueueLocalPrint(
-        printer: printer,
-        jobType: 'weigh_ticket',
-        content: LocalPrintRenderer.weighTicket(
-          order: order,
-          restaurant: _restaurant,
+      final agent = LocalDeviceAgent(api: widget.api);
+      final ticketPrinter = WeighTicketPrinter(
+        PrinterDevice.fromJson(printer),
+        runtime: agent.printing,
+      );
+      final result = await agent.submit(
+        ticketPrinter,
+        ticketPrinter.compose(
+          content: LocalPrintRenderer.weighTicket(
+            order: order,
+            restaurant: _restaurant,
+          ),
+          barcode: LocalPrintRenderer.commandBarcode(order, null),
         ),
-        barcodeValue: LocalPrintRenderer.commandBarcode(order, null),
       );
       // Este terminal assumiu a nota. Sem avisar o backend, ele criaria um
       // `PrintJob` novo ao processar a fila e o cliente levaria dois papéis do

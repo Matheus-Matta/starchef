@@ -10,8 +10,11 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/mutation_relay.dart';
 import '../../../core/network/offline_mutations.dart';
+import '../../devices/services/local_device_agent.dart';
 import '../data/local_topology_store.dart';
+import '../domain/lan_addresses.dart';
 import '../domain/local_topology_config.dart';
+import 'relay_print_fallback.dart';
 
 enum LocalTopologyPhase {
   starting,
@@ -54,8 +57,12 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     required this.actorId,
     required String restaurantId,
     LocalTopologyStore? store,
+    LocalDeviceAgent? deviceAgent,
   }) : _restaurantId = restaurantId,
-       store = store ?? LocalTopologyStore();
+       store = store ?? LocalTopologyStore(),
+       _printFallback = deviceAgent == null
+           ? null
+           : RelayPrintFallback(api: api, deviceAgent: deviceAgent);
 
   static const _timestampTolerance = Duration(minutes: 2);
   static const _healthFreshness = Duration(seconds: 5);
@@ -69,6 +76,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   final String actorId;
   final LocalTopologyStore store;
   final Expando<bool> _respondedRequests = Expando<bool>();
+  final RelayPrintFallback? _printFallback;
   String _restaurantId;
 
   LocalTopologyConfig? _config;
@@ -84,14 +92,54 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   int _queuedRelays = 0;
   bool _closed = false;
 
+  /// A configuração está válida, mas parada esperando a sessão dizer conta,
+  /// operador e unidade.
+  ///
+  /// O papel do terminal é decidido antes de o PDV carregar os dados — é o que
+  /// permite a um Caixa Secundário ler o cardápio pelo principal em vez de
+  /// depender da nuvem. Nesse instante a unidade ainda não é conhecida, e sem
+  /// esta marca a configuração ficava parada para sempre: nada reaplicava
+  /// depois, então o secundário nunca chegava a testar a conexão.
+  bool _awaitingIdentity = false;
+
+  /// Último teste de conexão que falhou.
+  ///
+  /// Enquanto o principal está fora, o monitor já repete o teste a cada
+  /// [probeInterval]. Sem esta marca, CADA leitura pagava um teste próprio
+  /// antes de cair para a nuvem — a tela inteira travava por segundos a cada
+  /// consulta, com o principal desligado.
+  DateTime? _lastFailureAt;
+
+  bool get _identityComplete =>
+      accountId.trim().isNotEmpty &&
+      actorId.trim().isNotEmpty &&
+      _restaurantId.trim().isNotEmpty;
+
+  bool get _recentlyUnavailable =>
+      _lastFailureAt != null &&
+      DateTime.now().difference(_lastFailureAt!) < probeInterval;
+
   LocalTopologyConfig? get config => _config;
   LocalTopologyStatus get status => _status;
+
+  /// A configuração está gravada e válida, só aguardando a sessão informar a
+  /// unidade deste terminal.
+  bool get isAwaitingIdentity => _awaitingIdentity;
 
   void updateRestaurant(String restaurantId) {
     final normalized = restaurantId.trim();
     if (_restaurantId == normalized) return;
     _restaurantId = normalized;
     _lastHealthyAt = null;
+    _lastFailureAt = null;
+    // A unidade chega depois do papel do terminal, e é ela que faltava para
+    // assinar. Sem reaplicar aqui, a configuração continuaria no estado de
+    // erro que ela mesma causou — sem servidor aberto no principal e sem
+    // nenhum teste de conexão no secundário.
+    final pending = _config;
+    if (_awaitingIdentity && _identityComplete && pending != null) {
+      unawaited(_apply(pending));
+    }
   }
 
   Future<void> start() async {
@@ -106,7 +154,11 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (_closed) return;
     final previous = _config;
     await _apply(next);
-    if (_status.phase == LocalTopologyPhase.error) {
+    // Esperar a sessão dizer a unidade NÃO é uma configuração inválida: é o
+    // estado normal de quem acabou de abrir o PDV. Tratar isso como falha
+    // desfazia a escolha do operador e, pior, não gravava nada — o caixa
+    // reabria amanhã sem saber que era secundário.
+    if (_status.phase == LocalTopologyPhase.error && !_awaitingIdentity) {
       final failure = _status.message;
       if (previous != null) await _apply(previous);
       throw StateError(failure);
@@ -130,6 +182,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (server != null) await server.close(force: false);
     _config = next;
 
+    _awaitingIdentity = false;
     final errors = next.validate();
     if (errors.isNotEmpty) {
       // Um secundário mal configurado precisa continuar **bloqueado para
@@ -151,9 +204,8 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       );
       return;
     }
-    if (accountId.trim().isEmpty ||
-        actorId.trim().isEmpty ||
-        _restaurantId.trim().isEmpty) {
+    if (!_identityComplete) {
+      _awaitingIdentity = true;
       if (next.mode == LocalTopologyMode.client) {
         api.attachMutationRelay(this);
       }
@@ -206,7 +258,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
             );
           },
         );
-        final addresses = await _localAddresses(next.port);
+        final addresses = await LanAddresses.discover(next.port);
         // Sem esta linha, "a porta abriu" e "o app nunca chegou aqui" ficam
         // indistinguíveis no diagnóstico — e é a primeira coisa que se
         // pergunta quando um aparelho não conecta.
@@ -276,6 +328,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       final healthy = response['ok'] == true;
       if (!healthy) throw const FormatException('Resposta local inválida.');
       _lastHealthyAt = DateTime.now();
+      _lastFailureAt = null;
       _setStatus(
         LocalTopologyStatus(
           phase: LocalTopologyPhase.clientReady,
@@ -284,17 +337,45 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       );
       return true;
     } catch (error) {
+      _lastFailureAt = DateTime.now();
+      // O motivo entra na mensagem: "indisponível" sozinho não distingue
+      // chave errada, relógio fora de hora, restaurante diferente e cabo de
+      // rede solto — e era com essa frase que o operador ficava.
       _setStatus(
         LocalTopologyStatus(
           phase: LocalTopologyPhase.unavailable,
           message:
               'Caixa Principal ${current!.principalHost}:${current.port} '
-              'indisponível.',
+              'indisponível. ${_probeFailureDetail(error)}',
         ),
+      );
+      AppLogger.instance.warning(
+        'relay_cliente_sem_principal',
+        data: {
+          'host': '${current.principalHost}:${current.port}',
+          'causa': '$error',
+        },
       );
       return false;
     }
   }
+
+  /// Traduz a falha do teste de conexão para quem está no caixa.
+  ///
+  /// O principal já responde 401 dizendo o motivo exato (chave, relógio,
+  /// conta, restaurante); descartar isso era o que transformava um erro de
+  /// configuração de trinta segundos numa manhã perdida.
+  static String _probeFailureDetail(Object error) => switch (error) {
+    ApiException(:final message) => message,
+    MutationRelayUnavailable(:final message) => message,
+    FormatException(:final message) => message,
+    TimeoutException() => 'Ele não respondeu a tempo pela rede local.',
+    SocketException(:final message) =>
+      'Não houve resposta na rede local ($message). Confira se o Caixa '
+          'Principal está ligado, na mesma rede, e se o firewall do Windows '
+          'libera a porta do relay.',
+    _ => '$error',
+  };
 
   @override
   Future<Map<String, dynamic>> relay(RelayMutation mutation) async {
@@ -355,10 +436,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final recentlyHealthy =
         _lastHealthyAt != null &&
         DateTime.now().difference(_lastHealthyAt!) <= _healthFreshness;
-    if (!recentlyHealthy && !await probe()) {
-      throw const MutationRelayUnavailable(
-        'O Caixa Principal não respondeu ao teste de conexão.',
-      );
+    if (!recentlyHealthy) {
+      // Uma leitura tem para onde cair (cache local e nuvem): repetir o teste
+      // que acabou de falhar só atrasaria a tela.
+      if (_recentlyUnavailable) {
+        throw MutationRelayUnavailable(_status.message);
+      }
+      if (!await probe()) {
+        throw const MutationRelayUnavailable(
+          'O Caixa Principal não respondeu ao teste de conexão.',
+        );
+      }
     }
     try {
       final envelope = await _signedRequest(
@@ -542,8 +630,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         responseSignature,
         expectedResponseSignature,
       )) {
-        throw const FormatException(
-          'A resposta do Caixa Principal não pôde ser autenticada.',
+        // A resposta não confere com a chave deste caixa, então o corpo dela
+        // não pode ser lido — e é justamente nele que o principal explica a
+        // recusa. Com 401, porém, as duas únicas explicações possíveis levam
+        // à mesma ação: a chave está diferente da dele. Sem dizer isso, o
+        // operador ficava com "resposta não autenticada" e ia procurar
+        // problema de rede.
+        throw FormatException(
+          response.statusCode == HttpStatus.unauthorized
+              ? 'O Caixa Principal recusou a chave de pareamento deste '
+                    'caixa. Copie a chave em Configurações → Rede local do '
+                    'principal e cole aqui.'
+              : 'A resposta do Caixa Principal não pôde ser autenticada.',
         );
       }
       final decoded = responseBody.isEmpty
@@ -815,6 +913,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           completer.complete(existing);
           return;
         }
+        // Antes da mutação: depois dela os itens já estão marcados como
+        // enviados/cancelados, e o responsável pela impressão não teria mais
+        // como saber o que mudou nesta chamada.
+        final beforeOrder = await _printFallback?.captureBeforeState(mutation);
         final response = await api.acceptRelayedMutation(
           mutation,
           accessToken: accessToken,
@@ -824,6 +926,16 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           nodeId: authenticated.nodeId,
           operationId: mutation.operationId,
           requestHash: requestHash,
+          response: response,
+        );
+        // Quem imprime a comanda/o cupom de cancelamento é este terminal,
+        // nunca quem mandou a operação (§ impressão automática por setor):
+        // o app do garçom não tem impressora, e um Caixa Secundário que
+        // achou a entrega concluída sem o Principal ter alcançado a nuvem
+        // também depende disto.
+        await _printFallback?.afterAcceptedMutation(
+          mutation: mutation,
+          beforeOrder: beforeOrder,
           response: response,
         );
         completer.complete(response);
@@ -1092,21 +1204,6 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     super.dispose();
   }
 
-  static Future<List<String>> _localAddresses(int port) async {
-    final values = <String>[];
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-      );
-      for (final interface in interfaces) {
-        for (final address in interface.addresses) {
-          values.add('${address.address}:$port');
-        }
-      }
-    } catch (_) {}
-    return values.toSet().toList()..sort();
-  }
 
   static Future<void> _ensurePrivateDestination(String host) async {
     try {

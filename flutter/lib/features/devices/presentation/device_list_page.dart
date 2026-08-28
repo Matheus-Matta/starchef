@@ -10,7 +10,9 @@ import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../domain/local_print_renderer.dart';
 import '../domain/printer_endpoint.dart';
-import '../services/local_device_agent.dart';
+import '../printing/printer.dart';
+import '../printing/printer_device.dart';
+import '../printing/printer_transport.dart';
 
 enum DeviceKind { printer, scale }
 
@@ -653,7 +655,12 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       final text = rendered.isNotEmpty
           ? rendered
           : LocalPrintRenderer.printerTest(printer: printer);
-      await LocalDeviceAgent(api: widget.api).printForPrinter(printer, text);
+      // A nota de teste usa a mesma classe de impressora do resto do PDV: se
+      // ela sai aqui, sai igual na venda. Antes este botão montava um agente
+      // de impressão inteiro — com WebSocket e fila — só para escrever numa
+      // porta.
+      final tester = TestPrinter(PrinterDevice.fromJson(printer));
+      await tester.send(tester.compose(content: text));
       final jobId = job?['print_job_id'];
       if (jobId != null) {
         await widget.api.post(

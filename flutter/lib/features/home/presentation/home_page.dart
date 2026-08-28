@@ -35,6 +35,7 @@ import '../../topology/data/local_topology_store.dart';
 import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
+import '../../topology/services/terminal_topology.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_cash_center_dialog.dart';
@@ -151,19 +152,17 @@ class _HomePageState extends State<HomePage> {
   final Set<String> pendingRealtimeTopics = {};
   bool realtimeRefreshRunning = false;
   bool realtimeRefreshQueued = false;
-  LocalTopologyService? topologyService;
+  late final TerminalTopology topology;
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
   );
   bool offlineMode = false;
 
   /// Este terminal é um Caixa Cliente, que depende do principal para gravar.
-  bool get isSecondaryStation =>
-      topologyService?.config?.mode == LocalTopologyMode.client;
+  bool get isSecondaryStation => topology.isClient;
 
   /// O principal respondeu ao último teste de conexão.
-  bool get principalReachable =>
-      topologyService?.status.phase == LocalTopologyPhase.clientReady;
+  bool get principalReachable => topology.isClientReady;
   int offlinePendingCount = 0;
   bool sidebarExpanded = true;
 
@@ -221,6 +220,30 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     deviceAgent = LocalDeviceAgent(api: api, preferences: widget.preferences);
     deviceAgent.printerAvailability.addListener(_onPrinterStatusChanged);
+    topology = TerminalTopology(
+      api: api,
+      deviceAgent: deviceAgent,
+      readIdentity: () {
+        final user = widget.controller.session?.user;
+        return TopologyIdentity(
+          accessToken: widget.controller.session?.accessToken ?? '',
+          accountId: user?.accountId ?? '',
+          actorId: user?.id ?? '',
+          // A unidade escolhida quando já houver bootstrap; antes dele, a do
+          // vínculo do usuário. Nenhuma das duas depende da nuvem agora.
+          restaurantId: selectedRestaurantId ?? user?.restaurantId ?? '',
+        );
+      },
+      // A chave de pareamento tem a mesma exigência do login: perder ela ao
+      // fechar o PDV desconecta todos os caixas secundários. Guarda nas mesmas
+      // camadas duráveis, incluindo o banco operacional.
+      createStore: () => LocalTopologyStore(
+        secretStorage: SecureTopologySecretStorage(
+          valueStore: widget.controller.repository.credentials,
+        ),
+      ),
+    );
+    topology.addListener(_onTopologyChanged);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
     updateService = PdvUpdateService();
@@ -412,58 +435,18 @@ class _HomePageState extends State<HomePage> {
     return repository.list(path, query: query);
   }
 
-  Future<void> _ensureTopology() async {
-    final selected = restaurantId;
-    final accountId = widget.controller.session!.user.accountId;
-    if (selected == null || accountId == null || accountId.trim().isEmpty) {
-      return;
-    }
-    final existing = topologyService;
-    if (existing != null) {
-      existing.updateRestaurant(selected);
-      return;
-    }
-    final service = LocalTopologyService(
-      api: api,
-      accessToken: token,
-      accountId: accountId,
-      actorId: widget.controller.session!.user.id,
-      restaurantId: selected,
-      // A chave de pareamento tem a mesma exigência do login: perder ela ao
-      // fechar o PDV desconecta todos os caixas secundários. Guarda nas mesmas
-      // camadas duráveis, incluindo o banco operacional.
-      store: LocalTopologyStore(
-        secretStorage: SecureTopologySecretStorage(
-          valueStore: widget.controller.repository.credentials,
-        ),
-      ),
-    );
-    try {
-      await service.start();
-      if (!mounted) {
-        await service.shutdown();
-        return;
-      }
-      topologyService = service;
-      service.addListener(_onTopologyChanged);
-      _onTopologyChanged();
-    } catch (_) {
-      await service.shutdown();
-      rethrow;
-    }
-  }
+  /// Liga a rede local deste terminal.
+  ///
+  /// Chamada ANTES do bootstrap de dados e de novo depois dele. A ordem é o
+  /// ponto: num Caixa Secundário é o Caixa Principal quem serve restaurantes e
+  /// cardápio, então ligar o relay só depois da carga era pedir ao secundário
+  /// que carregasse pela nuvem justamente o que ele deveria ler do principal —
+  /// e, sem nuvem, ele nunca chegava a se conectar a ninguém.
+  Future<void> _ensureTopology({String? restaurantId}) =>
+      topology.ensure(restaurantId: restaurantId);
 
   void _onTopologyChanged() {
-    final service = topologyService;
-    if (service == null || !mounted) return;
-    final config = service.config;
-    if (service.status.phase == LocalTopologyPhase.starting ||
-        config == null ||
-        config.mode == LocalTopologyMode.client) {
-      deviceAgent.stop();
-    } else if (restaurantId != null) {
-      deviceAgent.start(token: token, restaurantId: restaurantId!);
-    }
+    if (!mounted) return;
     setState(() {});
   }
 
@@ -482,6 +465,22 @@ class _HomePageState extends State<HomePage> {
       loadErrorMessage = null;
     });
     try {
+      // Primeiro o papel do terminal, só depois os dados. Num Caixa
+      // Secundário é o principal quem responde `/restaurants/` e o cardápio;
+      // ligar o relay depois da carga deixava o secundário tentando a nuvem
+      // para sempre — e sem nuvem, sem PDV.
+      try {
+        await _ensureTopology();
+      } catch (error) {
+        if (mounted) {
+          showAppToast(
+            context,
+            'A rede local não iniciou: $error',
+            title: 'Rede local indisponível',
+            severity: AppErrorSeverity.warning,
+          );
+        }
+      }
       final bootstrap = await presenter.load(
         selectedRestaurantId: selectedRestaurantId,
         userRestaurantId: widget.controller.session!.user.restaurantId,
@@ -508,18 +507,9 @@ class _HomePageState extends State<HomePage> {
       tables = catalog.tables;
       commands = catalog.commands;
       paymentMethods = catalog.paymentMethods;
-      try {
-        await _ensureTopology();
-      } catch (error) {
-        if (mounted) {
-          showAppToast(
-            context,
-            'A rede local não iniciou: $error',
-            title: 'Rede local indisponível',
-            severity: AppErrorSeverity.warning,
-          );
-        }
-      }
+      // Agora com a unidade resolvida: é ela que assina as requisições ao
+      // principal e que o agente de impressão consulta.
+      await _ensureTopology(restaurantId: selectedRestaurantId);
       try {
         final currentSession = await api.get(
           '/cash-register/current/',
@@ -588,10 +578,6 @@ class _HomePageState extends State<HomePage> {
         final restaurantForSync = restaurantId;
         if (restaurantForSync != null) {
           unawaited(api.syncService?.pullAll(restaurantId: restaurantForSync));
-        }
-        if (restaurantId != null &&
-            topologyService?.config?.mode != LocalTopologyMode.client) {
-          deviceAgent.start(token: token, restaurantId: restaurantId!);
         }
         if (hasCashDivergence) {
           WidgetsBinding.instance.addPostFrameCallback(
@@ -1074,9 +1060,9 @@ class _HomePageState extends State<HomePage> {
     final selection = await PdvSettingsMenuDialog.show(
       context,
       canManageDevices: widget.controller.session!.user.canManageDevices,
-      topologyStatus:
-          topologyService?.status.message ??
-          'Entre novamente para habilitar a identidade deste caixa.',
+      topologyStatus: topology.config == null
+          ? 'Entre novamente para habilitar a identidade deste caixa.'
+          : topology.status.message,
       offlinePendingCount: offlinePendingCount,
       isDark: widget.isDark,
       isFullScreen: widget.isFullScreen,
@@ -1114,9 +1100,14 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openTopologySettings() async {
-    final service = topologyService;
-    final current = service?.config;
-    if (service == null || current == null) {
+    // O diálogo pode ser aberto antes de a carga terminar: garantir a rede
+    // local aqui é o que permite corrigir o endereço do principal justamente
+    // quando ele está errado — que é quando os dados não carregam.
+    await _ensureTopology();
+    if (!mounted) return;
+    final service = topology;
+    final current = service.config;
+    if (current == null) {
       showAppToast(
         context,
         'A sessão restaurada não contém a identidade da conta. '
@@ -1137,7 +1128,6 @@ class _HomePageState extends State<HomePage> {
     try {
       await service.reconfigure(candidate);
       if (!mounted) return;
-      _onTopologyChanged();
       final degraded =
           candidate.mode == LocalTopologyMode.client && !service.status.ready;
       // Sem este aviso, uma chave vazia ou a caixa de rede confiável
@@ -1503,8 +1493,8 @@ class _HomePageState extends State<HomePage> {
     realtimeRefreshDebounce?.cancel();
     pendingRealtimeTopics.clear();
     syncStatusSubscription?.cancel();
-    topologyService?.removeListener(_onTopologyChanged);
-    topologyService?.dispose();
+    topology.removeListener(_onTopologyChanged);
+    topology.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
     ordersSearchDebounce?.cancel();
@@ -2674,10 +2664,13 @@ class _HomePageState extends State<HomePage> {
       try {
         // O cupom entra na fila local: mesmo que esta impressora esteja sem
         // papel agora, ele sai quando ela voltar.
-        if ((await deviceAgent.enqueueLocalPrint(
-          printer: printer,
-          jobType: 'kitchen_cancel',
-          content: text,
+        final cancelPrinter = KitchenCancelPrinter(
+          PrinterDevice.fromJson(printer),
+          runtime: deviceAgent.printing,
+        );
+        if ((await deviceAgent.submit(
+          cancelPrinter,
+          cancelPrinter.compose(content: text),
         )).accepted) {
           printed = true;
         }
@@ -2865,10 +2858,13 @@ class _HomePageState extends State<HomePage> {
         // evento do servidor que, offline, nunca chega.
         // `accepted`, não `printed`: com o cupom na fila, este terminal já é
         // o responsável — mesmo que a impressora só aceite daqui a pouco.
-        if ((await deviceAgent.enqueueLocalPrint(
-          printer: ticket.printer,
-          jobType: 'kitchen',
-          content: ticket.text,
+        final kitchenPrinter = KitchenPrinter(
+          PrinterDevice.fromJson(ticket.printer),
+          runtime: deviceAgent.printing,
+        );
+        if ((await deviceAgent.submit(
+          kitchenPrinter,
+          kitchenPrinter.compose(content: ticket.text),
         )).accepted) {
           printedAny = true;
         }
@@ -3097,13 +3093,18 @@ class _HomePageState extends State<HomePage> {
         await _work(() async {
           // Pela fila local: se a impressora estiver sem papel, o cupom
           // espera e sai sozinho quando ela voltar, em vez de se perder.
-          final result = await deviceAgent.enqueueLocalPrint(
-            printer: chosen,
-            jobType: 'receipt',
-            content: await _localReceiptText(order),
-            barcodeValue: LocalPrintRenderer.commandBarcode(
-              order,
-              selectedCommand,
+          final receiptPrinter = ReceiptPrinter(
+            PrinterDevice.fromJson(chosen),
+            runtime: deviceAgent.printing,
+          );
+          final result = await deviceAgent.submit(
+            receiptPrinter,
+            receiptPrinter.compose(
+              content: await _localReceiptText(order),
+              barcode: LocalPrintRenderer.commandBarcode(
+                order,
+                selectedCommand,
+              ),
             ),
           );
           // Quem pediu o recibo está olhando a impressora: o silêncio faria
@@ -4434,7 +4435,7 @@ class _HomePageState extends State<HomePage> {
                       child: PdvPrincipalBadge(
                         connected: principalReachable,
                         compact: compactHeader,
-                        detail: topologyService?.status.message ?? '',
+                        detail: topology.status.message,
                         onPressed: () => unawaited(_openTopologySettings()),
                       ),
                     ),
