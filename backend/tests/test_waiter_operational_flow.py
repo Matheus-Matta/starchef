@@ -85,6 +85,49 @@ def test_create_with_item_never_leaves_an_empty_order(api_client, manager_user, 
     assert OrderItem.all_objects.filter(order_id=created.data["id"]).count() == 1
 
 
+def test_create_with_item_on_open_command_appends_instead_of_conflicting(
+    api_client,
+    manager_user,
+    restaurant,
+    command,
+    product,
+):
+    """A comanda ja aberta recebe o item, em vez de recusar o lancamento.
+
+    O app do garcom lanca offline. Quando a operacao enfileirada sobe, a
+    comanda quase sempre ja foi aberta por alguem — o proprio garcom em outro
+    aparelho, o caixa, ou a mesma operacao por outro caminho. Respondendo 409,
+    o item virava pendencia bloqueada e sumia do pedido.
+    """
+    api_client.force_authenticate(user=None)
+    login = api_client.post(
+        "/api/v1/auth/login/",
+        {"username": "manager", "password": "secret123", "no_cookie": True},
+        format="json",
+    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+    payload = {
+        "order_type": "command",
+        "command": str(command.id),
+        "item": {"product": str(product.id), "quantity": 1},
+    }
+    created = api_client.post("/api/v1/orders/create-with-item/", payload, format="json")
+    assert created.status_code == 201, created.data
+
+    again = api_client.post("/api/v1/orders/create-with-item/", payload, format="json")
+
+    assert again.status_code == 200, again.data
+    # O mesmo pedido, agora com os dois itens: nenhum pedido novo foi aberto.
+    assert again.data["id"] == created.data["id"]
+    assert Order.all_objects.filter(command=command).count() == 1
+    itens = OrderItem.all_objects.filter(order_id=created.data["id"])
+    # Item identico soma na linha que ja existe, como em qualquer lancamento
+    # repetido — o que importa aqui e que a quantidade nao se perdeu.
+    assert itens.count() == 1
+    assert itens.first().quantity == Decimal("2")
+
+
 def test_immediate_kitchen_dispatch_prints_linked_cancellation(
     account,
     restaurant,

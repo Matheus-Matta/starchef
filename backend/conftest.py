@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -16,6 +17,25 @@ from apps.accounts.models import Account, UserProfile
 from apps.restaurants.models import Branch, Restaurant
 
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def _limpa_contadores_de_rate_limit():
+    """Zera os contadores de rate limit entre um teste e o seguinte.
+
+    O DRF guarda o contador do `ScopedRateThrottle` no cache do Django, e o
+    cache sobrevive de um teste para o outro: os logins de dezenas de testes
+    caíam no mesmo balde e, a partir de certo ponto do run, um teste qualquer
+    recebia 429 por causa dos anteriores. Rodado sozinho ele passava — o
+    sintoma clássico de contaminação entre testes, e a razão de o resultado
+    depender da ORDEM em que os arquivos rodam.
+
+    O limite em si continua exercitado por quem o testa de propósito: cada
+    teste começa com o balde vazio e conta as próprias chamadas.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

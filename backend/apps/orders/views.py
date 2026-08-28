@@ -172,6 +172,7 @@ class OrderViewSet(BaseTenantViewSet):
                 order_type=Order.TYPE_COMMAND,
                 command=command,
                 user=request.user,
+                responsible_user=self._attending_user(command.restaurant),
             )
         except ValidationError as exc:
             return Response(
@@ -179,6 +180,29 @@ class OrderViewSet(BaseTenantViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+
+    def _attending_user(self, restaurant):
+        """Quem esta atendendo, quando nao e quem gravou.
+
+        O Caixa Principal executa as operacoes do app do garcom com as
+        proprias credenciais — e ele quem tem a sessao com a nuvem. Sem esta
+        atribuicao o pedido nascia no nome do caixa e a comanda saia na cozinha
+        com "ATENDENTE: <caixa>", escondendo quem de fato atendeu a mesa.
+
+        `created_by` continua sendo quem gravou (verdade de auditoria); so o
+        atendimento e atribuido, e apenas a um usuario do mesmo restaurante.
+        """
+        raw = str(self.request.data.get("responsible_user") or "").strip()
+        if not raw:
+            return None
+        try:
+            return (
+                get_user_model()
+                .objects.filter(pk=raw, profile__restaurant=restaurant)
+                .first()
+            )
+        except (ValueError, ValidationError):
+            return None
 
     @action(detail=False, methods=["post"], url_path="create-with-item")
     def create_with_item(self, request):
@@ -206,11 +230,6 @@ class OrderViewSet(BaseTenantViewSet):
             ).first()
             if command is None:
                 return Response({"command": "Selecione uma comanda válida."}, status=status.HTTP_400_BAD_REQUEST)
-            if command.current_order_id:
-                return Response(
-                    {"detail": "A comanda já possui um pedido. Reabra-o para adicionar itens."},
-                    status=status.HTTP_409_CONFLICT,
-                )
             if request.data.get("table"):
                 from apps.restaurants.models import Table
 
@@ -229,6 +248,42 @@ class OrderViewSet(BaseTenantViewSet):
         if product is None:
             return Response({"item": "O produto selecionado não está disponível."}, status=status.HTTP_400_BAD_REQUEST)
 
+        item_data = {
+            "quantity": raw_item.get("quantity"),
+            "variations": raw_item.get("variations", []),
+            "addons": raw_item.get("addons", []),
+            "customer_note": raw_item.get("customer_note", ""),
+            "expected_unit_price": raw_item.get("expected_unit_price"),
+        }
+
+        # A comanda ja tem pedido aberto: o item entra NELE.
+        #
+        # Recusar com 409 so fazia sentido quando quem chamava estava on-line e
+        # podia reabrir o pedido na tela. O app do garcom lanca offline: quando
+        # a operacao enfileirada finalmente sobe, a comanda quase sempre ja foi
+        # aberta por alguem (o proprio garcom em outro aparelho, o caixa, ou a
+        # mesma operacao vinda por outro caminho). O 409 transformava isso em
+        # pendencia bloqueada e o item simplesmente sumia do pedido.
+        #
+        # `add_order_item` continua recusando um pedido pago, cancelado ou
+        # estornado, que e o unico caso em que "reabra o pedido" e a resposta
+        # certa.
+        existing_order = None
+        if command is not None and command.current_order_id:
+            existing_order = Order.objects.filter(
+                pk=command.current_order_id,
+                restaurant=restaurant,
+            ).first()
+        if existing_order is not None:
+            try:
+                add_order_item(order=existing_order, product=product, user=request.user, **item_data)
+            except ValidationError as exc:
+                return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+            existing_order = Order.objects.prefetch_related(
+                "items__product", "items__addons", "items__batch"
+            ).get(pk=existing_order.pk)
+            return Response(self.get_serializer(existing_order).data, status=status.HTTP_200_OK)
+
         try:
             order = create_order_with_item(
                 restaurant=restaurant,
@@ -237,13 +292,8 @@ class OrderViewSet(BaseTenantViewSet):
                 table=table,
                 product=product,
                 user=request.user,
-                item_data={
-                    "quantity": raw_item.get("quantity"),
-                    "variations": raw_item.get("variations", []),
-                    "addons": raw_item.get("addons", []),
-                    "customer_note": raw_item.get("customer_note", ""),
-                    "expected_unit_price": raw_item.get("expected_unit_price"),
-                },
+                item_data=item_data,
+                responsible_user=self._attending_user(restaurant),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
@@ -259,6 +309,7 @@ class OrderViewSet(BaseTenantViewSet):
             branch=branch,
             order_type=serializer.validated_data["order_type"],
             user=user,
+            responsible_user=self._attending_user(restaurant),
             table=serializer.validated_data.get("table"),
             command=serializer.validated_data.get("command"),
             customer=serializer.validated_data.get("customer"),

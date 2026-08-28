@@ -26,7 +26,15 @@ def next_order_sequence(restaurant):
 
 
 @transaction.atomic
-def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
+def create_order(*, restaurant, order_type, user, branch=None, responsible_user=None, **kwargs):
+    """Abre um pedido.
+
+    [user] e quem gravou (auditoria); [responsible_user] e quem esta atendendo,
+    quando os dois nao sao a mesma pessoa. E o caso do app do garcom: quem
+    executa a operacao e o Caixa Principal, com as credenciais dele, mas quem
+    atende a mesa e o garcom — e e o nome dele que a cozinha precisa ler na
+    comanda.
+    """
     account = restaurant.account
 
     with tenant_context(account):
@@ -55,7 +63,7 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
             branch=None,
             sequence=next_order_sequence(restaurant),
             order_type=order_type,
-            responsible_user=user,
+            responsible_user=responsible_user or user,
             created_by=user,
             updated_by=user,
             **kwargs,
@@ -419,6 +427,7 @@ def create_order_with_item(
     command=None,
     table=None,
     item_data=None,
+    responsible_user=None,
 ):
     """Atomically creates a real order only when its first item is valid."""
     item_data = dict(item_data or {})
@@ -457,6 +466,7 @@ def create_order_with_item(
             order_type=order_type,
             command=command,
             user=user,
+            responsible_user=responsible_user,
         )
         add_order_item(order=order, product=product, user=user, **item_data)
         return Order.objects.prefetch_related("items__product", "items__addons", "items__batch").get(pk=order.pk)
