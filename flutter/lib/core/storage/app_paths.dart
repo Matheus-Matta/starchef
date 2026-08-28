@@ -38,19 +38,39 @@ abstract final class AppPaths {
       return Directory.systemTemp.path;
     }
 
-    // `LOCALAPPDATA` continua sendo respeitado fora do Windows para permitir
-    // que testes e empacotamentos apontem o armazenamento para outro lugar.
-    final override = Platform.environment['LOCALAPPDATA']?.trim();
-    if (override != null && override.isNotEmpty) return override;
-
     final xdgDataHome = Platform.environment['XDG_DATA_HOME']?.trim();
     if (xdgDataHome != null && xdgDataHome.isNotEmpty) return xdgDataHome;
 
-    final home = Platform.environment['HOME']?.trim();
+    final home = _linuxHomeDirectory();
     if (home != null && home.isNotEmpty) {
       return '$home${Platform.pathSeparator}.local'
           '${Platform.pathSeparator}share';
     }
+
+    // Último recurso: nunca deveria ser alcançado num desktop de verdade, e
+    // `/tmp` é justamente o pior lugar para guardar pareamento, fila offline
+    // e preferências — algumas distros o limpam a cada boot. Se chegou até
+    // aqui, o processo foi iniciado sem `HOME` nem usuário identificável no
+    // ambiente (ex.: um serviço systemd mal configurado); é melhor a próxima
+    // abertura reconfigurar tudo do que perder dados em silêncio achando que
+    // persistiu.
     return Directory.systemTemp.path;
+  }
+
+  /// `HOME` é o caminho normal, mas nem todo processo o herda — um serviço
+  /// systemd ou um autostart mal configurado pode não repassar o ambiente da
+  /// sessão gráfica. Sem isso, o PDV caía direto no diretório temporário (ver
+  /// [_baseDirectory]) e perdia o pareamento do Caixa Principal a cada
+  /// reinício, mesmo sem o computador ter sido desligado.
+  static String? _linuxHomeDirectory() {
+    final home = Platform.environment['HOME']?.trim();
+    if (home != null && home.isNotEmpty) return home;
+
+    final user =
+        Platform.environment['USER']?.trim() ??
+        Platform.environment['LOGNAME']?.trim();
+    if (user == null || user.isEmpty) return null;
+    final guess = Platform.isMacOS ? '/Users/$user' : '/home/$user';
+    return Directory(guess).existsSync() ? guess : null;
   }
 }
