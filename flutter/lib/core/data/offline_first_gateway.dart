@@ -210,7 +210,18 @@ class OfflineFirstGateway {
     // Interceptá-las sempre degradaria o fluxo normal só para atender o caso
     // da rede caída. Aqui, portanto, o local é alternativa, não primeiro
     // caminho.
-    if (_isScaleCheckout(path) || path.endsWith('/approve/')) {
+    // A pesagem fecha aqui quando não há outro caminho — e num Caixa
+    // Secundário nunca há: ele não fala com a nuvem. O que ele tem é a
+    // própria balança na porta serial e a cópia local do cardápio e das
+    // comandas, que é tudo de que o fechamento precisa. O pedido é montado
+    // neste terminal e entregue ao Caixa Principal pela fila, como qualquer
+    // outra venda; a nota de pesagem sai na impressora daqui.
+    if (_isScaleCheckout(path)) {
+      return relayOnly || !(connectivity?.call() ?? false);
+    }
+    // A autorização do supervisor continua sendo do servidor: online ela
+    // aceita o login de um gerente, algo que só ele sabe validar.
+    if (path.endsWith('/approve/')) {
       return !relayOnly && !(connectivity?.call() ?? false);
     }
     if (requiresServer(path)) return false;

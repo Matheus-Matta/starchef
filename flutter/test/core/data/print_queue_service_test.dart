@@ -72,15 +72,77 @@ void main() {
     expect(entries.single.lastError, contains('papel'));
   });
 
-  test('espera entre tentativas cresce: 5s, 15s, 30s, 1min, 2min', () {
+  test('a espera cresce a cada tentativa, sem repetir o degrau', () {
+    // Começa em segundos (papel, cabo, impressora desligada se resolvem
+    // assim) e vai afrouxando: passados alguns minutos, insistir no mesmo
+    // ritmo não resolve e ainda custa um tempo limite por rodada.
     expect(PrintQueueService.backoffFor(1), const Duration(seconds: 5));
-    expect(PrintQueueService.backoffFor(2), const Duration(seconds: 15));
-    expect(PrintQueueService.backoffFor(3), const Duration(seconds: 30));
-    expect(PrintQueueService.backoffFor(4), const Duration(minutes: 1));
-    expect(PrintQueueService.backoffFor(5), const Duration(minutes: 2));
-    // O teto se repete: insistir mais devagar não ajudaria quem espera o
-    // cupom no balcão.
-    expect(PrintQueueService.backoffFor(20), const Duration(minutes: 2));
+    expect(PrintQueueService.backoffFor(2), const Duration(seconds: 10));
+    expect(
+      PrintQueueService.backoffFor(PrintQueueService.maximumAttempts),
+      const Duration(minutes: 15),
+    );
+    var previous = Duration.zero;
+    for (var attempt = 1;
+        attempt <= PrintQueueService.maximumAttempts;
+        attempt++) {
+      final wait = PrintQueueService.backoffFor(attempt);
+      expect(
+        wait,
+        greaterThan(previous),
+        reason: 'a tentativa $attempt deveria esperar mais que a anterior',
+      );
+      previous = wait;
+    }
+  });
+
+  test('o cupom para depois de 15 tentativas e espera uma decisão', () async {
+    // Sem teto, um trabalho que ninguém vai conseguir imprimir girava até
+    // expirar em 12 h, custando um tempo limite por rodada e atrasando os
+    // cupons bons atrás dele.
+    await enfileirar();
+    final job = await queue.claimNext(scope: scope);
+
+    final antes = await queue.markRetry(
+      job!.id,
+      attempts: PrintQueueService.maximumAttempts - 1,
+      error: 'Impressora sem resposta.',
+    );
+    expect(antes.exhausted, isFalse);
+    expect(antes.nextRetryAt, isNotNull);
+
+    final esgotou = await queue.markRetry(
+      job.id,
+      attempts: PrintQueueService.maximumAttempts,
+      error: 'Impressora sem resposta.',
+    );
+
+    expect(esgotou.exhausted, isTrue);
+    expect(esgotou.nextRetryAt, isNull);
+    final entry = (await queue.entries(scope: scope)).single;
+    expect(entry.status, PrintJobStatus.failed);
+    expect(entry.attempts, PrintQueueService.maximumAttempts);
+    expect(entry.lastError, contains('15 tentativas'));
+    // Parou de girar sozinho: nenhuma rodada volta a reclamá-lo.
+    expect(await queue.claimNext(scope: scope), isNull);
+  });
+
+  test('tentar agora devolve as 15 tentativas ao cupom esgotado', () async {
+    // O operador resolveu a causa; a contagem recomeça, senão o botão da tela
+    // da fila daria uma única tentativa e o cupom voltaria a travar.
+    await enfileirar();
+    final job = await queue.claimNext(scope: scope);
+    await queue.markRetry(
+      job!.id,
+      attempts: PrintQueueService.maximumAttempts,
+      error: 'Impressora sem resposta.',
+    );
+
+    await queue.retryNow(job.id);
+
+    final entry = (await queue.entries(scope: scope)).single;
+    expect(entry.status, PrintJobStatus.pending);
+    expect(entry.attempts, 0);
   });
 
   test('trabalho em espera não é reclamado antes da hora', () async {
@@ -209,5 +271,46 @@ void main() {
       await queue.claimNext(scope: 'starchef.test|outra-conta:operador-9'),
       isNull,
     );
+  });
+
+  group('painel da fila: tentar agora e descartar', () {
+    test('tentar agora antecipa a espera e esquece a tentativa anterior', () async {
+      // O operador trocou o papel: esperar a escada de retentativa recomeçar
+      // do zero não faz sentido, a causa da falha mudou.
+      final jobId = await enfileirar();
+      final job = await queue.claimNext(scope: scope);
+      await queue.markRetry(job!.id, attempts: 3, error: 'sem papel');
+      expect(await queue.claimNext(scope: scope), isNull);
+
+      await queue.retryNow(job.id);
+
+      final reclaimed = await queue.claimNext(scope: scope);
+      expect(reclaimed, isNotNull);
+      expect(reclaimed!.jobId, jobId);
+      expect(reclaimed.attempts, 0);
+      expect(reclaimed.lastError, isNull);
+    });
+
+    test('descartar tira o cupom da fila para sempre', () async {
+      await enfileirar();
+      final job = await queue.claimNext(scope: scope);
+
+      await queue.discard(job!.id);
+
+      expect(await queue.entries(scope: scope), isEmpty);
+      final resumo = await queue.summary(scope: scope);
+      expect(resumo.total, 0);
+    });
+
+    test('a listagem do painel traz o que ainda não saiu no papel', () async {
+      await enfileirar(content: 'COMANDA 1');
+      final segundo = await enfileirar(content: 'COMANDA 2');
+      final job = await queue.claimNext(scope: scope);
+      await queue.markPrinted(job!.id);
+
+      final listadas = await queue.entries(scope: scope);
+
+      expect(listadas.map((item) => item.jobId), [segundo]);
+    });
   });
 }

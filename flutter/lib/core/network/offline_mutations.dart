@@ -35,7 +35,33 @@ abstract final class OfflineMutations {
   /// É um subconjunto de [isQueueable]: cadastro de cliente não pertence ao
   /// atendimento em curso e não ganha nada em passar pelo principal.
   static bool isRelayable(String method, String path) =>
-      !path.startsWith('/customers/') && _matches(method, path, _remoteId);
+      !path.startsWith('/customers/') &&
+      (_matches(method, path, _remoteId) ||
+          isScaleCheckout(method, path, _remoteId));
+
+  /// Fechamento de uma pesagem na comanda.
+  ///
+  /// Fica fora de [_matches] de propósito: ele não entra na fila **por conta
+  /// do `ApiClient`** — quem o coloca lá é o próprio armazenamento local, ao
+  /// montar o pedido da balança com o peso no corpo (o backend materializa a
+  /// leitura no replay). Aqui só se declara que o Caixa Principal aceita
+  /// recebê-lo pela rede local: sem isso, a balança de um Caixa Secundário
+  /// pesava e nunca conseguia fechar a venda.
+  static bool isScaleCheckout(String method, String path, [String? id]) =>
+      method == 'POST' &&
+      RegExp('^/scales/${id ?? _localId}/checkout-command/\$').hasMatch(path);
+
+  /// A operação abre um pedido novo.
+  ///
+  /// É onde o atendimento é atribuído: quem abriu o pedido é quem a cozinha
+  /// vai ler como atendente na comanda.
+  static bool opensOrder(String method, String path) =>
+      method == 'POST' &&
+      const {
+        '/orders/',
+        '/orders/open-command/',
+        '/orders/create-with-item/',
+      }.contains(path);
 
   /// A operação cria um recurso e precisa de um ID temporário local.
   static bool createsResource(String method, String path) =>
@@ -77,7 +103,17 @@ abstract final class OfflineMutations {
           // sentou.
           RegExp('^/commands/$id/(link-table|unlink-table)/\$').hasMatch(path);
     }
-    if (method == 'PATCH') return path.startsWith('/customers/');
+    if (method == 'PATCH') {
+      return path.startsWith('/customers/') ||
+          // Cadastro de equipamento é configuração do PDV, não venda: um
+          // Caixa Secundário tem impressora e balança próprias e precisa
+          // poder corrigir porta, IP e setor sem depender do Principal. A
+          // alteração é gravada aqui e entregue a ele como qualquer outra
+          // operação da fila — repetir é seguro, porque um PATCH com os
+          // mesmos campos leva ao mesmo cadastro.
+          RegExp('^/printers/$id/\$').hasMatch(path) ||
+          RegExp('^/scales/$id/\$').hasMatch(path);
+    }
     if (method == 'DELETE') {
       return RegExp('^/orders/$id/items/$id/void/\$').hasMatch(path);
     }

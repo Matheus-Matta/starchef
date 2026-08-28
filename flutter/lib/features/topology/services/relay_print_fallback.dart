@@ -122,7 +122,7 @@ class RelayPrintFallback {
         ? requestedSerial
         : OrderPresenter.generateBatchSerial();
 
-    final tickets = OrderPresenter.buildOfflineKitchenTickets(
+    final plan = OrderPresenter.buildOfflineKitchenTickets(
       order: order,
       table: await _relatedRecord(gateway, EntityCatalog.table, order['table']),
       command: await _relatedRecord(
@@ -134,10 +134,21 @@ class RelayPrintFallback {
       products: await _allProducts(gateway),
       printers: await deviceAgent.ensurePrinters(),
       batchSerial: batchSerial,
+      // Quem atendeu, não quem imprimiu: a comanda sai deste terminal, mas o
+      // pedido é do garçom. Sem isto a cozinha lia `ATENDENTE: <caixa>` em
+      // todo pedido que chegou pelo aplicativo.
+      operatorName: await _operatorName(gateway, order),
+    );
+    // Quem mandou a operação pode não ter tela nenhuma (o app do garçom): se
+    // o roteamento por setor não achar impressora, este registro é o único
+    // lugar onde isso aparece.
+    AppLogger.instance.info(
+      'comanda_roteamento_relay',
+      data: {'pedido': orderId, ...plan.toLog()},
     );
 
     var printed = false;
-    for (final ticket in tickets) {
+    for (final ticket in plan.tickets) {
       try {
         final printer = KitchenPrinter(
           PrinterDevice.fromJson(ticket.printer),
@@ -220,6 +231,26 @@ class RelayPrintFallback {
     if (!printed) {
       await api.patchQueuedBody(operationId, {'offline_printed': false});
     }
+  }
+
+  /// Nome de quem abriu o pedido, pela cópia local de usuários.
+  ///
+  /// Vazio quando o terminal não conhece o usuário: a linha do atendente
+  /// simplesmente não sai, o que é melhor do que sair com o nome errado.
+  Future<String> _operatorName(
+    OfflineFirstGateway gateway,
+    Map<String, dynamic> order,
+  ) async {
+    final userId = '${order['responsible_user'] ?? ''}'.trim();
+    if (userId.isEmpty) return '';
+    final record = await gateway.repository(EntityCatalog.user).read(userId);
+    final payload = record?.payload;
+    if (payload == null) return '';
+    final full = [
+      '${payload['first_name'] ?? ''}'.trim(),
+      '${payload['last_name'] ?? ''}'.trim(),
+    ].where((part) => part.isNotEmpty).join(' ');
+    return full.isNotEmpty ? full : '${payload['username'] ?? ''}'.trim();
   }
 
   Future<Map<String, dynamic>?> _relatedRecord(

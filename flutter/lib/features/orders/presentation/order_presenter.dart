@@ -4,12 +4,73 @@ import '../../../core/formatters/value_formatters.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 
-/// Uma comanda de cozinha pronta para `LocalDeviceAgent.printForPrinter`.
+/// Uma comanda de cozinha pronta para uma impressora.
 class KitchenTicket {
   const KitchenTicket({required this.printer, required this.text});
 
   final JsonMap printer;
   final String text;
+}
+
+/// O resultado do roteamento por setor: as comandas a imprimir **e por que**
+/// alguma coisa ficou de fora.
+///
+/// O roteamento é silencioso por natureza — item sem setor e setor sem
+/// impressora simplesmente não geram papel, do mesmo jeito que no backend. Sem
+/// registrar o motivo, "a comanda não saiu e não deu erro" só se investigava
+/// abrindo o banco. Esta classe carrega o diagnóstico junto com o resultado,
+/// para quem chama registrar em uma linha.
+class KitchenTicketPlan {
+  const KitchenTicketPlan({
+    required this.tickets,
+    required this.printersConsidered,
+    required this.itemsBySector,
+    required this.productsWithoutSector,
+    required this.sectorsWithoutPrinter,
+  });
+
+  static const empty = KitchenTicketPlan(
+    tickets: [],
+    printersConsidered: 0,
+    itemsBySector: {},
+    productsWithoutSector: [],
+    sectorsWithoutPrinter: [],
+  );
+
+  final List<KitchenTicket> tickets;
+
+  /// Quantas impressoras entraram na decisão (a lista que o terminal conhece).
+  final int printersConsidered;
+
+  /// Quantos itens caíram em cada setor.
+  final Map<String, int> itemsBySector;
+
+  /// Produtos cujo item não pôde ser roteado: sem setor cadastrado, ou fora
+  /// do catálogo carregado neste terminal — nos dois casos o item some da
+  /// comanda sem nenhum aviso.
+  final List<String> productsWithoutSector;
+
+  /// Setores com item para produzir e nenhuma impressora ativa apontando
+  /// para eles.
+  final List<String> sectorsWithoutPrinter;
+
+  bool get isEmpty => tickets.isEmpty;
+
+  /// Linha única para o log do terminal.
+  Map<String, Object?> toLog() => {
+    'comandas': tickets.length,
+    'impressoras_conhecidas': printersConsidered,
+    'itens_por_setor': itemsBySector,
+    'produtos_sem_setor': productsWithoutSector,
+    'setores_sem_impressora': sectorsWithoutPrinter,
+    'destinos': [
+      for (final ticket in tickets)
+        {
+          'impressora': '${ticket.printer['name'] ?? ticket.printer['id']}',
+          'setor': '${ticket.printer['sector'] ?? ''}',
+        },
+    ],
+  };
 }
 
 /// Regras de apresentação de um pedido local/offline.
@@ -207,7 +268,7 @@ abstract final class OrderPresenter {
   /// silenciosos": item sem setor no produto, ou setor sem impressora ativa,
   /// simplesmente não geram ticket, sem erro. Só é chamado quando a rede caiu
   /// e a impressão não pode esperar o backend renderizar o `PrintJob`.
-  static List<KitchenTicket> buildOfflineKitchenTickets({
+  static KitchenTicketPlan buildOfflineKitchenTickets({
     required JsonMap? order,
     required JsonMap? table,
     required JsonMap? command,
@@ -218,19 +279,42 @@ abstract final class OrderPresenter {
     String operatorName = '',
     DateTime? now,
   }) {
+    // O relógio é lido UMA vez: duas impressoras do mesmo setor recebem a
+    // mesma rodada, e reler a hora por comanda fazia os dois papéis saírem
+    // com horários diferentes quando o segundo virava no meio do laço.
+    final printedAt = now ?? DateTime.now();
     final productsById = {
       for (final product in products) '${product['id']}': product,
     };
     final itemsBySector = <String, List<JsonMap>>{};
+    final productsWithoutSector = <String>[];
     for (final item in pendingItems) {
       final product = productsById['${item['product']}'];
       final sector = product?['sector'];
-      if (sector == null) continue;
+      if (sector == null) {
+        // Produto sem setor OU produto que não está no catálogo carregado
+        // aqui: os dois somem da comanda sem aviso, e só o registro distingue
+        // um do outro na hora de investigar.
+        productsWithoutSector.add('${item['product']}');
+        continue;
+      }
       itemsBySector.putIfAbsent('$sector', () => []).add(item);
     }
-    if (itemsBySector.isEmpty) return const [];
+    final sectorCounts = {
+      for (final entry in itemsBySector.entries) entry.key: entry.value.length,
+    };
+    if (itemsBySector.isEmpty) {
+      return KitchenTicketPlan(
+        tickets: const [],
+        printersConsidered: printers.length,
+        itemsBySector: sectorCounts,
+        productsWithoutSector: productsWithoutSector,
+        sectorsWithoutPrinter: const [],
+      );
+    }
 
     final tickets = <KitchenTicket>[];
+    final sectorsWithoutPrinter = <String>[];
     for (final entry in itemsBySector.entries) {
       final sectorPrinters = printers
           .where(
@@ -239,7 +323,10 @@ abstract final class OrderPresenter {
                 '${printer['sector'] ?? ''}' == entry.key,
           )
           .toList();
-      if (sectorPrinters.isEmpty) continue;
+      if (sectorPrinters.isEmpty) {
+        sectorsWithoutPrinter.add(entry.key);
+        continue;
+      }
       for (final printer in sectorPrinters) {
         tickets.add(
           KitchenTicket(
@@ -254,13 +341,19 @@ abstract final class OrderPresenter {
               // devolve `sector_name`, então não precisa de outra consulta.
               sectorName: '${printer['sector_name'] ?? ''}',
               operatorName: operatorName,
-              now: now ?? DateTime.now(),
+              now: printedAt,
             ),
           ),
         );
       }
     }
-    return tickets;
+    return KitchenTicketPlan(
+      tickets: tickets,
+      printersConsidered: printers.length,
+      itemsBySector: sectorCounts,
+      productsWithoutSector: productsWithoutSector,
+      sectorsWithoutPrinter: sectorsWithoutPrinter,
+    );
   }
 
   /// Rótulos do tipo de atendimento, iguais aos de `TIPO_ATENDIMENTO_COMANDA`

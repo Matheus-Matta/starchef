@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../data/local_topology_store.dart';
@@ -164,22 +165,48 @@ class TerminalTopology extends ChangeNotifier {
   void _syncDeviceAgent() {
     final current = _service;
     final config = current?.config;
-    if (current == null ||
-        config == null ||
-        config.mode == LocalTopologyMode.client ||
-        current.status.phase == LocalTopologyPhase.starting) {
+    final identity = _readIdentity();
+    final restaurant = identity.restaurantId.trim();
+
+    // Uma linha por decisão: é o agente quem imprime a comanda de pedido novo
+    // (o `PrintJob` do backend), enquanto recibo e nota de teste saem direto
+    // na impressora escolhida. Um agente parado aparece para o operador
+    // exatamente como "só a comanda não sai, e sem erro nenhum" — sem este
+    // registro, não há onde ver que ele nunca subiu.
+    void announce(String acao, String motivo) => AppLogger.instance.info(
+      'print_agent_role',
+      data: {
+        'acao': acao,
+        'motivo': motivo,
+        'modo': config?.mode.storageValue,
+        'fase': current?.status.phase.name,
+        'restaurante': restaurant,
+      },
+    );
+
+    if (current == null || config == null) {
+      announce('parado', 'rede local ainda iniciando');
       deviceAgent.stop();
       return;
     }
-    final identity = _readIdentity();
-    final restaurant = identity.restaurantId.trim();
-    // Sem unidade definida o agente não teria o que consultar; ele sobe na
-    // próxima chamada de [ensure], quando o bootstrap resolver o restaurante.
-    if (restaurant.isEmpty) return;
-    deviceAgent.start(
-      token: identity.accessToken,
-      restaurantId: restaurant,
-    );
+    if (config.mode == LocalTopologyMode.client) {
+      announce('parado', 'terminal secundario: quem imprime e o Principal');
+      deviceAgent.stop();
+      return;
+    }
+    if (current.status.phase == LocalTopologyPhase.starting) {
+      announce('parado', 'aplicando configuracao da rede local');
+      deviceAgent.stop();
+      return;
+    }
+    if (restaurant.isEmpty) {
+      // O agente não é derrubado aqui: ele sobe na próxima chamada de
+      // [ensure], quando o bootstrap resolver o restaurante.
+      announce('aguarda', 'restaurante ainda nao definido');
+      return;
+    }
+    announce('ativo', 'Caixa Principal com unidade definida');
+    deviceAgent.start(token: identity.accessToken, restaurantId: restaurant);
   }
 
   Future<void> shutdown() async {

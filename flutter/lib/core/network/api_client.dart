@@ -925,7 +925,12 @@ class ApiClient {
     RelayMutation mutation, {
     required String accessToken,
   }) async {
-    if (!_canQueue(mutation.method, mutation.path, mutation.body)) {
+    // A pergunta aqui é "isto pode chegar pela rede local?", não "isto pode
+    // esperar numa fila" — são coisas diferentes, e confundi-las travava a
+    // balança de um Caixa Secundário: a pesagem é encaminhada ao Principal
+    // no instante em que acontece, mas nunca poderia ser enfileirada pelo
+    // `ApiClient` como uma venda comum.
+    if (!OfflineMutations.isRelayable(mutation.method, mutation.path)) {
       throw ApiException(
         'Operação não autorizada no relay local.',
         statusCode: 400,

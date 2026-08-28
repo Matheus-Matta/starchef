@@ -100,7 +100,17 @@ void main() {
     final operationId = '${response['_sync_operation_id']}';
 
     // Entregue: o terminal NÃO imprime, senão sairiam duas comandas.
-    expect(await stack.api.awaitDelivery(operationId), isTrue);
+    expect(
+      await stack.api.awaitDelivery(
+        operationId,
+        // Folga de propósito: o que este teste afirma é que a operação SOBE,
+        // não em quantos milissegundos. Com a suíte inteira disputando o
+        // disco, os 3 s do padrão faziam ele falhar por carga da máquina —
+        // passava sozinho e quebrava no run completo.
+        timeout: const Duration(seconds: 30),
+      ),
+      isTrue,
+    );
     // E não dá mais para reivindicar a impressão: a operação já saiu da fila.
     expect(
       await stack.api.patchQueuedBody(operationId, {'offline_printed': true}),

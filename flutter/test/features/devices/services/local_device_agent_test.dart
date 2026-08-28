@@ -3,8 +3,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
+import 'package:starchef_pdv/core/storage/app_paths.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
+
+import '../../../core/data/pdv_test_support.dart';
 
 void main() {
   group('LocalDeviceAgent filtro de evento em tempo real', () {
@@ -71,6 +74,87 @@ void main() {
         expect(agent.postCutSettleDelay, const Duration(milliseconds: 400));
         await api.dispose();
       },
+    );
+  });
+
+  group('LocalDeviceAgent fila com várias impressoras', () {
+    late TestPdvStack stack;
+    late Directory locks;
+
+    setUp(() async {
+      stack = await TestPdvStack.create();
+      locks = await Directory.systemTemp.createTemp('starchef-drain-locks');
+      AppPaths.overrideDataDirectory(locks);
+    });
+
+    tearDown(() async {
+      AppPaths.overrideDataDirectory(null);
+      await stack.dispose();
+      try {
+        await locks.delete(recursive: true);
+      } on FileSystemException {
+        // No Windows o arquivo de trava pode continuar preso por instantes.
+      }
+    });
+
+    test(
+      'uma impressora fora do ar não segura o cupom das outras',
+      () async {
+        // O sintoma era exatamente este: o cupom do bar travado numa térmica
+        // de rede sem resposta, e a comanda da cozinha — enfileirada depois,
+        // numa impressora que estava funcionando — nunca saindo, sem erro
+        // nenhum na tela. A drenagem parava no primeiro que falhava.
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final escritas = <String>[];
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async {
+            if (target.host == '192.0.2.99') {
+              throw const SocketException('sem resposta');
+            }
+            escritas.add(target.host);
+          },
+        );
+        addTearDown(agent.dispose);
+
+        final queue = stack.gateway.printQueue;
+        await queue.enqueue(
+          scope: TestPdvStack.scope,
+          printer: const {
+            'id': 'bar',
+            'name': 'Bar',
+            'connection_type': 'network',
+            'host': '192.0.2.99',
+            'port': 9100,
+          },
+          jobType: 'kitchen',
+          content: 'CHOPP',
+        );
+        await queue.enqueue(
+          scope: TestPdvStack.scope,
+          printer: const {
+            'id': 'cozinha',
+            'name': 'Cozinha',
+            'connection_type': 'network',
+            'host': '192.0.2.10',
+            'port': 9100,
+          },
+          jobType: 'kitchen',
+          content: 'X-BURGER',
+        );
+
+        await agent.drainPrintQueue();
+
+        expect(escritas, ['192.0.2.10']);
+        final resumo = await queue.summary(scope: TestPdvStack.scope);
+        // O cupom do bar continua na fila para a próxima tentativa; o da
+        // cozinha já saiu no papel.
+        expect(resumo.pending, 1);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
     );
   });
 

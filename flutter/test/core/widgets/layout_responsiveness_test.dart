@@ -45,6 +45,7 @@ void main() {
           topologyStatus:
               'Caixa Principal indisponível; verifique a rede local da unidade.',
           offlinePendingCount: 128,
+          printQueueCount: 7,
           isDark: true,
           isFullScreen: false,
         ),

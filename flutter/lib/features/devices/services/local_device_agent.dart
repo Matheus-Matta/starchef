@@ -119,10 +119,23 @@ class LocalDeviceAgent {
   /// antes dela, no processo que já sabe que está imprimindo.
   Future<void>? _drainInFlight;
 
+  /// O agente está em operação neste terminal?
+  ///
+  /// Quem imprime **automaticamente** é ele: a comanda de cozinha do backend
+  /// chega como `PrintJob` e é ele quem consulta e imprime. Recibo e nota de
+  /// teste saem por outro caminho (direto na impressora escolhida), então um
+  /// agente parado se manifesta exatamente assim: "só a comanda de pedido
+  /// novo não sai, e não aparece erro nenhum".
+  bool get isRunning => _token != null && _restaurantId != null;
+
   void start({required String token, required String restaurantId}) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
       return;
     }
+    AppLogger.instance.info(
+      'print_agent_start',
+      data: {'restaurante': restaurantId, 'reinicio': _realtime != null},
+    );
     _token = token;
     _restaurantId = restaurantId;
     _lastTemplateSync = null;
@@ -171,6 +184,12 @@ class LocalDeviceAgent {
   }
 
   void stop() {
+    if (_token != null || _restaurantId != null) {
+      AppLogger.instance.info(
+        'print_agent_stop',
+        data: {'restaurante': _restaurantId},
+      );
+    }
     _stopRealtime();
     _availabilityTimer?.cancel();
     _availabilityTimer = null;
@@ -348,9 +367,16 @@ class LocalDeviceAgent {
 
   /// Fila local deste terminal, quando o armazenamento operacional já está
   /// vinculado a uma sessão.
-  PrintQueueService? get _printQueue => api.localStore?.printQueue;
+  ///
+  /// Pública porque a tela da fila lê e opera sobre ela: é o mesmo objeto que
+  /// o agente drena, e não uma segunda visão do mesmo banco.
+  PrintQueueService? get printQueue => api.localStore?.printQueue;
 
-  String? get _printScope => api.localStore?.scope;
+  String? get printScope => api.localStore?.scope;
+
+  PrintQueueService? get _printQueue => printQueue;
+
+  String? get _printScope => printScope;
 
   /// Traz os trabalhos do servidor para a fila local, sem imprimir.
   ///
@@ -608,6 +634,15 @@ class LocalDeviceAgent {
       barcode: document.barcode,
       qr: document.qr,
     );
+    AppLogger.instance.info(
+      'print_job_enfileirado',
+      data: {
+        'job_id': jobId,
+        'job_type': document.wireType,
+        'printer': printer.device.label,
+        'setor': printer.device.sector,
+      },
+    );
     await drainPrintQueue();
     var status = await queue.statusOf(jobId);
     if (status == PrintJobStatus.pending) {
@@ -617,6 +652,14 @@ class LocalDeviceAgent {
       await drainPrintQueue();
       status = await queue.statusOf(jobId);
     }
+    AppLogger.instance.info(
+      'print_job_resultado',
+      data: {
+        'job_id': jobId,
+        'printer': printer.device.label,
+        'estado': status?.name ?? 'desconhecido',
+      },
+    );
     return (
       // Recusa definitiva (impressora sem endereço) devolve a impressão ao
       // backend: nenhuma repetição aqui resolveria.
@@ -647,53 +690,128 @@ class LocalDeviceAgent {
     final queue = _printQueue;
     final scope = _printScope;
     if (queue == null || scope == null) return;
+    final before = await queue.summary(scope: scope);
+    if (before.pending == 0 && before.failed == 0) return;
+
+    // Impressoras que já falharam nesta rodada. Antes, a primeira falha
+    // encerrava a drenagem inteira — "a impressora é a mesma", o que só vale
+    // quando existe uma. Com um cupom do bar travado numa térmica de rede
+    // fora do ar, a comanda da cozinha ficava esperando atrás dele em toda
+    // rodada, sem erro nenhum na tela: "não imprimiu e não avisou".
+    final unreachable = <String>{};
+    var printed = 0;
+    var retried = 0;
+    var failed = 0;
+    var skipped = 0;
+    var exhausted = 0;
+
     for (var processed = 0; processed < limit; processed++) {
       final job = await queue.claimNext(scope: scope);
       if (job == null) break;
       final document = PrintDocument.fromQueueEntry(job);
+      final printer = Printer.forDocument(
+        job.printer,
+        document,
+        runtime: printing,
+      );
+      final resource = printer.device.lockResource;
+      if (unreachable.contains(resource)) {
+        // Já sabemos que este equipamento não responde agora: insistir custa
+        // um tempo limite inteiro e atrasa as outras impressoras da fila.
+        skipped++;
+        await queue.markRetry(
+          job.id,
+          attempts: job.attempts + 1,
+          error: 'Equipamento sem resposta nesta rodada.',
+        );
+        continue;
+      }
       try {
-        await Printer.forDocument(
-          job.printer,
-          document,
-          runtime: printing,
-        ).send(document);
+        await printer.send(document);
         await queue.markPrinted(job.id);
+        printed++;
         AppLogger.instance.info(
           'print_job_printed',
           data: {
             'job_id': job.jobId,
             'job_type': job.jobType,
             'printer_id': job.printerId,
+            'printer': printer.device.label,
           },
         );
       } on PrinterCommunicationException catch (error) {
         final attempts = job.attempts + 1;
-        await queue.markRetry(job.id, attempts: attempts, error: error.message);
-        AppLogger.instance.warning(
-          'print_job_retry',
-          data: {
-            'job_id': job.jobId,
-            'tentativa': attempts,
-            'motivo': error.message,
-          },
+        final outcome = await queue.markRetry(
+          job.id,
+          attempts: attempts,
+          error: error.message,
         );
-        // A próxima tentativa deste trabalho só faz sentido depois da espera,
-        // e insistir agora daria o mesmo erro para todos os outros da fila:
-        // a impressora é a mesma.
-        break;
+        // A próxima tentativa DESTE equipamento só faz sentido depois da
+        // espera; os cupons das outras impressoras seguem na mesma rodada.
+        unreachable.add(resource);
+        if (outcome.exhausted) {
+          exhausted++;
+          AppLogger.instance.error(
+            'print_job_esgotado',
+            data: {
+              'job_id': job.jobId,
+              'job_type': job.jobType,
+              'printer': printer.device.label,
+              'tentativas': attempts,
+              'motivo': error.message,
+            },
+          );
+          // O servidor precisa saber que este cupom não vai sair sozinho:
+          // sem isso o trabalho fica "pendente" lá para sempre.
+          await _reportRemoteFailure(job, error);
+        } else {
+          retried++;
+          AppLogger.instance.warning(
+            'print_job_retry',
+            data: {
+              'job_id': job.jobId,
+              'job_type': job.jobType,
+              'printer': printer.device.label,
+              'tentativa': '$attempts/${PrintQueueService.maximumAttempts}',
+              'proxima_em_s': outcome.nextRetryAt!
+                  .difference(DateTime.now().toUtc())
+                  .inSeconds,
+              'motivo': error.message,
+            },
+          );
+        }
       } catch (error) {
         // Erro que nenhuma repetição resolve (conteúdo inválido, configuração
         // impossível): sai da rotação e fica visível para revisão.
         await queue.markFailed(job.id, error: '$error');
+        failed++;
         AppLogger.instance.error(
           'print_job_failed',
           cause: error,
-          data: {'job_id': job.jobId, 'job_type': job.jobType},
+          data: {
+            'job_id': job.jobId,
+            'job_type': job.jobType,
+            'printer': printer.device.label,
+          },
         );
         await _reportRemoteFailure(job, error);
       }
     }
     await queue.purgeConfirmed(scope: scope);
+    final after = await queue.summary(scope: scope);
+    AppLogger.instance.info(
+      'print_queue_drain',
+      data: {
+        'na_fila_antes': before.pending,
+        'impressos': printed,
+        'reagendados': retried,
+        'adiados': skipped,
+        'sem_tentativas': exhausted,
+        'recusados': failed,
+        'ainda_na_fila': after.pending,
+        'com_falha': after.failed,
+      },
+    );
   }
 
   /// Avisa o servidor sobre os trabalhos que já saíram no papel.
@@ -751,14 +869,12 @@ class LocalDeviceAgent {
     Map<String, dynamic> job,
     Map<String, dynamic> printer,
   ) async {
+    // O papel vale mais que o registro: num Caixa Secundário este agente fica
+    // parado de propósito (quem serve a fila da nuvem é o Principal), e exigir
+    // sessão aqui fazia o botão "imprimir" não produzir nada num terminal com
+    // impressora própria e cupom já renderizado na mão.
     final token = _token;
-    if (token == null) {
-      throw StateError('O agente local não está autenticado.');
-    }
     final jobId = '${job['print_job_id'] ?? job['id'] ?? ''}'.trim();
-    if (jobId.isEmpty) {
-      throw StateError('Trabalho de impressão inválido.');
-    }
     final document = PrintDocument.fromRemoteJob(job);
     if (document.isEmpty) {
       throw StateError('O trabalho não possui conteúdo para impressão.');
@@ -775,6 +891,9 @@ class LocalDeviceAgent {
         runtime: printing,
       ).send(document);
       printed = true;
+      // Sem sessão ou sem id remoto não há o que confirmar: o cupom já está
+      // com o operador, e é isso que ele pediu.
+      if (token == null || jobId.isEmpty) return;
       await api.post(
         '/print-jobs/$jobId/mark-printed/',
         body: const {},
@@ -788,11 +907,13 @@ class LocalDeviceAgent {
         );
         return;
       }
-      await api.post(
-        '/print-jobs/$jobId/mark-failed/',
-        body: {'error': 'Falha na impressão manual: $error'},
-        accessToken: token,
-      );
+      if (token != null && jobId.isNotEmpty) {
+        await api.post(
+          '/print-jobs/$jobId/mark-failed/',
+          body: {'error': 'Falha na impressão manual: $error'},
+          accessToken: token,
+        );
+      }
       rethrow;
     }
   }
@@ -871,6 +992,19 @@ class LocalDeviceAgent {
         // Segue com a lista em memória, mesmo vazia — quem chama decide o
         // que dizer ao operador.
       }
+    }
+    if (_printers.isEmpty) {
+      // Sem impressora conhecida, o roteamento por setor não tem o que
+      // escolher e a comanda simplesmente não existe — sem erro em lugar
+      // nenhum. Quase sempre é o agente parado (terminal secundário, ou
+      // restaurante ainda não definido), e não cadastro faltando.
+      AppLogger.instance.warning(
+        'print_agent_sem_impressoras',
+        data: {
+          'agente_ativo': isRunning,
+          'restaurante': _restaurantId,
+        },
+      );
     }
     return knownPrinters;
   }

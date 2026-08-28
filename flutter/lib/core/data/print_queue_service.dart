@@ -91,6 +91,26 @@ class PrintQueueEntry {
   }
 }
 
+/// O que aconteceu com um cupom depois de uma falha de impressão.
+///
+/// Devolver só a data da próxima tentativa escondia o caso que interessa: o
+/// trabalho que gastou todas as tentativas e parou de girar sozinho.
+class PrintRetryOutcome {
+  const PrintRetryOutcome({
+    required this.attempts,
+    required this.exhausted,
+    this.nextRetryAt,
+  });
+
+  final int attempts;
+
+  /// Quando ele volta a ser tentado. `null` quando as tentativas acabaram.
+  final DateTime? nextRetryAt;
+
+  /// Chegou ao teto: agora depende de uma decisão do operador.
+  final bool exhausted;
+}
+
 class PrintQueueSummary {
   const PrintQueueSummary({this.pending = 0, this.failed = 0});
 
@@ -117,16 +137,45 @@ class PrintQueueService {
   PrintQueueService({required this.database, String? leaseOwner})
     : _leaseOwner = leaseOwner ?? 'spooler-${LocalId.uuid()}';
 
-  /// Escada de espera entre tentativas. O teto é baixo de propósito: quem
-  /// está esperando o cupom é uma pessoa no balcão, e a causa mais comum
-  /// (papel, cabo, impressora desligada) se resolve em segundos.
+  /// Escada de espera entre tentativas: cada falha espera mais que a anterior.
+  ///
+  /// Começa em segundos porque a causa mais comum (papel, cabo, impressora
+  /// desligada) se resolve assim, e quem espera o cupom é uma pessoa no
+  /// balcão. Vai afrouxando porque, passados alguns minutos, insistir no mesmo
+  /// ritmo não resolve nada e ainda custa um tempo limite por rodada — tempo
+  /// em que os cupons das outras impressoras ficam esperando a vez.
+  ///
+  /// Há exatamente uma espera por tentativa permitida: o tamanho desta lista
+  /// **é** o teto de [maximumAttempts]. Somadas, dão cerca de 1h20 de
+  /// insistência antes de o cupom pedir uma decisão humana.
   static const retryLadder = [
     Duration(seconds: 5),
-    Duration(seconds: 15),
+    Duration(seconds: 10),
+    Duration(seconds: 20),
     Duration(seconds: 30),
+    Duration(seconds: 45),
     Duration(minutes: 1),
+    Duration(seconds: 90),
     Duration(minutes: 2),
+    Duration(minutes: 3),
+    Duration(minutes: 4),
+    Duration(minutes: 5),
+    Duration(minutes: 7),
+    Duration(minutes: 10),
+    Duration(minutes: 12),
+    Duration(minutes: 15),
   ];
+
+  /// Quantas vezes o mesmo cupom é tentado antes de parar e esperar alguém.
+  ///
+  /// Sem teto, um trabalho que ninguém vai conseguir imprimir (impressora
+  /// desinstalada, endereço trocado, setor sem equipamento) girava até expirar
+  /// em 12 h — centenas de tentativas, cada uma custando um tempo limite
+  /// inteiro e atrasando os cupons bons atrás dele. Quinze cobrem com folga
+  /// uma troca de papel ou um religar de impressora; depois disso o cupom fica
+  /// visível na tela da fila, onde o operador decide entre tentar de novo
+  /// (o que zera esta contagem) e descartar.
+  static int get maximumAttempts => retryLadder.length;
 
   /// Depois disso o cupom não interessa mais a ninguém: uma comanda de ontem
   /// saindo hoje confunde a cozinha mais do que ajuda.
@@ -257,11 +306,22 @@ class PrintQueueService {
 
   /// Falha de comunicação com a impressora: papel, cabo, equipamento
   /// desligado. Volta para a fila — desistir aqui perderia a comanda.
-  Future<DateTime> markRetry(
+  ///
+  /// Só até [maximumAttempts]: insistir para sempre num equipamento que não
+  /// vai responder não imprime nada e atrasa o que ainda tem chance.
+  Future<PrintRetryOutcome> markRetry(
     int id, {
     required int attempts,
     required String error,
   }) async {
+    if (attempts >= maximumAttempts) {
+      await markFailed(
+        id,
+        error: 'Depois de $maximumAttempts tentativas: $error',
+        attempts: attempts,
+      );
+      return PrintRetryOutcome(attempts: attempts, exhausted: true);
+    }
     final delay = backoffFor(attempts);
     final nextRetryAt = DateTime.now().toUtc().add(delay);
     await database.execute(
@@ -279,20 +339,29 @@ class PrintQueueService {
         id,
       ],
     );
-    return nextRetryAt;
+    return PrintRetryOutcome(
+      attempts: attempts,
+      nextRetryAt: nextRetryAt,
+      exhausted: false,
+    );
   }
 
   /// Erro que nenhuma repetição resolve: trabalho sem conteúdo, impressora
   /// sem endereço configurado.
-  Future<void> markFailed(int id, {required String error}) async {
+  Future<void> markFailed(
+    int id, {
+    required String error,
+    int? attempts,
+  }) async {
     await database.execute(
       '''
       UPDATE print_queue
       SET status = 'FAILED', next_retry_at = NULL, last_error = ?,
+          attempts = COALESCE(?, attempts),
           lease_owner = NULL, lease_until = NULL, updated_at = ?
       WHERE id = ?
       ''',
-      [error, DateTime.now().toUtc().toIso8601String(), id],
+      [error, attempts, DateTime.now().toUtc().toIso8601String(), id],
     );
   }
 
@@ -309,6 +378,31 @@ class PrintQueueService {
       [DateTime.now().toUtc().toIso8601String(), id],
     );
   }
+
+  /// Antecipa a espera de UM trabalho, ou traz de volta um recusado.
+  ///
+  /// É o "tentar agora" da tela da fila: o operador trocou o papel, religou a
+  /// impressora ou corrigiu o cadastro e não tem por que esperar a escada de
+  /// retentativa recomeçar do zero. As tentativas anteriores são esquecidas
+  /// justamente porque a causa mudou.
+  Future<void> retryNow(int id) async {
+    await database.execute(
+      '''
+      UPDATE print_queue
+      SET status = 'PENDING', attempts = 0, next_retry_at = NULL,
+          lease_owner = NULL, lease_until = NULL, last_error = NULL,
+          updated_at = ?
+      WHERE id = ? AND status != 'PRINTED'
+      ''',
+      [DateTime.now().toUtc().toIso8601String(), id],
+    );
+  }
+
+  /// O operador desistiu deste cupom: ele sai da fila e não sai no papel.
+  ///
+  /// Mesmo efeito de [forget], nome diferente porque a intenção é outra —
+  /// aqui não houve confirmação nenhuma, houve desistência.
+  Future<void> discard(int id) => forget(id);
 
   /// Antecipa as esperas — usado quando a impressora volta a responder.
   Future<void> retryAllNow({required String scope}) async {

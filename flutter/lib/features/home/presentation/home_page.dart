@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/errors/app_error.dart';
+import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
 import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
@@ -19,6 +20,7 @@ import '../../../core/widgets/supervisor_close_dialog.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../devices/domain/local_print_renderer.dart';
 import '../../devices/presentation/device_list_page.dart';
+import '../../devices/presentation/print_queue_dialog.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../../orders/data/local_order_store.dart';
@@ -1057,6 +1059,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openSettingsCenter() async {
+    final scope = deviceAgent.printScope;
+    final printQueue = scope == null
+        ? null
+        : await deviceAgent.printQueue?.summary(scope: scope);
+    if (!mounted) return;
     final selection = await PdvSettingsMenuDialog.show(
       context,
       canManageDevices: widget.controller.session!.user.canManageDevices,
@@ -1064,6 +1071,7 @@ class _HomePageState extends State<HomePage> {
           ? 'Entre novamente para habilitar a identidade deste caixa.'
           : topology.status.message,
       offlinePendingCount: offlinePendingCount,
+      printQueueCount: printQueue?.total ?? 0,
       isDark: widget.isDark,
       isFullScreen: widget.isFullScreen,
     );
@@ -1093,6 +1101,9 @@ class _HomePageState extends State<HomePage> {
           printers: printersForPreferences,
         );
       }
+    }
+    if (selection == 'print_queue' && mounted) {
+      await PrintQueueDialog.show(context, deviceAgent);
     }
     if (selection == 'outbox' && mounted) await _openOutboxReview();
     if (selection == 'theme') widget.onToggleTheme();
@@ -2786,9 +2797,25 @@ class _HomePageState extends State<HomePage> {
       accessToken: token,
     );
     final operationId = '${response['_sync_operation_id'] ?? ''}';
+    AppLogger.instance.info(
+      'comanda_envio',
+      data: {
+        'pedido': '${activeOrder?['id']}',
+        'itens_pendentes': pendingItems.length,
+        'lote': batchSerial,
+        'na_fila': operationId.isNotEmpty,
+        'conexao': api.syncStatus.phase.name,
+      },
+    );
     // Sem operação na fila, quem executou foi o servidor (ou o Caixa
     // Principal, num caixa secundário): o `PrintJob` já existe lá.
-    if (operationId.isEmpty) return response;
+    if (operationId.isEmpty) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {'motivo': 'operacao entregue direto, o PrintJob e de la'},
+      );
+      return response;
+    }
 
     // Quem imprime a comanda não pode ser decidido por um palpite sobre a
     // conexão. Antes a escolha era feita ANTES do POST, olhando o último
@@ -2803,7 +2830,13 @@ class _HomePageState extends State<HomePage> {
     final janela = api.syncStatus.hasConnection
         ? const Duration(seconds: 3)
         : const Duration(milliseconds: 400);
-    if (await api.awaitDelivery(operationId, timeout: janela)) return response;
+    if (await api.awaitDelivery(operationId, timeout: janela)) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {'motivo': 'a operacao subiu dentro da janela', 'operacao': operationId},
+      );
+      return response;
+    }
 
     // Ela continua na fila. Reivindica a impressão marcando o corpo ANTES de
     // imprimir: se a operação subir neste instante, a marcação falha e quem
@@ -2812,13 +2845,29 @@ class _HomePageState extends State<HomePage> {
     final claimed = await api.patchQueuedBody(operationId, {
       'offline_printed': true,
     });
-    if (!claimed) return response;
+    if (!claimed) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {
+          'motivo': 'a operacao subiu enquanto este terminal reivindicava',
+          'operacao': operationId,
+        },
+      );
+      return response;
+    }
 
     final printed = await _printKitchenTicketsOffline(
       pendingItems,
       batchSerial,
     );
     if (!printed) {
+      AppLogger.instance.warning(
+        'comanda_devolvida_ao_backend',
+        data: {
+          'operacao': operationId,
+          'motivo': 'nenhuma impressora aceitou o cupom neste terminal',
+        },
+      );
       // Não saiu papel aqui. Devolve a impressão ao backend, senão a cozinha
       // ficaria sem comanda agora e também quando a fila sincronizasse.
       await api.patchQueuedBody(operationId, {'offline_printed': false});
@@ -2837,7 +2886,7 @@ class _HomePageState extends State<HomePage> {
     // no cache de respostas, o que não se pode assumir com a rede fora.
     final printersForTickets = await deviceAgent.ensurePrinters();
     final user = widget.controller.session?.user;
-    final tickets = OrderPresenter.buildOfflineKitchenTickets(
+    final plan = OrderPresenter.buildOfflineKitchenTickets(
       order: activeOrder,
       table: selectedTable,
       command: selectedCommand,
@@ -2849,6 +2898,12 @@ class _HomePageState extends State<HomePage> {
           ? user!.name
           : (user?.username ?? ''),
     );
+    final tickets = plan.tickets;
+    // A escolha da impressora pelo setor do produto é silenciosa por
+    // natureza: item sem setor e setor sem impressora não geram papel nem
+    // erro. Esta linha é o que transforma "não imprimiu e não avisou" em algo
+    // que se lê no terminal.
+    AppLogger.instance.info('comanda_roteamento', data: plan.toLog());
     var printedAny = false;
     Object? lastFailure;
     for (final ticket in tickets) {
@@ -3063,6 +3118,16 @@ class _HomePageState extends State<HomePage> {
         (item) => '${item?['id']}' == printerId,
         orElse: () => null,
       );
+      // A impressora é deste terminal, e o cupom sabe ser montado aqui: um
+      // Caixa Secundário não precisa do Principal nem do backend para
+      // entregar um recibo ao cliente. Pedir o cupom renderizado ao servidor
+      // é conveniência (layout de referência e registro do trabalho), não
+      // requisito — e num secundário essa rota nem existe, o que antes fazia
+      // o botão não produzir absolutamente nada.
+      if (chosen != null && isSecondaryStation) {
+        await _work(() => _printReceiptLocally(order, chosen));
+        return;
+      }
       try {
         final printJob = await api.post(
           '/orders/${order['id']}/print/',
@@ -3086,46 +3151,65 @@ class _HomePageState extends State<HomePage> {
           return true;
         });
       } on ApiException catch (error) {
-        // Sem backend não há `PrintJob` para renderizar, mas o cliente está
-        // com a mão estendida esperando o comprovante. O cupom é montado aqui
-        // com o mesmo layout do servidor e sai na mesma impressora.
-        if (!error.isConnectivity || chosen == null) rethrow;
-        await _work(() async {
-          // Pela fila local: se a impressora estiver sem papel, o cupom
-          // espera e sai sozinho quando ela voltar, em vez de se perder.
-          final receiptPrinter = ReceiptPrinter(
-            PrinterDevice.fromJson(chosen),
-            runtime: deviceAgent.printing,
-          );
-          final result = await deviceAgent.submit(
-            receiptPrinter,
-            receiptPrinter.compose(
-              content: await _localReceiptText(order),
-              barcode: LocalPrintRenderer.commandBarcode(
-                order,
-                selectedCommand,
-              ),
-            ),
-          );
-          // Quem pediu o recibo está olhando a impressora: o silêncio faria
-          // o operador achar que o papel vem e mandar o cliente embora.
-          if (!result.printed && mounted) {
-            showAppToast(
-              context,
-              result.accepted
-                  ? 'A impressora não respondeu agora. O recibo está na fila e '
-                        'sai assim que ela voltar.'
-                  : 'O recibo não pôde ser impresso. Confira a configuração '
-                        'da impressora.',
-              severity: AppErrorSeverity.warning,
-            );
-          }
-          return true;
-        });
+        // Sem `PrintJob` do servidor o cliente continua com a mão estendida
+        // esperando o comprovante. Qualquer recusa serve de gatilho — falta
+        // de rede, servidor fora, ou uma rota que este terminal não alcança.
+        if (chosen == null) rethrow;
+        AppLogger.instance.info(
+          'recibo_montado_localmente',
+          data: {'motivo': error.message},
+        );
+        await _work(() => _printReceiptLocally(order, chosen));
+      }
+    } catch (error) {
+      // Sem isto o erro virava exceção assíncrona sem dono: o operador
+      // apertava "imprimir recibo" e não acontecia nada, nem papel nem aviso.
+      if (mounted) {
+        _error(
+          error,
+          title: 'O recibo não pôde ser impresso',
+          action: 'Confira a impressora selecionada e tente novamente.',
+        );
       }
     } finally {
       if (mounted) setState(() => printingReceipt = false);
     }
+  }
+
+  /// Monta o recibo neste terminal e manda para a fila local.
+  ///
+  /// Mesmo layout do servidor ([LocalPrintRenderer]), mesma impressora. Pela
+  /// fila: se faltar papel agora, o cupom sai sozinho quando ela voltar em vez
+  /// de se perder.
+  Future<bool> _printReceiptLocally(
+    Map<String, dynamic> order,
+    Map<String, dynamic> printer,
+  ) async {
+    final receiptPrinter = ReceiptPrinter(
+      PrinterDevice.fromJson(printer),
+      runtime: deviceAgent.printing,
+    );
+    final result = await deviceAgent.submit(
+      receiptPrinter,
+      receiptPrinter.compose(
+        content: await _localReceiptText(order),
+        barcode: LocalPrintRenderer.commandBarcode(order, selectedCommand),
+      ),
+    );
+    // Quem pediu o recibo está olhando a impressora: o silêncio faria o
+    // operador achar que o papel vem e mandar o cliente embora.
+    if (!result.printed && mounted) {
+      showAppToast(
+        context,
+        result.accepted
+            ? 'A impressora não respondeu agora. O recibo está na fila e '
+                  'sai assim que ela voltar.'
+            : 'O recibo não pôde ser impresso. Confira a configuração '
+                  'da impressora.',
+        severity: AppErrorSeverity.warning,
+      );
+    }
+    return true;
   }
 
   /// Autoriza a divergência do caixa com a senha de ações do restaurante.

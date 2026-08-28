@@ -121,7 +121,7 @@ void main() {
           {'id': 'printer-1', 'sector': 'sector-1', 'is_active': true},
         ],
         batchSerial: 'batch-serial-1',
-      );
+      ).tickets;
 
       expect(tickets, isEmpty);
     });
@@ -139,7 +139,7 @@ void main() {
           {'id': 'printer-1', 'sector': 'sector-1', 'is_active': false},
         ],
         batchSerial: 'batch-serial-1',
-      );
+      ).tickets;
 
       expect(tickets, isEmpty);
     });
@@ -158,7 +158,7 @@ void main() {
           {'id': 'printer-2', 'sector': 'sector-1', 'is_active': true},
         ],
         batchSerial: 'batch-serial-1',
-      );
+      ).tickets;
 
       expect(tickets, hasLength(2));
       expect(tickets[0].text, tickets[1].text);
@@ -194,7 +194,7 @@ void main() {
             {'id': 'printer-1', 'sector': 'sector-1', 'is_active': true},
           ],
           batchSerial: 'batch-serial-1',
-        );
+        ).tickets;
 
         final text = tickets.single.text;
         final mesaLine = text.indexOf('MESA: 7');
@@ -247,7 +247,7 @@ void main() {
         batchSerial: 'batch-serial-1',
         operatorName: 'Maria',
         now: DateTime(2026, 8, 27, 20, 30, 15),
-      );
+      ).tickets;
 
       final text = tickets.single.text;
       expect(text, contains('COZINHA'));

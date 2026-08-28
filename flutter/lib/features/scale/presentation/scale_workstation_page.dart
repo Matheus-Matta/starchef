@@ -642,7 +642,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           accessToken: widget.accessToken,
         );
       } on ApiException catch (error) {
-        if (!error.isConnectivity) rethrow;
+        // Qualquer recusa serve: sem rede, ou num Caixa Secundário (onde esta
+        // rota não existe — ele não fala com a nuvem). O peso segue no corpo
+        // do fechamento e o backend materializa a leitura no replay, que é o
+        // caminho já usado quando a internet cai.
+        AppLogger.instance.info(
+          'pesagem_sem_leitura_no_servidor',
+          data: {'motivo': error.message},
+        );
       }
       final result = await widget.api.post(
         '/scales/$scaleId/checkout-command/',

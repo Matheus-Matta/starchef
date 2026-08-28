@@ -627,8 +627,11 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         // O teste de impressora existe justamente para diagnosticar o
         // equipamento — depender do backend para gerar a nota tornava
         // impossível conferir uma impressora sem internet, que é quando o
-        // problema costuma aparecer.
-        if (!error.isConnectivity) rethrow;
+        // problema costuma aparecer. Vale para QUALQUER recusa, não só falta
+        // de rede: num Caixa Secundário esta rota nem chega ao servidor, e
+        // exigir a nota renderizada de lá deixava o botão de teste sem efeito
+        // nenhum num terminal que tem a impressora fisicamente ligada nele.
+        debugPrint('teste de impressora sem nota do servidor: ${error.message}');
       }
       final apiPrinter =
           job?['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};

@@ -4,6 +4,58 @@ import 'package:starchef_pdv/core/network/offline_mutations.dart';
 const _order = '/orders/8f14e45f-ceea-4a12';
 
 void main() {
+  group('pesagem no Caixa Secundario', () {
+    // A balanca esta na porta serial DO secundario. Ele le o peso, monta o
+    // pedido com a copia local do cardapio e das comandas e a fila entrega ao
+    // Principal -- e um pedido normal, so que com alguns passos antes.
+    const checkout = '/scales/8f14e45f-ceea-4a12/checkout-command/';
+
+    test('o Principal aceita o fechamento vindo pela rede local', () {
+      expect(OfflineMutations.isRelayable('POST', checkout), isTrue);
+    });
+
+    test('mas o ApiClient nao enfileira uma pesagem por conta propria', () {
+      // Quem coloca a pesagem na fila e o armazenamento local, ao montar o
+      // pedido com o peso no corpo (o backend materializa a leitura no
+      // replay). Enfileirar aqui criaria uma leitura que nunca aconteceu
+      // naquele instante.
+      expect(OfflineMutations.isQueueable('POST', checkout), isFalse);
+    });
+  });
+
+  group('cadastro de equipamento do proprio terminal', () {
+    // Um Caixa Secundario tem impressora e balanca ligadas nele. Corrigir a
+    // porta, o IP ou o setor era impossivel la: a rota nao passava pela fila
+    // nem pelo relay, entao a tela salvava contra a nuvem (que o secundario
+    // nao alcanca) e o operador ficava sem conseguir configurar o proprio
+    // equipamento.
+    const printer = '/printers/8f14e45f-ceea-4a12/';
+    const scale = '/scales/9a25b7c1-3f42-4d88/';
+
+    test('editar impressora e balanca espera na fila e vai ao Principal', () {
+      expect(OfflineMutations.isQueueable('PATCH', printer), isTrue);
+      expect(OfflineMutations.isQueueable('PATCH', scale), isTrue);
+      expect(OfflineMutations.isRelayable('PATCH', printer), isTrue);
+      expect(OfflineMutations.isRelayable('PATCH', scale), isTrue);
+    });
+
+    test('criar equipamento continua sendo operacao de servidor', () {
+      // Um cadastro novo precisa do id definitivo antes de qualquer terminal
+      // apontar para ele.
+      expect(OfflineMutations.isQueueable('POST', '/printers/'), isFalse);
+      expect(OfflineMutations.isQueueable('POST', '/scales/'), isFalse);
+    });
+
+    test('a nota de teste nao entra na fila', () {
+      // Testar a impressora e um diagnostico do agora: enfileirar para depois
+      // nao diz nada sobre o equipamento.
+      expect(
+        OfflineMutations.isQueueable('POST', '${printer}test-connection/'),
+        isFalse,
+      );
+    });
+  });
+
   group('operações que podem esperar na fila', () {
     test('o atendimento inteiro cabe offline', () {
       expect(OfflineMutations.isQueueable('POST', '/orders/'), isTrue);

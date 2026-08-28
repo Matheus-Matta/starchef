@@ -145,7 +145,7 @@ void main() {
         stack.gateway,
         items: [
           {
-            'id': 'item-1',
+            'id': 'item-0001',
             'product': 'prod-1',
             'product_name': 'X-Tudo',
             'status': 'pending',
@@ -205,7 +205,7 @@ void main() {
         stack.gateway,
         items: [
           {
-            'id': 'item-1',
+            'id': 'item-0001',
             'product': 'prod-1',
             'product_name': 'X-Tudo',
             'status': 'pending',
@@ -254,7 +254,7 @@ void main() {
         stack.gateway,
         items: [
           {
-            'id': 'item-1',
+            'id': 'item-0001',
             'product': 'prod-1',
             'product_name': 'X-Tudo',
             'status': 'pending',
@@ -304,7 +304,7 @@ void main() {
         stack.gateway,
         items: [
           {
-            'id': 'item-1',
+            'id': 'item-0001',
             'product': 'prod-1',
             'product_name': 'X-Tudo',
             'status': 'sent',
@@ -318,7 +318,7 @@ void main() {
       );
       const mutation = RelayMutation(
         method: 'DELETE',
-        path: '/orders/pedido-1/items/item-1/void/',
+        path: '/orders/pedido-1/items/item-0001/void/',
         operationId: 'op-cancela-1',
         body: {'reason': 'Cliente desistiu'},
       );
@@ -356,7 +356,7 @@ void main() {
         stack.gateway,
         items: [
           {
-            'id': 'item-1',
+            'id': 'item-0001',
             'product': 'prod-1',
             'product_name': 'X-Tudo',
             'status': 'pending',
@@ -370,7 +370,7 @@ void main() {
       );
       const mutation = RelayMutation(
         method: 'DELETE',
-        path: '/orders/pedido-1/items/item-1/void/',
+        path: '/orders/pedido-1/items/item-0001/void/',
         operationId: 'op-cancela-2',
         body: {'reason': 'Errei o pedido'},
       );

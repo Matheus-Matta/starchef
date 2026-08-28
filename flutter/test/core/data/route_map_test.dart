@@ -197,15 +197,19 @@ void main() {
       stack.gateway.handlesWrite('POST', '/cash-register/open/', const {}),
       isFalse,
     );
-    // E a pesagem pertence à estação da balança, ligada ao principal.
-    stack.gateway.connectivity = () => false;
+    // A pesagem do próprio secundário fecha aqui, mesmo com o Principal
+    // respondendo: a balança está na porta serial DELE, e o pedido é montado
+    // com a cópia local do cardápio e das comandas. Quem entrega ao Principal
+    // é a fila, como em qualquer outra venda. Antes isto era recusado, e a
+    // balança de um Caixa Secundário pesava sem nunca fechar a comanda.
+    stack.gateway.connectivity = () => true;
     expect(
       stack.gateway.handlesWrite(
         'POST',
         '/scales/bal-1/checkout-command/',
         const {},
       ),
-      isFalse,
+      isTrue,
     );
   });
 

@@ -147,6 +147,7 @@ abstract class Printer {
       _reserveInProcess(device.lockResource, () => _send(document));
 
   Future<void> _send(PrintDocument document) async {
+    final startedAt = DateTime.now();
     final missing = device.missingConfiguration;
     if (missing != null) {
       // Configuração incompleta não é falha de comunicação: nenhuma repetição
@@ -221,6 +222,15 @@ abstract class Printer {
       );
       _lastSuccessfulSend[device.lockResource] = DateTime.now();
       _publishStatus(PrinterAvailability.available);
+      AppLogger.instance.info(
+        'print_send_ok',
+        data: {
+          'printer': device.label,
+          'job_type': jobType.wire,
+          'ligacao': target.connection.name,
+          'ms': DateTime.now().difference(startedAt).inMilliseconds,
+        },
+      );
     } on PrinterCommunicationException catch (error) {
       throw _publish(error);
     } catch (error) {

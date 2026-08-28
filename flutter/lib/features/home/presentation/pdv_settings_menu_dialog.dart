@@ -8,6 +8,7 @@ class PdvSettingsMenuDialog extends StatelessWidget {
     required this.canManageDevices,
     required this.topologyStatus,
     required this.offlinePendingCount,
+    required this.printQueueCount,
     required this.isDark,
     required this.isFullScreen,
   });
@@ -15,6 +16,9 @@ class PdvSettingsMenuDialog extends StatelessWidget {
   final bool canManageDevices;
   final String topologyStatus;
   final int offlinePendingCount;
+
+  /// Cupons ainda esperando a impressora neste terminal.
+  final int printQueueCount;
   final bool isDark;
   final bool isFullScreen;
 
@@ -23,6 +27,7 @@ class PdvSettingsMenuDialog extends StatelessWidget {
     required bool canManageDevices,
     required String topologyStatus,
     required int offlinePendingCount,
+    required int printQueueCount,
     required bool isDark,
     required bool isFullScreen,
   }) => showDialog<String>(
@@ -31,6 +36,7 @@ class PdvSettingsMenuDialog extends StatelessWidget {
       canManageDevices: canManageDevices,
       topologyStatus: topologyStatus,
       offlinePendingCount: offlinePendingCount,
+      printQueueCount: printQueueCount,
       isDark: isDark,
       isFullScreen: isFullScreen,
     ),
@@ -82,6 +88,14 @@ class PdvSettingsMenuDialog extends StatelessWidget {
               title: 'Preferências deste terminal',
               subtitle: 'Tempo da comanda, estabilidade, alertas e impressão',
               onTap: () => _select(context, 'preferences'),
+            ),
+            _SettingsEntry(
+              icon: Icons.print_outlined,
+              title: 'Fila de impressão',
+              subtitle: printQueueCount == 0
+                  ? 'Nenhum cupom esperando a impressora'
+                  : '$printQueueCount cupom(ns) esperando a impressora',
+              onTap: () => _select(context, 'print_queue'),
             ),
             _SettingsEntry(
               icon: Icons.sync_problem_outlined,

@@ -875,6 +875,30 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
+  /// Diz quem realmente está atendendo, quando a operação abre um pedido.
+  ///
+  /// Este terminal executa com as credenciais DELE — é ele quem tem a sessão
+  /// com a nuvem. Sem essa atribuição o pedido nascia no nome do caixa, e a
+  /// comanda saía na cozinha com `ATENDENTE: <caixa>`: o garçom que lançou não
+  /// aparecia em lugar nenhum. O ator não vem do corpo, e sim do cabeçalho
+  /// assinado com a chave de pareamento — quem manda não escolhe por quem
+  /// falar.
+  RelayMutation _withActingUser(
+    RelayMutation mutation,
+    _AuthenticatedNode node,
+  ) {
+    if (!OfflineMutations.opensOrder(mutation.method, mutation.path)) {
+      return mutation;
+    }
+    return RelayMutation(
+      method: mutation.method,
+      path: mutation.path,
+      operationId: mutation.operationId,
+      query: mutation.query,
+      body: {...?mutation.body, 'responsible_user': node.actorId},
+    );
+  }
+
   Future<Map<String, dynamic>> _serialRelay(
     RelayMutation rawMutation,
     _AuthenticatedNode authenticated,
@@ -883,15 +907,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     // existe apenas a rota de recurso, e o recibo de idempotência fica
     // associado a ela — senão o mesmo pedido enviado pelos dois caminhos
     // pareceria duas operações diferentes.
-    final mutation = rawMutation.path.startsWith('/local/')
-        ? RelayMutation(
-            method: rawMutation.method,
-            path: normalizeLocalPath(rawMutation.path),
-            operationId: rawMutation.operationId,
-            query: rawMutation.query,
-            body: rawMutation.body,
-          )
-        : rawMutation;
+    final mutation = _withActingUser(
+      rawMutation.path.startsWith('/local/')
+          ? RelayMutation(
+              method: rawMutation.method,
+              path: normalizeLocalPath(rawMutation.path),
+              operationId: rawMutation.operationId,
+              query: rawMutation.query,
+              body: rawMutation.body,
+            )
+          : rawMutation,
+      authenticated,
+    );
     if (_queuedRelays >= _maximumQueuedRelays) {
       throw ApiException(
         'O Caixa Principal está processando muitas operações locais.',
