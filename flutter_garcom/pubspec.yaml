@@ -1,7 +1,7 @@
 name: starchef_garcom
 description: "StarChef Garçom — pedidos no salão, pelo Caixa Principal."
 publish_to: 'none'
-version: 1.7.0+11
+version: 1.7.1+12
 
 environment:
   sdk: ^3.12.2
