@@ -304,45 +304,6 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     return missing < 0 ? 0 : missing;
   }
 
-  /// Fecha a conta: aplica taxa de serviço e trava novos itens.
-  ///
-  /// A partir daqui o aparelho age como caixa secundário — a operação vai
-  /// para o Caixa Principal, que grava e sincroniza (§8).
-  Future<void> _closeOrder() async {
-    final chargeService = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Fechar a conta'),
-        content: const Text(
-          'A taxa de serviço entra no total? Depois de fechar, o pedido não '
-          'aceita novos itens.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Voltar'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Sem taxa'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Com taxa'),
-          ),
-        ],
-      ),
-    );
-    if (chargeService == null) return;
-    await _work(
-      () => widget.repository.closeOrder(
-        orderId: _effectiveOrderId,
-        serviceFeeEnabled: chargeService,
-      ),
-      'Conta fechada. Falta receber.',
-    );
-  }
-
   Future<void> _receivePayment() async {
     // As formas de pagamento e a sessão de caixa só são consultadas aqui, no
     // momento em que o operador vai receber. Buscá-las a cada abertura de tela
@@ -468,14 +429,6 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               queued: sendQueued,
               onAdd: _addItem,
               onSend: (pending > 0 && !sendQueued) ? _sendToKitchen : null,
-              // Fechar só depois de mandar tudo para a produção: itens
-              // pendentes travariam na cozinha com a conta já fechada.
-              onClose:
-                  '${order['status']}' == 'open' &&
-                      pending == 0 &&
-                      !_effectiveOrderId.startsWith('offline-')
-                  ? _closeOrder
-                  : null,
               onReceive:
                   '${order['status']}' == 'awaiting_payment' &&
                       _remaining > 0.009
@@ -690,7 +643,6 @@ class _Actions extends StatelessWidget {
     required this.queued,
     required this.onAdd,
     required this.onSend,
-    required this.onClose,
     required this.onReceive,
   });
 
@@ -706,9 +658,8 @@ class _Actions extends StatelessWidget {
   final VoidCallback onAdd;
   final VoidCallback? onSend;
 
-  /// Fechar a conta e receber: o aparelho operando como caixa secundário.
-  /// `null` quando a etapa não se aplica ao estado atual do pedido.
-  final VoidCallback? onClose;
+  /// Receber pagamento: o aparelho operando como caixa secundário. `null`
+  /// quando o pedido ainda não foi fechado (isso agora só acontece no caixa).
   final VoidCallback? onReceive;
 
   @override
@@ -787,21 +738,14 @@ class _Actions extends StatelessWidget {
                 ),
               ],
             ),
-            if (onClose != null || onReceive != null) ...[
+            if (onReceive != null) ...[
               const SizedBox(height: 10),
               ShadButton.secondary(
-                onPressed: busy ? null : (onReceive ?? onClose),
+                onPressed: busy ? null : onReceive,
                 enabled: !busy,
                 height: AppTheme.controlHeight,
-                leading: Icon(
-                  onReceive != null
-                      ? Icons.payments_outlined
-                      : Icons.receipt_long_outlined,
-                  size: 18,
-                ),
-                child: Text(
-                  onReceive != null ? 'Receber' : 'Fechar a conta',
-                ),
+                leading: const Icon(Icons.payments_outlined, size: 18),
+                child: const Text('Receber'),
               ),
             ],
           ],
