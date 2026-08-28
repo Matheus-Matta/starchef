@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import '../../../core/hardware/peripheral_lock.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
@@ -155,8 +156,12 @@ class PrinterAvailability {
 /// modelos em cache. A leitura da balança **não** passa mais por aqui: quem lê
 /// o equipamento é a própria janela que vai usá-lo, abrindo a porta serial
 /// diretamente ([SerialScaleReader]). Isso eliminou o lease remoto
-/// (`claim-agent`), a consulta periódica de peso pela API e a disputa entre
-/// este agente e a janela pela mesma COM.
+/// (`claim-agent`) e a consulta periódica de peso pela API.
+///
+/// A impressora continua compartilhada entre este agente e a janela da
+/// Balança Rápida (processo à parte, com o seu próprio `LocalDeviceAgent`) —
+/// por isso [printForPrinter] reserva a porta serial com [PeripheralLock]
+/// antes de escrever, a mesma trava que já protegia a balança.
 ///
 /// A fila de impressão não é mais varrida por polling: o backend já publica
 /// `model.updated`/`model.created` para qualquer `PrintJob` da conta em
@@ -1168,44 +1173,86 @@ class LocalDeviceAgent {
     PrinterEndpoint target,
     List<int> bytes,
   ) async {
-    final port = SerialPort(target.endpoint);
-    // O passo é registrado para a mensagem de erro dizer ONDE falhou: abrir,
-    // configurar e escrever têm causas e soluções completamente diferentes,
-    // e "Argumento inválido" sozinho não distingue nenhuma delas.
-    var step = 'abrir';
-    try {
-      // Alguns drivers COM virtuais do Windows rejeitam um handle aberto
-      // somente para escrita com ERROR_INVALID_HANDLE, embora aceitem o modo
-      // leitura/escrita usado pelas APIs e ferramentas nativas do sistema.
-      if (!port.openReadWrite()) {
-        throw _serialCommunicationError(
-          target,
-          step,
-          SerialPort.lastError?.message ?? 'porta ocupada ou inexistente',
-        );
-      }
-      step = 'configurar';
-      port.config = SerialPortConfig()
-        ..baudRate = target.baudRate
-        ..bits = 8
-        ..parity = SerialPortParity.none
-        ..stopBits = 1;
-      final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
-      step = 'enviar o cupom';
-      _writeAllSerial(port, target, payload.content);
-      _settleSerialWrite(port, target);
-      if (payload.cut.isNotEmpty) {
-        await _delay(cutDelay); // pausa física antes da guilhotina
-        step = 'enviar o corte';
-        _writeAllSerial(port, target, payload.cut);
-        _settleSerialWrite(port, target);
-      }
-    } on SerialPortError catch (error) {
-      throw _serialCommunicationError(target, step, error.message);
-    } finally {
-      if (port.isOpen) port.close();
-      port.dispose();
+    // A Balança Rápida roda como processo à parte (`ScaleWindowLauncher` usa
+    // `Process.start`) e tem seu próprio `LocalDeviceAgent` imprimindo notas
+    // de pesagem — sem trava, dois `tcsetattr` quase simultâneos na mesma
+    // porta é exatamente o que produz "Argumento inválido" só na impressão
+    // automática: o teste manual, feito sozinho, nunca disputa a porta com
+    // ninguém. É a mesma classe de disputa que a balança já resolveu com
+    // `PeripheralLock` (ver o comentário da classe); a impressora nunca tinha
+    // ganhado a mesma proteção.
+    final resource = 'printer:${target.endpoint}';
+    final lock = await _acquirePrinterLock(resource);
+    if (lock == null) {
+      final owner = await PeripheralLock.currentOwner(resource);
+      throw PrinterCommunicationException(
+        message: owner == null
+            ? 'A porta ${target.endpoint} está ocupada por outro processo.'
+            : 'A porta ${target.endpoint} está em uso por ${owner.describe()}.',
+        recommendedAction:
+            'Aguarde a impressão em andamento terminar e tente novamente.',
+      );
     }
+    try {
+      final port = SerialPort(target.endpoint);
+      // O passo é registrado para a mensagem de erro dizer ONDE falhou: abrir,
+      // configurar e escrever têm causas e soluções completamente diferentes,
+      // e "Argumento inválido" sozinho não distingue nenhuma delas.
+      var step = 'abrir';
+      try {
+        // Alguns drivers COM virtuais do Windows rejeitam um handle aberto
+        // somente para escrita com ERROR_INVALID_HANDLE, embora aceitem o
+        // modo leitura/escrita usado pelas APIs e ferramentas nativas do
+        // sistema.
+        if (!port.openReadWrite()) {
+          throw _serialCommunicationError(
+            target,
+            step,
+            SerialPort.lastError?.message ?? 'porta ocupada ou inexistente',
+          );
+        }
+        step = 'configurar';
+        port.config = SerialPortConfig()
+          ..baudRate = target.baudRate
+          ..bits = 8
+          ..parity = SerialPortParity.none
+          ..stopBits = 1;
+        final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
+        step = 'enviar o cupom';
+        _writeAllSerial(port, target, payload.content);
+        _settleSerialWrite(port, target);
+        if (payload.cut.isNotEmpty) {
+          await _delay(cutDelay); // pausa física antes da guilhotina
+          step = 'enviar o corte';
+          _writeAllSerial(port, target, payload.cut);
+          _settleSerialWrite(port, target);
+        }
+      } on SerialPortError catch (error) {
+        throw _serialCommunicationError(target, step, error.message);
+      } finally {
+        if (port.isOpen) port.close();
+        port.dispose();
+      }
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /// Tenta a trava por até ~2 s antes de desistir.
+  ///
+  /// Um cupom inteiro sai em bem menos que isso — vale esperar a impressão
+  /// concorrente terminar em vez de recusar um trabalho só porque a porta
+  /// estava ocupada por um instante.
+  Future<PeripheralLock?> _acquirePrinterLock(String resource) async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final lock = await PeripheralLock.tryAcquire(
+        resource,
+        role: 'impressora',
+      );
+      if (lock != null) return lock;
+      await _delay(const Duration(milliseconds: 100));
+    }
+    return null;
   }
 
   /// Aguarda o driver esvaziar o buffer de saída — quando ele souber dizer.

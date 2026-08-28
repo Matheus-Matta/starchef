@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv/core/hardware/peripheral_lock.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
+import 'package:starchef_pdv/core/storage/app_paths.dart';
 import 'package:starchef_pdv/core/storage/local_preferences.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 
@@ -408,6 +410,53 @@ void main() {
   });
 
   group('LocalDeviceAgent corte e disponibilidade', () {
+    test(
+      'porta serial presa por outro processo dá erro claro, sem tentar abrir',
+      () async {
+        // Reproduz a Balança Rápida (processo à parte) segurando a mesma
+        // porta que a impressão automática do PDV principal tenta usar. Sem
+        // a trava, os dois processos disputavam `tcsetattr` na mesma porta e
+        // o sintoma era "Argumento inválido" — só na automática, nunca no
+        // teste manual isolado.
+        final directory = await Directory.systemTemp.createTemp(
+          'starchef-printer-lock',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        AppPaths.overrideDataDirectory(directory);
+        addTearDown(() => AppPaths.overrideDataDirectory(null));
+
+        final held = await PeripheralLock.tryAcquire(
+          'printer:/dev/ttyACM0',
+          role: 'balanca-rapida',
+        );
+        addTearDown(() => held?.release());
+        expect(held, isNotNull);
+
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        final agent = LocalDeviceAgent(
+          api: api,
+          availabilityProbe: (_) async => true,
+        );
+
+        await expectLater(
+          agent.printForPrinter({
+            'id': 'printer-1',
+            'connection_type': 'serial',
+            'endpoint': '/dev/ttyACM0',
+          }, 'RECIBO'),
+          throwsA(
+            isA<PrinterCommunicationException>().having(
+              (error) => error.message,
+              'message',
+              contains('em uso'),
+            ),
+          ),
+        );
+        await api.dispose();
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
+
     test('separa a guilhotina do conteúdo para drenar antes do corte', () {
       final bytes = LocalDeviceAgent.rawTransportBytes(
         'CUPOM LONGO',
