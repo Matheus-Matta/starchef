@@ -1178,11 +1178,14 @@ class LocalDeviceAgent {
     // de pesagem — sem trava, dois `tcsetattr` quase simultâneos na mesma
     // porta é exatamente o que produz "Argumento inválido" só na impressão
     // automática: o teste manual, feito sozinho, nunca disputa a porta com
-    // ninguém. É a mesma classe de disputa que a balança já resolveu com
-    // `PeripheralLock` (ver o comentário da classe); a impressora nunca tinha
-    // ganhado a mesma proteção.
+    // ninguém. `acquireQueued` faz a espera em ordem de chegada — sem isso,
+    // um retry otimista podia deixar quem pediu primeiro esperando mais que
+    // quem pediu depois, só por sorte no instante de cada tentativa.
     final resource = 'printer:${target.endpoint}';
-    final lock = await _acquirePrinterLock(resource);
+    final lock = await PeripheralLock.acquireQueued(
+      resource,
+      role: 'impressora',
+    );
     if (lock == null) {
       final owner = await PeripheralLock.currentOwner(resource);
       throw PrinterCommunicationException(
@@ -1236,23 +1239,6 @@ class LocalDeviceAgent {
     } finally {
       await lock.release();
     }
-  }
-
-  /// Tenta a trava por até ~2 s antes de desistir.
-  ///
-  /// Um cupom inteiro sai em bem menos que isso — vale esperar a impressão
-  /// concorrente terminar em vez de recusar um trabalho só porque a porta
-  /// estava ocupada por um instante.
-  Future<PeripheralLock?> _acquirePrinterLock(String resource) async {
-    for (var attempt = 0; attempt < 20; attempt++) {
-      final lock = await PeripheralLock.tryAcquire(
-        resource,
-        role: 'impressora',
-      );
-      if (lock != null) return lock;
-      await _delay(const Duration(milliseconds: 100));
-    }
-    return null;
   }
 
   /// Aguarda o driver esvaziar o buffer de saída — quando ele souber dizer.
