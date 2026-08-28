@@ -51,10 +51,17 @@
   <table>
     {% for item in items %}{% if item.status != "cancelled" %}
       <tr>
-        {# Por peso, a quantidade aparece uma vez só: o preço por kg completa a mesma linha. #}
-        <td>{{ item.quantity|floatformat:"-3" }} × {{ item.product.name }}{% if item.product.is_weighed %} {{ item.unit_price }}/kg{% endif %}</td>
+        {# Por peso, a quantidade aparece uma vez só: o preço por kg completa a mesma linha.
+           A variação sai colada no produto; o adicional vira uma linha indentada abaixo. #}
+        <td>{{ item.quantity|floatformat:"-3" }} × {{ item.product.name }}{{ item.variation_suffix }}{% if item.product.is_weighed %} {{ item.unit_price }}/kg{% endif %}</td>
         <td>R$ {{ item.total_price }}</td>
       </tr>
+      {% for item_addon in item.addons.all %}
+        <tr>
+          <td>&nbsp;&nbsp;{{ item_addon.addon.name }}</td>
+          <td>R$ {{ item_addon.total_price }}</td>
+        </tr>
+      {% endfor %}
     {% endif %}{% endfor %}
   </table>
   <div class="line"></div>

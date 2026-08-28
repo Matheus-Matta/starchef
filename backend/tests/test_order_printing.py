@@ -1,8 +1,11 @@
+from decimal import Decimal
+
 import pytest
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.customers.models import Customer, CustomerAddress
+from apps.menu.models import ProductAddon, ProductVariation
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
 from apps.printers.models import Printer, PrintJob
@@ -71,6 +74,71 @@ def test_customer_receipt_uses_selected_printer_and_manual_flag(
     product_line = next(line for line in text.splitlines() if product.name in line)
     assert len(product_line) == 42
     assert product_line.endswith("R$ 50.00")
+
+
+@pytest.mark.django_db
+def test_receipt_detalha_variacao_no_produto_e_adicional_com_valor(
+    account, restaurant, branch, manager_user, product
+):
+    """O recibo nao mostrava variacao nem adicional — so o nome do produto.
+
+    O cliente pagava por um item composto e nao via a composicao. Agora a
+    variacao sai colada no produto e cada adicional vira uma linha indentada
+    com o quanto acrescentou. O valor da linha do produto ja soma tudo, entao
+    as linhas de adicional sao detalhamento, e o TOTAL nao muda.
+    """
+    variation = ProductVariation.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        product=product,
+        name="Grande",
+        price_delta=Decimal("3.00"),
+    )
+    addon = ProductAddon.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Bacon",
+        price=Decimal("4.00"),
+    )
+    addon.products.add(product)
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    add_order_item(
+        order=order,
+        product=product,
+        quantity=2,
+        user=manager_user,
+        variations=[str(variation.id)],
+        addons=[str(addon.id)],
+    )
+    printer = Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Caixa",
+        endpoint="Impressora Caixa",
+        is_active=True,
+    )
+
+    job = register_print_job(order=order, user=manager_user, printer=printer)
+
+    text = job.payload["text_content"]
+    product_line = next(line for line in text.splitlines() if product.name in line)
+    assert f"{product.name} - Grande" in product_line
+    # 2 x (25,00 base + 3,00 variacao + 4,00 adicional) = 64,00
+    assert product_line.endswith("R$ 64.00")
+    addon_line = next(line for line in text.splitlines() if "Bacon" in line)
+    assert addon_line.startswith("  Bacon")
+    assert addon_line.endswith("R$ 8.00")
+    assert "2 x Bacon" not in text
+    assert "R$ 64.00" in text
+    assert f"{product.name} - Grande" in job.html_content
 
 
 @pytest.mark.django_db

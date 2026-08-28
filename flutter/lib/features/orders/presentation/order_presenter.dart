@@ -317,15 +317,12 @@ abstract final class OrderPresenter {
     for (final item in items) {
       totalItems += ValueFormatters.number(item['quantity']);
       final quantity = _formatQuantity(item['quantity']);
-      lines.add(clip('${quantity}x ${item['product_name']}'));
-      for (final variation in (item['variations'] as List? ?? const [])) {
-        final name = variation is Map ? variation['name'] : variation;
-        lines.add(clip('  VAR: $name'));
-      }
+      lines.add(
+        clip('${quantity}x ${item['product_name']}${variationSuffix(item)}'),
+      );
       for (final addon in (item['addons'] as List? ?? const [])) {
         if (addon is! Map) continue;
-        final addonQuantity = _formatQuantity(addon['quantity']);
-        lines.add(clip('  + ${addonQuantity}x ${addon['addon_name']}'));
+        lines.add(clip('  ${addon['addon_name']}'));
       }
       final note = '${item['customer_note'] ?? ''}';
       if (note.isNotEmpty) lines.add(clip('  OBS: $note'));
@@ -334,6 +331,21 @@ abstract final class OrderPresenter {
     lines.add(_twoColumns('TOTAL DE ITENS', _formatQuantity(totalItems), width));
     lines.addAll(['REF: $batchSerial', '']);
     return lines.join('\n');
+  }
+
+  /// Sufixo ` - Variação A, Variação B` para colar no nome do produto.
+  ///
+  /// Espelha `_variacoes_sufixo` em `backend/apps/printers/services.py`: a
+  /// variação diz QUAL produto é (sabor, tamanho, ponto), então sai na mesma
+  /// linha dele — quem vai para uma linha própria abaixo é o adicional.
+  static String variationSuffix(JsonMap item) {
+    final names = <String>[];
+    for (final variation in (item['variations'] as List? ?? const [])) {
+      final name = variation is Map ? variation['name'] : variation;
+      final text = '${name ?? ''}'.trim();
+      if (text.isNotEmpty) names.add(text);
+    }
+    return names.isEmpty ? '' : ' - ${names.join(', ')}';
   }
 
   static String _twoColumns(String left, String right, int width) {

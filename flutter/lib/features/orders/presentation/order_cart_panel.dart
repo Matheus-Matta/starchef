@@ -43,6 +43,11 @@ class OrderCartPanel extends StatelessWidget {
   bool get _readOnly =>
       const {'paid', 'cancelled', 'refunded'}.contains('${order?['status']}');
 
+  /// Item que já saiu da conta e não aceita mais cancelamento — o backend
+  /// recusa com "Este item já foi cancelado ou retirado da conta."
+  static bool _settled(Map<String, dynamic> item) =>
+      const {'cancelled', 'comped'}.contains('${item['status']}');
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -410,8 +415,15 @@ class OrderCartPanel extends StatelessWidget {
               child: _CartItem(
                 item: item,
                 money: money,
-                canRemove: false,
-                onRemove: () {},
+                // Item já em produção também pode ser cancelado: o backend
+                // aceita (`void_order_item`) e emite o cupom de cancelamento
+                // para a mesma impressora que recebeu a comanda original
+                // (`register_kitchen_item_cancellation_jobs`). Antes o botão
+                // simplesmente não existia aqui e o caixa tinha que ligar
+                // para a cozinha por fora do sistema. Cortesia e item já
+                // cancelado ficam de fora — o backend recusa os dois.
+                canRemove: !_readOnly && !_settled(item),
+                onRemove: () => onVoidItem(item),
               ),
             ),
         ],
@@ -555,7 +567,10 @@ class _CartItem extends StatelessWidget {
                     ),
                   ),
                 ],
-                if (!canRemove) ...[
+                // A rodada e o estado na cozinha dependem do item ter saído
+                // para produção, não de ele poder ser removido: agora um item
+                // em produção mostra os dois (o selo E o botão de cancelar).
+                if ('${item['status']}' != 'pending') ...[
                   const SizedBox(height: 5),
                   _statusChip(context),
                 ],

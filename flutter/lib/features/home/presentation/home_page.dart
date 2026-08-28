@@ -2639,9 +2639,19 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
+    // Item já enviado à cozinha: o cancelamento não é só tirar da conta, sai
+    // um cupom na impressora do setor para a produção parar. Avisar antes
+    // evita o caixa descobrir isso pelo barulho da impressora.
+    final inProduction = '${item['status']}' != 'pending';
     final reason = await ItemVoidReasonDialog.show(
       context,
       itemName: '${item['product_name'] ?? 'Item do pedido'}',
+      title: inProduction ? 'Cancelar item em produção' : 'Remover item',
+      confirmLabel: inProduction ? 'Cancelar e avisar cozinha' : 'Remover item',
+      warning: inProduction
+          ? 'Este item já foi enviado para a cozinha. Uma nota de '
+                'cancelamento será impressa no setor que o recebeu.'
+          : null,
     );
     if (reason == null || !mounted) return;
 

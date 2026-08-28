@@ -18,6 +18,11 @@ class ItemVoidReasonDialog {
     required String itemName,
     String title = 'Remover item',
     String confirmLabel = 'Remover item',
+
+    /// Consequência que o operador precisa saber ANTES de confirmar (ex.: que
+    /// vai sair um cupom de cancelamento na cozinha). Fica em destaque, não
+    /// como texto solto no meio do formulário.
+    String? warning,
   }) async {
     var selectedReason = reasons.first;
     var showDetailsError = false;
@@ -44,6 +49,10 @@ class ItemVoidReasonDialog {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                  if (warning != null) ...[
+                    const SizedBox(height: 14),
+                    _WarningBanner(message: warning),
+                  ],
                   const SizedBox(height: 16),
                   const Text('Selecione o motivo do cancelamento:'),
                   const SizedBox(height: 10),
@@ -108,5 +117,41 @@ class ItemVoidReasonDialog {
     );
     detailsController.dispose();
     return result;
+  }
+}
+
+class _WarningBanner extends StatelessWidget {
+  const _WarningBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer.withValues(alpha: .5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.error.withValues(alpha: .4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.print_outlined, size: 18, color: scheme.error),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.onErrorContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

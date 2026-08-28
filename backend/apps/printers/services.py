@@ -217,10 +217,16 @@ def _customer_receipt_text(order):
         # numa segunda linha ("0,024 kg x ...") mostrava o mesmo peso duas
         # vezes no cupom.
         if item.product.is_weighed:
-            descricao = f"{item.quantity:g} x {item.product.name} {item.unit_price}/kg"
+            descricao = f"{item.quantity:g} x {item.product.name}{item.variation_suffix} {item.unit_price}/kg"
         else:
-            descricao = f"{item.quantity:g} x {item.product.name}"
+            descricao = f"{item.quantity:g} x {item.product.name}{item.variation_suffix}"
         lines.append(_linha_valor(descricao, item.total_price))
+        # O adicional e uma composicao da linha acima, nao outro item: entra
+        # indentado, sem repetir a quantidade (ja e a do produto) e com o
+        # quanto ele acrescentou. O valor do item acima ja soma os adicionais,
+        # entao aqui e detalhamento, nao uma nova cobranca.
+        for addon in item.addons.all():
+            lines.append(_linha_valor(f"  {addon.addon.name}", addon.total_price))
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
@@ -403,12 +409,10 @@ def _kitchen_ticket_text(*, order, batch, sector, items):
         lines.append(f"ATENDENTE: {atendente}"[:LARGURA_COMANDA])
     lines.append("-" * LARGURA_COMANDA)
     for item in items:
-        lines.append(f"{_kitchen_quantity(item.quantity)}x {item.product.name}"[:LARGURA_COMANDA])
-        for variation in item.variations or []:
-            name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:LARGURA_COMANDA])
+        produto = f"{_kitchen_quantity(item.quantity)}x {item.product.name}{item.variation_suffix}"
+        lines.append(produto[:LARGURA_COMANDA])
         for addon in item.addons.all():
-            lines.append(f"  + {_kitchen_quantity(addon.quantity)}x {addon.addon.name}"[:LARGURA_COMANDA])
+            lines.append(f"  {addon.addon.name}"[:LARGURA_COMANDA])
         if item.customer_note:
             lines.append(f"  OBS: {item.customer_note}"[:LARGURA_COMANDA])
         lines.append("-" * LARGURA_COMANDA)
@@ -544,30 +548,46 @@ def refresh_scheduled_kitchen_batch_jobs(*, batch, user):
         return jobs
 
 
-def _kitchen_cancellation_text(*, item, original_job, reason):
+def _kitchen_cancellation_text(*, item, original_job, reason, user=None):
+    """Cupom de cancelamento: o que a cozinha precisa pra tirar o item da fila.
+
+    Alem do item e do motivo, identifica o TIPO de atendimento (comanda,
+    balcao, entrega...) e quem pediu o cancelamento. Sem o tipo, um pedido de
+    balcao aparecia sem nenhuma origem; sem o solicitante, a cozinha nao
+    tinha a quem recorrer para confirmar um cancelamento duvidoso.
+    """
     order = item.order
     batch = item.batch
-    where = (
-        f"Mesa {order.table.number}"
-        if order.table_id
-        else (f"Comanda {order.command.code}" if order.command_id else order.get_order_type_display())
-    )
-    return "\n".join(
+    tipo = TIPO_ATENDIMENTO_COMANDA.get(order.order_type, str(order.order_type).upper())
+    lines = [
+        "CANCELAMENTO".center(LARGURA_COMANDA),
+        f"PEDIDO #{order.sequence}".center(LARGURA_COMANDA),
+        f"ORIGINAL {original_job.serial}".center(LARGURA_COMANDA),
+        f"RODADA {batch.serial if batch else '-'}".center(LARGURA_COMANDA),
+        "-" * LARGURA_COMANDA,
+        f"TIPO: {tipo}"[:LARGURA_COMANDA],
+    ]
+    if order.table_id:
+        lines.append(f"MESA: {order.table.number}"[:LARGURA_COMANDA])
+    if order.command_id:
+        lines.append(f"COMANDA: {order.command.code}"[:LARGURA_COMANDA])
+    produto = f"{_kitchen_quantity(item.quantity)}x {item.product.name}{item.variation_suffix}"
+    lines.append(f"CANCELAR {produto}"[:LARGURA_COMANDA])
+    for addon in item.addons.all():
+        lines.append(f"  {addon.addon.name}"[:LARGURA_COMANDA])
+    lines.append(f"MOTIVO: {reason}"[:LARGURA_COMANDA])
+    if user is not None:
+        solicitante = user.get_full_name() or user.username
+        lines.append(f"SOLICITADO POR: {solicitante}"[:LARGURA_COMANDA])
+    lines.extend(
         [
-            "CANCELAMENTO".center(32),
-            f"PEDIDO #{order.sequence}".center(32),
-            f"ORIGINAL {original_job.serial}".center(32),
-            f"RODADA {batch.serial if batch else '-'}".center(32),
-            "-" * 32,
-            where,
-            f"CANCELAR {_kitchen_quantity(item.quantity)}x {item.product.name}"[:32],
-            f"MOTIVO: {reason}"[:32],
             timezone.localtime().strftime("%d/%m/%Y %H:%M:%S"),
-            "-" * 32,
-            "FIM DO CANCELAMENTO".center(32),
+            "-" * LARGURA_COMANDA,
+            "FIM DO CANCELAMENTO".center(LARGURA_COMANDA),
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def register_kitchen_item_cancellation_jobs(*, item, user, reason):
@@ -585,7 +605,7 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason):
         ]
         jobs = []
         for original in originals:
-            text = _kitchen_cancellation_text(item=item, original_job=original, reason=reason)
+            text = _kitchen_cancellation_text(item=item, original_job=original, reason=reason, user=user)
             job, created = PrintJob.objects.get_or_create(
                 original_job=original,
                 cancelled_item=item,
@@ -715,7 +735,12 @@ def _resolve_weigh_printer(*, order, scale):
 
 def _weigh_ticket_items(order):
     excluded = {"cancelled", "comped"}
-    return list(order.items.select_related("product").exclude(status__in=excluded).order_by("launched_at", "id"))
+    return list(
+        order.items.select_related("product")
+        .prefetch_related("addons__addon")
+        .exclude(status__in=excluded)
+        .order_by("launched_at", "id")
+    )
 
 
 def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
@@ -794,11 +819,14 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
         ]
     )
     for ticket_item in items:
-        lines.append(_linha_valor(ticket_item.product.name, ticket_item.total_price))
+        nome = f"{ticket_item.product.name}{ticket_item.variation_suffix}"
+        lines.append(_linha_valor(nome, ticket_item.total_price))
         if ticket_item.product.is_weighed:
             lines.append(f"{Decimal(ticket_item.quantity):.3f} kg x " f"R$ {ticket_item.unit_price}/kg")
         else:
             lines.append(f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}")
+        for addon in ticket_item.addons.all():
+            lines.append(_linha_valor(f"  {addon.addon.name}", addon.total_price))
         lines.append("-" * LARGURA_CUPOM)
     lines.append(_linha_valor("TOTAL DO PEDIDO", order.total))
     if barcode["value"]:

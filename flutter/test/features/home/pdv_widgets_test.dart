@@ -437,6 +437,62 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('item em produção pode ser cancelado e mantém o selo', (
+      tester,
+    ) async {
+      Map<String, dynamic>? voidedItem;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 61, 'order_type': 'command', 'total': 20},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-sent',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 20,
+              'total_price': 20,
+              'status': 'sent',
+              'batch_number': 3,
+            },
+            // Cortesia já saiu da conta: o backend recusa cancelar de novo,
+            // então nem deve oferecer o botão.
+            {
+              'id': 'item-comped',
+              'product_name': 'Sobremesa',
+              'quantity': 1,
+              'unit_price': 0,
+              'total_price': 0,
+              'status': 'comped',
+              'batch_number': 3,
+            },
+          ],
+          money: _money,
+          onVoidItem: (value) => voidedItem = value,
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      expect(find.text('EM PRODUÇÃO (2)'), findsOneWidget);
+      // O selo de rodada/estado continua visível mesmo com o botão presente:
+      // era ele que sumia quando a exibição dependia de "não pode remover".
+      expect(find.text('Rodada 3'), findsNWidgets(2));
+      expect(find.text('Cozinha'), findsOneWidget);
+      expect(find.text('Cortesia'), findsOneWidget);
+
+      // Só o item em produção oferece cancelar; a cortesia não.
+      expect(find.byTooltip('Cancelar item'), findsOneWidget);
+      await tester.tap(find.byTooltip('Cancelar item'));
+      expect(voidedItem?['id'], 'item-sent');
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('identifica o pedido pela comanda quando não há mesa', (
       tester,
     ) async {

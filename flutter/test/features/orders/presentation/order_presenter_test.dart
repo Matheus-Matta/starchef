@@ -199,19 +199,26 @@ void main() {
         final text = tickets.single.text;
         final mesaLine = text.indexOf('MESA: 7');
         final comandaLine = text.indexOf('COMANDA: 0012');
-        final itemLine = text.indexOf('1.5x X-Burger');
-        final variationLine = text.indexOf('VAR: Grande');
-        final addonLine = text.indexOf('+ 2x Bacon');
+        // A variação sai colada no produto (é qual produto é), não numa
+        // linha "VAR:" separada; o adicional é que fica na linha de baixo,
+        // sem repetir a quantidade do produto.
+        final itemLine = text.indexOf('1.5x X-Burger - Grande');
+        final addonLine = text.indexOf('  Bacon');
         final noteLine = text.indexOf('OBS: Sem cebola');
         final refLine = text.indexOf('REF: batch-serial-1');
 
         expect(mesaLine, greaterThanOrEqualTo(0));
         expect(comandaLine, greaterThan(mesaLine));
         expect(itemLine, greaterThan(comandaLine));
-        expect(variationLine, greaterThan(itemLine));
-        expect(addonLine, greaterThan(variationLine));
+        expect(addonLine, greaterThan(itemLine));
         expect(noteLine, greaterThan(addonLine));
         expect(refLine, greaterThan(noteLine));
+        expect(text, isNot(contains('VAR:')));
+        expect(
+          text,
+          isNot(contains('2x Bacon')),
+          reason: 'o adicional não repete a quantidade do produto',
+        );
       },
     );
 

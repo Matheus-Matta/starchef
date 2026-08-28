@@ -273,12 +273,15 @@ jobs:
             exit 1
           fi
           if [[ "$present" -eq 0 ]]; then
-            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-              echo "A tag exige os Secrets GARCOM_* para publicar um APK atualizável." >&2
-              echo "Sem uma chave fixa, cada build assina com um certificado de debug diferente e o Android recusa silenciosamente instalar a atualização por cima do app já instalado." >&2
-              exit 1
-            fi
-            echo "::warning::APK de homologação será assinado com a chave de debug."
+            # Sem os Secrets a build NAO falha: publicar o PDV e mais
+            # importante do que a atualizacao in-place do APK do garcom.
+            # Mas o APK sai assinado com a chave de debug, e cada execucao
+            # gera uma chave nova — o Android recusa em silencio instalar
+            # esse APK por cima de um ja instalado, entao a atualizacao
+            # automatica do garcom NAO vai funcionar neste release. Para
+            # ligar de vez: cadastre os quatro Secrets GARCOM_* (sempre o
+            # mesmo keystore, para sempre).
+            echo "::warning::Secrets GARCOM_* ausentes: APK assinado com chave de debug. A atualização automática do app do garçom NÃO funcionará neste release (o Android bloqueia a instalação por cima do app já instalado). Cadastre GARCOM_KEYSTORE_BASE64, GARCOM_KEYSTORE_PASSWORD, GARCOM_KEY_ALIAS e GARCOM_KEY_PASSWORD para habilitar."
             exit 0
           fi
           printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks

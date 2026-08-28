@@ -3,13 +3,14 @@ from decimal import Decimal
 
 import pytest
 
-from apps.menu.models import Product
+from apps.menu.models import Product, ProductAddon, ProductVariation
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.orders.services import (
     add_order_item,
     create_order,
     send_order_to_kitchen,
     update_order_item_status,
+    void_order_item,
 )
 from apps.printers.models import Printer, PrintJob
 from apps.restaurants.models import TableSector
@@ -178,6 +179,124 @@ def test_kitchen_new_order_note_shows_command_and_table_when_present(
     assert "MESA: 1" in job.payload["text_content"]
     assert f"Comanda: {command.code}" in job.html_content
     assert "Mesa: 1" in job.html_content
+
+
+@pytest.mark.django_db
+def test_kitchen_variacao_sai_no_produto_e_adicional_sem_quantidade(
+    account, restaurant, branch, table, product, manager_user
+):
+    """A variacao diz QUAL produto e, entao sai colada nele; o adicional nao.
+
+    Antes a variacao ia numa linha "VAR: ..." separada e o adicional repetia
+    a quantidade do produto ("+ 2x Bacon"), o que fazia a cozinha ler duas
+    quantidades diferentes para a mesma linha.
+    """
+    product.sector = table.sector
+    product.save(update_fields=["sector", "updated_at"])
+    variation = ProductVariation.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        product=product,
+        name="Grande",
+        price_delta=Decimal("3.00"),
+    )
+    addon = ProductAddon.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Bacon",
+        price=Decimal("4.00"),
+    )
+    addon.products.add(product)
+    Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        sector=table.sector,
+        name="Cozinha",
+        endpoint="Teste",
+        auto_print=True,
+    )
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(
+        order=order,
+        product=product,
+        quantity=2,
+        user=manager_user,
+        variations=[str(variation.id)],
+        addons=[str(addon.id)],
+    )
+
+    send_order_to_kitchen(order, manager_user)
+
+    text = PrintJob.objects.get(order=order).payload["text_content"]
+    assert "2x X-Burger - Grande" in text
+    assert "VAR:" not in text
+    # O adicional entra na linha de baixo, so com o nome.
+    assert "\n  Bacon" in text
+    assert "2x Bacon" not in text
+
+    html = PrintJob.objects.get(order=order).html_content
+    assert "X-Burger - Grande" in html
+    assert "Variação:" not in html
+
+
+@pytest.mark.django_db
+def test_cancelamento_traz_tipo_de_atendimento_e_quem_pediu(
+    account, restaurant, branch, command, product, manager_user
+):
+    """Cupom de cancelamento sem tipo/solicitante nao servia para a cozinha.
+
+    Sem o tipo, um pedido de balcao chegava sem nenhuma origem; sem o
+    solicitante, nao havia a quem recorrer para confirmar um cancelamento.
+    """
+    sector = TableSector.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Cozinha",
+    )
+    product.sector = sector
+    product.save(update_fields=["sector", "updated_at"])
+    Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        sector=sector,
+        name="Cozinha",
+        endpoint="Teste",
+        auto_print=True,
+    )
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COMMAND,
+        command=command,
+        user=manager_user,
+    )
+    item = add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    send_order_to_kitchen(order, manager_user)
+    item.refresh_from_db()
+    update_order_item_status(item, OrderItem.STATUS_PREPARING, manager_user)
+
+    void_order_item(item, manager_user, reason="Cliente desistiu")
+
+    cancel_job = PrintJob.objects.get(job_type=PrintJob.TYPE_KITCHEN_CANCEL)
+    text = cancel_job.payload["text_content"]
+    assert "CANCELAMENTO" in text
+    assert "TIPO: COMANDA" in text
+    assert f"COMANDA: {command.code}" in text
+    assert "CANCELAR 1x X-Burger" in text
+    assert "MOTIVO: Cliente desistiu" in text
+    solicitante = manager_user.get_full_name() or manager_user.username
+    assert f"SOLICITADO POR: {solicitante}" in text
 
 
 @pytest.mark.django_db

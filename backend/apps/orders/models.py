@@ -296,6 +296,24 @@ class OrderItem(TenantModel):
     def __str__(self):
         return f"{self.quantity} x {self.product}"
 
+    @property
+    def variation_suffix(self):
+        """Sufixo ' - Variacao A, Variacao B' para colar no nome do produto.
+
+        A variacao descreve QUAL produto e (sabor, tamanho, ponto da carne),
+        entao sai na mesma linha dele em toda nota impressa; quem vai para
+        uma linha propria abaixo e o adicional. Fica no modelo, e nao no
+        modulo de impressao, porque os templates HTML precisam do mesmo
+        texto — duplicar a regra la ja tinha feito o cupom e o HTML da mesma
+        nota divergirem.
+        """
+        nomes = []
+        for variation in self.variations or []:
+            nome = variation.get("name") if isinstance(variation, dict) else variation
+            if nome:
+                nomes.append(str(nome))
+        return f" - {', '.join(nomes)}" if nomes else ""
+
 
 class OrderItemAddon(TenantModel):
     item = models.ForeignKey(OrderItem, related_name="addons", on_delete=models.CASCADE)
