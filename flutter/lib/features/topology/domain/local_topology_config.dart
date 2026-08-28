@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// Papel deste terminal na rede local da loja.
 ///
 /// Não existe mais um modo "independente". Todo terminal é Caixa Principal ou
@@ -76,8 +74,8 @@ class LocalTopologyConfig {
   /// normalmente, apenas sem servir a rede local.
   List<String> lanSharingErrors() {
     final errors = <String>[];
-    if (!_isStrongPairingSecret(pairingSecret.trim())) {
-      errors.add('Gere a chave de pareamento para conectar outros caixas.');
+    if (pairingSecret.trim().isEmpty) {
+      errors.add('Defina uma chave de pareamento para conectar outros caixas.');
     }
     if (!trustedNetworkAcknowledged) {
       errors.add(
@@ -85,14 +83,6 @@ class LocalTopologyConfig {
       );
     }
     return errors;
-  }
-
-  static bool _isStrongPairingSecret(String value) {
-    try {
-      return base64Url.decode(base64Url.normalize(value)).length == 32;
-    } on FormatException {
-      return false;
-    }
   }
 
   static bool _isValidHost(String value) =>

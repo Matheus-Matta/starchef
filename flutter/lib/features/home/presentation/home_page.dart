@@ -1126,11 +1126,26 @@ class _HomePageState extends State<HomePage> {
       _onTopologyChanged();
       final degraded =
           candidate.mode == LocalTopologyMode.client && !service.status.ready;
+      // Sem este aviso, uma chave vazia ou a caixa de rede confiável
+      // desmarcada faziam o Caixa Principal salvar "com sucesso" e só nunca
+      // abrir a porta — o operador só descobria reabrindo o diálogo e lendo
+      // o texto pequeno do status, o que parecia "QR Code parou de
+      // funcionar" sem nenhum erro visível.
+      final principalLocalOnly =
+          candidate.mode == LocalTopologyMode.principal &&
+          service.status.phase == LocalTopologyPhase.principalLocalOnly;
       if (degraded) {
         showAppToast(
           context,
           'Modo Cliente salvo, mas o Caixa Principal está indisponível.',
           title: 'Rede local',
+          severity: AppErrorSeverity.warning,
+        );
+      } else if (principalLocalOnly) {
+        showAppToast(
+          context,
+          service.status.message,
+          title: 'Rede local não foi ligada',
           severity: AppErrorSeverity.warning,
         );
       }
@@ -2789,10 +2804,20 @@ class _HomePageState extends State<HomePage> {
     );
     if (_isOfflinePending(response)) {
       // Corrida rara: a conexão caiu entre o check acima e o POST, então a
-      // fila já guardou a chamada sem a flag — o backend também vai imprimir
-      // quando sincronizar. Preferimos o risco pequeno de uma comanda
-      // repetida a nenhuma comanda sair agora.
-      await _printKitchenTicketsOffline(pendingItems, batchSerial);
+      // fila já guardou a chamada sem a flag `offline_printed`. Sem corrigir
+      // o corpo já enfileirado, quando ele enfim sincronizasse o backend não
+      // saberia que a comanda já saiu aqui e criaria um PrintJob novo — que o
+      // agente local imprimiria de novo sozinho assim que a rede voltasse
+      // ("impressão automática duplicada"). Imprime local e, se deu certo,
+      // marca a MESMA operação já na fila como já impressa.
+      final printed = await _printKitchenTicketsOffline(
+        pendingItems,
+        batchSerial,
+      );
+      final queueId = '${response['_offline_queue_id'] ?? ''}';
+      if (printed && queueId.isNotEmpty) {
+        await api.patchQueuedBody(queueId, {'offline_printed': true});
+      }
     }
     return response;
   }

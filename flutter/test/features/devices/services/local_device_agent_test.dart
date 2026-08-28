@@ -457,6 +457,21 @@ void main() {
       timeout: const Timeout(Duration(seconds: 10)),
     );
 
+    test(
+      'mantém uma folga padrão depois do corte, antes de liberar a porta',
+      () async {
+        // Sem essa folga, um segundo trabalho enfileirado logo em seguida na
+        // MESMA porta (ex.: a nota de cancelamento, na impressora que acabou
+        // de receber a comanda original) reabria a porta antes da guilhotina
+        // terminar de atuar — o sistema aceitava os bytes sem erro nenhum,
+        // mas a impressora nunca chegava a processar o segundo cupom.
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        final agent = LocalDeviceAgent(api: api);
+        expect(agent.postCutSettleDelay, const Duration(milliseconds: 400));
+        await api.dispose();
+      },
+    );
+
     test('separa a guilhotina do conteúdo para drenar antes do corte', () {
       final bytes = LocalDeviceAgent.rawTransportBytes(
         'CUPOM LONGO',

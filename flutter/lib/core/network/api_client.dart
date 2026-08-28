@@ -1091,6 +1091,14 @@ class ApiClient {
     return _offlineStore.resolvedIdMappings(scope: scope);
   }
 
+  /// Acrescenta campos ao corpo de uma mutação que ainda está na fila,
+  /// identificada pelo `queue_id` devolvido em `_offline_queue_id` na
+  /// resposta otimista. Sem efeito se ela já foi enviada.
+  Future<void> patchQueuedBody(
+    String queueId,
+    Map<String, dynamic> patch,
+  ) => _offlineStore.patchBody(queueId, patch);
+
   Future<int> pendingOperations() async =>
       (await _offlineStore.summary(scope: _activeScope)).total;
 

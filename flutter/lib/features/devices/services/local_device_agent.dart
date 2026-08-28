@@ -180,6 +180,7 @@ class LocalDeviceAgent {
     Future<void> Function(PrinterEndpoint target, List<int> bytes)?
     networkWriter,
     this.cutDelay = const Duration(milliseconds: 350),
+    this.postCutSettleDelay = const Duration(milliseconds: 400),
   }) : _availabilityProbe = availabilityProbe,
        _networkWriter = networkWriter,
        _delay = delay ?? Future<void>.delayed;
@@ -487,6 +488,22 @@ class LocalDeviceAgent {
   /// esta pausa era usada para compensar; com os ~30 mm corretos ela volta a
   /// ser só a margem de drenagem que sempre deveria ter sido.
   final Duration cutDelay;
+
+  /// Pausa mantida com a porta ainda aberta e a fila de impressão ainda
+  /// travada, DEPOIS de enviar o corte — não é o mesmo que [cutDelay] (que é
+  /// ANTES do corte, para drenar o conteúdo).
+  ///
+  /// A guilhotina continua atuando fisicamente por um instante depois do
+  /// byte de corte já ter saído da porta, e uma porta serial USB-CDC costuma
+  /// levar um tempo para assentar entre um `close()` e o próximo `open()` no
+  /// mesmo dispositivo. Sem essa folga, um segundo trabalho enfileirado logo
+  /// em seguida (ex.: a nota de cancelamento, impressa na mesma impressora
+  /// da comanda original que acabou de sair) reabria a porta cedo demais: o
+  /// sistema aceitava os bytes na fila de saída do driver — então nada aqui
+  /// via erro, o job era marcado como impresso — mas a impressora, ainda
+  /// concluindo o corte anterior, nunca chegava a receber ou processar esse
+  /// segundo cupom. "Imprimiu sem erro" e "não saiu papel" ao mesmo tempo.
+  final Duration postCutSettleDelay;
   final ValueNotifier<PrinterAvailability> printerAvailability =
       ValueNotifier<PrinterAvailability>(
         const PrinterAvailability(
@@ -1276,6 +1293,9 @@ class LocalDeviceAgent {
           step = 'enviar o corte';
           _writeAllSerial(port, target, payload.cut);
           _settleSerialWrite(port, target);
+          // Mantém a porta aberta e a fila travada até a guilhotina acabar
+          // de atuar — ver o comentário de [postCutSettleDelay].
+          await _delay(postCutSettleDelay);
         }
       } on SerialPortError catch (error) {
         throw _serialCommunicationError(target, step, error.message);

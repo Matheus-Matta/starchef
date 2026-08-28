@@ -355,6 +355,33 @@ class OfflineStore {
     });
   }
 
+  /// Mescla campos no corpo de uma operação AINDA na fila, identificada pelo
+  /// próprio `queue_id`.
+  ///
+  /// Existe para o caso em que a decisão "isto já foi impresso localmente"
+  /// só é conhecida DEPOIS que a operação foi enfileirada (a rede caiu no
+  /// meio do POST) — sem isto, quando a fila enfim sincroniza, o servidor não
+  /// tem como saber que a comanda de cozinha já saiu na impressora e cria um
+  /// `PrintJob` novo, que o agente local imprime de novo sozinho. Não faz
+  /// nada se a operação já foi enviada e removida da fila (a comanda offline
+  /// já imprimiu localmente; não há mais nada a marcar).
+  Future<void> patchBody(String queueId, Map<String, dynamic> patch) async {
+    await _ready;
+    await _database.writeTransaction((tx) async {
+      final row = await tx.getOptional(
+        'SELECT body_json FROM offline_outbox WHERE queue_id = ?',
+        [queueId],
+      );
+      if (row == null) return;
+      final body = _decodeMap(row['body_json']) ?? <String, dynamic>{};
+      body.addAll(patch);
+      await tx.execute(
+        'UPDATE offline_outbox SET body_json = ? WHERE queue_id = ?',
+        [jsonEncode(body), queueId],
+      );
+    });
+  }
+
   Future<void> remove(String queueId) async {
     await _ready;
     await _database.execute('DELETE FROM offline_outbox WHERE queue_id = ?', [
