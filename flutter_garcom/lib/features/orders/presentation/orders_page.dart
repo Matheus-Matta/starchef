@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/relay/pending_mutation.dart';
 import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
@@ -81,10 +82,38 @@ class _OrdersPageState extends State<OrdersPage> {
         builder: (_) => OrderDetailPage(
           repository: widget.repository,
           orderId: '${order['id']}',
+          initialOrder: order,
         ),
       ),
     );
     if (mounted) await _load();
+  }
+
+  /// Pedidos novos ainda não confirmados pelo caixa (fila offline) — sem
+  /// isto, sair da tela de detalhe antes de sincronizar faria o pedido
+  /// "sumir" até a rede voltar. `RelayGateway.pending` já sobrevive a fechar
+  /// e abrir o app (`restore()` na inicialização), então não precisa de
+  /// nenhum armazenamento novo aqui.
+  List<Map<String, dynamic>> get _creatingOrders => widget
+      .repository
+      .gateway
+      .pending
+      .where((mutation) => mutation.kind == 'create_order')
+      .map(_placeholderOrder)
+      .toList();
+
+  Map<String, dynamic> _placeholderOrder(PendingMutation mutation) {
+    final body = mutation.body ?? const <String, dynamic>{};
+    final item = body['item'];
+    return {
+      'id': mutation.placeholderOrderId,
+      '_offline_pending': true,
+      'status': 'open',
+      'order_type': body['order_type'],
+      if (body['command'] != null) 'command': body['command'],
+      if (body['table'] != null) 'table': body['table'],
+      'items': item == null ? const [] : [item],
+    };
   }
 
   Future<void> _newOrder() async {
@@ -266,10 +295,11 @@ class _OrdersPageState extends State<OrdersPage> {
   }
 
   Widget _buildBody() {
-    if (_loading && _orders.isEmpty) {
+    final creating = _creatingOrders;
+    if (_loading && _orders.isEmpty && creating.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_error != null && _orders.isEmpty) {
+    if (_error != null && _orders.isEmpty && creating.isEmpty) {
       return _Message(
         icon: Icons.wifi_off,
         title: 'Não foi possível carregar',
@@ -280,20 +310,21 @@ class _OrdersPageState extends State<OrdersPage> {
         ),
       );
     }
-    if (_orders.isEmpty) {
+    if (_orders.isEmpty && creating.isEmpty) {
       return const _Message(
         icon: Icons.receipt_long_outlined,
         title: 'Nenhum pedido aberto',
         description: 'Toque em "Novo pedido" para começar a atender uma mesa.',
       );
     }
+    final orders = [...creating, ..._orders];
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: _orders.length,
+      itemCount: orders.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
-        final order = _orders[index];
+        final order = orders[index];
         return _OrderCard(order: order, onTap: () => _openOrder(order));
       },
     );
@@ -349,7 +380,9 @@ class _OrderCard extends StatelessWidget {
                 ],
               ),
             ),
-            _StatusChip(order: order),
+            order['_offline_pending'] == true
+                ? const PendingBadge(label: 'aguardando conexão')
+                : _StatusChip(order: order),
             const SizedBox(width: 6),
             Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
           ],

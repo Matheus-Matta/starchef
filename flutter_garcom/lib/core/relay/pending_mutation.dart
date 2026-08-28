@@ -17,6 +17,7 @@ class PendingMutation {
     this.body,
     this.attempts = 0,
     this.lastError,
+    this.placeholderOrderId,
   });
 
   final String operationId;
@@ -25,8 +26,8 @@ class PendingMutation {
   final Map<String, dynamic>? body;
 
   /// Categoria da operação (`add_item`, `void_item`, `send_to_kitchen`,
-  /// `link_table`) — usada para agrupar/filtrar na UI (ex.: só as pendências
-  /// de UM pedido, na tela de detalhe).
+  /// `link_table`, `create_order`) — usada para agrupar/filtrar na UI (ex.:
+  /// só as pendências de UM pedido, na tela de detalhe).
   final String kind;
 
   /// Texto pronto para mostrar ao garçom (ex.: "2x Coxinha").
@@ -36,9 +37,17 @@ class PendingMutation {
   final int attempts;
   final String? lastError;
 
+  /// Id local (`offline-...`) atribuído a um pedido ainda não confirmado
+  /// pelo caixa — só preenchido quando `kind == 'create_order'`. É o que
+  /// permite a tela de detalhe abrir e acompanhar um pedido que ainda não
+  /// tem id de verdade (ver [orderId] e `RelayGateway.resolvedOrderId`).
+  final String? placeholderOrderId;
+
   /// Pedido a que esta operação pertence, quando aplicável (extraído do
-  /// path). Usado para filtrar as pendências de UM pedido específico.
+  /// path, ou o id local desta própria criação). Usado para filtrar as
+  /// pendências de UM pedido específico.
   String? get orderId {
+    if (placeholderOrderId != null) return placeholderOrderId;
     final match = RegExp(r'^/orders/([^/]+)/').firstMatch(path);
     return match?.group(1);
   }
@@ -60,7 +69,26 @@ class PendingMutation {
     createdAt: createdAt,
     attempts: attempts + 1,
     lastError: error,
+    placeholderOrderId: placeholderOrderId,
   );
+
+  /// Cópia com [placeholder] trocado por [realId] no path — usado quando uma
+  /// criação de pedido enfileirada é confirmada e esta mutação (ex.: um item
+  /// lançado nesse pedido enquanto ele ainda não tinha id real) ainda está na
+  /// fila esperando ser enviada.
+  PendingMutation withOrderIdReplaced(String placeholder, String realId) =>
+      PendingMutation(
+        operationId: operationId,
+        method: method,
+        path: path.replaceAll(placeholder, realId),
+        body: body,
+        kind: kind,
+        summary: summary,
+        createdAt: createdAt,
+        attempts: attempts,
+        lastError: lastError,
+        placeholderOrderId: placeholderOrderId,
+      );
 
   Map<String, dynamic> toJson() => {
     'operation_id': operationId,
@@ -72,6 +100,7 @@ class PendingMutation {
     'created_at': createdAt.toIso8601String(),
     'attempts': attempts,
     'last_error': lastError,
+    if (placeholderOrderId != null) 'placeholder_order_id': placeholderOrderId,
   };
 
   static PendingMutation fromJson(Map<String, dynamic> json) =>
@@ -88,6 +117,7 @@ class PendingMutation {
             DateTime.tryParse('${json['created_at'] ?? ''}') ?? DateTime.now(),
         attempts: (json['attempts'] as num?)?.toInt() ?? 0,
         lastError: json['last_error'] as String?,
+        placeholderOrderId: json['placeholder_order_id'] as String?,
       );
 }
 

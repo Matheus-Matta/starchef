@@ -29,6 +29,35 @@ abstract final class AppPaths {
   static File dataFile(String fileName) =>
       File('${dataDirectory().path}${Platform.pathSeparator}$fileName');
 
+  /// Confirma, durante a inicialização, que o diretório realmente é
+  /// persistente e gravável pelo usuário que abriu o PDV.
+  ///
+  /// Linux desktop não oferece um pedido de permissão equivalente ao Android:
+  /// o processo já deve ser dono do diretório em `$HOME`. Este teste torna
+  /// visível o caso comum em que uma execução anterior com `sudo` deixou a
+  /// pasta pertencendo ao root e as gravações seguintes passaram a falhar.
+  static Future<void> verifyPersistentStorage() async {
+    final directory = dataDirectory();
+    if (_override == null && _usesTemporaryFallback()) {
+      throw FileSystemException(
+        'HOME/LOCALAPPDATA indisponível; o diretório temporário não preserva '
+        'sessão, filas e pareamento após reiniciar.',
+        directory.path,
+      );
+    }
+
+    await directory.create(recursive: true);
+    final probe = File(
+      '${directory.path}${Platform.pathSeparator}'
+      '.storage-probe-$pid-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await probe.writeAsString('starchef', flush: true);
+    } finally {
+      if (await probe.exists()) await probe.delete();
+    }
+  }
+
   static String _baseDirectory() {
     if (Platform.isWindows) {
       final localAppData = Platform.environment['LOCALAPPDATA']?.trim();
@@ -55,6 +84,15 @@ abstract final class AppPaths {
     // abertura reconfigurar tudo do que perder dados em silêncio achando que
     // persistiu.
     return Directory.systemTemp.path;
+  }
+
+  static bool _usesTemporaryFallback() {
+    if (Platform.isWindows) {
+      return (Platform.environment['LOCALAPPDATA']?.trim().isEmpty ?? true) &&
+          (Platform.environment['APPDATA']?.trim().isEmpty ?? true);
+    }
+    return (Platform.environment['XDG_DATA_HOME']?.trim().isEmpty ?? true) &&
+        _linuxHomeDirectory() == null;
   }
 
   /// `HOME` é o caminho normal, mas nem todo processo o herda — um serviço

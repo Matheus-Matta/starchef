@@ -603,6 +603,98 @@ void main() {
       await api.dispose();
     });
   });
+
+  group('LocalDeviceAgent confirmação de impressão', () {
+    test(
+      'mark-printed falhando não reimprime o mesmo trabalho no ciclo seguinte',
+      () async {
+        var writes = 0;
+        var markPrintedAttempts = 0;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.listen((request) async {
+          final response = request.response;
+          response.headers.contentType = ContentType.json;
+          switch (request.uri.path) {
+            case '/api/v1/printers/':
+              response.write(
+                jsonEncode({
+                  'results': [
+                    {
+                      'id': 'printer-1',
+                      'name': 'Balança',
+                      'connection_type': 'network',
+                      'host': '192.0.2.10',
+                      'port': 9100,
+                      'driver_type': 'escpos',
+                      'auto_print': false,
+                    },
+                  ],
+                }),
+              );
+            case '/api/v1/print-jobs/':
+              final status = request.uri.queryParameters['status'];
+              response.write(
+                jsonEncode({
+                  'results': status == 'pending'
+                      ? [
+                          {
+                            'id': 'job-1',
+                            'status': 'pending',
+                            'job_type': 'weigh_ticket',
+                            'printer': 'printer-1',
+                            'payload': {'text_content': 'NOTA DE PESAGEM'},
+                          },
+                        ]
+                      : const [],
+                }),
+              );
+            case '/api/v1/print-jobs/job-1/mark-printed/':
+              markPrintedAttempts++;
+              if (markPrintedAttempts == 1) {
+                response.statusCode = HttpStatus.internalServerError;
+                response.write(jsonEncode({'detail': 'falha simulada'}));
+              } else {
+                response.write(jsonEncode({'ok': true}));
+              }
+            default:
+              response.statusCode = HttpStatus.notFound;
+          }
+          await response.close();
+        });
+        addTearDown(() => server.close(force: true));
+
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        final agent = LocalDeviceAgent(
+          api: api,
+          networkWriter: (target, bytes) async => writes++,
+        );
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+        );
+        expect(writes, 1, reason: 'primeiro ciclo imprime fisicamente');
+        expect(markPrintedAttempts, 1);
+
+        // mark-printed falhou no ciclo anterior: o job continua "pending" no
+        // servidor de mentira e volta a aparecer aqui — sem a correção, isto
+        // reimprimiria o mesmo cupom.
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+        );
+        expect(
+          writes,
+          1,
+          reason: 'não reimprime; só reenvia a confirmação',
+        );
+        expect(markPrintedAttempts, 2);
+      },
+    );
+  });
 }
 
 int _sublistIndex(List<int> source, List<int> pattern) {

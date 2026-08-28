@@ -594,8 +594,8 @@ export const resources = [
       { name: "fiscal_provider", label: "Provedor fiscal", type: "dropdown", options: FISCAL_PROVIDER_OPTIONS, default: "manual", section: "Fiscal", full: true, hint: "Focus NFe cria e sincroniza automaticamente a empresa e transmite NF-e/NFC-e pela API. Manual mantem o fluxo atual sem transmissao." },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
-      // Senha para autorizar ações do caixa (armazenada com hash; usada no app offline).
-      { name: "cash_action_password", label: "Senha de ações do caixa", type: "password", placeholder: "Deixe em branco para não alterar", section: "Operacao" },
+      // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
+      { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "Digite a senha que será usada no PDV. Não cole uma hash. Ao editar, deixe em branco para manter a senha atual." },
     ],
   },
   {

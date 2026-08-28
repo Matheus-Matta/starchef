@@ -10,7 +10,7 @@
 | Estado | `ChangeNotifier` + `setState` (decisão deliberada — não BLoC; o app já usava esse padrão) |
 | Janela nativa | `window_manager` |
 | Banco local | `sqlite_async` com migrations próprias (decisão deliberada — não Drift) |
-| Sessão segura | `flutter_secure_storage` |
+| Sessão segura | cofre do SO + fallback Linux protegido por usuário (`0700`/`0600`) |
 | HTTP | `http` |
 | Hash/criptografia | `crypto` (PBKDF2-HMAC-SHA256, formato do Django, para senha de caixa offline) |
 | Porta serial (balança) | `flutter_libserialport` |
@@ -72,7 +72,7 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 ## 4. Autenticação e sessão
 
-- **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore` (`flutter_secure_storage`, três chaves: token de acesso, refresh, usuário em JSON).
+- **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
 - **Autorização de caixa é separada da autenticação de usuário**: `features/cash/data/cash_auth_repository.dart` sincroniza (quando online) um hash PBKDF2 (formato Django) via `GET /restaurants/<id>/cash-auth/`, guardado localmente. `core/security/cash_password.dart` verifica a senha **offline**, sem round-trip ao servidor — é o que autoriza ações de caixa (cancelamento, desconto) mesmo sem internet.
 
@@ -132,6 +132,51 @@ flutter run -d windows
 ```
 
 A janela de balança não tem script próprio de dev — clique em "Balança Rápida" no menu do PDV rodando, que relança o mesmo binário (debug, nesse caso) com `--scale-workstation`. O `.env` é procurado a partir da raiz do monorepo ou de `flutter/` (busca sobe até 8 níveis de diretório).
+
+### Persistência no Ubuntu
+
+O Linux desktop não apresenta uma permissão de armazenamento para o aplicativo
+pedir como no Android. O PDV deve ser iniciado sempre pelo mesmo usuário normal,
+sem `sudo`, com acesso ao próprio `~/.local/share/StarChef`.
+
+`flutter_secure_storage` usa `libsecret` e um Secret Service como GNOME Keyring
+ou KWallet. O pacote precisa de `libsecret-1-0` em runtime; quando o serviço de
+chaves estiver bloqueado, ausente ou indisponível durante o autostart, o PDV usa
+o fallback local protegido por modo `0700` no diretório e `0600` nos arquivos.
+Sessão, hash de autorização offline e chave de pareamento compartilham esse
+mesmo mecanismo resiliente.
+
+Na inicialização, o PDV faz uma pequena gravação de teste nesse diretório. Se
+ela falhar, um alerta permanente informa que login, fila offline e pareamento
+não sobreviverão ao fechamento, incluindo o caminho que precisa ser corrigido.
+
+Em Ubuntu/Debian, a instalação recomendada é:
+
+```bash
+sudo apt install libsecret-1-0 gnome-keyring dbus-x11
+```
+
+Para conferir o dono e as permissões sem expor os valores:
+
+```bash
+stat -c '%U %a %n' "$HOME/.local/share/StarChef"
+stat -c '%U %a %n' "$HOME/.local/share/StarChef/secure"
+find "$HOME/.local/share/StarChef/secure" -maxdepth 1 -type f -printf '%u %m %p\n'
+```
+
+Se alguma execução anterior com `sudo` tiver deixado a pasta como `root`, feche
+o PDV e devolva a propriedade ao usuário da sessão:
+
+```bash
+sudo chown -R "$USER":"$USER" "$HOME/.local/share/StarChef"
+chmod 700 "$HOME/.local/share/StarChef/secure"
+find "$HOME/.local/share/StarChef/secure" -maxdepth 1 -type f -exec chmod 600 {} \;
+```
+
+O diretório `secure` deve pertencer ao usuário que abre o PDV e aparecer como
+`700`; seus arquivos `.secret`, como `600`. Nunca execute o aplicativo uma vez
+com `sudo`: isso pode criar dados pertencentes a `root` e impedir gravações nas
+aberturas seguintes.
 
 ## 12. Build e release
 

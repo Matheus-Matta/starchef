@@ -107,6 +107,12 @@ Dois composables sustentam isso:
 - **`useResourceList.js`** — paginação/ordenação/busca server-side para `ResourceListViewPro`.
 - **`useResourceForm.js`** — carrega o registro, monta o form a partir de `formFields`, faz POST/PATCH, mapeia erros de validação do backend para os campos.
 
+No recurso **Restaurantes**, o campo “Definir senha de ações do caixa” recebe a
+senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou
+cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
+deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
+payload do CRUD.
+
 ## 6. Tempo real
 
 Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo Vite em dev e pelo proxy reverso externo em produção):

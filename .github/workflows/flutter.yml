@@ -273,7 +273,12 @@ jobs:
             exit 1
           fi
           if [[ "$present" -eq 0 ]]; then
-            echo "::warning::Secrets GARCOM_* ausentes; publicando APK assinado com a chave de debug (sem atualização in-place garantida)."
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              echo "A tag exige os Secrets GARCOM_* para publicar um APK atualizável." >&2
+              echo "Sem uma chave fixa, cada build assina com um certificado de debug diferente e o Android recusa silenciosamente instalar a atualização por cima do app já instalado." >&2
+              exit 1
+            fi
+            echo "::warning::APK de homologação será assinado com a chave de debug."
             exit 0
           fi
           printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks

@@ -1,11 +1,20 @@
 """CNPJ do restaurante é opcional (vários restaurantes podem ficar sem CNPJ)."""
+
+import importlib
+
 import pytest
+from django.apps import apps as django_apps
+from django.contrib.auth.hashers import check_password, make_password
+
+from apps.restaurants.admin import RestaurantAdminForm
 
 pytestmark = pytest.mark.django_db
 
 
 def test_create_restaurant_without_cnpj(admin_client):
-    resp = admin_client.post("/api/v1/restaurants/", {"trade_name": "Sem CNPJ 1", "legal_name": "Sem CNPJ 1 LTDA"}, format="json")
+    resp = admin_client.post(
+        "/api/v1/restaurants/", {"trade_name": "Sem CNPJ 1", "legal_name": "Sem CNPJ 1 LTDA"}, format="json"
+    )
     assert resp.status_code == 201, resp.data
     assert resp.data["cnpj"] is None
 
@@ -18,9 +27,74 @@ def test_multiple_restaurants_without_cnpj_do_not_clash(admin_client):
 
 
 def test_blank_cnpj_normalized_to_null(admin_client):
-    resp = admin_client.post("/api/v1/restaurants/", {"trade_name": "Vazio", "legal_name": "Vazio LTDA", "cnpj": ""}, format="json")
+    resp = admin_client.post(
+        "/api/v1/restaurants/", {"trade_name": "Vazio", "legal_name": "Vazio LTDA", "cnpj": ""}, format="json"
+    )
     assert resp.status_code == 201, resp.data
     assert resp.data["cnpj"] is None
+
+
+def test_cash_action_password_accepts_plain_value_and_returns_only_status(admin_client, restaurant):
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"cash_action_password": "123"},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert "cash_action_password" not in response.data
+    assert response.data["has_cash_action_password"] is True
+    restaurant.refresh_from_db()
+    assert restaurant.cash_action_password != "123"
+    assert check_password("123", restaurant.cash_action_password)
+
+
+def test_blank_cash_action_password_keeps_current_password(admin_client, restaurant):
+    restaurant.cash_action_password = make_password("123")
+    restaurant.save(update_fields=["cash_action_password", "updated_at"])
+    previous_hash = restaurant.cash_action_password
+
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"cash_action_password": ""},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    restaurant.refresh_from_db()
+    assert restaurant.cash_action_password == previous_hash
+
+
+def test_model_hashes_plain_cash_action_password_from_admin_or_script(restaurant):
+    restaurant.cash_action_password = "123"
+    restaurant.save(update_fields=["cash_action_password", "updated_at"])
+
+    restaurant.refresh_from_db()
+    assert restaurant.cash_action_password != "123"
+    assert check_password("123", restaurant.cash_action_password)
+
+
+def test_admin_password_field_does_not_render_current_hash(restaurant):
+    restaurant.set_cash_action_password("123")
+    restaurant.save(update_fields=["cash_action_password", "updated_at"])
+
+    rendered_field = str(RestaurantAdminForm(instance=restaurant)["cash_action_password"])
+
+    assert restaurant.cash_action_password not in rendered_field
+    assert 'type="password"' in rendered_field
+
+
+def test_data_migration_hashes_plain_password_already_in_database(restaurant):
+    # `update` ignora Restaurant.save e reproduz uma base antiga que guardou o
+    # texto diretamente pelo Admin ou por um script.
+    type(restaurant).all_objects.filter(pk=restaurant.pk).update(cash_action_password="123")
+    migration = importlib.import_module("apps.restaurants.migrations.0003_hash_plain_cash_action_passwords")
+
+    migration.hash_plain_cash_action_passwords(django_apps, None)
+
+    restaurant.refresh_from_db()
+    assert restaurant.cash_action_password != "123"
+    assert check_password("123", restaurant.cash_action_password)
 
 
 def test_table_blocks_sector_from_another_restaurant(admin_client, account, restaurant):

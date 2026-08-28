@@ -61,6 +61,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// balança, que sempre mostra pelo menos o total.
   static const double _panelFooterMinHeight = 92;
 
+  /// Valor do item "Nenhuma" no select de impressora — um id de impressora de
+  /// verdade nunca é vazio, então não colide com nenhum `printers[i]['id']`.
+  /// Selecionado, a estação continua pesando e lançando o pedido normalmente,
+  /// só não emite o ticket (equivalente a `printerId == null`).
+  static const String _noPrinterOption = '';
+
   List<Map<String, dynamic>> scales = [];
   List<Map<String, dynamic>> printers = [];
   String? scaleId;
@@ -386,7 +392,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   Future<void> _selectPrinter(String? value) async {
-    if (scaleId == null || value == null || value == printerId) return;
+    if (scaleId == null || value == printerId) return;
     final previous = printerId;
     setState(() {
       printerId = value;
@@ -1302,13 +1308,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                     initialValue:
                         printers.any((item) => '${item['id']}' == printerId)
                         ? printerId
-                        : null,
+                        : _noPrinterOption,
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: 'Impressora da balança (opcional)',
                       prefixIcon: const Icon(Icons.print_outlined),
                       helperText:
-                          'Sem impressora a estação pesa e lança o pedido normalmente, só não emite o ticket.',
+                          'Com "Nenhuma" selecionada, a estação pesa e lança o pedido normalmente, só não emite o ticket.',
                       suffixIcon: loadingPrinters
                           ? const Padding(
                               padding: EdgeInsets.all(12),
@@ -1316,20 +1322,28 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                             )
                           : null,
                     ),
-                    items: printers
-                        .map(
-                          (item) => DropdownMenuItem(
-                            value: '${item['id']}',
-                            child: Text(
-                              '${item['name']} · ${PrinterEndpoint.fromJson(item).label}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: _noPrinterOption,
+                        child: Text('Nenhuma (não imprime)'),
+                      ),
+                      ...printers.map(
+                        (item) => DropdownMenuItem(
+                          value: '${item['id']}',
+                          child: Text(
+                            '${item['name']} · ${PrinterEndpoint.fromJson(item).label}',
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        )
-                        .toList(),
+                        ),
+                      ),
+                    ],
                     onChanged: loadingPrinters
                         ? null
-                        : (value) => unawaited(_selectPrinter(value)),
+                        : (value) => unawaited(
+                            _selectPrinter(
+                              value == _noPrinterOption ? null : value,
+                            ),
+                          ),
                   ),
                 ],
                 if (weighedProduct != null) ...[

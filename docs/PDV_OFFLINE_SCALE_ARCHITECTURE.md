@@ -51,6 +51,13 @@ O diretório temporário só é usado quando nenhuma dessas variáveis existe. I
 importa porque a fila offline precisa sobreviver a uma reinicialização — em
 `/tmp` ela não sobreviveria.
 
+No Linux, credenciais e a chave de pareamento usam primeiro o Secret Service
+do sistema e também mantêm uma cópia em `<dados>/StarChef/secure`. O diretório
+recebe modo `0700` e cada arquivo recebe `0600`, bloqueando outros usuários da
+máquina. Essa cópia é necessária porque `libsecret` pode devolver vazio ou erro
+quando GNOME Keyring/KWallet não está disponível no autostart; sem ela, o login
+era perdido e outra chave do Caixa Principal era gerada a cada abertura.
+
 ## Interface do PDV
 
 A tela principal usa três regiões:
@@ -373,6 +380,8 @@ Entre no PDV com rede disponível e carregue o restaurante/cardápio ao menos um
 | porta do leitor ocupada | feche a outra janela/processo ou remova o vínculo anterior |
 | checkout recusado | comanda ativa, permissão e API online |
 | Balança Rápida abre no login no Ubuntu | use um pacote que contenha a transferência efêmera de sessão; confira permissão de escrita em `~/.local/share/StarChef` e a presença do comando `chmod` |
+| PDV principal abre deslogado no Ubuntu | confira o dono de `~/.local/share/StarChef`, nunca execute com `sudo`; instale `libsecret-1-0` e um Secret Service. O fallback fica em `secure/` com modo `0700/0600` |
+| chave/hash do Caixa Principal muda após reiniciar | confira se `secure/` pertence ao mesmo usuário que inicia o PDV e procure `secure_fallback_*`/`secure_native_*` em `pdv.log` |
 | impressão não sai | processo principal aberto, impressora vinculada à balança, ativa, endpoint/IP/COM e job no backend |
 | barras não aparecem | usar driver ESC/POS por TCP/serial; spool do Windows recebe fallback textual |
 

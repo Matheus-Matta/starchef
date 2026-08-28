@@ -27,10 +27,17 @@ class OrderDetailPage extends StatefulWidget {
     super.key,
     required this.repository,
     required this.orderId,
+    this.initialOrder,
   });
 
   final OrdersRepository repository;
   final String orderId;
+
+  /// Pedido já conhecido antes de abrir a tela — obrigatório quando
+  /// [orderId] é um id local (`offline-...`, ver [OrdersRepository]): esse
+  /// pedido não existe no servidor ainda, então não há nada para buscar até
+  /// a criação sincronizar.
+  final Map<String, dynamic>? initialOrder;
 
   @override
   State<OrderDetailPage> createState() => _OrderDetailPageState();
@@ -43,11 +50,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   String? _error;
   int _lastPendingCount = 0;
 
+  /// Id efetivamente usado para buscar/gravar este pedido. Começa igual a
+  /// [OrderDetailPage.orderId] e é trocado, sozinho, pelo id real assim que
+  /// uma criação offline (id `offline-...`) sincroniza — ver
+  /// [_onGatewayChange].
+  late String _effectiveOrderId = widget.orderId;
+
   RelayGateway get _gateway => widget.repository.gateway;
 
   @override
   void initState() {
     super.initState();
+    _order = widget.initialOrder;
     _gateway.addListener(_onGatewayChange);
     _load();
   }
@@ -64,7 +78,15 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   /// pendência a mais, ou de outro pedido) só redesenha o selo.
   void _onGatewayChange() {
     if (!mounted) return;
-    final current = _gateway.pendingFor(widget.orderId).length;
+    if (_effectiveOrderId.startsWith('offline-')) {
+      final resolved = _gateway.resolvedOrderId(_effectiveOrderId);
+      if (resolved != null) {
+        setState(() => _effectiveOrderId = resolved);
+        _load();
+        return;
+      }
+    }
+    final current = _gateway.pendingFor(_effectiveOrderId).length;
     final flushed = current < _lastPendingCount;
     _lastPendingCount = current;
     if (flushed) {
@@ -75,17 +97,28 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   }
 
   Future<void> _load() async {
+    // Um pedido criado offline não existe no servidor até a criação
+    // sincronizar — não há nada para buscar ainda, então mostra o que já
+    // está em memória (o otimista, mais qualquer item lançado offline
+    // depois) em vez de tentar um GET que só devolveria 404.
+    if (_effectiveOrderId.startsWith('offline-')) {
+      setState(() {
+        _loading = false;
+        _lastPendingCount = _gateway.pendingFor(_effectiveOrderId).length;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final order = await widget.repository.order(widget.orderId);
+      final order = await widget.repository.order(_effectiveOrderId);
       if (!mounted) return;
       setState(() {
         _order = order;
         _loading = false;
-        _lastPendingCount = _gateway.pendingFor(widget.orderId).length;
+        _lastPendingCount = _gateway.pendingFor(_effectiveOrderId).length;
       });
     } catch (error) {
       if (!mounted) return;
@@ -129,7 +162,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     if (choice == null || !mounted) return;
     await _work(
       () => widget.repository.addItem(
-        orderId: widget.orderId,
+        orderId: _effectiveOrderId,
         productId: choice.productId,
         productName: choice.productName,
         quantity: choice.quantity,
@@ -146,7 +179,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     if (reason == null || !mounted) return;
     await _work(
       () => widget.repository.voidItem(
-        orderId: widget.orderId,
+        orderId: _effectiveOrderId,
         itemId: '${item['id']}',
         itemLabel: '${item['product_name'] ?? 'item'}',
         reason: reason,
@@ -246,7 +279,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   }
 
   Future<void> _sendToKitchen() => _work(
-    () => widget.repository.sendToKitchen(widget.orderId),
+    () => widget.repository.sendToKitchen(_effectiveOrderId),
     'Pedido enviado para produção e impressão.',
   );
 
@@ -259,7 +292,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   @override
   Widget build(BuildContext context) {
     final order = _order;
-    final ordersPending = _gateway.pendingFor(widget.orderId);
+    final ordersPending = _gateway.pendingFor(_effectiveOrderId);
     final addPending = ordersPending
         .where((m) => m.kind == 'add_item')
         .toList();

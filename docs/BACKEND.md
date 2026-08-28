@@ -141,6 +141,14 @@ Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusã
 
 Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo; retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`.
 
+**Senha de ações do caixa**: o cadastro de restaurante recebe a senha comum
+escolhida pelo responsável (por exemplo, `123`), nunca uma hash. O modelo
+converte automaticamente qualquer valor novo para PBKDF2-SHA256, inclusive
+quando vem do Django Admin, import ou script; a API expõe apenas
+`has_cash_action_password` e o endpoint autenticado `cash-auth` entrega a hash
+ao PDV para verificação offline. A migration `restaurants.0003` converte valores
+simples já existentes sem alterar hashes válidas.
+
 **Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)). O agente recebe a criação do `PrintJob` pelo WebSocket do PDV, busca a fila pendente pela API e imprime via rede/serial/spool do SO; também reconcilia a fila uma vez ao conectar ou reconectar, sem polling periódico.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.

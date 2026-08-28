@@ -56,7 +56,7 @@ GitHub Actions
   ├── compila Linux
   │     └── StarChef-PDV-Linux-v1.0.34.zip
   ├── compila o APK universal do garçom
-  │     └── StarChef-Garcom-v1.6.2.apk
+  │     └── StarChef-Garcom-v1.6.3.apk
   ├── calcula SHA-256 e tamanho dos três pacotes do PDV
   ├── gera latest.json
   └── publica tudo no GitHub Release v1.0.34

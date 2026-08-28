@@ -1,4 +1,3 @@
-from django.contrib.auth.hashers import PBKDF2PasswordHasher
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
@@ -53,14 +52,12 @@ class RestaurantSerializer(TenantModelSerializer):
         return value or None
 
     def _hash_cash_password(self, validated_data):
-        # Só (re)define quando um valor não-vazio é enviado — senão mantém o atual.
+        # Só (re)define quando um valor não-vazio é enviado — senão mantém o
+        # atual. O modelo centraliza a geração da hash para cobrir também
+        # Django Admin, imports e scripts.
         raw = validated_data.pop("cash_action_password", None)
         if raw:
-            hasher = PBKDF2PasswordHasher()
-            validated_data["cash_action_password"] = hasher.encode(
-                raw,
-                hasher.salt(),
-            )
+            validated_data["cash_action_password"] = raw
         return validated_data
 
     def _sync_fiscal_config(self, restaurant, provider=None):

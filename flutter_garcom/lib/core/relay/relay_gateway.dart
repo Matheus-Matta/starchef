@@ -44,6 +44,7 @@ class RelayGateway extends ChangeNotifier {
 
   final List<PendingMutation> _pending = [];
   final List<FailedMutation> _failed = [];
+  final Map<String, String> _resolvedIds = {};
 
   PrincipalConfig? _config;
   RelayIdentity? _identity;
@@ -60,6 +61,12 @@ class RelayGateway extends ChangeNotifier {
   /// itens que já vieram do servidor.
   List<PendingMutation> pendingFor(String orderId) =>
       _pending.where((m) => m.orderId == orderId).toList();
+
+  /// Id real que um pedido criado offline recebeu do caixa, uma vez que a
+  /// criação (`kind == 'create_order'`) foi confirmada. `null` enquanto ainda
+  /// não sincronizou — a tela de detalhe usa isto para trocar sozinha do id
+  /// local para o real, sem esperar ação do garçom.
+  String? resolvedOrderId(String placeholderId) => _resolvedIds[placeholderId];
 
   /// Lê a fila salva. Chamado uma vez, na abertura do app — depois disso o
   /// estado em memória é a fonte de verdade e cada mudança é persistida.
@@ -91,6 +98,7 @@ class RelayGateway extends ChangeNotifier {
     required String kind,
     required String summary,
     Map<String, dynamic>? body,
+    String? placeholderOrderId,
   }) async {
     final config = _config;
     final identity = _identity;
@@ -107,6 +115,7 @@ class RelayGateway extends ChangeNotifier {
       kind: kind,
       summary: summary,
       createdAt: DateTime.now(),
+      placeholderOrderId: placeholderOrderId,
     );
     try {
       return await _send(mutation, config, identity);
@@ -158,8 +167,13 @@ class RelayGateway extends ChangeNotifier {
       while (_pending.isNotEmpty) {
         final mutation = _pending.first;
         try {
-          await _send(mutation, config, identity);
+          final response = await _send(mutation, config, identity);
           _pending.removeAt(0);
+          final placeholderId = mutation.placeholderOrderId;
+          if (mutation.kind == 'create_order' && placeholderId != null) {
+            final realId = '${response['id'] ?? ''}';
+            if (realId.isNotEmpty) _resolveOrderId(placeholderId, realId);
+          }
           await store.save(_pending);
           notifyListeners();
         } on PrincipalUnavailable {
@@ -180,6 +194,18 @@ class RelayGateway extends ChangeNotifier {
       _flushing = false;
       notifyListeners();
       _scheduleFlush();
+    }
+  }
+
+  /// Um pedido criado offline acabou de ser confirmado: guarda o id real e
+  /// reescreve, na própria fila ainda em memória, o path de qualquer
+  /// mutação posterior que dependia do id local (ex.: um item lançado nesse
+  /// pedido antes da criação sincronizar) — sem isso ela seria enviada
+  /// referenciando um pedido que o caixa nunca vai reconhecer.
+  void _resolveOrderId(String placeholderId, String realId) {
+    _resolvedIds[placeholderId] = realId;
+    for (var i = 0; i < _pending.length; i++) {
+      _pending[i] = _pending[i].withOrderIdReplaced(placeholderId, realId);
     }
   }
 

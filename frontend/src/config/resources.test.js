@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { resources } from "./resources";
 
+describe("configuração do cadastro de restaurantes", () => {
+  it("orienta a cadastrar a senha comum do caixa, sem hash", () => {
+    const restaurants = resources.find((resource) => resource.name === "restaurantes");
+    const password = restaurants.formFields.find((field) => field.name === "cash_action_password");
+
+    expect(password.type).toBe("password");
+    expect(password.placeholder).toContain("123");
+    expect(password.hint).toContain("Não cole uma hash");
+  });
+});
+
 describe("configuração do cadastro de usuários", () => {
   it("usa a conta da sessão sem exibir ou enviar um seletor de conta", () => {
     const users = resources.find((resource) => resource.name === "usuarios");

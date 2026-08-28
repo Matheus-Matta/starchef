@@ -1,5 +1,9 @@
 # Integração fiscal Brasil — Focus NFe
 
+Para a explicação operacional de cada campo da tela, origem das credenciais e
+checklist de homologação/produção, consulte
+[`FOCUS_NFE_CONFIGURACAO.md`](FOCUS_NFE_CONFIGURACAO.md).
+
 O StarChef possui dois provedores fiscais independentes:
 
 - `manual`: não transmite; a API responde que a nota não foi emitida;

@@ -507,6 +507,13 @@ class LocalDeviceAgent {
   List<Map<String, dynamic>> _printers = const [];
   Timer? _availabilityTimer;
   Timer? _scheduledPrintTimer;
+
+  /// Trabalhos já impressos fisicamente cujo `mark-printed` ainda não foi
+  /// confirmado pelo servidor. Continuam com status `pending` lá (ver
+  /// `_processPrintJobs`), então sem isto o próximo ciclo de polling os
+  /// encontraria de novo e imprimiria o mesmo cupom uma segunda vez — o
+  /// próprio cupom saindo duas vezes, não um erro visível para o operador.
+  final Set<String> _confirmingJobIds = {};
   Timer? _printJobsPollTimer;
 
   void start({required String token, required String restaurantId}) {
@@ -704,6 +711,18 @@ class LocalDeviceAgent {
     return ((data['results'] ?? const []) as List).cast<Map<String, dynamic>>();
   }
 
+  /// Roda um ciclo de `_processPrintJobs` sem passar por `start()` (que abre
+  /// o WebSocket e os timers reais). Só para teste.
+  @visibleForTesting
+  Future<void> processPendingPrintJobsForTesting({
+    required String token,
+    required String restaurantId,
+  }) {
+    _token = token;
+    _restaurantId = restaurantId;
+    return _processPrintJobs();
+  }
+
   Future<void> _processPrintJobs() async {
     _scheduledPrintTimer?.cancel();
     _scheduledPrintTimer = null;
@@ -778,7 +797,32 @@ class LocalDeviceAgent {
           );
           continue;
         }
+        final jobId = '${job['id']}';
         attempted++;
+        // O trabalho já saiu da impressora num ciclo anterior; só o aviso ao
+        // servidor (`mark-printed`) não confirmou ainda, e por isso o job
+        // continua "pending" e voltaria a aparecer aqui. Reimprimir agora
+        // seria o mesmo cupom saindo pela segunda vez — só insiste em avisar.
+        if (_confirmingJobIds.contains(jobId)) {
+          try {
+            await api.post(
+              '/print-jobs/$jobId/mark-printed/',
+              body: const {},
+              accessToken: _token,
+            );
+            _confirmingJobIds.remove(jobId);
+            AppLogger.instance.info(
+              'print_job_confirmed_after_retry',
+              data: {'job_id': jobId, 'job_type': job['job_type']},
+            );
+          } catch (error) {
+            AppLogger.instance.warning(
+              'print_job_still_not_confirmed',
+              data: {'job_id': jobId, 'message': '$error'},
+            );
+          }
+          continue;
+        }
         var printed = false;
         try {
           final readyText = '${payload['text_content'] ?? ''}'.trim();
@@ -796,14 +840,14 @@ class LocalDeviceAgent {
           );
           printed = true;
           await api.post(
-            '/print-jobs/${job['id']}/mark-printed/',
+            '/print-jobs/$jobId/mark-printed/',
             body: const {},
             accessToken: _token,
           );
           AppLogger.instance.info(
             'print_job_printed',
             data: {
-              'job_id': job['id'],
+              'job_id': jobId,
               'job_type': job['job_type'],
               'printer_id': printer['id'],
             },
@@ -811,11 +855,14 @@ class LocalDeviceAgent {
         } catch (error) {
           // Se o cupom já saiu, o problema foi só avisar o servidor. Marcar
           // como falha aqui deixaria o trabalho elegível para imprimir de
-          // novo no próximo ciclo — a mesma nota saindo duas vezes.
+          // novo no próximo ciclo — a mesma nota saindo duas vezes. Em vez
+          // disso, lembra que este job já foi impresso (`_confirmingJobIds`)
+          // para que o próximo ciclo só reenvie a confirmação, sem reimprimir.
           if (printed) {
+            _confirmingJobIds.add(jobId);
             AppLogger.instance.warning(
               'print_job_printed_but_not_confirmed',
-              data: {'job_id': job['id'], 'message': '$error'},
+              data: {'job_id': jobId, 'message': '$error'},
             );
             continue;
           }

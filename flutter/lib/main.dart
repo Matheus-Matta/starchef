@@ -8,9 +8,11 @@ import 'package:window_manager/window_manager.dart';
 import 'app/scale_window_app.dart';
 import 'app/starchef_app.dart';
 import 'core/config/app_config.dart';
+import 'core/errors/app_error.dart';
 import 'core/errors/error_center.dart';
 import 'core/logging/app_logger.dart';
 import 'core/network/api_client.dart';
+import 'core/storage/app_paths.dart';
 import 'core/storage/local_preferences.dart';
 import 'core/storage/session_store.dart';
 import 'core/update/pdv_auto_updater.dart';
@@ -30,13 +32,32 @@ Future<void> main(List<String> arguments) async {
   final inheritedSession = scaleWindow
       ? await ScaleWindowLauncher.takeSession(arguments)
       : null;
+  final errorCenter = ErrorCenter();
+  try {
+    await AppPaths.verifyPersistentStorage();
+  } catch (error, stackTrace) {
+    errorCenter.report(
+      AppError(
+        title: 'Armazenamento local sem permissão',
+        message:
+            'O PDV não consegue gravar seus dados permanentes. Login, fila '
+            'offline e pareamento do Caixa Principal podem ser perdidos ao '
+            'fechar o aplicativo.',
+        severity: AppErrorSeverity.failure,
+        recommendedAction:
+            'Abra o PDV sempre com o mesmo usuário, sem sudo, e corrija o '
+            'proprietário da pasta local indicada nos detalhes.',
+        technicalDetails:
+            'Diretório: ${AppPaths.dataDirectory().path}\n$error\n$stackTrace',
+        dedupeKey: 'persistent-storage-unavailable',
+      ),
+    );
+  }
   final preferences = LocalPreferences();
   await preferences.load();
   final config = await AppConfig.load(
     manualOverrideUrl: preferences.apiBaseUrlOverride,
   );
-  final errorCenter = ErrorCenter();
-
   // Erros fora de um handler explícito ainda precisam chegar ao log; nenhum
   // deles pode desaparecer em silêncio durante uma venda.
   FlutterError.onError = (details) {

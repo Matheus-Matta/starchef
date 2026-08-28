@@ -110,37 +110,34 @@ class OrdersRepository {
     return ResourcePage.from(response);
   }
 
-  /// Abre (ou retoma) o pedido de uma comanda. Não entra na fila offline —
-  /// ver nota da classe.
+  /// Abre (ou retoma) o pedido de uma comanda. Entra na fila offline (ver
+  /// [_mutateCreate]) se o caixa estiver fora do ar.
   ///
   /// O backend devolve 201 para comanda livre e 200 quando já havia pedido
   /// aberto — nos dois casos vem o pedido, que é o que o app precisa.
   Future<Map<String, dynamic>> openCommandOrder(String commandId) =>
-      principalClient.mutate(
-        principal,
-        session.identity,
-        method: 'POST',
+      _mutateCreate(
         path: '/orders/open-command/',
-        operationId: RelaySignature.randomId(),
+        summary: 'Abrir comanda',
         body: {'command': commandId},
+        optimisticFields: {'order_type': 'command', 'command': commandId},
       );
 
-  /// Pedido sem comanda: balcão, delivery ou retirada. Não entra na fila
-  /// offline — ver nota da classe.
+  /// Pedido sem comanda: balcão, delivery ou retirada. Entra na fila offline
+  /// (ver [_mutateCreate]) se o caixa estiver fora do ar.
   ///
   /// `table` não é aceito como tipo: pedido de salão nasce em comanda e a mesa
   /// entra depois como vínculo (ver [linkTable]).
-  Future<Map<String, dynamic>> createOrder(String orderType) =>
-      principalClient.mutate(
-        principal,
-        session.identity,
-        method: 'POST',
-        path: '/orders/',
-        operationId: RelaySignature.randomId(),
-        body: {'order_type': orderType},
-      );
+  Future<Map<String, dynamic>> createOrder(String orderType) => _mutateCreate(
+    path: '/orders/',
+    summary: 'Novo pedido',
+    body: {'order_type': orderType},
+    optimisticFields: {'order_type': orderType},
+  );
 
   /// Materializa um rascunho somente junto com o primeiro item confirmado.
+  /// Entra na fila offline (ver [_mutateCreate]) se o caixa estiver fora do
+  /// ar.
   Future<Map<String, dynamic>> createOrderWithItem({
     required String orderType,
     required String productId,
@@ -150,25 +147,67 @@ class OrdersRepository {
     String customerNote = '',
     String? commandId,
     String? tableId,
-  }) => principalClient.mutate(
-    principal,
-    session.identity,
-    method: 'POST',
-    path: '/orders/create-with-item/',
-    operationId: RelaySignature.randomId(),
-    body: {
-      'order_type': orderType,
-      ...commandId == null ? const {} : {'command': commandId},
-      ...tableId == null ? const {} : {'table': tableId},
-      'item': {
-        'product': productId,
-        'quantity': quantity,
-        'variations': variationId == null ? const [] : [variationId],
-        'addons': addonIds,
-        'customer_note': customerNote,
+  }) {
+    final item = {
+      'product': productId,
+      'quantity': quantity,
+      'variations': variationId == null ? const [] : [variationId],
+      'addons': addonIds,
+      'customer_note': customerNote,
+    };
+    return _mutateCreate(
+      path: '/orders/create-with-item/',
+      summary: 'Novo pedido',
+      body: {
+        'order_type': orderType,
+        ...commandId == null ? const {} : {'command': commandId},
+        ...tableId == null ? const {} : {'table': tableId},
+        'item': item,
       },
-    },
-  );
+      optimisticFields: {
+        'order_type': orderType,
+        'command': ?commandId,
+        'table': ?tableId,
+        'items': [
+          {...item, 'status': 'pending'},
+        ],
+      },
+    );
+  }
+
+  /// Cria um pedido novo passando pelo [gateway]: com o caixa fora do ar, a
+  /// criação fica salva no aparelho (mesmo mecanismo de [_mutate]) e esta
+  /// função devolve um pedido "otimista" na hora — com um id local
+  /// (`offline-...`) — em vez de lançar erro, para o garçom continuar
+  /// trabalhando nele sem esperar a rede voltar. `RelayGateway` troca o id
+  /// local pelo real sozinho assim que a criação sincronizar.
+  Future<Map<String, dynamic>> _mutateCreate({
+    required String path,
+    required String summary,
+    required Map<String, dynamic> body,
+    required Map<String, dynamic> optimisticFields,
+  }) async {
+    final placeholderId = 'offline-${RelaySignature.randomId()}';
+    try {
+      return await gateway.mutate(
+        method: 'POST',
+        path: path,
+        kind: 'create_order',
+        summary: summary,
+        body: body,
+        placeholderOrderId: placeholderId,
+      );
+    } on MutationQueued {
+      return {
+        'id': placeholderId,
+        '_offline_pending': true,
+        'status': 'open',
+        'payment_status': 'pending',
+        'items': const [],
+        ...optimisticFields,
+      };
+    }
+  }
 
   /// Vincula a comanda a uma mesa (onde o cliente sentou). Entra na fila se o
   /// caixa estiver fora do ar.

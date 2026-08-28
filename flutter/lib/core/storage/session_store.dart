@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../features/auth/domain/auth_session.dart';
+import 'durable_secure_store.dart';
 
 abstract interface class SessionStore {
   Future<void> save(AuthSession session);
@@ -13,22 +14,29 @@ abstract interface class SessionStore {
 class SecureSessionStore implements SessionStore {
   SecureSessionStore({
     FlutterSecureStorage? storage,
+    SecureValueStore? valueStore,
     AuthSession? initialSession,
-  }) : _storage = storage ?? const FlutterSecureStorage(),
+  }) : _storage =
+           valueStore ??
+           DurableSecureStore(
+             primary: FlutterSecureValueStore(
+               storage ?? const FlutterSecureStorage(),
+             ),
+           ),
        _initialSession = initialSession;
 
   static const _accessKey = 'starchef_access_token';
   static const _refreshKey = 'starchef_refresh_token';
   static const _userKey = 'starchef_user';
-  final FlutterSecureStorage _storage;
+  final SecureValueStore _storage;
   AuthSession? _initialSession;
 
   @override
   Future<void> save(AuthSession session) async {
     await Future.wait([
-      _storage.write(key: _accessKey, value: session.accessToken),
-      _storage.write(key: _refreshKey, value: session.refreshToken),
-      _storage.write(key: _userKey, value: jsonEncode(session.user.toJson())),
+      _storage.write(_accessKey, session.accessToken),
+      _storage.write(_refreshKey, session.refreshToken),
+      _storage.write(_userKey, jsonEncode(session.user.toJson())),
     ]);
   }
 
@@ -39,9 +47,9 @@ class SecureSessionStore implements SessionStore {
     if (inherited != null) return inherited;
     try {
       final values = await Future.wait([
-        _storage.read(key: _accessKey),
-        _storage.read(key: _refreshKey),
-        _storage.read(key: _userKey),
+        _storage.read(_accessKey),
+        _storage.read(_refreshKey),
+        _storage.read(_userKey),
       ]);
       if (values.any((value) => value == null)) return null;
       return AuthSession(
@@ -57,9 +65,9 @@ class SecureSessionStore implements SessionStore {
   @override
   Future<void> clear() async {
     await Future.wait([
-      _storage.delete(key: _accessKey),
-      _storage.delete(key: _refreshKey),
-      _storage.delete(key: _userKey),
+      _storage.delete(_accessKey),
+      _storage.delete(_refreshKey),
+      _storage.delete(_userKey),
     ]);
   }
 }

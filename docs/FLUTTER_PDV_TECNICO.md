@@ -17,7 +17,7 @@ o código é a verdade — abra um PR corrigindo o documento.
 | UI | Flutter Desktop (Windows e Linux) | requisito do produto |
 | Estado | `ChangeNotifier` + `setState`, sem pacote de DI | o app já nasceu assim; trocar por BLoC seria reescrita sem ganho funcional |
 | Banco local | `sqlite_async` | mantém I/O fora do isolate de UI, habilita WAL e coordena múltiplos processos no mesmo arquivo |
-| Segredos | `flutter_secure_storage` | cofre do sistema operacional; nada de token em texto puro |
+| Segredos | cofre do SO + fallback Linux `0700`/`0600` | mantém o cofre nativo e sobrevive a Secret Service ausente/bloqueado no Ubuntu |
 | Serial | `flutter_libserialport` | mesma biblioteca para balança, leitor e impressora serial, nos dois sistemas |
 | Janelas | processo por janela (`Process.start`) | isolamento real de foco, hardware e falha |
 | HTTP | `http` + camada própria de fila | não há dependência de framework de sync |
@@ -494,9 +494,21 @@ O sistema libera a trava sozinho quando o processo morre — uma janela encerrad
   + rename) e serializada. Uma queda de energia no meio da escrita não deixa
   JSON truncado impedindo o próximo boot. O valor novo vale em memória
   imediatamente; o disco alcança depois.
-- `session_store.dart` — `flutter_secure_storage` para access, refresh e o
+- `durable_secure_store.dart` — abstrai os segredos usados por sessão, login
+  offline, senha de caixa e topologia. No Windows usa apenas o cofre nativo. No
+  Linux lê primeiro a cópia durável em `<dados>/StarChef/secure`, protegida por
+  diretório `0700` e arquivos `0600`, e tenta espelhá-la no Secret Service. Se
+  só existir o valor antigo no keyring, a primeira leitura o migra para o
+  fallback. Isso impede que um keyring bloqueado seja confundido com “primeira
+  instalação” e gere outra chave do Caixa Principal.
+- `session_store.dart` — usa o armazenamento resiliente para access, refresh e
   usuário serializado; a primeira leitura da janela filha prioriza a sessão
-  efêmera recebida do processo pai e depois volta a usar somente o cofre.
+  efêmera recebida do processo pai e depois volta ao armazenamento persistente.
+
+O fallback Linux não é uma solicitação de permissão: aplicações desktop comuns
+têm acesso ao diretório do próprio usuário. A proteção depende de executar o
+PDV sempre como o mesmo usuário, sem `sudo`. Criptografia integral de disco
+continua recomendada para proteger contra acesso físico à máquina desligada.
 
 ### 4.7 `core/logging/app_logger.dart`
 
@@ -761,6 +773,7 @@ regressão (larguras compactas, botão de fechar do alerta).
 | `core/errors/error_center_test.dart` | mensagem literal do backend, botão `X`, stack trace oculto |
 | `core/storage/local_preferences_test.dart` | persistência, JSON corrompido, limites |
 | `core/storage/app_paths_test.dart` | destino estável, nunca o temporário |
+| `core/storage/durable_secure_store_test.dart` | migração do keyring e persistência de sessão quando o Secret Service falha |
 | `features/devices/domain/printer_endpoint_test.dart` | resolução de transporte nos dois níveis |
 | `core/widgets/touch_keypad_test.dart` | acumulação, backspace, casas decimais |
 | `features/home/pdv_widgets_test.dart` | sidebar sem Delivery, larguras compactas |

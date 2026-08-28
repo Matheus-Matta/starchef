@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite_async/sqlite_async.dart';
+import 'package:starchef_pdv/core/storage/durable_secure_store.dart';
 import 'package:starchef_pdv/features/topology/data/local_topology_store.dart';
 import 'package:starchef_pdv/features/topology/domain/local_topology_config.dart';
 
@@ -28,10 +29,7 @@ void main() {
     });
 
     test('persists device configuration and secret separately', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final initial = await store!.load();
       final configured = initial.copyWith(
         mode: LocalTopologyMode.principal,
@@ -42,10 +40,7 @@ void main() {
 
       await store!.save(configured);
       await store!.close();
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final restored = await store!.load();
 
       expect(restored.mode, LocalTopologyMode.principal);
@@ -56,10 +51,7 @@ void main() {
     });
 
     test('instalação nova nasce secundária, sem principal definido', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
 
       final fresh = await store!.load();
 
@@ -78,10 +70,7 @@ void main() {
     });
 
     test('promover a principal não exige mais nenhuma configuração', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final fresh = await store!.load();
 
       final asPrincipal = fresh.copyWith(mode: LocalTopologyMode.principal);
@@ -92,17 +81,11 @@ void main() {
     });
 
     test('a chave gerada sozinha sobrevive ao reinício', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final first = await store!.load();
       await store!.close();
 
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final second = await store!.load();
 
       // Gerar outra a cada boot deixaria os secundários fora do ar.
@@ -110,35 +93,59 @@ void main() {
       expect(second.nodeId, first.nodeId);
     });
 
-    test('instalação antiga em standalone é promovida a principal ativo',
-        () async {
-      // Cria o banco no formato antigo e força o estado que existia lá.
+    test('a chave sobrevive sem keyring usando o fallback do Linux', () async {
+      final fallbackDirectory = Directory(
+        '${temporaryDirectory.path}${Platform.pathSeparator}secure',
+      );
+      SecureTopologySecretStorage secretStorage() =>
+          SecureTopologySecretStorage(
+            valueStore: DurableSecureStore(
+              primary: _UnavailableSecureValueStore(),
+              fallback: OwnerProtectedFileValueStore(
+                directory: fallbackDirectory,
+                enforceModes: false,
+              ),
+            ),
+          );
       store = LocalTopologyStore(
         file: databaseFile,
-        secretStorage: secrets,
+        secretStorage: secretStorage(),
       );
-      await store!.load();
+      final first = await store!.load();
       await store!.close();
-      await _forceLegacyStandalone(databaseFile);
 
       store = LocalTopologyStore(
         file: databaseFile,
-        secretStorage: secrets,
+        secretStorage: secretStorage(),
       );
-      final migrated = await store!.load();
+      final second = await store!.load();
 
-      // Naquele modo os campos de rede nem apareciam, então o zero ali
-      // significava "nunca configurado", não "o operador desligou".
-      expect(migrated.mode, LocalTopologyMode.principal);
-      expect(migrated.trustedNetworkAcknowledged, isTrue);
-      expect(migrated.lanSharingErrors(), isEmpty);
+      expect(second.pairingSecret, first.pairingSecret);
+      expect(second.nodeId, first.nodeId);
     });
 
+    test(
+      'instalação antiga em standalone é promovida a principal ativo',
+      () async {
+        // Cria o banco no formato antigo e força o estado que existia lá.
+        store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
+        await store!.load();
+        await store!.close();
+        await _forceLegacyStandalone(databaseFile);
+
+        store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
+        final migrated = await store!.load();
+
+        // Naquele modo os campos de rede nem apareciam, então o zero ali
+        // significava "nunca configurado", não "o operador desligou".
+        expect(migrated.mode, LocalTopologyMode.principal);
+        expect(migrated.trustedNetworkAcknowledged, isTrue);
+        expect(migrated.lanSharingErrors(), isEmpty);
+      },
+    );
+
     test('receipt is idempotent only for the same request hash', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       await store!.saveReceipt(
         accountId: 'account-1',
         nodeId: 'node-1',
@@ -168,10 +175,7 @@ void main() {
     });
 
     test('recibos antigos saem, os recentes continuam protegendo', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final now = DateTime.now();
 
       // Um recibo do mês passado: nenhum caixa cliente ainda tenta reenviar
@@ -226,10 +230,7 @@ void main() {
     });
 
     test('nonce survives restart and cannot be consumed twice', () async {
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
       final now = DateTime.now().toUtc();
       expect(
         await store!.consumeNonce(
@@ -242,10 +243,7 @@ void main() {
         isTrue,
       );
       await store!.close();
-      store = LocalTopologyStore(
-        file: databaseFile,
-        secretStorage: secrets,
-      );
+      store = LocalTopologyStore(file: databaseFile, secretStorage: secrets);
 
       expect(
         await store!.consumeNonce(
@@ -269,6 +267,18 @@ class _MemorySecretStorage implements TopologySecretStorage {
 
   @override
   Future<void> write(String value) async => this.value = value;
+}
+
+class _UnavailableSecureValueStore implements SecureValueStore {
+  @override
+  Future<void> delete(String key) => throw StateError('keyring indisponível');
+
+  @override
+  Future<String?> read(String key) => throw StateError('keyring indisponível');
+
+  @override
+  Future<void> write(String key, String value) =>
+      throw StateError('keyring indisponível');
 }
 
 Future<void> _deleteTemporaryDirectory(Directory directory) async {

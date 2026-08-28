@@ -230,6 +230,63 @@ void main() {
     expect(gateway.pendingFor('pedido-3'), isEmpty);
   });
 
+  test(
+    'pedido criado offline: resolve o id local quando a criação sincroniza',
+    () async {
+      await principal.stop();
+      await expectLater(
+        gateway.mutate(
+          method: 'POST',
+          path: '/orders/create-with-item/',
+          kind: 'create_order',
+          summary: 'Novo pedido',
+          placeholderOrderId: 'offline-x',
+        ),
+        throwsA(isA<MutationQueued>()),
+      );
+      expect(gateway.resolvedOrderId('offline-x'), isNull);
+
+      await principal.start(port: 0);
+      gateway.updateContext(config: config(), identity: identity);
+      await gateway.flushNow();
+
+      expect(gateway.resolvedOrderId('offline-x'), 'pedido-1');
+    },
+  );
+
+  test(
+    'item lançado no pedido offline é reescrito com o id real antes de ser enviado',
+    () async {
+      await principal.stop();
+      await gateway
+          .mutate(
+            method: 'POST',
+            path: '/orders/create-with-item/',
+            kind: 'create_order',
+            summary: 'Novo pedido',
+            placeholderOrderId: 'offline-x',
+          )
+          .catchError((_) => <String, dynamic>{});
+      await gateway
+          .mutate(
+            method: 'POST',
+            path: '/orders/offline-x/items/',
+            kind: 'add_item',
+            summary: '2x Coxinha',
+          )
+          .catchError((_) => <String, dynamic>{});
+      expect(gateway.pendingCount, 2);
+
+      await principal.start(port: 0);
+      gateway.updateContext(config: config(), identity: identity);
+      await gateway.flushNow();
+
+      expect(gateway.pendingCount, 0);
+      final paths = principal.received.map((e) => '${e['path']}').toList();
+      expect(paths, ['/orders/create-with-item/', '/orders/pedido-1/items/']);
+    },
+  );
+
   test('sem pareamento nenhum, a operação recusa direto (sem travar)', () async {
     final semContexto = RelayGateway(
       client: PrincipalClient(),

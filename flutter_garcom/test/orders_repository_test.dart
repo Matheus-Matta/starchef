@@ -76,6 +76,41 @@ void main() {
     });
   });
 
+  group('criação offline', () {
+    test(
+      'sem conexão com o caixa, devolve um pedido otimista em vez de falhar',
+      () async {
+        await principal.stop();
+
+        final order = await repository.createOrderWithItem(
+          orderType: 'command',
+          commandId: 'comanda-1',
+          productId: 'produto-1',
+          quantity: 2,
+          addonIds: const [],
+        );
+
+        expect('${order['id']}', startsWith('offline-'));
+        expect(order['_offline_pending'], isTrue);
+        expect(order['order_type'], 'command');
+        expect(order['command'], 'comanda-1');
+        expect((order['items'] as List).single['product'], 'produto-1');
+      },
+    );
+
+    test('com o caixa disponível, devolve o pedido real, sem enfileirar', () async {
+      final order = await repository.createOrderWithItem(
+        orderType: 'counter',
+        productId: 'produto-1',
+        quantity: 1,
+        addonIds: const [],
+      );
+
+      expect(order['id'], 'pedido-1');
+      expect(order.containsKey('_offline_pending'), isFalse);
+    });
+  });
+
   test('vínculo com a mesa vai na comanda e usa table_id', () async {
     await repository.linkTable(
       commandId: 'comanda-1',

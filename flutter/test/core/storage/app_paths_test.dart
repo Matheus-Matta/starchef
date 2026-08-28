@@ -45,4 +45,23 @@ void main() {
     AppPaths.overrideDataDirectory(null);
     expect(AppPaths.dataDirectory().path, endsWith('StarChef'));
   });
+
+  test('valida que o diretório persistente aceita gravação', () async {
+    final root = await Directory.systemTemp.createTemp('starchef-paths-test-');
+    final custom = Directory('${root.path}/data');
+    AppPaths.overrideDataDirectory(custom);
+
+    try {
+      await AppPaths.verifyPersistentStorage();
+
+      expect(await custom.exists(), isTrue);
+      expect(
+        custom.listSync().whereType<File>().map((file) => file.path),
+        isEmpty,
+      );
+    } finally {
+      AppPaths.overrideDataDirectory(null);
+      await root.delete(recursive: true);
+    }
+  });
 }
