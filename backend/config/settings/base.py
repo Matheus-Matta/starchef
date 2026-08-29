@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers as _cors_default_headers
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -287,6 +288,11 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+# A identidade do terminal (instalação + nome) viaja em cabeçalho em toda
+# requisição — inclusive as de leitura, então precisa valer para qualquer rota,
+# não só para abertura de caixa. Sem isso o navegador falha no preflight antes
+# mesmo de a requisição chegar à view, e o axios só reporta "CORS error".
+CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name")
 # Necessário para o Django aceitar mutações vindas do front (cookies) cross-origin.
 CSRF_TRUSTED_ORIGINS = config(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
