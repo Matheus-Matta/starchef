@@ -244,6 +244,7 @@ const groups = computed(() =>
         canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
         canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
         canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
+        canSeeAllRestaurants.value ? { id: "terminais", label: "Terminais do PDV", icon: "monitor" } : null,
         canSeeAllRestaurants.value ? { id: "impressoras", label: "Impressoras", icon: "zap" } : null,
         canSeeAllRestaurants.value ? { id: "balancas", label: "Balancas", icon: "scale" } : null,
       ].filter(Boolean),

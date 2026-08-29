@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqlite_async/sqlite_async.dart';
 
 import '../logging/app_logger.dart';
+import '../network/relay_origin.dart';
 import 'conflict_resolver.dart';
 import 'entity_catalog.dart';
 import 'entity_record.dart';
@@ -10,6 +11,7 @@ import 'local_id.dart';
 import 'payload_cipher.dart';
 import 'pdv_database.dart';
 import 'sync_operation.dart';
+import 'sync_queue_service.dart';
 
 /// Acesso a UM tipo de entidade no banco local (§27).
 ///
@@ -205,6 +207,7 @@ class EntityRepository {
     Map<String, dynamic>? query,
     String? id,
     Map<String, dynamic>? requestBody,
+    Future<void> Function(SqliteWriteContext tx)? guard,
   }) async {
     final entityId = id ?? '${payload['id'] ?? ''}';
     if (entityId.isEmpty) {
@@ -216,6 +219,11 @@ class EntityRepository {
     final operationId = LocalId.uuid();
 
     return database.write((tx) async {
+      // Verificação e gravação na MESMA transação. É o que separa "consultei e
+      // depois criei" (duas aberturas simultâneas leem "livre" antes de
+      // qualquer uma gravar) de uma exclusividade de verdade: se o guard
+      // lançar, nada foi escrito — nem a entidade, nem a operação da fila.
+      if (guard != null) await guard(tx);
       final existing = await tx.getOptional(
         '''
         SELECT version, created_at FROM entities
@@ -530,6 +538,119 @@ class EntityRepository {
 
   // ------------------------------------------------------------- internals
 
+  /// Reescreve as entradas de código desta entidade.
+  ///
+  /// Vive dentro do `_upsert` de propósito: entidade e índice mudam na mesma
+  /// transação. Um índice atualizado depois ficaria momentaneamente apontando
+  /// para um preço, um nome ou um código que já não valem — e é justamente
+  /// nesse instante que alguém bipa o produto.
+  Future<void> _syncCodeIndex(
+    SqliteWriteContext tx, {
+    required String entityId,
+    required Map<String, dynamic> payload,
+    required bool deleted,
+  }) async {
+    if (descriptor.codeFields.isEmpty) return;
+    await tx.execute(
+      'DELETE FROM entity_codes WHERE scope = ? AND entity_type = ? '
+      'AND entity_id = ?',
+      [scope, type, entityId],
+    );
+    if (deleted) return;
+    for (final field in descriptor.codeFields) {
+      final code = normalizeCode(payload[field]);
+      if (code.isEmpty) continue;
+      await tx.execute(
+        'INSERT OR REPLACE INTO entity_codes(scope, entity_type, field, code, '
+        'entity_id) VALUES (?, ?, ?, ?, ?)',
+        [scope, type, field, code, entityId],
+      );
+    }
+  }
+
+  /// Como um código é comparado: sem espaços e sem diferença de caixa.
+  ///
+  /// Zeros à esquerda são preservados — `0000012345670` e `12345670` são
+  /// códigos diferentes, e apagá-los faria o leitor não achar o produto.
+  static String normalizeCode(Object? value) =>
+      '${value ?? ''}'.trim().toUpperCase();
+
+  /// A entidade cujo código bate com [code], na ordem de [codeFields].
+  ///
+  /// Devolve também QUAL campo casou: a tela de venda precisa saber se foi o
+  /// código de barras ou o código interno para explicar o que aconteceu.
+  Future<CodeMatch?> findByCode(String code) async {
+    final normalized = normalizeCode(code);
+    if (normalized.isEmpty || descriptor.codeFields.isEmpty) return null;
+
+    var rows = await database.query(
+      'SELECT field, entity_id FROM entity_codes '
+      'WHERE scope = ? AND entity_type = ? AND code = ?',
+      [scope, type, normalized],
+    );
+    if (rows.isEmpty && await _codeIndexIsCold()) {
+      // Base que já existia antes do índice: reconstrói uma vez e repete a
+      // consulta, em vez de varrer o catálogo a cada leitura para sempre.
+      await rebuildCodeIndex();
+      rows = await database.query(
+        'SELECT field, entity_id FROM entity_codes '
+        'WHERE scope = ? AND entity_type = ? AND code = ?',
+        [scope, type, normalized],
+      );
+    }
+    if (rows.isEmpty) return null;
+
+    for (final field in descriptor.codeFields) {
+      for (final row in rows) {
+        if ('${row['field']}' != field) continue;
+        final record = await read('${row['entity_id']}');
+        if (record != null) return CodeMatch(record: record, field: field);
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _codeIndexIsCold() async {
+    final row = await database.querySingle(
+      'SELECT COUNT(*) AS total FROM entity_codes '
+      'WHERE scope = ? AND entity_type = ?',
+      [scope, type],
+    );
+    return ((row?['total'] as num?)?.toInt() ?? 0) == 0;
+  }
+
+  /// Recria o índice a partir do que já está gravado.
+  Future<void> rebuildCodeIndex() async {
+    if (descriptor.codeFields.isEmpty) return;
+    final rows = await database.query(
+      'SELECT entity_id, payload FROM entities '
+      'WHERE scope = ? AND entity_type = ? AND deleted_at IS NULL',
+      [scope, type],
+    );
+    final decoded = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      final payload = await _cipher.decrypt('${row['payload']}');
+      final map = jsonDecode(payload);
+      if (map is Map) {
+        decoded['${row['entity_id']}'] = Map<String, dynamic>.from(map);
+      }
+    }
+    await database.write((tx) async {
+      await tx.execute(
+        'DELETE FROM entity_codes WHERE scope = ? AND entity_type = ?',
+        [scope, type],
+      );
+      for (final entry in decoded.entries) {
+        await _syncCodeIndex(
+          tx,
+          entityId: entry.key,
+          payload: entry.value,
+          deleted: false,
+        );
+      }
+    });
+  }
+
   Future<void> _upsert(
     SqliteWriteContext tx, {
     required String entityId,
@@ -581,6 +702,12 @@ class EntityRepository {
         deletedAt,
       ],
     );
+    await _syncCodeIndex(
+      tx,
+      entityId: entityId,
+      payload: payload,
+      deleted: deletedAt != null,
+    );
   }
 
   Future<void> _enqueue(
@@ -598,8 +725,8 @@ class EntityRepository {
       '''
       INSERT INTO sync_queue(
         operation_id, scope, entity_type, entity_id, operation, method, path,
-        query_json, payload, status, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?)
+        query_json, payload, status, attempts, created_at, updated_at, origin_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)
       ''',
       [
         operationId,
@@ -613,6 +740,10 @@ class EntityRepository {
         payload == null ? null : jsonEncode(payload),
         createdAt.toIso8601String(),
         createdAt.toIso8601String(),
+        // Quando esta gravação é o Caixa Principal executando por um
+        // secundário, a operação sobe com as credenciais DELE — não com as do
+        // principal. `RelayOrigin.current` é `null` no caminho comum.
+        SyncQueueService.encodeOrigin(RelayOrigin.current),
       ],
     );
   }
@@ -749,4 +880,16 @@ class EntityWrite {
     ...record.toApiJson(),
     '_sync_operation_id': operationId,
   };
+}
+
+/// O que casou com um código lido: o registro e o campo que o continha.
+class CodeMatch {
+  const CodeMatch({required this.record, required this.field});
+
+  final EntityRecord record;
+
+  /// `ean`, `internal_code`, `code`... — a tela usa para explicar a leitura.
+  final String field;
+
+  Map<String, dynamic> get payload => record.payload;
 }

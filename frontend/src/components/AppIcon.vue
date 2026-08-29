@@ -92,6 +92,7 @@ const icons = {
   "ticket": "pi-ticket",
   "timer": "pi-stopwatch",
   "trash": "pi-trash",
+  "monitor": "pi-desktop",
   "trending-up": "pi-chart-line",
   "truck": "pi-truck",
   "user-cog": "pi-user-edit",

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/errors/app_error.dart';
@@ -38,6 +39,11 @@ import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
 import '../../topology/services/terminal_topology.dart';
+import '../../../core/input/code_lookup_service.dart';
+import '../../../core/input/pdv_input_router.dart';
+import '../../../core/input/pdv_screen.dart';
+import '../../../core/input/pdv_shortcuts.dart';
+import 'pdv_help_dialog.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
 import 'pdv_cash_center_dialog.dart';
@@ -114,6 +120,13 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> tables = [];
   List<Map<String, dynamic>> commands = [];
   List<Map<String, dynamic>> orderItems = [];
+
+  /// Item sob o cursor do teclado, na lista do pedido.
+  ///
+  /// `+`, `-` e Delete agem sobre ELE. Guardar o id (e não o índice) é o que
+  /// mantém a seleção no mesmo item depois de um recarregamento em que a
+  /// ordem da lista mudou.
+  String? selectedOrderItemId;
   List<Map<String, dynamic>> paymentMethods = [];
   List<Map<String, dynamic>> registeredPayments = [];
   List<Map<String, dynamic>> orders = [];
@@ -130,6 +143,8 @@ class _HomePageState extends State<HomePage> {
   /// achou tudo.
   bool ordersPartial = false;
   final ordersSearchController = TextEditingController();
+  final ordersSearchFocus = FocusNode(debugLabel: 'orders-search');
+  final commandSearchFocus = FocusNode(debugLabel: 'command-search');
   Timer? ordersSearchDebounce;
   String? selectedPaymentMethod;
   String paymentDigits = '0';
@@ -155,6 +170,18 @@ class _HomePageState extends State<HomePage> {
   bool realtimeRefreshRunning = false;
   bool realtimeRefreshQueued = false;
   late final TerminalTopology topology;
+
+  /// O controlador central de entrada: teclado, leitor USB, leitor serial e
+  /// área de transferência entram por aqui e saem como o MESMO evento.
+  late final PdvInputRouter inputRouter;
+  CodeLookupService? codeLookup;
+  StreamSubscription<ScannedCode>? codeSubscription;
+  StreamSubscription<PdvShortcut>? shortcutSubscription;
+
+  /// Enquanto o modal de configuração de produto está aberto, uma nova leitura
+  /// do MESMO produto soma quantidade lá dentro em vez de abrir outro modal.
+  StreamController<void>? productScanRepeats;
+  String? scanningProductId;
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
   );
@@ -230,8 +257,15 @@ class _HomePageState extends State<HomePage> {
         final user = widget.controller.session?.user;
         return TopologyIdentity(
           accessToken: widget.controller.session?.accessToken ?? '',
+          // Num Caixa Secundário, estas credenciais viajam com cada operação
+          // encaminhada: é com ELAS que o Caixa Principal entrega ao backend,
+          // para a venda e a sessão de caixa nascerem no nome de quem
+          // realmente atendeu.
+          refreshToken: widget.controller.session?.refreshToken ?? '',
           accountId: user?.accountId ?? '',
           actorId: user?.id ?? '',
+          actorName: user?.name ?? user?.username ?? '',
+          terminalName: _terminalName,
           // A unidade escolhida quando já houver bootstrap; antes dele, a do
           // vínculo do usuário. Nenhuma das duas depende da nuvem agora.
           restaurantId: selectedRestaurantId ?? user?.restaurantId ?? '',
@@ -247,6 +281,10 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     topology.addListener(_onTopologyChanged);
+    inputRouter = PdvInputRouter(readContext: _readInputContext);
+    codeSubscription = inputRouter.codes.listen(_onCodeScanned);
+    shortcutSubscription = inputRouter.shortcuts.listen(_onShortcut);
+    HardwareKeyboard.instance.addHandler(inputRouter.handleKeyEvent);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
     updateService = PdvUpdateService();
@@ -450,7 +488,51 @@ class _HomePageState extends State<HomePage> {
 
   void _onTopologyChanged() {
     if (!mounted) return;
+    // O `nodeId` da topologia é a identidade da INSTALAÇÃO — o mesmo UUID que
+    // já identifica este terminal no relay da rede local. Reusá-lo evita
+    // inventar um segundo identificador para o caixa, e dispensa MAC, IP ou
+    // nome do computador (nenhum estável, nenhum necessário).
+    api.localStore?.installationId = topology.config?.nodeId;
+    api.localStore?.terminalLabel = _terminalName;
     setState(() {});
+  }
+
+  /// Por que este terminal não pode usar o caixa aberto (409/403 do servidor).
+  ///
+  /// Guardado em vez de descartado porque a mensagem já diz quem está com o
+  /// caixa, de onde e desde quando — é o que o operador precisa para decidir
+  /// entre esperar e pedir uma transferência gerencial.
+  String? cashSessionBlockMessage;
+
+  /// UUID da instalação deste terminal, ou vazio antes de a topologia subir.
+  String get _terminalInstallationId => topology.config?.nodeId ?? '';
+
+  /// Nome amigável do terminal. Um padrão pelo papel até a loja renomeá-lo
+  /// (Configurações › Terminais, no backoffice) — melhor do que expor o UUID
+  /// cru numa mensagem de bloqueio.
+  String get _terminalName {
+    final nodeId = _terminalInstallationId;
+    if (nodeId.isEmpty) return '';
+    final suffix = nodeId.length <= 6 ? nodeId : nodeId.substring(0, 6);
+    return isSecondaryStation ? 'Caixa Secundário $suffix' : 'Caixa Principal $suffix';
+  }
+
+  /// Campos de identidade enviados em toda operação de caixa.
+  ///
+  /// Sem eles o servidor não consegue cumprir "a sessão pertence ao usuário
+  /// que abriu E ao terminal onde foi aberta": o backend já tinha o campo, mas
+  /// este aplicativo nunca o preenchia.
+  Map<String, dynamic> get _terminalIdentity {
+    final nodeId = _terminalInstallationId;
+    if (nodeId.isEmpty) return const {};
+    return {
+      'terminal_installation_id': nodeId,
+      'terminal_name': _terminalName,
+      'terminal_type': 'desktop',
+      'terminal_role': isSecondaryStation ? 'secondary' : 'principal',
+      // Mantido para servidores que ainda leem o campo antigo.
+      'device_identifier': nodeId,
+    };
   }
 
   /// Recarrega os dados do PDV.
@@ -549,10 +631,31 @@ class _HomePageState extends State<HomePage> {
         // terminal também não sabe o estado do caixa; em ambos os casos ele
         // segue carregando, porque abrir/fechar já exige servidor e falharia
         // com mensagem própria.
-        if (error.statusCode != null && error.statusCode != 404) rethrow;
+        //
+        // 409/403 são a resposta nova: o caixa está com outra pessoa, ou com
+        // este operador em outra máquina. Não é falha de carga — é informação
+        // que o operador precisa ler, e a tela continua utilizável para o
+        // resto do atendimento.
+        const blocked = {403, 409};
+        if (error.statusCode != null &&
+            error.statusCode != 404 &&
+            !blocked.contains(error.statusCode)) {
+          rethrow;
+        }
+        cashSessionBlockMessage = blocked.contains(error.statusCode)
+            ? error.message
+            : null;
         cashSession = null;
         pendingCashMovement = null;
         cashSessionFromCache = false;
+        if (cashSessionBlockMessage != null && mounted) {
+          showAppToast(
+            context,
+            cashSessionBlockMessage!,
+            title: 'Caixa indisponível neste terminal',
+            severity: AppErrorSeverity.warning,
+          );
+        }
       }
     } catch (error) {
       // Numa recarga de fundo o operador já tem uma tela utilizável: falhar
@@ -604,6 +707,7 @@ class _HomePageState extends State<HomePage> {
       selectedCommand = null;
       selectedCustomer = null;
       orderItems = [];
+      selectedOrderItemId = null;
       registeredPayments = [];
       paymentMethods = [];
       orderType = null;
@@ -1508,12 +1612,518 @@ class _HomePageState extends State<HomePage> {
     syncStatusSubscription?.cancel();
     topology.removeListener(_onTopologyChanged);
     topology.dispose();
+    HardwareKeyboard.instance.removeHandler(inputRouter.handleKeyEvent);
+    codeSubscription?.cancel();
+    shortcutSubscription?.cancel();
+    productScanRepeats?.close();
+    inputRouter.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
     ordersSearchDebounce?.cancel();
     ordersSearchController.dispose();
+    ordersSearchFocus.dispose();
+    commandSearchFocus.dispose();
     updateService.dispose();
     super.dispose();
+  }
+
+  // ───────────────────────────────── entrada (teclado, leitor, colar) ──
+
+  /// Em que tela o operador está — é o que decide como um código é lido.
+  PdvScreen get _currentScreen {
+    if (flowStep == 'scale-workstation') return PdvScreen.scale;
+    if (flowStep == 'orders') return PdvScreen.orders;
+    if (flowStep == 'payment') return PdvScreen.payment;
+    if (activeOrder != null) return PdvScreen.order;
+    if (flowStep == 'context' || flowStep == 'table_details') {
+      return PdvScreen.context;
+    }
+    return PdvScreen.home;
+  }
+
+  /// O cursor está dentro de um campo de texto?
+  ///
+  /// Com um campo focado o teclado é dele: o leitor escreve ali como qualquer
+  /// digitação, em vez de a tela interpretar o código por conta própria.
+  bool get _hasTextFocus {
+    final focus = FocusManager.instance.primaryFocus?.context;
+    if (focus == null) return false;
+    return focus.widget is EditableText ||
+        focus.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  /// Há um diálogo aberto por cima desta página?
+  ///
+  /// A rota da página deixa de ser a corrente quando um modal sobe — é o
+  /// sinal mais confiável, e não depende de cada `showDialog` do arquivo
+  /// lembrar de avisar.
+  bool get _hasModalAbove {
+    final route = ModalRoute.of(context);
+    return route != null && !route.isCurrent;
+  }
+
+  PdvInputContext _readInputContext() => PdvInputContext(
+    screen: _currentScreen,
+    hasTextFocus: _hasTextFocus,
+    hasModal: _hasModalAbove,
+    // O único modal que entende código é o de configuração de produto: ler o
+    // mesmo item de novo soma quantidade lá dentro.
+    modalAcceptsScanner: scanningProductId != null,
+    hasOrder: activeOrder != null,
+  );
+
+  /// A consulta de códigos, quando o armazenamento local já está ligado.
+  ///
+  /// Antes do login não há banco local, e ler um código nesse momento não faz
+  /// sentido nenhum — daí o nulo em vez de uma exceção.
+  CodeLookupService? get _codeLookup {
+    final gateway = api.localStore;
+    if (gateway == null) return null;
+    return codeLookup ??= CodeLookupService(gateway);
+  }
+
+  /// Um código chegou — de onde quer que tenha vindo.
+  Future<void> _onCodeScanned(ScannedCode scanned) async {
+    switch (_currentScreen) {
+      case PdvScreen.home:
+        await _openOrderFromCommandCode(scanned.value);
+      case PdvScreen.context:
+        _onCommandSearchSubmitted(scanned.value);
+      case PdvScreen.order:
+        await _addProductFromCode(scanned.value);
+      case PdvScreen.orders:
+        // Preenche a busca e para por aí: abrir um pedido sozinho a partir de
+        // uma lista é o tipo de ação que o operador não pediu.
+        ordersSearchController.text = scanned.value;
+        setState(() => orderSearch = scanned.value);
+      case PdvScreen.payment:
+      case PdvScreen.cash:
+      case PdvScreen.settings:
+      case PdvScreen.scale:
+        break;
+    }
+  }
+
+  /// Início: acha a comanda e abre o pedido em aberto dela.
+  ///
+  /// Não encontrando, o silêncio é deliberado. Um aviso a cada leitura sem
+  /// correspondência transformaria uma pilha de cartões conferidos rapidamente
+  /// em uma sequência de alertas para fechar — e nenhum deles ajuda.
+  ///
+  /// Também não procura produto aqui: um EAN lido por engano na tela inicial
+  /// não pode disparar uma ação inesperada.
+  Future<void> _openOrderFromCommandCode(String code) async {
+    final lookup = _codeLookup;
+    if (lookup == null) return;
+    final resolution = await lookup.findCommand(code);
+    final command = resolution.command;
+    if (command == null) return;
+    final orderId = '${command['current_order_id'] ?? ''}';
+    if (orderId.isEmpty) return;
+    final local = commands.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == '${command['id']}',
+      orElse: () => null,
+    );
+    await _openCommand(local ?? command);
+  }
+
+  /// Edição do pedido: acha o produto e abre a configuração dele.
+  Future<void> _addProductFromCode(String code) async {
+    final lookup = _codeLookup;
+    if (lookup == null) return;
+    // Leitura repetida com o modal aberto: soma lá dentro.
+    if (scanningProductId != null) {
+      final repeated = await lookup.findProduct(
+        code,
+        restaurantId: restaurantId,
+        orderType: orderType,
+      );
+      if ('${repeated.product?['id'] ?? ''}' == scanningProductId) {
+        productScanRepeats?.add(null);
+      }
+      return;
+    }
+
+    final resolution = await lookup.findProduct(
+      code,
+      restaurantId: restaurantId,
+      orderType: orderType,
+    );
+    final product = resolution.product;
+    if (product == null) return;
+
+    // Já lançado e sem configuração possível: a segunda leitura é só mais uma
+    // unidade. Com variação ou adicional, a escolha é ambígua e o modal volta.
+    if (!_productHasChoices(product) && _pendingItemFor(product) != null) {
+      await _addOneMoreOf(product);
+      return;
+    }
+    await _configureProduct(product);
+  }
+
+  bool _productHasChoices(Map<String, dynamic> product) {
+    bool active(List? list) => (list ?? const [])
+        .whereType<Map>()
+        .any((item) => item['is_active'] != false);
+    return active(product['variations'] as List?) ||
+        active(product['addons'] as List?);
+  }
+
+  /// O item pendente deste produto, sem variação, adicional nem observação.
+  Map<String, dynamic>? _pendingItemFor(Map<String, dynamic> product) {
+    for (final item in orderItems) {
+      if ('${item['status'] ?? ''}' != 'pending') continue;
+      if ('${item['product'] ?? ''}' != '${product['id']}') continue;
+      if ((item['variations'] as List? ?? const []).isNotEmpty) continue;
+      if ((item['addons'] as List? ?? const []).isNotEmpty) continue;
+      if ('${item['customer_note'] ?? ''}'.trim().isNotEmpty) continue;
+      return item;
+    }
+    return null;
+  }
+
+  /// Soma uma unidade ao item pendente. O servidor agrupa itens pendentes
+  /// iguais, e o armazenamento local passou a agrupar na mesma hora.
+  Future<void> _addOneMoreOf(Map<String, dynamic> product) async {
+    await _work(() async {
+      await api.post(
+        '/orders/${activeOrder!['id']}/items/',
+        body: {
+          'product': product['id'],
+          'quantity': 1,
+          'variations': const [],
+          'addons': const [],
+          'expected_unit_price': OrderPresenter.expectedUnitPrice(
+            product,
+          ).toStringAsFixed(2),
+          'customer_note': '',
+        },
+        accessToken: token,
+      );
+      await _refreshOrder();
+    });
+  }
+
+  /// Executa a ação de um atalho.
+  Future<void> _onShortcut(PdvShortcut shortcut) async {
+    switch (shortcut.id) {
+      case PdvAction.help:
+        await _openHelp();
+      case PdvAction.readClipboard:
+        await inputRouter.readFromClipboard();
+      case PdvAction.home:
+      case PdvAction.newSale:
+        if (await _confirmLeavingPendingItems()) await _goHome();
+      case PdvAction.orders:
+        await _navigateTo(PdvDestination.orders);
+      case PdvAction.refresh:
+        await _load();
+      case PdvAction.cashCenter:
+        await _openCashCenter();
+      case PdvAction.pickCommand:
+        setState(() {
+          orderType = 'command';
+          commandSearch = '';
+          flowStep = 'context';
+        });
+      case PdvAction.back:
+        _goBack();
+      case PdvAction.focusSearch:
+        _focusPageSearch();
+      case PdvAction.sendToKitchen:
+        await _sendPendingFromShortcut();
+      case PdvAction.payment:
+        await _preparePaymentPage();
+      case PdvAction.printReceipt:
+        await _printCustomerReceipt();
+      case PdvAction.moveSelectionUp:
+        _moveItemSelection(-1);
+      case PdvAction.moveSelectionDown:
+        _moveItemSelection(1);
+      case PdvAction.increaseQuantity:
+        await _changeSelectedQuantity(1);
+      case PdvAction.decreaseQuantity:
+        await _changeSelectedQuantity(-1);
+      case PdvAction.removeItem:
+        await _removeSelectedItem();
+      case PdvAction.confirm:
+        await _confirmPrimaryAction();
+    }
+  }
+
+  /// Sair do pedido com itens ainda não enviados exige confirmação.
+  ///
+  /// F3 e Ctrl + N ficam ao lado de teclas usadas o tempo todo, e um toque
+  /// errado apagaria da tela itens que a cozinha nunca recebeu — sem que
+  /// ninguém percebesse até o cliente cobrar.
+  Future<bool> _confirmLeavingPendingItems() async {
+    if (activeOrder == null) return true;
+    final pending = orderItems
+        .where((item) => item['status'] == 'pending')
+        .length;
+    if (pending == 0) return true;
+    final answer = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: const Text('Sair com itens não enviados?'),
+        content: Text(
+          pending == 1
+              ? 'Há 1 item lançado que ainda não foi para a cozinha. '
+                    'Ele continua no pedido, mas você sai da tela dele.'
+              : 'Há $pending itens lançados que ainda não foram para a '
+                    'cozinha. Eles continuam no pedido, mas você sai da tela '
+                    'dele.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar no pedido'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sair mesmo assim'),
+          ),
+        ],
+      ),
+    );
+    return answer == true;
+  }
+
+  // ─────────────────────────────────── seleção de item por teclado ──
+
+  /// A lista de itens na MESMA ordem em que o painel a desenha.
+  ///
+  /// As setas precisam andar na ordem que o operador vê; percorrer a lista
+  /// bruta faria o cursor pular de um bloco para o outro sem motivo aparente.
+  List<Map<String, dynamic>> get _itemsInDisplayOrder => [
+    ...orderItems.where((item) => item['status'] != 'pending'),
+    ...orderItems.where((item) => item['status'] == 'pending'),
+  ];
+
+  Map<String, dynamic>? get _selectedOrderItem {
+    final id = selectedOrderItemId;
+    if (id == null) return null;
+    for (final item in orderItems) {
+      if ('${item['id']}' == id) return item;
+    }
+    return null;
+  }
+
+  /// Move o cursor. Sem seleção, a primeira seta escolhe a ponta certa da
+  /// lista — descer começa no primeiro item, subir no último.
+  void _moveItemSelection(int delta) {
+    final items = _itemsInDisplayOrder;
+    if (items.isEmpty) {
+      setState(() => selectedOrderItemId = null);
+      return;
+    }
+    final current = items.indexWhere(
+      (item) => '${item['id']}' == selectedOrderItemId,
+    );
+    final next = current < 0
+        ? (delta > 0 ? 0 : items.length - 1)
+        : (current + delta).clamp(0, items.length - 1);
+    setState(() => selectedOrderItemId = '${items[next]['id']}');
+    _revealSelectedItem();
+  }
+
+  void _selectOrderItem(Map<String, dynamic> item) {
+    setState(() => selectedOrderItemId = '${item['id']}');
+  }
+
+  /// Rola a lista até a linha selecionada quando ela sai da área visível.
+  void _revealSelectedItem() {
+    final id = selectedOrderItemId;
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = OrderCartPanel.contextOfItem(id);
+      if (target == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          target,
+          alignment: .5,
+          duration: const Duration(milliseconds: 140),
+        ),
+      );
+    });
+  }
+
+  /// `+` e `-` sobre o item selecionado.
+  ///
+  /// Só item pendente: um já despachado descreve o que a cozinha recebeu, e
+  /// mudar a quantidade dele reescreveria o passado sem ninguém na produção
+  /// ficar sabendo. Chegando a zero, a tecla vira o cancelamento — que exige
+  /// motivo e deixa registro, em vez de apagar em silêncio.
+  Future<void> _changeSelectedQuantity(int delta) async {
+    final item = _selectedOrderItem;
+    if (item == null || busy || activeOrder == null) return;
+    if ('${item['status'] ?? ''}' != 'pending') {
+      _error(
+        const ApiException(
+          'Este item já foi para a produção. Cancele-o (Delete) se precisar '
+          'tirá-lo da conta.',
+        ),
+      );
+      return;
+    }
+    if ('${item['pricing_unit'] ?? 'unit'}' == 'kg') {
+      _error(
+        const ApiException(
+          'Produto vendido por peso: a quantidade vem da balança.',
+        ),
+      );
+      return;
+    }
+    final quantity = ValueFormatters.number(item['quantity']) + delta;
+    if (quantity <= 0) {
+      await _removeSelectedItem();
+      return;
+    }
+    await _work(() async {
+      await api.post(
+        '/orders/${activeOrder!['id']}/items/${item['id']}/quantity/',
+        body: {'quantity': quantity},
+        accessToken: token,
+      );
+      await _refreshOrder();
+      return activeOrder ?? <String, dynamic>{};
+    });
+  }
+
+  /// Delete sobre o item selecionado.
+  ///
+  /// Reusa o cancelamento normal, que já pede motivo e — para item despachado
+  /// — passa pela permissão e pelo cupom de cancelamento na cozinha. Uma tecla
+  /// não pode ter um caminho mais curto do que o botão.
+  Future<void> _removeSelectedItem() async {
+    final item = _selectedOrderItem;
+    if (item == null || busy) return;
+    await _voidItem(item);
+    if (mounted) setState(() => selectedOrderItemId = null);
+  }
+
+  // ────────────────────────────────────────────── ação principal (Enter) ──
+
+  /// O que o Enter confirma nesta tela.
+  ///
+  /// Só chega aqui quando NÃO há modal aberto nem campo focado — nesses dois
+  /// casos o Enter pertence a quem tem o foco, e é assim que ele continua
+  /// funcionando dentro dos diálogos sem nenhum caso especial.
+  Future<void> _confirmPrimaryAction() async {
+    switch (_currentScreen) {
+      case PdvScreen.order:
+        if (activeOrder == null || orderItems.isEmpty) return;
+        await _finishOrder();
+      case PdvScreen.context:
+        // Uma comanda filtrada e só uma: confirmar é abrir. Com várias, o
+        // Enter não escolhe por ninguém.
+        if (orderType != 'command') return;
+        final visible = visibleCommands;
+        if (visible.length == 1) await _openCommand(visible.first);
+      case PdvScreen.payment:
+        await _confirmPaymentFromKeyboard();
+      case PdvScreen.home:
+      case PdvScreen.orders:
+      case PdvScreen.cash:
+      case PdvScreen.settings:
+      case PdvScreen.scale:
+        break;
+    }
+  }
+
+  /// Enter na tela de pagamento.
+  ///
+  /// A regra é a mesma do botão, e de propósito: enquanto faltar dado
+  /// obrigatório, a tecla não conclui nada. Um Enter que cobra sozinho seria
+  /// pior do que um Enter que não faz nada, porque o operador só descobriria
+  /// depois — com o cliente já do outro lado do balcão.
+  Future<void> _confirmPaymentFromKeyboard() async {
+    if (activeOrder == null || busy) return;
+    // Já pago por inteiro: confirmar é concluir.
+    if (remainingTotal <= .009) {
+      await _completePaidOrder();
+      return;
+    }
+    // Falta valor: só registra o recebimento digitado, e só se ele existir e
+    // houver forma de pagamento escolhida.
+    if (selectedPaymentMethod == null || paymentValue <= 0) return;
+    await _addSplitPayment();
+  }
+
+  /// Leva o cursor para a busca da tela atual.
+  void _focusPageSearch() {
+    if (_currentScreen == PdvScreen.orders) {
+      ordersSearchFocus.requestFocus();
+      return;
+    }
+    if (_currentScreen == PdvScreen.context) {
+      commandSearchFocus.requestFocus();
+    }
+  }
+
+  /// F9: manda para a produção só o que ainda está pendente.
+  ///
+  /// Sem itens pendentes a tecla não faz nada — e não avisa: apertar F9 duas
+  /// vezes é comum, e a segunda não pode virar um alerta.
+  Future<void> _sendPendingFromShortcut() async {
+    if (activeOrder == null || busy) return;
+    final pending = orderItems
+        .where((item) => item['status'] == 'pending')
+        .toList();
+    if (pending.isEmpty) return;
+    await _work(() async {
+      await _sendPendingItemsToKitchen(pending);
+      return activeOrder ?? <String, dynamic>{};
+    });
+    if (mounted) await _refreshOrder();
+  }
+
+  Future<void> _openHelp() async {
+    final serial = topology.config;
+    await PdvHelpDialog.show(
+      context,
+      screen: _currentScreen,
+      hasOrder: activeOrder != null,
+      scannerStatus: ScannerStatus(
+        connected: false,
+        detail: serial == null
+            ? 'A estação de balança é quem cuida do leitor serial.'
+            : 'Vincule o leitor serial em Balança rápida › Equipamentos.',
+      ),
+      lastCode: inputRouter.lastCode,
+      onTestCode: _describeCode,
+    );
+  }
+
+  /// Diz o que ACONTECERIA com um código, sem executar nada.
+  Future<String> _describeCode(String code) async {
+    final screen = _currentScreen;
+    if (!screen.readsCodes) {
+      return '${screen.label}: códigos são ignorados aqui, de propósito.';
+    }
+    final lookup = _codeLookup;
+    if (lookup == null) {
+      return 'O armazenamento local ainda não está pronto nesta sessão.';
+    }
+    final product = await lookup.findProduct(
+      code,
+      restaurantId: restaurantId,
+      orderType: orderType,
+    );
+    if (product.found) {
+      return 'Produto "${product.product?['name']}" — encontrado pelo '
+          '${product.matchedFieldLabel}.'
+          '${screen == PdvScreen.order ? ' Nesta tela, abriria a configuração do item.' : ' Esta tela não lança produtos.'}';
+    }
+    final command = await lookup.findCommand(code);
+    if (command.found) {
+      final orderId = '${command.command?['current_order_id'] ?? ''}';
+      return 'Comanda ${command.command?['number']} — encontrada pelo '
+          '${command.matchedFieldLabel}. '
+          '${orderId.isEmpty ? 'Sem pedido em aberto.' : 'Abriria o pedido em aberto dela.'}';
+    }
+    return 'Nenhuma comanda e nenhum produto com este código. '
+        'Na operação, uma leitura assim não faz nada e não mostra aviso.';
   }
 
   /// Publica a falha no alerta global, que sempre traz o botão de fechar.
@@ -2319,24 +2929,46 @@ class _HomePageState extends State<HomePage> {
       await _weighProduct(product);
       return;
     }
-    final config = await showProductConfigDialog(context, product);
+    // Enquanto este modal estiver aberto, ler o MESMO produto de novo soma
+    // quantidade aqui dentro em vez de abrir um segundo modal por cima.
+    //
+    // O `finally` não é zelo: se o diálogo falhasse com a marca ligada, toda
+    // leitura seguinte seria interpretada como "repetição do produto X" e
+    // nenhum outro item entraria no pedido.
+    final repeats = StreamController<void>.broadcast();
+    ProductConfigResult? config;
+    try {
+      productScanRepeats = repeats;
+      scanningProductId = '${product['id']}';
+      config = await showProductConfigDialog(
+        context,
+        product,
+        repeatedScans: repeats.stream,
+      );
+    } finally {
+      scanningProductId = null;
+      productScanRepeats = null;
+      await repeats.close();
+    }
     if (config == null) return;
+    // Cópia não-nula: o `finally` acima impede o compilador de promover o tipo.
+    final chosen = config;
     await _work(() async {
       await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
-          'quantity': config.quantity.round(),
-          'variations': config.variationId == null ? [] : [config.variationId],
-          'addons': config.addonIds,
+          'quantity': chosen.quantity.round(),
+          'variations': chosen.variationId == null ? [] : [chosen.variationId],
+          'addons': chosen.addonIds,
           'expected_unit_price': OrderPresenter.expectedUnitPrice(
             product,
-            variationIds: config.variationId == null
+            variationIds: chosen.variationId == null
                 ? const []
-                : [config.variationId!],
-            addonIds: config.addonIds,
+                : [chosen.variationId!],
+            addonIds: chosen.addonIds,
           ).toStringAsFixed(2),
-          'customer_note': config.customerNote,
+          'customer_note': chosen.customerNote,
         },
         accessToken: token,
       );
@@ -3815,6 +4447,7 @@ class _HomePageState extends State<HomePage> {
             'cash_station': stationId,
             'opening_amount': amount.text.replaceAll(',', '.'),
             'notes': notes.text.trim(),
+            ..._terminalIdentity,
           },
           accessToken: token,
           // Abrir caixa passou a funcionar sem internet (§30): o repositório
@@ -3903,6 +4536,7 @@ class _HomePageState extends State<HomePage> {
               'reason': reason.text.trim(),
               'destination': destination.text.trim(),
               'source': destination.text.trim(),
+              ..._terminalIdentity,
             },
             accessToken: token,
           );
@@ -4154,6 +4788,7 @@ class _HomePageState extends State<HomePage> {
           body: {
             'actual_amount': amount.text.replaceAll(',', '.'),
             'notes': notes.text.trim(),
+            ..._terminalIdentity,
           },
           accessToken: token,
         );
@@ -4555,6 +5190,14 @@ class _HomePageState extends State<HomePage> {
                     onPressed: _goHome,
                     icon: const Icon(Icons.home_outlined),
                   ),
+                  // Ajuda ao lado do Home: é onde o operador procura quando
+                  // não sabe o que uma tecla faz, e a lista que ela mostra sai
+                  // do mesmo registro que o teclado consulta.
+                  IconButton(
+                    tooltip: 'Ajuda e atalhos (F1)',
+                    onPressed: () => unawaited(_openHelp()),
+                    icon: const Icon(Icons.help_outline),
+                  ),
                   IconButton(
                     tooltip: widget.isDark
                         ? 'Usar tema claro'
@@ -4805,6 +5448,7 @@ class _HomePageState extends State<HomePage> {
           width: 300,
           child: TextField(
             controller: ordersSearchController,
+            focusNode: ordersSearchFocus,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search_rounded),
               hintText: 'Nº do pedido, cliente ou mesa...',
@@ -5640,6 +6284,7 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 16),
               TextField(
                 autofocus: true,
+                focusNode: commandSearchFocus,
                 onChanged: (value) => setState(() => commandSearch = value),
                 onSubmitted: _onCommandSearchSubmitted,
                 decoration: const InputDecoration(
@@ -6161,6 +6806,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _cart() => OrderCartPanel(
+    selectedItemId: selectedOrderItemId,
+    onSelectItem: _selectOrderItem,
     order: activeOrder,
     table: selectedTable,
     command: selectedCommand,

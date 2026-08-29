@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import '../network/relay_origin.dart';
 import 'local_id.dart';
 import 'pdv_database.dart';
 import 'sync_operation.dart';
@@ -64,8 +65,8 @@ class SyncQueueService {
       '''
       INSERT INTO sync_queue(
         operation_id, scope, entity_type, entity_id, operation, method, path,
-        query_json, payload, status, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?)
+        query_json, payload, status, attempts, created_at, updated_at, origin_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)
       ON CONFLICT(operation_id) DO NOTHING
       ''',
       [
@@ -80,9 +81,34 @@ class SyncQueueService {
         payload == null ? null : jsonEncode(payload),
         now,
         now,
+        encodeOrigin(RelayOrigin.current),
       ],
     );
     return id;
+  }
+
+  /// Serializa a origem de uma operação para a coluna `origin_json`.
+  ///
+  /// `null` quando a operação é deste terminal — o caso comum, e o que faz a
+  /// entrega usar a sessão local sem nenhuma indireção.
+  static String? encodeOrigin(RelayOrigin? origin) =>
+      origin == null ? null : jsonEncode(origin.toJson());
+
+  /// Grava o token renovado de um terminal de origem.
+  ///
+  /// A fila é durável: o access token que veio com a operação vence enquanto
+  /// ela espera a nuvem. Quando o principal renova (com o refresh do próprio
+  /// secundário), o novo token fica gravado para as próximas tentativas — sem
+  /// isto, cada tentativa renovaria de novo.
+  Future<void> updateOrigin(int id, RelayOrigin origin) async {
+    await database.execute(
+      'UPDATE sync_queue SET origin_json = ?, updated_at = ? WHERE id = ?',
+      [
+        encodeOrigin(origin),
+        DateTime.now().toUtc().toIso8601String(),
+        id,
+      ],
+    );
   }
 
   /// Próxima operação entregável, já reservada para este processo.
@@ -175,6 +201,7 @@ class SyncQueueService {
       createdAt: entry.createdAt,
       nextRetryAt: entry.nextRetryAt,
       lastError: entry.lastError,
+      origin: entry.origin,
     );
   }
 

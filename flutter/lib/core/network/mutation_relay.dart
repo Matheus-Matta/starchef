@@ -1,3 +1,5 @@
+import 'relay_origin.dart';
+
 /// A mutation that may be handed to a trusted StarChef node on the local LAN.
 class RelayMutation {
   const RelayMutation({
@@ -6,6 +8,8 @@ class RelayMutation {
     required this.operationId,
     this.query,
     this.body,
+    this.origin,
+    this.sealedOrigin = '',
   });
 
   final String method;
@@ -14,12 +18,42 @@ class RelayMutation {
   final Map<String, dynamic>? query;
   final Map<String, dynamic>? body;
 
+  /// Credenciais de quem originou a operação.
+  ///
+  /// No cliente é o que se envia; no principal é o que se recupera do envelope
+  /// para encaminhar em nome de quem pediu. Nunca é serializado em claro — ver
+  /// [sealedOrigin].
+  final RelayOrigin? origin;
+
+  /// A origem cifrada com a chave de pareamento (o que trafega de fato).
+  ///
+  /// A rede local é autenticada, mas não é criptografada: um token em claro
+  /// no corpo ficaria legível para qualquer um com acesso ao segmento. O lacre
+  /// é aberto só por quem tem a chave — e a assinatura do corpo, que já
+  /// existe, garante que ninguém o trocou no caminho.
+  final String sealedOrigin;
+
+  RelayMutation copyWith({
+    String? path,
+    Map<String, dynamic>? body,
+    RelayOrigin? origin,
+  }) => RelayMutation(
+    method: method,
+    path: path ?? this.path,
+    operationId: operationId,
+    query: query,
+    body: body ?? this.body,
+    origin: origin ?? this.origin,
+    sealedOrigin: sealedOrigin,
+  );
+
   Map<String, dynamic> toJson() => {
     'method': method,
     'path': path,
     'operation_id': operationId,
     'query': ?query,
     'body': ?body,
+    if (sealedOrigin.isNotEmpty) 'origin': sealedOrigin,
   };
 }
 

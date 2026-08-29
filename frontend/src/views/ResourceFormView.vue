@@ -342,16 +342,17 @@
         <p v-else class="rpage__hint">Salve a receita para poder adicionar ingredientes.</p>
       </div>
 
-      <!-- Configuração fiscal (CNPJ, CSC, integrador) do restaurante -->
-      <div v-else-if="isRestaurant" class="rpage__extra">
-        <RestaurantFiscalSection
-          v-if="recordId"
-          ref="fiscalSectionRef"
-          :key="`fiscal-${recordId}`"
-          :restaurant-id="recordId"
-          :provider="formData.fiscal_provider || 'manual'"
-          :readonly="isView"
-        />
+      <!-- Configuração fiscal: tela própria (emitente, CSC, certificado, Focus
+           NFe). Ficava embutida aqui e disputava o mesmo salvamento; agora este
+           bloco só aponta pra lá. -->
+      <div v-else-if="isRestaurant && hasFinanceiro" class="rpage__extra">
+        <div v-if="recordId" class="rpage__link-card">
+          <div>
+            <h3>Configuração fiscal e Focus NFe</h3>
+            <p>Emitente da nota, CSC da NFC-e, certificado A1 e a empresa na Focus — em uma tela separada.</p>
+          </div>
+          <Button label="Abrir configuração fiscal" icon="pi pi-receipt" severity="secondary" outlined @click="goToFiscalConfig" />
+        </div>
         <p v-else class="rpage__hint">Salve o restaurante para poder configurar os dados fiscais.</p>
       </div>
 
@@ -394,7 +395,6 @@ import Column from "primevue/column";
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
 import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
-import RestaurantFiscalSection from "../components/restaurant/RestaurantFiscalSection.vue";
 import FiscalProfileDialog from "../components/restaurant/FiscalProfileDialog.vue";
 import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
@@ -530,17 +530,9 @@ function cancelForm() {
   if (isEdit.value && recordId.value) goToView(recordId.value);
   else goToList();
 }
-const fiscalSectionRef = ref(null);
-
 async function submit() {
   const saved = await save();
   if (!saved) return; // erros de validacao ja estao em fieldErrors/saveError
-  // Botão único: ao salvar o restaurante, salva junto a configuração fiscal
-  // embutida na mesma página (dois modelos/endpoints, uma ação só pro usuário).
-  if (isRestaurant.value && fiscalSectionRef.value) {
-    const fiscalOk = await fiscalSectionRef.value.save();
-    if (!fiscalOk) return; // erro já aparece na própria seção fiscal
-  }
   if (props.mode === "view") {
     // edição inline concluída: volta ao modo leitura e recarrega o registro.
     localEdit.value = false;
@@ -557,6 +549,10 @@ const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View r
 const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
+const hasFinanceiro = computed(() => auth.hasModule("financeiro"));
+function goToFiscalConfig() {
+  router.push({ name: "restaurante-fiscal", params: { id: recordId.value } });
+}
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
 const printing = ref(false);
 const emittingInvoice = ref(false);
@@ -1014,6 +1010,20 @@ watch(() => [recordId.value, props.mode], async () => {
   color: var(--text-muted);
   font: var(--weight-medium) 13px/1.4 var(--font-sans);
 }
+/* Ponte para um cadastro vizinho que tem tela própria (ex.: config fiscal). */
+.rpage__link-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.rpage__link-card h3 { margin: 0 0 4px; color: var(--text-strong); font: var(--weight-extra) 14.5px/1.2 var(--font-sans); }
+.rpage__link-card p { margin: 0; max-width: 62ch; color: var(--text-muted); font: var(--weight-medium) 12.5px/1.45 var(--font-sans); }
 
 .detail-section {
   border: 1px solid var(--border);

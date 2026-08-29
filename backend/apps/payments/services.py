@@ -12,8 +12,17 @@ from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
-from apps.payments.models import CashMovement, CashRegister, Payment, PaymentMethod
-from apps.restaurants.models import Table
+from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+from apps.payments.terminals import (
+    CashSessionConflict,
+    active_session_for_station,
+    active_session_for_user,
+    assert_session_owner,
+    occupied_message,
+    operator_label,
+    terminal_label_of,
+)
+from apps.restaurants.models import Restaurant, Table
 
 
 def get_open_cash_register(restaurant, user=None, station=None):
@@ -37,50 +46,54 @@ def open_cash_register(
     device_identifier="",
     branch=None,
     cash_station=None,
+    terminal=None,
 ):
+    """Abre a sessão do caixa — a única não finalizada que ele pode ter.
+
+    Toda a decisão acontece dentro de UMA transação que começa travando a linha
+    do `CashStation`. A sequência antiga ("consulta e depois cria") deixava duas
+    aberturas simultâneas lerem "livre" antes de qualquer uma gravar; o
+    `select_for_update` serializa as duas, e a `UniqueConstraint` parcial do
+    modelo é a rede de segurança para o que escapar daqui (outro processo, um
+    script, o replay da fila offline).
+    """
     # `branch` existe apenas para compatibilidade durante a migração; todo o
     # escopo operacional é resolvido pelo restaurante.
     restaurant = restaurant or getattr(branch, "restaurant", None)
     if restaurant is None:
         raise ValidationError("Informe o restaurante do caixa.")
-    if cash_station is not None:
-        if cash_station.restaurant_id != restaurant.id or not cash_station.is_active:
-            raise ValidationError("O caixa selecionado não pertence ao restaurante ou está inativo.")
-        if not cash_station.operators.filter(pk=user.pk).exists():
-            raise ValidationError("O operador não está vinculado a este caixa.")
-        station = cash_station.name
     with tenant_context(restaurant.account):
-        existing = (
-            CashRegister.objects.filter(restaurant=restaurant, cash_station=cash_station)
-            .exclude(
-                status__in=[
-                    CashRegister.STATUS_CLOSED,
-                    CashRegister.STATUS_CLOSED_DIFFERENCE,
-                    CashRegister.STATUS_CANCELLED,
-                ]
-            )
-            .first()
-        )
+        # 1. Trava a linha do caixa: a partir daqui, uma segunda abertura do
+        #    mesmo caixa espera esta transação terminar em vez de correr com ela.
+        #    Sem caixa cadastrado (cadastros antigos e scripts internos) a trava
+        #    é a do restaurante — ainda serializa, só com granularidade maior.
+        if cash_station is not None:
+            cash_station = CashStation.objects.select_for_update().get(pk=cash_station.pk)
+            if cash_station.restaurant_id != restaurant.id or not cash_station.is_active:
+                raise ValidationError("O caixa selecionado não pertence ao restaurante ou está inativo.")
+            if not cash_station.operators.filter(pk=user.pk).exists():
+                raise ValidationError("O operador não está vinculado a este caixa.")
+            station = cash_station.name
+        else:
+            Restaurant.objects.select_for_update().filter(pk=restaurant.pk).first()
+
+        # 2. Alguma sessão ainda ocupa este caixa?
+        existing = active_session_for_station(cash_station, for_update=True) if cash_station else None
         if existing:
-            raise ValidationError("Já existe uma sessão aberta para este caixa.")
-        operator_session = (
-            CashRegister.objects.filter(restaurant=restaurant, opened_by=user)
-            .exclude(
-                status__in=[
-                    CashRegister.STATUS_CLOSED,
-                    CashRegister.STATUS_CLOSED_DIFFERENCE,
-                    CashRegister.STATUS_CANCELLED,
-                ]
-            )
-            .select_related("cash_station")
-            .first()
-        )
+            raise CashSessionConflict(occupied_message(existing), session=existing)
+
+        # 3. E o operador, já está em outro caixa?
+        operator_session = active_session_for_user(restaurant, user)
         if operator_session:
             current_name = (
-                operator_session.cash_station.name if operator_session.cash_station else operator_session.station
+                operator_session.cash_station.name
+                if operator_session.cash_station_id
+                else operator_session.station
             )
-            raise ValidationError(
-                f"Você já possui uma sessão em andamento no caixa {current_name}. Feche-a antes de abrir outro caixa."
+            raise CashSessionConflict(
+                f"Você já possui uma sessão em andamento no caixa {current_name}. "
+                "Feche-a antes de abrir outro caixa.",
+                session=operator_session,
             )
 
         counted = Decimal(str(opening_amount))
@@ -96,13 +109,18 @@ def open_cash_register(
         expected = previous.actual_amount if previous and previous.actual_amount is not None else counted
         is_initial = previous is None
         matches = counted == expected
+        # 4. Registra usuário e terminal antes de criar — o retrato do nome do
+        #    terminal fica gravado na sessão para a auditoria sobreviver a um
+        #    "Balcão 01" renomeado depois.
         cash_register = CashRegister.objects.create(
             account=restaurant.account,
             restaurant=restaurant,
             opened_by=user,
             station=station,
             cash_station=cash_station,
-            device_identifier=device_identifier,
+            device_identifier=(getattr(terminal, "installation_id", "") or device_identifier)[:255],
+            opened_terminal=terminal,
+            opened_terminal_label=(terminal.label if terminal is not None else "")[:160],
             opening_amount=counted,
             expected_amount=expected,
             actual_amount=counted,
@@ -114,6 +132,7 @@ def open_cash_register(
             created_by=user,
             updated_by=user,
         )
+        # 5. A abertura e seu movimento nascem juntos, na mesma transação.
         CashMovement.objects.create(
             account=restaurant.account,
             restaurant=restaurant,
@@ -126,16 +145,32 @@ def open_cash_register(
             created_by=user,
             updated_by=user,
         )
-        record_audit(action=AuditLog.ACTION_CREATED, instance=cash_register, actor=user)
+        record_audit(
+            action=AuditLog.ACTION_CREATED,
+            instance=cash_register,
+            actor=user,
+            metadata={
+                "event": "open_cash",
+                "terminal": getattr(terminal, "installation_id", "") or device_identifier,
+                "terminal_label": cash_register.opened_terminal_label,
+            },
+        )
         return cash_register
 
 
 @transaction.atomic
-def close_cash_register(*, cash_register, user, actual_amount, notes=""):
+def close_cash_register(*, cash_register, user, actual_amount, notes="", terminal=None, installation_id=""):
     with tenant_context(cash_register.account):
-        cash_register = CashRegister.objects.select_for_update().get(pk=cash_register.pk)
-        if cash_register.status == CashRegister.STATUS_CLOSED:
+        cash_register = (
+            CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
+            .select_for_update()
+            .get(pk=cash_register.pk)
+        )
+        if cash_register.is_finished:
             raise ValidationError("O caixa já está fechado.")
+        # Fechar é uma operação de dono: outro operador (ou a mesma pessoa em
+        # outra máquina) precisa passar por uma transferência gerencial.
+        assert_session_owner(cash_register, user=user, terminal=terminal, installation_id=installation_id)
 
         expected = cash_register.movements.filter(status="approved").aggregate(value=Sum("amount"))["value"] or Decimal(
             "0.00"
@@ -150,6 +185,10 @@ def close_cash_register(*, cash_register, user, actual_amount, notes=""):
         cash_register.pending_operation = "" if cash_register.difference_amount == 0 else "closing"
         cash_register.closed_by = user
         cash_register.closed_at = timezone.now() if cash_register.difference_amount == 0 else None
+        cash_register.closed_terminal = terminal or cash_register.opened_terminal
+        cash_register.closed_terminal_label = (
+            (terminal.label if terminal is not None else cash_register.opened_terminal_label) or ""
+        )[:160]
         cash_register.notes = notes
         cash_register.updated_by = user
         cash_register.save()
@@ -186,11 +225,20 @@ def _is_account_owner(user):
 
 
 @transaction.atomic
-def create_cash_movement(*, cash_register, user, movement_type, amount, reason, destination=""):
+def create_cash_movement(
+    *, cash_register, user, movement_type, amount, reason, destination="", terminal=None, installation_id=""
+):
     with tenant_context(cash_register.account):
-        cash_register = CashRegister.objects.select_for_update().get(pk=cash_register.pk)
+        cash_register = (
+            CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
+            .select_for_update()
+            .get(pk=cash_register.pk)
+        )
         if cash_register.status != CashRegister.STATUS_OPEN:
             raise ValidationError("O caixa precisa estar aberto para registrar movimentações.")
+        # Sangria e suprimento mexem no dinheiro da sessão: mesma regra do
+        # fechamento. Travar só o botão de abrir não impediria a chamada direta.
+        assert_session_owner(cash_register, user=user, terminal=terminal, installation_id=installation_id)
         amount = Decimal(str(amount))
         if amount <= 0 or not reason.strip():
             raise ValidationError("Informe um valor maior que zero e o motivo.")
@@ -299,6 +347,134 @@ def approve_cash_operation(
 
 
 @transaction.atomic
+def transfer_cash_session(
+    *,
+    cash_register,
+    manager,
+    reason,
+    new_operator=None,
+    terminal=None,
+    cash_password=None,
+):
+    """Passa a sessão para outro operador e/ou outra máquina, com autorização.
+
+    É a saída prevista para o que a regra de dono torna impossível sozinho: o
+    computador que abriu quebrou, o operador foi embora, o navegador perdeu os
+    dados, o terminal foi reinstalado. Sem esta ação, a exclusividade viraria
+    um caixa travado até alguém mexer no banco.
+
+    A autorização segue o mesmo desenho do resto do caixa: senha de ações do
+    restaurante OU um gerente autenticado — nunca só o pedido do operador que
+    quer assumir. A justificativa é obrigatória e tudo vai para a auditoria.
+    """
+    authorized_by_password = False
+    if cash_password:
+        stored = cash_register.restaurant.cash_action_password
+        if not stored or not check_password(cash_password, stored):
+            raise ValidationError("Senha de ações do caixa inválida.")
+        authorized_by_password = True
+    else:
+        _require_manager(manager)
+
+    if not str(reason or "").strip():
+        raise ValidationError("A justificativa da transferência é obrigatória.")
+
+    with tenant_context(cash_register.account):
+        cash_register = (
+            CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station", "restaurant")
+            .select_for_update()
+            .get(pk=cash_register.pk)
+        )
+        if cash_register.is_finished:
+            raise ValidationError("Esta sessão já foi finalizada; não há o que transferir.")
+
+        new_operator = new_operator or cash_register.opened_by
+        if new_operator.pk != cash_register.opened_by_id:
+            if cash_register.cash_station_id and not cash_register.cash_station.operators.filter(
+                pk=new_operator.pk
+            ).exists():
+                raise ValidationError("O novo operador não está vinculado a este caixa.")
+            # O destino não pode estar com outro caixa aberto — senão a
+            # transferência criaria a segunda sessão que tudo isso evita.
+            conflicting = active_session_for_user(cash_register.restaurant, new_operator)
+            if conflicting and conflicting.pk != cash_register.pk:
+                raise CashSessionConflict(occupied_message(conflicting), session=conflicting)
+
+        previous = {
+            "operator": operator_label(cash_register.opened_by),
+            "operator_id": str(cash_register.opened_by_id),
+            "terminal": terminal_label_of(cash_register),
+            "terminal_id": str(cash_register.opened_terminal_id) if cash_register.opened_terminal_id else None,
+        }
+
+        cash_register.opened_by = new_operator
+        if terminal is not None:
+            cash_register.opened_terminal = terminal
+            cash_register.opened_terminal_label = terminal.label[:160]
+            cash_register.device_identifier = terminal.installation_id[:255]
+        cash_register.approval_reason = str(reason).strip()
+        cash_register.approved_by = manager
+        cash_register.approved_at = timezone.now()
+        cash_register.updated_by = manager
+        cash_register.save(
+            update_fields=[
+                "opened_by",
+                "opened_terminal",
+                "opened_terminal_label",
+                "device_identifier",
+                "approval_reason",
+                "approved_by",
+                "approved_at",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+        CashMovement.objects.create(
+            account=cash_register.account,
+            restaurant=cash_register.restaurant,
+            branch=cash_register.branch,
+            cash_register=cash_register,
+            operator=new_operator,
+            movement_type=CashMovement.TYPE_ADJUSTMENT,
+            amount=Decimal("0.00"),
+            reason=f"Transferência de sessão: {str(reason).strip()}",
+            authorized_by=manager,
+            approved_at=timezone.now(),
+            metadata={
+                "event": "cash_session_transferred",
+                "previous_operator": previous["operator"],
+                "previous_terminal": previous["terminal"],
+                "new_operator": operator_label(new_operator),
+                "new_terminal": cash_register.opened_terminal_label or terminal_label_of(cash_register),
+                "authorized_by_cash_password": authorized_by_password,
+            },
+            created_by=manager,
+            updated_by=manager,
+        )
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=cash_register,
+            actor=manager,
+            reason=str(reason).strip(),
+            metadata={
+                "event": "cash_session_transferred",
+                "previous_operator": previous["operator"],
+                "previous_operator_id": previous["operator_id"],
+                "previous_terminal": previous["terminal"],
+                "previous_terminal_id": previous["terminal_id"],
+                "new_operator": operator_label(new_operator),
+                "new_operator_id": str(new_operator.pk),
+                "new_terminal": cash_register.opened_terminal_label,
+                "new_terminal_id": (
+                    str(cash_register.opened_terminal_id) if cash_register.opened_terminal_id else None
+                ),
+                "authorized_by_cash_password": authorized_by_password,
+            },
+        )
+        return cash_register
+
+
+@transaction.atomic
 def register_payment(
     *,
     order,
@@ -308,6 +484,8 @@ def register_payment(
     idempotency_key=None,
     metadata=None,
     cash_register_id=None,
+    terminal=None,
+    installation_id="",
 ):
     with tenant_context(order.account):
         if idempotency_key:
@@ -325,17 +503,24 @@ def register_payment(
 
         payment_method = PaymentMethod.objects.get(pk=payment_method_id, restaurant=order.restaurant, is_active=True)
         if cash_register_id:
-            cash_register = CashRegister.objects.filter(
-                pk=cash_register_id,
-                restaurant=order.restaurant,
-                opened_by=user,
-                status=CashRegister.STATUS_OPEN,
-            ).first()
+            cash_register = (
+                CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
+                .filter(
+                    pk=cash_register_id,
+                    restaurant=order.restaurant,
+                    opened_by=user,
+                    status=CashRegister.STATUS_OPEN,
+                )
+                .first()
+            )
             if cash_register is None:
                 raise ValidationError(
                     "A sessão de caixa usada neste pagamento não está mais aberta "
                     "para este operador. Revise a venda antes de sincronizar."
                 )
+            # O dinheiro entra na gaveta de UM terminal. Aceitar o recebimento
+            # de outra máquina somaria ao saldo de uma sessão que não é dela.
+            assert_session_owner(cash_register, user=user, terminal=terminal, installation_id=installation_id)
         else:
             cash_register = get_open_cash_register(order.restaurant, user=user)
         if order.restaurant.require_open_cash_register and not cash_register:

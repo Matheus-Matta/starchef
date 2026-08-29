@@ -71,6 +71,21 @@ class Product(TenantModel):
         help_text="Restaurantes da conta que podem comercializar este produto.",
     )
     internal_code = models.CharField(max_length=60)
+    # Código de barras do fabricante (GTIN-8/12/13/14) ou etiqueta própria.
+    #
+    # TEXTO, nunca número: `0000012345670` e `12345670` são códigos
+    # diferentes, e guardar como número perderia os zeros à esquerda — o
+    # leitor mandaria o código impresso e o PDV não acharia o produto.
+    #
+    # Único na CONTA (ver constraint): se dois produtos tivessem o mesmo
+    # código, o PDV teria de escolher um em silêncio na hora da venda.
+    ean = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Código de barras (EAN/GTIN). Opcional, único na conta.",
+    )
     description = models.TextField(blank=True)
     category = models.ForeignKey(
         ProductCategory,
@@ -119,10 +134,21 @@ class Product(TenantModel):
         ordering = ["category__display_order", "name"]
         constraints = [
             models.UniqueConstraint(fields=["branch", "internal_code"], name="unique_product_code_by_branch"),
+            # Vazio não conflita (a maioria dos produtos não tem código de
+            # barras); preenchido, é único na conta inteira — o leitor não
+            # sabe de qual filial é o produto que ele acabou de ler.
+            models.UniqueConstraint(
+                fields=["account", "ean"],
+                condition=~models.Q(ean="") & models.Q(deleted_at__isnull=True),
+                name="unique_product_ean_by_account",
+            ),
         ]
         indexes = [
             models.Index(fields=["branch", "is_active", "product_type"]),
             models.Index(fields=["branch", "production_sector"]),
+            # O PDV busca por código na venda: sem índice, cada leitura
+            # varreria o catálogo inteiro.
+            models.Index(fields=["account", "ean"]),
         ]
 
     @property

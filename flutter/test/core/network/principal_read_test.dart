@@ -230,6 +230,56 @@ void main() {
       expect(await api.pendingOperations(), 0);
     });
 
+    test('cadastro de cliente vai ao principal, não à nuvem', () async {
+      // Era a última exceção: o cliente ia direto para a nuvem porque "não
+      // pertence ao atendimento em curso". Na prática, era um segundo caminho
+      // até a nuvem saindo de um terminal que não deveria ter nenhum.
+      var cloudCalls = 0;
+      final api = clientWith(
+        MockClient((_) async {
+          cloudCalls += 1;
+          return http.Response('{"id":"da-nuvem"}', 201);
+        }),
+      );
+      addTearDown(api.dispose);
+      final principal = FakePrincipal();
+      api.attachMutationRelay(principal);
+
+      final result = await api.post(
+        '/customers/',
+        body: const {'name': 'Maria'},
+        accessToken: _token,
+      );
+
+      expect(cloudCalls, 0);
+      expect(result['id'], 'do-principal');
+      expect(principal.relayedPaths, ['/customers/']);
+    });
+
+    test('sem o principal, o cliente também não vai pela nuvem', () async {
+      var cloudCalls = 0;
+      final api = clientWith(
+        MockClient((_) async {
+          cloudCalls += 1;
+          return http.Response('{"id":"da-nuvem"}', 201);
+        }),
+      );
+      addTearDown(api.dispose);
+      api.attachMutationRelay(FakePrincipal(available: false));
+
+      await expectLater(
+        () => api.post(
+          '/customers/',
+          body: const {'name': 'Maria'},
+          accessToken: _token,
+        ),
+        throwsA(isA<ApiException>()),
+      );
+
+      expect(cloudCalls, 0);
+      expect(await api.pendingOperations(), 0);
+    });
+
     test('operação que exige servidor também é recusada', () async {
       final api = clientWith(
         MockClient((_) async => http.Response('{}', 200)),

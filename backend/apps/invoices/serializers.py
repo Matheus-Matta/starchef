@@ -15,7 +15,9 @@ class FiscalProfileSerializer(TenantModelSerializer):
 
 class FiscalConfigSerializer(TenantModelSerializer):
     is_ready = serializers.BooleanField(read_only=True)
+    restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True)
     focus_connected = serializers.SerializerMethodField()
+    focus_missing_fields = serializers.SerializerMethodField()
     provider_token_configured = serializers.SerializerMethodField()
     csc_token_configured = serializers.SerializerMethodField()
     focus_certificate_configured = serializers.SerializerMethodField()
@@ -47,6 +49,18 @@ class FiscalConfigSerializer(TenantModelSerializer):
 
     def get_focus_connected(self, obj):
         return bool(obj.focus_company_id and (obj.focus_token_production or obj.focus_token_homologation))
+
+    def get_focus_missing_fields(self, obj):
+        """O que ainda falta para a Focus aceitar a empresa, campo a campo.
+
+        A API de sincronizacao ja recusa com a lista ("...antes de sincronizar:
+        CEP."), mas so DEPOIS de clicar. Devolvendo isso no GET a tela mostra a
+        pendencia antes, apontando o campo exato em vez de mandar o usuario
+        adivinhar onde mexer.
+        """
+        from apps.invoices.focus import company_payload_missing_fields
+
+        return company_payload_missing_fields(obj)
 
     def get_provider_token_configured(self, obj):
         return bool(obj.provider_token)
@@ -94,6 +108,18 @@ class FiscalConfigSerializer(TenantModelSerializer):
         csc_id = attrs.get("csc_id")
         if csc_id and not csc_id.isdigit():
             raise serializers.ValidationError({"csc_id": "Informe apenas numeros no ID do CSC."})
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if branch is not None:
+            duplicates = FiscalConfig.all_objects.filter(branch=branch)
+            if self.instance is not None:
+                duplicates = duplicates.exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                # A constraint e do banco e nao enxerga soft-delete: sem isto o
+                # POST estourava IntegrityError ("valor duplicado") em vez de
+                # dizer que a configuracao daquela filial ja existe.
+                raise serializers.ValidationError(
+                    {"branch": "Esta filial ja possui uma configuracao fiscal. Edite a existente em vez de criar outra."}
+                )
         return attrs
 
 

@@ -20,12 +20,27 @@ class TopologyIdentity {
     required this.accountId,
     required this.actorId,
     this.restaurantId = '',
+    this.refreshToken = '',
+    this.actorName = '',
+    this.terminalName = '',
   });
 
   final String accessToken;
   final String accountId;
   final String actorId;
   final String restaurantId;
+
+  /// Refresh deste terminal, enviado junto da operação encaminhada.
+  ///
+  /// Um Caixa Secundário não fala com o servidor — nem para renovar o próprio
+  /// token. Quem renova, quando a operação dele espera muito na fila do
+  /// principal, é o principal, com este refresh.
+  final String refreshToken;
+
+  /// Nome do operador e do terminal, para o registro que o principal grava
+  /// antes de a nuvem confirmar.
+  final String actorName;
+  final String terminalName;
 
   /// Dá para assinar uma requisição ao Caixa Principal?
   bool get canPair =>
@@ -123,8 +138,11 @@ class TerminalTopology extends ChangeNotifier {
     final service = LocalTopologyService(
       api: api,
       accessToken: identity.accessToken,
+      refreshToken: identity.refreshToken,
       accountId: identity.accountId,
       actorId: identity.actorId,
+      actorName: identity.actorName,
+      terminalName: identity.terminalName,
       restaurantId: unit,
       store: _createStore(),
       // Quem imprime em nome de um nó sem impressora (o app do garçom) é

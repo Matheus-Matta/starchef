@@ -1,7 +1,9 @@
 import 'dart:convert';
 
+import '../formatters/value_formatters.dart';
 import '../network/api_exception.dart';
 import '../network/offline_mutations.dart';
+import '../network/relay_origin.dart';
 import 'cash_register_repository.dart';
 import 'entity_catalog.dart';
 import 'entity_repository.dart';
@@ -106,6 +108,25 @@ class OfflineFirstGateway {
   String? _scope;
   String? _restaurantId;
   final Map<String, EntityRepository> _repositories = {};
+
+  /// UUID da instalação deste terminal — o `nodeId` da topologia local.
+  ///
+  /// É a identidade que torna a sessão de caixa recuperável ("mesmo operador,
+  /// mesma máquina") sem torná-la transferível por acidente. Não usamos MAC,
+  /// IP nem nome do computador: nenhum é estável, e nenhum é necessário.
+  String? installationId;
+
+  /// Nome amigável do terminal ("Balcão 01"), quando a loja já o nomeou.
+  String? terminalLabel;
+
+  /// Operador da sessão atual. Vem do escopo (`servidor|conta:operador`), que
+  /// já é o namespace do banco local.
+  String? get operatorId {
+    final scope = _scope;
+    if (scope == null || !scope.contains(':')) return null;
+    final actor = scope.split(':').last.trim();
+    return actor.isEmpty ? null : actor;
+  }
 
   /// Namespace da sessão (servidor + conta + operador). Sem ele o gateway não
   /// atende nada: dados de duas contas não podem se misturar no mesmo
@@ -239,6 +260,13 @@ class OfflineFirstGateway {
     if (!EntityCatalog.isLocalAction(route.type, route.action)) return false;
     // Num secundário, a fila só pode aceitar o que o principal sabe receber.
     if (relayOnly && !OfflineMutations.isRelayable(method, path)) return false;
+    // E a sessão de caixa nunca é gravada aqui num secundário: quem manda na
+    // sessão é o Caixa Principal, e uma cópia local criada por conta própria
+    // seria uma segunda sessão esperando para nascer. O secundário encaminha
+    // e usa a resposta do principal.
+    if (relayOnly && OfflineMutations.ownsCashSession(method, path)) {
+      return false;
+    }
     return true;
   }
 
@@ -263,10 +291,15 @@ class OfflineFirstGateway {
 
     // `/cash-register/current/`: instância única, resolvida por regra.
     if (route.type == EntityCatalog.cashSession && route.action == 'current') {
+      final restaurant = '${query?['restaurant'] ?? _restaurantId ?? ''}';
+      // A sessão pertence a quem abriu e ao terminal onde foi aberta: devolver
+      // a de outra pessoa faria esta tela oferecer sangria e fechamento de uma
+      // gaveta que não é dela.
+      final origin = RelayOrigin.current;
       final session = await cashRegister.current(
-        restaurantId: '${query?['restaurant'] ?? _restaurantId ?? ''}'.isEmpty
-            ? null
-            : '${query?['restaurant'] ?? _restaurantId}',
+        restaurantId: restaurant.isEmpty ? null : restaurant,
+        operatorId: origin?.actorId ?? operatorId,
+        installationId: origin?.installationId ?? installationId,
       );
       if (session == null) {
         return {'detail': 'Nenhuma sessão de caixa aberta neste terminal.',
@@ -379,6 +412,13 @@ class OfflineFirstGateway {
     if (action.startsWith('items/') && action.endsWith('/void')) {
       final itemId = action.split('/')[1];
       return orders.voidItem(orderId, itemId: itemId, body: body);
+    }
+    if (action.startsWith('items/') && action.endsWith('/quantity')) {
+      return orders.setItemQuantity(
+        orderId,
+        itemId: action.split('/')[1],
+        quantity: ValueFormatters.number(body['quantity']),
+      );
     }
     if (action == 'send-to-kitchen') {
       return orders.sendToKitchen(orderId, body: body);
@@ -501,29 +541,53 @@ class OfflineFirstGateway {
     Map<String, dynamic> body,
     Map<String, dynamic>? context,
   ) async {
+    // Quando este terminal está executando por outro (o principal atendendo
+    // um secundário), o dono da sessão é o DE LÁ — operador e instalação de
+    // quem originou. Gravar o operador daqui faria a sessão do PDV 2 nascer
+    // no nome do PDV 1.
+    final origin = RelayOrigin.current;
+    final actor = origin?.actorId ?? operatorId;
+    final terminal =
+        '${origin?.installationId ?? body['terminal_installation_id'] ?? installationId ?? ''}';
     if (route.isCollection && route.action == 'open') {
       return cashRegister.open(
         body: body,
         restaurantId: '${body['restaurant'] ?? _restaurantId ?? ''}',
         station: context?['cash_station'] as Map<String, dynamic>?,
-        operatorName: context?['operator_name'] as String?,
+        operatorName:
+            origin?.actorName.isNotEmpty == true
+            ? origin!.actorName
+            : context?['operator_name'] as String?,
+        operatorId: actor,
+        installationId: terminal.isEmpty ? null : terminal,
+        terminalLabel:
+            '${origin?.terminalName ?? body['terminal_name'] ?? terminalLabel ?? ''}',
       );
     }
     final id = route.entityId ?? '';
     switch (route.action) {
       case 'close':
-        return cashRegister.close(id, body: body);
+        return cashRegister.close(
+          id,
+          body: body,
+          operatorId: actor,
+          installationId: terminal.isEmpty ? null : terminal,
+        );
       case 'withdrawal':
         return cashRegister.registerMovement(
           id,
           movementType: 'withdrawal',
           body: body,
+          operatorId: actor,
+          installationId: terminal.isEmpty ? null : terminal,
         );
       case 'supply':
         return cashRegister.registerMovement(
           id,
           movementType: 'supply',
           body: body,
+          operatorId: actor,
+          installationId: terminal.isEmpty ? null : terminal,
         );
       case 'approve':
         return cashRegister.approve(

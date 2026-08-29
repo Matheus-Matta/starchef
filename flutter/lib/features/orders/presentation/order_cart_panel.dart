@@ -24,6 +24,8 @@ class OrderCartPanel extends StatelessWidget {
     this.onEmitInvoice,
     required this.printing,
     this.emittingInvoice = false,
+    this.selectedItemId,
+    this.onSelectItem,
   });
 
   final Map<String, dynamic>? order;
@@ -39,6 +41,14 @@ class OrderCartPanel extends StatelessWidget {
   final VoidCallback? onEmitInvoice;
   final bool printing;
   final bool emittingInvoice;
+
+  /// Item sob o cursor do teclado.
+  ///
+  /// As teclas `+`, `-` e Delete agem sobre ELE. Sem uma seleção visível,
+  /// essas teclas teriam de adivinhar um alvo — e uma tecla que apaga não
+  /// pode adivinhar.
+  final String? selectedItemId;
+  final ValueChanged<Map<String, dynamic>>? onSelectItem;
 
   bool get _readOnly =>
       const {'paid', 'cancelled', 'refunded'}.contains('${order?['status']}');
@@ -393,6 +403,7 @@ class OrderCartPanel extends StatelessWidget {
   /// informação que o operador precisa antes de fechar: só a segunda parte
   /// ainda pode ser removida.
   Widget _items(BuildContext context) {
+    _pruneItemKeys();
     final sent = items
         .where((item) => item['status'] != 'pending')
         .toList(growable: false);
@@ -411,10 +422,13 @@ class OrderCartPanel extends StatelessWidget {
           ),
           for (final item in sent)
             Padding(
+              key: _keyFor(item),
               padding: const EdgeInsets.only(bottom: 8),
               child: _CartItem(
                 item: item,
                 money: money,
+                selected: '${item['id']}' == selectedItemId,
+                onTap: onSelectItem == null ? null : () => onSelectItem!(item),
                 // Item já em produção também pode ser cancelado: o backend
                 // aceita (`void_order_item`) e emite o cupom de cancelamento
                 // para a mesma impressora que recebeu a comanda original
@@ -436,18 +450,42 @@ class OrderCartPanel extends StatelessWidget {
           ),
           for (final item in pending)
             Padding(
+              key: _keyFor(item),
               padding: const EdgeInsets.only(bottom: 8),
               child: _CartItem(
                 item: item,
                 money: money,
                 canRemove: !_readOnly,
                 onRemove: () => onVoidItem(item),
+                selected: '${item['id']}' == selectedItemId,
+                onTap: onSelectItem == null ? null : () => onSelectItem!(item),
               ),
             ),
         ],
       ],
     );
   }
+
+  /// Chave estável por item, para a navegação por setas conseguir rolar até
+  /// a linha selecionada quando ela sai da área visível.
+  static Key _keyFor(Map<String, dynamic> item) =>
+      _itemKeys.putIfAbsent('${item['id']}', GlobalKey.new);
+
+  /// Onde a linha deste item está desenhada agora, se estiver.
+  static BuildContext? contextOfItem(String itemId) =>
+      _itemKeys[itemId]?.currentContext;
+
+  /// Descarta as chaves de itens que saíram da tela.
+  ///
+  /// Sem isto o mapa guardaria uma `GlobalKey` por item de TODO pedido já
+  /// aberto no turno — um vazamento lento que só apareceria depois de horas
+  /// de operação, que é exatamente quando ninguém está olhando.
+  void _pruneItemKeys() {
+    final alive = items.map((item) => '${item['id']}').toSet();
+    _itemKeys.removeWhere((id, _) => !alive.contains(id));
+  }
+
+  static final Map<String, GlobalKey> _itemKeys = {};
 
   Widget _sectionLabel(
     BuildContext context, {
@@ -504,12 +542,16 @@ class _CartItem extends StatelessWidget {
     required this.canRemove,
     required this.money,
     required this.onRemove,
+    this.selected = false,
+    this.onTap,
   });
 
   final Map<String, dynamic> item;
   final bool canRemove;
   final String Function(dynamic) money;
   final VoidCallback onRemove;
+  final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -518,9 +560,16 @@ class _CartItem extends StatelessWidget {
     final extras = _extras();
     final comped = item['status'] == 'comped';
 
-    return ShadCard(
+    final card = ShadCard(
       padding: const EdgeInsets.fromLTRB(11, 9, 7, 9),
-      backgroundColor: scheme.surface,
+      // A seleção precisa ser inconfundível: é ela que diz sobre qual linha
+      // o Delete vai agir.
+      backgroundColor: selected
+          ? scheme.primaryContainer.withValues(alpha: .38)
+          : scheme.surface,
+      border: selected
+          ? ShadBorder.all(color: scheme.primary, width: 1.6)
+          : null,
       radius: AppTheme.radius,
       shadows: const [],
       columnCrossAxisAlignment: CrossAxisAlignment.stretch,
@@ -617,6 +666,12 @@ class _CartItem extends StatelessWidget {
             const SizedBox(width: 30),
         ],
       ),
+    );
+    if (onTap == null) return card;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: card,
     );
   }
 

@@ -43,7 +43,13 @@ from apps.menu.views import (
 )
 from apps.notifications.views import NotificationViewSet
 from apps.orders.views import OrderItemViewSet, OrderViewSet
-from apps.payments.views import CashRegisterViewSet, CashStationViewSet, PaymentMethodViewSet, PaymentViewSet
+from apps.payments.views import (
+    CashRegisterViewSet,
+    CashStationViewSet,
+    PaymentMethodViewSet,
+    PaymentViewSet,
+    PdvTerminalViewSet,
+)
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.views import (
     DashboardReportView,
@@ -119,6 +125,7 @@ router.register("payments/methods", PaymentMethodViewSet, basename="payment-meth
 router.register("payments", PaymentViewSet, basename="payments")
 router.register("cash-register", CashRegisterViewSet, basename="cash-register")
 router.register("cash-stations", CashStationViewSet, basename="cash-stations")
+router.register("pdv-terminals", PdvTerminalViewSet, basename="pdv-terminals")
 router.register("fiscal/config", FiscalConfigViewSet, basename="fiscal-config")
 router.register("fiscal/profiles", FiscalProfileViewSet, basename="fiscal-profiles")
 router.register("invoices", InvoiceViewSet, basename="invoices")

@@ -15,6 +15,7 @@ import 'api_exception.dart';
 import 'data_signals.dart';
 import 'realtime_client.dart';
 import 'mutation_relay.dart';
+import 'relay_origin.dart';
 import 'offline_mutations.dart';
 import 'offline_store.dart';
 
@@ -440,7 +441,6 @@ class ApiClient {
     final cacheKey = _cacheKey(path, query, accessToken);
     final operationId = method == 'GET' ? null : _nextOperationId();
     final queueableMutation = method != 'GET' && _canQueue(method, path, body);
-    final bypassesPrincipal = path.startsWith('/customers/');
     if (method != 'GET' && _containsPrincipalTemporaryId(path, query, body)) {
       final relay = _mutationRelay;
       if (relay == null || !queueableMutation) {
@@ -506,8 +506,13 @@ class ApiClient {
     // problema só apareceria depois, como pedido divergente ou cobrança
     // repetida. Preferimos recusar agora, com o motivo na tela.
     final preferredRelay = _mutationRelay;
-    if (method != 'GET' && preferredRelay != null && !bypassesPrincipal) {
-      if (!queueableMutation) {
+    if (method != 'GET' && preferredRelay != null) {
+      // O critério é "o principal sabe executar isto?", e não "isto cabe numa
+      // fila". São perguntas diferentes: transferir uma sessão de caixa não
+      // pode esperar em fila nenhuma, mas o principal a executa na hora em
+      // nome de quem pediu — e é justamente por existirem operações assim que
+      // o secundário nunca precisa falar com o servidor.
+      if (!OfflineMutations.canBeHandledByPrincipal(method, path)) {
         throw ApiException(
           'Esta operação precisa do servidor e este caixa é secundário. '
           'Ela é concluída pelo Caixa Principal.',
@@ -564,11 +569,12 @@ class ApiClient {
           return {...cached, '_offline_cache': true};
         }
       }
-      // Um secundário já teria sido atendido — ou recusado — pelo principal
-      // acima. Chegar aqui com relay significa que a nuvem caiu numa operação
-      // que não passa pelo principal, e a fila local continua fora de questão.
+      // Um secundário já foi atendido — ou recusado — pelo principal acima.
+      // Chegar aqui com relay ligado significaria uma operação que escapou
+      // dele, e a fila deste terminal continua fora de questão: ela entregaria
+      // à nuvem, que é exatamente o caminho que um secundário não tem.
       if (method != 'GET' &&
-          (_mutationRelay == null || bypassesPrincipal) &&
+          _mutationRelay == null &&
           _canQueue(method, path, body)) {
         final queued = await _queueMutation(
           method: method,
@@ -708,26 +714,51 @@ class ApiClient {
     Map<String, dynamic>? body,
     String? accessToken,
     String? operationId,
+    RelayOrigin? origin,
+    void Function(RelayOrigin renewed)? onOriginRenewed,
   }) async {
+    // Uma operação encaminhada viaja com as credenciais de quem a originou:
+    // o token do secundário, não o do principal.
+    final effectiveToken = origin != null ? origin.accessToken : accessToken;
     try {
       return await _requestOnline(
         method,
         path,
         query: query,
         body: body,
-        accessToken: accessToken,
+        accessToken: effectiveToken,
         operationId: operationId,
+        origin: origin,
       );
     } on ApiException catch (error) {
       final recoverable =
           error.statusCode == 401 &&
-          accessToken != null &&
-          _tokenRefresher != null &&
+          effectiveToken != null &&
           // O próprio login/refresh devolvendo 401 significa credencial
           // inválida; insistir aqui geraria um laço.
           !path.startsWith('/auth/');
       if (!recoverable) rethrow;
 
+      if (origin != null) {
+        // A fila é durável: o access token do secundário vence enquanto a
+        // operação espera a nuvem voltar. Ele não pode renovar sozinho (não
+        // fala com o servidor), então quem renova é o principal, com o refresh
+        // que veio no envelope.
+        final renewedOrigin = await _refreshOriginToken(origin);
+        if (renewedOrigin == null) rethrow;
+        onOriginRenewed?.call(renewedOrigin);
+        return _requestOnline(
+          method,
+          path,
+          query: query,
+          body: body,
+          accessToken: renewedOrigin.accessToken,
+          operationId: operationId,
+          origin: renewedOrigin,
+        );
+      }
+
+      if (_tokenRefresher == null) rethrow;
       // Um `null` aqui pode significar credencial recusada ou apenas rede
       // indisponível no instante da renovação. Quem sabe distinguir os dois é
       // quem detém a sessão, então a decisão de encerrá-la fica lá — encerrar
@@ -743,6 +774,31 @@ class ApiClient {
         accessToken: renewed,
         operationId: operationId,
       );
+    }
+  }
+
+  /// Renova o token de um terminal de origem usando o refresh dele.
+  ///
+  /// Nunca toca na sessão deste terminal: são credenciais de outra pessoa,
+  /// que só existem aqui para a entrega acontecer no nome certo.
+  Future<RelayOrigin?> _refreshOriginToken(RelayOrigin origin) async {
+    if (origin.refreshToken.trim().isEmpty) return null;
+    try {
+      final response = await _requestOnline(
+        'POST',
+        '/auth/refresh/',
+        body: {'refresh': origin.refreshToken},
+      );
+      final token = '${response['access'] ?? ''}';
+      if (token.isEmpty) return null;
+      // A rotação do backend invalida o refresh usado: guardar o novo é o que
+      // permite renovar de novo na próxima espera longa.
+      return origin.withTokens(
+        access: token,
+        refresh: '${response['refresh'] ?? ''}',
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -774,6 +830,7 @@ class ApiClient {
     Map<String, dynamic>? body,
     String? accessToken,
     String? operationId,
+    RelayOrigin? origin,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl$path').replace(
@@ -784,6 +841,25 @@ class ApiClient {
         headers['Authorization'] = 'Bearer $accessToken';
       }
       if (operationId != null) headers['Idempotency-Key'] = operationId;
+      // De ONDE a operação partiu. A sessão de caixa pertence ao par
+      // (operador, terminal), e a checagem vale para receber, sangrar, suprir
+      // e fechar — não só para abrir. Mandar no cabeçalho, e não no corpo de
+      // cada rota, é o que faz a identidade acompanhar inclusive o replay da
+      // fila (que reenvia por aqui).
+      //
+      // Quando o principal entrega a operação de um secundário, o terminal é o
+      // DELE, não o do principal — senão a sessão ficaria registrada na
+      // máquina errada.
+      final installation = origin?.installationId.isNotEmpty == true
+          ? origin!.installationId
+          : (_gateway?.installationId ?? '');
+      if (installation.isNotEmpty) {
+        headers['X-Terminal-Id'] = installation;
+        final label = origin?.installationId.isNotEmpty == true
+            ? origin!.terminalName
+            : (_gateway?.terminalLabel ?? '');
+        if (label.isNotEmpty) headers['X-Terminal-Name'] = label;
+      }
       final request = http.Request(method, uri)..headers.addAll(headers);
       if (body != null) request.body = jsonEncode(body);
       final streamed = await _client.send(request).timeout(requestTimeout);
@@ -924,6 +1000,21 @@ class ApiClient {
   Future<Map<String, dynamic>> acceptRelayedMutation(
     RelayMutation mutation, {
     required String accessToken,
+    RelayOrigin? origin,
+  }) =>
+      // Tudo o que esta operação gravar — a entidade local e a linha da fila —
+      // fica atribuído a quem a originou. A zona é o que mantém essa atribuição
+      // colada à cadeia de chamadas: o principal atende as próprias vendas no
+      // mesmo isolate, e um campo compartilhado seria lido pela operação errada
+      // no primeiro `await` que as intercalasse.
+      RelayOrigin.runAs(
+        origin,
+        () => _acceptRelayedMutation(mutation, accessToken: accessToken),
+      );
+
+  Future<Map<String, dynamic>> _acceptRelayedMutation(
+    RelayMutation mutation, {
+    required String accessToken,
   }) async {
     // A pergunta aqui é "isto pode chegar pela rede local?", não "isto pode
     // esperar numa fila" — são coisas diferentes, e confundi-las travava a
@@ -960,6 +1051,7 @@ class ApiClient {
     // Rota que o armazenamento local não sabe aplicar (aprovação de
     // supervisor, trabalho de impressão): segue exigindo o servidor, e o
     // aparelho recebe o erro de verdade em vez de uma confirmação falsa.
+    final origin = RelayOrigin.current;
     try {
       final response = await _requestWithSessionRecovery(
         mutation.method,
@@ -968,10 +1060,24 @@ class ApiClient {
         body: mutation.body,
         accessToken: accessToken,
         operationId: mutation.operationId,
+        origin: origin,
       );
       await _publishStatus(NetworkSyncPhase.online);
       return response;
     } on _NetworkUnavailable catch (error) {
+      // Esta fila é do principal e não guarda credenciais de terceiros: uma
+      // operação de outro caixa que caísse aqui subiria no nome errado. Ela
+      // volta como falha temporária, e quem a originou torna a pedir — a
+      // operação continua com o dono.
+      if (origin != null) {
+        throw ApiException(
+          'O Caixa Principal não alcançou o servidor agora. ${error.message}',
+          // 503 para o secundário reconhecer isto como temporário e tentar de
+          // novo, em vez de tratar como recusa de negócio.
+          statusCode: 503,
+          isConnectivity: true,
+        );
+      }
       final queued = await _queueMutation(
         method: mutation.method,
         path: mutation.path,
@@ -1043,9 +1149,7 @@ class ApiClient {
         try {
           late final Map<String, dynamic> response;
           final relay = _mutationRelay;
-          if (relay != null &&
-              _canQueue(method, path, body) &&
-              !path.startsWith('/customers/')) {
+          if (relay != null && _canQueue(method, path, body)) {
             try {
               response = await _relayMutation(
                 relay,
@@ -1604,6 +1708,8 @@ class _ApiSyncTransport implements SyncTransport {
     Map<String, dynamic>? query,
     Map<String, dynamic>? body,
     String? idempotencyKey,
+    RelayOrigin? origin,
+    void Function(RelayOrigin renewed)? onOriginRenewed,
   }) async {
     try {
       return await _api._requestWithSessionRecovery(
@@ -1613,6 +1719,8 @@ class _ApiSyncTransport implements SyncTransport {
         body: body,
         accessToken: _api._lastAccessToken,
         operationId: idempotencyKey,
+        origin: origin,
+        onOriginRenewed: onOriginRenewed,
       );
     } on _NetworkUnavailable catch (error) {
       throw TransientSyncFailure(

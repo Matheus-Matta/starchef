@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { clearSession, hasSession } from "./tokenStorage";
+import { terminalInstallationId, terminalName } from "./terminalIdentity";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -31,8 +32,26 @@ api.interceptors.request.use((config) => {
   // O access token vai automaticamente pelo cookie httpOnly. Só mexemos no
   // Authorization quando o chamador o define explicitamente (sessão temporária).
   applyRestaurantScope(config);
+  applyTerminalIdentity(config);
   return config;
 });
+
+/**
+ * Diz DE ONDE a requisição partiu, em toda chamada.
+ *
+ * A sessão de caixa pertence ao par (operador, terminal), e a checagem vale
+ * para recuperar, pagar, sangrar, suprir e fechar — não só para abrir. Mandar
+ * a identidade em um cabeçalho, e não apenas no corpo de `/open/`, é o que
+ * evita ter de lembrar de incluí-la em cada endpoint novo.
+ */
+function applyTerminalIdentity(config) {
+  if (isAuthRequest(config.url)) return;
+  config.headers = config.headers || {};
+  if (!config.headers["X-Terminal-Id"]) {
+    config.headers["X-Terminal-Id"] = terminalInstallationId();
+    config.headers["X-Terminal-Name"] = terminalName();
+  }
+}
 
 api.interceptors.response.use(
   (response) => response,
@@ -131,7 +150,13 @@ export async function confirmPasswordReset(token, password, passwordConfirm) {
 
 export async function temporaryAuthenticatedPost(path, payload, access) {
   return authClient.post(path, payload, {
-    headers: { Authorization: `Bearer ${access}` },
+    // A identidade do terminal viaja também na autorização gerencial: é ela
+    // que diz para qual máquina uma sessão de caixa está sendo transferida.
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "X-Terminal-Id": terminalInstallationId(),
+      "X-Terminal-Name": terminalName(),
+    },
   });
 }
 

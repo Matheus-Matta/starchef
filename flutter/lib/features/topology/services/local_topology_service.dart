@@ -9,6 +9,7 @@ import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/mutation_relay.dart';
+import '../../../core/network/relay_origin.dart';
 import '../../../core/network/offline_mutations.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../data/local_topology_store.dart';
@@ -56,6 +57,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     required this.accountId,
     required this.actorId,
     required String restaurantId,
+    this.refreshToken = '',
+    this.actorName = '',
+    this.installationId = '',
+    this.terminalName = '',
     LocalTopologyStore? store,
     LocalDeviceAgent? deviceAgent,
   }) : _restaurantId = restaurantId,
@@ -72,8 +77,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
 
   final ApiClient api;
   final String accessToken;
+
+  /// Refresh token DESTE terminal, enviado junto da operação encaminhada.
+  ///
+  /// A fila do Caixa Principal é durável: uma venda de um secundário pode
+  /// esperar horas até a nuvem voltar, e o access token já teria vencido. Sem
+  /// o refresh, uma queda longa transformaria a fila inteira em pendência
+  /// manual — e o secundário não pode renovar sozinho, porque ele não fala com
+  /// o servidor.
+  final String refreshToken;
   final String accountId;
   final String actorId;
+
+  /// Nome do operador e da instalação de origem, usados no registro local que
+  /// o principal grava antes de a nuvem confirmar.
+  final String actorName;
+  final String installationId;
+  final String terminalName;
   final LocalTopologyStore store;
   final Expando<bool> _respondedRequests = Expando<bool>();
   final RelayPrintFallback? _printFallback;
@@ -400,10 +420,27 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
 
     try {
+      // O secundário não fala com o servidor: quem entrega é o principal. Para
+      // que a entrega aconteça em nome de QUEM originou — e não do principal —,
+      // as credenciais deste terminal viajam junto, lacradas com a chave de
+      // pareamento.
+      final credentials = _ownCredentials;
       final envelope = await _signedRequest(
         'POST',
         '/v1/relay',
-        body: mutation.toJson(),
+        body: credentials == null
+            ? mutation.toJson()
+            : RelayMutation(
+                method: mutation.method,
+                path: mutation.path,
+                operationId: mutation.operationId,
+                query: mutation.query,
+                body: mutation.body,
+                sealedOrigin: LocalRelayAuthenticator.sealOrigin(
+                  secret: current!.pairingSecret,
+                  origin: credentials,
+                ),
+              ).toJson(),
       );
       final rawResult = envelope['result'];
       if (envelope['ok'] != true || rawResult is! Map) {
@@ -560,6 +597,26 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       }
     }
     return null;
+  }
+
+  /// As credenciais que este terminal envia junto de cada operação.
+  ///
+  /// `installationId` cai para o `nodeId` da topologia: é o mesmo UUID que já
+  /// identifica a instalação no relay, e é ele que vira o `X-Terminal-Id` do
+  /// encaminhamento — a sessão de caixa fica registrada na máquina certa.
+  RelayOrigin? get _ownCredentials {
+    final token = accessToken.trim();
+    if (token.isEmpty || actorId.trim().isEmpty) return null;
+    return RelayOrigin(
+      accessToken: token,
+      refreshToken: refreshToken,
+      actorId: actorId,
+      actorName: actorName,
+      installationId: installationId.isNotEmpty
+          ? installationId
+          : (_config?.nodeId ?? ''),
+      terminalName: terminalName,
+    );
   }
 
   Future<Map<String, dynamic>> _signedRequest(
@@ -808,6 +865,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
               ? null
               : Map<String, dynamic>.from(request.uri.queryParameters),
           body: payloadLocal.isEmpty ? null : payloadLocal,
+          origin: _openOrigin(
+            '${payloadLocal['origin'] ?? ''}',
+            authenticated,
+          ),
         );
         if (!_validMutationEnvelope(mutationLocal)) {
           throw const FormatException('Envelope da operação local inválido.');
@@ -839,6 +900,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         body: payload['body'] is Map
             ? Map<String, dynamic>.from(payload['body'] as Map)
             : null,
+        origin: _openOrigin('${payload['origin'] ?? ''}', authenticated),
       );
       if (!_validMutationEnvelope(mutation)) {
         throw const FormatException('Envelope da operação local inválido.');
@@ -875,6 +937,42 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
+  /// Abre o lacre da origem e confere que ele descreve quem realmente falou.
+  ///
+  /// O ator do lacre precisa bater com o ator do cabeçalho assinado: é o
+  /// cabeçalho que a chave de pareamento autentica, e quem manda não escolhe
+  /// por quem falar. Um lacre ilegível (chave diferente) ou divergente é
+  /// simplesmente descartado — a operação segue com as credenciais do
+  /// principal, como antes, em vez de ser recusada por um cliente
+  /// desatualizado.
+  RelayOrigin? _openOrigin(String sealed, _AuthenticatedNode node) {
+    final secret = _config?.pairingSecret ?? '';
+    if (sealed.isEmpty || secret.isEmpty) return null;
+    final origin = LocalRelayAuthenticator.openOrigin(
+      secret: secret,
+      sealed: sealed,
+    );
+    if (origin == null) return null;
+    if (origin.actorId != node.actorId) {
+      AppLogger.instance.warning(
+        'relay_origem_divergente',
+        data: {'node': node.nodeId, 'ator_assinado': node.actorId},
+      );
+      return null;
+    }
+    return origin.installationId.isNotEmpty
+        ? origin
+        : RelayOrigin(
+            accessToken: origin.accessToken,
+            refreshToken: origin.refreshToken,
+            actorId: origin.actorId,
+            actorName: origin.actorName,
+            // Sem instalação declarada, o nó do relay já identifica a máquina.
+            installationId: node.nodeId,
+            terminalName: origin.terminalName,
+          );
+  }
+
   /// Diz quem realmente está atendendo, quando a operação abre um pedido.
   ///
   /// Este terminal executa com as credenciais DELE — é ele quem tem a sessão
@@ -890,11 +988,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (!OfflineMutations.opensOrder(mutation.method, mutation.path)) {
       return mutation;
     }
-    return RelayMutation(
-      method: mutation.method,
-      path: mutation.path,
-      operationId: mutation.operationId,
-      query: mutation.query,
+    return mutation.copyWith(
       body: {...?mutation.body, 'responsible_user': node.actorId},
     );
   }
@@ -909,13 +1003,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     // pareceria duas operações diferentes.
     final mutation = _withActingUser(
       rawMutation.path.startsWith('/local/')
-          ? RelayMutation(
-              method: rawMutation.method,
-              path: normalizeLocalPath(rawMutation.path),
-              operationId: rawMutation.operationId,
-              query: rawMutation.query,
-              body: rawMutation.body,
-            )
+          ? rawMutation.copyWith(path: normalizeLocalPath(rawMutation.path))
           : rawMutation,
       authenticated,
     );
@@ -944,9 +1032,14 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         // enviados/cancelados, e o responsável pela impressão não teria mais
         // como saber o que mudou nesta chamada.
         final beforeOrder = await _printFallback?.captureBeforeState(mutation);
+        // Encaminha em nome de quem originou: o token do secundário, o
+        // operador do secundário e a instalação do secundário. As credenciais
+        // do principal só entram quando o cliente não mandou as dele (versão
+        // antiga do app).
         final response = await api.acceptRelayedMutation(
           mutation,
           accessToken: accessToken,
+          origin: mutation.origin,
         );
         await store.saveReceipt(
           accountId: authenticated.accountId,
@@ -1306,6 +1399,58 @@ abstract final class LocalRelayAuthenticator {
       utf8.encode(secret),
     ).convert(utf8.encode(canonical));
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
+  }
+
+  /// Lacra as credenciais de origem com a chave de pareamento.
+  ///
+  /// A rede local é autenticada (assinatura HMAC + nonce + endereço privado),
+  /// mas não é criptografada: um access token em claro dentro do corpo ficaria
+  /// legível para quem estivesse no mesmo segmento. Aqui o segredo compartilhado
+  /// deriva um keystream (HMAC-SHA256 em contador, no espírito de um HKDF-expand)
+  /// que é aplicado ao JSON com XOR. A integridade não depende deste lacre: o
+  /// corpo inteiro já vai assinado com a mesma chave, então isto é
+  /// encrypt-then-MAC — quem não tem a chave não lê e não consegue trocar.
+  static String sealOrigin({required String secret, required RelayOrigin origin}) {
+    final nonce = LocalTopologyStore.generateNodeId();
+    final plain = utf8.encode(jsonEncode(origin.toJson()));
+    final cipher = _xorKeystream(secret: secret, nonce: nonce, data: plain);
+    return '$nonce.${base64Url.encode(cipher)}';
+  }
+
+  /// Abre o lacre. Devolve `null` para qualquer coisa que não confira —
+  /// envelope malformado, chave diferente, campo obrigatório ausente.
+  static RelayOrigin? openOrigin({required String secret, required String sealed}) {
+    if (sealed.isEmpty) return null;
+    final separator = sealed.indexOf('.');
+    if (separator <= 0) return null;
+    try {
+      final nonce = sealed.substring(0, separator);
+      final cipher = base64Url.decode(sealed.substring(separator + 1));
+      final plain = _xorKeystream(secret: secret, nonce: nonce, data: cipher);
+      return RelayOrigin.fromJson(jsonDecode(utf8.decode(plain)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static List<int> _xorKeystream({
+    required String secret,
+    required String nonce,
+    required List<int> data,
+  }) {
+    final output = List<int>.filled(data.length, 0);
+    final hmac = Hmac(sha256, utf8.encode(secret));
+    var offset = 0;
+    var counter = 0;
+    while (offset < data.length) {
+      final block = hmac.convert(utf8.encode('ORIGIN\n$nonce\n$counter')).bytes;
+      for (var index = 0; index < block.length && offset < data.length; index++) {
+        output[offset] = data[offset] ^ block[index];
+        offset += 1;
+      }
+      counter += 1;
+    }
+    return output;
   }
 
   static bool constantTimeEquals(String left, String right) {

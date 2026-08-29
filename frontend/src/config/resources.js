@@ -20,7 +20,6 @@ import {
   FISCAL_CST_ICMS_OPTIONS,
   FISCAL_CST_PIS_COFINS_OPTIONS,
   FISCAL_ORIGEM_OPTIONS,
-  FISCAL_PROVIDER_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
   MOVEMENT_TYPE_LABELS,
@@ -28,6 +27,10 @@ import {
   ORDER_TYPE_LABELS,
   PAYMENT_STATUS_LABELS,
   PRODUCTION_STATUS_LABELS,
+  TERMINAL_ROLE_LABELS,
+  TERMINAL_ROLE_OPTIONS,
+  TERMINAL_TYPE_LABELS,
+  TERMINAL_TYPE_OPTIONS,
   PAYMENT_METHOD_TYPE_LABELS,
   PAYMENT_TYPE_OPTIONS,
   PRICING_OPTIONS,
@@ -233,6 +236,7 @@ export const resources = [
     endpoint: "/menu/products/",
     columns: [
       { key: "internal_code", label: "Codigo" },
+      { key: "ean", label: "Cód. barras" },
       { key: "name", label: "Produto" },
       { key: "restaurant_names", label: "Restaurantes", type: "badges", sortable: false },
       { key: "category_name", label: "Categoria" },
@@ -245,6 +249,9 @@ export const resources = [
       { name: "name", label: "Nome do produto", type: "text", required: true, full: true, section: "Informações básicas" },
       { name: "restaurants", label: "Restaurantes que utilizam o produto", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, full: true, section: "Informações básicas", hint: "Disponibilize o mesmo produto em vários restaurantes da franquia." },
       { name: "internal_code", label: "Codigo interno", type: "text", section: "Informações básicas" },
+      // Texto, nunca número: `0000012345670` e `12345670` são códigos
+      // diferentes, e perder os zeros faria o leitor não achar o produto.
+      { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
       { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
       { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
       { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
@@ -614,6 +621,22 @@ export const resources = [
     title: "Restaurantes",
     endpoint: "/restaurants/",
     globalScope: true,
+    pro: {
+      // A configuração fiscal (emitente, CSC, certificado, Focus NFe) tem tela
+      // própria — é um cadastro à parte, com dados e riscos próprios, e ficava
+      // disputando o salvamento com o cadastro do restaurante quando morava
+      // dentro dele. Ver views/RestaurantFiscalConfigView.vue.
+      rowActions: [
+        {
+          key: "fiscal",
+          label: "Configuração fiscal (Focus NFe)",
+          icon: "pi pi-receipt",
+          type: "route",
+          routeName: "restaurante-fiscal",
+          module: "financeiro",
+        },
+      ],
+    },
     columns: [
       { key: "trade_name", label: "Nome fantasia" },
       { key: "legal_name", label: "Razao social" },
@@ -631,11 +654,39 @@ export const resources = [
       { name: "city", label: "Cidade", type: "text" },
       { name: "state", label: "UF", type: "text", placeholder: "SP" },
       { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
-      { name: "fiscal_provider", label: "Provedor fiscal", type: "dropdown", options: FISCAL_PROVIDER_OPTIONS, default: "manual", section: "Fiscal", full: true, hint: "Focus NFe cria e sincroniza automaticamente a empresa e transmite NF-e/NFC-e pela API. Manual mantem o fluxo atual sem transmissao." },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
       // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
       { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", configuredField: "has_cash_action_password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "As bolinhas indicam que já existe uma senha salva. Digite apenas para substituir. Não cole uma hash." },
+    ],
+  },
+  {
+    // Terminais (instalações) que já operaram na conta. O cadastro nasce
+    // sozinho na primeira operação de cada terminal — esta tela existe para
+    // dar nome ao que seria um UUID ("Balcão 01" em vez de "Navegador a1b2c3",
+    // que é o que aparece na mensagem de caixa ocupado) e para revogar uma
+    // instalação que não deve mais abrir caixa.
+    name: "terminais",
+    title: "Terminais do PDV",
+    endpoint: "/pdv-terminals/",
+    globalScope: true,
+    module: "base",
+    columns: [
+      { key: "name", label: "Terminal" },
+      { key: "installation_id", label: "Instalacao" },
+      { key: "device_type", label: "Tipo", type: "status", map: TERMINAL_TYPE_LABELS },
+      { key: "role", label: "Papel", type: "status", map: TERMINAL_ROLE_LABELS },
+      { key: "restaurant_name", label: "Restaurante" },
+      { key: "last_seen_at", label: "Ultimo contato", type: "date" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do terminal", type: "text", required: true, placeholder: "Balcao 01", full: true, hint: "É este nome que aparece em \"o caixa já está aberto por João no terminal ...\"." },
+      { name: "device_type", label: "Tipo", type: "dropdown", options: TERMINAL_TYPE_OPTIONS },
+      { name: "role", label: "Papel na rede local", type: "dropdown", options: TERMINAL_ROLE_OPTIONS },
+      { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, hint: "Desative para impedir que esta instalação volte a abrir caixa." },
+      { name: "revoked_reason", label: "Motivo da revogacao", type: "textarea", full: true, section: "Revogacao" },
     ],
   },
   {

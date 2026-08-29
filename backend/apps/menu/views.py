@@ -46,7 +46,7 @@ class ProductViewSet(BaseTenantViewSet):
         "available_for_counter",
         "available_for_delivery",
     ]
-    search_fields = ["name", "internal_code", "description"]
+    search_fields = ["name", "internal_code", "description", "ean"]
     ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
     ordering = ["name"]
 

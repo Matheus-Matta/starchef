@@ -348,7 +348,9 @@ void main() {
       context: {'approver_name': 'Ana'},
     );
 
-    expect(approved.payload['status'], 'closed_difference');
+    // O mesmo nome que o backend usa: enquanto as duas grafias divergiam, um
+    // caixa ja fechado continuava "nao finalizado" para este terminal.
+    expect(approved.payload['status'], 'closed_with_difference');
     expect(approved.payload['approved_by_name'], 'Ana');
     final queued = await stack.queue.entries(scope: TestPdvStack.scope);
     // A senha em texto nunca entra na fila: só a prova de que o terminal

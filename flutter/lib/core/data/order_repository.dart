@@ -105,7 +105,62 @@ class OrderRepository extends EntityRepository {
       quantity: quantity <= 0 ? 1 : quantity,
       customerNote: '${body['customer_note'] ?? ''}',
     );
-    return OrderPresenter.withItems(order, [..._itemsOf(order), item]);
+
+    // O servidor agrupa itens PENDENTES iguais (mesmo produto, variações,
+    // adicionais e observação). Aqui a tela mostrava duas linhas até a
+    // sincronização acontecer — e então elas viravam uma, sozinhas. Com o
+    // leitor isso deixa de ser detalhe: bipar cinco vezes o mesmo refrigerante
+    // encheria a comanda de linhas de quantidade 1.
+    final items = _itemsOf(order);
+    final existingIndex = items.indexWhere(
+      (candidate) => _groupsWith(candidate, item),
+    );
+    if (existingIndex < 0) {
+      return OrderPresenter.withItems(order, [...items, item]);
+    }
+    final existing = items[existingIndex];
+    final merged = ValueFormatters.number(existing['quantity']) +
+        ValueFormatters.number(item['quantity']);
+    final unitPrice = ValueFormatters.number(existing['unit_price']);
+    items[existingIndex] = {
+      ...existing,
+      'quantity': merged,
+      'total_price': unitPrice * merged,
+    };
+    return OrderPresenter.withItems(order, items);
+  }
+
+  /// Dois itens são a MESMA linha do pedido?
+  ///
+  /// Só itens pendentes se juntam: um item já enviado à cozinha descreve o que
+  /// a produção recebeu, e mexer na quantidade dele mudaria o passado. Produto
+  /// vendido por peso também fica de fora — cada pesagem é uma leitura própria,
+  /// e somá-las apagaria o registro de duas balanças diferentes.
+  static bool _groupsWith(Map<String, dynamic> existing, Map<String, dynamic> item) {
+    if ('${existing['status'] ?? ''}' != 'pending') return false;
+    if ('${existing['product'] ?? ''}' != '${item['product'] ?? ''}') {
+      return false;
+    }
+    if ('${existing['pricing_unit'] ?? 'unit'}' == 'kg') return false;
+    if ('${existing['customer_note'] ?? ''}'.trim() !=
+        '${item['customer_note'] ?? ''}'.trim()) {
+      return false;
+    }
+    return _idsOf(existing['variations']) == _idsOf(item['variations']) &&
+        _idsOf(existing['addons']) == _idsOf(item['addons']);
+  }
+
+  static String _idsOf(Object? value) {
+    final ids = (value as List? ?? const [])
+        .map(
+          (entry) => entry is Map
+              ? '${entry['addon'] ?? entry['variation'] ?? entry['id'] ?? ''}'
+              : '$entry',
+        )
+        .where((id) => id.isNotEmpty)
+        .toList()
+      ..sort();
+    return ids.join(',');
   }
 
   /// Fecha uma pesagem na comanda, sem servidor.
@@ -193,7 +248,12 @@ class OrderRepository extends EntityRepository {
       body,
       itemId: itemId,
     );
-    final item = _itemsOf(updated).last;
+    // Com agrupamento, o item afetado pode ser um que já existia — devolver o
+    // último da lista mostraria a linha errada na tela.
+    final item = _itemsOf(updated).firstWhere(
+      (candidate) => '${candidate['id']}' == itemId,
+      orElse: () => _itemsOf(updated).last,
+    );
     final record = await saveLocal(
       updated,
       operation: SyncOperation.update,
@@ -206,6 +266,67 @@ class OrderRepository extends EntityRepository {
     // pedido recalculado (para o total). Devolver os dois evita uma segunda
     // leitura logo em seguida.
     return {...record.toApiJson(), '_created_item': item};
+  }
+
+  /// Ajusta a quantidade de um item PENDENTE, do mesmo jeito que o servidor.
+  ///
+  /// Só item pendente: um já despachado descreve o que a cozinha recebeu, e
+  /// mudar a quantidade dele reescreveria o passado sem ninguém na produção
+  /// ficar sabendo. Por peso também não — a quantidade vem da balança.
+  Future<Map<String, dynamic>> setItemQuantity(
+    String orderId, {
+    required String itemId,
+    required double quantity,
+  }) async {
+    final order = await read(orderId);
+    if (order == null) {
+      throw StateError('Pedido $orderId não existe no armazenamento local.');
+    }
+    if (quantity <= 0) {
+      throw ArgumentError('Para remover o item, cancele-o informando o motivo.');
+    }
+    final items = _itemsOf(order.payload);
+    final index = items.indexWhere((item) => '${item['id']}' == itemId);
+    if (index < 0) {
+      throw StateError('Item $itemId não existe neste pedido.');
+    }
+    final item = items[index];
+    if ('${item['status'] ?? ''}' != 'pending') {
+      throw ArgumentError(
+        'Só um item que ainda não foi para a produção pode ter a quantidade '
+        'alterada.',
+      );
+    }
+    if ('${item['pricing_unit'] ?? 'unit'}' == 'kg') {
+      throw ArgumentError(
+        'Produto vendido por peso: a quantidade vem da balança, não do teclado.',
+      );
+    }
+    final unitPrice = ValueFormatters.number(item['unit_price']);
+    items[index] = {
+      ...item,
+      'quantity': quantity,
+      'total_price': unitPrice * quantity,
+      'addons': (item['addons'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (addon) => {
+              ...Map<String, dynamic>.from(addon),
+              'total_price':
+                  ValueFormatters.number(addon['unit_price']) * quantity,
+            },
+          )
+          .toList(),
+    };
+    final record = await saveLocal(
+      OrderPresenter.withItems(order.payload, items),
+      operation: SyncOperation.update,
+      method: 'POST',
+      path: '/orders/$orderId/items/$itemId/quantity/',
+      requestBody: {'quantity': quantity},
+      id: orderId,
+    );
+    return record.toApiJson();
   }
 
   /// Cancela um item, do mesmo jeito que o servidor faria.

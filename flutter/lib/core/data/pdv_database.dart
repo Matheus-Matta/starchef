@@ -26,7 +26,7 @@ class PdvDatabase {
     _ready = _initialize();
   }
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 5;
 
   final File _file;
   late final SqliteDatabase _database;
@@ -48,7 +48,9 @@ class PdvDatabase {
       ..createDatabase = SqliteMigration(schemaVersion, _createSchema)
       ..add(SqliteMigration(1, _createSchema))
       ..add(SqliteMigration(2, _createPrintQueue))
-      ..add(SqliteMigration(3, _createSecureValues));
+      ..add(SqliteMigration(3, _createSecureValues))
+      ..add(SqliteMigration(4, _createQueueOrigin))
+      ..add(SqliteMigration(5, _createCodeIndex));
     await migrations.migrate(_database);
     // WAL permite ler enquanto se grava (§20). `sqlite_async` já o ativa por
     // padrão; o comando explícito documenta a dependência e protege contra uma
@@ -165,6 +167,44 @@ class PdvDatabase {
     ''');
   }
 
+  /// Credenciais de origem na fila de saída (§8).
+  ///
+  /// A fila do Caixa Principal deixou de ser só dele: ela entrega também o que
+  /// os caixas secundários originaram, e cada operação precisa subir com as
+  /// credenciais de QUEM a originou. Sem isso, uma venda do PDV 2 chegava ao
+  /// backend no nome do PDV 1 — e a sessão de caixa, que pertence ao par
+  /// (operador, terminal), ficava com o dono errado.
+  static Future<void> _createQueueOrigin(SqliteWriteContext tx) async {
+    await tx.execute('ALTER TABLE sync_queue ADD COLUMN origin_json TEXT');
+  }
+
+  /// Índice de códigos lidos por leitor (§scanner).
+  ///
+  /// Achar o produto de um código de barras varrendo o catálogo significaria
+  /// ler e decifrar milhares de payloads a cada bipe — no balcão, com o
+  /// cliente esperando. Uma tabela pequena, indexada pelo código, transforma
+  /// isso em uma consulta direta.
+  static Future<void> _createCodeIndex(SqliteWriteContext tx) async {
+    await tx.execute('''
+      CREATE TABLE IF NOT EXISTS entity_codes (
+        scope TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        field TEXT NOT NULL,
+        code TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        PRIMARY KEY (scope, entity_type, field, code, entity_id)
+      )
+    ''');
+    await tx.execute('''
+      CREATE INDEX IF NOT EXISTS entity_codes_lookup_idx
+      ON entity_codes(scope, entity_type, code)
+    ''');
+    await tx.execute('''
+      CREATE INDEX IF NOT EXISTS entity_codes_entity_idx
+      ON entity_codes(scope, entity_type, entity_id)
+    ''');
+  }
+
   static Future<void> _createSchema(SqliteWriteContext tx) async {
     // ---------------------------------------------------------------------
     // Entidades: uma linha por recurso do restaurante, qualquer que seja o
@@ -234,7 +274,10 @@ class PdvDatabase {
         next_retry_at TEXT,
         last_error TEXT,
         lease_owner TEXT,
-        lease_until TEXT
+        lease_until TEXT,
+        -- Credenciais de quem originou a operação, quando não foi este
+        -- terminal. Ver `_createQueueOrigin`.
+        origin_json TEXT
       )
     ''');
     await tx.execute('''
@@ -245,6 +288,8 @@ class PdvDatabase {
       CREATE INDEX IF NOT EXISTS sync_queue_entity_idx
       ON sync_queue(scope, entity_type, entity_id)
     ''');
+
+    await _createCodeIndex(tx);
 
     // Marca de tempo por tipo, para o delta sync (§14) não rebaixar a base
     // inteira a cada reconexão.

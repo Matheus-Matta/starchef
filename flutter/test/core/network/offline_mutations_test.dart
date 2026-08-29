@@ -95,13 +95,32 @@ void main() {
       );
     });
 
-    test('o que exige servidor fica de fora', () {
-      // Impressão não pode "sair mais tarde", e caixa envolve conferência de
-      // valores que o terminal não resolve.
+    test('o turno de caixa também cabe offline', () {
+      // §30: com a internet fora o turno tem de começar. Quem grava e entrega
+      // depois é o Caixa Principal, com as credenciais de quem originou.
       for (final path in [
-        '$_order/print/',
         '/cash-register/open/',
         '/cash-register/abc-123/close/',
+        '/cash-register/abc-123/withdrawal/',
+        '/cash-register/abc-123/supply/',
+      ]) {
+        expect(
+          OfflineMutations.isQueueable('POST', path),
+          isTrue,
+          reason: '$path deveria poder esperar na fila',
+        );
+      }
+    });
+
+    test('o que exige servidor fica de fora', () {
+      // Impressão não pode "sair mais tarde". Transferir uma sessão e
+      // autorizar uma divergência dependem de uma validação do servidor
+      // (gerente, senha do restaurante): guardá-las para aplicar depois seria
+      // decidir agora e conferir depois.
+      for (final path in [
+        '$_order/print/',
+        '/cash-register/abc-123/transfer/',
+        '/cash-register/abc-123/approve/',
         '/print-jobs/abc-123/mark-printed/',
       ]) {
         expect(
@@ -110,6 +129,23 @@ void main() {
           reason: '$path não deveria entrar na fila',
         );
       }
+    });
+
+    test('mesmo sem fila, o principal executa por um secundário', () {
+      // O secundário nunca fala com o servidor: se nem transferir nem
+      // autorizar pudessem ser encaminhadas, ele ficaria sem saída.
+      expect(
+        OfflineMutations.isRelayable('POST', '/cash-register/abc-12345/transfer/'),
+        isTrue,
+      );
+      expect(
+        OfflineMutations.isRelayable('POST', '/cash-register/abc-12345/approve/'),
+        isTrue,
+      );
+      expect(
+        OfflineMutations.isRelayable('POST', '/cash-register/open/'),
+        isTrue,
+      );
     });
 
     test('métodos e rotas fora do formato são recusados', () {
@@ -156,12 +192,34 @@ void main() {
       }
     });
 
-    test('cadastro de cliente não precisa do principal', () {
-      expect(OfflineMutations.isRelayable('POST', '/customers/'), isFalse);
+    test('cadastro de cliente também passa pelo principal', () {
+      // Foi exceção por um tempo ("não pertence ao atendimento em curso"), e o
+      // resultado prático era um segundo caminho até a nuvem saindo de um
+      // terminal que não deveria ter nenhum — além de um cliente que demorava
+      // a aparecer para os outros caixas, que leem do principal.
+      expect(OfflineMutations.isRelayable('POST', '/customers/'), isTrue);
       expect(
-        OfflineMutations.isRelayable('PATCH', '/customers/abc-123/'),
-        isFalse,
+        OfflineMutations.isRelayable('PATCH', '/customers/abc-12345/'),
+        isTrue,
       );
+    });
+
+    test('nenhuma escrita de um secundário escapa do principal', () {
+      const escritas = [
+        ('POST', '/customers/'),
+        ('PATCH', '/customers/abc-12345/'),
+        ('POST', '/orders/'),
+        ('POST', '/cash-register/open/'),
+        ('POST', '/cash-register/abc-12345/close/'),
+        ('POST', '/cash-register/abc-12345/transfer/'),
+      ];
+      for (final (method, path) in escritas) {
+        expect(
+          OfflineMutations.canBeHandledByPrincipal(method, path),
+          isTrue,
+          reason: '$method $path precisa ter um caminho pelo principal',
+        );
+      }
     });
 
     test('o principal exige um identificador com cara de identificador', () {
@@ -175,7 +233,11 @@ void main() {
       expect(OfflineMutations.isRelayable('POST', '$_order/close/'), isTrue);
     });
 
-    test('o relay nunca aceita mais do que a fila aceitaria', () {
+    test('tudo que espera na fila também chega ao principal', () {
+      // A recíproca NÃO vale: o principal executa por um cliente coisas que
+      // ninguém pode guardar numa fila (transferir sessão, autorizar
+      // divergência) — é justamente por isso que o secundário nunca precisa
+      // do servidor.
       const candidates = [
         ('POST', '/orders/'),
         ('POST', '/customers/'),
@@ -185,11 +247,11 @@ void main() {
         ('POST', '/cash-register/open/'),
       ];
       for (final (method, path) in candidates) {
-        if (OfflineMutations.isRelayable(method, path)) {
+        if (OfflineMutations.isQueueable(method, path)) {
           expect(
-            OfflineMutations.isQueueable(method, path),
+            OfflineMutations.canBeHandledByPrincipal(method, path),
             isTrue,
-            reason: '$method $path é relayable mas não é enfileirável',
+            reason: '$method $path espera na fila mas não chega ao principal',
           );
         }
       }

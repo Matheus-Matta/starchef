@@ -979,8 +979,10 @@ const rowMenu = ref(null);
 const menuRow = ref(null);
 const rowMenuItems = computed(() => {
   const items = [{ label: "Ver detalhe", icon: "pi pi-eye", command: () => openDetail(menuRow.value) }];
-  // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos".
+  // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos",
+  // "Configuração fiscal". `module` esconde a ação em contas sem o módulo.
   for (const rowAction of proCfg.value.rowActions || []) {
+    if (!auth.hasModule(rowAction.module)) continue;
     items.push({ label: rowAction.label, icon: rowAction.icon, command: () => runRowAction(rowAction, menuRow.value) });
   }
   if (props.formEnabled) {
@@ -999,6 +1001,10 @@ const codesTitle = ref("");
 
 async function runRowAction(rowAction, row) {
   if (rowAction.type === "codes") return openCodes(row);
+  // Ação que só leva pra outra página do registro (ex.: configuração fiscal).
+  if (rowAction.type === "route" && row?.id) {
+    return router.push({ name: rowAction.routeName, params: { id: row.id } });
+  }
 }
 
 async function openCodes(row) {

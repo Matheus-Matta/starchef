@@ -689,6 +689,14 @@ foi persistido: se o equipamento na COM mudou, exige novo vínculo. O
 **`data/scanner_binding_store.dart`** — SQLite com `port_name` único, impedindo
 que dois slots reservem a mesma porta deliberadamente.
 
+**`core/input/`** — o controlador central de entrada do PDV. Teclado, leitor
+USB que simula teclado, leitor serial e área de transferência produzem o mesmo
+evento interno (`ScannedCode`), e o `PdvInputRouter` decide o destino pela tela
+atual, nesta ordem: campo/modal em foco, captura do leitor (que consome o
+Enter final), atalhos da página, atalhos globais. `PdvShortcuts` é o registro
+único — é dele que saem tanto a tecla que o roteador escuta quanto a linha que
+a página de ajuda (F1) mostra.
+
 **`services/scale_window_launcher.dart`** — abre a estação como processo
 independente. No Linux, prepara a transferência de sessão com diretório `0700`,
 arquivo `0600`, validade de um minuto e remoção após a primeira leitura.
@@ -868,8 +876,12 @@ hardware, está em `PDV_OFFLINE_SCALE_ARCHITECTURE.md`.
 3. **A fila do sistema de impressão não é portátil.** Rede e serial funcionam
    nos dois sistemas; o spool depende de `Out-Printer` ou `lp` estarem
    presentes.
-4. **O scanner cobre só serial/USB-CDC.** Captura exclusiva de HID por VID/PID
-   exigiria código nativo por plataforma.
+4. **O leitor HID é capturado por cadência, não por dispositivo.**
+   `core/input/scanner_keyboard_capture.dart` reconhece o leitor USB que
+   simula teclado pelo ritmo das teclas e pelo Enter/Tab final. Isolar um HID
+   específico por VID/PID continua exigindo código nativo por plataforma — o
+   que significa que um teclado usado muito rápido pode, em tese, ser lido
+   como código.
 5. **A trava de periférico é por máquina.** Duas máquinas ligadas fisicamente
    ao mesmo equipamento continuam sendo um problema de instalação.
 6. **O cache não tem TTL.** Offline, ele entrega a última resposta conhecida

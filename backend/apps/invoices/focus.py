@@ -81,21 +81,43 @@ def _is_duplicate_message(message):
     return "duplicad" in normalized or "ja existe" in normalized or "já existe" in normalized
 
 
+# Campo da Focus -> (campo local que a tela edita, rotulo pro usuario).
+COMPANY_REQUIRED_FIELDS = (
+    ("nome", "corporate_name", "Razao social"),
+    ("cnpj", "cnpj", "CNPJ"),
+    ("logradouro", "address_line", "Endereco"),
+    ("municipio", "city", "Cidade"),
+    ("cep", "zip_code", "CEP"),
+    ("uf", "uf", "UF"),
+)
+
+
+def _missing_company_labels(payload):
+    return [label for field, _local, label in COMPANY_REQUIRED_FIELDS if not payload.get(field)]
+
+
+def company_payload_missing_fields(config):
+    """Pendencias do cadastro fiscal, no formato que a tela consome.
+
+    Nunca levanta: serve a um GET de leitura, entao um cadastro incompleto
+    demais para montar o payload vira "tudo pendente", nao um erro.
+    """
+    try:
+        payload = build_focus_company_payload(config)
+    except Exception:  # noqa: BLE001 - leitura defensiva; ver docstring
+        payload = {}
+    return [
+        {"field": local, "label": label}
+        for field, local, label in COMPANY_REQUIRED_FIELDS
+        if not payload.get(field)
+    ]
+
+
 def _validate_company_payload(payload):
-    missing = []
-    for field, label in (
-        ("nome", "razao social"),
-        ("cnpj", "CNPJ"),
-        ("logradouro", "endereco"),
-        ("municipio", "cidade"),
-        ("cep", "CEP"),
-        ("uf", "UF"),
-    ):
-        if not payload.get(field):
-            missing.append(label)
+    missing = _missing_company_labels(payload)
     if missing:
         raise FocusNfeConfigurationError(
-            "Preencha os dados obrigatorios do restaurante antes de sincronizar: " + ", ".join(missing) + "."
+            "Preencha os dados obrigatorios da configuracao fiscal antes de sincronizar: " + ", ".join(missing) + "."
         )
 
 

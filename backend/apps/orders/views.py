@@ -1,3 +1,5 @@
+from decimal import InvalidOperation
+
 import django_filters
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.hashers import check_password
@@ -23,6 +25,7 @@ from apps.orders.services import (
     create_order,
     create_order_with_item,
     send_order_to_kitchen,
+    set_order_item_quantity,
     update_order_item_status,
     void_order_item,
 )
@@ -356,6 +359,21 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path=r"items/(?P<item_pk>[^/.]+)/quantity")
+    def set_item_quantity(self, request, pk=None, item_pk=None):
+        """Ajusta a quantidade de um item pendente (teclas + e - do PDV)."""
+        try:
+            item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
+            item = set_order_item_quantity(item, request.user, request.data.get("quantity"))
+        except OrderItem.DoesNotExist:
+            return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        except (ValidationError, InvalidOperation, TypeError):
+            return Response(
+                {"detail": "Informe uma quantidade válida maior que zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(OrderItemSerializer(item).data)
+
     @action(detail=True, methods=["delete"], url_path=r"items/(?P<item_pk>[^/.]+)/void")
     def void_item(self, request, pk=None, item_pk=None):
         """Void a pending item (cancel before sending to kitchen)."""
@@ -435,19 +453,33 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="pay")
     def pay(self, request, pk=None):
-        from apps.payments.services import register_payment
         from apps.payments.serializers import PaymentSerializer
+        from apps.payments.services import register_payment
+        from apps.payments.terminals import (
+            CashSessionConflict,
+            CashSessionForbidden,
+            installation_id_from_request,
+            terminal_from_request,
+        )
+        from apps.payments.views import cash_session_error_response
 
+        order = self.get_object()
         try:
             payment = register_payment(
-                order=self.get_object(),
+                order=order,
                 user=request.user,
                 payment_method_id=request.data["payment_method"],
                 amount=request.data["amount"],
                 idempotency_key=request.headers.get("Idempotency-Key") or request.data.get("idempotency_key"),
                 metadata=request.data.get("metadata", {}),
                 cash_register_id=request.data.get("cash_register"),
+                # O dinheiro entra na gaveta de UM terminal: o recebimento
+                # segue a mesma regra de dono da sangria e do fechamento.
+                terminal=terminal_from_request(request, restaurant=order.restaurant),
+                installation_id=installation_id_from_request(request),
             )
+        except (CashSessionConflict, CashSessionForbidden) as exc:
+            return cash_session_error_response(exc)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)

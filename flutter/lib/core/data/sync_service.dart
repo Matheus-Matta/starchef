@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../logging/app_logger.dart';
 import '../network/api_exception.dart';
+import '../network/relay_origin.dart';
 import 'entity_catalog.dart';
 import 'local_id.dart';
 import 'offline_first_gateway.dart';
@@ -22,6 +23,8 @@ abstract interface class SyncTransport {
     Map<String, dynamic>? query,
     Map<String, dynamic>? body,
     String? idempotencyKey,
+    RelayOrigin? origin,
+    void Function(RelayOrigin renewed)? onOriginRenewed,
   });
 
   /// O servidor responde agora? Consultado antes de gastar tentativas da fila.
@@ -251,6 +254,13 @@ class SyncService {
         // (§7): se o servidor processou antes de a resposta se perder, o
         // reenvio devolve a resposta original em vez de duplicar a venda.
         idempotencyKey: entry.operationId,
+        // A fila deste terminal entrega também o que outros caixas
+        // originaram, e cada operação sobe no nome de quem a criou.
+        origin: entry.origin,
+        // Token do secundário renovado aqui: fica gravado para as próximas
+        // tentativas não renovarem de novo.
+        onOriginRenewed: (renewed) =>
+            unawaited(gateway.queue.updateOrigin(entry.id, renewed)),
       );
       await gateway.confirmDelivery(entry, response);
       await gateway.queue.markSynced(entry.id);

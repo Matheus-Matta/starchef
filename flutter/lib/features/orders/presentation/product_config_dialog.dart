@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/widgets/app_dialog.dart';
@@ -28,8 +30,9 @@ class ProductConfigResult {
 /// além do que a tela permite.
 Future<ProductConfigResult?> showProductConfigDialog(
   BuildContext context,
-  Map<String, dynamic> product,
-) async {
+  Map<String, dynamic> product, {
+  Stream<void>? repeatedScans,
+}) async {
   final soldByWeight = isProductSoldByWeight(product);
   final variations = (product['variations'] as List? ?? [])
       .cast<Map<String, dynamic>>()
@@ -43,10 +46,18 @@ Future<ProductConfigResult?> showProductConfigDialog(
   final selectedAddons = <String>{};
   var quantity = soldByWeight ? 0.0 : 1.0;
   var customerNote = '';
+  StreamSubscription<void>? repeats;
   final accepted = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, update) {
+        // Ler o mesmo produto de novo com o modal aberto soma quantidade aqui,
+        // em vez de abrir um segundo modal por cima do primeiro. É o que
+        // permite bipar cinco unidades em sequência sem tocar no teclado.
+        repeats ??= repeatedScans?.listen((_) {
+          if (soldByWeight) return;
+          update(() => quantity += 1);
+        });
         final size = MediaQuery.sizeOf(context);
         final maxHeight = (size.height * .75).clamp(320.0, 620.0);
         // Mesmo 560-720 ainda ficava apertado para nomes de adicional
@@ -217,6 +228,7 @@ Future<ProductConfigResult?> showProductConfigDialog(
       },
     ),
   );
+  await repeats?.cancel();
   if (accepted != true) return null;
   return ProductConfigResult(
     quantity: quantity,

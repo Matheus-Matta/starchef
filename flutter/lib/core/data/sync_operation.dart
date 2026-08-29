@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../network/relay_origin.dart';
+
 /// Tipo de alteração registrada na fila (§5).
 enum SyncOperation {
   create,
@@ -56,6 +58,7 @@ class SyncQueueEntry {
     this.payload,
     this.nextRetryAt,
     this.lastError,
+    this.origin,
   });
 
   /// Sequência FIFO (§6). Determinística mesmo para operações criadas no
@@ -80,6 +83,13 @@ class SyncQueueEntry {
   final DateTime? nextRetryAt;
   final String? lastError;
 
+  /// Credenciais de quem originou a operação, quando não foi este terminal.
+  ///
+  /// É o que permite a fila do Caixa Principal entregar em nome de outro
+  /// caixa: o token, o operador e a instalação de quem realmente atendeu.
+  /// `null` significa "é minha" — o caminho comum.
+  final RelayOrigin? origin;
+
   /// Resumo legível para a tela de revisão da fila.
   String get summary => '$method $path';
 
@@ -100,7 +110,17 @@ class SyncQueueEntry {
         DateTime.now().toUtc(),
     nextRetryAt: DateTime.tryParse('${row['next_retry_at'] ?? ''}')?.toUtc(),
     lastError: row['last_error'] as String?,
+    origin: _decodeOrigin(row['origin_json']),
   );
+
+  static RelayOrigin? _decodeOrigin(Object? raw) {
+    if (raw is! String || raw.isEmpty) return null;
+    try {
+      return RelayOrigin.fromJson(jsonDecode(raw));
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Map<String, dynamic>? _decode(Object? raw) {
     if (raw is! String || raw.isEmpty) return null;

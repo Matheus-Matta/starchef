@@ -1,5 +1,6 @@
 import '../network/api_exception.dart';
 import '../network/mutation_relay.dart';
+import '../network/relay_origin.dart';
 import 'sync_service.dart';
 
 /// Transporte da fila de um **Caixa Secundário**: o destino é o Caixa
@@ -30,6 +31,11 @@ class RelaySyncTransport implements SyncTransport {
     Map<String, dynamic>? query,
     Map<String, dynamic>? body,
     String? idempotencyKey,
+    // Um secundário nunca entrega por outro terminal: a fila dele só tem
+    // operação própria, e quem a assina são as credenciais que ele mesmo
+    // envia no envelope do relay.
+    RelayOrigin? origin,
+    void Function(RelayOrigin renewed)? onOriginRenewed,
   }) async {
     try {
       if (method == 'GET') {

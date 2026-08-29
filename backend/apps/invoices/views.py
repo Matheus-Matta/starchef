@@ -26,9 +26,11 @@ from apps.invoices.serializers import FiscalConfigSerializer, FiscalProfileSeria
 from apps.invoices.services import (
     cancel_fiscal_invoice,
     emit_fiscal_invoice,
+    ensure_fiscal_config,
     fiscal_emission_unavailable_reason,
     print_fiscal_invoice,
 )
+from apps.restaurants.models import Restaurant
 
 
 class FiscalProfileViewSet(BaseTenantViewSet):
@@ -56,6 +58,48 @@ class FiscalConfigViewSet(BaseTenantViewSet):
         "account__focus_nfe_config", "restaurant", "branch", "default_profile"
     ).all()
     filterset_fields = ["is_active", "document_model"]
+
+    @action(detail=False, methods=["get"], url_path="for-restaurant")
+    def for_restaurant(self, request):
+        """A configuracao fiscal de um restaurante, criando-a se ainda nao existir.
+
+        A tela avancada (Restaurantes > acoes > Configuracao fiscal / Focus NFe)
+        entra por aqui em vez de listar e dar POST: era esse POST concorrente
+        com o cadastro do restaurante que estourava a
+        `unique_fiscal_config_by_branch` como "valor duplicado".
+        """
+        restaurant_id = request.query_params.get("restaurant")
+        if not restaurant_id:
+            return Response({"detail": "Informe o restaurante em ?restaurant=."}, status=status.HTTP_400_BAD_REQUEST)
+
+        restaurant = self._scoped_restaurant(restaurant_id)
+        if restaurant is None:
+            return Response({"detail": "Restaurante nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        config = ensure_fiscal_config(restaurant, user=request.user)
+        if config is None:
+            return Response(
+                {"detail": "Este restaurante ainda nao tem uma filial para receber a configuracao fiscal."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(self.get_serializer(config).data)
+
+    def _scoped_restaurant(self, restaurant_id):
+        """Restaurante da conta do request, respeitando o recorte do perfil."""
+        account = getattr(self.request, "account", None)
+        if account is None:
+            return None
+        queryset = Restaurant.objects.filter(account=account)
+        profile = getattr(self.request.user, "profile", None)
+        if not is_tenant_admin(self.request.user):
+            if profile is None or not profile.restaurant_id:
+                return None
+            queryset = queryset.filter(pk=profile.restaurant_id)
+        try:
+            return queryset.filter(pk=restaurant_id).first()
+        except (ValidationError, ValueError):
+            # id malformado na querystring: e "nao encontrado", nao um 500.
+            return None
 
     def perform_create(self, serializer):
         super().perform_create(serializer)

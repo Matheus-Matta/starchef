@@ -49,7 +49,27 @@ class RestaurantSerializer(TenantModelSerializer):
         return data
 
     def validate_cnpj(self, value):
-        return value or None
+        # O campo e declarado a mao (para aceitar vazio -> null), o que descarta
+        # o UniqueValidator que o DRF geraria a partir do model. Sem esta
+        # checagem o unique do banco estourava como IntegrityError e o usuario
+        # via "Ja existe um registro com estes dados (valor duplicado)" sem
+        # saber que o culpado era o CNPJ.
+        value = (value or "").strip() or None
+        if value is None:
+            return None
+        digits = "".join(filter(str.isdigit, value))
+        duplicates = Restaurant.all_objects.filter(cnpj=value)
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        conflict = duplicates.first()
+        if conflict is not None:
+            where = "outro restaurante" if conflict.deleted_at is None else "um restaurante ja excluido"
+            raise serializers.ValidationError(
+                f"O CNPJ {value} ja esta cadastrado em {where} ({conflict.trade_name})."
+            )
+        if digits and len(digits) != 14:
+            raise serializers.ValidationError("Informe um CNPJ com 14 digitos.")
+        return value
 
     def _hash_cash_password(self, validated_data):
         # Só (re)define quando um valor não-vazio é enviado — senão mantém o
@@ -60,52 +80,43 @@ class RestaurantSerializer(TenantModelSerializer):
             validated_data["cash_action_password"] = raw
         return validated_data
 
-    def _sync_fiscal_config(self, restaurant, provider=None):
-        from apps.invoices.focus import enqueue_focus_company_sync
-        from apps.invoices.models import FiscalConfig
+    def _sync_fiscal_config(self, restaurant, provider=None, *, overwrite=False, sync_focus=False):
+        """Garante a configuracao fiscal da filial e (so quando pedido) sincroniza.
 
-        branch = restaurant.branches.order_by("created_at").first()
-        if branch is None:
-            return None
+        A tela avancada (Restaurantes > acoes > Configuracao fiscal / Focus NFe)
+        e a dona dos dados fiscais; aqui so semeamos o que ainda estiver em
+        branco. E a sincronizacao com a Focus deixou de disparar a cada
+        salvamento do cadastro: com o CEP ainda em branco ela so produzia o
+        erro "Empresa nao sincronizada: ... CEP".
+        """
+        from apps.invoices.focus import enqueue_focus_company_sync
+        from apps.invoices.services import ensure_fiscal_config
+
         user = getattr(self.context.get("request"), "user", None)
-        defaults = {
-            "account": restaurant.account,
-            "restaurant": restaurant,
-            "provider": provider or FiscalConfig.PROVIDER_MANUAL,
-            "cnpj": restaurant.cnpj or "",
-            "ie": restaurant.state_registration,
-            "corporate_name": restaurant.legal_name,
-            "trade_name": restaurant.trade_name,
-            "address_line": restaurant.address,
-            "city": restaurant.city,
-            "uf": restaurant.state,
-            "zip_code": restaurant.zip_code,
-            "created_by": user,
-            "updated_by": user,
-        }
-        config = FiscalConfig.objects.filter(branch=branch).first()
-        if config is None:
-            config = FiscalConfig.objects.create(branch=branch, **defaults)
-        else:
-            for field, value in defaults.items():
-                if field not in {"account", "restaurant", "created_by"}:
-                    setattr(config, field, value)
-            if provider is not None:
-                config.provider = provider
-            config.save()
-        enqueue_focus_company_sync(config)
+        config = ensure_fiscal_config(
+            restaurant,
+            user=user if getattr(user, "is_authenticated", False) else None,
+            provider=provider,
+            overwrite=overwrite,
+        )
+        if config is not None and sync_focus:
+            enqueue_focus_company_sync(config)
         return config
 
     def create(self, validated_data):
         provider = validated_data.pop("fiscal_provider", "manual")
         restaurant = super().create(self._hash_cash_password(validated_data))
-        self._sync_fiscal_config(restaurant, provider)
+        self._sync_fiscal_config(restaurant, provider, overwrite=True, sync_focus=True)
         return restaurant
 
     def update(self, instance, validated_data):
+        # `fiscal_provider` so chega quando alguem o envia explicitamente (o
+        # formulario do restaurante nao o exibe mais): e o unico caso em que
+        # salvar o cadastro ainda dispara uma sincronizacao com a Focus.
+        provider_sent = "fiscal_provider" in validated_data
         provider = validated_data.pop("fiscal_provider", None)
         restaurant = super().update(instance, self._hash_cash_password(validated_data))
-        self._sync_fiscal_config(restaurant, provider)
+        self._sync_fiscal_config(restaurant, provider, sync_focus=provider_sent)
         return restaurant
 
     def validate_default_service_fee_percent(self, value):

@@ -46,6 +46,88 @@ def _resolve_fiscal_config(restaurant, branch=None):
     return FiscalConfig.objects.filter(branch__restaurant=restaurant, is_active=True).first()
 
 
+# Campos do emitente que nascem espelhados do cadastro do restaurante. Depois
+# que a configuracao existe, quem manda neles e a pagina fiscal avancada
+# (Restaurantes > acoes > Configuracao fiscal / Focus NFe): salvar o cadastro
+# do restaurante so preenche o que ainda estiver em branco, senao trocar um
+# telefone la apagaria a razao social fiscal ajustada aqui.
+_EMITTER_FIELDS_FROM_RESTAURANT = {
+    "cnpj": lambda restaurant: restaurant.cnpj or "",
+    "ie": lambda restaurant: restaurant.state_registration or "",
+    "corporate_name": lambda restaurant: restaurant.legal_name or "",
+    "trade_name": lambda restaurant: restaurant.trade_name or "",
+    "address_line": lambda restaurant: restaurant.address or "",
+    "city": lambda restaurant: restaurant.city or "",
+    "uf": lambda restaurant: restaurant.state or "",
+    "zip_code": lambda restaurant: restaurant.zip_code or "",
+}
+
+
+def restaurant_fiscal_branch(restaurant):
+    """A filial que sustenta a configuracao fiscal deste restaurante.
+
+    `all_objects` de proposito: o signal `sync_branch_for_restaurant` tambem usa,
+    e assim a filial e encontrada mesmo fora de um request com conta no contexto
+    (tarefas Celery, comandos de manage.py).
+    """
+    from apps.restaurants.models import Branch
+
+    return Branch.all_objects.filter(restaurant=restaurant).order_by("created_at").first()
+
+
+def ensure_fiscal_config(restaurant, *, user=None, provider=None, overwrite=False):
+    """Devolve (criando se preciso) a unica `FiscalConfig` da filial do restaurante.
+
+    Ponto unico de criacao: antes o cadastro do restaurante e a tela fiscal
+    criavam cada um a sua, e a segunda batia na `unique_fiscal_config_by_branch`
+    virando um 409 "Ja existe um registro com estes dados" que travava o
+    salvamento do restaurante. `all_objects` aqui tambem recupera uma config
+    soft-deleted (a constraint e do banco e nao enxerga `deleted_at`).
+    """
+    branch = restaurant_fiscal_branch(restaurant)
+    if branch is None:
+        return None
+
+    config = FiscalConfig.all_objects.filter(branch=branch).first()
+    if config is None:
+        config = FiscalConfig(
+            account=restaurant.account,
+            restaurant=restaurant,
+            branch=branch,
+            provider=provider or FiscalConfig.PROVIDER_MANUAL,
+            created_by=user,
+            updated_by=user,
+            **{field: resolve(restaurant) for field, resolve in _EMITTER_FIELDS_FROM_RESTAURANT.items()},
+        )
+        config.save()
+        return config
+
+    changed = []
+    if config.deleted_at is not None:
+        config.deleted_at = None
+        changed.append("deleted_at")
+    if config.restaurant_id != restaurant.pk:
+        config.restaurant = restaurant
+        changed.append("restaurant")
+    if provider is not None and config.provider != provider:
+        config.provider = provider
+        changed.append("provider")
+    for field, resolve in _EMITTER_FIELDS_FROM_RESTAURANT.items():
+        value = resolve(restaurant)
+        if not value:
+            continue
+        if overwrite or not getattr(config, field):
+            if getattr(config, field) != value:
+                setattr(config, field, value)
+                changed.append(field)
+    if changed:
+        if user is not None:
+            config.updated_by = user
+            changed.append("updated_by")
+        config.save(update_fields=[*changed, "updated_at"])
+    return config
+
+
 def fiscal_emission_unavailable_reason(order):
     """Explica por que a API nao deve tentar transmitir uma nota deste pedido."""
 

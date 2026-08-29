@@ -315,3 +315,23 @@ export const SECTOR_FILTER_OPTIONS = [
   { label: "Bar", value: "bar" },
   { label: "Sobremesa", value: "dessert" },
 ];
+
+// ── Terminais do PDV ────────────────────────────────────────────────────────
+// A instalação é identificada por um UUID; estes rótulos existem para a tela
+// não mostrar o UUID cru quando disser quem está com um caixa.
+export const TERMINAL_TYPE_OPTIONS = [
+  { label: "Desktop", value: "desktop" },
+  { label: "Navegador", value: "web" },
+  { label: "Aplicativo", value: "mobile" },
+];
+export const TERMINAL_TYPE_LABELS = Object.fromEntries(
+  TERMINAL_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+);
+export const TERMINAL_ROLE_OPTIONS = [
+  { label: "Caixa Principal", value: "principal" },
+  { label: "Caixa Secundario", value: "secondary" },
+  { label: "Navegador", value: "web" },
+];
+export const TERMINAL_ROLE_LABELS = Object.fromEntries(
+  TERMINAL_ROLE_OPTIONS.map((option) => [option.value, option.label]),
+);

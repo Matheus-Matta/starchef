@@ -30,6 +30,7 @@ class EntityDescriptor {
     this.sensitive = false,
     this.ordering = EntityOrdering.byName,
     this.sharedWithSecondary = true,
+    this.codeFields = const [],
   });
 
   /// Nome do tipo dentro da tabela `entities`.
@@ -46,6 +47,14 @@ class EntityDescriptor {
 
   /// Campo do payload usado como situação (`status`, `state`).
   final String? statusField;
+
+  /// Campos que um leitor de código pode ler, em ORDEM DE PRIORIDADE.
+  ///
+  /// No produto, `ean` vem antes de `internal_code`: o código de barras é o
+  /// que está impresso na embalagem, e o código interno é a etiqueta da casa.
+  /// Um mesmo número pode existir nos dois papéis em produtos diferentes, e
+  /// nesse caso quem ganha é o que o leitor de fato leu.
+  final List<String> codeFields;
 
   /// Recurso de instância única (a sessão de caixa aberta, por exemplo).
   final bool singleton;
@@ -168,6 +177,7 @@ abstract final class EntityCatalog {
       collectionPath: '/menu/products/',
       statusField: 'is_active',
       pullPriority: 11,
+      codeFields: ['ean', 'internal_code'],
     ),
     EntityDescriptor(
       type: addon,
@@ -199,6 +209,9 @@ abstract final class EntityCatalog {
       collectionPath: '/commands/',
       statusField: 'status',
       pullPriority: 22,
+      // A comanda é lida pelo código impresso nela e, quando o operador
+      // digita, pelo número.
+      codeFields: ['code', 'number'],
     ),
 
     // --- Clientes e recebimento ------------------------------------------
@@ -229,6 +242,10 @@ abstract final class EntityCatalog {
     EntityDescriptor(
       type: cashSession,
       collectionPath: '/cash-register/',
+      // O caixa cadastrado é o "pai" da sessão. Gravar isso em `parent_id`
+      // permite que a exclusividade ("uma sessão não finalizada por caixa")
+      // seja resolvida em SQL, dentro da mesma transação que grava a abertura.
+      parentField: 'cash_station',
       statusField: 'status',
       pullPriority: 33,
       ordering: EntityOrdering.recentFirst,
@@ -292,7 +309,7 @@ abstract final class EntityCatalog {
   /// recurso — `DELETE /orders/<id>/payments/<id>/` chegou a excluir o pedido
   /// inteiro em vez de estornar um recebimento.
   static const localActions = <String, Set<String>>{
-    order: {'items', 'close', 'pay', 'send-to-kitchen'},
+    order: {'items', 'close', 'pay', 'send-to-kitchen', 'quantity'},
     cashSession: {'open', 'close', 'withdrawal', 'supply', 'approve'},
     command: {'link-table', 'unlink-table'},
   };

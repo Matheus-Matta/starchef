@@ -573,6 +573,58 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
 
 
 @transaction.atomic
+def set_order_item_quantity(item, user, quantity):
+    """Ajusta a quantidade de um item que ainda NAO foi para a producao.
+
+    Existe para o `+` e o `-` do teclado do PDV. So item pendente entra aqui:
+    um item ja despachado descreve o que a cozinha recebeu, e mudar a
+    quantidade dele reescreveria o passado sem que ninguem na producao ficasse
+    sabendo — para esse caso existem o cancelamento e a cortesia, que avisam.
+
+    Quantidade zero seria um item invisivel com preco; quem quer remover usa
+    `void_order_item`, que exige motivo e deixa registro.
+    """
+    quantity = Decimal(str(quantity))
+    if quantity <= 0:
+        raise ValidationError("Para remover o item, cancele-o informando o motivo.")
+
+    with tenant_context(item.account):
+        item = (
+            OrderItem.objects.select_related("order", "product")
+            .select_for_update(of=("self",))
+            .get(pk=item.pk)
+        )
+        if item.order.is_locked:
+            raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
+        if item.status != OrderItem.STATUS_PENDING:
+            raise ValidationError(
+                "Só um item que ainda não foi para a produção pode ter a quantidade alterada."
+            )
+        if item.product_id and item.product.is_weighed:
+            raise ValidationError(
+                "Produto vendido por peso: a quantidade vem da balança, não do teclado."
+            )
+
+        item.quantity = quantity
+        item.total_price = (item.unit_price * quantity).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        item.updated_by = user
+        item.save(update_fields=["quantity", "total_price", "updated_by", "updated_at"])
+        for item_addon in item.addons.all():
+            item_addon.total_price = (item_addon.unit_price * quantity).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP
+            )
+            item_addon.updated_by = user
+            item_addon.save(update_fields=["total_price", "updated_by", "updated_at"])
+        recalculate_order(item.order)
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=item,
+            actor=user,
+            metadata={"event": "item_quantity_changed", "quantity": str(quantity)},
+        )
+        return item
+
+
 def void_order_item(item, user, reason="", offline_printed=False):
     """Cancela um item, com cupom de cancelamento so depois de despachado.
 

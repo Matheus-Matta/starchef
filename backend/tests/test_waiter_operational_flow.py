@@ -279,13 +279,19 @@ def test_table_api_derives_occupied_status_from_linked_command(api_client, manag
     assert row["status"] == Table.STATUS_OCCUPIED
 
 
-def test_assigned_operator_resumes_open_cash_session(
+def test_another_assigned_operator_cannot_take_over_the_session(
     account,
     restaurant,
     branch,
     manager_user,
     waiter_user,
 ):
+    """A sessao pertence a quem a abriu — estar vinculado ao caixa nao basta.
+
+    Antes, `current` entregava a sessao de outra pessoa para qualquer operador
+    vinculado ao caixa: dois usuarios acabavam operando a mesma gaveta, e a
+    conferencia cega do fechamento deixava de significar alguma coisa.
+    """
     station = CashStation.objects.create(
         account=account,
         restaurant=restaurant,
@@ -293,7 +299,7 @@ def test_assigned_operator_resumes_open_cash_session(
         code="PDV1",
     )
     station.operators.add(manager_user, waiter_user)
-    opened = open_cash_register(
+    open_cash_register(
         restaurant=restaurant,
         cash_station=station,
         user=manager_user,
@@ -303,8 +309,14 @@ def test_assigned_operator_resumes_open_cash_session(
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {RefreshToken.for_user(waiter_user).access_token}")
     response = client.get("/api/v1/cash-register/current/")
-    assert response.status_code == 200, response.content
-    assert response.json()["id"] == str(opened.id)
+
+    assert response.status_code == 409, response.content
+    body = response.json()
+    assert body["code"] == "cash_session_conflict"
+    # A mensagem precisa dizer quem esta com o caixa e o que fazer.
+    assert "PDV 1" in body["message"]
+    assert "transferência gerencial" in body["message"]
+    assert body["session"]["opened_by_name"] == (manager_user.get_full_name() or manager_user.username)
 
 
 def test_current_cash_register_does_not_leak_across_restaurants(

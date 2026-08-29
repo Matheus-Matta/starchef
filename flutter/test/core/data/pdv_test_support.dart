@@ -5,6 +5,7 @@ import 'package:starchef_pdv/core/data/offline_first_gateway.dart';
 import 'package:starchef_pdv/core/data/pdv_database.dart';
 import 'package:starchef_pdv/core/data/sync_queue_service.dart';
 import 'package:starchef_pdv/core/data/sync_service.dart';
+import 'package:starchef_pdv/core/network/relay_origin.dart';
 
 /// Núcleo local completo em um arquivo temporário, sem rede nem interface.
 ///
@@ -68,6 +69,7 @@ class RecordedRequest {
     this.query,
     this.body,
     this.idempotencyKey,
+    this.origin,
   });
 
   final String method;
@@ -75,6 +77,10 @@ class RecordedRequest {
   final Map<String, dynamic>? query;
   final Map<String, dynamic>? body;
   final String? idempotencyKey;
+
+  /// Credenciais com que a fila entregou esta operação — `null` quando ela
+  /// pertence ao próprio terminal.
+  final RelayOrigin? origin;
 }
 
 /// Transporte controlado pelo teste: nenhuma chamada sai da máquina.
@@ -100,6 +106,8 @@ class FakeSyncTransport implements SyncTransport {
     Map<String, dynamic>? query,
     Map<String, dynamic>? body,
     String? idempotencyKey,
+    RelayOrigin? origin,
+    void Function(RelayOrigin renewed)? onOriginRenewed,
   }) async {
     final request = RecordedRequest(
       method: method,
@@ -107,6 +115,7 @@ class FakeSyncTransport implements SyncTransport {
       query: query,
       body: body,
       idempotencyKey: idempotencyKey,
+      origin: origin,
     );
     requests.add(request);
     if (!online) {

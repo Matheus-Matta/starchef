@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
+from apps.menu.barcodes import GTIN_LENGTHS, is_valid_gtin, normalize_barcode
 from apps.menu.models import (
     Ingredient,
     Menu,
@@ -122,6 +123,42 @@ class ProductSerializer(TenantModelSerializer):
         if value and self.instance and value.branch_id != self.instance.branch_id:
             raise serializers.ValidationError("O setor deve pertencer à mesma filial do produto.")
         return value
+
+    def validate_ean(self, value):
+        """Normaliza e recusa duplicidade e dígito verificador errado.
+
+        O erro precisa aparecer AQUI, no cadastro. Um código repetido só se
+        manifestaria na frente do cliente, com o PDV tendo de escolher entre
+        dois produtos sem ter como saber qual; e um dígito verificador errado
+        vira um produto que o leitor nunca encontra.
+        """
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        digits = normalize_barcode(raw)
+        if not digits:
+            raise serializers.ValidationError("O código de barras deve conter apenas dígitos.")
+        if len(digits) > 32:
+            raise serializers.ValidationError("Código de barras longo demais (máximo 32 dígitos).")
+        if len(digits) in GTIN_LENGTHS and not is_valid_gtin(digits):
+            raise serializers.ValidationError(
+                f"Dígito verificador inválido para um código de {len(digits)} dígitos. "
+                "Confira a etiqueta — um código errado aqui é um produto que o leitor nunca acha."
+            )
+
+        account = getattr(self.context.get("request"), "account", None)
+        duplicates = Product.all_objects.filter(ean=digits, deleted_at__isnull=True)
+        if account is not None:
+            duplicates = duplicates.filter(account=account)
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        conflict = duplicates.first()
+        if conflict is not None:
+            raise serializers.ValidationError(
+                f"O código {digits} já está cadastrado em \"{conflict.name}\". "
+                "Dois produtos com o mesmo código deixariam o PDV escolher um deles em silêncio."
+            )
+        return digits
 
     def validate_restaurants(self, value):
         account = getattr(self.context.get("request"), "account", None)
