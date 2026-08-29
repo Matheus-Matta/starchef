@@ -24,6 +24,7 @@ class PdvSidebar extends StatelessWidget {
     this.contextPanel,
     this.compactContextPanel,
     this.showOrders = true,
+    this.showFinance = true,
     this.showScale = true,
     this.showSettings = true,
     this.versionStatus,
@@ -40,6 +41,7 @@ class PdvSidebar extends StatelessWidget {
   final Widget? contextPanel;
   final Widget? compactContextPanel;
   final bool showOrders;
+  final bool showFinance;
   final bool showScale;
   final bool showSettings;
   final PdvUpdateStatus? versionStatus;
@@ -65,11 +67,12 @@ class PdvSidebar extends StatelessWidget {
           label: 'Pedidos',
           icon: Icons.receipt_long_outlined,
         ),
-      const _SidebarEntry(
-        destination: PdvDestination.finance,
-        label: 'Financeiro',
-        icon: Icons.account_balance_wallet_outlined,
-      ),
+      if (showFinance)
+        const _SidebarEntry(
+          destination: PdvDestination.finance,
+          label: 'Financeiro',
+          icon: Icons.account_balance_wallet_outlined,
+        ),
       if (showScale)
         const _SidebarEntry(
           destination: PdvDestination.scale,

@@ -225,6 +225,7 @@ class _HomePageState extends State<HomePage> {
     topology = TerminalTopology(
       api: api,
       deviceAgent: deviceAgent,
+      preferences: widget.preferences,
       readIdentity: () {
         final user = widget.controller.session?.user;
         return TopologyIdentity(
@@ -1033,6 +1034,7 @@ class _HomePageState extends State<HomePage> {
         await _openOrders();
         return;
       case PdvDestination.finance:
+        if (!widget.controller.session!.user.canAccessCash) return;
         await _openCashCenter();
         return;
       case PdvDestination.scale:
@@ -2615,6 +2617,27 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// Quem imprime é o servidor (ou o Caixa Principal, pelo relay)?
+  ///
+  /// Só quando a operação chega ao destino dentro da janela: aí o `PrintJob`
+  /// existe lá e sair papel aqui dobraria o cupom.
+  ///
+  /// **Um Caixa Secundário nunca espera essa janela.** A impressora é dele, o
+  /// cupom ele sabe montar, e o cliente está na frente dele — mandar a
+  /// impressão para o Principal faria o papel sair na outra ponta da loja. Ele
+  /// vai direto reivindicar e imprimir; se a operação já tiver subido, a
+  /// reivindicação falha e o backend assume, que é a mesma rede de segurança
+  /// de sempre.
+  Future<bool> _serverPrintsInstead(String operationId) async {
+    if (isSecondaryStation) return false;
+    return api.awaitDelivery(
+      operationId,
+      timeout: api.syncStatus.hasConnection
+          ? const Duration(seconds: 3)
+          : const Duration(milliseconds: 400),
+    );
+  }
+
   /// Imprime o cupom de cancelamento aqui quando a operação não chegou ao
   /// servidor.
   ///
@@ -2629,10 +2652,7 @@ class _HomePageState extends State<HomePage> {
   ) async {
     final operationId = '${response['_sync_operation_id'] ?? ''}';
     if (operationId.isEmpty) return;
-    final janela = api.syncStatus.hasConnection
-        ? const Duration(seconds: 3)
-        : const Duration(milliseconds: 400);
-    if (await api.awaitDelivery(operationId, timeout: janela)) return;
+    if (await _serverPrintsInstead(operationId)) return;
     if (!await api.patchQueuedBody(operationId, {'offline_printed': true})) {
       return;
     }
@@ -2827,10 +2847,7 @@ class _HomePageState extends State<HomePage> {
     // ela reconhecidamente fora, esperar tanto só atrasaria a cozinha — mas a
     // pergunta continua sendo feita, porque o indicador pode estar um
     // instante atrás da realidade.
-    final janela = api.syncStatus.hasConnection
-        ? const Duration(seconds: 3)
-        : const Duration(milliseconds: 400);
-    if (await api.awaitDelivery(operationId, timeout: janela)) {
+    if (await _serverPrintsInstead(operationId)) {
       AppLogger.instance.info(
         'comanda_impressao_do_servidor',
         data: {'motivo': 'a operacao subiu dentro da janela', 'operacao': operationId},
@@ -3011,10 +3028,13 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.schedule),
               label: const Text('Pagar depois'),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, 'payment'),
-              child: const Text('Ir para pagamento'),
-            ),
+            // Sem `payments.manage`, o operador só pode mandar para a cozinha
+            // e deixar o recebimento para quem tem a permissão de caixa.
+            if (widget.controller.session!.user.canProcessPayments)
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'payment'),
+                child: const Text('Ir para pagamento'),
+              ),
           ],
         ),
       ),
@@ -4435,6 +4455,7 @@ class _HomePageState extends State<HomePage> {
             contextPanel: _sidebarOperationPanel(),
             compactContextPanel: _sidebarOperationPanel(compact: true),
             showOrders: widget.controller.session!.user.canViewOrders,
+            showFinance: widget.controller.session!.user.canAccessCash,
             showScale:
                 widget.controller.session!.user.canManageOrders ||
                 widget.controller.session!.user.canProcessPayments,
@@ -6149,8 +6170,11 @@ class _HomePageState extends State<HomePage> {
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,
-    onCancel: _cancelOrder,
-    onEmitInvoice: activeOrder == null
+    onCancel: widget.controller.session!.user.canCancelOrders
+        ? _cancelOrder
+        : null,
+    onEmitInvoice:
+        activeOrder == null || !widget.controller.session!.user.canProcessPayments
         ? null
         : () => _emitFiscalInvoice(activeOrder!),
     printing: printingReceipt,

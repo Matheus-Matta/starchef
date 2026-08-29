@@ -13,10 +13,6 @@ enum HandsFreeState {
   /// Estado 2: item pesado registrado, aguardando a leitura da comanda.
   waitingCommand,
 
-  /// Estado 2 em alerta: o tempo de comanda esgotou e há um período curto de
-  /// confirmação antes do cancelamento automático.
-  commandOverdue,
-
   /// Estado 3: criando o pedido e imprimindo.
   creatingOrder,
 
@@ -71,16 +67,17 @@ class WeighedItem {
 class HandsFreeMachine extends ChangeNotifier {
   HandsFreeMachine({
     required this.commandTimeout,
-    this.gracePeriod = const Duration(seconds: 10),
     this.minimumWeightKg = 0.005,
     this.cancelOnZeroDuringCommand = false,
   });
 
-  /// Tempo máximo aguardando a comanda antes do alerta.
+  /// Tempo máximo aguardando a comanda antes do cancelamento automático.
+  ///
+  /// Único temporizador do fluxo — o mesmo valor configurado em
+  /// Preferências. Havia um segundo período fixo de 10s ("grace period")
+  /// somado a este depois de esgotado: configurar 10s no terminal cancelava
+  /// de fato aos 20s, e ninguém que ajustou aquele número esperava isso.
   final Duration commandTimeout;
-
-  /// Período de confirmação entre o alerta e o cancelamento automático.
-  final Duration gracePeriod;
 
   /// Abaixo deste valor o prato é considerado vazio.
   final double minimumWeightKg;
@@ -98,7 +95,6 @@ class HandsFreeMachine extends ChangeNotifier {
   String? _commandCode;
   String? _failureMessage;
   DateTime? _commandDeadline;
-  DateTime? _cancelDeadline;
   double _currentWeightKg = 0;
   bool _stable = false;
 
@@ -110,7 +106,7 @@ class HandsFreeMachine extends ChangeNotifier {
   double get currentWeightKg => _currentWeightKg;
   bool get isStable => _stable;
 
-  /// Quanto falta para o alerta de comanda, quando aplicável.
+  /// Quanto falta para o cancelamento automático, quando aplicável.
   Duration? remainingForCommand(DateTime now) {
     final deadline = _commandDeadline;
     if (deadline == null || _state != HandsFreeState.waitingCommand) {
@@ -120,19 +116,8 @@ class HandsFreeMachine extends ChangeNotifier {
     return remaining.isNegative ? Duration.zero : remaining;
   }
 
-  /// Quanto falta para o cancelamento automático durante o alerta.
-  Duration? remainingForCancel(DateTime now) {
-    final deadline = _cancelDeadline;
-    if (deadline == null || _state != HandsFreeState.commandOverdue) {
-      return null;
-    }
-    final remaining = deadline.difference(now);
-    return remaining.isNegative ? Duration.zero : remaining;
-  }
-
   bool get canAcceptCommand =>
       _state == HandsFreeState.waitingCommand ||
-      _state == HandsFreeState.commandOverdue ||
       _state == HandsFreeState.failed;
 
   /// Coloca a estação no Estado 1.
@@ -177,11 +162,9 @@ class HandsFreeMachine extends ChangeNotifier {
           );
           _state = HandsFreeState.waitingCommand;
           _commandDeadline = sample.at.add(commandTimeout);
-          _cancelDeadline = null;
           effects.add(HandsFreeEffect.successSound);
         }
       case HandsFreeState.waitingCommand:
-      case HandsFreeState.commandOverdue:
         if (empty && cancelOnZeroDuringCommand) {
           effects.addAll(_cancelToWaiting());
         }
@@ -196,25 +179,18 @@ class HandsFreeMachine extends ChangeNotifier {
   }
 
   /// Avança o relógio da máquina; a interface chama a cada segundo.
+  ///
+  /// Um único prazo: esgotado o tempo de comanda, cancela na hora — sem um
+  /// segundo período de espera por trás.
   List<HandsFreeEffect> tick(DateTime now) {
-    final effects = <HandsFreeEffect>[];
-    if (_state == HandsFreeState.waitingCommand) {
-      final deadline = _commandDeadline;
-      if (deadline != null && !now.isBefore(deadline)) {
-        _state = HandsFreeState.commandOverdue;
-        _cancelDeadline = now.add(gracePeriod);
-        effects.add(HandsFreeEffect.alertSound);
-        notifyListeners();
-      }
-      return effects;
-    }
-    if (_state == HandsFreeState.commandOverdue) {
-      final deadline = _cancelDeadline;
-      if (deadline != null && !now.isBefore(deadline)) {
-        effects.addAll(_cancelToWaiting());
-        notifyListeners();
-      }
-    }
+    if (_state != HandsFreeState.waitingCommand) return const [];
+    final deadline = _commandDeadline;
+    if (deadline == null || now.isBefore(deadline)) return const [];
+    final effects = [
+      HandsFreeEffect.alertSound,
+      ..._cancelToWaiting(),
+    ];
+    notifyListeners();
     return effects;
   }
 
@@ -236,7 +212,6 @@ class HandsFreeMachine extends ChangeNotifier {
     _failureMessage = null;
     _state = HandsFreeState.creatingOrder;
     _commandDeadline = null;
-    _cancelDeadline = null;
     notifyListeners();
     return const [HandsFreeEffect.successSound, HandsFreeEffect.createOrder];
   }
@@ -296,7 +271,6 @@ class HandsFreeMachine extends ChangeNotifier {
     _commandCode = null;
     _failureMessage = null;
     _commandDeadline = null;
-    _cancelDeadline = null;
     _currentWeightKg = 0;
     _stable = false;
   }

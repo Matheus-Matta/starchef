@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/data/print_queue_service.dart';
+import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/copyable_error.dart';
@@ -99,6 +100,79 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
     await widget.agent.drainPrintQueue();
     await _load();
   }
+
+  /// Esvazia a fila inteira.
+  ///
+  /// Descartar um a um não é uma opção com trinta cupons esperando e fila no
+  /// balcão — que é exatamente o estado em que um terminal fica depois de
+  /// herdar trabalho que não era dele.
+  Future<void> _clearAll() async {
+    final total = entries.length;
+    final confirmed = await _confirmClearAll(total);
+    if (confirmed != true || !mounted) return;
+    final queue = _queue;
+    final scope = _scope;
+    if (queue == null || scope == null) return;
+    setState(() => loading = true);
+    final removed = await queue.clearPending(scope: scope);
+    AppLogger.instance.warning(
+      'print_queue_esvaziada',
+      data: {'descartados': removed},
+    );
+    await _load();
+    if (!mounted) return;
+    showAppToast(
+      context,
+      removed == 1
+          ? '1 cupom saiu da fila e não será impresso.'
+          : '$removed cupons saíram da fila e não serão impressos.',
+      severity: AppErrorSeverity.warning,
+    );
+  }
+
+  Future<bool?> _confirmClearAll(int total) => showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AppDialog(
+      title: const Text('Limpar a fila de impressão?'),
+      content: SizedBox(
+        width: 460,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              total == 1
+                  ? 'O cupom que está esperando sai da fila e não será '
+                        'impresso.'
+                  : 'Os $total cupons que estão esperando saem da fila e não '
+                        'serão impressos.',
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Nenhuma venda é alterada — só o papel deixa de sair. Não dá '
+              'para desfazer: o que for descartado aqui precisa ser '
+              'reimpresso pelo caixa, um a um. O descarte fica registrado '
+              'no log.',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Manter a fila'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(dialogContext).colorScheme.error,
+          ),
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Limpar tudo'),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _discard(PrintQueueEntry entry) async {
     final confirmed = await _confirmDiscard(entry);
@@ -223,6 +297,12 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
           onPressed: loading ? null : _load,
           icon: const Icon(Icons.refresh),
           label: const Text('Atualizar'),
+        ),
+        TextButton.icon(
+          onPressed: loading || entries.isEmpty ? null : _clearAll,
+          style: TextButton.styleFrom(foregroundColor: scheme.error),
+          icon: const Icon(Icons.delete_sweep_outlined),
+          label: const Text('Limpar fila'),
         ),
         FilledButton.icon(
           onPressed: loading || entries.isEmpty ? null : _retryAll,

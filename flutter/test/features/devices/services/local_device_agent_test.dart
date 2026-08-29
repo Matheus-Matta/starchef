@@ -249,4 +249,154 @@ void main() {
       },
     );
   });
+
+  group('LocalDeviceAgent ao assumir o papel de Caixa Principal', () {
+    /// Servidor de mentira com o acúmulo que um Caixa Principal anterior
+    /// deixou pendente.
+    Future<HttpServer> servidorComBacklog({
+      required String criadoEm,
+      required List<int> writes,
+    }) async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final response = request.response;
+        response.headers.contentType = ContentType.json;
+        switch (request.uri.path) {
+          case '/api/v1/printers/':
+            response.write(
+              jsonEncode({
+                'results': [
+                  {
+                    'id': 'printer-1',
+                    'name': 'Balança',
+                    'connection_type': 'network',
+                    'host': '192.0.2.10',
+                    'port': 9100,
+                    'driver_type': 'escpos',
+                    'auto_print': false,
+                  },
+                ],
+              }),
+            );
+          case '/api/v1/print-jobs/':
+            final status = request.uri.queryParameters['status'];
+            response.write(
+              jsonEncode({
+                'results': status == 'pending'
+                    ? [
+                        {
+                          'id': 'job-antigo',
+                          'status': 'pending',
+                          'job_type': 'weigh_ticket',
+                          'printer': 'printer-1',
+                          'created_at': criadoEm,
+                          'payload': {'text_content': 'NOTA DE PESAGEM'},
+                        },
+                      ]
+                    : const [],
+              }),
+            );
+          case '/api/v1/print-jobs/job-antigo/mark-printed/':
+            response.write(jsonEncode({'ok': true}));
+          default:
+            response.statusCode = HttpStatus.notFound;
+        }
+        await response.close();
+      });
+      return server;
+    }
+
+    test(
+      'não imprime o que já estava pendente antes da virada',
+      () async {
+        // O caso relatado: o terminal operou como Caixa Secundário e imprimiu
+        // as notas na hora, na impressora dele. Os `PrintJob` correspondentes
+        // ficaram pendentes no servidor, porque quem os fecharia era o
+        // principal daquele momento. Ao virar principal, ele encontrava esse
+        // acúmulo inteiro e mandava tudo para a impressora de uma vez — todas
+        // as notas do expediente saindo de novo.
+        final writes = <int>[];
+        final server = await servidorComBacklog(
+          criadoEm: DateTime.now()
+              .toUtc()
+              .subtract(const Duration(hours: 2))
+              .toIso8601String(),
+          writes: writes,
+        );
+        addTearDown(() => server.close(force: true));
+
+        final stack = await TestPdvStack.create();
+        addTearDown(stack.dispose);
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async => writes.add(bytes.length),
+        );
+        addTearDown(agent.dispose);
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+          takingOver: true,
+        );
+
+        expect(writes, isEmpty, reason: 'nada sai no papel sozinho');
+        // Mas o cupom não some: ele fica visível na fila, esperando a decisão
+        // de quem está no balcão.
+        // O escopo da fila segue a sessao do token usado nas requisicoes, e
+        // nao o do bind inicial do stack de teste.
+        final retidos = await stack.gateway.printQueue.entries(
+          scope: agent.printScope!,
+        );
+        expect(retidos.single.remoteJobId, 'job-antigo');
+        expect(retidos.single.lastError, contains('Caixa Principal'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'imprime normalmente o que o servidor cria depois da virada',
+      () async {
+        // A retenção vale só para o acúmulo herdado. Um trabalho novo é
+        // responsabilidade deste terminal e tem de sair sem ninguém mandar.
+        final writes = <int>[];
+        final server = await servidorComBacklog(
+          criadoEm: DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 1))
+              .toIso8601String(),
+          writes: writes,
+        );
+        addTearDown(() => server.close(force: true));
+
+        final stack = await TestPdvStack.create();
+        addTearDown(stack.dispose);
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async => writes.add(bytes.length),
+        );
+        addTearDown(agent.dispose);
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+          takingOver: true,
+        );
+
+        expect(writes, hasLength(1));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+  });
 }

@@ -28,6 +28,7 @@ class LocalPreferences {
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _serialPortOverridesKey = 'serial_port_overrides';
   static const _masterPrinterIdKey = 'master_printer_id';
+  static const _servedAsPrincipalKey = 'served_as_principal';
 
   final File _file;
   Map<String, dynamic> _values = const {};
@@ -116,6 +117,20 @@ class LocalPreferences {
     _masterPrinterIdKey,
     (value == null || value.trim().isEmpty) ? null : value.trim(),
   );
+
+  /// Este terminal já servia a fila de impressão como Caixa Principal na
+  /// última vez que operou?
+  ///
+  /// Distingue as duas partidas que, do lado do agente, são idênticas: um
+  /// principal que reiniciou (o que estava pendente no servidor é dele, e
+  /// deve sair) e um terminal que acabou de trocar de papel (o que estava
+  /// pendente é do principal anterior, e sair de novo é imprimir duas vezes).
+  /// Precisa sobreviver ao fechamento do PDV, por isso mora aqui e não na
+  /// memória do agente.
+  bool get servedAsPrincipal => _values[_servedAsPrincipalKey] as bool? ?? false;
+
+  Future<void> setServedAsPrincipal(bool value) =>
+      _write(_servedAsPrincipalKey, value);
 
   /// Porta guardada por versões antigas para este equipamento neste terminal.
   ///

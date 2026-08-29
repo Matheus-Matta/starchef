@@ -191,6 +191,11 @@ class PrintQueueService {
   /// [remoteJobId] identifica o `PrintJob` do servidor: enquanto o
   /// `mark-printed` não é confirmado, o mesmo trabalho volta a aparecer na
   /// consulta, e sem esta chave ele entraria de novo na fila.
+  /// [heldReason] entra o cupom **parado**, esperando uma decisão de quem
+  /// está no balcão em vez de ir direto para a impressora. É como um trabalho
+  /// herdado é recebido: ele existe, aparece na tela da fila e sai com "tentar
+  /// agora" — mas ninguém manda papel por conta própria em nome de um
+  /// terminal que não era o dono dele.
   Future<String> enqueue({
     required String scope,
     required Map<String, dynamic> printer,
@@ -200,6 +205,7 @@ class PrintQueueService {
     String? remoteJobId,
     String? barcode,
     String? qr,
+    String? heldReason,
   }) async {
     final id = jobId ?? remoteJobId ?? LocalId.uuid();
     final now = DateTime.now().toUtc().toIso8601String();
@@ -207,8 +213,9 @@ class PrintQueueService {
       '''
       INSERT INTO print_queue(
         job_id, scope, remote_job_id, printer_id, printer_json, job_type,
-        content, barcode, qr, status, attempts, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?)
+        content, barcode, qr, status, attempts, last_error, created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
       ON CONFLICT(job_id) DO NOTHING
       ''',
       [
@@ -221,6 +228,8 @@ class PrintQueueService {
         content,
         barcode,
         qr,
+        heldReason == null ? 'PENDING' : 'FAILED',
+        heldReason,
         now,
         now,
       ],
@@ -403,6 +412,32 @@ class PrintQueueService {
   /// Mesmo efeito de [forget], nome diferente porque a intenção é outra —
   /// aqui não houve confirmação nenhuma, houve desistência.
   Future<void> discard(int id) => forget(id);
+
+  /// Esvazia a fila: nada do que está esperando vai sair no papel.
+  ///
+  /// É o descarte um a um aplicado de uma vez, para quando a fila inteira
+  /// perdeu o sentido — o caso que motivou isto foi um terminal que trocou de
+  /// papel na rede local e acordou com dezenas de cupons herdados esperando.
+  /// Descartar trinta cupons um por um não é uma opção para quem tem fila no
+  /// balcão.
+  ///
+  /// O que já saiu no papel (`PRINTED`) não é tocado: aquelas linhas são o
+  /// registro de que o cupom saiu, e é o que impede o mesmo trabalho do
+  /// servidor de entrar de novo na fila. Devolve quantos cupons saíram.
+  Future<int> clearPending({required String scope}) async {
+    final row = await database.querySingle(
+      "SELECT COUNT(*) AS total FROM print_queue "
+      "WHERE scope = ? AND status != 'PRINTED'",
+      [scope],
+    );
+    final total = (row?['total'] as num?)?.toInt() ?? 0;
+    if (total == 0) return 0;
+    await database.execute(
+      "DELETE FROM print_queue WHERE scope = ? AND status != 'PRINTED'",
+      [scope],
+    );
+    return total;
+  }
 
   /// Antecipa as esperas — usado quando a impressora volta a responder.
   Future<void> retryAllNow({required String scope}) async {

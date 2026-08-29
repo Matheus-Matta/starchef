@@ -81,11 +81,30 @@ class SerialScaleTransport implements ScaleTransport {
           portBusy: true,
         );
       }
-      port.config = SerialPortConfig()
+      final config = SerialPortConfig()
         ..baudRate = baudRate
         ..bits = 8
         ..parity = parity ?? SerialPortParity.none
-        ..stopBits = stopBits ?? 1;
+        ..stopBits = stopBits ?? 1
+        // Sem isto, libserialport deixa RTS, CTS, DTR, DSR e XON/XOFF como o
+        // driver (ou o último programa a usar a porta) os deixou — é o que a
+        // própria documentação da biblioteca avisa. Numa porta que ficou com
+        // controle de fluxo por hardware, a balança nunca levanta CTS e o
+        // Windows simplesmente não entrega byte nenhum: porta aberta, leitura
+        // vazia, sem erro em lugar nenhum.
+        ..setFlowControl(SerialPortFlowControl.none)
+        // `SerialPortFlowControl.none` derruba DTR e RTS. Boa parte das
+        // balanças RS-232 (e dos conversores USB-serial que as acompanham)
+        // tira daí a energia ou o sinal de "estou escutando" e fica muda. O
+        // agente da v1.0 abria com pyserial, que levanta as duas por padrão —
+        // é esse comportamento que voltamos a ter aqui.
+        ..dtr = SerialPortDtr.on
+        ..rts = SerialPortRts.on;
+      try {
+        port.config = config;
+      } finally {
+        config.dispose();
+      }
       final reader = SerialPortReader(port);
       _port = port;
       _reader = reader;

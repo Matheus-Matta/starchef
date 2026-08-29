@@ -312,5 +312,79 @@ void main() {
 
       expect(listadas.map((item) => item.jobId), [segundo]);
     });
+
+    test('limpar a fila descarta tudo que ainda espera', () async {
+      // Descartar um a um não é opção com a fila cheia no balcão — que é
+      // exatamente o estado de um terminal que herdou trabalho alheio.
+      await enfileirar(content: 'COMANDA 1');
+      await enfileirar(content: 'COMANDA 2');
+      await enfileirar(content: 'COMANDA 3');
+
+      final removidos = await queue.clearPending(scope: scope);
+
+      expect(removidos, 3);
+      expect(await queue.entries(scope: scope), isEmpty);
+      expect((await queue.summary(scope: scope)).total, 0);
+    });
+
+    test('limpar a fila preserva o registro do que já saiu no papel', () async {
+      // A linha `PRINTED` de um trabalho do servidor é o que impede o mesmo
+      // cupom de entrar de novo na fila na próxima consulta. Apagá-la aqui
+      // transformaria "limpar a fila" em "imprimir tudo de novo em seguida".
+      final impresso = await enfileirar(remoteJobId: 'remoto-1');
+      final job = await queue.claimNext(scope: scope);
+      await queue.markPrinted(job!.id);
+      await enfileirar(content: 'AINDA ESPERANDO');
+
+      final removidos = await queue.clearPending(scope: scope);
+
+      expect(removidos, 1);
+      expect(
+        await queue.containsRemote(scope: scope, remoteJobId: 'remoto-1'),
+        isTrue,
+        reason: 'o trabalho $impresso ja saiu e nao pode voltar a fila',
+      );
+    });
+  });
+
+  group('trabalho herdado de outro papel', () {
+    test('entra parado, sem ir para a impressora sozinho', () async {
+      // Um terminal que vira Caixa Principal encontra no servidor os
+      // `PrintJob` que o principal anterior deixou pendentes — inclusive os
+      // das notas que ele mesmo já imprimiu enquanto era secundário.
+      // Enfileirá-los como PENDING mandava tudo para o papel de uma vez.
+      await queue.enqueue(
+        scope: scope,
+        printer: printer,
+        jobType: 'weigh_ticket',
+        content: 'NOTA DE PESAGEM',
+        remoteJobId: 'remoto-herdado',
+        heldReason: 'Ja estava pendente quando este terminal assumiu.',
+      );
+
+      expect(await queue.claimNext(scope: scope), isNull);
+
+      final listadas = await queue.entries(scope: scope);
+      expect(listadas.single.status, PrintJobStatus.failed);
+      expect(listadas.single.lastError, contains('assumiu'));
+    });
+
+    test('sai no papel quando o operador manda tentar', () async {
+      await queue.enqueue(
+        scope: scope,
+        printer: printer,
+        jobType: 'weigh_ticket',
+        content: 'NOTA DE PESAGEM',
+        remoteJobId: 'remoto-herdado',
+        heldReason: 'Ja estava pendente quando este terminal assumiu.',
+      );
+      final retido = (await queue.entries(scope: scope)).single;
+
+      await queue.retryNow(retido.id);
+
+      final job = await queue.claimNext(scope: scope);
+      expect(job, isNotNull);
+      expect(job!.content, 'NOTA DE PESAGEM');
+    });
   });
 }

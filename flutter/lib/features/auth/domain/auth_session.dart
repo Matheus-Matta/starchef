@@ -84,6 +84,32 @@ class AuthUser {
       permissions.contains('*') ||
       permissions.contains('payments.manage');
 
+  /// Alguma permissão de caixa (abrir/fechar/sangria/suprimento/aprovar) —
+  /// controla se o destino "Financeiro" aparece no PDV.
+  bool get canAccessCash =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      const {
+        'cash.view',
+        'cash.view.own',
+        'cash.open',
+        'cash.close.own',
+        'cash.manage',
+        'cash.manage.own',
+        'cash.withdrawal',
+        'cash.supply',
+        'cash.approve',
+      }.any(permissions.contains);
+
+  bool get canCancelOrders =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      permissions.contains('orders.cancel');
+
   factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
     id: json['id'] as String,
     username: json['username'] as String,

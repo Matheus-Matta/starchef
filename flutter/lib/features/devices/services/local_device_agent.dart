@@ -110,6 +110,25 @@ class LocalDeviceAgent {
   /// WebSocket — que, offline, nunca chega.
   Timer? _printQueueTimer;
 
+  /// Momento em que este terminal assumiu o papel de Caixa Principal, quando
+  /// ele não era antes. `null` num terminal que já era o principal.
+  ///
+  /// A fila de impressão do restaurante é do principal, e o agente a serve
+  /// consultando `/print-jobs/` pendentes — **todos** os pendentes da
+  /// unidade, sem nada dizendo quem os montou. Isso está certo para um
+  /// principal que reiniciou: o que ficou pendente enquanto ele estava fora é
+  /// dele mesmo. Está errado no instante em que um terminal troca de papel:
+  /// um Caixa Secundário imprime as próprias notas na hora, na impressora
+  /// dele, e os `PrintJob` correspondentes ficam pendentes no servidor porque
+  /// quem os fecharia é o principal daquele momento. Ao virar principal, esse
+  /// terminal encontrava esse acúmulo inteiro e mandava tudo para a
+  /// impressora de uma vez — todas as notas do expediente saindo de novo.
+  ///
+  /// Enquanto isto estiver marcado, o que já era pendente **antes** da
+  /// virada entra na fila parado (visível na tela da fila, com "tentar
+  /// agora"), e só o que o servidor criar daí em diante imprime sozinho.
+  DateTime? _backlogHeldBefore;
+
   /// Só um giro da fila por vez.
   ///
   /// O timer da fila, o evento do WebSocket e um cupom montado agora na tela
@@ -128,14 +147,29 @@ class LocalDeviceAgent {
   /// novo não sai, e não aparece erro nenhum".
   bool get isRunning => _token != null && _restaurantId != null;
 
-  void start({required String token, required String restaurantId}) {
+  /// Assume a fila de impressão do restaurante.
+  ///
+  /// [takingOver] diz que este terminal **não** era o Caixa Principal até
+  /// agora. Ele muda uma coisa só, e é a que evita o pior estrago desta
+  /// classe: os `PrintJob` que já estavam pendentes no servidor quando ele
+  /// assumiu não são impressos sozinhos — ver [_backlogHeldBefore].
+  void start({
+    required String token,
+    required String restaurantId,
+    bool takingOver = false,
+  }) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
       return;
     }
     AppLogger.instance.info(
       'print_agent_start',
-      data: {'restaurante': restaurantId, 'reinicio': _realtime != null},
+      data: {
+        'restaurante': restaurantId,
+        'reinicio': _realtime != null,
+        'assumindo_papel': takingOver,
+      },
     );
+    if (takingOver) _backlogHeldBefore = DateTime.now().toUtc();
     _token = token;
     _restaurantId = restaurantId;
     _lastTemplateSync = null;
@@ -201,6 +235,7 @@ class LocalDeviceAgent {
     _printQueueTimer = null;
     _token = null;
     _restaurantId = null;
+    _backlogHeldBefore = null;
     _lastTemplateSync = null;
     _lastDeviceSync = null;
     _backoffUntil = null;
@@ -343,9 +378,11 @@ class LocalDeviceAgent {
   Future<void> processPendingPrintJobsForTesting({
     required String token,
     required String restaurantId,
+    bool takingOver = false,
   }) {
     _token = token;
     _restaurantId = restaurantId;
+    if (takingOver) _backlogHeldBefore = DateTime.now().toUtc();
     return _processPrintJobs();
   }
 
@@ -377,6 +414,27 @@ class LocalDeviceAgent {
   PrintQueueService? get _printQueue => printQueue;
 
   String? get _printScope => printScope;
+
+  /// Este trabalho do servidor é herança do papel anterior deste terminal?
+  ///
+  /// Devolve o motivo a gravar na fila quando ele **não** deve sair sozinho,
+  /// e `null` quando é um trabalho normal. Ver [_backlogHeldBefore].
+  ///
+  /// Um trabalho sem data de criação legível conta como novo: reter um cupom
+  /// que a cozinha está esperando por causa de um campo ausente seria pior do
+  /// que o problema que isto resolve.
+  static const _inheritedBacklogReason =
+      'Este cupom já estava pendente no servidor quando este terminal virou '
+      'Caixa Principal. Ele não sai sozinho porque outro terminal pode já '
+      'tê-lo impresso — use "tentar agora" se ainda faltar o papel.';
+
+  String? _heldReasonFor(Map<String, dynamic> job) {
+    final limit = _backlogHeldBefore;
+    if (limit == null) return null;
+    final createdAt = DateTime.tryParse('${job['created_at'] ?? ''}')?.toUtc();
+    if (createdAt == null || !createdAt.isBefore(limit)) return null;
+    return _inheritedBacklogReason;
+  }
 
   /// Traz os trabalhos do servidor para a fila local, sem imprimir.
   ///
@@ -483,6 +541,7 @@ class LocalDeviceAgent {
         // `remoteJobId` é a chave que impede o mesmo cupom de entrar duas
         // vezes: enquanto o `mark-printed` não é confirmado, o trabalho volta
         // a aparecer nesta consulta.
+        final held = _heldReasonFor(job);
         await queue.enqueue(
           scope: scope,
           jobId: jobId,
@@ -492,7 +551,18 @@ class LocalDeviceAgent {
           content: document.content,
           barcode: document.barcode,
           qr: document.qr,
+          heldReason: held,
         );
+        if (held != null) {
+          AppLogger.instance.warning(
+            'print_job_herdado_retido',
+            data: {
+              'job_id': jobId,
+              'job_type': document.wireType,
+              'criado_em': '${job['created_at'] ?? ''}',
+            },
+          );
+        }
         ingested++;
       }
     }

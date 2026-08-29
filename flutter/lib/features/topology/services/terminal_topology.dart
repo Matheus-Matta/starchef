@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/storage/local_preferences.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../data/local_topology_store.dart';
 import '../domain/local_topology_config.dart';
@@ -52,11 +53,16 @@ class TerminalTopology extends ChangeNotifier {
     required this.deviceAgent,
     required TopologyIdentity Function() readIdentity,
     required LocalTopologyStore Function() createStore,
+    this.preferences,
   }) : _readIdentity = readIdentity,
        _createStore = createStore;
 
   final ApiClient api;
   final LocalDeviceAgent deviceAgent;
+
+  /// Onde fica registrado o papel com que este terminal operou por último.
+  /// Ver [LocalPreferences.servedAsPrincipal].
+  final LocalPreferences? preferences;
   final TopologyIdentity Function() _readIdentity;
   final LocalTopologyStore Function() _createStore;
 
@@ -190,7 +196,11 @@ class TerminalTopology extends ChangeNotifier {
       return;
     }
     if (config.mode == LocalTopologyMode.client) {
-      announce('parado', 'terminal secundario: quem imprime e o Principal');
+      announce('parado', 'terminal secundario: a fila da nuvem e do Principal');
+      // O secundário imprime o que ele mesmo monta (recibo, comanda, nota de
+      // pesagem) — isso não passa pelo agente. O que ele não faz é servir a
+      // fila de `PrintJob` da nuvem, que é do principal.
+      _rememberRole(principal: false);
       deviceAgent.stop();
       return;
     }
@@ -205,8 +215,35 @@ class TerminalTopology extends ChangeNotifier {
       announce('aguarda', 'restaurante ainda nao definido');
       return;
     }
-    announce('ativo', 'Caixa Principal com unidade definida');
-    deviceAgent.start(token: identity.accessToken, restaurantId: restaurant);
+    // Assumir a fila da nuvem vindo de outro papel não é a mesma coisa que
+    // reiniciar já sendo o principal: no primeiro caso, o que está pendente
+    // no servidor foi montado quando este terminal não era o dono da fila, e
+    // pode já ter saído no papel em outro lugar. Ver
+    // [LocalDeviceAgent.start] e [LocalPreferences.servedAsPrincipal].
+    final takingOver = preferences != null && !preferences!.servedAsPrincipal;
+    announce(
+      'ativo',
+      takingOver
+          ? 'Caixa Principal assumindo a fila (papel anterior: outro)'
+          : 'Caixa Principal com unidade definida',
+    );
+    deviceAgent.start(
+      token: identity.accessToken,
+      restaurantId: restaurant,
+      takingOver: takingOver,
+    );
+    _rememberRole(principal: true);
+  }
+
+  /// Grava o papel com que este terminal está servindo a fila de impressão.
+  ///
+  /// Só quando ele muda: este método roda a cada notificação da rede local, e
+  /// reescrever o arquivo de preferências em toda uma delas é ruído de disco
+  /// sem nenhum ganho.
+  void _rememberRole({required bool principal}) {
+    final current = preferences;
+    if (current == null || current.servedAsPrincipal == principal) return;
+    unawaited(current.setServedAsPrincipal(principal));
   }
 
   Future<void> shutdown() async {

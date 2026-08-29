@@ -423,19 +423,33 @@ como uma amostra já estável e percorre exatamente o mesmo caminho.
 
 ### Leitura da balança física
 
-A janela que vai usar a balança abre a porta ela mesma (`SerialScaleReader`,
-via `flutter_libserialport`). Não há PowerShell no caminho, o que faz a leitura
-funcionar igual em Windows e Linux, e não há nenhuma chamada periódica à API
-para obter peso.
+A janela que vai usar a balança abre a porta ela mesma (`Scale`, sobre
+`SerialScaleReader` e `flutter_libserialport`). Não há PowerShell no caminho, o
+que faz a leitura funcionar igual em Windows e Linux, e não há nenhuma chamada
+periódica à API para obter peso.
 
-O protocolo é escolhido em `settings.protocol` no cadastro da balança:
+`Scale` é a única porta de entrada da leitura de peso, no mesmo molde de
+`Printer` para a impressão. `ScaleDevice.fromJson` resolve o cadastro uma vez
+— porta, baud rate, protocolo, tempo de estabilização, limiar de zero — e é
+esse mesmo objeto que alimenta o leitor e o cartão de configuração da estação,
+para que o que a tela promete seja o que será aberto. `ScaleRuntime` carrega o
+que é do terminal (tolerância de estabilidade) e o transporte injetado dos
+testes.
+
+O protocolo é o campo `protocol` do cadastro da balança (`settings.protocol`
+ainda é aceito como segunda opção, para registros antigos preenchidos à mão):
 
 | Valor | Família | Enquadramento tratado |
 | --- | --- | --- |
 | `generic` (padrão) | qualquer equipamento em transmissão contínua | último número de cada linha; sem separador decimal e acima de 100, interpreta gramas |
-| `toledo` | Toledo Prix / 9091 | STX…ETX, dígitos com casas implícitas, marcas `I`/`?`/`M` de movimento |
+| `toledo_prt2` | Toledo Prix / 9091 | STX…ETX, dígitos com casas implícitas, marcas `I`/`?`/`M` de movimento |
 | `filizola` | Filizola CS / MF | gramas terminadas em CR, campo de status `S`/`U`/`M` quando presente |
-| `urano` | Urano UDC / POP-S | `+00.500kg`, com conversão quando a unidade é `g` |
+| `urano` | Urano UDC / POP-S | `002845` (só dígitos, casas implícitas), `+00.500kg` / `+500g`, e o quadro do modo de impressão (`PESO:   284 g` entre sequências ESC) |
+
+Todas as famílias abrem a porta em 8-N-1, com controle de fluxo desligado e
+DTR/RTS levantados — é o que o agente Python da v1.0 fazia (padrão do
+pyserial), e é o que boa parte das balanças RS-232 e dos conversores
+USB-serial espera para transmitir.
 
 Cada família documenta o enquadramento mais comum, mas firmware, configuração e
 modelo ainda variam: **todo modelo novo exige homologação física** antes de ir
@@ -445,8 +459,13 @@ leitor, comparando leituras consecutivas dentro da tolerância
 na balança. Quando o equipamento informa movimento, esse bit prevalece sobre a
 repetição do valor.
 
-Um watchdog marca `noResponse` se os quadros pararem por mais de 4 segundos, e
-uma falha de porta agenda reconexão com backoff de até 15 segundos.
+Um watchdog acompanha os 4 primeiros segundos de cada abertura e o silêncio
+depois dela, e distingue as causas em vez de deixar a estação parada em
+"aguardando leitura": porta aberta sem nenhum byte (porta trocada, cabo, baud
+rate ou equipamento em modo sob demanda), bytes chegando que o protocolo do
+cadastro não decodifica (a mensagem mostra uma amostra do que chegou), quadros
+só de estado sem peso, e leitura que existia e parou. Uma falha de porta
+agenda reconexão com backoff de até 15 segundos.
 
 ### Botão "Pegar peso da balança"
 
@@ -491,9 +510,9 @@ API:
 | `disconnected` | estação parada ou balança sem porta cadastrada |
 | `connecting` | abrindo a porta ou aguardando o primeiro quadro |
 | `connected` | quadros chegando, com o peso atual e se já estabilizou |
-| `noResponse` | porta aberta, mas o equipamento parou de transmitir |
+| `noResponse` | porta aberta e nada chegou dela, ou o equipamento parou de transmitir |
 | `portBusy` | outra janela detém o equipamento (com a identificação do dono) |
-| `readError` | quadros ilegíveis para o protocolo escolhido |
+| `readError` | quadros ilegíveis para o protocolo escolhido (com amostra do que chegou), ou só estado sem peso |
 
 ## Leitor de comanda USB-CDC/serial
 
@@ -867,7 +886,7 @@ Cuidados que o código já toma, e por quê:
 
 1. Cadastre o restaurante, produtos e comandas.
 2. Cadastre uma impressora ativa com conexão `windows`, `network` ou `serial`.
-3. Cadastre a balança ativa com porta, baud rate em `settings.baudrate`, protocolo em `settings.protocol` (`generic`, `toledo`, `filizola` ou `urano`) e produto por kg. A impressora pode ser vinculada no cadastro ou no seletor “Impressora padrão da balança” da estação.
+3. Cadastre a balança ativa com porta, baud rate em `settings.baudrate`, protocolo no campo `protocol` (`generic`, `toledo_prt2`, `filizola` ou `urano`) e produto por kg. A impressora pode ser vinculada no cadastro ou no seletor “Impressora padrão da balança” da estação.
 4. Confirme que usuário e token possuem permissão para usar/gerenciar dispositivos, operar balança e pedidos. Alterar a impressora persistida é uma alteração do cadastro da balança.
 
 ### 2. Preparar o terminal
@@ -901,7 +920,7 @@ Entre no PDV com rede disponível e carregue o restaurante/cardápio ao menos um
 | `Revisar` | clique no badge para abrir a fila, ver o motivo da recusa e decidir entre reenviar ou descartar |
 | "Este pedido ainda não está salvo neste terminal" | o pedido não estava na página guardada. Abra a tela de Pedidos com rede ao menos uma vez; o PDV também guarda os 50 mais recentes sozinho a cada abertura |
 | "Editando com os dados salvos localmente" | aviso normal offline: o pedido veio da cópia local e pode não refletir alterações feitas em outro caixa |
-| sem leitura de peso | use "Pegar peso da balança": ele reabre a porta e envia o pedido `ENQ`, cobrindo equipamento em modo sob demanda e canal caído. Persistindo, confira COM, baud rate e protocolo |
+| sem leitura de peso | leia primeiro o cartão de diagnóstico: ele diz se nada chegou pela porta, se o que chega não bate com o protocolo do cadastro (mostrando uma amostra) ou se a balança só manda estado. Depois use "Pegar peso da balança": ele reabre a porta e envia `ENQ`, cobrindo equipamento em modo sob demanda e canal caído |
 | peso nunca estabiliza | tolerância (`scale_stability_tolerance_kg`), `auto_print_delay_seconds` e vibração na bancada |
 | valor lido errado por 1000× | protocolo incorreto; confira se o equipamento transmite gramas ou quilos |
 | `Porta ocupada` na balança | o cartão informa qual janela detém o equipamento; feche-a ou escolha outra balança |

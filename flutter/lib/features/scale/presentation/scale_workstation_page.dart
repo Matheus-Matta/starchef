@@ -7,9 +7,9 @@ import '../../../core/errors/app_error_host.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/widgets/touch_keypad.dart';
-import '../../../core/hardware/scale/scale_protocol.dart';
+import '../../../core/hardware/scale/scale.dart';
+import '../../../core/hardware/scale/scale_device.dart';
 import '../../../core/hardware/scale/scale_sample.dart';
-import '../../../core/hardware/scale/serial_scale_reader.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
@@ -78,9 +78,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   bool started = false;
   String? errorMessage;
 
-  /// Leitor serial desta janela. `null` significa que nenhuma porta foi
-  /// configurada no cadastro da balança.
-  SerialScaleReader? reader;
+  /// Balança aberta por esta janela. `null` significa que nenhuma porta foi
+  /// configurada no cadastro do equipamento.
+  Scale? reader;
   StreamSubscription<ScaleSample>? sampleSubscription;
   StreamSubscription<ScaleLinkStatus>? linkSubscription;
   ScaleLinkStatus linkStatus = const ScaleLinkStatus(
@@ -115,6 +115,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   final Map<String, ProductConfigResult> extraConfigs = {};
 
   bool requestingWeight = false;
+
+  /// Esta estação vai emitir a nota de pesagem por conta própria?
+  ///
+  /// É a mesma condição que decide se o servidor deve gerar o `PrintJob` e se
+  /// ele já nasce impresso: uma resposta só, para os dois não divergirem e a
+  /// nota sair duas vezes.
+  bool get _printsTicketHere =>
+      widget.preferences.autoPrint && printerId != null;
 
   /// Restaurante selecionado, para o cabeçalho da nota impressa aqui.
   Map<String, dynamic>? get _restaurant => widget.restaurants
@@ -183,16 +191,36 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   double get pricePerKg =>
       ValueFormatters.number(weighedProduct?['current_price']);
 
+  /// Cadastro resolvido da última balança lida, guardado para não refazer a
+  /// leitura do JSON a cada quadro da interface.
+  ScaleDevice? _resolvedDevice;
+  Map<String, dynamic>? _resolvedFrom;
+
+  /// Cadastro da balança escolhida, já resolvido (porta, baud rate,
+  /// protocolo, estabilização). É o mesmo objeto que o leitor usa, então o
+  /// cartão de configuração não pode divergir do que será aberto.
+  ///
+  /// O `build` consulta isto várias vezes por quadro (porta, resumo,
+  /// estabilização); resolver o cadastro é barato, mas não de graça.
+  ScaleDevice? get scaleDevice {
+    final selected = selectedScale;
+    if (selected == null) return null;
+    if (!identical(_resolvedFrom, selected)) {
+      _resolvedFrom = selected;
+      _resolvedDevice = ScaleDevice.fromJson(selected);
+    }
+    return _resolvedDevice;
+  }
+
   /// Segundos de estabilidade exigidos, vindos do cadastro da balança.
-  int get settleSeconds =>
-      (selectedScale?['auto_print_delay_seconds'] as num?)?.toInt() ?? 3;
+  int get settleSeconds => scaleDevice?.settleDuration.inSeconds ?? 3;
 
   String? get scannerSlot {
     if (widget.restaurantId == null || scaleId == null) return null;
     return '${widget.restaurantId}:$scaleId';
   }
 
-  String get configuredPort => '${selectedScale?['port'] ?? ''}'.trim();
+  String get configuredPort => scaleDevice?.port ?? '';
 
   HandsFreeMachine _buildMachine() =>
       HandsFreeMachine(commandTimeout: widget.preferences.commandTimeout);
@@ -231,7 +259,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     machine.dispose();
     unawaited(sampleSubscription?.cancel());
     unawaited(linkSubscription?.cancel());
-    unawaited(reader?.dispose());
+    unawaited(reader?.close());
     unawaited(_detachScanner());
     unawaited(scannerBindingStore.close());
     commandController.dispose();
@@ -250,9 +278,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   bool get _acceptsCommandInput => switch (machine.state) {
-    HandsFreeState.waitingCommand ||
-    HandsFreeState.commandOverdue ||
-    HandsFreeState.failed => true,
+    HandsFreeState.waitingCommand || HandsFreeState.failed => true,
     _ => false,
   };
 
@@ -469,7 +495,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     linkSubscription = null;
     final current = reader;
     reader = null;
-    await current?.dispose();
+    await current?.close();
     machine.stop();
     extraConfigs.clear();
     if (!mounted) return;
@@ -491,36 +517,33 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Future<void> _attachReader() async {
     await sampleSubscription?.cancel();
     await linkSubscription?.cancel();
-    await reader?.dispose();
+    await reader?.close();
     sampleSubscription = null;
     linkSubscription = null;
     reader = null;
 
-    final port = configuredPort;
-    if (port.isEmpty) {
+    final device = scaleDevice;
+    if (device == null || !device.hasPort) {
       setState(() {
-        linkStatus = const ScaleLinkStatus(
+        linkStatus = ScaleLinkStatus(
           state: ScaleLinkState.disconnected,
           message:
-              'A balança não tem porta serial cadastrada. Informe a COM e o '
-              'baud rate no cadastro para ler o peso automaticamente.',
+              device?.missingConfiguration ??
+              'Selecione uma balança para começar a pesar.',
         );
       });
       return;
     }
 
-    final settings =
-        selectedScale?['settings'] as Map<String, dynamic>? ?? const {};
-    final baudRate = int.tryParse('${settings['baudrate'] ?? 9600}') ?? 9600;
-    final next = SerialScaleReader.serial(
-      portName: port,
-      baudRate: baudRate,
-      protocol: ScaleProtocol.forId('${settings['protocol'] ?? ''}'),
-      stabilityToleranceKg: widget.preferences.stabilityToleranceKg,
-      settleDuration: Duration(seconds: settleSeconds),
-      zeroThresholdKg:
-          double.tryParse('${settings['zero_threshold_kg'] ?? 0.005}') ?? 0.005,
-      ownerDetail: '${selectedScale?['name'] ?? 'balança'}',
+    // Porta, baud rate, protocolo e tempo de estabilização vêm todos do
+    // cadastro, resolvidos uma vez só por [ScaleDevice]. Daqui não sai mais
+    // nenhuma leitura solta do JSON: era assim que o protocolo escolhido no
+    // cadastro deixava de chegar ao leitor.
+    final next = Scale(
+      device,
+      runtime: ScaleRuntime(
+        stabilityToleranceKg: widget.preferences.stabilityToleranceKg,
+      ),
     );
     reader = next;
     sampleSubscription = next.samples.listen(_onSample);
@@ -534,7 +557,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         if (status.state == ScaleLinkState.connected) errorMessage = null;
       });
     });
-    await next.start();
+    await next.open();
   }
 
   /// Pede uma pesagem ao equipamento e explica o resultado ao operador.
@@ -562,12 +585,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       final message = switch (result) {
         ScaleWeightRequest.sent => null,
         ScaleWeightRequest.writeNotSupported =>
-          'A porta ${current.portName} abriu somente para leitura, então não '
+          'A porta ${current.device.port} abriu somente para leitura, então '
               'dá para pedir o peso. Se o visor mostra o peso mas nada chega '
               'aqui, configure a balança em transmissão contínua ou use o '
               'peso manual.',
         ScaleWeightRequest.notConnected =>
-          'Não foi possível abrir ${current.portName}. Confira o cabo e se '
+          'Não foi possível abrir ${current.device.port}. Confira o cabo e se '
               'outra janela está usando a porta.',
         ScaleWeightRequest.unavailable =>
           'A estação precisa estar em operação para falar com a balança.',
@@ -678,7 +701,23 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           // Sem impressora vinculada não há ticket a emitir: pedir impressão
           // aqui faria o servidor recusar o lançamento inteiro
           // (`_resolve_weigh_printer` exige a impressora da balança).
-          'print': widget.preferences.autoPrint && printerId != null,
+          'print': _printsTicketHere,
+          // A reivindicação vai JUNTO com a operação, não depois dela.
+          //
+          // Antes esta estação imprimia a nota e só então marcava o corpo
+          // ainda enfileirado com `offline_printed`. Entre uma coisa e outra
+          // cabe a fila entregar a operação — e aí a marca não entra mais,
+          // o backend cria o `PrintJob` como pendente, e o Caixa Principal
+          // imprime a mesma nota de novo. Num Caixa Secundário, onde a fila
+          // pode ficar horas sem alcançar o principal, isso se acumulava:
+          // todas as notas do expediente saíam outra vez quando o terminal
+          // virava principal e encontrava esse monte de trabalho pendente.
+          //
+          // A nota é montada e impressa aqui em qualquer caso — a estação
+          // sabe fazê-la e o cliente está esperando o papel para pagar no
+          // caixa —, então o backend já nasce sabendo disso. Se a impressora
+          // recusar em definitivo, a marca é devolvida logo abaixo.
+          if (_printsTicketHere) 'offline_printed': true,
         },
         accessToken: widget.accessToken,
         // O que a API resolveria pelo id: sem ela, o terminal precisa dizer
@@ -762,7 +801,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       (item) => '${item?['id']}' == printerId,
       orElse: () => null,
     );
-    if (printer == null || !widget.preferences.autoPrint) return;
+    if (printer == null || !_printsTicketHere) return;
     try {
       final agent = LocalDeviceAgent(api: widget.api);
       final ticketPrinter = WeighTicketPrinter(
@@ -779,13 +818,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           barcode: LocalPrintRenderer.commandBarcode(order, null),
         ),
       );
-      // Este terminal assumiu a nota. Sem avisar o backend, ele criaria um
-      // `PrintJob` novo ao processar a fila e o cliente levaria dois papéis do
-      // mesmo prato para o caixa.
+      // A nota já foi reivindicada no corpo da operação, antes de qualquer
+      // papel. Só a recusa definitiva devolve a impressão ao backend: uma
+      // impressora sem papel **não** conta, porque o cupom está na fila e sai
+      // quando ela voltar — devolver aqui faria a nota sair duas vezes.
       final operationId = '${order['_sync_operation_id'] ?? ''}';
-      if (result.accepted && operationId.isNotEmpty) {
+      if (!result.accepted && operationId.isNotEmpty) {
         await widget.api.patchQueuedBody(operationId, {
-          'offline_printed': true,
+          'offline_printed': false,
         });
       }
       // O cliente está com o prato na mão esperando a nota para pagar no
@@ -1480,11 +1520,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// Resumo do que a estação vai usar: porta, protocolo e tolerância.
   Widget _scaleSetupCard() {
     final scheme = Theme.of(context).colorScheme;
-    final settings =
-        selectedScale?['settings'] as Map<String, dynamic>? ?? const {};
-    final port = configuredPort;
-    final baudRate = '${settings['baudrate'] ?? 9600}';
-    final protocol = ScaleProtocol.forId('${settings['protocol'] ?? ''}');
+    // O mesmo cadastro resolvido que o leitor usa: o cartão promete a porta e
+    // o protocolo que serão de fato abertos, não uma segunda leitura do JSON.
+    final device = scaleDevice;
+    final port = device?.port ?? '';
     final missingPort = port.isEmpty;
     final color = missingPort ? Colors.orange.shade800 : scheme.primary;
 
@@ -1531,8 +1570,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   missingPort
                       ? 'Informe a COM e o baud rate no cadastro. Sem isso só '
                             'o peso manual funciona nesta estação.'
-                      : '$baudRate baud · ${protocol.label} · estabiliza em '
-                            '$settleSeconds s',
+                      : device!.summary,
                   style: TextStyle(
                     color: missingPort ? color : scheme.onSurfaceVariant,
                     fontSize: 12,
@@ -1685,7 +1723,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final scheme = Theme.of(context).colorScheme;
     final waitingCommand = {
       HandsFreeState.waitingCommand,
-      HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state);
     final showWeightActions =
@@ -1977,7 +2014,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           ),
         );
       case HandsFreeState.waitingCommand:
-      case HandsFreeState.commandOverdue:
       case HandsFreeState.failed:
         return _commandInput();
       case HandsFreeState.idle:
@@ -2007,7 +2043,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Widget _commandFooter() {
     if ({
       HandsFreeState.waitingCommand,
-      HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state)) {
       return Column(
@@ -2242,12 +2277,17 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     return parts.isEmpty ? null : parts.join(' · ');
   }
 
+  /// Últimos segundos do prazo único em que a contagem vira alerta vermelho.
+  ///
+  /// Não é um segundo temporizador — é só o aviso visual perto do fim do
+  /// MESMO prazo (`HandsFreeMachine.commandTimeout`), sem somar tempo algum.
+  static const _finalWarning = Duration(seconds: 5);
+
   /// Campo do código da comanda e teclado touch, na etapa de leitura.
   Widget _commandInput() {
-    final overdue = machine.state == HandsFreeState.commandOverdue;
     final now = DateTime.now();
-    final remaining =
-        machine.remainingForCancel(now) ?? machine.remainingForCommand(now);
+    final remaining = machine.remainingForCommand(now);
+    final overdue = remaining != null && remaining <= _finalWarning;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

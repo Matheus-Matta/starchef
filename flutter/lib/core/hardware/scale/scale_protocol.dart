@@ -40,9 +40,16 @@ abstract class ScaleProtocol {
 
   static const _maximumFrameLength = 64;
 
-  /// Cria o protocolo a partir do valor gravado em `settings.protocol`.
+  /// Cria o protocolo a partir do valor gravado no cadastro da balança.
+  ///
+  /// Os identificadores aceitos são os do modelo do backend
+  /// (`Scale.PROTOCOL_CHOICES`): `generic`, `toledo_prt2`, `filizola` e
+  /// `urano`. `toledo` sozinho continua valendo porque foi o que os cadastros
+  /// antigos gravaram — e porque um `toledo_prt2` que não casasse aqui cairia
+  /// calado no decodificador genérico, que é justamente a falha difícil de
+  /// enxergar: a leitura sai errada em vez de faltar.
   factory ScaleProtocol.forId(String? id) => switch (id?.trim().toLowerCase()) {
-    'toledo' => ToledoProtocol(),
+    'toledo' || 'toledo_prt2' || 'toledo_prix' => ToledoProtocol(),
     'filizola' => FilizolaProtocol(),
     'urano' => UranoProtocol(),
     _ => GenericNumericProtocol(),
@@ -285,15 +292,35 @@ class FilizolaProtocol extends ScaleProtocol {
 
 /// Urano (linha UDC / POP-S).
 ///
-/// O peso chega já formatado com ponto decimal e sufixo de unidade, por
-/// exemplo `+00.500kg`. Quando o sufixo é `g`, o valor é convertido para
-/// quilogramas.
+/// Três enquadramentos convivem no mesmo cadastro, e o decodificador aceita
+/// os três: `002845` (só dígitos, resolução do visor — o da transmissão
+/// contínua), `+00.500kg` / `+500g` (com ponto e unidade) e o quadro do modo
+/// de impressão, que traz `PESO:   284 g` entre sequências ESC.
+///
+/// A porta é 8-N-1, como em qualquer outra família daqui. Havia um
+/// `serialConfig` pedindo **dois stop bits** só para a Urano: com o
+/// equipamento transmitindo 8-N-1, o driver acusa erro de enquadramento em
+/// cada byte e a estação não recebe nada — porta aberta, zero quadros. O
+/// agente que lia essa mesma balança na v1.0 abria a porta com o padrão
+/// 8-N-1 do pyserial.
 class UranoProtocol extends ScaleProtocol {
   @override
   String get id => 'urano';
 
   @override
   String get label => 'Urano (UDC / POP-S)';
+
+  /// Acima deste valor o número só pode estar em gramas.
+  ///
+  /// A Urano troca a escala do quadro sozinha nas pesagens pequenas — abaixo
+  /// de 100 g o mesmo campo chega mil vezes maior, e nada no quadro denuncia
+  /// a troca: não vem unidade, não vem separador diferente. Como nenhuma
+  /// balança de restaurante pesa uma tonelada, um valor acima de 1000 é a
+  /// assinatura dessa troca, e não um peso de verdade.
+  static const _gramsThresholdKg = 1000;
+
+  static double _asKilograms(double weightKg) =>
+      weightKg.abs() > _gramsThresholdKg ? weightKg / 1000 : weightKg;
 
   @override
   ScaleSample? _frameToSample(String frame) {
@@ -319,7 +346,7 @@ class UranoProtocol extends ScaleProtocol {
         final negative =
             pesoMatch.group(1)!.startsWith('-') || trimmed.contains('-');
         final stable = trimmed.contains('*') || upper.contains('S');
-        final weightKg = inGrams ? value / 1000.0 : value;
+        final weightKg = _asKilograms(inGrams ? value / 1000.0 : value);
         return ScaleSample(
           weightKg: weightKg.abs(),
           stable: stable ? true : null,
@@ -331,26 +358,45 @@ class UranoProtocol extends ScaleProtocol {
       }
     }
 
-    // Fallback: formato já tratado anteriormente (ex.: +00.500kg)
+    // Formato com ponto decimal e unidade (ex.: `+00.500kg`, `+500g`).
     final match = RegExp(
       r'([+-]?)\s*(\d+(?:[.,]\d+)?)\s*(kg|g)?',
       caseSensitive: false,
     ).firstMatch(trimmed);
     if (match == null) return null;
-    final value = double.tryParse(match.group(2)!.replaceAll(',', '.'));
+    final digits = match.group(2)!;
+    final unit = match.group(3)?.toLowerCase();
+    final value = double.tryParse(digits.replaceAll(',', '.'));
     if (value == null) return null;
-    final inGrams = match.group(3)?.toLowerCase() == 'g';
+
+    // Sem ponto decimal e sem unidade o quadro é o da resposta padrão da
+    // linha UDC: só os dígitos, na resolução do visor, sem separador algum
+    // (`002845` = 2,845 kg). Sem esta conversão a estação lia 2845 kg e a
+    // estabilidade nunca fechava — e era esse o caminho em que a balança
+    // Urano caía, porque o quadro com `kg` no fim é o do modo de impressão,
+    // não o da transmissão contínua.
+    final double weightKg;
+    if (unit == 'g') {
+      weightKg = value / 1000;
+    } else if (unit == null && !digits.contains('.') && !digits.contains(',')) {
+      weightKg = _asKilograms(ScaleProtocol.parseWeight(digits) ?? value);
+    } else {
+      weightKg = _asKilograms(value);
+    }
+
     return ScaleSample(
-      weightKg: inGrams ? value / 1000 : value,
+      weightKg: weightKg,
       stable: upper.contains('I') || upper.contains('M') ? false : null,
       negative: match.group(1) == '-',
       raw: frame,
     );
   }
 
+  /// `ENQ`, como as outras famílias e como o manual da linha UDC descreve.
+  ///
+  /// Estava `EOT` (0x04) aqui, que não é o pedido de peso de nenhum modelo
+  /// Urano homologado — a documentação da estação sempre disse ENQ, e o botão
+  /// "Pegar peso" ficava mudo.
   @override
-  List<int> get weightRequest => const [0x04]; // Alguns modelos respondem a EOT
-
-  @override
-  Map<String, int>? get serialConfig => {'stopBits': 2};
+  List<int> get weightRequest => const [0x05];
 }
