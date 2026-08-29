@@ -185,7 +185,6 @@
                 text
                 rounded
                 aria-label="Criar novo"
-                :disabled="quickCreateLoading"
                 @click="openQuickCreate(field)"
               />
             </div>
@@ -367,13 +366,7 @@
     </form>
 
     <!-- Criação rápida de perfil fiscal a partir de qualquer remote-dropdown marcado com quickCreate: "fiscal-profile" (ex.: produto) -->
-    <FiscalProfileDialog
-      v-if="quickCreateBranchId"
-      v-model:visible="fiscalProfileDialogOpen"
-      :restaurant-id="quickCreateRestaurantId"
-      :branch-id="quickCreateBranchId"
-      @saved="onQuickCreateSaved"
-    />
+    <FiscalProfileDialog v-model:visible="fiscalProfileDialogOpen" @saved="onQuickCreateSaved" />
   </div>
 </template>
 
@@ -407,7 +400,6 @@ import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
-import { resolveBranchIdForRestaurant } from "../utils/fiscalBranch";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 import { useToast } from "primevue/usetoast";
@@ -571,37 +563,16 @@ const emittingInvoice = ref(false);
 const toast = useToast();
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
-   formulário de produto) — o mesmo diálogo usado na seção fiscal do
-   restaurante, disparado por um "+" ao lado do campo (`field.quickCreate`). */
-const quickCreateLoading = ref(false);
+   formulário de produto), disparada por um "+" ao lado do campo
+   (`field.quickCreate`). O perfil fiscal é um cadastro da conta, então não
+   depende de restaurante/filial — abre direto. */
 const quickCreateField = ref(null);
-const quickCreateRestaurantId = ref(null);
-const quickCreateBranchId = ref(null);
 const fiscalProfileDialogOpen = ref(false);
 
-async function openQuickCreate(field) {
+function openQuickCreate(field) {
   if (field.quickCreate !== "fiscal-profile") return;
-  const restaurantId = formData.restaurants?.[0] || formData.restaurant || null;
-  if (!restaurantId) {
-    toast.add({ severity: "warn", summary: "Selecione um restaurante primeiro", life: 3500 });
-    return;
-  }
-  quickCreateLoading.value = true;
-  try {
-    const branchId = await resolveBranchIdForRestaurant(restaurantId);
-    if (!branchId) {
-      toast.add({ severity: "warn", summary: "Não foi possível carregar a configuração fiscal deste restaurante. Tente novamente.", life: 4000 });
-      return;
-    }
-    quickCreateField.value = field;
-    quickCreateRestaurantId.value = restaurantId;
-    quickCreateBranchId.value = branchId;
-    fiscalProfileDialogOpen.value = true;
-  } catch (err) {
-    toast.add({ severity: "error", summary: "Não foi possível preparar a criação", detail: normalizeApiError(err).message, life: 4000 });
-  } finally {
-    quickCreateLoading.value = false;
-  }
+  quickCreateField.value = field;
+  fiscalProfileDialogOpen.value = true;
 }
 
 function onQuickCreateSaved(saved) {
@@ -738,6 +709,9 @@ const dateTime = (value) => formatDateTime(value, { withYear: true });
  */
 function fieldPlaceholder(field, fallback) {
   if (isView.value) return "—";
+  if (field.type === "password" && field.configuredField && formData[field.configuredField]) {
+    return "••••••••";
+  }
   return field.placeholder || fallback;
 }
 

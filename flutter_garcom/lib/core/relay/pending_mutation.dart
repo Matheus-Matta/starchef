@@ -129,4 +129,22 @@ class FailedMutation {
 
   final PendingMutation mutation;
   final String reason;
+
+  /// Pedido a que a recusa pertence, para a tela de detalhe mostrá-la junto
+  /// dos itens.
+  String? get orderId => mutation.orderId;
+
+  Map<String, dynamic> toJson() => {
+    'mutation': mutation.toJson(),
+    'reason': reason,
+  };
+
+  static FailedMutation fromJson(Map<String, dynamic> json) => FailedMutation(
+    mutation: PendingMutation.fromJson(
+      json['mutation'] is Map
+          ? Map<String, dynamic>.from(json['mutation'] as Map)
+          : const {},
+    ),
+    reason: '${json['reason'] ?? ''}',
+  );
 }

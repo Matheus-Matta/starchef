@@ -45,3 +45,12 @@ def provision_account_focus_nfe_config(sender, instance, created, **_kwargs):
             account=instance,
             defaults=focus_nfe_defaults_from_settings(),
         )
+
+
+def provision_account_system_roles(sender, instance, created, **_kwargs):
+    """Toda conta nasce com os 4 Perfis de Acesso fixos (ver role_catalog)."""
+
+    if created:
+        from apps.accounts.role_catalog import ensure_system_roles
+
+        ensure_system_roles(instance)

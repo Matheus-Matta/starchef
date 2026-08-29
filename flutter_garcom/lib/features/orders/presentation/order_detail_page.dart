@@ -7,6 +7,7 @@ import '../../../core/relay/pending_mutation.dart';
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
+import '../data/order_drafts.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
 import 'orders_page.dart' show describeFailure;
@@ -33,10 +34,15 @@ class OrderDetailPage extends StatefulWidget {
     required this.repository,
     required this.orderId,
     this.initialOrder,
+    this.canReceivePayment = false,
   });
 
   final OrdersRepository repository;
   final String orderId;
+
+  /// Perfil fixo "Garçom" não recebe pagamento por padrão — só quem tiver
+  /// `payments.manage`/`cash.manage` liberado à parte (ver `WaiterUser`).
+  final bool canReceivePayment;
 
   /// Pedido já conhecido antes de abrir a tela — obrigatório quando
   /// [orderId] é um id local (`offline-...`, ver [OrdersRepository]): esse
@@ -70,6 +76,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   late String _effectiveOrderId = widget.orderId;
 
   RelayGateway get _gateway => widget.repository.gateway;
+  OrderDrafts get _drafts => widget.repository.drafts;
 
   @override
   void initState() {
@@ -94,6 +101,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     if (_effectiveOrderId.startsWith('offline-')) {
       final resolved = _gateway.resolvedOrderId(_effectiveOrderId);
       if (resolved != null) {
+        // Os itens ainda não enviados acompanham o pedido: sem isto eles
+        // ficariam apontando para um id que deixou de existir.
+        unawaited(_drafts.reassign(_effectiveOrderId, resolved));
         setState(() => _effectiveOrderId = resolved);
         _load();
         return;
@@ -174,21 +184,119 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
   }
 
+  /// Acrescenta o item à lista de "a enviar" — sem tocar na rede.
+  ///
+  /// Antes cada toque virava uma ida ao Caixa Principal que podia falhar
+  /// sozinha, e o garçom só descobria muito depois, numa pendência que já não
+  /// dizia de que item se tratava. Agora os itens se acumulam e vão juntos,
+  /// num envio só, quando ele confirma.
   Future<void> _addItem() async {
     final choice = await showProductPicker(context, widget.repository);
     if (choice == null || !mounted) return;
-    await _work(
-      () => widget.repository.addItem(
+    await _drafts.add(
+      DraftItem(
+        id: OrderDrafts.newId(),
         orderId: _effectiveOrderId,
         productId: choice.productId,
         productName: choice.productName,
         quantity: choice.quantity,
         variationId: choice.variationId,
+        variationName: choice.variationName,
         addonIds: choice.addonIds,
-        customerNote: choice.note,
+        note: choice.note,
       ),
-      'Item lançado.',
     );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _removeDraft(DraftItem item) async {
+    await _drafts.remove(item.id);
+    if (mounted) setState(() {});
+  }
+
+  /// Manda tudo o que está esperando e pede a impressão da comanda.
+  ///
+  /// Os itens sobem um a um (é assim que o Caixa Principal e o backend os
+  /// aceitam) e só então vem o envio à produção, que é o que imprime. Um item
+  /// recusado não impede os outros: ele fica na lista de erros, com o motivo,
+  /// para o garçom reenviar ou remover.
+  Future<void> _confirmSend() async {
+    if (_working) return;
+    final drafts = _drafts.forOrder(_effectiveOrderId);
+    setState(() => _working = true);
+    var enviados = 0;
+    var enfileirados = 0;
+    try {
+      for (final draft in drafts) {
+        try {
+          await widget.repository.addItem(
+            orderId: _effectiveOrderId,
+            productId: draft.productId,
+            productName: draft.productName,
+            quantity: draft.quantity,
+            variationId: draft.variationId,
+            addonIds: draft.addonIds,
+            customerNote: draft.note,
+          );
+          enviados++;
+        } on MutationQueued {
+          // Salvo no aparelho: sai quando o Caixa Principal responder.
+          enfileirados++;
+        }
+        await _drafts.remove(draft.id);
+      }
+      // A comanda só é impressa uma vez, no fim: uma impressão por item
+      // encheria a cozinha de papel para a mesma rodada.
+      try {
+        await widget.repository.sendToKitchen(_effectiveOrderId);
+      } on MutationQueued {
+        enfileirados++;
+      }
+      await _load();
+      if (!mounted) return;
+      _toast(
+        enfileirados == 0
+            ? 'Pedido enviado para produção e impressão.'
+            : 'Sem conexão: $enviados de ${drafts.length} itens foram '
+                  'entregues. O resto sai quando o Caixa Principal responder.',
+      );
+    } catch (error) {
+      if (mounted) _toast(describeFailure(error));
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _retryFailed(FailedMutation failure) async {
+    await _gateway.retryFailed(failure.mutation.operationId);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _discardFailed(FailedMutation failure) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remover este item?'),
+        content: Text(
+          '"${failure.mutation.summary}" não foi aceito pelo caixa e será '
+          'apagado deste aparelho. O pedido não muda — o item simplesmente '
+          'nunca entrou nele.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Manter'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remover'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _gateway.discardFailed(failure.mutation.operationId);
+    if (mounted) setState(() {});
   }
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
@@ -376,11 +484,6 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     }
   }
 
-  Future<void> _sendToKitchen() => _work(
-    () => widget.repository.sendToKitchen(_effectiveOrderId),
-    'Pedido enviado para produção e impressão.',
-  );
-
   void _toast(String message) {
     ScaffoldMessenger.of(
       context,
@@ -400,7 +503,13 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
         .whereType<String>()
         .toSet();
     final sendQueued = ordersPending.any((m) => m.kind == 'send_to_kitchen');
-    final pending = order == null ? 0 : pendingItems(order) + addPending.length;
+    final drafts = _drafts.forOrder(_effectiveOrderId);
+    final failures = _gateway.failedFor(_effectiveOrderId);
+    // O que ainda vai para a cozinha: o que o servidor já tem como pendente,
+    // o que está na fila e o que o garçom acabou de escolher.
+    final pending = (order == null ? 0 : pendingItems(order)) +
+        addPending.length +
+        drafts.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -427,10 +536,12 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
               pending: pending,
               busy: _working,
               queued: sendQueued,
+              drafts: drafts.length,
               onAdd: _addItem,
-              onSend: (pending > 0 && !sendQueued) ? _sendToKitchen : null,
+              onSend: (pending > 0 && !sendQueued) ? _confirmSend : null,
               onReceive:
-                  '${order['status']}' == 'awaiting_payment' &&
+                  widget.canReceivePayment &&
+                      '${order['status']}' == 'awaiting_payment' &&
                       _remaining > 0.009
                   ? _receivePayment
                   : null,
@@ -438,7 +549,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       body: Column(
         children: [
           StaleDataBanner(origin: _origin, onRetry: _loading ? null : _load),
-          Expanded(child: _buildBody(addPending, voidingItemIds)),
+          Expanded(
+            child: _buildBody(addPending, voidingItemIds, drafts, failures),
+          ),
         ],
       ),
     );
@@ -447,6 +560,8 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   Widget _buildBody(
     List<PendingMutation> addPending,
     Set<String> voidingItemIds,
+    List<DraftItem> drafts,
+    List<FailedMutation> failures,
   ) {
     if (_loading && _order == null) {
       return const Center(child: CircularProgressIndicator());
@@ -459,7 +574,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_error ?? 'Pedido não encontrado.'),
+              Text(_error ?? 'Pedido nao encontrado.'),
               const SizedBox(height: 16),
               ShadButton.outline(
                 onPressed: _load,
@@ -471,34 +586,234 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       );
     }
 
+    // Tres listas, na ordem em que o garcom pensa: o que ja esta na cozinha, o
+    // que ele acabou de escolher e ainda nao mandou, e o que o caixa recusou.
+    // Antes tudo isso era uma lista so, e "enviado" e "esperando" ficavam
+    // indistinguiveis no meio do salao.
     final items = orderItems(order);
-    if (items.isEmpty && addPending.isEmpty) {
+    final enviados = items.where(_alreadySent).toList();
+    final aEnviar = items.where((item) => !_alreadySent(item)).toList();
+    final vazio =
+        items.isEmpty &&
+        addPending.isEmpty &&
+        drafts.isEmpty &&
+        failures.isEmpty;
+    if (vazio) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'Nenhum item lançado ainda.\nToque em "Adicionar item".',
+            'Nenhum item lancado ainda.\nToque em "Adicionar item".',
             textAlign: TextAlign.center,
           ),
         ),
       );
     }
-    return ListView.separated(
+
+    Widget espacado(Widget child) =>
+        Padding(padding: const EdgeInsets.only(bottom: 8), child: child);
+
+    Widget itemTile(Map<String, dynamic> item) {
+      final voiding = voidingItemIds.contains('${item['id']}');
+      return _ItemTile(
+        item: item,
+        voiding: voiding,
+        onVoid: (_working || voiding) ? null : () => _voidItem(item),
+      );
+    }
+
+    final aEnviarTotal = aEnviar.length + addPending.length + drafts.length;
+    return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      itemCount: items.length + addPending.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index < items.length) {
-          final item = items[index];
-          final voiding = voidingItemIds.contains('${item['id']}');
-          return _ItemTile(
-            item: item,
-            voiding: voiding,
-            onVoid: (_working || voiding) ? null : () => _voidItem(item),
-          );
-        }
-        return _PendingAddTile(mutation: addPending[index - items.length]);
-      },
+      children: [
+        if (enviados.isNotEmpty) ...[
+          const _SectionHeader(
+            icon: Icons.soup_kitchen_outlined,
+            label: 'Ja na cozinha',
+          ),
+          for (final item in enviados) espacado(itemTile(item)),
+        ],
+        if (aEnviarTotal > 0) ...[
+          _SectionHeader(
+            icon: Icons.schedule_outlined,
+            label: 'A enviar ($aEnviarTotal)',
+          ),
+          for (final item in aEnviar) espacado(itemTile(item)),
+          for (final draft in drafts)
+            espacado(
+              _DraftTile(
+                item: draft,
+                onRemove: _working ? null : () => _removeDraft(draft),
+              ),
+            ),
+          for (final mutation in addPending)
+            espacado(_PendingAddTile(mutation: mutation)),
+        ],
+        if (failures.isNotEmpty) ...[
+          const _SectionHeader(
+            icon: Icons.error_outline,
+            label: 'Nao aceitos pelo caixa',
+            danger: true,
+          ),
+          for (final failure in failures)
+            espacado(
+              _FailedTile(
+                failure: failure,
+                onRetry: _working ? null : () => _retryFailed(failure),
+                onDiscard: _working ? null : () => _discardFailed(failure),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  /// O item ja foi para a producao, nesta ou em outra rodada.
+  static bool _alreadySent(Map<String, dynamic> item) =>
+      '${item['status'] ?? ''}' != 'pending';
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.icon,
+    required this.label,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = danger ? AppColors.danger : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              letterSpacing: .4,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Item escolhido e ainda nao enviado.
+class _DraftTile extends StatelessWidget {
+  const _DraftTile({required this.item, this.onRemove});
+
+  final DraftItem item;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: AppTheme.radius,
+        border: Border.all(color: AppColors.warning.withValues(alpha: .45)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.label,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (item.note.isNotEmpty)
+                  Text(
+                    item.note,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                const Text(
+                  'Ainda nao enviado',
+                  style: TextStyle(fontSize: 12, color: AppColors.warning),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Remover',
+            onPressed: onRemove,
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Item que o Caixa Principal recusou — com o motivo e o que fazer.
+class _FailedTile extends StatelessWidget {
+  const _FailedTile({required this.failure, this.onRetry, this.onDiscard});
+
+  final FailedMutation failure;
+  final VoidCallback? onRetry;
+  final VoidCallback? onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withValues(alpha: .06),
+        borderRadius: AppTheme.radius,
+        border: Border.all(color: AppColors.danger.withValues(alpha: .45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            failure.mutation.summary,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            failure.reason,
+            style: const TextStyle(fontSize: 12, color: AppColors.danger),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton.icon(
+                onPressed: onDiscard,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Remover'),
+                style: TextButton.styleFrom(
+                  foregroundColor: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 4),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Reenviar'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -641,6 +956,7 @@ class _Actions extends StatelessWidget {
     required this.pending,
     required this.busy,
     required this.queued,
+    required this.drafts,
     required this.onAdd,
     required this.onSend,
     required this.onReceive,
@@ -655,6 +971,10 @@ class _Actions extends StatelessWidget {
 
   /// O envio à cozinha já está na fila offline, esperando o caixa responder.
   final bool queued;
+
+  /// Itens escolhidos e ainda não enviados: é o que o botão de confirmar vai
+  /// mandar, e o número que o garçom confere antes de tocar.
+  final int drafts;
   final VoidCallback onAdd;
   final VoidCallback? onSend;
 
@@ -728,8 +1048,13 @@ class _Actions extends StatelessWidget {
                           )
                         : const Icon(Icons.send, size: 18),
                     child: Text(
+                      // O rótulo diz o que vai acontecer AGORA: com item
+                      // escolhido e não enviado, o toque manda tudo e pede a
+                      // impressão da comanda.
                       queued
                           ? 'Aguardando conexão'
+                          : drafts > 0
+                          ? 'Enviar e imprimir ($drafts)'
                           : pending > 0
                           ? 'Enviar ($pending)'
                           : 'Tudo enviado',

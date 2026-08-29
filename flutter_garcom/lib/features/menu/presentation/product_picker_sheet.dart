@@ -13,6 +13,7 @@ class ProductChoice {
     required this.productName,
     required this.quantity,
     this.variationId,
+    this.variationName,
     this.addonIds = const [],
     this.note = '',
   });
@@ -21,6 +22,10 @@ class ProductChoice {
   final String productName;
   final int quantity;
   final String? variationId;
+
+  /// Nome da variação escolhida, para a lista de itens a enviar dizer o que
+  /// foi escolhido sem uma segunda consulta ao catálogo.
+  final String? variationName;
   final List<String> addonIds;
   final String note;
 }
@@ -172,6 +177,22 @@ class _ProductConfigState extends State<_ProductConfig> {
     super.dispose();
   }
 
+  String? get _variationName {
+    final id = _variationId;
+    if (id == null) return null;
+    for (final variation in _variations) {
+      if ('${variation['id']}' == id) return '${variation['name'] ?? ''}';
+    }
+    return null;
+  }
+
+  /// O cadastro exige escolher a variação deste produto.
+  bool get _variationRequired =>
+      widget.product['requires_variation'] == true && _variations.isNotEmpty;
+
+  bool get _missingRequiredVariation =>
+      _variationRequired && (_variationId ?? '').isEmpty;
+
   double get _unitPrice => expectedUnitPrice(
     widget.product,
     variationId: _variationId,
@@ -207,7 +228,9 @@ class _ProductConfigState extends State<_ProductConfig> {
           ),
           if (_variations.isNotEmpty) ...[
             const SizedBox(height: 18),
-            const _SectionLabel('Variação'),
+            _SectionLabel(
+              _variationRequired ? 'Variação (obrigatória)' : 'Variação',
+            ),
             RadioGroup<String>(
               groupValue: _variationId,
               onChanged: (value) => setState(() => _variationId = value),
@@ -301,15 +324,31 @@ class _ProductConfigState extends State<_ProductConfig> {
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
+          // O cadastro pode exigir a escolha da variação (o PDV já respeita
+          // isso). Sem esta trava o item era lançado sem variação, entrava na
+          // fila e só falhava lá na frente, ao chegar no servidor: o garçom
+          // via "Selecione uma variacao obrigatoria" numa pendência de meia
+          // hora atrás, sem saber mais de que item se tratava.
+          if (_missingRequiredVariation)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Escolha uma variação para lançar este produto.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.error, fontSize: 13),
+              ),
+            ),
           ShadButton(
             height: AppTheme.controlHeight,
             leading: const Icon(Icons.check, size: 18),
+            enabled: !_missingRequiredVariation,
             onPressed: () => Navigator.of(context).pop(
               ProductChoice(
                 productId: '${product['id']}',
                 productName: '${product['name'] ?? ''}',
                 quantity: _quantity,
                 variationId: _variationId,
+                variationName: _variationName,
                 addonIds: _selectedAddons.toList(),
                 note: _note.text.trim(),
               ),

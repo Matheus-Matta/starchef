@@ -48,6 +48,7 @@ class WaiterUser {
     required this.restaurantId,
     this.restaurantName = '',
     this.profileType = '',
+    this.permissions = const [],
   });
 
   final String id;
@@ -58,7 +59,19 @@ class WaiterUser {
   final String restaurantName;
   final String profileType;
 
+  /// Códigos do catálogo de permissões (ver backend `permission_catalog.py`),
+  /// vindos do perfil fixo do garçom mais qualquer permissão específica
+  /// liberada individualmente para ele (`UserProfile.specific_permissions`).
+  final List<String> permissions;
+
   String get displayName => name.trim().isEmpty ? username : name.trim();
+
+  /// O perfil fixo "Garçom" não inclui `payments.manage`/`cash.manage` — o
+  /// aparelho só oferece "Receber" para quem tiver isso liberado à parte.
+  bool get canReceivePayment =>
+      permissions.contains('*') ||
+      permissions.contains('payments.manage') ||
+      permissions.contains('cash.manage');
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -68,6 +81,7 @@ class WaiterUser {
     'restaurant_id': restaurantId,
     'restaurant_name': restaurantName,
     'profile_type': profileType,
+    'permissions': permissions,
   };
 
   static WaiterUser fromJson(Map<String, dynamic> json) => WaiterUser(
@@ -78,5 +92,8 @@ class WaiterUser {
     restaurantId: '${json['restaurant_id'] ?? ''}',
     restaurantName: '${json['restaurant_name'] ?? ''}',
     profileType: '${json['profile_type'] ?? ''}',
+    permissions: (json['permissions'] as List? ?? const [])
+        .map((item) => '$item')
+        .toList(),
   );
 }

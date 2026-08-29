@@ -16,6 +16,10 @@ import {
   CHANNEL_OPTIONS,
   COMMAND_STATUS_LABELS,
   EMISSION_TYPE_LABELS,
+  FISCAL_CSOSN_OPTIONS,
+  FISCAL_CST_ICMS_OPTIONS,
+  FISCAL_CST_PIS_COFINS_OPTIONS,
+  FISCAL_ORIGEM_OPTIONS,
   FISCAL_PROVIDER_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
@@ -249,8 +253,9 @@ export const resources = [
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
       { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },
-      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e; sem ele, usa o perfil padrão do restaurante.
-      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Usar perfil padrão do restaurante", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile" },
+      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e. O mesmo
+      // perfil serve vários produtos (1:N) e é cadastrado em Financeiro › Perfis fiscais.
+      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Sem perfil (item sai sem tributação)", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile", hint: "Grupo tributário reutilizável. Cadastre em Financeiro › Perfis fiscais ou crie um novo no \"+\"." },
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
       // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
       { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
@@ -500,6 +505,41 @@ export const resources = [
       { key: "issued_at", label: "Emissao em", type: "date" },
     ],
   },
+  {
+    // Grupo tributario reutilizavel: quem escolhe o perfil e o PRODUTO (1:N),
+    // igual a categoria. Nao pertence a restaurante nenhum — e da conta.
+    name: "perfis-fiscais",
+    module: "financeiro",
+    title: "Perfis Fiscais",
+    endpoint: "/fiscal/profiles/",
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Perfil" },
+      { key: "ncm", label: "NCM" },
+      { key: "cfop", label: "CFOP" },
+      { key: "csosn", label: "CSOSN" },
+      { key: "cst_icms", label: "CST ICMS" },
+      { key: "is_default", label: "Padrao", type: "boolean" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do perfil", type: "text", required: true, full: true, placeholder: "Ex.: Bebida, Prato padrao", section: "Identificacao", hint: "Como voce vai reconhecer este grupo tributario ao cadastrar um produto." },
+      { name: "ncm", label: "NCM", type: "text", placeholder: "22021000", section: "Classificacao", hint: "8 digitos. Obrigatorio na NF-e/NFC-e." },
+      { name: "cest", label: "CEST", type: "text", placeholder: "0300100", section: "Classificacao", hint: "Somente para produtos sujeitos a substituicao tributaria." },
+      { name: "cfop", label: "CFOP de venda", type: "text", default: "5102", placeholder: "5102", section: "Classificacao", hint: "5102 = venda dentro do estado. 6102 = fora do estado." },
+      { name: "origem", label: "Origem da mercadoria", type: "dropdown", options: FISCAL_ORIGEM_OPTIONS, default: "0", section: "Classificacao" },
+      { name: "csosn", label: "CSOSN (Simples Nacional)", type: "dropdown", options: FISCAL_CSOSN_OPTIONS, placeholder: "Selecione se a empresa e do Simples", section: "ICMS", hint: "Use este campo quando o CRT da empresa for Simples Nacional." },
+      { name: "cst_icms", label: "CST ICMS (Regime Normal)", type: "dropdown", options: FISCAL_CST_ICMS_OPTIONS, placeholder: "Selecione se a empresa e do Regime Normal", section: "ICMS", hint: "Preencha CSOSN ou CST ICMS — o que valer para o enquadramento da empresa." },
+      { name: "icms_rate", label: "Aliquota ICMS (%)", type: "decimal", default: 0, section: "ICMS" },
+      { name: "pis_cst", label: "CST PIS", type: "dropdown", options: FISCAL_CST_PIS_COFINS_OPTIONS, default: "49", section: "PIS / COFINS" },
+      { name: "pis_rate", label: "Aliquota PIS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
+      { name: "cofins_cst", label: "CST COFINS", type: "dropdown", options: FISCAL_CST_PIS_COFINS_OPTIONS, default: "49", section: "PIS / COFINS" },
+      { name: "cofins_rate", label: "Aliquota COFINS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
+      { name: "approx_tax_rate", label: "Tributos aprox. (Lei 12.741) (%)", type: "decimal", default: 0, full: true, section: "Outros", hint: "Percentual informado no cupom como tributo aproximado ao consumidor." },
+      { name: "is_default", label: "Sugerir como padrao", type: "boolean", default: false, section: "Outros", hint: "Destaca este perfil no cadastro de produtos. Nao altera sozinho a emissao." },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Outros" },
+    ],
+  },
 
   // ── Impressao ──────────────────────────────────────────────────────
   {
@@ -595,7 +635,7 @@ export const resources = [
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
       // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
-      { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "Digite a senha que será usada no PDV. Não cole uma hash. Ao editar, deixe em branco para manter a senha atual." },
+      { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", configuredField: "has_cash_action_password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "As bolinhas indicam que já existe uma senha salva. Digite apenas para substituir. Não cole uma hash." },
     ],
   },
   {
@@ -625,6 +665,9 @@ export const resources = [
     ],
   },
   {
+    // Perfis fixos (Garçom, Caixa, Gerente, Administrador) — ver backend
+    // apps/accounts/role_catalog.py. Sem `formFields`: tela somente-leitura,
+    // não há mais opção de criar/editar/apagar perfil (API também bloqueia).
     name: "perfis",
     title: "Perfis de Acesso",
     endpoint: "/roles/",
@@ -632,15 +675,9 @@ export const resources = [
     columns: [
       { key: "name", label: "Perfil" },
       { key: "code", label: "Codigo" },
+      { key: "is_account_admin", label: "Admin da conta", type: "boolean" },
+      { key: "max_discount_percent", label: "Desconto max. (%)" },
       { key: "created_at", label: "Criado em", type: "date" },
-    ],
-    formFields: [
-      { name: "name", label: "Nome do perfil", type: "text", required: true, section: "Perfil" },
-      { name: "code", label: "Codigo", type: "text", required: true, placeholder: "ex: gerente-vip", section: "Perfil" },
-      { name: "restaurant", label: "Restaurante (opcional)", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil" },
-      { name: "is_account_admin", label: "Administrador da Conta", type: "boolean", default: false, section: "Perfil", hint: "Dá acesso irrestrito a todos os restaurantes e configurações globais da conta." },
-      // Permissões de negócio vinculadas ao perfil (M2M).
-      { name: "permissions", label: "Permissões", type: "remote-multiselect", endpoint: "/permissions/", optionLabel: "name", optionValue: "id", grouped: true, full: true, section: "Permissões", hint: "Agrupadas por área. Itens com \"meu/meus\" restringem ao próprio operador (ex.: ver meus pedidos, gerenciar somente meu caixa)." },
     ],
   },
 ];

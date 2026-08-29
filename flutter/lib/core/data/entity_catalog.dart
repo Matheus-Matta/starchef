@@ -149,6 +149,10 @@ abstract final class EntityCatalog {
     EntityDescriptor(
       type: fiscalProfile,
       collectionPath: '/fiscal/profiles/',
+      // Cadastro da CONTA, não de um restaurante (como perfis de acesso e
+      // usuários): filtrar o pull por restaurante deixaria de fora justamente
+      // os perfis compartilhados, que são todos eles.
+      restaurantField: null,
       pullPriority: 3,
       sharedWithSecondary: false,
     ),

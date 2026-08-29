@@ -137,6 +137,10 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
     assert "focus_token_homologation" not in resp.data
     assert "focus_certificate_base64" not in resp.data
     assert "focus_certificate_password" not in resp.data
+    assert resp.data["provider_token_configured"] is True
+    assert resp.data["csc_token_configured"] is True
+    assert resp.data["focus_certificate_configured"] is True
+    assert resp.data["focus_certificate_password_configured"] is True
 
     listed = api_client.get("/api/v1/fiscal/config/")
     assert listed.status_code == 200
@@ -151,14 +155,18 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
     )
 
 
-def test_fiscal_profile_crud_via_api(api_client, account_with_financeiro, restaurant, branch):
+def test_fiscal_profile_crud_via_api(api_client, account_with_financeiro):
+    """O perfil e um cadastro da conta: nasce sem restaurante/filial."""
     create_resp = api_client.post(
         "/api/v1/fiscal/profiles/",
-        {"restaurant": str(restaurant.id), "branch": str(branch.id), "name": "Prato padrão", "cfop": "5102"},
+        {"name": "Prato padrão", "cfop": "5102"},
         format="json",
     )
     assert create_resp.status_code == 201, create_resp.data
     profile_id = create_resp.data["id"]
+    # Compartilhado entre restaurantes — como as categorias do cardapio.
+    assert create_resp.data["restaurant"] is None
+    assert create_resp.data["branch"] is None
 
     update_resp = api_client.patch(f"/api/v1/fiscal/profiles/{profile_id}/", {"is_default": True}, format="json")
     assert update_resp.status_code == 200
@@ -167,6 +175,67 @@ def test_fiscal_profile_crud_via_api(api_client, account_with_financeiro, restau
     list_resp = api_client.get("/api/v1/fiscal/profiles/")
     assert list_resp.status_code == 200
     assert any(row["id"] == profile_id for row in list_resp.data["results"])
+
+
+def test_fiscal_profile_name_is_unique_per_account(api_client, account_with_financeiro):
+    payload = {"name": "Bebida", "cfop": "5102"}
+    assert api_client.post("/api/v1/fiscal/profiles/", payload, format="json").status_code == 201
+
+    # 409 é o conflito padronizado da API para violação de unicidade.
+    duplicated = api_client.post("/api/v1/fiscal/profiles/", payload, format="json")
+    assert duplicated.status_code == 409, duplicated.data
+
+
+def test_shared_fiscal_profile_is_visible_to_restaurant_scoped_user(
+    api_client, admin_client, account_with_financeiro, restaurant
+):
+    """Um perfil da conta (restaurant=NULL) nao pode sumir para quem tem restaurante.
+
+    O recorte por restaurante do `TenantQuerySetMixin` filtrava so pelo id e
+    derrubava os compartilhados — o perfil reutilizavel ficava invisivel
+    justamente para o operador, e some do dropdown filtrado por unidade.
+    """
+    created = admin_client.post("/api/v1/fiscal/profiles/", {"name": "Bebida"}, format="json")
+    assert created.status_code == 201, created.data
+    profile_id = created.data["id"]
+
+    # `api_client` é o gerente, com restaurante/filial no perfil.
+    listed = api_client.get("/api/v1/fiscal/profiles/")
+    assert listed.status_code == 200
+    assert any(row["id"] == profile_id for row in listed.data["results"])
+
+    # E continua aparecendo quando a tela filtra por unidade (dropdown do produto).
+    scoped = api_client.get("/api/v1/fiscal/profiles/", {"restaurant": str(restaurant.id)})
+    assert scoped.status_code == 200
+    assert any(row["id"] == profile_id for row in scoped.data["results"])
+
+
+def test_product_reuses_one_fiscal_profile(api_client, account_with_financeiro, restaurant, branch):
+    """1:N — um perfil serve varios produtos, de qualquer restaurante."""
+    from apps.menu.models import Product
+
+    profile_resp = api_client.post(
+        "/api/v1/fiscal/profiles/", {"name": "Bebida", "cfop": "5102", "ncm": "22021000"}, format="json"
+    )
+    assert profile_resp.status_code == 201, profile_resp.data
+    profile_id = profile_resp.data["id"]
+
+    for index, name in enumerate(("Refrigerante", "Suco"), start=1):
+        created = api_client.post(
+            "/api/v1/menu/products/",
+            {
+                "restaurant": str(restaurant.id),
+                "branch": str(branch.id),
+                "name": name,
+                "internal_code": f"BEB-{index}",
+                "sale_price": "10.00",
+                "fiscal_profile": profile_id,
+            },
+            format="json",
+        )
+        assert created.status_code == 201, created.data
+
+    assert Product.all_objects.filter(fiscal_profile_id=profile_id).count() == 2
 
 
 class TestFullEmissionFlow:

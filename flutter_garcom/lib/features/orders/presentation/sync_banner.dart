@@ -192,8 +192,15 @@ Future<void> showFailedMutationsSheet(
                             ),
                           ),
                           TextButton(
-                            onPressed: () =>
-                                gateway.discardFailed(item.mutation.operationId),
+                            onPressed: () => gateway.retryFailed(
+                              item.mutation.operationId,
+                            ),
+                            child: const Text('Reenviar'),
+                          ),
+                          TextButton(
+                            onPressed: () => gateway.discardFailed(
+                              item.mutation.operationId,
+                            ),
                             child: const Text('Descartar'),
                           ),
                         ],

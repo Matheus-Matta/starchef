@@ -294,9 +294,10 @@ class Command(BaseCommand):
 
     def _seed_fiscal_burger(self, account, restaurant, branch, user):
         # Perfil tributario padrao (Simples Nacional, aliquotas zeradas — configure depois).
+        # E um cadastro DA CONTA (sem restaurante/filial): vale para todas as unidades.
         profile = self._upsert(
             FiscalProfile,
-            {"account": account, "restaurant": restaurant, "branch": branch, "name": "Alimentacao - Simples Nacional"},
+            {"account": account, "name": "Alimentacao - Simples Nacional"},
             {
                 "ncm": "21069090", "cfop": "5102", "origem": "0", "csosn": "102",
                 "icms_rate": Decimal("0"), "pis_rate": Decimal("0"), "cofins_rate": Decimal("0"),

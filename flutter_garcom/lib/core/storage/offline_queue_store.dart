@@ -34,6 +34,54 @@ class OfflineQueueStore {
     return file;
   }
 
+  /// Arquivo das recusas, ao lado da fila.
+  ///
+  /// Uma recusa é um item que o garçom lançou e o Caixa Principal não aceitou
+  /// — ela precisa sobreviver a fechar o app tanto quanto a fila: enquanto
+  /// vivia só em memória, o item sumia da tela no primeiro reinício e ninguém
+  /// mais sabia que ele existiu.
+  File? _failedFile;
+
+  Future<File> _resolveFailedFile() async {
+    final existing = _failedFile;
+    if (existing != null) return existing;
+    final queue = await _resolveFile();
+    final file = File(
+      '${queue.path.replaceFirst(RegExp(r'\.json$'), '')}_recusadas.json',
+    );
+    _failedFile = file;
+    return file;
+  }
+
+  Future<List<FailedMutation>> loadFailed() async {
+    try {
+      final file = await _resolveFailedFile();
+      if (!await file.exists()) return [];
+      final raw = await file.readAsString();
+      if (raw.trim().isEmpty) return [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((row) => FailedMutation.fromJson(Map<String, dynamic>.from(row)))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveFailed(List<FailedMutation> failures) {
+    final future = _writeTail.then((_) async {
+      final file = await _resolveFailedFile();
+      await file.writeAsString(
+        jsonEncode(failures.map((item) => item.toJson()).toList()),
+        flush: true,
+      );
+    });
+    _writeTail = future.catchError((_) {});
+    return future;
+  }
+
   Future<List<PendingMutation>> load() async {
     try {
       final file = await _resolveFile();

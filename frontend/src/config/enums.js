@@ -140,6 +140,55 @@ export const FISCAL_PROVIDER_OPTIONS = [
   { label: "Focus NFe", value: "focus_nfe" },
 ];
 
+// ── Perfil fiscal (grupo tributario reutilizado pelos produtos) ─────────────
+// Tabelas oficiais da NF-e/NFC-e; os codigos vao literalmente para a Focus NFe.
+// Origem da mercadoria (campo `orig` do ICMS).
+export const FISCAL_ORIGEM_OPTIONS = [
+  { label: "0 - Nacional", value: "0" },
+  { label: "1 - Estrangeira (importacao direta)", value: "1" },
+  { label: "2 - Estrangeira (mercado interno)", value: "2" },
+  { label: "3 - Nacional com importacao > 40%", value: "3" },
+  { label: "4 - Nacional (processos produtivos basicos)", value: "4" },
+  { label: "5 - Nacional com importacao <= 40%", value: "5" },
+  { label: "6 - Estrangeira (importacao direta, sem similar)", value: "6" },
+  { label: "7 - Estrangeira (mercado interno, sem similar)", value: "7" },
+  { label: "8 - Nacional com importacao > 70%", value: "8" },
+];
+// CSOSN — usado por quem e do Simples Nacional (CRT 1 ou 2).
+export const FISCAL_CSOSN_OPTIONS = [
+  { label: "101 - Tributada com permissao de credito", value: "101" },
+  { label: "102 - Tributada sem permissao de credito", value: "102" },
+  { label: "103 - Isencao do ICMS para faixa de receita", value: "103" },
+  { label: "300 - Imune", value: "300" },
+  { label: "400 - Nao tributada", value: "400" },
+  { label: "500 - ICMS cobrado por substituicao tributaria", value: "500" },
+  { label: "900 - Outros", value: "900" },
+];
+// CST do ICMS — usado por quem e do Regime Normal (CRT 3).
+export const FISCAL_CST_ICMS_OPTIONS = [
+  { label: "00 - Tributada integralmente", value: "00" },
+  { label: "10 - Tributada com cobranca por ST", value: "10" },
+  { label: "20 - Com reducao de base de calculo", value: "20" },
+  { label: "40 - Isenta", value: "40" },
+  { label: "41 - Nao tributada", value: "41" },
+  { label: "50 - Suspensao", value: "50" },
+  { label: "51 - Diferimento", value: "51" },
+  { label: "60 - ICMS cobrado anteriormente por ST", value: "60" },
+  { label: "90 - Outras", value: "90" },
+];
+// CST de PIS/COFINS — a mesma tabela vale para os dois tributos.
+export const FISCAL_CST_PIS_COFINS_OPTIONS = [
+  { label: "01 - Operacao tributavel (aliquota basica)", value: "01" },
+  { label: "02 - Operacao tributavel (aliquota diferenciada)", value: "02" },
+  { label: "04 - Monofasica (aliquota zero)", value: "04" },
+  { label: "06 - Aliquota zero", value: "06" },
+  { label: "07 - Operacao isenta", value: "07" },
+  { label: "08 - Operacao sem incidencia", value: "08" },
+  { label: "09 - Operacao com suspensao", value: "09" },
+  { label: "49 - Outras operacoes de saida", value: "49" },
+  { label: "99 - Outras operacoes", value: "99" },
+];
+
 export const STOCK_TIMING_LABELS = { payment: "No pagamento", kitchen: "Na cozinha" };
 
 // Espelham PaymentMethod.TYPE_CHOICES / Printer.DRIVER_CHOICES do backend.

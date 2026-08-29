@@ -57,7 +57,8 @@
         <div class="fs__grid">
           <div v-if="provider !== 'focus_nfe'" class="fs__field">
             <label for="fs-provider_token" class="fs__label">Token/credencial do provedor</label>
-            <Password id="fs-provider_token" v-model="form.provider_token" placeholder="Deixe em branco para não alterar" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <Password id="fs-provider_token" v-model="form.provider_token" :placeholder="form.provider_token_configured ? '••••••••' : 'Informe a credencial'" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <small v-if="form.provider_token_configured" class="fs__field-hint">As bolinhas indicam que a credencial já está salva.</small>
           </div>
           <div v-else class="fs__field fs__field--full fs__focus-status">
             <div>
@@ -77,7 +78,8 @@
           </div>
           <div v-if="provider === 'focus_nfe'" class="fs__field">
             <label for="fs-focus-certificate-password" class="fs__label">Senha do certificado A1</label>
-            <Password id="fs-focus-certificate-password" v-model="form.focus_certificate_password" placeholder="Senha do PFX/P12" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <Password id="fs-focus-certificate-password" v-model="form.focus_certificate_password" :placeholder="form.focus_certificate_password_configured ? '••••••••' : 'Senha do PFX/P12'" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <small v-if="form.focus_certificate_password_configured" class="fs__field-hint">As bolinhas indicam que a senha está salva e aguardando sincronização.</small>
           </div>
           <div class="fs__field">
             <label for="fs-csc_id" class="fs__label">ID do CSC (idToken)</label>
@@ -85,7 +87,8 @@
           </div>
           <div class="fs__field">
             <label for="fs-csc_token" class="fs__label">CSC (segredo da NFC-e)</label>
-            <Password id="fs-csc_token" v-model="form.csc_token" placeholder="Deixe em branco para não alterar" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <Password id="fs-csc_token" v-model="form.csc_token" :placeholder="form.csc_token_configured ? '••••••••' : 'Informe o CSC'" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
+            <small v-if="form.csc_token_configured" class="fs__field-hint">As bolinhas indicam que o CSC já está salvo.</small>
           </div>
           <div class="fs__field">
             <label for="fs-certificate_ref" class="fs__label">Referência do certificado A1</label>
@@ -100,45 +103,20 @@
             <InputText id="fs-portal_url" v-model="form.portal_url" class="fs__input" :disabled="readonly" />
           </div>
         </div>
+        <div v-if="provider === 'focus_nfe' && form.focus_company_dry_run" class="fs__focus-warning">
+          <i class="pi pi-info-circle" />
+          <span>Simulação ativa na configuração da conta: sincronizar valida os dados, mas não cria nem altera a empresa na Focus.</span>
+        </div>
       </div>
 
       <div v-if="formError" class="fs__alert">
         <i class="pi pi-exclamation-triangle" /> {{ formError }}
       </div>
 
-      <div class="fs__section">
-        <div class="fs__section-head">
-          <h3 class="fs__title">Perfis fiscais</h3>
-          <Button v-if="!readonly" label="Novo perfil" icon="pi pi-plus" size="small" text @click="openCreateProfile" />
-        </div>
-        <p class="fs__section-desc">Grupos tributários (NCM/CFOP/CSOSN + alíquotas) reutilizados pelos produtos deste restaurante.</p>
-
-        <div class="fs__profiles">
-          <p v-if="!profiles.length" class="fs__hint">Nenhum perfil fiscal cadastrado ainda.</p>
-          <div v-for="profile in profiles" :key="profile.id" class="fs__profile-row">
-            <div class="fs__profile-info">
-              <strong>{{ profile.name }}</strong>
-              <span>NCM {{ profile.ncm || "-" }} · CFOP {{ profile.cfop || "-" }}</span>
-            </div>
-            <Tag v-if="profile.is_default" value="Padrão" severity="info" rounded />
-            <Tag :value="profile.is_active ? 'Ativo' : 'Inativo'" :severity="profile.is_active ? 'success' : 'danger'" rounded />
-            <div v-if="!readonly" class="fs__profile-actions">
-              <Button icon="pi pi-pencil" text rounded aria-label="Editar perfil" @click="openEditProfile(profile)" />
-              <Button icon="pi pi-trash" text rounded severity="danger" aria-label="Remover perfil" @click="confirmRemoveProfile(profile)" />
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- Perfis fiscais NÃO moram mais aqui: são um cadastro da conta,
+           reutilizado por qualquer produto de qualquer unidade
+           (Financeiro › Perfis fiscais). -->
     </template>
-
-    <FiscalProfileDialog
-      v-if="branchId"
-      v-model:visible="profileDialogOpen"
-      :restaurant-id="restaurantId"
-      :branch-id="branchId"
-      :profile="editingProfile"
-      @saved="onProfileSaved"
-    />
   </div>
 </template>
 
@@ -158,11 +136,8 @@ import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
 import InputText from "primevue/inputtext";
 import Password from "primevue/password";
-import Tag from "primevue/tag";
-import { useConfirm } from "primevue/useconfirm";
 import { useToast } from "primevue/usetoast";
 
-import FiscalProfileDialog from "./FiscalProfileDialog.vue";
 import { ResourceService } from "../../services/ResourceService";
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
@@ -180,10 +155,8 @@ const props = defineProps({
 });
 
 const toast = useToast();
-const confirm = useConfirm();
 const restaurantService = new ResourceService({ endpoint: "/restaurants/", globalScope: true });
 const configService = new ResourceService({ endpoint: "/fiscal/config/", globalScope: true });
-const profileService = new ResourceService({ endpoint: "/fiscal/profiles/", globalScope: true });
 
 const loading = ref(true);
 const branchId = ref(null);
@@ -191,9 +164,6 @@ const configId = ref(null);
 const saving = ref(false);
 const focusSyncing = ref(false);
 const formError = ref("");
-const profiles = ref([]);
-const profileDialogOpen = ref(false);
-const editingProfile = ref(null);
 // Guardado só pra ler razão social/CNPJ/endereço na hora de salvar — o
 // restaurante é a única fonte desses dados, o form fiscal não os repete.
 const restaurant = ref(null);
@@ -208,10 +178,16 @@ function emptyForm() {
     series: 1,
     provider: "manual",
     provider_token: "",
+    provider_token_configured: false,
     focus_certificate_base64: "",
     focus_certificate_password: "",
+    focus_certificate_configured: false,
+    focus_certificate_password_configured: false,
+    focus_account_configured: false,
+    focus_company_dry_run: false,
     csc_id: "",
     csc_token: "",
+    csc_token_configured: false,
     certificate_ref: "",
     qr_base_url: "",
     portal_url: "",
@@ -236,19 +212,27 @@ function onCertificateSelected(event) {
   reader.readAsDataURL(file);
 }
 
-const focusStatusLabel = computed(() => ({
-  synced: "Sincronizado",
-  pending: "Sincronizando",
-  error: "Erro",
-  not_configured: "Nao sincronizado",
-}[form.focus_sync_status] || "Nao sincronizado"));
-const focusStatusSeverity = computed(() => ({
-  synced: "success",
-  pending: "warn",
-  error: "danger",
-}[form.focus_sync_status] || "secondary"));
+const focusStatusLabel = computed(() => {
+  if (form.focus_company_dry_run && !form.focus_company_id) return "Simulação ativa";
+  return ({
+    synced: "Sincronizado",
+    pending: "Sincronizando",
+    error: "Erro",
+    not_configured: "Nao sincronizado",
+  }[form.focus_sync_status] || "Nao sincronizado");
+});
+const focusStatusSeverity = computed(() => {
+  if (form.focus_company_dry_run && !form.focus_company_id) return "info";
+  return ({
+    synced: "success",
+    pending: "warn",
+    error: "danger",
+  }[form.focus_sync_status] || "secondary");
+});
 const focusStatusText = computed(() => {
   if (form.focus_company_id) return `Empresa Focus #${form.focus_company_id}`;
+  if (form.focus_company_dry_run) return "Os dados podem ser validados, mas a empresa não será criada enquanto a simulação estiver ativa.";
+  if (!form.focus_account_configured) return "Configure o Token Principal de Produção da Focus nas configurações da conta.";
   return "A empresa sera criada automaticamente com os dados fiscais deste restaurante.";
 });
 
@@ -265,22 +249,31 @@ async function syncFocus() {
       focus_certificate_base64: "",
       focus_certificate_password: "",
     });
+    const warning = Array.isArray(data.warnings) ? data.warnings.filter(Boolean).join(" ") : "";
     toast.add({
-      severity: data.synced === false ? "warn" : "success",
-      summary: data.synced === false ? "Empresa não sincronizada" : "Empresa sincronizada com a Focus NFe",
-      detail: data.message || undefined,
-      life: data.synced === false ? 5000 : 3000,
+      severity: data.dry_run ? "info" : (data.synced === false || warning ? "warn" : "success"),
+      summary: data.dry_run
+        ? "Dados validados em simulação"
+        : (data.synced === false ? "Empresa não sincronizada" : (warning ? "Empresa sincronizada com aviso" : "Empresa sincronizada com a Focus NFe")),
+      detail: [data.message, warning].filter(Boolean).join(" ") || undefined,
+      life: data.synced === false || warning ? 6500 : 3000,
     });
   } catch (err) {
-    formError.value = normalizeApiError(err).message;
+    const failedConfig = err?.response?.data?.config;
+    if (failedConfig) {
+      Object.assign(form, failedConfig, {
+        provider_token: "",
+        csc_token: "",
+        focus_certificate_base64: "",
+        focus_certificate_password: "",
+      });
+    }
+    const normalized = normalizeApiError(err);
+    formError.value = normalized.message;
+    toast.add({ severity: "error", summary: "Falha ao sincronizar com a Focus", detail: normalized.message, life: 7000 });
   } finally {
     focusSyncing.value = false;
   }
-}
-
-async function loadProfiles() {
-  const list = await profileService.list({ page_size: 200 });
-  profiles.value = (list.results || []).filter((p) => p.branch === branchId.value);
 }
 
 onMounted(async () => {
@@ -305,49 +298,12 @@ onMounted(async () => {
         focus_certificate_password: "",
       });
     }
-
-    await loadProfiles();
   } catch (err) {
     formError.value = normalizeApiError(err).message;
   } finally {
     loading.value = false;
   }
 });
-
-function openCreateProfile() {
-  editingProfile.value = null;
-  profileDialogOpen.value = true;
-}
-function openEditProfile(profile) {
-  editingProfile.value = profile;
-  profileDialogOpen.value = true;
-}
-function onProfileSaved(saved) {
-  const index = profiles.value.findIndex((p) => p.id === saved.id);
-  if (index >= 0) profiles.value.splice(index, 1, saved);
-  else profiles.value.push(saved);
-  toast.add({ severity: "success", summary: editingProfile.value ? "Perfil atualizado" : "Perfil adicionado", life: 2500 });
-}
-function confirmRemoveProfile(profile) {
-  confirm.require({
-    header: "Remover perfil fiscal?",
-    message: `Remover "${profile.name}"? Produtos que usam este perfil passam a usar o perfil padrão da filial.`,
-    icon: "pi pi-exclamation-triangle",
-    acceptLabel: "Remover",
-    rejectLabel: "Cancelar",
-    acceptClass: "p-button-danger",
-    accept: () => removeProfile(profile),
-  });
-}
-async function removeProfile(profile) {
-  try {
-    await profileService.remove(profile.id);
-    profiles.value = profiles.value.filter((p) => p.id !== profile.id);
-    toast.add({ severity: "success", summary: "Perfil removido", life: 2000 });
-  } catch (err) {
-    toast.add({ severity: "error", summary: "Não foi possível remover", detail: normalizeApiError(err).message, life: 4000 });
-  }
-}
 
 function buildPayload() {
   const payload = {
@@ -473,6 +429,8 @@ defineExpose({ save });
 .fs__focus-status { flex-direction: row; align-items: center; justify-content: space-between; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .fs__focus-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .fs__focus-error { margin-top: 4px; color: #dc2626; font: var(--weight-medium) 12px/1.4 var(--font-sans); }
+.fs__focus-warning { display: flex; align-items: flex-start; gap: 9px; margin-top: 12px; padding: 11px 13px; border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent); border-radius: var(--radius-md); background: color-mix(in srgb, #f59e0b 10%, var(--surface-card)); color: var(--text-body); font: var(--weight-medium) 12px/1.45 var(--font-sans); }
+.fs__focus-warning i { margin-top: 2px; color: #d97706; }
 
 .fs__alert {
   display: flex;
@@ -487,18 +445,4 @@ defineExpose({ save });
   font: var(--weight-semibold) 13px/1.4 var(--font-sans);
 }
 
-.fs__section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.fs__profiles { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
-.fs__profile-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
-.fs__profile-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.fs__profile-info strong { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-sans); }
-.fs__profile-info span { color: var(--text-muted); font: var(--weight-medium) 12px/1.3 var(--font-sans); }
-.fs__profile-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 </style>

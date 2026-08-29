@@ -6,11 +6,26 @@ from apps.core.models import TenantModel
 class FiscalProfile(TenantModel):
     """Grupo tributario reutilizavel por produtos (CFOP/CSOSN/NCM + aliquotas).
 
-    Os valores default sao "em branco"/zero de proposito: cada restaurante
-    configura conforme seu enquadramento. Simples Nacional costuma usar CSOSN
-    (ex.: 102) e aliquotas zeradas no cupom.
+    E um cadastro DA CONTA, nao do restaurante: o mesmo "Bebida" ou "Prato
+    padrao" vale para todas as unidades, do mesmo jeito que as categorias do
+    cardapio. Quem escolhe o perfil e o PRODUTO (``menu.Product.fiscal_profile``),
+    numa relacao 1:N — um perfil serve N produtos.
+
+    Os valores default sao "em branco"/zero de proposito: cada conta configura
+    conforme seu enquadramento. Simples Nacional costuma usar CSOSN (ex.: 102) e
+    aliquotas zeradas no cupom.
     """
 
+    # Compartilhado entre restaurantes (reutilizavel): o vinculo de restaurante
+    # e opcional. Sobrescreve o FK obrigatorio do TenantModel — mesmo padrao de
+    # `menu.ProductCategory` / `menu.ProductAddon`.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
     name = models.CharField(max_length=120)
     ncm = models.CharField(max_length=8, blank=True, help_text="Codigo NCM do produto.")
     cest = models.CharField(max_length=7, blank=True)
@@ -26,12 +41,15 @@ class FiscalProfile(TenantModel):
     approx_tax_rate = models.DecimalField(
         max_digits=6, decimal_places=2, default=0, help_text="Tributos aprox. (Lei 12.741) em %."
     )
-    is_default = models.BooleanField(default=False, help_text="Perfil padrao da filial.")
+    is_default = models.BooleanField(default=False, help_text="Marca o perfil sugerido no cadastro de produtos.")
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        ordering = ["name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_fiscal_profile_by_branch"),
+            # Nome unico por CONTA (e nao mais por filial): o perfil e um
+            # cadastro reutilizavel, entao "Bebida" e um so em toda a conta.
+            models.UniqueConstraint(fields=["account", "name"], name="unique_fiscal_profile_by_account"),
         ]
 
     def __str__(self):

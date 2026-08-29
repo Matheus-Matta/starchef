@@ -11,6 +11,7 @@ from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.access import is_tenant_admin
 from apps.core.viewsets import BaseTenantViewSet
 from apps.invoices.focus import (
+    FocusCompanySyncResult,
     FocusNfeApiError,
     FocusNfeConfigurationError,
     delete_focus_company,
@@ -31,13 +32,19 @@ from apps.invoices.services import (
 
 
 class FiscalProfileViewSet(BaseTenantViewSet):
-    """Grupos tributarios (CFOP/CSOSN/NCM + aliquotas) reutilizados pelos produtos."""
+    """Grupos tributarios (CFOP/CSOSN/NCM + aliquotas) reutilizados pelos produtos.
+
+    Cadastro da CONTA, compartilhado entre restaurantes (ver `FiscalProfile`):
+    o payload nao precisa mandar restaurante/filial — eles ficam nulos.
+    """
 
     required_module = MODULE_FINANCEIRO
     serializer_class = FiscalProfileSerializer
     queryset = FiscalProfile.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["is_active", "is_default"]
-    search_fields = ["name", "ncm", "cfop"]
+    search_fields = ["name", "ncm", "cfop", "csosn", "cest"]
+    ordering_fields = ["name", "ncm", "cfop", "created_at"]
+    ordering = ["name"]
 
 
 class FiscalConfigViewSet(BaseTenantViewSet):
@@ -45,7 +52,9 @@ class FiscalConfigViewSet(BaseTenantViewSet):
 
     required_module = MODULE_FINANCEIRO
     serializer_class = FiscalConfigSerializer
-    queryset = FiscalConfig.objects.select_related("restaurant", "branch", "default_profile").all()
+    queryset = FiscalConfig.objects.select_related(
+        "account__focus_nfe_config", "restaurant", "branch", "default_profile"
+    ).all()
     filterset_fields = ["is_active", "document_model"]
 
     def perform_create(self, serializer):
@@ -59,19 +68,45 @@ class FiscalConfigViewSet(BaseTenantViewSet):
     def _focus_action(self, operation):
         config = self.get_object()
         try:
-            operation(config)
+            result = operation(config)
         except FocusNfeConfigurationError as exc:
             config.refresh_from_db()
             return Response(
                 {
                     "synced": False,
+                    "error": {
+                        "code": "focus_not_configured",
+                        "message": f"Empresa nao sincronizada: {exc}",
+                    },
                     "message": f"Empresa nao sincronizada: {exc}",
                     "config": self.get_serializer(config).data,
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except FocusNfeApiError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            config.refresh_from_db()
+            response_status = status.HTTP_503_SERVICE_UNAVAILABLE if exc.retryable else status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "synced": False,
+                    "error": {"code": exc.error_code, "message": str(exc)},
+                    "message": str(exc),
+                    "focus_status_code": exc.upstream_status,
+                    "config": self.get_serializer(config).data,
+                },
+                status=response_status,
+            )
+        if isinstance(result, FocusCompanySyncResult):
+            return Response(
+                {
+                    "synced": result.synced,
+                    "dry_run": result.dry_run,
+                    "operation": result.operation,
+                    "message": result.message,
+                    "warnings": list(result.warnings),
+                    "config": self.get_serializer(result.config).data,
+                }
+            )
         config.refresh_from_db()
         return Response(self.get_serializer(config).data)
 

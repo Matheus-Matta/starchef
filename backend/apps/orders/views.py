@@ -395,9 +395,21 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="send-to-kitchen")
     def send_to_kitchen(self, request, pk=None):
+        order = self.get_object()
+        # Nada pendente: a rodada que esta chamada queria enviar ja foi.
+        #
+        # Numa fila de entrega ao-menos-uma-vez isso e sucesso, nao erro. O app
+        # do garcom enfileira o envio, e quando a operacao sobe os itens quase
+        # sempre ja foram enviados — pela repeticao da propria operacao, pelo
+        # caixa, ou por outro aparelho. Respondendo 400, a operacao virava
+        # pendencia bloqueada e a comanda ficava presa em "aguardando" ate
+        # alguem remover a pendencia na mao. Quem chama pela tela nunca cai
+        # aqui: o botao de enviar so existe com item pendente.
+        if not order.is_locked and not order.items.filter(status=OrderItem.STATUS_PENDING).exists():
+            return Response(self.get_serializer(order).data)
         try:
             order = send_order_to_kitchen(
-                self.get_object(),
+                order,
                 request.user,
                 client_batch_serial=request.data.get("client_batch_serial"),
                 offline_printed=bool(request.data.get("offline_printed")),

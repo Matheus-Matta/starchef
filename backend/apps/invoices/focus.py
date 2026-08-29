@@ -1,6 +1,7 @@
 """Sincronizacao de empresas do StarChef com a API de Empresas da Focus NFe."""
 
 import logging
+from dataclasses import dataclass
 
 import requests
 from django.db import transaction
@@ -16,9 +17,27 @@ logger = logging.getLogger(__name__)
 class FocusNfeApiError(RuntimeError):
     """Erro de transporte ou validacao devolvido pela Focus NFe."""
 
+    def __init__(self, message, *, error_code="focus_api_error", upstream_status=None, retryable=False):
+        super().__init__(message)
+        self.error_code = error_code
+        self.upstream_status = upstream_status
+        self.retryable = retryable
+
 
 class FocusNfeConfigurationError(RuntimeError):
     """A conta ainda nao possui os dados necessarios para usar a Focus."""
+
+
+@dataclass(frozen=True)
+class FocusCompanySyncResult:
+    """Resultado explicito para a API nao confundir dry run com persistencia."""
+
+    config: FiscalConfig
+    synced: bool
+    message: str
+    dry_run: bool = False
+    operation: str = ""
+    warnings: tuple[str, ...] = ()
 
 
 def get_account_focus_config(account):
@@ -29,6 +48,55 @@ def get_account_focus_config(account):
 
 def _clean_payload(payload):
     return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+def _focus_error_message(data, fallback=""):
+    """Extrai a mensagem da Focus sem devolver payloads inteiros ou segredos."""
+
+    def collect(value):
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, list):
+            messages = []
+            for item in value:
+                messages.extend(collect(item))
+            return messages
+        if not isinstance(value, dict):
+            return []
+
+        messages = []
+        for key in ("mensagem", "message", "detail", "descricao", "description"):
+            messages.extend(collect(value.get(key)))
+        for key in ("erros", "errors", "erro", "error", "detalhes", "details"):
+            messages.extend(collect(value.get(key)))
+        return messages
+
+    messages = list(dict.fromkeys(message for message in collect(data) if message))
+    message = "; ".join(messages) or str(fallback or "Resposta de erro sem mensagem.").strip()
+    return message[:1500]
+
+
+def _is_duplicate_message(message):
+    normalized = str(message or "").casefold()
+    return "duplicad" in normalized or "ja existe" in normalized or "já existe" in normalized
+
+
+def _validate_company_payload(payload):
+    missing = []
+    for field, label in (
+        ("nome", "razao social"),
+        ("cnpj", "CNPJ"),
+        ("logradouro", "endereco"),
+        ("municipio", "cidade"),
+        ("cep", "CEP"),
+        ("uf", "UF"),
+    ):
+        if not payload.get(field):
+            missing.append(label)
+    if missing:
+        raise FocusNfeConfigurationError(
+            "Preencha os dados obrigatorios do restaurante antes de sincronizar: " + ", ".join(missing) + "."
+        )
 
 
 def build_focus_company_payload(config):
@@ -99,20 +167,59 @@ class FocusNfeCompanyClient:
                 timeout=self.timeout,
                 **kwargs,
             )
+        except requests.Timeout as exc:
+            raise FocusNfeApiError(
+                f"A Focus NFe nao respondeu em ate {self.timeout} segundos. Tente novamente.",
+                error_code="focus_timeout",
+                retryable=True,
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise FocusNfeApiError(
+                "Nao foi possivel conectar a Focus NFe. Verifique a URL e tente novamente.",
+                error_code="focus_unavailable",
+                retryable=True,
+            ) from exc
         except requests.RequestException as exc:
-            raise FocusNfeApiError(f"Focus NFe indisponivel: {exc}") from exc
+            raise FocusNfeApiError(
+                "Falha de comunicacao com a Focus NFe. Tente novamente.",
+                error_code="focus_request_error",
+                retryable=True,
+            ) from exc
 
         try:
             data = response.json() if response.content else {}
         except ValueError:
             data = {"mensagem": response.text}
         if response.status_code >= 400:
-            message = data.get("mensagem") if isinstance(data, dict) else None
-            errors = data.get("erros") if isinstance(data, dict) else None
-            if errors:
-                message = "; ".join(str(item.get("mensagem", item)) for item in errors)
+            upstream_status = response.status_code
+            message = _focus_error_message(data, response.text)
+            error_code = "focus_api_error"
+            retryable = upstream_status == 429 or upstream_status >= 500
+            if upstream_status in (401, 403):
+                error_code = "focus_auth_error"
+                message = (
+                    "Token mestre recusado pela Focus NFe. Configure o Token Principal de Producao "
+                    "da conta Focus; o token de emissao da empresa nao serve para cadastrar empresas."
+                )
+            elif upstream_status in (400, 409, 422) and _is_duplicate_message(message):
+                error_code = "focus_conflict"
+                message = f"A Focus NFe informou que a empresa ou um de seus dados ja esta cadastrado: {message}"
+            elif upstream_status in (400, 422):
+                error_code = "focus_validation_error"
+                message = f"A Focus NFe recusou os dados da empresa: {message}"
+            elif upstream_status == 404:
+                error_code = "focus_not_found"
+            elif upstream_status == 429:
+                error_code = "focus_rate_limited"
+                message = "A Focus NFe limitou temporariamente as requisicoes. Aguarde e tente novamente."
+            elif upstream_status >= 500:
+                error_code = "focus_unavailable"
+                message = "A Focus NFe esta indisponivel no momento. Tente novamente em instantes."
             raise FocusNfeApiError(
-                f"Focus NFe (HTTP {response.status_code}): {message or data or response.text}"
+                message,
+                error_code=error_code,
+                upstream_status=upstream_status,
+                retryable=retryable,
             )
         return data
 
@@ -162,10 +269,24 @@ def _first_company(data):
         return data[0] if data else None
     if not isinstance(data, dict):
         return None
-    companies = data.get("data") or data.get("results") or data.get("empresas")
-    if isinstance(companies, list):
-        return companies[0] if companies else None
-    return data if data.get("id") else None
+    if data.get("id"):
+        return data
+    for key in ("data", "results", "empresas", "items"):
+        if key in data:
+            company = _first_company(data[key])
+            if company:
+                return company
+    return None
+
+
+def _company_conflict_not_visible(error):
+    return FocusNfeApiError(
+        "A Focus informou que essa empresa ja existe, mas o Token Principal de Producao configurado "
+        "nao conseguiu localiza-la pelo CNPJ. Confirme se a empresa pertence a mesma conta Focus do token; "
+        "se pertencer a outra conta, solicite a transferencia/liberacao ao suporte da Focus.",
+        error_code="focus_company_conflict_unresolved",
+        upstream_status=error.upstream_status,
+    )
 
 
 def _store_focus_company(config, company):
@@ -208,23 +329,88 @@ def sync_focus_company(config, *, client=None):
     client = client or FocusNfeCompanyClient(account_config=get_account_focus_config(config.account))
     try:
         payload = build_focus_company_payload(config)
+        _validate_company_payload(payload)
         company = None
+        operation = "updated"
         if config.focus_company_id:
             try:
                 company = client.update(config.focus_company_id, payload)
             except FocusNfeApiError as exc:
-                if "HTTP 404" not in str(exc):
+                if exc.upstream_status != 404:
                     raise
         if company is None:
             existing = _first_company(client.list(cnpj=cnpj))
-            company = client.update(existing["id"], payload) if existing else client.create(payload)
+            if existing:
+                company = client.update(existing["id"], payload)
+            else:
+                try:
+                    company = client.create(payload)
+                    operation = "created"
+                except FocusNfeApiError as exc:
+                    if exc.error_code != "focus_conflict":
+                        raise
+                    # Pode haver um cadastro antigo que nao apareceu na primeira
+                    # consulta ou uma corrida entre duas sincronizacoes. Consulta
+                    # novamente pelo CNPJ e adota o registro remoto existente.
+                    existing = _first_company(client.list(cnpj=cnpj))
+                    if not existing:
+                        raise _company_conflict_not_visible(exc) from exc
+                    company = client.update(existing["id"], payload)
+                    operation = "recovered"
+
+        if getattr(client, "dry_run", False):
+            updates = {"focus_sync_error": "", "updated_at": timezone.now()}
+            if not config.focus_company_id:
+                updates["focus_sync_status"] = FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED
+            FiscalConfig.all_objects.filter(pk=config.pk).update(**updates)
+            config.refresh_from_db()
+            return FocusCompanySyncResult(
+                config=config,
+                synced=False,
+                dry_run=True,
+                operation="validated",
+                message=(
+                    "A Focus validou os dados em modo de simulacao (dry run), mas nao criou nem alterou "
+                    "a empresa. Desative 'Simular cadastro da empresa' e sincronize novamente para persistir."
+                ),
+            )
+
+        company = _first_company(company)
+        if not company:
+            # Algumas respostas de criacao podem ser resumidas. Confirma pelo
+            # CNPJ antes de afirmar ao usuario que houve persistencia.
+            company = _first_company(client.list(cnpj=cnpj))
+        if not company or not company.get("id"):
+            raise FocusNfeApiError(
+                "A Focus respondeu sem erro, mas a empresa nao apareceu na consulta por CNPJ. "
+                "Nenhum cadastro foi marcado como sincronizado; tente novamente ou contate o suporte da Focus.",
+                error_code="focus_company_not_persisted",
+                upstream_status=200,
+            )
+        warnings = []
         try:
             client.ensure_webhook(company=company, cnpj=cnpj)
-        except FocusNfeApiError:
+        except FocusNfeApiError as exc:
             # O webhook e complementar: NFC-e e sincrona e NF-e tambem pode
             # ser consultada. Uma falha aqui nao pode inutilizar os tokens.
             logger.exception("Empresa sincronizada, mas o webhook Focus NFe nao foi cadastrado.")
-        return _store_focus_company(config, company)
+            warnings.append(f"Empresa sincronizada, mas o webhook nao foi configurado: {exc}")
+        stored_config = _store_focus_company(config, company)
+        return FocusCompanySyncResult(
+            config=stored_config,
+            synced=True,
+            operation=operation,
+            message=(
+                "Empresa criada e confirmada na Focus NFe."
+                if operation == "created"
+                else (
+                    "Empresa que ja existia na Focus foi localizada pelo CNPJ, vinculada e atualizada."
+                    if operation == "recovered"
+                    else "Empresa atualizada e confirmada na Focus NFe."
+                )
+            ),
+            warnings=tuple(warnings),
+        )
     except Exception as exc:
         FiscalConfig.all_objects.filter(pk=config.pk).update(
             focus_sync_status=(

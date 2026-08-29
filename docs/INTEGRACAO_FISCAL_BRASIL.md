@@ -28,8 +28,9 @@ A API de empresas da Focus opera apenas no servidor de produção, mesmo quando 
 A Focus não oferece um CRUD de catálogo de produtos ou de perfis tributários. A fonte de verdade continua no StarChef:
 
 - `FiscalProfile` mantém NCM, CEST, CFOP, origem, CSOSN/CST, ICMS, PIS, COFINS e tributos aproximados;
-- cada `Product` pode apontar para um perfil fiscal;
-- sem perfil no produto, é usado o perfil padrão da filial;
+- o perfil é um cadastro **da conta**, não de um restaurante: o mesmo "Bebida" serve produtos de qualquer unidade (relação 1:N com `Product`, como as categorias do cardápio). O nome é único por conta;
+- cada `Product` pode apontar para um perfil fiscal — em **Financeiro › Perfis fiscais** (ou pelo "+" no formulário do produto);
+- sem perfil no produto, é usado o `default_profile` da configuração fiscal da filial, quando houver;
 - cada emissão cria um snapshot em `InvoiceItem` e envia os itens completos no JSON da NF-e/NFC-e.
 
 Assim, criar, editar ou trocar o perfil de um produto passa a valer automaticamente na próxima nota. Notas já emitidas preservam o snapshot original para auditoria.

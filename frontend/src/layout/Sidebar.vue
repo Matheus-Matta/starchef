@@ -219,6 +219,7 @@ const groups = computed(() =>
       items: [
         canManage.value ? { id: "pagamentos", label: "Hist. pagamentos", icon: "dollar-sign" } : null,
         canManage.value ? { id: "notas-fiscais", label: "Notas fiscais", icon: "shield-check" } : null,
+        canManage.value ? { id: "perfis-fiscais", label: "Perfis fiscais", icon: "percentage" } : null,
         canSeeAllRestaurants.value ? { id: "configuracao-focus", label: "Configuração Focus", icon: "settings" } : null,
       ].filter(Boolean),
     },

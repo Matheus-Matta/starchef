@@ -38,12 +38,16 @@
             <span>Novo token mestre</span>
             <Password
               v-model="form.master_token"
-              :placeholder="form.master_token_configured ? 'Deixe vazio para manter o token atual' : 'Informe o token mestre da Focus'"
+              :placeholder="form.master_token_configured ? '••••••••' : 'Informe o token mestre da Focus'"
               :feedback="false"
               toggle-mask
               input-class="focus-input"
             />
-            <small>O valor atual nunca é devolvido pela API.</small>
+            <small>
+              {{ form.master_token_configured
+                ? "As bolinhas indicam que há um token salvo. Digite apenas para substituir."
+                : "Use o Token Principal de Produção da Focus; tokens de emissão não cadastram empresas." }}
+            </small>
           </label>
 
           <label class="focus-field">
@@ -66,6 +70,11 @@
             <span>Simular cadastro da empresa</span>
             <div><InputSwitch v-model="form.company_dry_run" /> <small>{{ form.company_dry_run ? "Dry run ativo" : "Persistir na Focus" }}</small></div>
           </div>
+        </div>
+
+        <div v-if="form.company_dry_run" class="focus-page__warning">
+          <i class="pi pi-info-circle" />
+          <span><strong>Modo de simulação ativo.</strong> A Focus apenas validará os dados; nenhuma empresa será criada ou alterada.</span>
         </div>
 
         <Button
@@ -110,11 +119,12 @@
             <span>Novo segredo do webhook</span>
             <Password
               v-model="form.webhook_authorization"
-              :placeholder="form.webhook_authorization_configured ? 'Deixe vazio para manter o segredo atual' : 'Informe um segredo forte'"
+              :placeholder="form.webhook_authorization_configured ? '••••••••' : 'Informe um segredo forte'"
               :feedback="false"
               toggle-mask
               input-class="focus-input"
             />
+            <small v-if="form.webhook_authorization_configured">As bolinhas indicam que o segredo já está salvo.</small>
           </label>
         </div>
 
@@ -245,6 +255,8 @@ onMounted(load);
 .focus-field--switch > div { display: flex; align-items: center; gap: 9px; min-height: var(--control-h); }
 .focus-input { width: 100%; }
 .focus-page__alert { display: flex; align-items: center; gap: 9px; padding: 12px 14px; border: 1px solid var(--danger-border); border-radius: var(--radius-md); background: var(--danger-subtle); color: var(--danger-text); }
+.focus-page__warning { display: flex; align-items: flex-start; gap: 9px; margin: 4px 0 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent); border-radius: var(--radius-md); background: color-mix(in srgb, #f59e0b 10%, var(--surface-card)); color: var(--text-body); font: var(--weight-medium) 12.5px/1.45 var(--font-sans); }
+.focus-page__warning i { margin-top: 2px; color: #d97706; }
 :deep(.p-password), :deep(.p-password-input) { width: 100%; }
 @media (max-width: 720px) {
   .focus-page__head, .focus-card__head { flex-direction: column; }

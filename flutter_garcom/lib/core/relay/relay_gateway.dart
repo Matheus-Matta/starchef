@@ -74,7 +74,28 @@ class RelayGateway extends ChangeNotifier {
     if (_restored) return;
     _restored = true;
     _pending.addAll(await store.load());
-    if (_pending.isNotEmpty) notifyListeners();
+    // As recusas voltam junto: um item que o Caixa Principal não aceitou
+    // precisa continuar visível depois de fechar o app. Enquanto elas viviam
+    // só em memória, o item sumia da tela no primeiro reinício e ninguém mais
+    // sabia que ele tinha existido.
+    _failed.addAll(await store.loadFailed());
+    if (_pending.isNotEmpty || _failed.isNotEmpty) notifyListeners();
+  }
+
+  /// Recusas de UM pedido — a tela de detalhe as mostra junto dos itens.
+  List<FailedMutation> failedFor(String orderId) =>
+      _failed.where((item) => item.orderId == orderId).toList();
+
+  /// Reenvia uma recusa, depois que o garçom corrigiu a causa.
+  Future<void> retryFailed(String operationId) async {
+    final index = _failed.indexWhere(
+      (item) => item.mutation.operationId == operationId,
+    );
+    if (index < 0) return;
+    final recovered = _failed.removeAt(index).mutation;
+    await store.saveFailed(_failed);
+    await _enqueue(recovered);
+    _scheduleFlush(immediate: true);
   }
 
   /// Atualiza o alvo do reenvio (conta/operador/restaurante e o caixa
@@ -187,6 +208,7 @@ class RelayGateway extends ChangeNotifier {
           _pending.removeAt(0);
           _failed.add(FailedMutation(mutation: mutation, reason: error.message));
           await store.save(_pending);
+          await store.saveFailed(_failed);
           notifyListeners();
         }
       }
@@ -209,8 +231,9 @@ class RelayGateway extends ChangeNotifier {
     }
   }
 
-  void discardFailed(String operationId) {
+  Future<void> discardFailed(String operationId) async {
     _failed.removeWhere((item) => item.mutation.operationId == operationId);
+    await store.saveFailed(_failed);
     notifyListeners();
   }
 

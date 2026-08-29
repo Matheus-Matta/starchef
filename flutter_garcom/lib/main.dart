@@ -12,6 +12,7 @@ import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/login_page.dart';
 import 'features/auth/presentation/principal_setup_page.dart';
 import 'features/auth/presentation/session_controller.dart';
+import 'features/orders/data/order_drafts.dart';
 import 'features/orders/data/orders_repository.dart';
 import 'features/orders/presentation/orders_page.dart';
 
@@ -48,6 +49,11 @@ class _GarcomAppState extends State<GarcomApp> {
   /// divergiriam em memória e uma sobrescreveria o que a outra guardou.
   late final PrincipalCache _cache;
 
+  /// Pelo mesmo motivo dos dois acima: os itens escolhidos e ainda não
+  /// enviados não podem se perder quando o repositório é reconstruído — nem
+  /// quando o garçom fecha o app no meio do salão.
+  late final OrderDrafts _drafts;
+
   @override
   void initState() {
     super.initState();
@@ -55,6 +61,7 @@ class _GarcomAppState extends State<GarcomApp> {
     _principal = PrincipalClient();
     _gateway = RelayGateway(client: _principal, store: OfflineQueueStore());
     _cache = PrincipalCache();
+    _drafts = OrderDrafts();
     _controller = SessionController(
       api: _api,
       principalClient: _principal,
@@ -69,6 +76,7 @@ class _GarcomAppState extends State<GarcomApp> {
     // pendências de uma sessão anterior — o gateway já esteja pronto assim
     // que `updateContext` chegar com a sessão/pareamento restaurados.
     await _gateway.restore();
+    await _drafts.restore();
     await _controller.restore();
     _syncGatewayContext();
     _controller.addListener(_syncGatewayContext);
@@ -127,6 +135,7 @@ class _GarcomAppState extends State<GarcomApp> {
             session: _controller.session!,
             principal: _controller.principal!,
             cache: _cache,
+            drafts: _drafts,
           ),
         ),
       },

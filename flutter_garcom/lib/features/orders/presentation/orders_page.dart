@@ -17,6 +17,7 @@ import 'command_picker_sheet.dart';
 import 'new_order_sheet.dart';
 import 'order_detail_page.dart';
 import 'order_formatters.dart';
+import 'pending_sheet.dart';
 import 'sync_banner.dart';
 import 'table_picker_sheet.dart';
 import 'update_banner.dart';
@@ -87,6 +88,8 @@ class _OrdersPageState extends State<OrdersPage> {
           repository: widget.repository,
           orderId: '${order['id']}',
           initialOrder: order,
+          canReceivePayment:
+              widget.controller.session?.user.canReceivePayment ?? false,
         ),
       ),
     );
@@ -234,6 +237,27 @@ class _OrdersPageState extends State<OrdersPage> {
       appBar: AppBar(
         title: const Text('Pedidos abertos'),
         actions: [
+          // Contador de envios pendentes: é aqui que o garçom vê o que este
+          // aparelho ainda deve ao caixa. A lista de pedidos volta a mostrar
+          // só pedidos.
+          AnimatedBuilder(
+            animation: gateway,
+            builder: (context, _) {
+              final total = gateway.pendingCount + gateway.failed.length;
+              return IconButton(
+                tooltip: 'Envios pendentes',
+                onPressed: () => showPendingSheet(context, gateway),
+                icon: Badge(
+                  isLabelVisible: total > 0,
+                  backgroundColor: gateway.failed.isEmpty
+                      ? AppColors.warning
+                      : AppColors.danger,
+                  label: Text('$total'),
+                  child: const Icon(Icons.cloud_upload_outlined),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Atualizar',
             onPressed: _loading ? null : _load,
@@ -277,7 +301,9 @@ class _OrdersPageState extends State<OrdersPage> {
         label: const Text('Novo pedido'),
       ),
       body: AnimatedBuilder(
-        animation: gateway,
+        // A fila E os itens ainda não enviados: os dois mudam o que o cartão
+        // do pedido mostra, então a lista precisa acompanhar os dois.
+        animation: Listenable.merge([gateway, widget.repository.drafts]),
         builder: (context, _) => Column(
           children: [
             ListenableBuilder(
@@ -315,14 +341,33 @@ class _OrdersPageState extends State<OrdersPage> {
         ),
       );
     }
-    if (_orders.isEmpty && creating.isEmpty) {
+    if (_orders.isEmpty) {
+      // Com pedidos ainda a caminho, dizer "nenhum pedido aberto" faria o
+      // garçom achar que o que ele acabou de lançar se perdeu.
+      if (creating.isNotEmpty) {
+        return _Message(
+          icon: Icons.cloud_upload_outlined,
+          title: 'Pedido a caminho do caixa',
+          description:
+              '${creating.length} pedido(s) lançado(s) neste aparelho ainda '
+              'não foram confirmados pelo Caixa Principal.',
+          action: ShadButton.outline(
+            onPressed: () =>
+                showPendingSheet(context, widget.repository.gateway),
+            child: const Text('Ver envios pendentes'),
+          ),
+        );
+      }
       return const _Message(
         icon: Icons.receipt_long_outlined,
         title: 'Nenhum pedido aberto',
         description: 'Toque em "Novo pedido" para começar a atender uma mesa.',
       );
     }
-    final orders = [...creating, ..._orders];
+    // Sem os cartões de "criando": eles não são pedidos do caixa, e sim o que
+    // este aparelho ainda deve mandar. Agora vivem atrás do contador do topo
+    // (`showPendingSheet`), onde dizem em que pé estão.
+    final orders = _orders;
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
       physics: const AlwaysScrollableScrollPhysics(),
@@ -330,16 +375,36 @@ class _OrdersPageState extends State<OrdersPage> {
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final order = orders[index];
-        return _OrderCard(order: order, onTap: () => _openOrder(order));
+        final orderId = '${order['id'] ?? ''}';
+        return _OrderCard(
+          order: order,
+          // Itens deste pedido que o caixa recusou: sem o aviso aqui, o
+          // garçom só descobria abrindo o pedido — e podia nem abrir.
+          failed: widget.repository.gateway.failedFor(orderId).length,
+          draft: widget.repository.drafts.countFor(orderId),
+          onTap: () => _openOrder(order),
+        );
       },
     );
   }
 }
 
 class _OrderCard extends StatelessWidget {
-  const _OrderCard({required this.order, required this.onTap});
+  const _OrderCard({
+    required this.order,
+    required this.onTap,
+    this.failed = 0,
+    this.draft = 0,
+  });
 
   final Map<String, dynamic> order;
+
+  /// Itens que o Caixa Principal recusou neste pedido.
+  final int failed;
+
+  /// Itens escolhidos e ainda não enviados neste pedido.
+  final int draft;
+
   final VoidCallback onTap;
 
   @override
@@ -385,9 +450,22 @@ class _OrderCard extends StatelessWidget {
                 ],
               ),
             ),
-            order['_offline_pending'] == true
-                ? const PendingBadge(label: 'aguardando conexão')
-                : _StatusChip(order: order),
+            if (failed > 0)
+              _CountBadge(
+                count: failed,
+                color: AppColors.danger,
+                icon: Icons.error_outline,
+              )
+            else if (draft > 0)
+              _CountBadge(
+                count: draft,
+                color: AppColors.warning,
+                icon: Icons.schedule_outlined,
+              )
+            else if (order['_offline_pending'] == true)
+              const PendingBadge(label: 'aguardando conexão')
+            else
+              _StatusChip(order: order),
             const SizedBox(width: 6),
             Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
           ],
@@ -395,6 +473,44 @@ class _OrderCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Contador curto no cartão do pedido: erros de envio ou itens a mandar.
+class _CountBadge extends StatelessWidget {
+  const _CountBadge({
+    required this.count,
+    required this.color,
+    required this.icon,
+  });
+
+  final int count;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .12),
+      borderRadius: AppTheme.radius,
+      border: Border.all(color: color.withValues(alpha: .35)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          '$count',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _StatusChip extends StatelessWidget {

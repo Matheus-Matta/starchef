@@ -128,6 +128,37 @@ def test_create_with_item_on_open_command_appends_instead_of_conflicting(
     assert itens.first().quantity == Decimal("2")
 
 
+def test_send_to_kitchen_twice_is_not_an_error(api_client, manager_user, restaurant, product):
+    """Enviar de novo o que ja foi enviado devolve o pedido, nao um erro.
+
+    O app do garcom enfileira o envio. Quando a operacao sobe, os itens quase
+    sempre ja foram enviados — pela repeticao da propria operacao, pelo caixa,
+    ou por outro aparelho. Respondendo 400, a operacao virava pendencia
+    bloqueada e a comanda ficava presa em "aguardando" ate alguem remover a
+    pendencia na mao.
+    """
+    api_client.force_authenticate(user=None)
+    login = api_client.post(
+        "/api/v1/auth/login/",
+        {"username": "manager", "password": "secret123", "no_cookie": True},
+        format="json",
+    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+
+    order = create_order(restaurant=restaurant, order_type=Order.TYPE_COUNTER, user=manager_user)
+    add_order_item(order=order, product=product, user=manager_user, quantity=1)
+
+    primeiro = api_client.post(f"/api/v1/orders/{order.id}/send-to-kitchen/", {}, format="json")
+    assert primeiro.status_code == 200, primeiro.data
+
+    repetido = api_client.post(f"/api/v1/orders/{order.id}/send-to-kitchen/", {}, format="json")
+
+    assert repetido.status_code == 200, repetido.data
+    assert repetido.data["id"] == str(order.id)
+    # Nenhuma rodada nova foi aberta por causa da repeticao.
+    assert OrderBatch.all_objects.filter(order=order).count() == 1
+
+
 def test_immediate_kitchen_dispatch_prints_linked_cancellation(
     account,
     restaurant,

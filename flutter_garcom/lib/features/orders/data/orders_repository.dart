@@ -6,6 +6,7 @@ import '../../../core/relay/relay_gateway.dart';
 import '../../../core/relay/relay_signature.dart';
 import '../../../core/storage/principal_cache.dart';
 import '../../auth/domain/waiter_session.dart';
+import 'order_drafts.dart';
 
 /// Pedidos do salão, sempre pela ótica do Caixa Principal.
 ///
@@ -34,7 +35,9 @@ class OrdersRepository {
     required this.session,
     required this.principal,
     PrincipalCache? cache,
-  }) : cache = cache ?? PrincipalCache();
+    OrderDrafts? drafts,
+  }) : cache = cache ?? PrincipalCache(),
+       drafts = drafts ?? OrderDrafts();
 
   final PrincipalClient principalClient;
 
@@ -50,6 +53,11 @@ class OrdersRepository {
   /// quando ele é.
   ReadOrigin lastReadOrigin = const ReadOrigin.live();
   final RelayGateway gateway;
+
+  /// Itens escolhidos e ainda não enviados, por pedido. Eles saem juntos
+  /// quando o garçom confirma o envio — que é quando a comanda é impressa.
+  final OrderDrafts drafts;
+
   final WaiterSession session;
 
   /// Pareamento do aparelho — do dispositivo, não do garçom (ver

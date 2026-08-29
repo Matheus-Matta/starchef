@@ -16,6 +16,12 @@ class FiscalProfileSerializer(TenantModelSerializer):
 class FiscalConfigSerializer(TenantModelSerializer):
     is_ready = serializers.BooleanField(read_only=True)
     focus_connected = serializers.SerializerMethodField()
+    provider_token_configured = serializers.SerializerMethodField()
+    csc_token_configured = serializers.SerializerMethodField()
+    focus_certificate_configured = serializers.SerializerMethodField()
+    focus_certificate_password_configured = serializers.SerializerMethodField()
+    focus_account_configured = serializers.SerializerMethodField()
+    focus_company_dry_run = serializers.SerializerMethodField()
 
     class Meta:
         model = FiscalConfig
@@ -41,6 +47,29 @@ class FiscalConfigSerializer(TenantModelSerializer):
 
     def get_focus_connected(self, obj):
         return bool(obj.focus_company_id and (obj.focus_token_production or obj.focus_token_homologation))
+
+    def get_provider_token_configured(self, obj):
+        return bool(obj.provider_token)
+
+    def get_csc_token_configured(self, obj):
+        return bool(obj.csc_token)
+
+    def get_focus_certificate_configured(self, obj):
+        return bool(obj.focus_certificate_base64)
+
+    def get_focus_certificate_password_configured(self, obj):
+        return bool(obj.focus_certificate_password)
+
+    def _focus_account_config(self, obj):
+        return getattr(obj.account, "focus_nfe_config", None)
+
+    def get_focus_account_configured(self, obj):
+        account_config = self._focus_account_config(obj)
+        return bool(account_config and account_config.master_token and account_config.production_url)
+
+    def get_focus_company_dry_run(self, obj):
+        account_config = self._focus_account_config(obj)
+        return bool(account_config and account_config.company_dry_run)
 
     def validate(self, attrs):
         managed_tokens = {"focus_token_production", "focus_token_homologation"}.intersection(attrs)

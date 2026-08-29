@@ -4,6 +4,7 @@ Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
 Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
 estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
 """
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
@@ -69,20 +70,47 @@ class TenantQuerySetMixin:
         if not profile:
             return queryset.none()
 
+        is_restaurant_model = queryset.model._meta.label == "restaurants.Restaurant"
         model_is_restaurant_scoped = (
-            queryset.model._meta.label == "restaurants.Restaurant"
-            or model_has_field(queryset.model, self.tenant_restaurant_field)
+            is_restaurant_model or model_has_field(queryset.model, self.tenant_restaurant_field)
         )
-        if model_is_restaurant_scoped and not profile.restaurant_id:
-            return queryset.none()
+        shared = not is_restaurant_model and self._is_shared_across_restaurants(queryset.model)
 
-        filters = {}
-        if profile.restaurant_id:
-            if queryset.model._meta.label == "restaurants.Restaurant":
-                filters["id"] = profile.restaurant_id
-            elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
-        return queryset.filter(**filters) if filters else queryset
+        if model_is_restaurant_scoped and not profile.restaurant_id:
+            # Sem restaurante no perfil so sobra o que pertence a conta inteira.
+            return queryset.filter(**{f"{self.tenant_restaurant_field}__isnull": True}) if shared else queryset.none()
+
+        if not profile.restaurant_id:
+            return queryset
+        if is_restaurant_model:
+            return queryset.filter(id=profile.restaurant_id)
+        if model_is_restaurant_scoped:
+            return queryset.filter(self._restaurant_scope_q(queryset.model, profile.restaurant_id))
+        return queryset
+
+    def _is_shared_across_restaurants(self, model):
+        """True quando `restaurant` e opcional no model (recurso da conta inteira).
+
+        Categorias, adicionais e perfis fiscais usam `restaurant = NULL` para
+        dizer "vale para todos os restaurantes".
+        """
+        return (
+            model_has_field(model, self.tenant_restaurant_field)
+            and model._meta.get_field(self.tenant_restaurant_field).null
+        )
+
+    def _restaurant_scope_q(self, model, restaurant_id):
+        """Recorte por restaurante que NAO esconde os registros compartilhados.
+
+        Filtrar so pelo id derrubava os registros de `restaurant = NULL` — era o
+        que fazia uma categoria (ou um perfil fiscal) reutilizavel sumir para
+        quem nao e admin, e some do dropdown quando a tela filtra por unidade.
+        """
+        field_name = self.tenant_restaurant_field
+        scope = Q(**{f"{field_name}_id": restaurant_id})
+        if self._is_shared_across_restaurants(model):
+            scope |= Q(**{f"{field_name}__isnull": True})
+        return scope
 
     def soft_delete_scope(self, queryset):
         """Aplica (ou nao) o recorte de registros excluidos.
@@ -156,7 +184,10 @@ class TenantQuerySetMixin:
             if queryset.model._meta.label == "restaurants.Restaurant":
                 filters["id"] = restaurant_id
             elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = restaurant_id
+                # Inclui os compartilhados: o formulario de produto filtra por
+                # restaurante ao carregar o dropdown de perfil fiscal, e um
+                # perfil da conta inteira precisa continuar aparecendo la.
+                queryset = queryset.filter(self._restaurant_scope_q(queryset.model, restaurant_id))
 
         if branch_id:
             if queryset.model._meta.label == "restaurants.Branch":

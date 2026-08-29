@@ -229,7 +229,10 @@ import { currentMonthRange } from "../utils/dateRange";
 const DEFAULT_SLA = 15;
 const PAGE = 20; // cards renderizados por coluna antes de "carregar mais" no scroll
 const router = useRouter();
-useRealtimeResource("orders.orderitem", () => loadItems());
+// Ouve o PEDIDO além do item: cancelar um pedido atualiza os itens em massa
+// (sem disparar evento por item), então só escutando `orderitem` o card
+// cancelado ficava parado no quadro até o polling de 2 min.
+useRealtimeResource(["orders.orderitem", "orders.order"], () => loadItems());
 
 /* ── Filtro de datas (default: Hoje) ─────────────────────────── */
 const DATE_OPTIONS = [
@@ -417,6 +420,10 @@ async function moveItem(item, column) {
   } catch (err) {
     item.kds_column = previous; // desfaz
     errorMsg.value = normalizeApiError(err).message;
+    // O card pode ter morrido com a tela aberta (pedido cancelado/estornado no
+    // caixa): recarregar tira ele do quadro em vez de deixar um card parado
+    // que recusa todo movimento até o próximo refresh automático.
+    await loadItems();
   } finally {
     movingId.value = "";
   }

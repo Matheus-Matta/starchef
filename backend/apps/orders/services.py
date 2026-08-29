@@ -657,12 +657,29 @@ def comp_order_item(item, user, reason=""):
         return item
 
 
+# Avancos de PRODUCAO (o que o KDS faz). Nao mudam composicao nem valor do
+# pedido, entao continuam liberados depois do pagamento.
+_KITCHEN_STATUSES = frozenset(
+    {OrderItem.STATUS_PREPARING, OrderItem.STATUS_READY, OrderItem.STATUS_DELIVERED}
+)
+
+
 @transaction.atomic
 def update_order_item_status(item, new_status, user, reason=""):
     with tenant_context(item.account):
         item = OrderItem.objects.select_related("order").select_for_update(of=("self",)).get(pk=item.pk)
-        if item.order.is_locked:
-            raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
+        # Cancelado/estornado e ponto final: nao ha producao a fazer.
+        if item.order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
+            raise ValidationError("Itens de pedidos cancelados ou estornados não podem ser alterados.")
+        # Pago NAO trava a cozinha: o caixa cobra assim que manda os itens para a
+        # producao, entao "pago com comida na chapa" e o estado normal de um card
+        # no KDS. O bloqueio existe para o que mexe na composicao/valor do pedido
+        # (cancelar item, cortesia), nao para o cozinheiro avancar a ficha —
+        # producao e um ciclo independente do financeiro (Order.production_status).
+        if item.order.status == Order.STATUS_PAID and new_status not in _KITCHEN_STATUSES:
+            raise ValidationError(
+                "Pedido já pago: a cozinha pode avançar a produção, mas o item não pode mais ser alterado."
+            )
 
         # Guard special transitions through dedicated functions
         if new_status == OrderItem.STATUS_CANCELLED:

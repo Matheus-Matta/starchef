@@ -211,9 +211,57 @@ void main() {
     await gateway.flushNow();
     final id = gateway.failed.single.mutation.operationId;
 
-    gateway.discardFailed(id);
+    // Descartar grava a lista de recusas em disco: sem esperar, a gravação
+    // corria com a limpeza do diretório temporário no fim do teste.
+    await gateway.discardFailed(id);
 
     expect(gateway.failed, isEmpty);
+  });
+
+  test('a recusa sobrevive a fechar e abrir o app', () async {
+    // Enquanto as recusas viviam só em memória, o item recusado sumia da tela
+    // no primeiro reinício e ninguém mais sabia que ele tinha existido.
+    await principal.stop();
+    await gateway
+        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: '2x Coxinha')
+        .catchError((_) => <String, dynamic>{});
+    principal.rejectWith(statusCode: 400, detail: 'Selecione uma variacao obrigatoria.');
+    await principal.start(port: 0);
+    gateway.updateContext(config: config(), identity: identity);
+    await gateway.flushNow();
+    expect(gateway.failed, hasLength(1));
+
+    final reaberto = RelayGateway(client: PrincipalClient(), store: gateway.store);
+    await reaberto.restore();
+
+    expect(reaberto.failed, hasLength(1));
+    expect(reaberto.failed.single.reason, contains('variacao'));
+    expect(reaberto.failedFor('pedido-1'), hasLength(1));
+    reaberto.dispose();
+  });
+
+  test('reenviar uma recusa devolve a operação para a fila', () async {
+    // O garçom corrigiu a causa (escolheu a variação que faltava, o caixa
+    // voltou): insistir na mesma operação é melhor do que lançar o item de
+    // novo e arriscar a duplicata.
+    await principal.stop();
+    await gateway
+        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: '2x Coxinha')
+        .catchError((_) => <String, dynamic>{});
+    principal.rejectWith(statusCode: 400, detail: 'Recusado.');
+    await principal.start(port: 0);
+    gateway.updateContext(config: config(), identity: identity);
+    await gateway.flushNow();
+    final id = gateway.failed.single.mutation.operationId;
+
+    principal.acceptAgain();
+    await gateway.retryFailed(id);
+    await gateway.flushNow();
+
+    expect(gateway.failed, isEmpty);
+    expect(gateway.pendingCount, 0);
+    // Mesma operação, mesmo id: o caixa continua deduplicando por ele.
+    expect(principal.received.last['operation_id'], id);
   });
 
   test('pendingFor filtra por pedido — a tela de detalhe só vê as suas', () async {
@@ -330,9 +378,15 @@ class _FakePrincipal {
   int? _rejectStatus;
   String? _rejectDetail;
 
-  void rejectWith({required int statusCode, required String detail}) {
+  void rejectWith({required int? statusCode, required String detail}) {
     _rejectStatus = statusCode;
     _rejectDetail = detail;
+  }
+
+  /// Volta a aceitar tudo — o caixa que estava recusando foi corrigido.
+  void acceptAgain() {
+    _rejectStatus = null;
+    _rejectDetail = null;
   }
 
   Future<void> start({int port = 0}) async {

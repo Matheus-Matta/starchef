@@ -52,7 +52,9 @@ empresas pela API `/v2/empresas`.
 - A credencial precisa ter acesso à API de empresas/subcontas.
 - Não confunda com `token_producao` ou `token_homologacao` de um restaurante.
 - O StarChef não devolve o token pela API; a tela informa apenas se está
-  configurado. Deixar o campo vazio ao salvar preserva o valor atual.
+  configurado. Quando já existe um valor, o campo vazio mostra `••••••••`
+  apenas como referência visual. As bolinhas não são o token e não são enviadas
+  ao backend; deixar o campo sem digitar preserva o valor atual.
 
 ### URL de produção
 
@@ -100,6 +102,28 @@ persiste a criação ou alteração.
   homologação ou produção.
 - `dry_run` não transforma uma emissão em homologação; ambiente fiscal e
   simulação de cadastro são conceitos diferentes.
+
+O botão **Sincronizar agora** informa explicitamente quando houve somente uma
+validação em `dry_run`. Nesse caso a resposta usa `synced: false` e a empresa
+continua como não sincronizada. Fora do modo de simulação, o StarChef só marca
+sucesso depois que a resposta da Focus contém uma empresa identificável ou que
+uma nova consulta por CNPJ confirma a persistência.
+
+### Diagnóstico da sincronização
+
+Os erros da Focus aparecem no status fiscal do restaurante e na resposta do
+botão manual. As mensagens distinguem, entre outros casos:
+
+- Token Principal de Produção ausente ou recusado;
+- dados obrigatórios do emitente ausentes;
+- dados ou certificado recusados pela Focus (`400`/`422`);
+- timeout, indisponibilidade e limite temporário de requisições;
+- resposta aceita sem empresa confirmada por ID/CNPJ.
+
+O retorno inclui um código estável em `error.code`, o HTTP recebido da Focus em
+`focus_status_code` quando disponível e a configuração atual em `config`. Tokens,
+CSC, certificado e senhas continuam sendo somente escrita e nunca são incluídos
+no erro.
 
 ### URL do webhook
 
@@ -337,10 +361,11 @@ obtenha/valide o CSC de produção e confirme a série e a numeração de produ�
 | `Nota fiscal não emitida` com HTTP 200 | Provedor, URLs da conta e token do ambiente |
 | `Token mestre ... não configurado` | Financeiro > Configuração Focus |
 | `Empresa sem token para o ambiente` | Desative `dry_run` e sincronize novamente |
+| `Já existe um registro com estes dados` ao sincronizar empresa | O StarChef consulta novamente pelo CNPJ e vincula o cadastro existente. Se continuar, confirme que a empresa pertence à mesma conta Focus do Token Principal de Produção |
 | `Certificado inválido/vencido` | CNPJ, validade, arquivo A1 e senha |
 | `Código CSC não configurado` | CSC e ID do mesmo ambiente na SEFAZ |
 | Rejeição de item | NCM, CFOP, CSOSN/CST, PIS e COFINS |
-| Duplicidade | Série e próximo número já utilizados |
+| Duplicidade na emissão da nota | Série e próximo número já utilizados |
 | QR Code inválido | CSC/ID, ambiente e URL de QR Code da UF |
 | NF-e permanece processando | Webhook, segredo, logs e consulta de status |
 | DANFE não imprime | Impressora ativa/master e agente local do PDV |

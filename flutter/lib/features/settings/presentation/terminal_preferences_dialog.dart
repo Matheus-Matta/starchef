@@ -98,8 +98,9 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
               divisions: 29,
               display: '$commandTimeoutSeconds s',
               helper:
-                  'Depois desse tempo a estação avisa e, se ninguém ler a '
-                  'comanda, cancela a pesagem e volta a esperar peso.',
+                  'Depois desse tempo, sem ninguém ler a comanda, a estação '
+                  'avisa e cancela a pesagem na hora — não há um segundo '
+                  'tempo de espera além deste.',
               onChanged: (value) =>
                   setState(() => commandTimeoutSeconds = value.round()),
             ),

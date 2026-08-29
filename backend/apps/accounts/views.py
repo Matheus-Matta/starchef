@@ -29,7 +29,7 @@ from apps.accounts.serializers import (
     resolve_enabled_modules,
 )
 from apps.core.access import is_tenant_admin
-from apps.core.viewsets import BaseTenantViewSet
+from apps.core.viewsets import ReadOnlyTenantViewSet
 
 User = get_user_model()
 
@@ -267,7 +267,14 @@ class UserViewSet(viewsets.ModelViewSet):
         super().perform_create(serializer)
 
 
-class RoleViewSet(BaseTenantViewSet):
+class RoleViewSet(ReadOnlyTenantViewSet):
+    """Perfis de Acesso agora sao fixos (ver apps.accounts.role_catalog).
+
+    Somente leitura: nao ha mais criacao, edicao ou remocao de perfis pela API
+    — os 4 perfis (Garcom, Caixa, Gerente, Administrador) sao provisionados
+    por conta via signal (contas novas) e migration (contas existentes).
+    """
+
     serializer_class = RoleSerializer
     queryset = Role.all_objects.prefetch_related("permissions").all()
     search_fields = ["code", "name"]
