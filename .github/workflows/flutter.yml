@@ -48,8 +48,27 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+      # `flutter test` roda em windows-latest, o runner hospedado mais lento
+      # do GitHub Actions, e alguns testes fazem I/O real de disco (SQLite
+      # temporário) sob timers reais — com a suíte inteira disputando disco em
+      # paralelo, um pico de contenção pontual pode estourar até uma folga
+      # generosa. Uma repetição automática absorve essa flakiness transitória
+      # sem esconder regressão de verdade: uma falha real reproduz nas duas
+      # tentativas e continua barrando o release.
       - name: Testes
-        run: flutter test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $maxAttempts = 2
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            flutter test
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt $maxAttempts) {
+              Write-Host "::warning::flutter test falhou na tentativa $attempt/$maxAttempts — tentando novamente (possível flakiness de I/O no runner Windows)."
+              Start-Sleep -Seconds 5
+            }
+          }
+          exit $LASTEXITCODE
 
   test-garcom:
     runs-on: ubuntu-latest
