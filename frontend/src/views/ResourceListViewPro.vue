@@ -405,7 +405,9 @@ const primaryAction = computed(() => {
 });
 
 // Colunas atreladas a um módulo só aparecem se a conta tem o módulo.
-const visibleColumns = computed(() => props.columns.filter((column) => auth.hasModule(column.module)));
+const visibleColumns = computed(() => props.columns.filter(
+  (column) => column.showInList !== false && auth.hasModule(column.module),
+));
 
 // ── Estado local dos filtros "pro" ──────────────────────────────────
 const dateRange = ref(null);
@@ -983,6 +985,7 @@ const rowMenuItems = computed(() => {
   // "Configuração fiscal". `module` esconde a ação em contas sem o módulo.
   for (const rowAction of proCfg.value.rowActions || []) {
     if (!auth.hasModule(rowAction.module)) continue;
+    if (rowAction.visible && !rowAction.visible(menuRow.value)) continue;
     items.push({ label: rowAction.label, icon: rowAction.icon, command: () => runRowAction(rowAction, menuRow.value) });
   }
   if (props.formEnabled) {
@@ -1004,6 +1007,30 @@ async function runRowAction(rowAction, row) {
   // Ação que só leva pra outra página do registro (ex.: configuração fiscal).
   if (rowAction.type === "route" && row?.id) {
     return router.push({ name: rowAction.routeName, params: { id: row.id } });
+  }
+  if (rowAction.type === "post-detail" && row?.id) {
+    confirm.require({
+      header: rowAction.label,
+      message: rowAction.confirmMessage || `Executar esta ação em "${rowLabel(row)}"?`,
+      icon: "pi pi-exclamation-triangle",
+      acceptLabel: "Reenviar",
+      rejectLabel: "Cancelar",
+      accept: async () => {
+        try {
+          const { data } = await api.post(`${props.endpoint}${row.id}/${rowAction.action}/`, rowAction.payload || {});
+          toast.add({
+            severity: data.status === "issued" ? "success" : "info",
+            summary: data.status === "issued" ? "Nota autorizada" : "Nota reenviada",
+            detail: data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus.",
+            life: 4500,
+          });
+          await reload();
+        } catch (error) {
+          toast.add({ severity: "error", summary: "Não foi possível reenviar a nota", detail: normalizeApiError(error).message, life: 7000 });
+          await reload();
+        }
+      },
+    });
   }
 }
 

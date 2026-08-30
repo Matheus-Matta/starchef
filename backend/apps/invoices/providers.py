@@ -77,6 +77,13 @@ class FocusNfeProvider(FiscalProvider):
         return FocusNfeConfig.objects.filter(account_id=config.account_id).first()
 
     def unavailable_reason(self, config):
+        from apps.invoices.focus import company_payload_missing_fields
+
+        issues = company_payload_missing_fields(config)
+        if issues:
+            return "A configuracao fiscal da Focus esta incompleta: " + " ".join(
+                issue.get("message") or issue["label"] for issue in issues
+            )
         account_config = self._account_config(config)
         if account_config is None:
             return "A configuracao da Focus NFe ainda nao foi criada para esta conta."

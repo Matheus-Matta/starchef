@@ -9,7 +9,7 @@ import pytest
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FiscalProvider, register_provider
-from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices
+from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices, resend_fiscal_invoice
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -91,6 +91,32 @@ def test_reprocess_marks_issued_when_provider_recovers(account, restaurant, bran
     assert issued == 1
     assert invoice.status == Invoice.STATUS_ISSUED
     assert invoice.authorization_protocol == "135250000000001"
+
+
+def test_resend_retries_only_the_chosen_contingency_note(account, restaurant, branch, manager_user):
+    _SucceedsOnRetryProvider.attempts = 0
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch, provider="test_succeeds_on_retry")
+    order = _make_order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    resent = resend_fiscal_invoice(invoice, user=manager_user)
+
+    assert resent.pk == invoice.pk
+    assert resent.status == Invoice.STATUS_ISSUED
+    assert resent.authorization_protocol == "135250000000001"
+
+
+def test_resend_persists_new_failure_as_error(account, restaurant, branch, manager_user):
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch, provider="test_always_fails")
+    order = _make_order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    resent = resend_fiscal_invoice(invoice, user=manager_user)
+
+    assert resent.status == Invoice.STATUS_ERROR
+    assert "SEFAZ indisponivel" in resent.error_message
 
 
 def test_reprocess_ignores_notes_without_contingency(account, restaurant, branch, manager_user):

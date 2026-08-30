@@ -448,13 +448,13 @@ export const helpSections = [
         purpose: "Cada documento fiscal fica relacionado ao pedido e ao restaurante emitente. O status informa se a nota foi autorizada pela SEFAZ ou precisa de correcao. Esta e a etapa final do fluxo fiscal (veja Fluxo fiscal), depois de Configuracao Focus, Perfis fiscais, Configuracao fiscal do restaurante e Produtos ja estarem prontos.",
         steps: [
           "Filtre por restaurante, periodo ou status.",
-          "Abra rejeicoes e leia a mensagem completa antes de reenviar.",
+          "Abra a nota em contingencia ou com erro e leia a mensagem completa antes de usar Reenviar nota.",
           "Corrija o cadastro que causou o problema, como produto, cliente ou configuracao fiscal.",
           "Baixe XML e DANFE somente de documentos autorizados.",
           "Cancele dentro do prazo e sempre informe justificativa valida.",
         ],
         data: ["Chave, protocolo, XML e retorno vêm da SEFAZ por meio do provedor fiscal configurado."],
-        example: "Uma NFC-e volta rejeitada com \"NCM invalido para o CFOP informado\". Voce abre a nota, identifica o produto vendido, corrige o Perfil fiscal associado a ele e reenvia a partir do pedido; a nova tentativa e autorizada e o XML/DANFE ficam disponiveis para download.",
+        example: "Uma NFC-e volta rejeitada com \"NCM invalido para o CFOP informado\". Voce abre a nota, identifica o produto vendido, corrige o Perfil fiscal associado e usa Reenviar nota somente naquele documento; a nova tentativa e autorizada.",
         tips: ["Homologacao gera documentos de teste; producao gera documentos fiscais reais."],
       },
       {

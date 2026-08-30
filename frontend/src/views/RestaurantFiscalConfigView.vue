@@ -49,7 +49,7 @@
         <i class="pi pi-exclamation-circle" />
         <div>
           <strong>Faltam dados obrigatórios para emitir/sincronizar:</strong>
-          {{ missingFields.map((item) => item.label).join(", ") }}.
+          {{ missingFields.map((item) => item.message || item.label).join(" ") }}
           <span class="rfiscal__alert-hint">Preencha em "Dados do emitente", abaixo, e salve.</span>
         </div>
       </div>
@@ -122,16 +122,20 @@
             <InputText v-model="form.cnpj" placeholder="00.000.000/0000-00" fluid />
           </label>
           <label class="rfiscal__field">
-            <span>Inscrição Estadual</span>
-            <InputText v-model="form.ie" fluid />
+            <span>Inscrição Estadual<b>*</b></span>
+            <InputText v-model="form.ie" placeholder="Somente números ou ISENTO" fluid />
           </label>
           <label class="rfiscal__field">
             <span>Código IBGE do município</span>
             <InputText v-model="form.city_ibge" placeholder="3550308" fluid />
           </label>
-          <label class="rfiscal__field rfiscal__field--full">
-            <span>Endereço<b>*</b></span>
+          <label class="rfiscal__field">
+            <span>Logradouro<b>*</b></span>
             <InputText v-model="form.address_line" fluid />
+          </label>
+          <label class="rfiscal__field">
+            <span>Número<b>*</b></span>
+            <InputText v-model="form.address_number" placeholder="Ex.: 123 ou S/N" fluid />
           </label>
           <label class="rfiscal__field">
             <span>Cidade<b>*</b></span>
@@ -193,11 +197,11 @@
         </div>
         <div class="rfiscal__grid">
           <label class="rfiscal__field">
-            <span>ID do CSC (idToken)</span>
+            <span>ID do CSC (idToken)<b v-if="form.document_model === '65'">*</b></span>
             <InputText v-model="form.csc_id" placeholder="000001" fluid />
           </label>
           <label class="rfiscal__field">
-            <span>CSC (segredo da NFC-e)</span>
+            <span>CSC (segredo da NFC-e)<b v-if="form.document_model === '65'">*</b></span>
             <SecretField
               v-model="form.csc_token"
               :configured="form.csc_token_configured"
@@ -376,7 +380,7 @@ function startEditingSecret(field) {
 // sincronização, auditoria) fica fora do PATCH de propósito.
 const EDITABLE_FIELDS = [
   "provider", "document_model", "environment", "crt", "series", "is_active",
-  "corporate_name", "trade_name", "cnpj", "ie", "address_line", "city", "city_ibge", "uf", "zip_code",
+  "corporate_name", "trade_name", "cnpj", "ie", "address_line", "address_number", "city", "city_ibge", "uf", "zip_code",
   "csc_id", "qr_base_url", "portal_url", "certificate_ref",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
@@ -395,6 +399,7 @@ const form = reactive({
   cnpj: "",
   ie: "",
   address_line: "",
+  address_number: "",
   city: "",
   city_ibge: "",
   uf: "",
@@ -478,7 +483,10 @@ function copyFromRestaurant() {
   form.trade_name = source.trade_name || "";
   form.cnpj = source.cnpj || "";
   form.ie = source.state_registration || "";
-  form.address_line = source.address || "";
+  const address = String(source.address || "").trim();
+  const addressParts = address.match(/^(.*?),\s*([0-9][^,]*)$/);
+  form.address_line = addressParts?.[1]?.trim() || address;
+  form.address_number = addressParts?.[2]?.trim() || form.address_number || "";
   form.city = source.city || "";
   form.uf = source.state || "";
   form.zip_code = source.zip_code || "";

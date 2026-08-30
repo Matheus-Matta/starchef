@@ -292,6 +292,50 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
         return invoice
 
 
+def resend_fiscal_invoice(invoice, *, user=None):
+    """Retransmite somente a nota escolhida quando ela esta em contingencia/erro.
+
+    Notas autorizadas, canceladas ou apenas processando em emissao normal nao
+    podem ser reenviadas, evitando duplicidade no provedor. Uma nova rejeicao
+    fica gravada como `error` para a tela mostrar o motivo real ao operador.
+    """
+    with transaction.atomic():
+        locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
+        with tenant_context(locked.account):
+            if locked.status in {Invoice.STATUS_ISSUED, Invoice.STATUS_CANCELLED}:
+                raise ValidationError("Uma nota autorizada ou cancelada nao pode ser reenviada.")
+            if locked.status != Invoice.STATUS_ERROR and not (
+                locked.status == Invoice.STATUS_PENDING
+                and locked.emission_type == Invoice.EMISSION_CONTINGENCY
+            ):
+                raise ValidationError(
+                    "Somente notas em contingencia ou com erro podem ser reenviadas. "
+                    "Para uma nota em processamento normal, atualize o status."
+                )
+
+            config = _resolve_fiscal_config(locked.restaurant, locked.branch)
+            if config is None:
+                raise ValidationError("Configuracao fiscal ativa nao encontrada para esta nota.")
+            unavailable_reason = fiscal_provider_unavailable_reason(config)
+            if unavailable_reason:
+                raise ValidationError(unavailable_reason)
+
+            try:
+                get_provider(config.provider).emit(locked, config)
+            except Exception as exc:  # noqa: BLE001 - a rejeicao precisa ficar visivel e persistida.
+                locked.status = Invoice.STATUS_ERROR
+                locked.error_message = str(exc)
+            locked.updated_by = user
+            locked.save()
+            record_audit(
+                action=AuditLog.ACTION_UPDATED,
+                instance=locked,
+                actor=user,
+                metadata={"fiscal_resend": True, "status": locked.status},
+            )
+            return locked
+
+
 def reprocess_pending_fiscal_invoices(*, account=None):
     """Tenta retransmitir notas em contingencia (tpEmis=9) cuja SEFAZ/provider
     real ficou indisponivel no momento da venda. Chamado por

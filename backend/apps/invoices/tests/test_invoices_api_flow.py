@@ -39,6 +39,14 @@ class _ApiFlowProvider(FiscalProvider):
         return invoice.status
 
 
+@register_provider
+class _ApiResendFailsProvider(FiscalProvider):
+    name = "test_api_resend_fails"
+
+    def emit(self, invoice, config):
+        raise RuntimeError("Rejeicao fiscal no reenvio")
+
+
 @pytest.fixture
 def account_with_financeiro(account):
     account.enabled_modules = ["financeiro"]
@@ -295,3 +303,47 @@ class TestFullEmissionFlow:
         resp = self.client.post(f"/api/v1/invoices/{invoice_id}/cancel/", {"reason": "Pedido cancelado"}, format="json")
         assert resp.status_code == 200, resp.data
         assert resp.data["status"] == Invoice.STATUS_CANCELLED
+
+    def test_resend_selected_contingency_invoice(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice = Invoice.all_objects.get(pk=emitted.data["id"])
+        invoice.emission_type = Invoice.EMISSION_CONTINGENCY
+        invoice.error_message = "Falha temporaria"
+        invoice.save(update_fields=["emission_type", "error_message", "updated_at"])
+
+        response = self.client.post(f"/api/v1/invoices/{invoice.pk}/resend/", {}, format="json")
+
+        assert response.status_code == 200, response.data
+        assert response.data["id"] == str(invoice.pk)
+        assert response.data["resent"] is True
+
+    def test_resend_rejects_cancelled_invoice(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice_id = emitted.data["id"]
+        self.client.post(f"/api/v1/invoices/{invoice_id}/cancel/", {"reason": "Cancelada"}, format="json")
+
+        response = self.client.post(f"/api/v1/invoices/{invoice_id}/resend/", {}, format="json")
+
+        assert response.status_code == 400
+        assert "autorizada ou cancelada" in str(response.data)
+
+    def test_resend_returns_structured_error_and_keeps_invoice_details(self):
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+        invoice = Invoice.all_objects.get(pk=emitted.data["id"])
+        invoice.emission_type = Invoice.EMISSION_CONTINGENCY
+        invoice.save(update_fields=["emission_type", "updated_at"])
+        config = FiscalConfig.all_objects.get(restaurant=self.order.restaurant)
+        config.provider = _ApiResendFailsProvider.name
+        config.save(update_fields=["provider", "updated_at"])
+
+        response = self.client.post(f"/api/v1/invoices/{invoice.pk}/resend/", {}, format="json")
+
+        assert response.status_code == 400, response.data
+        assert response.data["resent"] is False
+        assert response.data["error"] == {
+            "code": "fiscal_resend_rejected",
+            "message": "Rejeicao fiscal no reenvio",
+        }
+        assert response.data["invoice"]["id"] == str(invoice.pk)
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_ERROR

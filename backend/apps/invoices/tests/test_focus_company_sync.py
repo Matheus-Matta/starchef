@@ -2,7 +2,13 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from apps.invoices.focus import FocusNfeApiError, FocusNfeCompanyClient, build_focus_company_payload, sync_focus_company
+from apps.invoices.focus import (
+    FocusNfeApiError,
+    FocusNfeCompanyClient,
+    FocusNfeConfigurationError,
+    build_focus_company_payload,
+    sync_focus_company,
+)
 from apps.invoices.models import FiscalConfig
 
 pytestmark = pytest.mark.django_db
@@ -61,10 +67,15 @@ def make_config(account, restaurant, branch, **kwargs):
         "ie": "123456789",
         "corporate_name": "Restaurante Teste LTDA",
         "trade_name": "Restaurante Teste",
-        "address_line": "Rua das Flores, 10",
+        "address_line": "Rua das Flores",
+        "address_number": "10",
         "city": "Sao Paulo",
         "uf": "SP",
         "zip_code": "01001-000",
+        "csc_id": "00001",
+        "csc_token": "CSC-TESTE",
+        "focus_certificate_base64": "BASE64-PFX",
+        "focus_certificate_password": "senha-pfx",
         "environment": FiscalConfig.ENV_HOMOLOGATION,
         "document_model": FiscalConfig.MODEL_NFCE,
         "series": 3,
@@ -85,6 +96,9 @@ def test_company_payload_maps_restaurant_and_nfce_settings(account, restaurant, 
     payload = build_focus_company_payload(config)
 
     assert payload["cnpj"] == "11222333000181"
+    assert payload["inscricao_estadual"] == "123456789"
+    assert payload["logradouro"] == "Rua das Flores"
+    assert payload["numero"] == "10"
     assert payload["regime_tributario"] == 1
     assert payload["habilita_nfce"] is True
     assert payload["habilita_nfe"] is False
@@ -92,6 +106,47 @@ def test_company_payload_maps_restaurant_and_nfce_settings(account, restaurant, 
     assert payload["proximo_numero_nfce_homologacao"] == "12"
     assert payload["csc_nfce_homologacao"] == "CSC-TESTE"
     assert payload["id_token_nfce_homologacao"] == 1
+
+
+def test_company_payload_preserves_isento_state_registration(account, restaurant, branch):
+    config = make_config(account, restaurant, branch, ie="ISENTO")
+
+    payload = build_focus_company_payload(config)
+
+    assert payload["inscricao_estadual"] == "ISENTO"
+
+
+@patch("requests.request")
+def test_manual_sync_rejects_missing_essential_data_before_calling_focus(
+    mock_request, admin_client, account, restaurant, branch
+):
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    config = make_config(account, restaurant, branch, ie="", address_number="", csc_token="")
+
+    response = admin_client.post(f"/api/v1/fiscal/config/{config.pk}/focus-sync/", {}, format="json")
+
+    assert response.status_code == 400, response.data
+    assert response.data["error"]["code"] == "focus_not_configured"
+    assert "Inscricao Estadual" in response.data["message"]
+    assert "Numero do endereco" in response.data["message"]
+    assert "CSC" in response.data["message"]
+    assert {item["field"] for item in response.data["config"]["focus_missing_fields"]} >= {
+        "ie",
+        "address_number",
+        "csc_token",
+    }
+    mock_request.assert_not_called()
+
+
+def test_sync_rejects_invalid_ie_and_cep_without_calling_client(account, restaurant, branch):
+    config = make_config(account, restaurant, branch, ie="1", zip_code="123")
+    client = FakeCompanyClient()
+
+    with pytest.raises(FocusNfeConfigurationError, match="2 a 14 digitos"):
+        sync_focus_company(config, client=client)
+
+    assert client.calls == []
 
 
 def test_sync_creates_company_and_stores_environment_tokens(account, restaurant, branch):

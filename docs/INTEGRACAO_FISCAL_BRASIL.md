@@ -75,7 +75,8 @@ O `.env` real é ignorado pelo Git. O contrato versionado está em `.env.example
 
 Para usar a Focus:
 
-1. Cadastre razão social, nome fantasia, CNPJ, endereço, cidade, UF e CEP.
+1. Cadastre razão social, nome fantasia, CNPJ, IE, logradouro, número do
+   endereço, cidade, UF e CEP.
 2. Escolha **Focus NFe** em **Provedor fiscal**.
 3. Salve o restaurante.
 4. Na configuração fiscal, escolha NF-e ou NFC-e, ambiente, CRT e série.
@@ -94,6 +95,7 @@ POST   /api/v1/fiscal/config/{id}/focus-sync/       cria ou atualiza agora
 POST   /api/v1/fiscal/config/{id}/focus-refresh/    consulta a empresa remota
 DELETE /api/v1/fiscal/config/{id}/focus-company/    exclui a empresa remota
 POST   /api/v1/invoices/{id}/refresh-status/        consulta o documento
+POST   /api/v1/invoices/{id}/resend/                reenvia somente a nota escolhida
 POST   /api/v1/integrations/focus-nfe/webhook/      recebe eventos da Focus
 GET    /api/v1/integrations/focus-nfe/config/       consulta a configuração da conta
 PATCH  /api/v1/integrations/focus-nfe/config/       altera a configuração da conta
@@ -107,6 +109,12 @@ Quando não há configuração fiscal ativa, o provedor é manual/desconhecido o
   "message": "Nota fiscal nao emitida: ..."
 }
 ```
+
+O reenvio individual aceita somente notas com `status = error` ou notas
+`pending` em contingência (`emission_type = 9`). Notas autorizadas, canceladas
+ou apenas processando em emissão normal são recusadas para evitar duplicidade.
+Se a Focus rejeitar novamente, a nota passa para `error` e a mensagem real fica
+em `error_message`.
 
 A exclusão remota é irreversível, restrita a administrador e exige o corpo:
 

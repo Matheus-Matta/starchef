@@ -16,6 +16,7 @@
           <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
           <Button v-if="isOrder" label="Imprimir recibo" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
           <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir nota fiscal / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
+          <Button v-if="canResendInvoice" label="Reenviar nota" severity="secondary" outlined icon="pi pi-send" :loading="resendingInvoice" @click="resendInvoice" />
           <Button v-if="isOrder && ['open', 'awaiting_payment'].includes(record?.status)" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
           <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
         </template>
@@ -574,8 +575,14 @@ function goToFiscalConfig() {
   router.push({ name: "restaurante-fiscal", params: { id: recordId.value } });
 }
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
+const isInvoice = computed(() => resolveDetailType(props.endpoint) === "invoice");
+const canResendInvoice = computed(() => isInvoice.value && (
+  record.value?.status === "error"
+  || (record.value?.status === "pending" && record.value?.emission_type === "9")
+));
 const printing = ref(false);
 const emittingInvoice = ref(false);
+const resendingInvoice = ref(false);
 const toast = useToast();
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
@@ -656,6 +663,27 @@ async function emitOrderInvoice() {
     toast.add({ severity: "error", summary: "Não foi possível emitir a nota fiscal", detail: normalizeApiError(err).message, life: 5000 });
   } finally {
     emittingInvoice.value = false;
+  }
+}
+
+/** Retransmite apenas esta nota quando ela esta em contingencia ou erro. */
+async function resendInvoice() {
+  if (!recordId.value || resendingInvoice.value) return;
+  resendingInvoice.value = true;
+  try {
+    const { data } = await api.post(`/invoices/${recordId.value}/resend/`, {});
+    await reload();
+    toast.add({
+      severity: data.status === "issued" ? "success" : "info",
+      summary: data.status === "issued" ? "Nota autorizada" : "Nota reenviada",
+      detail: data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus.",
+      life: 4500,
+    });
+  } catch (err) {
+    await reload();
+    toast.add({ severity: "error", summary: "Não foi possível reenviar a nota", detail: normalizeApiError(err).message, life: 7000 });
+  } finally {
+    resendingInvoice.value = false;
   }
 }
 

@@ -115,7 +115,7 @@ Os erros da Focus aparecem no status fiscal do restaurante e na resposta do
 botão manual. As mensagens distinguem, entre outros casos:
 
 - Token Principal de Produção ausente ou recusado;
-- dados obrigatórios do emitente ausentes;
+- dados obrigatórios do emitente ausentes ou inválidos;
 - dados ou certificado recusados pela Focus (`400`/`422`);
 - timeout, indisponibilidade e limite temporário de requisições;
 - resposta aceita sem empresa confirmada por ID/CNPJ.
@@ -217,8 +217,18 @@ número do ambiente escolhido na empresa Focus.
 ### Dados do emitente
 
 Preencha CNPJ, inscrição estadual, razão social, nome fantasia, logradouro,
-município, código IBGE, UF e CEP exatamente como constam no cadastro fiscal. O
-CNPJ deve ter 14 dígitos e precisa coincidir com o certificado.
+**número do endereço**, município, código IBGE, UF e CEP exatamente como constam
+no cadastro fiscal. O CNPJ deve ter 14 dígitos e precisa coincidir com o
+certificado. A inscrição estadual aceita de 2 a 14 dígitos ou o texto `ISENTO`.
+
+Antes de chamar a API da Focus, **Sincronizar agora** valida razão social, CNPJ,
+IE, logradouro, número, município, CEP e UF. Para NFC-e também exige CSC e ID do
+CSC. Na primeira sincronização também exige o certificado A1 e sua senha; depois
+que a empresa já está vinculada, a Focus conserva o certificado e o StarChef
+não exige um novo upload em toda atualização. Ausência ou formato inválido
+responde HTTP 400, grava o motivo em
+`focus_sync_error` e mantém a empresa como não sincronizada; nenhuma chamada
+externa é feita enquanto houver essas pendências.
 
 ## Certificado e campos da NFC-e
 

@@ -501,6 +501,19 @@ export const resources = [
     title: "Notas Fiscais",
     endpoint: "/invoices/",
     globalScope: true,
+    pro: {
+      rowActions: [
+        {
+          key: "resend",
+          label: "Reenviar nota",
+          icon: "pi pi-send",
+          type: "post-detail",
+          action: "resend",
+          confirmMessage: "Reenviar somente esta nota para a Focus NFe?",
+          visible: (row) => row.status === "error" || (row.status === "pending" && row.emission_type === "9"),
+        },
+      ],
+    },
     columns: [
       { key: "number", label: "Numero" },
       { key: "phase", label: "Tipo" },
@@ -508,6 +521,7 @@ export const resources = [
       { key: "emission_type", label: "Emissao", type: "status", map: EMISSION_TYPE_LABELS },
       { key: "total_amount", label: "Valor", type: "money", align: "right" },
       { key: "issued_at", label: "Emissao em", type: "date" },
+      { key: "error_message", label: "Motivo / erro", showInList: false },
     ],
   },
   {

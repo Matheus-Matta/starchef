@@ -155,7 +155,7 @@ def test_for_restaurant_lists_what_is_still_missing(admin_client, restaurant, fi
     assert response.status_code == 200, response.data
     missing = {item["field"] for item in response.data["focus_missing_fields"]}
     # O restaurante da fixture nao tem endereco/cidade/UF/CEP.
-    assert {"address_line", "city", "uf", "zip_code"} <= missing
+    assert {"ie", "address_line", "address_number", "city", "uf", "zip_code", "csc_id", "csc_token"} <= missing
 
 
 def test_for_restaurant_requires_the_restaurant_param(admin_client, financeiro):

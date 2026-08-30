@@ -81,19 +81,88 @@ def _is_duplicate_message(message):
     return "duplicad" in normalized or "ja existe" in normalized or "já existe" in normalized
 
 
+def _normalize_state_registration(value):
+    """Mantem ISENTO; para inscricoes comuns envia somente os digitos."""
+    normalized = str(value or "").strip().upper()
+    return "ISENTO" if normalized == "ISENTO" else only_digits(normalized)
+
+
 # Campo da Focus -> (campo local que a tela edita, rotulo pro usuario).
 COMPANY_REQUIRED_FIELDS = (
     ("nome", "corporate_name", "Razao social"),
     ("cnpj", "cnpj", "CNPJ"),
+    ("inscricao_estadual", "ie", "Inscricao Estadual"),
     ("logradouro", "address_line", "Endereco"),
+    ("numero", "address_number", "Numero do endereco"),
     ("municipio", "city", "Cidade"),
     ("cep", "zip_code", "CEP"),
     ("uf", "uf", "UF"),
 )
 
 
-def _missing_company_labels(payload):
-    return [label for field, _local, label in COMPANY_REQUIRED_FIELDS if not payload.get(field)]
+def _company_validation_issues(config, payload):
+    """Valida o minimo que permite cadastrar a empresa e emitir pela Focus."""
+    issues = [
+        {
+            "field": local,
+            "label": label,
+            "message": f"{label}: preenchimento obrigatorio.",
+        }
+        for field, local, label in COMPANY_REQUIRED_FIELDS
+        if not payload.get(field)
+    ]
+    invalid_fields = {issue["field"] for issue in issues}
+
+    def invalid(field, label, message):
+        if field not in invalid_fields:
+            issues.append({"field": field, "label": label, "message": message})
+            invalid_fields.add(field)
+
+    if payload.get("cnpj") and len(str(payload["cnpj"])) != 14:
+        invalid("cnpj", "CNPJ", "CNPJ: informe exatamente 14 digitos.")
+
+    ie = str(payload.get("inscricao_estadual") or "")
+    if ie and ie != "ISENTO" and (not ie.isdigit() or not 2 <= len(ie) <= 14):
+        invalid(
+            "ie",
+            "Inscricao Estadual",
+            "Inscricao Estadual: informe de 2 a 14 digitos ou ISENTO.",
+        )
+
+    cep = str(payload.get("cep") or "")
+    if cep and (not cep.isdigit() or len(cep) != 8):
+        invalid("zip_code", "CEP", "CEP: informe exatamente 8 digitos.")
+
+    uf = str(payload.get("uf") or "")
+    if uf and (len(uf) != 2 or not uf.isalpha()):
+        invalid("uf", "UF", "UF: informe a sigla com 2 letras.")
+
+    if config.document_model == FiscalConfig.MODEL_NFCE:
+        if not payload.get("id_token_nfce_homologacao") and not payload.get("id_token_nfce_producao"):
+            invalid("csc_id", "ID do CSC", "ID do CSC: obrigatorio para emitir NFC-e.")
+        if not payload.get("csc_nfce_homologacao") and not payload.get("csc_nfce_producao"):
+            invalid("csc_token", "CSC", "CSC: obrigatorio para emitir NFC-e.")
+
+    company_already_linked = bool(
+        config.focus_company_id
+        or config.focus_token_production
+        or config.focus_token_homologation
+    )
+    if not company_already_linked:
+        if not config.focus_certificate_base64:
+            invalid(
+                "focus_certificate_base64",
+                "Certificado A1",
+                "Certificado A1: obrigatorio na primeira sincronizacao da empresa.",
+            )
+        if not config.focus_certificate_password:
+            invalid(
+                "focus_certificate_password",
+                "Senha do certificado A1",
+                "Senha do certificado A1: obrigatoria na primeira sincronizacao da empresa.",
+            )
+
+    return issues
 
 
 def company_payload_missing_fields(config):
@@ -106,19 +175,23 @@ def company_payload_missing_fields(config):
         payload = build_focus_company_payload(config)
     except Exception:  # noqa: BLE001 - leitura defensiva; ver docstring
         payload = {}
-    return [
-        {"field": local, "label": label}
-        for field, local, label in COMPANY_REQUIRED_FIELDS
-        if not payload.get(field)
-    ]
+    return _company_validation_issues(config, payload)
 
 
-def _validate_company_payload(payload):
-    missing = _missing_company_labels(payload)
-    if missing:
+def _validate_company_payload(config, payload):
+    issues = _company_validation_issues(config, payload)
+    if issues:
         raise FocusNfeConfigurationError(
-            "Preencha os dados obrigatorios da configuracao fiscal antes de sincronizar: " + ", ".join(missing) + "."
+            "Corrija a configuracao fiscal antes de sincronizar: "
+            + " ".join(issue["message"] for issue in issues)
         )
+
+
+def validate_focus_company_config(config):
+    """Monta e valida o cadastro completo antes de qualquer chamada a Focus."""
+    payload = build_focus_company_payload(config)
+    _validate_company_payload(config, payload)
+    return payload
 
 
 def build_focus_company_payload(config):
@@ -133,9 +206,10 @@ def build_focus_company_payload(config):
         "nome": config.corporate_name or restaurant.legal_name or restaurant.trade_name,
         "nome_fantasia": config.trade_name or restaurant.trade_name,
         "cnpj": only_digits(config.cnpj or restaurant.cnpj),
-        "inscricao_estadual": only_digits(config.ie or branch.state_registration),
+        "inscricao_estadual": _normalize_state_registration(config.ie or branch.state_registration),
         "regime_tributario": int(config.crt),
         "logradouro": config.address_line or branch.address,
+        "numero": config.address_number,
         "municipio": config.city or branch.city,
         "cep": only_digits(config.zip_code or branch.zip_code),
         "uf": (config.uf or branch.state).upper(),
@@ -345,13 +419,10 @@ def sync_focus_company(config, *, client=None):
     if config.provider != FiscalConfig.PROVIDER_FOCUS_NFE:
         raise FocusNfeApiError("A configuracao fiscal nao usa o provedor Focus NFe.")
     cnpj = only_digits(config.cnpj or config.restaurant.cnpj)
-    if len(cnpj) != 14:
-        raise FocusNfeApiError("Informe um CNPJ valido antes de sincronizar com a Focus NFe.")
 
     client = client or FocusNfeCompanyClient(account_config=get_account_focus_config(config.account))
     try:
-        payload = build_focus_company_payload(config)
-        _validate_company_payload(payload)
+        payload = validate_focus_company_config(config)
         company = None
         operation = "updated"
         if config.focus_company_id:
@@ -485,6 +556,15 @@ def delete_focus_company(config, *, client=None):
 def enqueue_focus_company_sync(config):
     """Agenda a sincronizacao sem bloquear o cadastro do restaurante."""
     if config.provider != FiscalConfig.PROVIDER_FOCUS_NFE:
+        return False
+    try:
+        validate_focus_company_config(config)
+    except FocusNfeConfigurationError as exc:
+        FiscalConfig.all_objects.filter(pk=config.pk).update(
+            focus_sync_status=FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED,
+            focus_sync_error=str(exc),
+            updated_at=timezone.now(),
+        )
         return False
     account_config = get_account_focus_config(config.account)
     if account_config is None or not account_config.auto_sync:

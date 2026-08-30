@@ -35,6 +35,7 @@ from apps.invoices.services import (
     ensure_fiscal_config,
     fiscal_emission_unavailable_reason,
     print_fiscal_invoice,
+    resend_fiscal_invoice,
 )
 from apps.restaurants.models import Restaurant
 
@@ -305,6 +306,27 @@ class InvoiceViewSet(BaseTenantViewSet):
         invoice.updated_by = request.user
         invoice.save()
         return self._serialize(invoice)
+
+    @action(detail=True, methods=["post"], url_path="resend")
+    def resend(self, request, pk=None):
+        """Retransmite somente a nota escolhida, sem varrer as demais pendentes."""
+        try:
+            invoice = resend_fiscal_invoice(self.get_object(), user=request.user)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        data = InvoiceSerializer(invoice, context={"request": request}).data
+        data["resent"] = invoice.status != Invoice.STATUS_ERROR
+        if invoice.status == Invoice.STATUS_ERROR:
+            message = invoice.error_message or "A Focus rejeitou o reenvio da nota."
+            return Response(
+                {
+                    "resent": False,
+                    "error": {"code": "fiscal_resend_rejected", "message": message},
+                    "invoice": data,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(data)
 
 
 class FocusNfeWebhookView(APIView):

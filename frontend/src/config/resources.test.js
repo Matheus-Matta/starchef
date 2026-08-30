@@ -57,6 +57,23 @@ describe("configuração do perfil fiscal", () => {
   });
 });
 
+describe("ações de notas fiscais", () => {
+  const invoices = resources.find((resource) => resource.name === "notas-fiscais");
+  const resend = invoices.pro.rowActions.find((action) => action.key === "resend");
+
+  it("oferece reenvio individual apenas para erro ou contingência", () => {
+    expect(resend).toMatchObject({ type: "post-detail", action: "resend" });
+    expect(resend.visible({ status: "pending", emission_type: "9" })).toBe(true);
+    expect(resend.visible({ status: "error", emission_type: "1" })).toBe(true);
+    expect(resend.visible({ status: "pending", emission_type: "1" })).toBe(false);
+    expect(resend.visible({ status: "issued", emission_type: "1" })).toBe(false);
+    expect(invoices.columns.find((column) => column.key === "error_message")).toMatchObject({
+      label: "Motivo / erro",
+      showInList: false,
+    });
+  });
+});
+
 describe("configuração do produto", () => {
   it("escolhe o perfil fiscal do catálogo compartilhado (relação 1:N)", () => {
     const products = resources.find((resource) => resource.name === "cardapio");
