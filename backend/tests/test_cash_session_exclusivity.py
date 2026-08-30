@@ -20,6 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.core.models import AuditLog
 from apps.payments.models import CashRegister, CashStation, PdvTerminal
 from apps.payments.services import open_cash_register
+from apps.payments.terminals import active_session_for_station
 
 pytestmark = pytest.mark.django_db
 
@@ -86,6 +87,24 @@ def test_open_registers_the_terminal_and_the_owner(station, manager_user):
     assert session.opened_terminal_label == "Balcão 01"
     assert terminal.name == "Balcão 01"
     assert terminal.role == PdvTerminal.ROLE_PRINCIPAL
+
+
+def test_station_session_lock_targets_only_cash_register(station):
+    """Nao tenta aplicar FOR UPDATE aos LEFT JOINs opcionais no PostgreSQL."""
+    captured = {}
+
+    def capture_first(queryset):
+        captured["select_for_update"] = queryset.query.select_for_update
+        captured["select_for_update_of"] = queryset.query.select_for_update_of
+        return None
+
+    with patch("django.db.models.query.QuerySet.first", capture_first):
+        active_session_for_station(station, for_update=True)
+
+    assert captured == {
+        "select_for_update": True,
+        "select_for_update_of": ("self",),
+    }
 
 
 def test_second_user_cannot_open_the_same_station(station, manager_user, waiter_user):

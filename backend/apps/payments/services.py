@@ -164,7 +164,7 @@ def close_cash_register(*, cash_register, user, actual_amount, notes="", termina
     with tenant_context(cash_register.account):
         cash_register = (
             CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
-            .select_for_update()
+            .select_for_update(of=("self",))
             .get(pk=cash_register.pk)
         )
         if cash_register.is_finished:
@@ -236,7 +236,7 @@ def create_cash_movement(
     with tenant_context(cash_register.account):
         cash_register = (
             CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
-            .select_for_update()
+            .select_for_update(of=("self",))
             .get(pk=cash_register.pk)
         )
         if cash_register.status != CashRegister.STATUS_OPEN:
@@ -387,7 +387,7 @@ def transfer_cash_session(
     with tenant_context(cash_register.account):
         cash_register = (
             CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station", "restaurant")
-            .select_for_update()
+            .select_for_update(of=("self",))
             .get(pk=cash_register.pk)
         )
         if cash_register.is_finished:

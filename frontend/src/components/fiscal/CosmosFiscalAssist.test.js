@@ -59,6 +59,7 @@ describe("CosmosFiscalAssist", () => {
     await vi.advanceTimersByTimeAsync(700);
 
     expect(api.get).toHaveBeenCalledTimes(1);
-    expect(wrapper.text()).toContain("integração não está pronta");
+    expect(wrapper.find(".cosmos-assist").exists()).toBe(false);
+    expect(wrapper.text()).toBe("");
   });
 });

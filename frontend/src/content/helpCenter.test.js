@@ -23,19 +23,12 @@ const expectedArticleIds = [
   "entregadores",
   "estoque",
   "locais-estoque",
+  "fluxo-fiscal",
   "historico-pagamentos",
   "notas-fiscais",
   "perfis-fiscais",
   "configuracao-cosmos",
   "configuracao-focus",
-  "relatorios",
-  "relatorio-geral",
-  "relatorio-vendas",
-  "relatorio-pedidos",
-  "relatorio-produtos",
-  "relatorio-pagamentos",
-  "relatorio-garcons",
-  "relatorio-restaurantes",
   "restaurantes",
   "setores",
   "usuarios",
@@ -46,7 +39,7 @@ const expectedArticleIds = [
 ];
 
 describe("help center content", () => {
-  it("covers every sidebar topic and report submenu", () => {
+  it("covers every sidebar topic", () => {
     expect(helpSections.map((section) => section.id)).toEqual([
       "principal",
       "operacao",

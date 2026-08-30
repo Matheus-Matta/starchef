@@ -3,6 +3,8 @@
  *
  * A organizacao espelha a sidebar do sistema. Cada artigo explica para que a
  * tela serve, um fluxo recomendado e de onde normalmente vem cada informacao.
+ * `example` (quando presente) narra um cenario concreto de ponta a ponta,
+ * complementando os passos abstratos de `steps`.
  * Nao inclua tokens, senhas, CNPJ de clientes ou qualquer dado real aqui: a
  * rota /docs pode ser acessada sem autenticacao.
  */
@@ -21,12 +23,13 @@ export const helpSections = [
         steps: [
           "Confira qual restaurante esta selecionado antes de analisar os numeros.",
           "Revise pedidos abertos, movimento do dia e alertas operacionais.",
-          "Use os atalhos da pagina para abrir pedidos, produtos, caixa ou relatorios.",
+          "Use os atalhos da pagina para abrir pedidos, produtos ou caixa.",
         ],
         data: [
           "Os totais sao calculados automaticamente a partir de pedidos, pagamentos e itens do KDS.",
           "O seletor de restaurante aparece para proprietarios e administradores com acesso global.",
         ],
+        example: "Um gerente abre a Home no inicio do turno, ve dois pedidos parados ha mais de 15 minutos no card de alertas e entra direto no detalhe de cada um para verificar se estao presos no pagamento ou na cozinha.",
         tips: ["Se um numero parecer incorreto, confira primeiro o restaurante e o periodo selecionados."],
       },
       {
@@ -46,6 +49,7 @@ export const helpSections = [
           "Cliente e endereco vêm do cadastro de Clientes ou sao informados durante a venda.",
           "Status de pagamento muda quando recebimentos, estornos ou cancelamentos sao registrados.",
         ],
+        example: "Um cliente liga reclamando de um item que faltou no pedido de mesa 12. Voce filtra por mesa, abre o pedido do dia, confere os itens enviados a cozinha e decide entre cortesia ou reenvio, tudo a partir do mesmo detalhe.",
         tips: ["Pedidos pagos ou cancelados ficam protegidos contra alteracoes comuns."],
       },
       {
@@ -64,6 +68,7 @@ export const helpSections = [
           "Os itens chegam dos pedidos enviados para a cozinha.",
           "Setor do produto, estacao KDS, colunas e SLA determinam onde o card aparece e quando alerta.",
         ],
+        example: "O garcom envia um pedido de mesa com hamburguer e suco. O card do hamburguer aparece na estacao Cozinha e o do suco na estacao Bar; cada equipe move seu card independentemente ate pronto.",
         tips: ["Se um item nao aparecer, confira o setor do produto e o vinculo da estacao KDS."],
       },
     ],
@@ -86,6 +91,7 @@ export const helpSections = [
           "Depois, confira no KDS se os itens do setor correto estao chegando ao quadro.",
         ],
         data: ["Nome e fluxo vêm da organizacao fisica da producao do restaurante."],
+        example: "Uma hamburgueria cria as estacoes Cozinha (chapa e fritas) e Bar (bebidas e sobremesas); cada produto e associado ao setor certo para que o item caia no quadro correto ao ser enviado.",
         tips: ["Prefira uma estacao por fluxo real de producao, evitando quadros duplicados com a mesma funcao."],
       },
       {
@@ -101,6 +107,7 @@ export const helpSections = [
           "Acompanhe o resultado no KDS antes de reduzir os tempos.",
         ],
         data: ["Os tempos devem vir da meta operacional definida pelo responsavel da cozinha ou atendimento."],
+        example: "A meta da cozinha e entregar pratos quentes em 12 minutos. Voce cria um SLA de 12 minutos para a coluna Preparo da estacao Cozinha; o card muda de cor quando passa desse tempo, alertando a equipe.",
         tips: ["Uma regra de coluna e mais especifica e deve prevalecer sobre a regra geral da estacao."],
       },
       {
@@ -116,6 +123,7 @@ export const helpSections = [
           "Use Ver codigos ou Imprimir etiquetas para gerar identificadores fisicos.",
         ],
         data: ["Numeracao, capacidade e divisao por setor vêm do mapa real do estabelecimento."],
+        example: "Um restaurante com 20 mesas no salao e 6 na varanda usa Criar em lote duas vezes, uma para cada setor, gerando as mesas 1-20 e 21-26 com os QR Codes prontos para imprimir e colar nas mesas.",
         tips: ["Desative uma mesa temporariamente em vez de reutilizar seu numero durante um atendimento."],
       },
       {
@@ -131,6 +139,7 @@ export const helpSections = [
           "No PDV, leia a comanda para abrir ou retomar o pedido correspondente.",
         ],
         data: ["A quantidade e a numeracao vêm do conjunto de cartoes fisicos usado pelo restaurante."],
+        example: "Um bar entrega a comanda 34 ao cliente na entrada. Cada consumo durante a noite e lancado nela; no fechamento, o caixa le o codigo, cobra o total e a comanda volta a ficar livre para o proximo cliente.",
         tips: ["Uma comanda ocupada deve ser encerrada pelo fluxo do pedido; nao a desative para tentar libera-la."],
       },
       {
@@ -151,6 +160,7 @@ export const helpSections = [
           "Vendas em dinheiro entram automaticamente; cartao e PIX permanecem no historico de pagamentos.",
           "A senha de acoes do caixa e definida no cadastro do restaurante.",
         ],
+        example: "O caixa abre com R$ 100 de troco. Durante o turno ha uma sangria de R$ 200 para o cofre. No fechamento, a contagem fisica bate com o valor esperado (vendas em dinheiro + 100 - 200); sem aprovacao gerencial necessaria.",
         tips: ["Nunca use sangria para corrigir uma venda; estorne ou ajuste a operacao que originou a diferenca."],
       },
       {
@@ -158,7 +168,7 @@ export const helpSections = [
         title: "Formas de pagamento",
         icon: "credit-card",
         summary: "Configure dinheiro, PIX, cartoes, vouchers e outras formas aceitas.",
-        purpose: "As formas cadastradas aparecem no recebimento do PDV e determinam como o pagamento sera classificado nos relatorios.",
+        purpose: "As formas cadastradas aparecem no recebimento do PDV e determinam como o pagamento sera classificado no historico financeiro.",
         steps: [
           "Cadastre um nome que o operador reconheca.",
           "Escolha o tipo correto: dinheiro, cartao, PIX, voucher ou outro.",
@@ -166,6 +176,7 @@ export const helpSections = [
           "Desative formas antigas sem apagar o historico.",
         ],
         data: ["A lista vem dos meios realmente contratados com bancos, adquirentes e operadoras de beneficio."],
+        example: "Ao trocar de maquininha, o restaurante cadastra Cartao (nova adquirente) com Exige referencia ativo, mantem Cartao (antiga adquirente) desativado para preservar o historico e usa somente o novo daqui em diante.",
         tips: ["Nao crie varias formas com nomes diferentes para o mesmo meio sem necessidade contabil."],
       },
       {
@@ -182,6 +193,7 @@ export const helpSections = [
           "Mantenha observacoes internas objetivas e adequadas.",
         ],
         data: ["Todos os dados devem ser informados pelo proprio cliente e usados apenas para a operacao autorizada."],
+        example: "Um cliente pede delivery pela primeira vez. O atendente cadastra nome, telefone e endereco de entrega; nas proximas compras, basta buscar pelo telefone para reaproveitar o endereco ja salvo.",
         tips: ["Confirme o endereco a cada entrega; um cadastro antigo pode estar correto, mas nao ser o destino daquele pedido."],
       },
     ],
@@ -209,13 +221,14 @@ export const helpSections = [
           "NCM e regras fiscais devem ser confirmados com o contador.",
           "Preco, tempo e setor vêm da administracao e da cozinha.",
         ],
+        example: "Um refrigerante comprado pronto tem EAN de fabrica: o codigo de barras da lata vira o EAN/GTIN do produto e um Perfil fiscal ja com NCM de bebidas e vinculado a ele, para que toda venda saia tributada corretamente.",
         tips: ["EAN e codigo interno devem ser unicos para o scanner localizar somente um produto."],
       },
       {
         id: "categorias",
         title: "Categorias",
         icon: "tag",
-        summary: "Agrupe produtos para facilitar busca, exibicao e relatorios.",
+        summary: "Agrupe produtos para facilitar busca, exibicao e organizacao do cardapio.",
         purpose: "Categorias organizam o cardapio, como Lanches, Bebidas, Sobremesas ou Combos. Elas podem ser reutilizadas entre restaurantes da conta.",
         steps: [
           "Crie nomes curtos e reconheciveis.",
@@ -224,6 +237,7 @@ export const helpSections = [
           "Desative categorias que nao devem aparecer sem apagar os produtos.",
         ],
         data: ["A estrutura vem da organizacao comercial do cardapio."],
+        example: "Ao lancar uma linha de sobremesas, cria-se a categoria Sobremesas com ordem de exibicao apos Lanches; os produtos novos sao associados a ela e passam a aparecer agrupados no PDV e no cardapio digital.",
         tips: ["Evite categorias com apenas um produto quando uma classificacao existente ja atende."],
       },
       {
@@ -239,6 +253,7 @@ export const helpSections = [
           "Teste a selecao no PDV e a impressao na cozinha.",
         ],
         data: ["Nome, custo operacional, preco e setor vêm da ficha comercial do produto."],
+        example: "O hamburguer aceita Bacon extra (R$ 4,00) e Queijo extra (R$ 3,00). Ambos sao cadastrados como adicionais do setor Cozinha e vinculados ao produto; no PDV, o garcom marca as opcoes escolhidas pelo cliente.",
         tips: ["Um adicional so aparece no produto depois que o vinculo entre eles for salvo."],
       },
       {
@@ -254,6 +269,7 @@ export const helpSections = [
           "Padronize a unidade para evitar conversoes inconsistentes.",
         ],
         data: ["Descricoes, unidades e consumo vêm da ficha tecnica e das embalagens de compra."],
+        example: "O pao de hamburguer e cadastrado em unidade e o queijo em kg. Cada venda do hamburguer, via receita, baixa 1 unidade de pao e 0,03 kg de queijo do estoque automaticamente.",
         tips: ["Nao misture kg e unidade para o mesmo ingrediente sem definir uma conversao operacional confiavel."],
       },
       {
@@ -270,6 +286,7 @@ export const helpSections = [
           "Ative baixa automatica somente depois de conferir unidades e rendimento.",
         ],
         data: ["Use a ficha tecnica validada pela cozinha, com pesos e rendimentos medidos."],
+        example: "A receita do X-Salada usa 1 pao, 1 hamburguer, 1 fatia de queijo e alface. Ao vender uma unidade, o sistema calcula o custo somando cada insumo e, com baixa automatica ativa, desconta as quantidades do estoque.",
         tips: ["Uma receita incorreta afeta custo e estoque; valide primeiro em poucos produtos."],
       },
     ],
@@ -292,6 +309,7 @@ export const helpSections = [
           "Associe os produtos e confira preco e disponibilidade antes de divulgar.",
         ],
         data: ["Nome, canal e horarios vêm da estrategia comercial do restaurante."],
+        example: "Um restaurante quer vender marmitas so no horario de almoco. Cria o cardapio Almoco Executivo com janela das 11h as 14h, associa apenas os produtos do dia e divulga o link do slug nas redes sociais.",
         tips: ["Use um slug sem espacos e evite troca-lo depois que o endereco ja tiver sido divulgado."],
       },
     ],
@@ -314,6 +332,7 @@ export const helpSections = [
           "Teste enderecos proximos das bordas antes de liberar.",
         ],
         data: ["CEPs, bairros, distancia, custo e prazo vêm do mapa de cobertura definido pela operacao."],
+        example: "O bairro Centro fica a 2 km do restaurante e recebe taxa de R$ 5; um bairro mais distante recebe taxa de R$ 12. Ao fechar um pedido, o sistema identifica o endereco do cliente e aplica a taxa da zona correspondente.",
         tips: ["Revise periodicamente taxas e tempos conforme transito e custo dos entregadores."],
       },
       {
@@ -329,6 +348,7 @@ export const helpSections = [
           "Associe o entregador ao pedido no despacho.",
         ],
         data: ["Dados pessoais e do veiculo devem ser fornecidos pelo profissional e tratados conforme a politica da empresa."],
+        example: "Um pedido de delivery fica pronto na expedicao. O responsavel despacha selecionando o entregador de moto disponivel naquele momento, deixando registrado quem saiu com aquele pedido.",
         tips: ["Desative o cadastro ao encerrar a prestacao; nao reutilize um entregador antigo para outra pessoa."],
       },
     ],
@@ -352,6 +372,7 @@ export const helpSections = [
           "Investigue saldos negativos em vez de apenas zera-los.",
         ],
         data: ["Quantidades vêm de notas de compra, contagens fisicas, receitas e vendas registradas."],
+        example: "Chega uma compra de 20 kg de carne. A entrada e registrada com o numero da nota do fornecedor; conforme as vendas do dia usam a receita associada, o saldo vai baixando automaticamente ate a proxima contagem.",
         tips: ["Estoque do sistema e uma estimativa operacional; a contagem fisica continua sendo a referencia de auditoria."],
       },
       {
@@ -367,6 +388,7 @@ export const helpSections = [
           "Registre transferencias sempre que o material mudar de local.",
         ],
         data: ["A lista vem da estrutura fisica de armazenamento de cada restaurante."],
+        example: "A carne chega no Deposito seco e depois e transferida para o Freezer cozinha antes do preparo. Registrar essa transferencia mantem o saldo de cada local fiel ao que esta fisicamente guardado ali.",
         tips: ["Nao crie um local generico se a equipe precisa saber onde encontrar o item."],
       },
     ],
@@ -376,6 +398,32 @@ export const helpSections = [
     title: "Financeiro",
     description: "Recebimentos, documentos fiscais e integracao Focus NFe.",
     articles: [
+      {
+        id: "fluxo-fiscal",
+        title: "Fluxo fiscal: da configuração à nota emitida",
+        icon: "shield-check",
+        summary: "Entenda a ordem das etapas para emitir NF-e/NFC-e pela primeira vez.",
+        purpose: "A parte fiscal do StarChef tem duas camadas: configuracoes que pertencem a CONTA (usadas por todos os restaurantes) e configuracoes que pertencem a cada RESTAURANTE emitente. Entender essa divisao evita repetir cadastro e evita emitir nota errada por configuracao incompleta.",
+        steps: [
+          "1) Na conta: configure a Configuração Focus (token mestre, URLs de producao/homologacao e webhook) — sem isso nenhum restaurante consegue emitir.",
+          "2) Na conta: opcionalmente ative a Configuração Cosmos para agilizar o preenchimento de NCM/CEST ao criar perfis fiscais.",
+          "3) Na conta: monte os Perfis fiscais reutilizaveis (NCM, CFOP, origem, CST/CSOSN, ICMS/PIS/COFINS) para os grupos de produtos que a operacao vende.",
+          "4) No restaurante: abra Restaurantes > Configuracao fiscal e informe CNPJ, IE, CRT, certificado A1 e CSC/idToken daquele emitente especifico.",
+          "5) No cardapio: associe cada Produto ao Perfil fiscal correto.",
+          "6) Faca uma venda de teste em homologacao e confira o documento gerado antes de liberar producao.",
+          "7) Acompanhe emissoes, rejeicoes e cancelamentos em Notas fiscais.",
+        ],
+        data: [
+          "Token mestre, Cosmos e URLs vêm da integracao contratada (Focus NFe e, opcionalmente, Bluesoft Cosmos).",
+          "CNPJ, IE, CRT, certificado A1 e CSC/idToken vêm da documentacao e da SEFAZ de cada restaurante.",
+          "NCM, CFOP, CST/CSOSN e aliquotas dos perfis fiscais devem ser confirmados com o contador.",
+        ],
+        example: "Uma rede com 3 lojas configura a Focus NFe uma unica vez na conta. Depois, cadastra 2 Perfis fiscais (um para alimentos preparados, outro para bebidas industrializadas) e os reaproveita nas 3 lojas. Cada loja tem seu proprio CNPJ e certificado A1 em Configuracao fiscal, mas usa os mesmos perfis fiscais da conta. Ao vender um refrigerante em qualquer das 3 lojas, o produto ja carrega o perfil fiscal certo e a NFC-e sai com a tributacao correta sem retrabalho.",
+        tips: [
+          "Sempre valide em homologacao antes de emitir em producao pela primeira vez.",
+          "Se uma nota for rejeitada, o problema quase sempre esta em um dos cadastros anteriores (produto sem perfil fiscal, perfil incompleto ou dado do restaurante desatualizado) — corrija na origem, nao apenas reenvie.",
+        ],
+      },
       {
         id: "historico-pagamentos",
         title: "Histórico de pagamentos",
@@ -389,6 +437,7 @@ export const helpSections = [
           "Compare divergencias com o comprovante da adquirente ou banco.",
         ],
         data: ["Os registros sao criados pelo recebimento no PDV; NSU e referencias vêm da maquininha, banco ou comprovante."],
+        example: "O financeiro fecha o mes e encontra uma diferenca no extrato do cartao. Filtra o Historico de pagamentos pelo periodo e pela forma Cartao, localiza a referencia (NSU) do comprovante em duvida e confirma valor e horario batem com a venda registrada.",
         tips: ["Nao altere a forma para conciliar um erro; cancele ou estorne e registre novamente conforme a permissao."],
       },
       {
@@ -396,7 +445,7 @@ export const helpSections = [
         title: "Notas fiscais",
         icon: "shield-check",
         summary: "Acompanhe emissao, autorizacao, rejeicao, cancelamento, XML e DANFE.",
-        purpose: "Cada documento fiscal fica relacionado ao pedido e ao restaurante emitente. O status informa se a nota foi autorizada pela SEFAZ ou precisa de correcao.",
+        purpose: "Cada documento fiscal fica relacionado ao pedido e ao restaurante emitente. O status informa se a nota foi autorizada pela SEFAZ ou precisa de correcao. Esta e a etapa final do fluxo fiscal (veja Fluxo fiscal), depois de Configuracao Focus, Perfis fiscais, Configuracao fiscal do restaurante e Produtos ja estarem prontos.",
         steps: [
           "Filtre por restaurante, periodo ou status.",
           "Abra rejeicoes e leia a mensagem completa antes de reenviar.",
@@ -405,6 +454,7 @@ export const helpSections = [
           "Cancele dentro do prazo e sempre informe justificativa valida.",
         ],
         data: ["Chave, protocolo, XML e retorno vêm da SEFAZ por meio do provedor fiscal configurado."],
+        example: "Uma NFC-e volta rejeitada com \"NCM invalido para o CFOP informado\". Voce abre a nota, identifica o produto vendido, corrige o Perfil fiscal associado a ele e reenvia a partir do pedido; a nova tentativa e autorizada e o XML/DANFE ficam disponiveis para download.",
         tips: ["Homologacao gera documentos de teste; producao gera documentos fiscais reais."],
       },
       {
@@ -412,7 +462,7 @@ export const helpSections = [
         title: "Perfis fiscais",
         icon: "percentage",
         summary: "Reutilize NCM, CFOP, origem, CST/CSOSN e aliquotas entre produtos.",
-        purpose: "O perfil evita repetir a mesma tributacao em cada produto e padroniza a montagem dos itens da NF-e/NFC-e.",
+        purpose: "O perfil evita repetir a mesma tributacao em cada produto e padroniza a montagem dos itens da NF-e/NFC-e. E um cadastro da CONTA (compartilhado entre restaurantes) — veja Fluxo fiscal para a ordem completa das etapas.",
         steps: [
           "Separe grupos de produtos que realmente compartilham a mesma tributacao.",
           "Informe NCM, origem e CFOP.",
@@ -420,7 +470,8 @@ export const helpSections = [
           "Configure ICMS, PIS, COFINS, CEST e tributos aproximados quando aplicaveis.",
           "Associe o perfil aos produtos e valide primeiro em homologacao.",
         ],
-        data: ["Solicite NCM, CFOP, CST/CSOSN e aliquotas ao contador; CEST pode vir da classificacao fiscal do produto."],
+        data: ["Solicite NCM, CFOP, CST/CSOSN e aliquotas ao contador; CEST pode vir da classificacao fiscal do produto ou da sugestao da Configuracao Cosmos."],
+        example: "Uma pizzaria cria o perfil \"Alimentos preparados no local\" com o NCM e CFOP orientados pelo contador e o associa a todos os sabores de pizza. Quando o contador atualiza uma aliquota, basta editar o perfil uma vez em vez de corrigir produto por produto.",
         tips: ["O StarChef armazena a configuracao, mas nao substitui a classificacao feita pelo profissional contabil."],
       },
       {
@@ -428,7 +479,7 @@ export const helpSections = [
         title: "Configuração Cosmos",
         icon: "search",
         summary: "Use o catálogo Cosmos para sugerir NCM e CEST pelo nome do perfil fiscal.",
-        purpose: "A configuração pertence à conta StarChef. Quando estiver ativa, o formulário de perfil fiscal pesquisa produtos semelhantes e preenche os campos disponibilizados pela Cosmos.",
+        purpose: "A configuração pertence à conta StarChef e e um acelerador OPCIONAL do passo \"Perfis fiscais\" do Fluxo fiscal. Quando estiver ativa, o formulário de perfil fiscal pesquisa produtos semelhantes e preenche os campos disponibilizados pela Cosmos.",
         steps: [
           "Crie uma conta no portal Bluesoft Cosmos e abra a área da API.",
           "Copie o X-Cosmos-Token e o User-Agent exibidos para sua conta.",
@@ -441,6 +492,7 @@ export const helpSections = [
           "Nome do produto, GPC, NCM e CEST vêm do catálogo Cosmos quando disponíveis.",
           "CFOP, CST/CSOSN e alíquotas continuam dependendo da operação e da orientação contábil.",
         ],
+        example: "Ao criar o perfil fiscal \"Refrigerante lata 350ml\", a busca Cosmos sugere o NCM e o CEST usados por produtos parecidos no mercado; o cadastrante confere a sugestao, ajusta o CFOP conforme a operacao e so entao salva o perfil.",
         tips: ["O plano gratuito possui limite diário. Resultados já consultados ficam em cache para economizar chamadas."],
         warning: "Os dados da Cosmos são sugestões cadastrais e não substituem a validação do contador.",
       },
@@ -449,7 +501,7 @@ export const helpSections = [
         title: "Configuração Focus",
         icon: "settings",
         summary: "Conecte a conta integradora e sincronize os restaurantes emitentes.",
-        purpose: "Esta configuracao pertence à conta StarChef e guarda o token mestre, URLs, webhook e comportamento de sincronizacao com a Focus NFe.",
+        purpose: "Esta configuracao pertence à conta StarChef e e o PRIMEIRO passo do Fluxo fiscal: guarda o token mestre, URLs, webhook e comportamento de sincronizacao com a Focus NFe usados por todos os restaurantes da conta.",
         steps: [
           "Obtenha o token do ambiente correto no painel da Focus NFe.",
           "Informe URLs de producao e homologacao e ajuste o timeout somente se necessario.",
@@ -462,6 +514,7 @@ export const helpSections = [
           "Certificado A1, CRT, IE, CSC e idToken pertencem ao CNPJ de cada restaurante emitente.",
           "CSC e idToken são fornecidos pela SEFAZ da UF para o ambiente escolhido.",
         ],
+        example: "Uma conta nova ativa Dry run e testa o cadastro do primeiro restaurante na Focus sem criar nada de verdade. Depois de confirmar que os dados batem, desativa o Dry run e sincroniza de fato, liberando aquele restaurante para emitir notas.",
         tips: ["Nunca publique token, senha do certificado ou CSC em chamados, capturas de tela ou documentos publicos."],
         warning: "Homologacao e producao sao ambientes separados. Confirme o ambiente antes de sincronizar ou emitir.",
       },
@@ -470,93 +523,8 @@ export const helpSections = [
   {
     id: "gestao",
     title: "Gestão",
-    description: "Relatorios, unidades, acessos e equipamentos do restaurante.",
+    description: "Unidades, acessos e equipamentos do restaurante.",
     articles: [
-      {
-        id: "relatorios",
-        title: "Relatórios",
-        icon: "bar-chart-3",
-        summary: "Analise resultados por periodo, restaurante e dimensao operacional.",
-        purpose: "Os relatorios consolidam dados registrados pelo PDV, pagamentos, produtos e usuarios. Sempre confirme periodo, restaurante e status incluídos antes de comparar valores.",
-        steps: [
-          "Selecione o restaurante ou a visao consolidada.",
-          "Defina o periodo desejado.",
-          "Aplique os filtros especificos do relatorio.",
-          "Compare totais com os detalhes antes de exportar ou tomar uma decisao.",
-        ],
-        data: ["Todos os indicadores vêm dos registros operacionais do proprio StarChef."],
-        tips: ["Um pedido aberto ou pagamento pendente pode aparecer de forma diferente de uma venda concluida."],
-      },
-      {
-        id: "relatorio-geral",
-        title: "Relatórios: Visão geral",
-        icon: "layout-dashboard",
-        summary: "Indicadores consolidados de vendas, pedidos, ticket e operacao.",
-        purpose: "Use para uma leitura executiva do periodo e para localizar rapidamente variacoes que merecem investigacao em relatorios detalhados.",
-        steps: ["Escolha periodo e escopo.", "Compare faturamento, quantidade de pedidos e ticket medio.", "Abra o relatorio especifico do indicador que mudou."],
-        data: ["Os totais vêm de pedidos e pagamentos considerados no periodo."],
-        tips: ["Nao compare periodos de duracoes diferentes sem considerar dias e horarios de funcionamento."],
-      },
-      {
-        id: "relatorio-vendas",
-        title: "Relatórios: Vendas",
-        icon: "trending-up",
-        summary: "Acompanhe valor vendido, descontos, taxas e evolucao no periodo.",
-        purpose: "Ajuda a entender quando e onde as vendas aconteceram e como descontos e taxas afetaram o total.",
-        steps: ["Defina o periodo.", "Selecione o restaurante.", "Compare vendas brutas, descontos, taxas e vendas liquidas."],
-        data: ["Valores vêm dos totais finais dos pedidos e de seus ajustes."],
-        tips: ["Confira cancelamentos e estornos ao conciliar o valor com recebimentos."],
-      },
-      {
-        id: "relatorio-pedidos",
-        title: "Relatórios: Pedidos",
-        icon: "receipt-text",
-        summary: "Analise volume, tipo, status e motivos de cancelamento.",
-        purpose: "Mostra o comportamento operacional dos pedidos por canal e situacao.",
-        steps: ["Escolha periodo e restaurante.", "Compare balcao, mesa, comanda, entrega e retirada.", "Revise pedidos cancelados e justificativas."],
-        data: ["Tipo e status são gravados durante o fluxo de cada pedido."],
-        tips: ["Volume alto com ticket menor pode ser normal para um canal; compare dimensoes em conjunto."],
-      },
-      {
-        id: "relatorio-produtos",
-        title: "Relatórios: Produtos",
-        icon: "book-open",
-        summary: "Veja quantidade vendida, receita e preco medio por produto.",
-        purpose: "Use para identificar campeoes de venda, itens com pouca saida e diferencas por categoria ou setor.",
-        steps: ["Selecione periodo e restaurante.", "Filtre categoria ou setor quando necessário.", "Ordene por quantidade, total ou preco medio."],
-        data: ["Os dados vêm dos itens efetivamente registrados nos pedidos."],
-        tips: ["Considere produtos promocionais e adicionais antes de comparar preco medio com preco atual."],
-      },
-      {
-        id: "relatorio-pagamentos",
-        title: "Relatórios: Pagamentos",
-        icon: "credit-card",
-        summary: "Concilie valores por forma de pagamento e status.",
-        purpose: "Agrupa recebimentos em dinheiro, PIX, cartoes, vouchers e outros meios para apoiar a conferencia financeira.",
-        steps: ["Escolha o mesmo periodo do fechamento externo.", "Compare por forma de pagamento.", "Abra o Historico de pagamentos para investigar divergencias."],
-        data: ["Valores e referencias vêm dos recebimentos registrados no PDV."],
-        tips: ["A data da venda e a data de liquidacao da adquirente podem ser diferentes."],
-      },
-      {
-        id: "relatorio-garcons",
-        title: "Relatórios: Garçons",
-        icon: "users",
-        summary: "Acompanhe pedidos e valores por responsavel pelo atendimento.",
-        purpose: "Mostra a distribuicao da operacao entre usuarios identificados como responsaveis pelos pedidos.",
-        steps: ["Selecione periodo e restaurante.", "Compare quantidade e total por garcom.", "Confirme se os pedidos foram atribuídos ao usuario correto."],
-        data: ["O responsavel vem do usuario selecionado ou autenticado durante a abertura do pedido."],
-        tips: ["Use o indicador para gestao, nao como unica medida de desempenho ou qualidade."],
-      },
-      {
-        id: "relatorio-restaurantes",
-        title: "Relatórios: Restaurantes",
-        icon: "store",
-        summary: "Compare unidades da mesma conta com indicadores consolidados.",
-        purpose: "Permite comparar quantidade de pedidos, faturamento e ticket medio entre restaurantes.",
-        steps: ["Use o escopo Todos os restaurantes.", "Defina um periodo comum às unidades.", "Compare total, pedidos e ticket medio considerando dias de funcionamento."],
-        data: ["A unidade vem do restaurante associado a cada pedido e pagamento."],
-        tips: ["Valide se todas as unidades operaram durante todo o periodo antes de criar metas comparativas."],
-      },
       {
         id: "restaurantes",
         title: "Restaurantes",
@@ -571,6 +539,7 @@ export const helpSections = [
           "No menu da linha, abra Configuracao fiscal para preparar NF-e/NFC-e.",
         ],
         data: ["Razao social, CNPJ e endereco vêm do cartao CNPJ e documentos oficiais da empresa."],
+        example: "Uma rede abre a segunda unidade. Cadastra o novo restaurante com seu proprio CNPJ e endereco, reaproveita os Perfis fiscais ja existentes na conta e so precisa preencher a Configuracao fiscal especifica dessa unidade (certificado A1, IE e CSC).",
         tips: ["Dados fiscais são por emitente: use as informacoes do cliente que opera aquele restaurante, nao as da StarChef."],
       },
       {
@@ -581,32 +550,35 @@ export const helpSections = [
         purpose: "Setores podem agrupar mesas, produtos, impressoras, balancas e fluxos de cozinha.",
         steps: ["Mapeie as areas reais do restaurante.", "Crie nomes curtos como Salao, Cozinha ou Bar.", "Associe os cadastros correspondentes.", "Desative o setor quando deixar de ser usado."],
         data: ["A lista vem da divisao fisica e operacional da unidade."],
+        example: "O restaurante divide o salao em Interno e Varanda. Cada setor recebe suas proprias mesas e uma impressora de comanda dedicada, para que o pedido saia sempre na impressora fisicamente mais proxima daquela area.",
         tips: ["Evite nomes quase iguais; isso dificulta escolher impressora e producao corretas."],
       },
       {
         id: "usuarios",
         title: "Usuários",
         icon: "user-cog",
-        summary: "Crie acessos individuais e vincule perfil, restaurante e cargo.",
-        purpose: "Cada pessoa deve usar seu proprio usuario para que pedidos, caixa, aprovacoes e auditoria identifiquem corretamente o responsavel.",
+        summary: "Crie acessos individuais e vincule restaurante e cargo.",
+        purpose: "Cada pessoa deve usar seu proprio usuario para que pedidos, caixa, aprovacoes e auditoria identifiquem corretamente o responsavel. O cargo (veja Perfis de acesso) e o unico campo que controla o que a pessoa pode fazer.",
         steps: [
           "Cadastre nome de usuario e e-mail validos.",
           "Defina uma senha inicial e solicite a troca segura.",
-          "Escolha o perfil funcional correto.",
+          "Escolha o cargo correto para a funcao exercida.",
           "Restrinja ao restaurante quando a pessoa nao precisar de acesso global.",
           "Desative imediatamente acessos de quem saiu da operacao.",
         ],
         data: ["Nome, contato, funcao e unidade vêm do cadastro interno da equipe."],
+        example: "Uma nova garconete comeca a trabalhar. Recebe um usuario proprio com cargo Garçom e restrito ao restaurante em que atua; ela consegue abrir e editar seus proprios pedidos, mas nao acessa relatorios ou configuracoes de outras unidades.",
         tips: ["Nunca compartilhe um usuario entre varias pessoas; isso remove a rastreabilidade das operacoes."],
       },
       {
         id: "perfis-acesso",
         title: "Perfis de acesso",
         icon: "shield-check",
-        summary: "Consulte permissoes dos perfis fixos usados pela equipe.",
-        purpose: "Perfis como Garcom, Caixa, Gerente e Administrador determinam o conjunto basico de permissoes e limites, como desconto maximo.",
-        steps: ["Abra um perfil para revisar permissoes.", "Escolha o perfil apropriado no cadastro do usuario.", "Teste o acesso com um usuario de homologacao antes de liberar à equipe."],
-        data: ["As responsabilidades vêm da politica interna da empresa; os perfis disponiveis são mantidos pelo sistema."],
+        summary: "Consulte permissoes dos cargos fixos usados pela equipe.",
+        purpose: "Os cargos Garçom, Caixa, Gerente e Administrador sao fixos e crescentes: cada um inclui as permissoes do anterior e soma as suas. E o unico controle de acesso do usuario — nao ha mais um campo separado de \"perfil\".",
+        steps: ["Abra um cargo para revisar as permissoes incluidas.", "Escolha o cargo apropriado no cadastro do usuario.", "Teste o acesso com um usuario de homologacao antes de liberar à equipe."],
+        data: ["As responsabilidades vêm da politica interna da empresa; os quatro cargos disponiveis são fixos e mantidos pelo sistema."],
+        example: "Um funcionario e promovido de garcom a gerente de turno. Basta trocar o cargo dele de Garçom para Gerente no cadastro de usuario; ele passa a enxergar todos os caixas do restaurante e a poder autorizar descontos e cancelamentos, sem precisar de nenhum outro ajuste.",
         tips: ["Aplique o menor nivel de acesso suficiente para a funcao exercida."],
       },
       {
@@ -622,6 +594,7 @@ export const helpSections = [
           "Desative e informe o motivo quando o equipamento for perdido, substituido ou reinstalado.",
         ],
         data: ["O identificador e criado automaticamente pelo aplicativo; nome e restaurante são definidos pelo administrador."],
+        example: "O computador do caixa e trocado. A instalacao antiga aparece com um nome tecnico generico; o administrador a renomeia para \"Balcao 01 (antigo)\" e a desativa com o motivo \"equipamento substituido\", impedindo que ela volte a abrir caixa por engano.",
         tips: ["Nao copie o identificador de uma instalacao para outra maquina."],
       },
       {
@@ -638,6 +611,7 @@ export const helpSections = [
           "Execute uma impressao de teste no PDV antes de ativar impressao automatica.",
         ],
         data: ["Nome do dispositivo vem do sistema operacional; IP, porta, linguagem e parametros vêm do manual ou da configuracao da impressora."],
+        example: "A cozinha tem uma impressora de rede fixa em 192.168.0.50. Ela e cadastrada com esse IP e a porta TCP do manual, vinculada ao setor Cozinha; a partir dai, todo item enviado para aquele setor imprime automaticamente ali.",
         tips: ["Para impressoras de rede, reserve o IP no roteador para evitar mudanca após reinicializacao."],
       },
       {
@@ -654,6 +628,7 @@ export const helpSections = [
           "Teste estabilidade e unidade antes de ativar lancamento automatico.",
         ],
         data: ["Porta, velocidade e protocolo vêm do sistema operacional e do manual tecnico do fabricante."],
+        example: "Um mercado de bairro pesa frios no balcao. A balanca Urano e conectada na porta COM3; ao estabilizar o peso de uma peca de queijo, o PDV cria automaticamente o item \"Queijo (kg)\" com a quantidade lida, pronto para fechar a venda.",
         tips: ["No Linux, o usuario que executa o PDV precisa ter permissao para acessar a porta serial."],
       },
     ],

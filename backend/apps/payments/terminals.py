@@ -235,7 +235,11 @@ def other_terminal_message(session):
 def active_session_for_station(cash_station, *, for_update=False):
     queryset = CashRegister.objects.filter(cash_station=cash_station)
     if for_update:
-        queryset = queryset.select_for_update()
+        # A sessao possui relacionamentos opcionais carregados abaixo por
+        # LEFT OUTER JOIN. No PostgreSQL, um FOR UPDATE sem alvo tenta travar
+        # tambem o lado nullable desses joins e falha com NotSupportedError.
+        # A exclusividade precisa bloquear somente a linha de CashRegister.
+        queryset = queryset.select_for_update(of=("self",))
     return (
         CashRegister.active_sessions(queryset)
         .select_related("opened_by", "opened_terminal", "cash_station")

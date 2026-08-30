@@ -1,14 +1,9 @@
 <template>
-  <aside class="cosmos-assist" :data-tone="tone" aria-live="polite">
+  <aside v-if="status.ready" class="cosmos-assist" :data-tone="tone" aria-live="polite">
     <span class="cosmos-assist__icon"><i class="pi pi-search" /></span>
     <div class="cosmos-assist__copy">
       <strong>Preenchimento pela Cosmos</strong>
-      <span v-if="statusLoading">Verificando a integração desta conta...</span>
-      <span v-else-if="!status.ready">
-        A integração não está pronta. Um administrador pode informar o token e o User-Agent em
-        <RouterLink :to="{ name: 'configuracao-cosmos' }">Configuração Cosmos</RouterLink>.
-      </span>
-      <span v-else-if="searching">Buscando produtos semelhantes a “{{ normalizedName }}”...</span>
+      <span v-if="searching">Buscando produtos semelhantes a “{{ normalizedName }}”...</span>
       <span v-else-if="result">
         Encontrado: <b>{{ result.matched_product || normalizedName }}</b>.
         <template v-if="result.ncm"> NCM sugerido: <b>{{ result.ncm }}</b>.</template>
@@ -33,7 +28,6 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
 import Button from "primevue/button";
 
 import { api } from "../../services/api";
@@ -45,7 +39,6 @@ const props = defineProps({
 const emit = defineEmits(["suggestion"]);
 
 const status = reactive({ active: false, configured: false, ready: false });
-const statusLoading = ref(true);
 const searching = ref(false);
 const result = ref(null);
 const message = ref("");
@@ -55,8 +48,8 @@ let requestSequence = 0;
 
 const normalizedName = computed(() => String(props.name || "").trim().replace(/\s+/g, " "));
 const tone = computed(() => {
-  if (searching.value || statusLoading.value) return "info";
-  if (!status.ready || message.value) return "warning";
+  if (searching.value) return "info";
+  if (message.value) return "warning";
   if (result.value) return "success";
   return "neutral";
 });
@@ -70,14 +63,12 @@ function scheduleLookup() {
 }
 
 async function loadStatus() {
-  statusLoading.value = true;
   try {
     const { data } = await api.get("/fiscal/profiles/cosmos-status/", { skipRestaurantScope: true });
     Object.assign(status, data);
   } catch (error) {
     message.value = normalizeApiError(error).message;
   } finally {
-    statusLoading.value = false;
     scheduleLookup();
   }
 }
