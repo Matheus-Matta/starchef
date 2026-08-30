@@ -19,6 +19,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.menu.models import Product
 from apps.restaurants.models import Branch, Restaurant
 
@@ -69,7 +70,7 @@ def superuser_with_profile(account, restaurant, branch):
         username=f"root-{uuid.uuid4().hex[:6]}", password="x", email=f"{uuid.uuid4().hex[:6]}@test.com"
     )
     UserProfile.objects.create(
-        account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+        account=account, user=user, role=ensure_system_roles(account)["admin"], restaurant=restaurant, branch=branch
     )
     return user
 

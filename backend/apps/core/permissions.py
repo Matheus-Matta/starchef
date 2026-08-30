@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 
-from apps.core.access import is_tenant_admin
+from apps.core.access import has_role_at_least, is_tenant_admin
 from apps.core.modules import MODULE_BASE
 
 
@@ -98,22 +98,19 @@ class IsSameAccountPermission(BasePermission):
 
 class CanManageCashRegister(BasePermission):
     def has_permission(self, request, view):
-        profile = getattr(request.user, "profile", None)
-        return bool(profile and profile.profile_type in {"admin", "owner", "manager", "cashier"})
+        return has_role_at_least(request.user, "cashier")
 
 
 class CanAuthorizeDiscount(BasePermission):
     def has_permission(self, request, view):
-        profile = getattr(request.user, "profile", None)
-        return bool(profile and profile.profile_type in {"admin", "owner", "manager"})
+        return has_role_at_least(request.user, "manager")
 
 
 class CanUseOrManageDevices(BasePermission):
     message = "Você não tem permissão para acessar a configuração de equipamentos."
 
     def has_permission(self, request, view):
-        profile = getattr(request.user, "profile", None)
-        if request.user.is_superuser or getattr(profile, "profile_type", None) in {"admin", "owner"}:
+        if is_tenant_admin(request.user):
             return True
         codes = effective_permission_codes(request.user)
         if "*" in codes or "devices.manage" in codes:
@@ -127,13 +124,7 @@ class CanOperateScale(BasePermission):
     message = "Você não tem permissão para operar a estação de balança."
 
     def has_permission(self, request, view):
-        profile = getattr(request.user, "profile", None)
-        if request.user.is_superuser or getattr(profile, "profile_type", None) in {
-            "admin",
-            "owner",
-            "manager",
-            "cashier",
-        }:
+        if has_role_at_least(request.user, "cashier"):
             return True
         codes = effective_permission_codes(request.user)
         return "*" in codes or bool(

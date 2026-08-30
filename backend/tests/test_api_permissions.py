@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.accounts.models import UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.orders.models import Order
 from apps.orders.services import create_order
 from apps.restaurants.models import Branch, Restaurant
@@ -17,7 +18,7 @@ def test_user_lists_orders_from_own_restaurant(api_client, account, restaurant, 
     UserProfile.objects.create(
         account=account,
         user=other_user,
-        profile_type=UserProfile.PROFILE_MANAGER,
+        role=ensure_system_roles(account)["manager"],
         restaurant=restaurant,
         branch=other_branch,
     )
@@ -64,7 +65,7 @@ def test_tenant_admin_lists_all_restaurants_from_account(api_client, account, re
     UserProfile.objects.create(
         account=account,
         user=admin_user,
-        profile_type=UserProfile.PROFILE_ADMIN,
+        role=ensure_system_roles(account)["admin"],
         restaurant=restaurant,
         branch=branch,
     )
@@ -115,7 +116,7 @@ def test_tenant_admin_dashboard_can_filter_or_aggregate_all_restaurants(api_clie
     UserProfile.objects.create(
         account=account,
         user=admin_user,
-        profile_type=UserProfile.PROFILE_ADMIN,
+        role=ensure_system_roles(account)["admin"],
         restaurant=restaurant,
         branch=branch,
     )

@@ -20,6 +20,12 @@ from apps.invoices.focus import (
     refresh_focus_company,
     sync_focus_company,
 )
+from apps.invoices.cosmos import (
+    CosmosApiError,
+    CosmosConfigurationError,
+    cosmos_config_status,
+    suggest_fiscal_profile,
+)
 from apps.invoices.models import FiscalConfig, FiscalProfile, Invoice
 from apps.invoices.providers import FocusNfeProvider, get_provider
 from apps.invoices.serializers import FiscalConfigSerializer, FiscalProfileSerializer, InvoiceSerializer
@@ -47,6 +53,42 @@ class FiscalProfileViewSet(BaseTenantViewSet):
     search_fields = ["name", "ncm", "cfop", "csosn", "cest"]
     ordering_fields = ["name", "ncm", "cfop", "created_at"]
     ordering = ["name"]
+
+    @action(detail=False, methods=["get"], url_path="cosmos-status")
+    def cosmos_status(self, request):
+        """Estado nao sensivel usado pelo formulario de perfil fiscal."""
+
+        return Response(cosmos_config_status(getattr(request, "account", None)))
+
+    @action(detail=False, methods=["get"], url_path="cosmos-suggest")
+    def cosmos_suggest(self, request):
+        """Sugere NCM/CEST pelo nome sem gravar nem sobrescrever o perfil."""
+
+        query = str(request.query_params.get("query") or "").strip()
+        try:
+            suggestion = suggest_fiscal_profile(getattr(request, "account", None), query)
+        except CosmosConfigurationError as exc:
+            return Response(
+                {"error": {"code": "cosmos_not_configured", "message": str(exc)}, "detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except CosmosApiError as exc:
+            response_status = status.HTTP_400_BAD_REQUEST
+            if exc.error_code == "cosmos_not_found":
+                response_status = status.HTTP_404_NOT_FOUND
+            elif exc.error_code == "cosmos_rate_limited":
+                response_status = status.HTTP_429_TOO_MANY_REQUESTS
+            elif exc.retryable:
+                response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+            return Response(
+                {
+                    "error": {"code": exc.error_code, "message": str(exc)},
+                    "detail": str(exc),
+                    "cosmos_status_code": exc.upstream_status,
+                },
+                status=response_status,
+            )
+        return Response(suggestion.as_response())
 
 
 class FiscalConfigViewSet(BaseTenantViewSet):

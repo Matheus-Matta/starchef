@@ -198,25 +198,23 @@
           </label>
           <label class="rfiscal__field">
             <span>CSC (segredo da NFC-e)</span>
-            <Password
+            <SecretField
               v-model="form.csc_token"
-              :placeholder="form.csc_token_configured ? '••••••••' : 'Informe o CSC'"
-              :feedback="false"
-              toggle-mask
-              input-class="rfiscal__input"
+              :configured="form.csc_token_configured"
+              :revealing="revealSecret.csc_token"
+              placeholder="Informe o CSC"
+              @edit="startEditingSecret('csc_token')"
             />
-            <small v-if="form.csc_token_configured">Já salvo. Digite apenas para substituir.</small>
           </label>
           <label v-if="form.provider !== 'focus_nfe'" class="rfiscal__field">
             <span>Token/credencial do provedor</span>
-            <Password
+            <SecretField
               v-model="form.provider_token"
-              :placeholder="form.provider_token_configured ? '••••••••' : 'Informe a credencial'"
-              :feedback="false"
-              toggle-mask
-              input-class="rfiscal__input"
+              :configured="form.provider_token_configured"
+              :revealing="revealSecret.provider_token"
+              placeholder="Informe a credencial"
+              @edit="startEditingSecret('provider_token')"
             />
-            <small v-if="form.provider_token_configured">Já salvo. Digite apenas para substituir.</small>
           </label>
           <label class="rfiscal__field">
             <span>Referência do certificado A1</span>
@@ -268,12 +266,12 @@
           </label>
           <label class="rfiscal__field">
             <span>Senha do certificado A1</span>
-            <Password
+            <SecretField
               v-model="form.focus_certificate_password"
-              :placeholder="form.focus_certificate_password_configured ? '••••••••' : 'Senha do PFX/P12'"
-              :feedback="false"
-              toggle-mask
-              input-class="rfiscal__input"
+              :configured="form.focus_certificate_password_configured"
+              :revealing="revealSecret.focus_certificate_password"
+              placeholder="Senha do PFX/P12"
+              @edit="startEditingSecret('focus_certificate_password')"
             />
             <small>Certificado e senha viajam sempre juntos, na mesma gravação.</small>
           </label>
@@ -330,11 +328,11 @@ import Dialog from "primevue/dialog";
 import Dropdown from "primevue/dropdown";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
-import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
+import SecretField from "../components/form/SecretField.vue";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
 import { normalizeApiError } from "../utils/apiError";
@@ -360,6 +358,19 @@ const configId = ref(null);
 const restaurant = ref(null);
 const deleteDialog = ref(false);
 const deleteConfirmCnpj = ref("");
+
+// Um segredo em edição mostra o campo real (vazio, pronto para um valor
+// novo); fora disso, mostra a máscara com o selo "Salvo" — nunca o
+// placeholder sozinho, que fica indistinguível de "vazio" quando focado.
+const revealSecret = reactive({
+  csc_token: false,
+  provider_token: false,
+  focus_certificate_password: false,
+});
+function startEditingSecret(field) {
+  revealSecret[field] = true;
+  form[field] = "";
+}
 
 // Só o que esta tela edita — o resto da resposta (tokens, status de
 // sincronização, auditoria) fica fora do PATCH de propósito.
@@ -441,6 +452,9 @@ function applyConfig(data) {
   Object.assign(form, data);
   for (const field of SECRET_FIELDS) form[field] = "";
   configId.value = data.id || configId.value;
+  // Toda recarga do servidor é um estado "recém-salvo": volta para a máscara
+  // em vez de deixar o campo preso em modo de edição depois de um save.
+  for (const field of Object.keys(revealSecret)) revealSecret[field] = false;
 }
 
 function onCertificateSelected(event) {

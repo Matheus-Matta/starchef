@@ -5,8 +5,8 @@ from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 from apps.customers.models import Customer, CustomerAddress
 from apps.customers.validators import format_cpf, is_valid_cpf, mask_cpf, mask_phone, strip_cpf
 
-# Perfis autorizados a ver dados pessoais completos (CPF/telefone) nas listagens.
-SENSITIVE_DATA_PROFILES = {"admin", "owner", "manager", "cashier"}
+# Cargos (Role.code) autorizados a ver dados pessoais completos (CPF/telefone) nas listagens.
+SENSITIVE_DATA_ROLE_CODES = {"cashier", "manager", "admin"}
 
 
 class CustomerAddressSerializer(TenantModelSerializer):
@@ -103,7 +103,7 @@ class CustomerSerializer(TenantModelSerializer):
         if user.is_superuser:
             return True
         profile = getattr(user, "profile", None)
-        return bool(profile and profile.profile_type in SENSITIVE_DATA_PROFILES)
+        return bool(profile and profile.role_id and profile.role.code in SENSITIVE_DATA_ROLE_CODES)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

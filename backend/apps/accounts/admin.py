@@ -5,7 +5,7 @@ from django.contrib.auth.models import Group, User
 from unfold.admin import ModelAdmin
 
 from apps.accounts.admin_forms import ACCOUNT_FIELDS, MODULE_FIELDS, AccountChangeForm, AccountCreationForm
-from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.models import Account, CosmosConfig, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
 from apps.core.admin_mixins import TenantModelAdmin
 
 
@@ -16,7 +16,7 @@ admin.site.unregister(Group)
 @admin.register(User)
 class StarChefUserAdmin(DjangoUserAdmin, ModelAdmin):
     list_display = ("username", "email", "first_name", "last_name", "account", "is_staff", "is_active", "last_login")
-    list_filter = ("is_staff", "is_superuser", "is_active", "groups", "profile__account", "profile__profile_type")
+    list_filter = ("is_staff", "is_superuser", "is_active", "groups", "profile__account", "profile__role")
     search_fields = ("username", "email", "first_name", "last_name", "profile__phone")
 
     def account(self, obj):
@@ -103,6 +103,14 @@ class FocusNfeConfigAdmin(ModelAdmin):
     exclude = ("master_token", "webhook_authorization")
 
 
+@admin.register(CosmosConfig)
+class CosmosConfigAdmin(ModelAdmin):
+    list_display = ("account", "is_active", "user_agent", "timeout_seconds", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("account__name", "account__slug", "user_agent")
+    exclude = ("api_token",)
+
+
 @admin.register(Subscription)
 class SubscriptionAdmin(ModelAdmin):
     list_display = ("account", "plan", "status", "current_period_starts_at", "current_period_ends_at")
@@ -126,6 +134,6 @@ class RoleAdmin(TenantModelAdmin):
 
 @admin.register(UserProfile)
 class UserProfileAdmin(TenantModelAdmin):
-    list_display = ("user", "account", "profile_type", "restaurant", "branch", "is_active")
-    list_filter = ("account", "profile_type", "restaurant", "branch", "is_active")
+    list_display = ("user", "account", "role", "restaurant", "branch", "is_active")
+    list_filter = ("account", "role", "restaurant", "branch", "is_active")
     search_fields = ("user__username", "user__email", "phone")

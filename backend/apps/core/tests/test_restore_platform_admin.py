@@ -12,6 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 
 pytestmark = pytest.mark.django_db
 
@@ -23,7 +24,7 @@ def dono(account, restaurant, branch):
     """Superadmin da conta inicial, depois 'quebrado': sem flags e sem perfil."""
     user = User.objects.create_user(username="dono", password="x", email="dono@test.com")
     profile = UserProfile.objects.create(
-        account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+        account=account, user=user, role=ensure_system_roles(account)["admin"], restaurant=restaurant, branch=branch
     )
     profile.delete()  # soft delete — foi o que "removeu o superadmin da conta"
     user.is_staff = False
@@ -42,7 +43,7 @@ def test_restaura_flags_e_vinculo_de_conta(dono, account, restaurant, branch):
     assert profile.deleted_at is None
     assert profile.is_active
     assert profile.account_id == account.id
-    assert profile.profile_type == UserProfile.PROFILE_ADMIN
+    assert profile.role.code == "admin"
     assert profile.restaurant_id == restaurant.id
     assert profile.branch_id == branch.id
 

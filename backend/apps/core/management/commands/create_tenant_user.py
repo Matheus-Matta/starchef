@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.accounts.models import Account, UserProfile
+from apps.accounts.models import Account
+from apps.accounts.role_catalog import CODE_ADMIN, SYSTEM_ROLE_CODES, ensure_system_roles
 from apps.core.management.commands._demo_seed import (
     DEFAULT_ACCOUNT_SLUG,
     DEFAULT_BRANCH_NAME,
@@ -9,7 +10,6 @@ from apps.core.management.commands._demo_seed import (
     DEFAULT_RESTAURANT_NAME,
     DEFAULT_USERNAME,
     ensure_base_tenant,
-    ensure_role,
     ensure_tenant_user,
 )
 from apps.core.tenant import tenant_context
@@ -29,12 +29,11 @@ class Command(BaseCommand):
         parser.add_argument("--last-name", default="Demo")
         parser.add_argument("--phone", default="")
         parser.add_argument(
-            "--profile-type",
-            default=UserProfile.PROFILE_ADMIN,
-            choices=[choice[0] for choice in UserProfile.PROFILE_CHOICES],
+            "--role-code",
+            default=CODE_ADMIN,
+            choices=SYSTEM_ROLE_CODES,
+            help="Cargo fixo do usuário (Perfis de Acesso: waiter/cashier/manager/admin).",
         )
-        parser.add_argument("--role-code", default=None)
-        parser.add_argument("--role-name", default=None)
         parser.add_argument("--restaurant-id", default=None)
         parser.add_argument("--restaurant-name", default=DEFAULT_RESTAURANT_NAME)
         parser.add_argument("--branch-id", default=None)
@@ -65,9 +64,11 @@ class Command(BaseCommand):
 
         restaurant = self._resolve_restaurant(account, options)
         branch = self._resolve_branch(account, restaurant, options)
-        role_code = options["role_code"] or options["profile_type"]
-        role_name = options["role_name"] or role_code.replace("_", " ").title()
-        role = ensure_role(account, code=role_code, name=role_name, restaurant=restaurant)
+        role_code = options["role_code"]
+        # Perfis de Acesso sao fixos por conta (role_catalog.py) — o signal da
+        # Account ja os provisiona, mas garante aqui tambem para contas
+        # criadas via --create-tenant nesta mesma chamada.
+        role = ensure_system_roles(account)[role_code]
 
         user = ensure_tenant_user(
             account=account,
@@ -76,7 +77,6 @@ class Command(BaseCommand):
             password=options["password"],
             first_name=options["first_name"],
             last_name=options["last_name"],
-            profile_type=options["profile_type"],
             restaurant=restaurant,
             branch=branch,
             role=role,
@@ -91,7 +91,7 @@ class Command(BaseCommand):
         self.stdout.write(f"account: {account.slug} ({account.name})")
         self.stdout.write(f"restaurant: {restaurant.trade_name if restaurant else '-'}")
         self.stdout.write(f"branch: {branch.name if branch else '-'}")
-        self.stdout.write(f"profile_type: {options['profile_type']}")
+        self.stdout.write(f"role: {role.code}")
 
     def _resolve_restaurant(self, account, options):
         with tenant_context(account):

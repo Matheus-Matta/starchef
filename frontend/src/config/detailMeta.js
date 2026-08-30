@@ -14,7 +14,6 @@ import {
   CASH_STATUS_LABELS,
   ORDER_STATUS_LABELS,
   ORDER_TYPE_LABELS,
-  PROFILE_TYPE_LABELS,
   TABLE_STATUS_LABELS,
 } from "./enums";
 import { formatMoney } from "../utils/format";
@@ -98,10 +97,10 @@ export const DETAIL_META = {
     ],
   },
   user: {
-    icon: "pi-user", accent: "indigo", eyebrow: "Usuario", badgeKey: "profile.profile_type",
+    icon: "pi-user", accent: "indigo", eyebrow: "Usuario", badgeKey: "profile.role_name",
     title: (r) => r.first_name || r.username || "Usuario",
     subtitle: (r) => r.email || r.username,
-    badge: (r) => PROFILE_TYPE_LABELS[r.profile?.profile_type] || r.profile?.profile_type || "-",
+    badge: (r) => r.profile?.role_name || "-",
   },
   payment: {
     icon: "pi-dollar", accent: "teal", eyebrow: "Pagamento",

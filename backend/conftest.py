@@ -14,9 +14,17 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.restaurants.models import Branch, Restaurant
 
 User = get_user_model()
+
+
+def _role_for(account, code):
+    """Um dos 4 Perfis de Acesso fixos da conta (role_catalog.SYSTEM_ROLES),
+    já provisionados pelo signal de Account — usado para montar UserProfile
+    nos testes, já que `role` é obrigatório (não há mais profile_type)."""
+    return ensure_system_roles(account)[code]
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +78,7 @@ def manager_user(account, restaurant, branch):
     UserProfile.objects.create(
         account=account,
         user=user,
-        profile_type=UserProfile.PROFILE_MANAGER,
+        role=_role_for(account, "manager"),
         restaurant=restaurant,
         branch=branch,
     )
@@ -84,7 +92,7 @@ def admin_user(account, restaurant, branch):
     UserProfile.objects.create(
         account=account,
         user=user,
-        profile_type=UserProfile.PROFILE_ADMIN,
+        role=_role_for(account, "admin"),
         restaurant=restaurant,
         branch=branch,
     )

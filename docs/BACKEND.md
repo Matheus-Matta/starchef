@@ -53,6 +53,13 @@ Cada app de domínio segue o padrão: `models.py`, `serializers.py`, `views.py` 
 
 As credenciais da Focus NFe ficam em `accounts.FocusNfeConfig`, numa relação `OneToOne` com `Account`. O `.env` apenas provisiona esse registro na migration/criação da conta; chamadas externas nunca usam o `.env` como fallback.
 
+As credenciais da Bluesoft Cosmos ficam em `accounts.CosmosConfig`, também em
+`OneToOne` com `Account`. A integração nasce desativada e não usa fallback do
+`.env`: cada conta informa seu próprio `X-Cosmos-Token` e `User-Agent`. O token
+é somente escrita; a API devolve apenas `api_token_configured`/`is_ready`.
+`apps/invoices/cosmos.py` pesquisa produtos por descrição, sugere NCM/CEST e
+mantém o resultado em cache por sete dias para economizar a cota da Cosmos.
+
 ## 3. Como rodar em desenvolvimento
 
 Pré-requisito: um venv Python com `pip install -r backend/requirements/development.txt`. Por padrão, dev usa **SQLite** e serviços locais em memória (sem precisar de Postgres/Redis rodando).
@@ -167,6 +174,7 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 - `GET /api/schema/` e `/api/schema/swagger-ui/` — OpenAPI via `drf-spectacular`.
 - `/admin/` — Django Admin (Unfold), com `/admin/login/` cobrindo o fluxo de primeiro acesso.
 - Todo o resto é `router.urls` (DRF `DefaultRouter`) — um ViewSet por recurso, RESTful padrão (list/retrieve/create/update/partial_update/destroy) mais actions customizadas onde necessário (ex.: `orders/send-to-kitchen`, `cash-register/open`, `cash-register/close`).
+- `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
 
 ## 10. Configuração / variáveis de ambiente
 

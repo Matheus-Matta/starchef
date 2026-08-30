@@ -155,9 +155,11 @@ def test_printer_test_connection_job_is_manual_only(
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
     # `test-connection` exige `CanUseOrManageDevices`; um manager comum não
     # tem `devices.manage` por padrão.
-    manager_user.profile.profile_type = "owner"
+    from apps.accounts.role_catalog import ensure_system_roles
+
+    manager_user.profile.role = ensure_system_roles(account)["admin"]
     manager_user.profile.branch = None
-    manager_user.profile.save(update_fields=["profile_type", "branch", "updated_at"])
+    manager_user.profile.save(update_fields=["role", "branch", "updated_at"])
     printer = Printer.objects.create(
         account=account,
         restaurant=restaurant,

@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.menu.models import Product, ProductAddon, ProductCategory
 from apps.restaurants.models import Branch, Restaurant
 
@@ -169,7 +170,7 @@ def test_create_without_restaurant_scope_gives_clear_error(db, account):
     from conftest import _authenticated_client
 
     user = get_user_model().objects.create_user(username="admin-sem-rest", password="x", is_superuser=True, is_staff=True)
-    UserProfile.objects.create(account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN)  # sem restaurant
+    UserProfile.objects.create(account=account, user=user, role=ensure_system_roles(account)["admin"])  # sem restaurant
     client = _authenticated_client(user)
 
     resp = client.post("/api/v1/menu/products/", {"name": "Sem Escopo", "internal_code": "Z1", "sale_price": "1.00"}, format="json")
@@ -183,7 +184,7 @@ def test_shared_category_can_be_created_without_restaurant(db, account):
     from conftest import _authenticated_client
 
     user = get_user_model().objects.create_user(username="admin-shared", password="x", is_superuser=True, is_staff=True)
-    UserProfile.objects.create(account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN)
+    UserProfile.objects.create(account=account, user=user, role=ensure_system_roles(account)["admin"])
     client = _authenticated_client(user)
 
     resp = client.post("/api/v1/menu/categories/", {"name": "Compartilhada"}, format="json")

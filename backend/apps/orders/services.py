@@ -7,6 +7,7 @@ from django.db import transaction
 from django.db.models import Max, Sum
 from django.utils import timezone
 
+from apps.core.access import has_role_at_least
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
@@ -694,8 +695,7 @@ def comp_order_item(item, user, reason=""):
                 "A cortesia só pode ser aplicada a itens já enviados à cozinha. Cancele itens que ainda estão pendentes."
             )
 
-        profile = getattr(user, "profile", None)
-        if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+        if not has_role_at_least(user, "manager"):
             raise ValidationError("Aplicar cortesia exige permissão de gerente.")
 
         item.status = OrderItem.STATUS_COMPED
@@ -744,8 +744,7 @@ def update_order_item_status(item, new_status, user, reason=""):
             )
 
         if item.status == OrderItem.STATUS_READY and new_status != OrderItem.STATUS_DELIVERED:
-            profile = getattr(user, "profile", None)
-            if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+            if not has_role_at_least(user, "manager"):
                 raise ValidationError("Alterar itens prontos exige permissão de gerente.")
 
         now = timezone.now()
@@ -792,8 +791,7 @@ def close_order(
         # para Decimal antes de comparar/gravar.
         discount = Decimal(str(discount or 0))
         if discount > Decimal("0.00"):
-            profile = getattr(user, "profile", None)
-            if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+            if not has_role_at_least(user, "manager"):
                 raise ValidationError("Aplicar desconto exige permissão de gerente.")
 
         order.discount = discount

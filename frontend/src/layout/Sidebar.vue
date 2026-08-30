@@ -97,6 +97,10 @@
           </span>
         </div>
         <div class="sidebar__mobile-profile-actions">
+          <RouterLink :to="{ name: 'docs' }" @click="$emit('close')">
+            <AppIcon name="book-open" :size="17" />
+            Ajuda
+          </RouterLink>
           <button type="button" @click="$emit('toggle-theme')">
             <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="17" />
             {{ theme === "dark" ? "Tema claro" : "Tema escuro" }}
@@ -113,6 +117,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 
 import AppIcon from "../components/AppIcon.vue";
 
@@ -220,6 +225,7 @@ const groups = computed(() =>
         canManage.value ? { id: "pagamentos", label: "Hist. pagamentos", icon: "dollar-sign" } : null,
         canManage.value ? { id: "notas-fiscais", label: "Notas fiscais", icon: "shield-check" } : null,
         canManage.value ? { id: "perfis-fiscais", label: "Perfis fiscais", icon: "percentage" } : null,
+        canSeeAllRestaurants.value ? { id: "configuracao-cosmos", label: "Configuração Cosmos", icon: "search" } : null,
         canSeeAllRestaurants.value ? { id: "configuracao-focus", label: "Configuração Focus", icon: "settings" } : null,
       ].filter(Boolean),
     },
@@ -617,12 +623,13 @@ function selectScope(restaurantId) {
   .sidebar__mobile-user-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .sidebar__mobile-user-copy strong { color: var(--text-strong); font-size: 13px; }
   .sidebar__mobile-user-copy small { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .sidebar__mobile-profile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .sidebar__mobile-profile-actions button {
+  .sidebar__mobile-profile-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .sidebar__mobile-profile-actions button,
+  .sidebar__mobile-profile-actions a {
     height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
     border: 1px solid var(--border); border-radius: var(--radius-md);
     background: var(--surface-card); color: var(--text-body);
-    font: var(--weight-bold) 12px/1 var(--font-sans);
+    font: var(--weight-bold) 12px/1 var(--font-sans); text-decoration: none;
   }
   .sidebar__mobile-profile-actions .sidebar__mobile-logout { color: var(--danger-text); background: var(--danger-subtle); }
 }

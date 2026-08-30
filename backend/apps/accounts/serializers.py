@@ -3,7 +3,8 @@ from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.models import Account, CosmosConfig, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription, UserProfile
+from apps.accounts.role_catalog import CODE_WAITER
 from apps.core.modules import ALL_MODULES, account_active_modules
 from apps.core.serializers import TIMESTAMP_READ_ONLY_FIELDS, TenantModelSerializer
 
@@ -95,6 +96,67 @@ class FocusNfeConfigSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
+class CosmosConfigSerializer(serializers.ModelSerializer):
+    api_token_configured = serializers.SerializerMethodField()
+    is_ready = serializers.BooleanField(read_only=True)
+    clear_api_token = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    class Meta:
+        model = CosmosConfig
+        fields = [
+            "id",
+            "account",
+            "api_token",
+            "api_token_configured",
+            "user_agent",
+            "timeout_seconds",
+            "is_active",
+            "is_ready",
+            "clear_api_token",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "account", "created_at", "updated_at"]
+        extra_kwargs = {
+            "api_token": {
+                "write_only": True,
+                "required": False,
+                "allow_blank": True,
+                "trim_whitespace": False,
+            },
+        }
+
+    def get_api_token_configured(self, obj):
+        return bool(obj.api_token)
+
+    def validate_timeout_seconds(self, value):
+        if not 1 <= value <= 60:
+            raise serializers.ValidationError("Use um timeout entre 1 e 60 segundos.")
+        return value
+
+    def validate(self, attrs):
+        active = attrs.get("is_active", getattr(self.instance, "is_active", False))
+        clear_token = attrs.get("clear_api_token", False)
+        submitted_token = attrs.get("api_token")
+        current_token = getattr(self.instance, "api_token", "")
+        token = "" if clear_token else (submitted_token or current_token)
+        user_agent = attrs.get("user_agent", getattr(self.instance, "user_agent", ""))
+        if active and not token:
+            raise serializers.ValidationError({"api_token": "Informe o token da API Cosmos antes de ativar."})
+        if active and not str(user_agent or "").strip():
+            raise serializers.ValidationError({"user_agent": "Informe o User-Agent fornecido pela Cosmos."})
+        return attrs
+
+    def update(self, instance, validated_data):
+        clear_token = validated_data.pop("clear_api_token", False)
+        if validated_data.get("api_token") == "":
+            validated_data.pop("api_token")
+        if clear_token:
+            validated_data["api_token"] = ""
+            validated_data["is_active"] = False
+        return super().update(instance, validated_data)
+
+
 class SubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subscription
@@ -138,7 +200,6 @@ class UserProfileSerializer(TenantModelSerializer):
         fields = [
             "id",
             "phone",
-            "profile_type",
             "account",
             "role",
             "role_name",
@@ -264,7 +325,7 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
         if (
             request is not None
             and request.data.get("client") == "waiter_app"
-            and profile.profile_type != UserProfile.PROFILE_WAITER
+            and (not profile.role_id or profile.role.code != CODE_WAITER)
         ):
             raise AuthenticationFailed(
                 "Use uma conta com perfil de garçom para entrar neste aplicativo.",
@@ -277,7 +338,7 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             "email": self.user.email,
             "name": self.user.get_full_name(),
             "is_superuser": self.user.is_superuser,
-            "profile_type": profile.profile_type if profile else None,
+            "profile_type": profile.role.code if profile and profile.role_id else None,
             "account_id": str(account.id) if account else None,
             "account_name": account.name if account else None,
             "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,

@@ -73,10 +73,11 @@ def test_superuser_bypasses_module_gating(api_client, account, restaurant, branc
     from django.contrib.auth import get_user_model
 
     from apps.accounts.models import UserProfile
+    from apps.accounts.role_catalog import ensure_system_roles
 
     root = get_user_model().objects.create_superuser("root", "root@starchef.test", "secret123")
     UserProfile.objects.create(
-        account=account, user=root, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+        account=account, user=root, role=ensure_system_roles(account)["admin"], restaurant=restaurant, branch=branch
     )
     _auth(api_client, root)
     # Conta sem o modulo `logistica` habilitado: o superuser passa mesmo assim.

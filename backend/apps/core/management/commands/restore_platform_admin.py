@@ -13,6 +13,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import CODE_ADMIN, SYSTEM_ROLE_CODES, ensure_system_roles
 from apps.core.tenant import tenant_context
 from apps.restaurants.models import Branch, Restaurant
 
@@ -29,9 +30,10 @@ class Command(BaseCommand):
             help="Conta a vincular. Padrão: a conta mais antiga (a inicial).",
         )
         parser.add_argument(
-            "--profile-type",
-            default=UserProfile.PROFILE_ADMIN,
-            choices=[choice[0] for choice in UserProfile.PROFILE_CHOICES],
+            "--role-code",
+            default=CODE_ADMIN,
+            choices=SYSTEM_ROLE_CODES,
+            help="Cargo fixo a restaurar (Perfis de Acesso: waiter/cashier/manager/admin).",
         )
         parser.add_argument(
             "--no-superuser",
@@ -56,7 +58,7 @@ class Command(BaseCommand):
             self.stdout.write("  perfil: NENHUM (usuário sem conta vinculada)")
         else:
             self.stdout.write(
-                f"  perfil: conta={profile.account.slug} tipo={profile.profile_type} "
+                f"  perfil: conta={profile.account.slug} cargo={profile.role.code if profile.role_id else '(nenhum)'} "
                 f"ativo={profile.is_active} excluído={bool(profile.deleted_at)}"
             )
         self.stdout.write(f"  conta alvo: {account.slug} ({account.name})")
@@ -86,7 +88,7 @@ class Command(BaseCommand):
             )
             profile = profile or UserProfile(user=user)
             profile.account = account
-            profile.profile_type = options["profile_type"]
+            profile.role = ensure_system_roles(account)[options["role_code"]]
             profile.is_active = True
             profile.deleted_at = None  # desfaz o soft delete, se houver
             # Restaurante/filial só são preenchidos quando o perfil não tem:
@@ -102,7 +104,7 @@ class Command(BaseCommand):
             f"  #{user.pk} {user.username} — staff={user.is_staff} superuser={user.is_superuser}"
         )
         self.stdout.write(
-            f"  perfil {profile.profile_type} na conta {account.slug} — "
+            f"  perfil {profile.role.code} na conta {account.slug} — "
             f"restaurante={getattr(profile.restaurant, 'trade_name', None)} "
             f"filial={getattr(profile.branch, 'name', None)}"
         )

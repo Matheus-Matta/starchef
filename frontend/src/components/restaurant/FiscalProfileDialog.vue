@@ -10,6 +10,12 @@
     @save="save"
   >
     <AppErrorSummary :message="formError" />
+    <CosmosFiscalAssist
+      v-if="!profile"
+      class="fpd__cosmos"
+      :name="form.name"
+      @suggestion="applyCosmosSuggestion"
+    />
     <AppFormGrid :columns="2">
       <AppFormField label="Nome" name="name" :error="fieldErrors.name" required full>
         <template #default="{ fieldId, invalid }">
@@ -111,6 +117,7 @@ import AppEntityDialog from "../form/AppEntityDialog.vue";
 import AppFormGrid from "../form/AppFormGrid.vue";
 import AppFormField from "../form/AppFormField.vue";
 import AppErrorSummary from "../form/AppErrorSummary.vue";
+import CosmosFiscalAssist from "../fiscal/CosmosFiscalAssist.vue";
 import { ResourceService } from "../../services/ResourceService";
 import { normalizeApiError } from "../../utils/apiError";
 
@@ -138,6 +145,18 @@ function emptyForm() {
 }
 
 const form = reactive(emptyForm());
+const cosmosAppliedFields = reactive({});
+
+function applyCosmosSuggestion(suggestion) {
+  for (const [field, value] of Object.entries(suggestion.fields || {})) {
+    if (!(field in form) || value == null || value === "") continue;
+    if (form[field] === "" || form[field] === cosmosAppliedFields[field]) {
+      form[field] = value;
+      cosmosAppliedFields[field] = value;
+      dirty.value = true;
+    }
+  }
+}
 
 // Reabre com os dados certos toda vez que o modal abre (criar limpo, editar preenchido).
 watch(
@@ -147,6 +166,7 @@ watch(
     Object.assign(form, props.profile ? { ...emptyForm(), ...props.profile } : emptyForm());
     formError.value = "";
     fieldErrors.value = {};
+    Object.keys(cosmosAppliedFields).forEach((key) => delete cosmosAppliedFields[key]);
     dirty.value = false;
   },
 );
@@ -178,5 +198,6 @@ async function save() {
 </script>
 
 <style scoped>
+.fpd__cosmos { margin: 0 0 16px; }
 .fpd__switch { display: flex; align-items: center; gap: 10px; height: var(--control-h); color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); }
 </style>

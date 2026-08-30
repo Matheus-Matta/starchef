@@ -71,6 +71,7 @@ frontend/
 | `/kds` | `KdsView` | Painel de cozinha ao vivo |
 | `/kds-estacoes` | `KdsStationsView` | Cadastro de estações/colunas do KDS — tela própria |
 | `/configuracao-focus` | `FocusNfeConfigView` | Credenciais, endpoints e webhook Focus isolados por conta |
+| `/configuracao-cosmos` | `CosmosConfigView` | Token, User-Agent e ativação da busca fiscal Cosmos por conta |
 | `/relatorios/{vendas,pedidos,produtos,pagamentos,garcons,restaurantes}` | `ReportsView` | Uma view compartilhada, `section` muda o conteúdo |
 | `/<resource>`, `/<resource>/create`, `/<resource>/:id`, `/<resource>/:id/edit` | `ResourceListViewPro` / `ResourceFormView` | Geradas automaticamente a partir de `config/resources.js` |
 
@@ -106,6 +107,12 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 Dois composables sustentam isso:
 - **`useResourceList.js`** — paginação/ordenação/busca server-side para `ResourceListViewPro`.
 - **`useResourceForm.js`** — carrega o registro, monta o form a partir de `formFields`, faz POST/PATCH, mapeia erros de validação do backend para os campos.
+
+Na criação de um perfil fiscal, `CosmosFiscalAssist.vue` observa o nome e,
+quando a integração da conta está ativa, consulta a Cosmos depois de uma pausa
+curta na digitação. NCM e CEST encontrados preenchem o formulário para revisão,
+sem sobrescrever campos alterados manualmente. O mesmo componente aparece no
+diálogo de criação rápida aberto pelo cadastro de produto.
 
 No recurso **Restaurantes**, o campo “Definir senha de ações do caixa” recebe a
 senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou

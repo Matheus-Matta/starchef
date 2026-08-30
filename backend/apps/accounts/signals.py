@@ -3,7 +3,7 @@
 from django.conf import settings
 
 from apps.accounts.management.commands.sync_permissions import sync_permissions
-from apps.accounts.models import FocusNfeConfig
+from apps.accounts.models import CosmosConfig, FocusNfeConfig
 
 
 def sync_permission_catalog(**_kwargs):
@@ -45,6 +45,13 @@ def provision_account_focus_nfe_config(sender, instance, created, **_kwargs):
             account=instance,
             defaults=focus_nfe_defaults_from_settings(),
         )
+
+
+def provision_account_cosmos_config(sender, instance, created, **_kwargs):
+    """Toda conta nasce com a integracao Cosmos opcional e desativada."""
+
+    if created:
+        CosmosConfig.objects.get_or_create(account=instance)
 
 
 def provision_account_system_roles(sender, instance, created, **_kwargs):

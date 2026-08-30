@@ -15,9 +15,10 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from apps.core.cookies import clear_auth_cookies, set_auth_cookies
 
 from apps.accounts.limits import assert_can_create_user
-from apps.accounts.models import Account, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription
+from apps.accounts.models import Account, CosmosConfig, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription
 from apps.accounts.serializers import (
     AccountSerializer,
+    CosmosConfigSerializer,
     FocusNfeConfigSerializer,
     GlobalSystemConfigSerializer,
     PermissionSerializer,
@@ -58,6 +59,35 @@ class FocusNfeConfigView(APIView):
         self._assert_admin(request)
         config = self._account_config(request)
         serializer = FocusNfeConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class CosmosConfigView(APIView):
+    """Consulta e edita a credencial Cosmos da conta autenticada."""
+
+    required_module = "financeiro"
+
+    def _account_config(self, request):
+        account = getattr(request, "account", None)
+        if account is None:
+            raise PermissionDenied("Conta nao identificada.")
+        config, _ = CosmosConfig.objects.get_or_create(account=account)
+        return config
+
+    def _assert_admin(self, request):
+        if not is_tenant_admin(request.user):
+            raise PermissionDenied("Apenas administradores da conta podem configurar a Cosmos.")
+
+    def get(self, request):
+        self._assert_admin(request)
+        return Response(CosmosConfigSerializer(self._account_config(request)).data)
+
+    def patch(self, request):
+        self._assert_admin(request)
+        config = self._account_config(request)
+        serializer = CosmosConfigSerializer(config, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
@@ -133,7 +163,7 @@ class MeView(APIView):
                 "email": request.user.email,
                 "name": request.user.get_full_name(),
                 "is_superuser": request.user.is_superuser,
-                "profile_type": profile.profile_type if profile else None,
+                "profile_type": profile.role.code if profile and profile.role_id else None,
                 "account_id": str(account.id) if account else None,
                 "account_name": account.name if account else None,
                 "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,
@@ -247,7 +277,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if not profile.restaurant_id:
             return queryset.none()
         queryset = queryset.filter(profile__restaurant_id=profile.restaurant_id)
-        if profile.branch_id and profile.profile_type not in {"admin", "owner"}:
+        if profile.branch_id:
             queryset = queryset.filter(profile__branch_id=profile.branch_id)
         return queryset
 

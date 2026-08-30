@@ -68,20 +68,6 @@ export const COMMAND_STATUS_LABELS = {
   occupied: "Em uso",
 };
 
-export const PROFILE_TYPE_LABELS = {
-  admin: "Admin",
-  owner: "Proprietario",
-  manager: "Gerente",
-  waiter: "Garcom",
-  kitchen: "Cozinha",
-  cashier: "Caixa",
-  driver: "Entregador",
-};
-
-export const PROFILE_TYPE_OPTIONS = Object.entries(PROFILE_TYPE_LABELS).map(
-  ([value, label]) => ({ value, label }),
-);
-
 export const MOVEMENT_TYPE_LABELS = {
   in: "Entrada",
   out: "Saida",

@@ -123,8 +123,7 @@ def admin_login_or_first_access(request):
                     UserProfile.objects.create(
                         account=account,
                         user=user,
-                        profile_type=UserProfile.PROFILE_ADMIN,
-                        role=admin_role,
+                                    role=admin_role,
                         is_active=True,
                     )
                     FirstAccessState.objects.create()

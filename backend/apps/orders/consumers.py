@@ -3,6 +3,7 @@ import json
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+from apps.core.access import has_role_at_least
 from apps.orders.events import kitchen_group
 from apps.restaurants.models import Branch
 
@@ -62,6 +63,6 @@ class KitchenConsumer(AsyncWebsocketConsumer):
         profile = getattr(user, "profile", None)
         if not profile or not profile.account_id or profile.account_id != branch.account_id:
             return None
-        if str(profile.branch_id) == str(self.branch_id) or profile.profile_type in {"admin", "owner", "manager"}:
+        if str(profile.branch_id) == str(self.branch_id) or has_role_at_least(user, "manager"):
             return profile.account_id
         return None

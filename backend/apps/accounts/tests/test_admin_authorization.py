@@ -4,6 +4,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.accounts.models import Account, Permission, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 
 pytestmark = pytest.mark.django_db
 
@@ -71,11 +72,18 @@ def test_usuario_com_permissao_autoriza_cancelamento(api_client, manager_user):
     assert response.status_code == 200
 
 
-def test_usuario_sem_permissao_nao_autoriza_cancelamento(api_client, manager_user):
+def test_usuario_sem_permissao_nao_autoriza_cancelamento(api_client, account, restaurant, branch):
+    # Garçom: o único cargo fixo cujo catálogo NÃO inclui "orders.cancel"
+    # (waiter/cashier ficam abaixo de manager na hierarquia — ver role_catalog.py).
+    waiter = User.objects.create_user(username="garcom-sem-permissao", password="x")
+    UserProfile.objects.create(
+        account=account, user=waiter, role=ensure_system_roles(account)["waiter"], restaurant=restaurant, branch=branch
+    )
+
     response = api_client.post(
         "/api/v1/auth/authorize-admin/",
         {
-            "username": manager_user.username,
+            "username": waiter.username,
             "password": "x",
             "permission": "orders.cancel",
         },
@@ -100,7 +108,7 @@ def test_admin_de_outra_conta_nao_autoriza(api_client):
     UserProfile.objects.create(
         account=other_account,
         user=other_admin,
-        profile_type=UserProfile.PROFILE_ADMIN,
+        role=ensure_system_roles(other_account)["admin"],
     )
 
     response = api_client.post(

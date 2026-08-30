@@ -7,6 +7,7 @@ const AppLayout = () => import("../layout/AppLayout.vue");
 const DashboardView = () => import("../views/DashboardView.vue");
 const HomeView = () => import("../views/HomeView.vue");
 const KdsView = () => import("../views/KdsView.vue");
+const HelpCenterView = () => import("../views/HelpCenterView.vue");
 const LoginScreen = () => import("../views/LoginScreen.vue");
 const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
 const PdvView = () => import("../views/PdvView.vue");
@@ -14,6 +15,7 @@ const OrderEditView = () => import("../views/OrderEditView.vue");
 const CashRegisterView = () => import("../views/CashRegisterView.vue");
 const ReportsView = () => import("../views/ReportsView.vue");
 const KdsStationsView = () => import("../views/KdsStationsView.vue");
+const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
 const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
 const RestaurantFiscalConfigView = () => import("../views/RestaurantFiscalConfigView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
@@ -89,6 +91,12 @@ const resourceRoutes = resources.filter((resource) => !CUSTOM_RESOURCES.has(reso
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: "/docs",
+      name: "docs",
+      component: HelpCenterView,
+      meta: { public: true, allowAuthenticated: true, title: "Central de ajuda" },
+    },
     { path: "/login", name: "login", component: LoginScreen, meta: { public: true, title: "Login" } },
     { path: "/esqueci-senha", name: "forgot-password", component: PasswordRecoveryView, meta: { public: true, title: "Esqueci minha senha" } },
     { path: "/redefinir-senha", name: "reset-password", component: PasswordRecoveryView, meta: { public: true, title: "Redefinir senha" } },
@@ -105,6 +113,7 @@ export const router = createRouter({
         { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
         { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds", fullWidth: true } },
         { path: "kds-estacoes", name: "kds-estacoes", component: KdsStationsView, meta: { requiresAuth: true, title: "Estações KDS", nav: "kds-estacoes" } },
+        { path: "configuracao-cosmos", name: "configuracao-cosmos", component: CosmosConfigView, meta: { requiresAuth: true, title: "Configuração Cosmos", nav: "configuracao-cosmos", module: "financeiro" } },
         { path: "configuracao-focus", name: "configuracao-focus", component: FocusNfeConfigView, meta: { requiresAuth: true, title: "Configuração Focus NFe", nav: "configuracao-focus", module: "financeiro" } },
         // Configuração fiscal de UM restaurante (emitente, CSC, certificado,
         // empresa na Focus). Fica fora de `buildResourceRoutes` porque não é
@@ -130,7 +139,9 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
   if (to.meta.public) {
-    if (auth.isAuthenticated && (await auth.validateSession())) {
+    // A central de ajuda e publica para visitantes e tambem deve continuar
+    // acessivel pelo menu de perfil de quem ja esta autenticado.
+    if (!to.meta.allowAuthenticated && auth.isAuthenticated && (await auth.validateSession())) {
       return { name: "painel" };
     }
     return true;

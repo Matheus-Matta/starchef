@@ -14,7 +14,8 @@ from django.db import transaction
 from apps.notifications.events import broadcast_notification
 from apps.notifications.models import Notification
 
-MANAGER_PROFILE_TYPES = ("admin", "owner", "manager")
+# Cargos (Role.code) com acesso de gerência — waiter < cashier < manager < admin.
+MANAGER_ROLE_CODES = ("manager", "admin")
 
 
 def serialize_notification(notification):
@@ -36,12 +37,12 @@ def serialize_notification(notification):
 
 
 def managers_of_account(account_id, exclude_user_id=None):
-    """Usuários que podem tratar aprovações da conta (admin/owner/manager)."""
+    """Usuários que podem tratar aprovações da conta (cargo gerente ou acima)."""
     User = get_user_model()
     queryset = User.objects.filter(
         is_active=True,
         profile__account_id=account_id,
-        profile__profile_type__in=MANAGER_PROFILE_TYPES,
+        profile__role__code__in=MANAGER_ROLE_CODES,
     )
     if exclude_user_id:
         queryset = queryset.exclude(pk=exclude_user_id)

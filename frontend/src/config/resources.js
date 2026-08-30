@@ -43,8 +43,6 @@ import {
   SLA_PRIORITY_OPTIONS,
   SLA_TYPE_LABELS,
   SLA_TYPE_OPTIONS,
-  PROFILE_TYPE_LABELS,
-  PROFILE_TYPE_OPTIONS,
   SCALE_PROTOCOL_LABELS,
   SCALE_PROTOCOL_OPTIONS,
   SECTOR_OPTIONS,
@@ -698,7 +696,7 @@ export const resources = [
       { key: "username", label: "Usuario" },
       { key: "email", label: "Email" },
       { key: "first_name", label: "Nome" },
-      { key: "profile.profile_type", label: "Perfil", type: "status", map: PROFILE_TYPE_LABELS },
+      { key: "profile.role_name", label: "Cargo" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -709,9 +707,8 @@ export const resources = [
       { name: "last_name", label: "Sobrenome", type: "text", section: "Identificação" },
       { name: "profile.phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Identificação" },
       // Perfil (UserProfile) — enviado aninhado como `profile.*`.
-      { name: "profile.profile_type", label: "Perfil de acesso", type: "dropdown", options: PROFILE_TYPE_OPTIONS, default: "waiter", required: true, section: "Perfil de acesso" },
       { name: "profile.restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil de acesso" },
-      { name: "profile.role", label: "Cargo / permissões", type: "remote-dropdown", endpoint: "/roles/", optionLabel: "name", optionValue: "id", placeholder: "Sem cargo específico", globalScope: true, section: "Perfil de acesso" },
+      { name: "profile.role", label: "Cargo / permissões", type: "remote-dropdown", endpoint: "/roles/", optionLabel: "name", optionValue: "id", required: true, globalScope: true, section: "Perfil de acesso" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Perfil de acesso" },
     ],
   },

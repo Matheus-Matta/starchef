@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.core.tenant import tenant_context
 from apps.menu.models import Ingredient, Product, ProductCategory, Recipe, RecipeItem
 from apps.payments.models import PaymentMethod
@@ -58,7 +59,7 @@ def manager_user(db, account, restaurant, branch):
     UserProfile.objects.create(
         account=account,
         user=user,
-        profile_type=UserProfile.PROFILE_MANAGER,
+        role=ensure_system_roles(account)["manager"],
         restaurant=restaurant,
         branch=branch,
     )
@@ -71,7 +72,7 @@ def waiter_user(db, account, restaurant, branch):
     UserProfile.objects.create(
         account=account,
         user=user,
-        profile_type=UserProfile.PROFILE_WAITER,
+        role=ensure_system_roles(account)["waiter"],
         restaurant=restaurant,
         branch=branch,
     )

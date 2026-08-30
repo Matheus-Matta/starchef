@@ -35,19 +35,15 @@
 
         <div class="focus-grid">
           <label class="focus-field focus-field--full">
-            <span>Novo token mestre</span>
-            <Password
+            <span>Token mestre</span>
+            <SecretField
               v-model="form.master_token"
-              :placeholder="form.master_token_configured ? '••••••••' : 'Informe o token mestre da Focus'"
-              :feedback="false"
-              toggle-mask
-              input-class="focus-input"
+              :configured="form.master_token_configured"
+              :revealing="revealSecret.master_token"
+              placeholder="Informe o token mestre da Focus"
+              @edit="startEditingSecret('master_token')"
             />
-            <small>
-              {{ form.master_token_configured
-                ? "As bolinhas indicam que há um token salvo. Digite apenas para substituir."
-                : "Use o Token Principal de Produção da Focus; tokens de emissão não cadastram empresas." }}
-            </small>
+            <small>Use o Token Principal de Produção da Focus; tokens de emissão não cadastram empresas.</small>
           </label>
 
           <label class="focus-field">
@@ -116,15 +112,14 @@
             <InputText v-model="form.webhook_authorization_header" class="focus-input" placeholder="Authorization" />
           </label>
           <label class="focus-field">
-            <span>Novo segredo do webhook</span>
-            <Password
+            <span>Segredo do webhook</span>
+            <SecretField
               v-model="form.webhook_authorization"
-              :placeholder="form.webhook_authorization_configured ? '••••••••' : 'Informe um segredo forte'"
-              :feedback="false"
-              toggle-mask
-              input-class="focus-input"
+              :configured="form.webhook_authorization_configured"
+              :revealing="revealSecret.webhook_authorization"
+              placeholder="Informe um segredo forte"
+              @edit="startEditingSecret('webhook_authorization')"
             />
-            <small v-if="form.webhook_authorization_configured">As bolinhas indicam que o segredo já está salvo.</small>
           </label>
         </div>
 
@@ -148,11 +143,11 @@ import { onMounted, reactive, ref } from "vue";
 import Button from "primevue/button";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
-import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
+import SecretField from "../components/form/SecretField.vue";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 
@@ -175,8 +170,21 @@ const form = reactive({
   webhook_authorization_header: "Authorization",
 });
 
+// Um segredo em edição mostra o campo real (vazio, pronto para um valor
+// novo); fora disso, mostra a máscara com o selo "Salvo" — nunca o
+// placeholder sozinho, que fica indistinguível de "vazio" quando focado.
+const revealSecret = reactive({ master_token: false, webhook_authorization: false });
+function startEditingSecret(field) {
+  revealSecret[field] = true;
+  form[field] = "";
+}
+
 function applyConfig(data) {
   Object.assign(form, data, { master_token: "", webhook_authorization: "" });
+  // Toda recarga do servidor é um estado "recém-salvo": volta para a máscara
+  // em vez de deixar o campo preso em modo de edição depois de um save.
+  revealSecret.master_token = false;
+  revealSecret.webhook_authorization = false;
 }
 
 async function load() {

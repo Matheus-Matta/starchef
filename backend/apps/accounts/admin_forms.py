@@ -123,7 +123,6 @@ class AccountCreationForm(AccountChangeForm):
         UserProfile.objects.create(
             account=account,
             user=user,
-            profile_type=UserProfile.PROFILE_ADMIN,
             role=admin_role,
             is_active=True,
         )

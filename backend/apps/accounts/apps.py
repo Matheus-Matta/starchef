@@ -9,6 +9,7 @@ class AccountsConfig(AppConfig):
     def ready(self):
         from apps.accounts.models import Account
         from apps.accounts.signals import (
+            provision_account_cosmos_config,
             provision_account_focus_nfe_config,
             provision_account_system_roles,
             sync_permission_catalog,
@@ -23,6 +24,11 @@ class AccountsConfig(AppConfig):
             provision_account_focus_nfe_config,
             sender=Account,
             dispatch_uid="accounts.provision_focus_nfe_config",
+        )
+        post_save.connect(
+            provision_account_cosmos_config,
+            sender=Account,
+            dispatch_uid="accounts.provision_cosmos_config",
         )
         post_save.connect(
             provision_account_system_roles,

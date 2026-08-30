@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.core.access import has_role_at_least, is_tenant_admin
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
@@ -212,16 +213,20 @@ def close_cash_register(*, cash_register, user, actual_amount, notes="", termina
 
 
 def _require_manager(user):
-    profile = getattr(user, "profile", None)
-    if not (user.is_superuser or profile and profile.profile_type in {"admin", "owner", "manager"}):
+    if not has_role_at_least(user, "manager"):
         raise ValidationError("Esta operação exige um gerente ou supervisor.")
 
 
-def _is_account_owner(user):
-    """O dono da conta (owner) — ou superusuário da plataforma — pode aprovar a
-    própria divergência/sangria, dispensando a validação de segregação."""
-    profile = getattr(user, "profile", None)
-    return bool(user.is_superuser or (profile and profile.profile_type == "owner"))
+def _can_self_approve(user):
+    """Administrador da conta — ou superusuário da plataforma — pode aprovar a
+    própria divergência/sangria, dispensando a validação de segregação.
+
+    Antes da unificação de "perfil de acesso" em cargo único, só o "owner"
+    tinha esse bypass (nunca o "admin"); como os dois já eram tratados como
+    equivalentes em todo o resto do sistema, o bypass passa a valer para
+    qualquer usuário com cargo admin.
+    """
+    return bool(user.is_superuser or is_tenant_admin(user))
 
 
 @transaction.atomic
@@ -316,7 +321,7 @@ def approve_cash_operation(
         if movement:
             movement = CashMovement.objects.select_for_update().get(pk=movement.pk, cash_register=cash_register)
             # A senha do restaurante já é a autorização — dispensa a segregação operador≠aprovador.
-            if not authorized_by_password and movement.operator_id == user.id and not _is_account_owner(user):
+            if not authorized_by_password and movement.operator_id == user.id and not _can_self_approve(user):
                 raise ValidationError("O operador não pode aprovar a própria sangria.")
             movement.status = "approved"
             movement.authorized_by = user
@@ -328,7 +333,7 @@ def approve_cash_operation(
             }
             movement.save()
             return movement
-        if not authorized_by_password and cash_register.opened_by_id == user.id and not _is_account_owner(user):
+        if not authorized_by_password and cash_register.opened_by_id == user.id and not _can_self_approve(user):
             raise ValidationError("O operador não pode aprovar a própria divergência.")
         cash_register.approved_by = user
         cash_register.approved_at = timezone.now()

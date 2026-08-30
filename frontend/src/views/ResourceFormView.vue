@@ -125,6 +125,12 @@
         </p>
       </div>
 
+      <CosmosFiscalAssist
+        v-if="isFiscalProfile && isCreate"
+        :name="formData.name"
+        @suggestion="applyCosmosSuggestion"
+      />
+
       <div v-for="group in formSections" :key="group.title || '_default'" class="rpage__section">
         <h3 v-if="group.title" class="rpage__section-title">{{ group.title }}</h3>
         <div class="rpage__grid">
@@ -378,7 +384,7 @@
  * modo "ver" vem de `config/detailMeta`. Aqui ficam so o template, a navegacao
  * e a montagem dos dados de exibicao.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
@@ -396,6 +402,7 @@ import ProductVariationsEditor from "../components/product/ProductVariationsEdit
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
 import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
 import FiscalProfileDialog from "../components/restaurant/FiscalProfileDialog.vue";
+import CosmosFiscalAssist from "../components/fiscal/CosmosFiscalAssist.vue";
 import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
@@ -546,6 +553,19 @@ async function submit() {
 
 /* ── Modo "ver": monta hero, metricas e campos a partir de config/detailMeta ── */
 const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View remonta por :key)
+const isFiscalProfile = computed(() => props.endpoint === "/fiscal/profiles/");
+const cosmosAppliedFields = reactive({});
+
+function applyCosmosSuggestion(suggestion) {
+  for (const [field, value] of Object.entries(suggestion.fields || {})) {
+    if (!(field in formData) || value == null || value === "") continue;
+    const current = formData[field];
+    if (current == null || current === "" || current === cosmosAppliedFields[field]) {
+      formData[field] = value;
+      cosmosAppliedFields[field] = value;
+    }
+  }
+}
 const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
