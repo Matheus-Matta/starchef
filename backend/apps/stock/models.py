@@ -24,6 +24,7 @@ class StockMovement(TenantModel):
     TYPE_ADJUSTMENT = "adjustment"
     TYPE_SALE = "sale"
     TYPE_INVENTORY = "inventory"
+    TYPE_REVERSAL = "reversal"
 
     TYPE_CHOICES = [
         (TYPE_IN, "In"),
@@ -31,6 +32,7 @@ class StockMovement(TenantModel):
         (TYPE_ADJUSTMENT, "Adjustment"),
         (TYPE_SALE, "Sale"),
         (TYPE_INVENTORY, "Inventory"),
+        (TYPE_REVERSAL, "Reversal"),
     ]
 
     ingredient = models.ForeignKey("menu.Ingredient", related_name="stock_movements", on_delete=models.PROTECT)
@@ -42,8 +44,33 @@ class StockMovement(TenantModel):
     unit_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     total_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     reason = models.TextField(blank=True)
+    # Chave da ORIGEM do consumo: um item de pedido, um componente daquele item
+    # e o evento que o gerou. E o que impede a segunda chamada de baixar tudo
+    # de novo — a baixa era disparada tanto no envio para a cozinha quanto no
+    # pagamento, e cada lote enviado percorria o pedido inteiro outra vez.
+    source_key = models.CharField(max_length=200, blank=True, db_index=True)
+    # A composicao congelada no momento da baixa (receita, rendimento, unidade,
+    # fator de conversao). Editar a ficha tecnica depois nao pode reescrever o
+    # que ja saiu do estoque.
+    source_snapshot = models.JSONField(default=dict, blank=True)
+    reversal_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="reversals",
+        on_delete=models.PROTECT,
+    )
 
     class Meta:
+        constraints = [
+            # Vazio nao conflita (movimento manual nao tem origem automatica);
+            # preenchido, e unico na conta.
+            models.UniqueConstraint(
+                fields=["account", "source_key"],
+                condition=~models.Q(source_key="") & models.Q(deleted_at__isnull=True),
+                name="unique_stock_movement_source_key",
+            ),
+        ]
         indexes = [
             models.Index(fields=["branch", "ingredient", "created_at"]),
             models.Index(fields=["branch", "movement_type", "created_at"]),

@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.menu.barcodes import GTIN_LENGTHS, is_valid_gtin, normalize_barcode
+from apps.menu.units import IncompatibleUnitError, convert
 from apps.menu.models import (
     Ingredient,
     Menu,
@@ -61,11 +62,59 @@ class ProductVariationSerializer(TenantModelSerializer):
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
+def _validate_consumption(serializer, attrs, *, ingredient_field, quantity_field, unit_field):
+    """Coerencia entre insumo, quantidade e unidade de um vinculo de consumo."""
+    def current(name):
+        if name in attrs:
+            return attrs[name]
+        return getattr(serializer.instance, name, None)
+
+    ingredient = current(ingredient_field)
+    quantity = current(quantity_field) or 0
+    unit = current(unit_field) or ""
+
+    if ingredient is None:
+        if quantity:
+            raise serializers.ValidationError(
+                {ingredient_field: "Informe o insumo consumido ou zere a quantidade de consumo."}
+            )
+        return attrs
+
+    if quantity <= 0:
+        raise serializers.ValidationError(
+            {quantity_field: "Informe quanto do insumo cada unidade vendida consome."}
+        )
+
+    if unit and unit != ingredient.unit:
+        try:
+            convert(quantity, unit, ingredient.unit)
+        except IncompatibleUnitError:
+            raise serializers.ValidationError(
+                {unit_field: f"Nao e possivel converter {unit} para {ingredient.unit}, a unidade do insumo."}
+            ) from None
+    return attrs
+
+
 class ProductAddonSerializer(TenantModelSerializer):
     class Meta:
         model = ProductAddon
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate(self, attrs):
+        """O consumo declarado precisa fechar com a unidade do insumo.
+
+        A checagem vive aqui, e nao so na baixa: no momento da venda uma
+        unidade incoerente e apenas ignorada (o pedido ja foi pago e travar o
+        fechamento deixaria o operador sem saida), entao o erro passaria em
+        silencio e so apareceria como falta no inventario.
+        """
+        return _validate_consumption(
+            self, attrs,
+            ingredient_field="ingredient",
+            quantity_field="consumption_quantity",
+            unit_field="consumption_unit",
+        )
 
 
 class RecipeItemSerializer(TenantModelSerializer):
@@ -176,7 +225,16 @@ class ProductSerializer(TenantModelSerializer):
         attrs = super().validate(attrs)
         if selected is not serializers.empty:
             attrs["restaurants"] = selected
-        return attrs
+        # Vínculo direto (refrigerante em lata e afins): mesma coerência
+        # exigida do adicional. Produto COM ficha técnica ignora este vínculo
+        # na baixa — a ficha descreve a composição real —, mas um cadastro
+        # incoerente continua sendo recusado aqui.
+        return _validate_consumption(
+            self, attrs,
+            ingredient_field="stock_ingredient",
+            quantity_field="stock_consumption_quantity",
+            unit_field="stock_consumption_unit",
+        )
 
 
 class IngredientSerializer(TenantModelSerializer):

@@ -2,6 +2,24 @@ from django.db import models
 
 from apps.core.models import TenantModel
 
+UNIT_UNIT = "unit"
+UNIT_KG = "kg"
+UNIT_G = "g"
+UNIT_L = "l"
+UNIT_ML = "ml"
+
+# Vocabulario unico de unidades. Fica no modulo, e nao dentro de `Ingredient`,
+# porque `ProductAddon` e `Product` — declarados antes dele — tambem precisam
+# declarar em que unidade escrevem o consumo. Ver `apps.menu.units` para a
+# conversao entre elas.
+UNIT_CHOICES = [
+    (UNIT_UNIT, "Unit"),
+    (UNIT_KG, "Kg"),
+    (UNIT_G, "g"),
+    (UNIT_L, "L"),
+    (UNIT_ML, "ml"),
+]
+
 
 class ProductCategory(TenantModel):
     # Categorias são compartilhadas entre restaurantes (reutilizáveis): o vínculo
@@ -119,6 +137,19 @@ class Product(TenantModel):
     average_preparation_time = models.PositiveIntegerField(default=15, help_text="Minutes")
     production_sector = models.CharField(max_length=20, choices=SECTOR_CHOICES, default=SECTOR_KITCHEN)
     controls_stock = models.BooleanField(default=False)
+    # Produto vendido direto da prateleira (refrigerante em lata, agua): nao
+    # tem ficha tecnica, mas move saldo. Sem este vinculo, `controls_stock`
+    # ficava marcado e nao baixava nada — a promessa do campo nao se cumpria.
+    stock_ingredient = models.ForeignKey(
+        "menu.Ingredient",
+        null=True,
+        blank=True,
+        related_name="direct_products",
+        on_delete=models.PROTECT,
+        help_text="Insumo consumido por unidade vendida, para produtos sem ficha tecnica.",
+    )
+    stock_consumption_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    stock_consumption_unit = models.CharField(max_length=12, choices=UNIT_CHOICES, blank=True)
     allows_addons = models.BooleanField(default=True)
     allows_notes = models.BooleanField(default=True)
     requires_variation = models.BooleanField(
@@ -192,6 +223,19 @@ class ProductAddon(TenantModel):
     products = models.ManyToManyField(Product, blank=True, related_name="addons")
     price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     production_sector = models.CharField(max_length=20, choices=Product.SECTOR_CHOICES, default=Product.SECTOR_KITCHEN)
+    # O adicional continua sendo uma oferta comercial; o vinculo abaixo diz o
+    # que ele consome fisicamente. Sem ele, "bacon extra" vendia sem tirar
+    # bacon nenhum do estoque, e a diferenca so aparecia no inventario.
+    ingredient = models.ForeignKey(
+        "menu.Ingredient",
+        null=True,
+        blank=True,
+        related_name="addons",
+        on_delete=models.PROTECT,
+        help_text="Insumo consumido por unidade vendida deste adicional.",
+    )
+    consumption_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    consumption_unit = models.CharField(max_length=12, choices=UNIT_CHOICES, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -204,19 +248,15 @@ class ProductAddon(TenantModel):
 
 
 class Ingredient(TenantModel):
-    UNIT_UNIT = "unit"
-    UNIT_KG = "kg"
-    UNIT_G = "g"
-    UNIT_L = "l"
-    UNIT_ML = "ml"
+    # Aliases do vocabulario do modulo — o codigo existente (e as migrations)
+    # referenciam `Ingredient.UNIT_*`, entao eles continuam valendo.
+    UNIT_UNIT = UNIT_UNIT
+    UNIT_KG = UNIT_KG
+    UNIT_G = UNIT_G
+    UNIT_L = UNIT_L
+    UNIT_ML = UNIT_ML
 
-    UNIT_CHOICES = [
-        (UNIT_UNIT, "Unit"),
-        (UNIT_KG, "Kg"),
-        (UNIT_G, "g"),
-        (UNIT_L, "L"),
-        (UNIT_ML, "ml"),
-    ]
+    UNIT_CHOICES = UNIT_CHOICES
 
     # Ingredientes são compartilhados entre restaurantes (reutilizáveis): o vínculo
     # de restaurante é opcional. Sobrescreve o FK obrigatório do TenantModel.
