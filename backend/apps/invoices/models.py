@@ -122,6 +122,7 @@ class FiscalConfig(TenantModel):
     trade_name = models.CharField(max_length=180, blank=True, help_text="Nome fantasia.")
     address_line = models.CharField(max_length=255, blank=True)
     address_number = models.CharField(max_length=20, blank=True, help_text="Numero do endereco do emitente.")
+    district = models.CharField(max_length=120, blank=True, help_text="Bairro do endereco do emitente.")
     city = models.CharField(max_length=120, blank=True)
     city_ibge = models.CharField(max_length=7, blank=True, help_text="Codigo IBGE do municipio.")
     uf = models.CharField(max_length=2, blank=True)

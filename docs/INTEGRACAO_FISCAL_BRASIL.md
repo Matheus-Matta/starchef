@@ -76,7 +76,7 @@ O `.env` real é ignorado pelo Git. O contrato versionado está em `.env.example
 Para usar a Focus:
 
 1. Cadastre razão social, nome fantasia, CNPJ, IE, logradouro, número do
-   endereço, cidade, UF e CEP.
+   endereço, bairro, cidade, UF e CEP.
 2. Escolha **Focus NFe** em **Provedor fiscal**.
 3. Salve o restaurante.
 4. Na configuração fiscal, escolha NF-e ou NFC-e, ambiente, CRT e série.

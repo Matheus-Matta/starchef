@@ -549,7 +549,10 @@ function clearAdvancedFilters() {
 /* ── Navegação ─────────────────────────────────────────────────────── */
 function openDetail(row) {
   if (!row?.id) return;
-  router.push({ name: `${route.name}--view`, params: { id: row.id } });
+  // Recursos com tela de documento propria (entrada/saida de estoque) nao tem
+  // a rota `--view` gerada: o documento E a tela de detalhe.
+  const target = proCfg.value.detailRoute || `${route.name}--view`;
+  router.push({ name: target, params: { id: row.id } });
 }
 function onRowClick(event) {
   const target = event.originalEvent?.target;

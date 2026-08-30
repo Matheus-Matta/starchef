@@ -1,0 +1,51 @@
+/* Layout compartilhado pelas telas de documento de estoque (entrada e saida).
+   As duas sao o mesmo objeto visual — cabecalho, cartoes e linhas repetidas —
+   e mante-las em um arquivo so evita que uma mude de aparencia sem a outra. */
+
+.stock-doc { display: flex; flex-direction: column; gap: 18px; max-width: 1180px; margin: 0 auto; }
+
+.stock-doc__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.stock-doc__eyebrow { color: var(--text-brand); font: var(--weight-bold) 11px/1 var(--font-sans); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.stock-doc__head h1 { margin: 7px 0 5px; color: var(--text-strong); font-size: 25px; }
+.stock-doc__head p { margin: 0; max-width: 640px; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.stock-doc__head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.stock-doc__alert { display: flex; align-items: center; gap: 9px; padding: 12px 14px; border: 1px solid var(--danger-border); border-radius: var(--radius-md); background: var(--danger-subtle); color: var(--danger-text); font-size: 13px; }
+
+.stock-card { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.stock-card h2 { margin: 0 0 16px; color: var(--text-strong); font-size: 17px; }
+.stock-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.stock-card__head h2 { margin: 0 0 4px; }
+.stock-card__head p { margin: 0; color: var(--text-muted); font-size: 12.5px; line-height: 1.5; }
+
+.stock-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.stock-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text-body); font: var(--weight-bold) 12px/1.2 var(--font-sans); }
+.stock-field--full { grid-column: 1 / -1; }
+.stock-field--wide { grid-column: span 2; }
+.stock-field em { color: var(--danger-text); font-style: normal; }
+.stock-field small { color: var(--text-muted); font-weight: var(--weight-medium); }
+
+/* Uma linha repetida do documento: numero, campos e o botao de remover. */
+.stock-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 40px; gap: 12px; align-items: start; padding: 14px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-ground); }
+.stock-row__index { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; margin-top: 18px; border-radius: 8px; background: var(--brand-subtle); color: var(--text-brand); font: var(--weight-bold) 12px/1 var(--font-sans); }
+.stock-row__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.stock-row__remove { margin-top: 14px; }
+.stock-row__total { justify-content: flex-start; }
+.stock-row__total strong { display: flex; align-items: center; min-height: var(--control-h); color: var(--text-strong); font-size: 13px; }
+
+.stock-empty { padding: 40px 20px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); text-align: center; color: var(--text-muted); }
+.stock-empty i { font-size: 26px; }
+.stock-empty p { margin: 10px 0 14px; font-size: 13px; }
+
+.stock-table { font-size: 13px; }
+
+@media (max-width: 1080px) {
+  .stock-grid, .stock-row__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stock-field--wide { grid-column: 1 / -1; }
+}
+
+@media (max-width: 680px) {
+  .stock-doc__head { flex-direction: column; }
+  .stock-grid, .stock-row__fields { grid-template-columns: 1fr; }
+  .stock-row { grid-template-columns: 28px minmax(0, 1fr) 36px; }
+}

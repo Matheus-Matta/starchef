@@ -69,6 +69,7 @@ def make_config(account, restaurant, branch, **kwargs):
         "trade_name": "Restaurante Teste",
         "address_line": "Rua das Flores",
         "address_number": "10",
+        "district": "Centro",
         "city": "Sao Paulo",
         "uf": "SP",
         "zip_code": "01001-000",
@@ -99,6 +100,7 @@ def test_company_payload_maps_restaurant_and_nfce_settings(account, restaurant, 
     assert payload["inscricao_estadual"] == "123456789"
     assert payload["logradouro"] == "Rua das Flores"
     assert payload["numero"] == "10"
+    assert payload["bairro"] == "Centro"
     assert payload["regime_tributario"] == 1
     assert payload["habilita_nfce"] is True
     assert payload["habilita_nfe"] is False
@@ -122,7 +124,7 @@ def test_manual_sync_rejects_missing_essential_data_before_calling_focus(
 ):
     account.enabled_modules = ["financeiro"]
     account.save(update_fields=["enabled_modules"])
-    config = make_config(account, restaurant, branch, ie="", address_number="", csc_token="")
+    config = make_config(account, restaurant, branch, ie="", address_number="", district="", csc_token="")
 
     response = admin_client.post(f"/api/v1/fiscal/config/{config.pk}/focus-sync/", {}, format="json")
 
@@ -130,10 +132,12 @@ def test_manual_sync_rejects_missing_essential_data_before_calling_focus(
     assert response.data["error"]["code"] == "focus_not_configured"
     assert "Inscricao Estadual" in response.data["message"]
     assert "Numero do endereco" in response.data["message"]
+    assert "Bairro" in response.data["message"]
     assert "CSC" in response.data["message"]
     assert {item["field"] for item in response.data["config"]["focus_missing_fields"]} >= {
         "ie",
         "address_number",
+        "district",
         "csc_token",
     }
     mock_request.assert_not_called()

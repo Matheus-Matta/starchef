@@ -70,7 +70,17 @@ from apps.restaurants.views import (
     TableSectorViewSet,
     TableViewSet,
 )
-from apps.stock.views import StockAlertView, StockLocationViewSet, StockMovementViewSet
+from apps.stock.views import (
+    StockAlertView,
+    StockEntryViewSet,
+    StockExitViewSet,
+    StockExpiryReportView,
+    StockLabelTemplateViewSet,
+    StockLocationViewSet,
+    StockLotViewSet,
+    StockMovementViewSet,
+    StockSettingsViewSet,
+)
 from apps.data_exchange.views import CsvExportView, CsvParseView
 
 
@@ -135,6 +145,11 @@ router.register("print-jobs", PrintJobViewSet, basename="print-jobs")
 router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings")
 router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
+router.register("stock/settings", StockSettingsViewSet, basename="stock-settings")
+router.register("stock/label-templates", StockLabelTemplateViewSet, basename="stock-label-templates")
+router.register("stock/lots", StockLotViewSet, basename="stock-lots")
+router.register("stock/entries", StockEntryViewSet, basename="stock-entries")
+router.register("stock/exits", StockExitViewSet, basename="stock-exits")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
 router.register("notifications", NotificationViewSet, basename="notifications")
 
@@ -167,6 +182,7 @@ urlpatterns = [
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
+    path("api/v1/stock/reports/expiry/", StockExpiryReportView.as_view(), name="stock-expiry-report"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
     path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
     path("api/v1/integrations/cosmos/config/", CosmosConfigView.as_view(), name="cosmos-config"),

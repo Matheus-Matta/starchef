@@ -149,13 +149,38 @@ def test_for_restaurant_returns_the_same_config_every_time(admin_client, restaur
     assert FiscalConfig.all_objects.filter(restaurant=restaurant).count() == 1
 
 
+def test_fiscal_config_accepts_emitter_district(admin_client, restaurant, financeiro):
+    config = ensure_fiscal_config(restaurant)
+
+    response = admin_client.patch(
+        f"/api/v1/fiscal/config/{config.pk}/",
+        {"district": "Centro"},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["district"] == "Centro"
+    config.refresh_from_db()
+    assert config.district == "Centro"
+
+
 def test_for_restaurant_lists_what_is_still_missing(admin_client, restaurant, financeiro):
     response = admin_client.get("/api/v1/fiscal/config/for-restaurant/", {"restaurant": str(restaurant.pk)})
 
     assert response.status_code == 200, response.data
     missing = {item["field"] for item in response.data["focus_missing_fields"]}
     # O restaurante da fixture nao tem endereco/cidade/UF/CEP.
-    assert {"ie", "address_line", "address_number", "city", "uf", "zip_code", "csc_id", "csc_token"} <= missing
+    assert {
+        "ie",
+        "address_line",
+        "address_number",
+        "district",
+        "city",
+        "uf",
+        "zip_code",
+        "csc_id",
+        "csc_token",
+    } <= missing
 
 
 def test_for_restaurant_requires_the_restaurant_param(admin_client, financeiro):

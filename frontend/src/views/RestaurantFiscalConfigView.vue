@@ -138,6 +138,10 @@
             <InputText v-model="form.address_number" placeholder="Ex.: 123 ou S/N" fluid />
           </label>
           <label class="rfiscal__field">
+            <span>Bairro<b>*</b></span>
+            <InputText v-model="form.district" fluid />
+          </label>
+          <label class="rfiscal__field">
             <span>Cidade<b>*</b></span>
             <InputText v-model="form.city" fluid />
           </label>
@@ -380,7 +384,7 @@ function startEditingSecret(field) {
 // sincronização, auditoria) fica fora do PATCH de propósito.
 const EDITABLE_FIELDS = [
   "provider", "document_model", "environment", "crt", "series", "is_active",
-  "corporate_name", "trade_name", "cnpj", "ie", "address_line", "address_number", "city", "city_ibge", "uf", "zip_code",
+  "corporate_name", "trade_name", "cnpj", "ie", "address_line", "address_number", "district", "city", "city_ibge", "uf", "zip_code",
   "csc_id", "qr_base_url", "portal_url", "certificate_ref",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
@@ -400,6 +404,7 @@ const form = reactive({
   ie: "",
   address_line: "",
   address_number: "",
+  district: "",
   city: "",
   city_ibge: "",
   uf: "",

@@ -100,3 +100,68 @@ describe("configuração das listagens operacionais", () => {
     expect(kds.map.ready).toBe("Pronto");
   });
 });
+
+describe("recursos de estoque por lote", () => {
+  const byName = (name) => resources.find((resource) => resource.name === name);
+
+  it("expoe entradas, saidas, lotes e modelos de etiqueta na Logistica", () => {
+    for (const name of ["estoque-entradas", "estoque-saidas", "estoque-lotes", "etiquetas-estoque"]) {
+      expect(byName(name), name).toBeDefined();
+      expect(byName(name).module, name).toBe("logistica");
+    }
+  });
+
+  it("entrada e saida usam tela de documento, nao o formulario generico", () => {
+    // Um documento tem uma LISTA de linhas que cresce enquanto o operador
+    // digita; o formulario de campos fixos nao representa isso.
+    for (const name of ["estoque-entradas", "estoque-saidas"]) {
+      const resource = byName(name);
+      expect(resource.documentView, name).toBe(true);
+      expect(resource.formFields, name).toBeUndefined();
+      expect(resource.pro.primaryAction.route, name).toBeTruthy();
+      expect(resource.pro.detailRoute, name).toBeTruthy();
+    }
+  });
+
+  it("lotes sao somente leitura: nascem da confirmacao de uma entrada", () => {
+    const lots = byName("estoque-lotes");
+    expect(lots.endpoint).toBe("/stock/lots/");
+    expect(lots.formFields).toBeUndefined();
+  });
+
+  it("o modelo de etiqueta traz as medidas do papel adesivo", () => {
+    const template = byName("etiquetas-estoque");
+    const names = template.formFields.map((field) => field.name);
+    expect(names).toEqual(expect.arrayContaining(["width_mm", "height_mm", "margin_mm", "code_type"]));
+  });
+});
+
+describe("vinculo de consumo de insumo (Fase 0 do plano de estoque)", () => {
+  const byName = (name) => resources.find((resource) => resource.name === name);
+
+  it("o adicional declara qual insumo consome e quanto", () => {
+    // Sem isto, "bacon extra" vendia sem tirar bacon nenhum do estoque.
+    const addon = byName("adicionais");
+    const names = addon.formFields.map((field) => field.name);
+    expect(names).toEqual(
+      expect.arrayContaining(["ingredient", "consumption_quantity", "consumption_unit"]),
+    );
+    // Campos do Modulo Logistica: nao aparecem para quem nao tem o modulo.
+    for (const name of ["ingredient", "consumption_quantity", "consumption_unit"]) {
+      expect(addon.formFields.find((field) => field.name === name).module).toBe("logistica");
+    }
+  });
+
+  it("o produto vendido direto declara o insumo que baixa", () => {
+    // O recurso de produtos se chama "cardapio" no config.
+    const product = byName("cardapio");
+    const names = product.formFields.map((field) => field.name);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "stock_ingredient",
+        "stock_consumption_quantity",
+        "stock_consumption_unit",
+      ]),
+    );
+  });
+});

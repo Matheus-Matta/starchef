@@ -214,8 +214,13 @@ const groups = computed(() =>
       label: "Logistica",
       module: "logistica",
       items: [
-        canManage.value ? { id: "estoque", label: "Estoque", icon: "package" } : null,
-        canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
+        canManage.value ? { id: "estoque-saidas", label: "Saidas", icon: "truck" } : null,
+        canManage.value ? { id: "estoque-lotes", label: "Lotes e validades", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "estoque", label: "Movimentacoes", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "map-pin" } : null,
+        canManage.value ? { id: "etiquetas-estoque", label: "Modelos de etiqueta", icon: "tag" } : null,
+        canManage.value ? { id: "configuracao-estoque", label: "Configuração do estoque", icon: "settings" } : null,
       ].filter(Boolean),
     },
     {

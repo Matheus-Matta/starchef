@@ -217,12 +217,12 @@ número do ambiente escolhido na empresa Focus.
 ### Dados do emitente
 
 Preencha CNPJ, inscrição estadual, razão social, nome fantasia, logradouro,
-**número do endereço**, município, código IBGE, UF e CEP exatamente como constam
+**número do endereço**, bairro, município, código IBGE, UF e CEP exatamente como constam
 no cadastro fiscal. O CNPJ deve ter 14 dígitos e precisa coincidir com o
 certificado. A inscrição estadual aceita de 2 a 14 dígitos ou o texto `ISENTO`.
 
 Antes de chamar a API da Focus, **Sincronizar agora** valida razão social, CNPJ,
-IE, logradouro, número, município, CEP e UF. Para NFC-e também exige CSC e ID do
+IE, logradouro, número, bairro, município, CEP e UF. Para NFC-e também exige CSC e ID do
 CSC. Na primeira sincronização também exige o certificado A1 e sua senha; depois
 que a empresa já está vinculada, a Focus conserva o certificado e o StarChef
 não exige um novo upload em toda atualização. Ausência ou formato inválido
@@ -375,6 +375,7 @@ obtenha/valide o CSC de produção e confirme a série e a numeração de produ�
 | `Certificado inválido/vencido` | CNPJ, validade, arquivo A1 e senha |
 | `Código CSC não configurado` | CSC e ID do mesmo ambiente na SEFAZ |
 | Rejeição de item | NCM, CFOP, CSOSN/CST, PIS e COFINS |
+| `cMun` inesperado; esperado `xBairro` | Preencha o bairro do emitente, salve, sincronize a empresa e reenvie a nota |
 | Duplicidade na emissão da nota | Série e próximo número já utilizados |
 | QR Code inválido | CSC/ID, ambiente e URL de QR Code da UF |
 | NF-e permanece processando | Webhook, segredo, logs e consulta de status |

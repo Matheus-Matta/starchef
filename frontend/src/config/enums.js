@@ -321,3 +321,49 @@ export const TERMINAL_ROLE_OPTIONS = [
 export const TERMINAL_ROLE_LABELS = Object.fromEntries(
   TERMINAL_ROLE_OPTIONS.map((option) => [option.value, option.label]),
 );
+
+// ── Estoque por lote (Fases 1-3 do plano de estoque) ──────────────────
+export const STOCK_DOC_STATUS_LABELS = {
+  draft: "Rascunho",
+  posted: "Confirmado",
+  cancelled: "Cancelado",
+};
+
+export const STOCK_LOT_STATUS_LABELS = {
+  available: "Disponivel",
+  depleted: "Esgotado",
+  blocked: "Bloqueado",
+  expired: "Vencido",
+  discarded: "Descartado",
+};
+
+export const STOCK_EXIT_TYPE_LABELS = {
+  consumption: "Consumo manual",
+  loss: "Perda",
+  discard: "Descarte",
+  transfer: "Transferencia",
+  internal: "Uso interno",
+  other: "Outro",
+};
+
+export const STOCK_EXIT_TYPE_OPTIONS = Object.entries(STOCK_EXIT_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+export const STOCK_PICKING_LABELS = {
+  fifo: "FIFO — primeiro a entrar, primeiro a sair",
+  fefo: "FEFO — primeiro a vencer, primeiro a sair",
+};
+
+export const STOCK_PICKING_OPTIONS = Object.entries(STOCK_PICKING_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+export const LABEL_CODE_TYPE_LABELS = {
+  qr: "QR Code",
+  code128: "Codigo de barras (Code 128)",
+};
+
+export const LABEL_CODE_TYPE_OPTIONS = Object.entries(LABEL_CODE_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);

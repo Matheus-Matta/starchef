@@ -22,7 +22,12 @@ import {
   FISCAL_ORIGEM_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
+  LABEL_CODE_TYPE_LABELS,
+  LABEL_CODE_TYPE_OPTIONS,
   MOVEMENT_TYPE_LABELS,
+  STOCK_DOC_STATUS_LABELS,
+  STOCK_EXIT_TYPE_LABELS,
+  STOCK_LOT_STATUS_LABELS,
   DELIVERY_STATUS_LABELS,
   ORDER_TYPE_LABELS,
   PAYMENT_STATUS_LABELS,
@@ -264,6 +269,11 @@ export const resources = [
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
       // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
       { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
+      // Produto vendido direto da prateleira (refrigerante em lata): não tem
+      // ficha técnica, mas move saldo. Produto COM receita ignora este vínculo.
+      { name: "stock_ingredient", label: "Insumo consumido (venda direta)", type: "remote-dropdown", endpoint: "/menu/ingredients/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum (usa a ficha técnica)", module: "logistica", section: "Produção e logística", hint: "Só para produtos sem receita. Com ficha técnica, ela é que manda." },
+      { name: "stock_consumption_quantity", label: "Quantidade por unidade vendida", type: "decimal", module: "logistica", section: "Produção e logística" },
+      { name: "stock_consumption_unit", label: "Unidade do consumo", type: "dropdown", options: UNIT_OPTIONS, module: "logistica", section: "Produção e logística" },
       // Switches de disponibilidade — alinhados em grid na seção "Disponibilidade".
       { name: "available_for_table", label: "Disponivel para mesa", type: "boolean", default: true, section: "Disponibilidade" },
       { name: "available_for_counter", label: "Disponivel para balcao", type: "boolean", default: true, section: "Disponibilidade" },
@@ -375,6 +385,10 @@ export const resources = [
       { name: "production_sector", label: "Setor", type: "dropdown", options: SECTOR_OPTIONS },
       // O vínculo com produtos é gerenciado na edição do PRODUTO (não aqui).
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
+      // Sem este vínculo, "bacon extra" vende sem tirar bacon do estoque.
+      { name: "ingredient", label: "Insumo consumido", type: "remote-dropdown", endpoint: "/menu/ingredients/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum (apenas comercial)", module: "logistica", section: "Consumo de estoque" },
+      { name: "consumption_quantity", label: "Quantidade por unidade vendida", type: "decimal", module: "logistica", section: "Consumo de estoque", hint: "Quanto do insumo sai a cada adicional vendido." },
+      { name: "consumption_unit", label: "Unidade do consumo", type: "dropdown", options: UNIT_OPTIONS, module: "logistica", section: "Consumo de estoque", hint: "Precisa ser da mesma grandeza da unidade do insumo." },
     ],
   },
 
@@ -407,6 +421,93 @@ export const resources = [
       { name: "name", label: "Nome do local", type: "text", required: true },
       { name: "description", label: "Descricao", type: "textarea", full: true },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    // Lista das entradas. O documento em si (cabecalho + linhas) tem tela
+    // propria: um formulario de campos fixos nao da conta de uma lista de
+    // insumos que cresce enquanto o operador digita.
+    name: "estoque-entradas",
+    documentView: true,
+    pro: {
+      primaryAction: { label: "Nova entrada", icon: "pi pi-plus", route: "estoque-entrada-nova" },
+      detailRoute: "estoque-entrada-documento",
+    },
+    module: "logistica",
+    title: "Entradas de Estoque",
+    endpoint: "/stock/entries/",
+    columns: [
+      { key: "effective_date", label: "Data", type: "date" },
+      { key: "document_number", label: "Documento" },
+      { key: "supplier", label: "Fornecedor" },
+      { key: "location_name", label: "Local" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+    ],
+  },
+  {
+    name: "estoque-saidas",
+    documentView: true,
+    pro: {
+      primaryAction: { label: "Nova saída", icon: "pi pi-plus", route: "estoque-saida-nova" },
+      detailRoute: "estoque-saida-documento",
+    },
+    module: "logistica",
+    title: "Saidas de Estoque",
+    endpoint: "/stock/exits/",
+    columns: [
+      { key: "effective_date", label: "Data", type: "date" },
+      { key: "exit_type", label: "Tipo", type: "status", map: STOCK_EXIT_TYPE_LABELS },
+      { key: "location_name", label: "Local" },
+      { key: "reason", label: "Motivo" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+    ],
+  },
+  {
+    // Somente leitura: um lote nasce da confirmacao de uma entrada, e e o
+    // movimento positivo dela que explica de onde veio o saldo.
+    name: "estoque-lotes",
+    module: "logistica",
+    title: "Lotes e Validades",
+    endpoint: "/stock/lots/",
+    columns: [
+      { key: "code", label: "Lote" },
+      { key: "ingredient_name", label: "Insumo" },
+      { key: "location_name", label: "Local" },
+      { key: "quantity", label: "Saldo", align: "right" },
+      { key: "entered_at", label: "Entrada", type: "date" },
+      { key: "expires_at", label: "Validade", type: "date" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_LOT_STATUS_LABELS },
+    ],
+  },
+  {
+    name: "etiquetas-estoque",
+    module: "logistica",
+    title: "Modelos de Etiqueta",
+    endpoint: "/stock/label-templates/",
+    columns: [
+      { key: "name", label: "Modelo" },
+      { key: "width_mm", label: "Largura (mm)", align: "right" },
+      { key: "height_mm", label: "Altura (mm)", align: "right" },
+      { key: "code_type", label: "Codigo", type: "status", map: LABEL_CODE_TYPE_LABELS },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do modelo", type: "text", required: true, section: "Identificação" },
+      { name: "code_type", label: "Tipo de codigo", type: "dropdown", options: LABEL_CODE_TYPE_OPTIONS, section: "Identificação" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
+      { name: "width_mm", label: "Largura (mm)", type: "decimal", default: 60, required: true, section: "Papel" },
+      { name: "height_mm", label: "Altura (mm)", type: "decimal", default: 40, required: true, section: "Papel" },
+      { name: "margin_mm", label: "Margem (mm)", type: "decimal", default: 2, section: "Papel" },
+      { name: "columns", label: "Etiquetas por linha", type: "number", default: 1, section: "Papel" },
+      { name: "font_size_pt", label: "Tamanho da fonte (pt)", type: "decimal", default: 8, section: "Papel" },
+      { name: "show_ingredient", label: "Mostrar insumo", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_lot_code", label: "Mostrar codigo do lote", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_supplier_lot", label: "Mostrar lote do fornecedor", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_entered_at", label: "Mostrar data de entrada", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_expires_at", label: "Mostrar validade", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_quantity", label: "Mostrar quantidade", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_location", label: "Mostrar local", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "custom_text", label: "Texto livre", type: "text", full: true, section: "Campos impressos" },
     ],
   },
 

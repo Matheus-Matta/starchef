@@ -20,6 +20,10 @@ const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
 const RestaurantFiscalConfigView = () => import("../views/RestaurantFiscalConfigView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
+const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
+const StockExitFormView = () => import("../views/StockExitFormView.vue");
+const StockExitPickingView = () => import("../views/StockExitPickingView.vue");
+const StockSettingsView = () => import("../views/StockSettingsView.vue");
 
 /**
  * Gera as rotas de um recurso a partir do seu schema (config/resources.js):
@@ -63,6 +67,8 @@ function buildResourceRoutes(resource) {
       meta: meta(`Novo — ${resource.title}`),
     });
   }
+
+  if (resource.documentView) return routes;
 
   routes.push(
     {
@@ -119,6 +125,12 @@ export const router = createRouter({
         // empresa na Focus). Fica fora de `buildResourceRoutes` porque não é
         // uma das telas do CRUD genérico — chega pelo menu de ações da lista.
         { path: "restaurantes/:id/fiscal", name: "restaurante-fiscal", component: RestaurantFiscalConfigView, props: true, meta: { requiresAuth: true, title: "Configuração fiscal do restaurante", nav: "restaurantes", module: "financeiro" } },
+        { path: "estoque-entradas/nova", name: "estoque-entrada-nova", component: StockEntryFormView, meta: { requiresAuth: true, title: "Nova entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
+        { path: "estoque-entradas/:id", name: "estoque-entrada-documento", component: StockEntryFormView, props: true, meta: { requiresAuth: true, title: "Entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
+        { path: "estoque-saidas/nova", name: "estoque-saida-nova", component: StockExitFormView, meta: { requiresAuth: true, title: "Nova saída de estoque", nav: "estoque-saidas", module: "logistica" } },
+        { path: "estoque-saidas/:id/conferencia", name: "estoque-saida-conferencia", component: StockExitPickingView, props: true, meta: { requiresAuth: true, title: "Conferência de saída", nav: "estoque-saidas", module: "logistica" } },
+        { path: "estoque-saidas/:id", name: "estoque-saida-documento", component: StockExitFormView, props: true, meta: { requiresAuth: true, title: "Saída de estoque", nav: "estoque-saidas", module: "logistica" } },
+        { path: "configuracao-estoque", name: "configuracao-estoque", component: StockSettingsView, meta: { requiresAuth: true, title: "Configuração do estoque", nav: "configuracao-estoque", module: "logistica" } },
         { path: "relatorios", name: "relatorios", redirect: { name: "relatorio-vendas" } },
         { path: "relatorios/vendas", name: "relatorio-vendas", component: ReportsView, props: { section: "sales" }, meta: { requiresAuth: true, title: "Relatório de vendas", nav: "relatorio-vendas" } },
         { path: "relatorios/pedidos", name: "relatorio-pedidos", component: ReportsView, props: { section: "orders" }, meta: { requiresAuth: true, title: "Relatório de pedidos", nav: "relatorio-pedidos" } },
