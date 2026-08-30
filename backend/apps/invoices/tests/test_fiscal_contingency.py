@@ -3,7 +3,9 @@ fechamento da venda: a nota cai em contingencia (tpEmis=9), fica pending mas
 imprimivel, e pode ser retransmitida depois via `reprocess_pending_fiscal_invoices`.
 """
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -105,6 +107,26 @@ def test_resend_retries_only_the_chosen_contingency_note(account, restaurant, br
     assert resent.pk == invoice.pk
     assert resent.status == Invoice.STATUS_ISSUED
     assert resent.authorization_protocol == "135250000000001"
+
+
+def test_resend_refreshes_emission_date_and_access_key(account, restaurant, branch, manager_user):
+    _SucceedsOnRetryProvider.attempts = 0
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch, provider="test_succeeds_on_retry")
+    order = _make_order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+    invoice.fiscal_payload["emission"] = "2025-01-10T12:00:00+00:00"
+    invoice.access_key = "old-access-key"
+    invoice.save(update_fields=["fiscal_payload", "access_key", "updated_at"])
+    retry_time = datetime(2026, 8, 30, 18, 45, tzinfo=timezone.utc)
+
+    with patch("apps.invoices.services.timezone.now", return_value=retry_time):
+        resent = resend_fiscal_invoice(invoice, user=manager_user)
+
+    assert resent.fiscal_payload["emission"] == retry_time.isoformat()
+    assert resent.issued_at == retry_time
+    assert resent.access_key != "old-access-key"
+    assert resent.access_key[2:6] == "2608"
 
 
 def test_resend_persists_new_failure_as_error(account, restaurant, branch, manager_user):

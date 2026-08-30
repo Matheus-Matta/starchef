@@ -126,6 +126,33 @@ def test_payload_maps_approved_payments_and_cash_change(mock_post, account, rest
 
 
 @patch("requests.post")
+def test_payload_maps_order_fees_to_other_expenses(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "35" + "0" * 42,
+        "protocolo": "135250000000001",
+    })
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    order.service_fee = Decimal("2.50")
+    order.delivery_fee = Decimal("1.50")
+    order.discount = Decimal("1.00")
+    order.total = Decimal("28.00")
+    order.save(update_fields=["service_fee", "delivery_fee", "discount", "total", "updated_at"])
+
+    emit_fiscal_invoice(order, user=manager_user)
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["valor_produtos"] == "25.00"
+    assert sent_payload["valor_desconto"] == "1.00"
+    assert sent_payload["valor_outras_despesas"] == "4.00"
+    assert sent_payload["valor_total"] == "28.00"
+    assert sent_payload["items"][0]["valor_desconto"] == "1.00"
+    assert sent_payload["items"][0]["valor_outras_despesas"] == "4.00"
+
+
+@patch("requests.post")
 def test_processing_response_stays_pending_without_contingency(mock_post, account, restaurant, branch, manager_user):
     mock_post.return_value = _fake_response(200, {"status": "processando_autorizacao"})
     product = _make_product(account, restaurant, branch)

@@ -1,11 +1,14 @@
 """Provedores de emissao fiscal do StarChef."""
 
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import FocusNfeConfig
 from apps.invoices.models import FiscalConfig, Invoice
 
 _REGISTRY = {}
+TWO_PLACES = Decimal("0.01")
 
 
 def register_provider(cls):
@@ -162,7 +165,56 @@ class FocusNfeProvider(FiscalProvider):
             result.append({"forma_pagamento": self._payment_code(payment), "valor_pagamento": str(paid_value)})
         return result or [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
 
-    def _build_item(self, item, config):
+    @staticmethod
+    def _allocate_total(items, total):
+        """Rateia um total fiscal entre os itens sem perder centavos."""
+
+        total = Decimal(total).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        if not total:
+            return {}
+
+        products_total = sum((item.total_price for item in items), start=Decimal("0.00"))
+        if products_total <= 0:
+            raise RuntimeError("Focus NFe: nao e possivel ratear valores em uma nota sem produtos.")
+
+        allocations = {}
+        allocated = Decimal("0.00")
+        for item in items[:-1]:
+            amount = (total * item.total_price / products_total).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            amount = min(amount, total - allocated)
+            allocations[item.pk] = amount
+            allocated += amount
+        allocations[items[-1].pk] = total - allocated
+        return allocations
+
+    @staticmethod
+    def _validate_totals(invoice, items):
+        """Valida e devolve despesas que explicam o total da NF-e."""
+
+        items_total = sum((item.total_price for item in items), start=Decimal("0.00")).quantize(
+            TWO_PLACES, rounding=ROUND_HALF_UP
+        )
+        products_total = invoice.products_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        discount_total = invoice.discount_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        invoice_total = invoice.total_amount.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+        if items_total != products_total:
+            raise RuntimeError(
+                "Focus NFe: total dos itens difere do valor dos produtos "
+                f"({items_total} != {products_total})."
+            )
+        if discount_total < 0 or discount_total > products_total:
+            raise RuntimeError("Focus NFe: o desconto fiscal deve estar entre zero e o valor dos produtos.")
+
+        other_expenses = invoice_total - products_total + discount_total
+        if other_expenses < 0:
+            raise RuntimeError(
+                "Focus NFe: total fiscal inconsistente; o valor total deve corresponder a "
+                "produtos - desconto + outras despesas."
+            )
+        return other_expenses
+
+    def _build_item(self, item, config, *, discount=Decimal("0.00"), other_expenses=Decimal("0.00")):
         payload = {
             "numero_item": item.line_number,
             "codigo_produto": item.code or str(item.line_number),
@@ -186,6 +238,10 @@ class FocusNfeProvider(FiscalProvider):
         }
         if item.cest:
             payload["codigo_cest"] = item.cest
+        if discount:
+            payload["valor_desconto"] = str(discount)
+        if other_expenses:
+            payload["valor_outras_despesas"] = str(other_expenses)
         if item.icms_rate:
             payload.update(
                 {
@@ -203,6 +259,12 @@ class FocusNfeProvider(FiscalProvider):
         return payload
 
     def _build_payload(self, invoice, config):
+        items = list(invoice.items.all().order_by("line_number"))
+        if not items:
+            raise RuntimeError("Focus NFe: a nota nao possui itens fiscais.")
+        other_expenses = self._validate_totals(invoice, items)
+        discounts_by_item = self._allocate_total(items, invoice.discount_total)
+        expenses_by_item = self._allocate_total(items, other_expenses)
         payments = self._build_payments(invoice)
         change_total = sum(
             (
@@ -222,10 +284,19 @@ class FocusNfeProvider(FiscalProvider):
             "cnpj_emitente": config.cnpj,
             "valor_produtos": str(invoice.products_total),
             "valor_desconto": str(invoice.discount_total),
+            "valor_outras_despesas": str(other_expenses),
             "valor_total": str(invoice.total_amount),
             "valor_total_tributos": str(invoice.tax_approx_total),
             "modalidade_frete": "9",
-            "items": [self._build_item(item, config) for item in invoice.items.all()],
+            "items": [
+                self._build_item(
+                    item,
+                    config,
+                    discount=discounts_by_item.get(item.pk, Decimal("0.00")),
+                    other_expenses=expenses_by_item.get(item.pk, Decimal("0.00")),
+                )
+                for item in items
+            ],
             "formas_pagamento": payments,
         }
         if change_total:

@@ -292,6 +292,34 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
         return invoice
 
 
+def _refresh_emission_for_retry(invoice, config):
+    """Atualiza dhEmi e os dados locais derivados antes de uma retransmissao."""
+
+    emission_dt = timezone.now()
+    fiscal_payload = dict(invoice.fiscal_payload or {})
+    access_key, numeric_code = build_access_key(
+        uf=config.uf,
+        emission_date=emission_dt,
+        cnpj=config.cnpj,
+        model=invoice.document_model,
+        series=invoice.series,
+        number=invoice.number,
+        numeric_code=fiscal_payload.get("cNF"),
+        emission_type=invoice.emission_type,
+    )
+    invoice.access_key = access_key
+    invoice.qr_code_data = build_nfce_qrcode(
+        access_key=access_key,
+        environment=config.environment,
+        csc_id=config.csc_id,
+        csc_token=config.csc_token,
+        base_url=config.qr_base_url,
+    )
+    fiscal_payload.update({"cNF": numeric_code, "emission": emission_dt.isoformat()})
+    invoice.fiscal_payload = fiscal_payload
+    invoice.issued_at = emission_dt
+
+
 def resend_fiscal_invoice(invoice, *, user=None):
     """Retransmite somente a nota escolhida quando ela esta em contingencia/erro.
 
@@ -320,6 +348,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
             if unavailable_reason:
                 raise ValidationError(unavailable_reason)
 
+            _refresh_emission_for_retry(locked, config)
             try:
                 get_provider(config.provider).emit(locked, config)
             except Exception as exc:  # noqa: BLE001 - a rejeicao precisa ficar visivel e persistida.
@@ -359,11 +388,21 @@ def reprocess_pending_fiscal_invoices(*, account=None):
             config = _resolve_fiscal_config(invoice.restaurant, invoice.branch)
             if not config:
                 continue
+            _refresh_emission_for_retry(invoice, config)
             try:
                 get_provider(config.provider).emit(invoice, config)
             except Exception as exc:  # noqa: BLE001 — continua em contingencia, tenta de novo na proxima chamada.
                 invoice.error_message = str(exc)
-                invoice.save(update_fields=["error_message", "updated_at"])
+                invoice.save(
+                    update_fields=[
+                        "access_key",
+                        "qr_code_data",
+                        "fiscal_payload",
+                        "issued_at",
+                        "error_message",
+                        "updated_at",
+                    ]
+                )
                 continue
             invoice.save()
             if invoice.status == Invoice.STATUS_ISSUED:
