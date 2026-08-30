@@ -69,7 +69,9 @@ enum PdvScreen {
     PdvScreen.order =>
       'Procura o produto pelo código de barras e depois pelo código interno, '
           'e abre a configuração do item.',
-    PdvScreen.orders => 'Preenche a busca da lista. Não abre nada sozinho.',
+    PdvScreen.orders =>
+      'Procura a comanda e abre o pedido em aberto dela; não encontrando, '
+          'preenche a busca da lista.',
     PdvScreen.payment => 'Códigos são ignorados.',
     PdvScreen.cash => 'Códigos são ignorados.',
     PdvScreen.settings => 'Códigos são ignorados.',

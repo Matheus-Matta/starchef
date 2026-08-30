@@ -1688,14 +1688,29 @@ class _HomePageState extends State<HomePage> {
       case PdvScreen.home:
         await _openOrderFromCommandCode(scanned.value);
       case PdvScreen.context:
-        _onCommandSearchSubmitted(scanned.value);
+        // A busca em memória (por número/código exato da lista já filtrada)
+        // continua servindo a aba Comandas, que tem seu próprio campo de
+        // busca e convive bem com múltiplos resultados. A aba Mesas não tem
+        // campo de busca nenhum, então usa a mesma consulta ao banco local
+        // que a tela inicial usa — robusta mesmo com `commands` desatualizado.
+        if (orderType == 'command') {
+          _onCommandSearchSubmitted(scanned.value);
+        } else {
+          await _openOrderFromCommandCode(scanned.value);
+        }
       case PdvScreen.order:
         await _addProductFromCode(scanned.value);
       case PdvScreen.orders:
-        // Preenche a busca e para por aí: abrir um pedido sozinho a partir de
-        // uma lista é o tipo de ação que o operador não pediu.
-        ordersSearchController.text = scanned.value;
-        setState(() => orderSearch = scanned.value);
+        // Bipar uma comanda abre direto o pedido em aberto dela; qualquer
+        // outro código (produto, número de pedido) só preenche a busca da
+        // lista, como antes.
+        await _openOrderFromCommandCode(
+          scanned.value,
+          onNotFound: () {
+            ordersSearchController.text = scanned.value;
+            setState(() => orderSearch = scanned.value);
+          },
+        );
       case PdvScreen.payment:
       case PdvScreen.cash:
       case PdvScreen.settings:
@@ -1704,22 +1719,36 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Início: acha a comanda e abre o pedido em aberto dela.
+  /// Acha a comanda pelo código lido e abre o pedido em aberto dela.
   ///
-  /// Não encontrando, o silêncio é deliberado. Um aviso a cada leitura sem
-  /// correspondência transformaria uma pilha de cartões conferidos rapidamente
-  /// em uma sequência de alertas para fechar — e nenhum deles ajuda.
+  /// Usada pela tela inicial, pela aba Mesas e pela lista de Pedidos — sempre
+  /// que a tela não tem um jeito melhor de tratar um código que não é
+  /// comanda. Sem `onNotFound`, o silêncio é deliberado: um aviso a cada
+  /// leitura sem correspondência transformaria uma pilha de cartões
+  /// conferidos rapidamente em uma sequência de alertas para fechar.
   ///
-  /// Também não procura produto aqui: um EAN lido por engano na tela inicial
-  /// não pode disparar uma ação inesperada.
-  Future<void> _openOrderFromCommandCode(String code) async {
+  /// Também não procura produto aqui: um EAN lido por engano não pode
+  /// disparar uma ação inesperada nessas telas.
+  Future<void> _openOrderFromCommandCode(
+    String code, {
+    VoidCallback? onNotFound,
+  }) async {
     final lookup = _codeLookup;
-    if (lookup == null) return;
+    if (lookup == null) {
+      onNotFound?.call();
+      return;
+    }
     final resolution = await lookup.findCommand(code);
     final command = resolution.command;
-    if (command == null) return;
+    if (command == null) {
+      onNotFound?.call();
+      return;
+    }
     final orderId = '${command['current_order_id'] ?? ''}';
-    if (orderId.isEmpty) return;
+    if (orderId.isEmpty) {
+      onNotFound?.call();
+      return;
+    }
     final local = commands.cast<Map<String, dynamic>?>().firstWhere(
       (item) => '${item?['id']}' == '${command['id']}',
       orElse: () => null,
