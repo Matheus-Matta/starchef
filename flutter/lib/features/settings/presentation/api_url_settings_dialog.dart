@@ -85,11 +85,6 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
           const Icon(Icons.settings_outlined),
           const SizedBox(width: 10),
           const Expanded(child: Text('URL da API')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(

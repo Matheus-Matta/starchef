@@ -248,11 +248,6 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
           const Icon(Icons.print_outlined),
           const SizedBox(width: 10),
           const Expanded(child: Text('Fila de impressão')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(
@@ -397,11 +392,6 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
         title: Row(
           children: [
             Expanded(child: Text(_title(entry))),
-            IconButton(
-              tooltip: 'Fechar',
-              onPressed: () => Navigator.pop(dialogContext),
-              icon: const Icon(Icons.close),
-            ),
           ],
         ),
         content: SizedBox(

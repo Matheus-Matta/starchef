@@ -164,11 +164,6 @@ class _LocalTopologyDialogState extends State<_LocalTopologyDialog> {
                           ],
                         ),
                       ),
-                      IconButton(
-                        tooltip: 'Fechar',
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close),
-                      ),
                     ],
                   ),
                 ),

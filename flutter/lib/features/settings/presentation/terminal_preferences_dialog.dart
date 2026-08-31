@@ -76,11 +76,6 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
           const Icon(Icons.tune),
           const SizedBox(width: 10),
           const Expanded(child: Text('Preferências deste terminal')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(

@@ -151,11 +151,6 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
           const Icon(Icons.sync_problem_outlined),
           const SizedBox(width: 10),
           const Expanded(child: Text('Operações aguardando o servidor')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(
@@ -307,11 +302,6 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
         title: Row(
           children: [
             const Expanded(child: Text('Dados da operação')),
-            IconButton(
-              tooltip: 'Fechar',
-              onPressed: () => Navigator.pop(dialogContext),
-              icon: const Icon(Icons.close),
-            ),
           ],
         ),
         content: SizedBox(
