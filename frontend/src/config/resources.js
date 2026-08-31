@@ -818,6 +818,7 @@ export const resources = [
       { name: "phone", label: "Telefone", type: "text" },
       { name: "email", label: "Email", type: "text", inputType: "email" },
       { name: "address", label: "Endereco", type: "text", full: true },
+      { name: "district", label: "Bairro", type: "text" },
       { name: "city", label: "Cidade", type: "text" },
       { name: "state", label: "UF", type: "text", placeholder: "SP" },
       { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },

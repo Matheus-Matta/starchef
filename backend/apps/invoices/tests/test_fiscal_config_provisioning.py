@@ -61,6 +61,17 @@ def test_ensure_fiscal_config_only_fills_blank_emitter_fields(restaurant):
     assert refreshed.city == "Sao Paulo"
 
 
+def test_ensure_fiscal_config_copies_restaurant_district_when_blank(restaurant):
+    config = ensure_fiscal_config(restaurant)
+    restaurant.district = "Centro"
+    restaurant.save(update_fields=["district", "updated_at"])
+
+    refreshed = ensure_fiscal_config(restaurant)
+
+    assert refreshed.pk == config.pk
+    assert refreshed.district == "Centro"
+
+
 def test_restaurant_update_keeps_single_fiscal_config(admin_client, restaurant):
     ensure_fiscal_config(restaurant)
 

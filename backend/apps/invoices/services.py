@@ -177,6 +177,7 @@ _EMITTER_FIELDS_FROM_RESTAURANT = {
     "corporate_name": lambda restaurant: restaurant.legal_name or "",
     "trade_name": lambda restaurant: restaurant.trade_name or "",
     "address_line": lambda restaurant: restaurant.address or "",
+    "district": lambda restaurant: restaurant.district or "",
     "city": lambda restaurant: restaurant.city or "",
     "uf": lambda restaurant: restaurant.state or "",
     "zip_code": lambda restaurant: restaurant.zip_code or "",

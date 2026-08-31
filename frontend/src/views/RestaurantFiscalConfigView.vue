@@ -492,6 +492,7 @@ function copyFromRestaurant() {
   const addressParts = address.match(/^(.*?),\s*([0-9][^,]*)$/);
   form.address_line = addressParts?.[1]?.trim() || address;
   form.address_number = addressParts?.[2]?.trim() || form.address_number || "";
+  form.district = source.district || "";
   form.city = source.city || "";
   form.uf = source.state || "";
   form.zip_code = source.zip_code || "";

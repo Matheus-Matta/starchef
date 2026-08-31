@@ -211,7 +211,7 @@ def build_focus_company_payload(config):
         "regime_tributario": int(config.crt),
         "logradouro": config.address_line or branch.address,
         "numero": config.address_number,
-        "bairro": config.district,
+        "bairro": config.district or branch.district or restaurant.district,
         "municipio": config.city or branch.city,
         "cep": only_digits(config.zip_code or branch.zip_code),
         "uf": (config.uf or branch.state).upper(),

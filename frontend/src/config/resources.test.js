@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { resources } from "./resources";
 
+describe("campo de bairro do restaurante", () => {
+  it("faz parte do formulario de cadastro", () => {
+    const restaurants = resources.find((resource) => resource.name === "restaurantes");
+
+    expect(restaurants.formFields.some((field) => field.name === "district")).toBe(true);
+  });
+});
+
 describe("configuração do cadastro de restaurantes", () => {
   it("orienta a cadastrar a senha comum do caixa, sem hash", () => {
     const restaurants = resources.find((resource) => resource.name === "restaurantes");

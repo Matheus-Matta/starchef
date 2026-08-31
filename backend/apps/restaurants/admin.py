@@ -33,7 +33,7 @@ class RestaurantAdminForm(forms.ModelForm):
 @admin.register(Restaurant)
 class RestaurantAdmin(TenantModelAdmin):
     form = RestaurantAdminForm
-    list_display = ("trade_name", "account", "cnpj", "city", "state", "is_active")
+    list_display = ("trade_name", "account", "cnpj", "district", "city", "state", "is_active")
     search_fields = ("trade_name", "legal_name", "cnpj")
     list_filter = ("account", "is_active", "state")
 

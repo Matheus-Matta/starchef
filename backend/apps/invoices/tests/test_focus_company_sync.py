@@ -110,6 +110,17 @@ def test_company_payload_maps_restaurant_and_nfce_settings(account, restaurant, 
     assert payload["id_token_nfce_homologacao"] == 1
 
 
+def test_company_payload_falls_back_to_restaurant_district(account, restaurant, branch):
+    restaurant.district = "Vila Nova"
+    restaurant.save(update_fields=["district", "updated_at"])
+    branch.refresh_from_db()
+    config = make_config(account, restaurant, branch, district="")
+
+    payload = build_focus_company_payload(config)
+
+    assert payload["bairro"] == "Vila Nova"
+
+
 def test_company_payload_preserves_isento_state_registration(account, restaurant, branch):
     config = make_config(account, restaurant, branch, ie="ISENTO")
 

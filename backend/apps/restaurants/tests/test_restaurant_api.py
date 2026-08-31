@@ -34,6 +34,23 @@ def test_blank_cnpj_normalized_to_null(admin_client):
     assert resp.data["cnpj"] is None
 
 
+def test_restaurant_accepts_district_and_mirrors_it_to_branch(admin_client, restaurant):
+    from apps.restaurants.models import Branch
+
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"district": "Centro"},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["district"] == "Centro"
+    restaurant.refresh_from_db()
+    assert restaurant.district == "Centro"
+    mirrored_branch = Branch.all_objects.filter(restaurant=restaurant).order_by("created_at").first()
+    assert mirrored_branch.district == "Centro"
+
+
 def test_cash_action_password_accepts_plain_value_and_returns_only_status(admin_client, restaurant):
     response = admin_client.patch(
         f"/api/v1/restaurants/{restaurant.id}/",
