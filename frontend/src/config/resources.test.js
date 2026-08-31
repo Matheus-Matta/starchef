@@ -123,6 +123,26 @@ describe("recursos de estoque por lote", () => {
     }
   });
 
+  it("entrada e saida oferecem copiar a ultima e duplicar uma existente", () => {
+    // Repetir o mesmo documento e a rotina do deposito: a copia abre a tela
+    // nova ja preenchida, em vez de obrigar a redigitar linha por linha.
+    for (const [name, route] of [
+      ["estoque-entradas", "estoque-entrada-nova"],
+      ["estoque-saidas", "estoque-saida-nova"],
+    ]) {
+      const { pro } = byName(name);
+      const copyLast = pro.headerActions.find((action) => action.query?.copy === "last");
+      expect(copyLast?.routeName, name).toBe(route);
+      const duplicate = pro.rowActions.find((action) => action.type === "duplicate");
+      expect(duplicate?.routeName, name).toBe(route);
+    }
+  });
+
+  it("as movimentacoes aceitam o recorte por insumo vindo da posicao de estoque", () => {
+    const keys = byName("estoque").pro.linkFilters.map((filter) => filter.key);
+    expect(keys).toContain("ingredient");
+  });
+
   it("lotes sao somente leitura: nascem da confirmacao de uma entrada", () => {
     const lots = byName("estoque-lotes");
     expect(lots.endpoint).toBe("/stock/lots/");

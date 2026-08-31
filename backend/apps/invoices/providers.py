@@ -306,10 +306,26 @@ class FocusNfeProvider(FiscalProvider):
             payload["nome_destinatario"] = invoice.recipient_name
         return payload
 
+    @staticmethod
+    def _normalize_access_key(value):
+        """Converte ``NFe<44 digitos>`` da Focus na chave fiscal de 44 digitos."""
+
+        raw_value = str(value or "").strip()
+        if raw_value[:3].lower() == "nfe":
+            raw_value = raw_value[3:]
+        access_key = "".join(character for character in raw_value if character in "0123456789")
+        if len(access_key) != 44:
+            raise RuntimeError(
+                "Focus NFe: chave de acesso invalida na resposta; "
+                f"esperados 44 digitos, recebidos {len(access_key)}."
+            )
+        return access_key
+
     def apply_response(self, invoice, data):
         status = data.get("status")
         if status == "autorizado":
-            invoice.access_key = data.get("chave_nfe", invoice.access_key)
+            if data.get("chave_nfe") not in (None, ""):
+                invoice.access_key = self._normalize_access_key(data["chave_nfe"])
             if data.get("numero") not in (None, ""):
                 invoice.number = str(data["numero"])
             if data.get("serie") not in (None, ""):

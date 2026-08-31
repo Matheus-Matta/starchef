@@ -22,6 +22,7 @@ const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
 const StockExitFormView = () => import("../views/StockExitFormView.vue");
+const StockPositionView = () => import("../views/StockPositionView.vue");
 const StockExitPickingView = () => import("../views/StockExitPickingView.vue");
 const StockSettingsView = () => import("../views/StockSettingsView.vue");
 
@@ -125,6 +126,7 @@ export const router = createRouter({
         // empresa na Focus). Fica fora de `buildResourceRoutes` porque não é
         // uma das telas do CRUD genérico — chega pelo menu de ações da lista.
         { path: "restaurantes/:id/fiscal", name: "restaurante-fiscal", component: RestaurantFiscalConfigView, props: true, meta: { requiresAuth: true, title: "Configuração fiscal do restaurante", nav: "restaurantes", module: "financeiro" } },
+        { path: "estoque-posicao", name: "estoque-posicao", component: StockPositionView, meta: { requiresAuth: true, title: "Posição de estoque", nav: "estoque-posicao", module: "logistica" } },
         { path: "estoque-entradas/nova", name: "estoque-entrada-nova", component: StockEntryFormView, meta: { requiresAuth: true, title: "Nova entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
         { path: "estoque-entradas/:id", name: "estoque-entrada-documento", component: StockEntryFormView, props: true, meta: { requiresAuth: true, title: "Entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
         { path: "estoque-saidas/nova", name: "estoque-saida-nova", component: StockExitFormView, meta: { requiresAuth: true, title: "Nova saída de estoque", nav: "estoque-saidas", module: "logistica" } },

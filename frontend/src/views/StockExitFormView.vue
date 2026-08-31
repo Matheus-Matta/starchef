@@ -37,6 +37,14 @@
 
     <div v-if="error" class="stock-doc__alert"><i class="pi pi-exclamation-triangle" /> {{ error }}</div>
 
+    <div v-if="copiedFrom" class="stock-doc__alert stock-doc__alert--info">
+      <i class="pi pi-copy" />
+      <span>
+        Cópia da saída de {{ formatDate(copiedFrom.effective_date) }}. A data já está a de hoje e os
+        lotes ainda não foram separados — confira as quantidades e o motivo antes de separar.
+      </span>
+    </div>
+
     <div v-if="shortages.length" class="stock-doc__alert stock-doc__alert--warn">
       <i class="pi pi-exclamation-circle" />
       <span>
@@ -225,10 +233,13 @@ const exitTypeOptions = STOCK_EXIT_TYPE_OPTIONS;
 
 const exitId = computed(() => props.id || route.params.id || "");
 const isNew = computed(() => !exitId.value);
+// `?copy=last` (botao da listagem) ou `?copy=<id>` (duplicar uma saida).
+const copyRequest = computed(() => String(route.query.copy || ""));
+const copiedFrom = ref(null);
 
 const form = reactive({
   location: null,
-  effective_date: new Date().toISOString().slice(0, 10),
+  effective_date: today(),
   exit_type: "consumption",
   reason: "",
   require_label_scan: false,
@@ -261,6 +272,39 @@ function formatDate(value) {
   if (!value) return "";
   const [year, month, day] = String(value).split("-");
   return day ? `${day}/${month}/${year}` : value;
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Ultima saida que serve de modelo — a cancelada e pulada, porque copiar o
+ * documento que alguem desfez e o oposto do que o botao promete.
+ */
+async function findLastExitId() {
+  const { data } = await api.get("/stock/exits/", { params: { page_size: 5 } });
+  const list = data.results || data || [];
+  return (list.find((item) => item.status !== "cancelled") || list[0])?.id || "";
+}
+
+/** Abre a tela com os dados de outra saida, como rascunho novo. */
+async function applyCopy() {
+  const sourceId = copyRequest.value === "last" ? await findLastExitId() : copyRequest.value;
+  if (!sourceId) {
+    toast.add({ severity: "info", summary: "Nao ha saida anterior para copiar", life: 4000 });
+    addRow();
+    return;
+  }
+  const { data } = await api.get(`/stock/exits/${sourceId}/`);
+  applyExit(data);
+  // Os lotes separados pertencem ao documento antigo: a nova saida precisa
+  // passar pela propria separacao, com o saldo que existe hoje.
+  form.status = "draft";
+  form.effective_date = today();
+  allocations.value = [];
+  shortages.value = [];
+  copiedFrom.value = { effective_date: data.effective_date };
 }
 
 function goBack() {
@@ -397,6 +441,8 @@ async function load() {
     if (exitId.value) {
       const { data } = await api.get(`/stock/exits/${exitId.value}/`);
       applyExit(data);
+    } else if (copyRequest.value) {
+      await applyCopy();
     } else {
       addRow();
     }
@@ -414,6 +460,7 @@ onMounted(load);
 @import "../styles/stock-document.css";
 
 .stock-doc__alert--warn { border-color: var(--warning); background: var(--warning-subtle); color: var(--warning-text); }
+.stock-doc__alert--info { border-color: var(--info); background: var(--info-subtle); color: var(--info-text); }
 .stock-switch { display: flex; align-items: center; gap: 9px; min-height: var(--control-h); }
 .stock-switch small { color: var(--text-muted); font-weight: var(--weight-medium); }
 </style>

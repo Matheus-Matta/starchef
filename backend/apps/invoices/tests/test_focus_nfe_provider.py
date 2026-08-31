@@ -62,7 +62,7 @@ def _fake_response(status_code, payload):
 def test_authorized_response_marks_issued(mock_post, account, restaurant, branch, manager_user):
     mock_post.return_value = _fake_response(200, {
         "status": "autorizado",
-        "chave_nfe": "35" + "0" * 42,
+        "chave_nfe": "NFe35" + "0" * 42,
         "protocolo": "135250000000001",
         "caminho_xml_nota_fiscal": "https://focusnfe.com.br/xml/abc",
         "caminho_danfe": "https://focusnfe.com.br/danfe/abc",
@@ -75,6 +75,7 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
 
     assert invoice.status == Invoice.STATUS_ISSUED
     assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.access_key == "35" + "0" * 42
     assert invoice.authorization_protocol == "135250000000001"
     assert mock_post.call_count == 1
     sent_payload = mock_post.call_args.kwargs["json"]
@@ -237,7 +238,7 @@ def test_focus_webhook_updates_async_invoice(mock_post, account, restaurant, bra
         {
             "ref": invoice.provider_reference,
             "status": "autorizado",
-            "chave_nfe": "35" + "1" * 42,
+            "chave_nfe": "NFe35" + "1" * 42,
             "protocolo": "135250000000002",
             "numero": "99",
             "serie": "2",
@@ -249,6 +250,20 @@ def test_focus_webhook_updates_async_invoice(mock_post, account, restaurant, bra
     assert response.status_code == 200, response.data
     invoice.refresh_from_db()
     assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.access_key == "35" + "1" * 42
     assert invoice.number == "99"
     assert invoice.series == 2
     assert invoice.authorization_protocol == "135250000000002"
+
+
+def test_authorized_response_rejects_malformed_access_key():
+    original_key = "35" + "0" * 42
+    invoice = Invoice(access_key=original_key)
+
+    with pytest.raises(RuntimeError, match="esperados 44 digitos, recebidos 3"):
+        FocusNfeProvider().apply_response(
+            invoice,
+            {"status": "autorizado", "chave_nfe": "NFe123"},
+        )
+
+    assert invoice.access_key == original_key

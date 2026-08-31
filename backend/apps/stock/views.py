@@ -1,6 +1,7 @@
+from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -10,6 +11,7 @@ from apps.core.access import is_tenant_admin
 from apps.core.codes import barcode_data_uri, qr_data_uri
 from apps.core.modules import MODULE_LOGISTICA
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
+from apps.menu.models import Ingredient
 from apps.stock.lots import (
     cancel_stock_entry,
     post_stock_entry,
@@ -265,34 +267,59 @@ class StockMovementViewSet(BaseTenantViewSet):
             update_ingredient_average_cost(instance.ingredient, instance.quantity, instance.unit_cost)
 
 
+def tenant_scope_filters(request):
+    """Recorte de conta/restaurante/filial para consultas montadas na mao.
+
+    As telas de relatorio agregam movimentos e lotes fora de um viewset, entao
+    nao herdam o `TenantQuerySetMixin`. Sem conta no request nao ha o que
+    responder — nem para superusuario, porque a API nunca consolida contas
+    (ver TenantMiddleware.resolve_account); `account_id: None` devolve vazio.
+    """
+    account = getattr(request, "account", None)
+    if not account:
+        return {"account_id": None}
+    filters = {"account_id": account.id}
+    if is_tenant_admin(request.user):
+        if restaurant_id := request.query_params.get("restaurant"):
+            filters["restaurant_id"] = restaurant_id
+        if branch_id := request.query_params.get("branch"):
+            filters["branch_id"] = branch_id
+        return filters
+    profile = getattr(request.user, "profile", None)
+    if not profile or not profile.restaurant_id:
+        return {"account_id": None}
+    filters["restaurant_id"] = profile.restaurant_id
+    if profile.branch_id:
+        filters["branch_id"] = profile.branch_id
+    return filters
+
+
+def scoped_ingredients(filters):
+    """Insumos visiveis no recorte — incluindo os compartilhados pela conta.
+
+    Insumo tem `restaurant` opcional (e reutilizavel entre restaurantes), entao
+    filtrar so pelo id do restaurante escondia justamente os que valem para
+    todos — os mesmos que aparecem nos dropdowns da entrada e da saida.
+    """
+    if not filters.get("account_id"):
+        return Ingredient.all_objects.none()
+    queryset = Ingredient.all_objects.filter(
+        account_id=filters["account_id"], deleted_at__isnull=True
+    )
+    if restaurant_id := filters.get("restaurant_id"):
+        queryset = queryset.filter(Q(restaurant_id=restaurant_id) | Q(restaurant__isnull=True))
+    if branch_id := filters.get("branch_id"):
+        queryset = queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
+    return queryset
+
+
 class StockAlertView(APIView):
     """Return ingredients whose current stock balance is below their minimum_stock."""
 
     required_module = MODULE_LOGISTICA
 
-    def _tenant_filter(self, request):
-        account = getattr(request, "account", None)
-        # Sem conta no request não há alerta — nem para superusuário (a API
-        # nunca consolida contas; ver TenantMiddleware.resolve_account).
-        if not account:
-            return {"account_id": None}
-        filters = {"account_id": account.id}
-        if is_tenant_admin(request.user):
-            if restaurant_id := request.query_params.get("restaurant"):
-                filters["restaurant_id"] = restaurant_id
-            if branch_id := request.query_params.get("branch"):
-                filters["branch_id"] = branch_id
-            return filters
-        profile = getattr(request.user, "profile", None)
-        if not profile or not profile.restaurant_id:
-            return {"account_id": None}
-        filters["restaurant_id"] = profile.restaurant_id
-        if profile.branch_id:
-            filters["branch_id"] = profile.branch_id
-        return filters
-
     def get(self, request):
-        filters = self._tenant_filter(request)
+        filters = tenant_scope_filters(request)
         balances = (
             StockMovement.objects.filter(**filters)
             .values("ingredient_id", "ingredient__name", "ingredient__unit", "ingredient__minimum_stock")
@@ -346,3 +373,105 @@ class StockExpiryReportView(APIView):
                 }
             )
         return Response({"today": today, "horizon_days": horizon, "lots": rows, "count": len(rows)})
+
+
+class StockPositionView(APIView):
+    """Posicao de estoque: um insumo por linha, com saldo, minimo e valor.
+
+    O saldo sai do livro de movimentos, e nao da soma dos lotes: ha saldo que
+    nunca passou por lote (ajuste manual, baixa de venda de insumo sem controle
+    de validade) e uma tela que ignorasse esse saldo mostraria zerado um insumo
+    que esta na prateleira. Os lotes entram so para a leitura de validade.
+    """
+
+    required_module = MODULE_LOGISTICA
+
+    def get(self, request):
+        filters = tenant_scope_filters(request)
+        location_id = request.query_params.get("location") or None
+
+        movements = StockMovement.objects.filter(**filters)
+        lots = StockLot.objects.filter(**filters, quantity__gt=0).exclude(
+            status__in=[StockLot.STATUS_DISCARDED, StockLot.STATUS_DEPLETED]
+        )
+        if location_id:
+            movements = movements.filter(location_id=location_id)
+            lots = lots.filter(location_id=location_id)
+
+        balances = {}
+        for row in movements.values("ingredient_id").annotate(
+            balance=Sum("quantity"), last_movement_at=Max("created_at")
+        ):
+            balances[row["ingredient_id"]] = row
+
+        by_location = defaultdict(list)
+        for row in (
+            movements.values("ingredient_id", "location_id", "location__name")
+            .annotate(balance=Sum("quantity"))
+            .order_by("location__name")
+        ):
+            # Local zerado nao e informacao: polui a linha do insumo com todos
+            # os lugares por onde ele ja passou.
+            if not row["balance"]:
+                continue
+            by_location[row["ingredient_id"]].append(
+                {
+                    "location_id": str(row["location_id"]),
+                    "location_name": row["location__name"],
+                    "balance": row["balance"],
+                }
+            )
+
+        today = timezone.localdate()
+        # `Min` ignora os lotes sem validade — o que sobra e exatamente a
+        # validade mais proxima, que e a unica que a tela precisa mostrar.
+        lot_info = {
+            row["ingredient_id"]: row
+            for row in lots.values("ingredient_id").annotate(
+                lot_count=Count("id"), next_expiry=Min("expires_at")
+            )
+        }
+
+        rows = []
+        for ingredient in scoped_ingredients(filters).order_by("name"):
+            movement = balances.get(ingredient.id) or {}
+            balance = movement.get("balance") or Decimal("0")
+            # Insumo inativo so aparece enquanto ainda houver saldo dele: ele
+            # saiu do cardapio, mas continua ocupando prateleira.
+            if not ingredient.is_active and not balance:
+                continue
+            minimum = ingredient.minimum_stock
+            if balance <= 0:
+                situation = "out"
+            elif minimum is not None and balance < minimum:
+                situation = "low"
+            else:
+                situation = "ok"
+            next_expiry = (lot_info.get(ingredient.id) or {}).get("next_expiry")
+            rows.append(
+                {
+                    "ingredient_id": str(ingredient.id),
+                    "ingredient_name": ingredient.name,
+                    "unit": ingredient.unit,
+                    "is_active": ingredient.is_active,
+                    "balance": balance,
+                    "minimum_stock": minimum,
+                    "average_cost": ingredient.average_cost,
+                    "stock_value": (balance * ingredient.average_cost).quantize(Decimal("0.01")),
+                    "situation": situation,
+                    "locations": by_location.get(ingredient.id, []),
+                    "lot_count": (lot_info.get(ingredient.id) or {}).get("lot_count", 0),
+                    "next_expiry": next_expiry,
+                    "expired": bool(next_expiry and next_expiry < today),
+                    "last_movement_at": movement.get("last_movement_at"),
+                }
+            )
+
+        totals = {
+            "ingredients": len(rows),
+            "low": sum(1 for row in rows if row["situation"] == "low"),
+            "out": sum(1 for row in rows if row["situation"] == "out"),
+            "expired": sum(1 for row in rows if row["expired"]),
+            "stock_value": sum((row["stock_value"] for row in rows), Decimal("0")),
+        }
+        return Response({"positions": rows, "totals": totals, "count": len(rows)})

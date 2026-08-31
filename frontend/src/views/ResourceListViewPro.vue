@@ -28,6 +28,13 @@
       </div>
     </header>
 
+    <!-- Filtro que chegou por um link de outra tela (ex.: "ver movimentacoes deste insumo"). -->
+    <div v-if="linkFilterLabels.length" class="rpro__linkfilter">
+      <i class="pi pi-filter" />
+      <span>Lista recortada por {{ linkFilterLabels.join(" e ") }}, a pedido da tela anterior.</span>
+      <button type="button" @click="clearLinkFilters">Ver tudo</button>
+    </div>
+
     <!-- ── Toolbar: busca + período · mais filtros + engrenagem ───────── -->
     <button class="rpro__mobile-filter-trigger" type="button" @click="mobileFiltersOpen = true">
       <i class="pi pi-sliders-h" />
@@ -352,7 +359,7 @@
  * apresentação: cabeçalho com ações, cartões de resumo, filtro de período,
  * seleção em massa, filtros avançados, importação/exportação e paginação enxuta.
  */
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -439,6 +446,7 @@ function dateParams() {
 /** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
 function buildProParams() {
   return {
+    ...linkFilters.value,
     ...dateParams(),
     ...Object.fromEntries(
       Object.entries(advancedFilters)
@@ -460,6 +468,33 @@ const {
   pageSize: proCfg.value.pageSize || 25,
 });
 const loadRows = reload;
+
+// ── Filtros que chegam pela URL ──────────────────────────────────────
+// So passam os campos declarados em `pro.linkFilters`: se qualquer query
+// param da rota virasse filtro da API, um link com um parametro qualquer
+// (ou um `?new=` esquecido) faria a listagem responder 400.
+const linkFilterDefs = computed(() => (proCfg.value.linkFilters || [])
+  .map((item) => (typeof item === "string" ? { key: item, label: item } : item)));
+const activeLinkFilters = computed(() => linkFilterDefs.value.filter((item) => route.query[item.key]));
+const linkFilters = computed(() => Object.fromEntries(
+  activeLinkFilters.value.map((item) => [item.key, route.query[item.key]]),
+));
+const linkFilterLabels = computed(() => activeLinkFilters.value.map((item) => item.label));
+function clearLinkFilters() {
+  router.replace({ name: route.name, query: {} });
+}
+// A mesma rota pode ser reaberta com outro recorte sem remontar o componente.
+// O nome da rota e comparado com o da montagem porque `route` ja aponta para o
+// destino enquanto esta tela ainda existe — sem isso, sair da listagem
+// dispararia uma busca inutil no caminho.
+const listRouteName = route.name;
+watch(
+  () => route.query,
+  () => {
+    if (linkFilterDefs.value.length && route.name === listRouteName) loadRows();
+  },
+  { deep: true },
+);
 if (props.endpoint === "/orders/") ordering.value = "-updated_at";
 const realtimeModelByEndpoint = {
   "/orders/": "orders.order",
@@ -571,6 +606,9 @@ function runPrimary() {
 const headerActions = computed(() => proCfg.value.headerActions || []);
 function runHeaderAction(headerAction) {
   if (headerAction.type === "bulk-create") openBulk(headerAction.bulkType);
+  else if (headerAction.type === "route") {
+    router.push({ name: headerAction.routeName, query: headerAction.query || {} });
+  }
 }
 
 // ── Ações em massa (config `pro.bulkActions`) ─────────────────────────
@@ -1007,6 +1045,10 @@ const codesTitle = ref("");
 
 async function runRowAction(rowAction, row) {
   if (rowAction.type === "codes") return openCodes(row);
+  // Duplicar: abre a tela de NOVO documento pedindo a copia deste registro.
+  if (rowAction.type === "duplicate" && row?.id) {
+    return router.push({ name: rowAction.routeName, query: { copy: row.id } });
+  }
   // Ação que só leva pra outra página do registro (ex.: configuração fiscal).
   if (rowAction.type === "route" && row?.id) {
     return router.push({ name: rowAction.routeName, params: { id: row.id } });
@@ -1219,6 +1261,17 @@ onMounted(loadRows);
 .rpro-btn--ghost { background: var(--surface-card); }
 .rpro-btn--icon { width: 38px; padding: 0; }
 .rpro-btn--sm { height: 32px; padding: 0 12px; font-size: 12.5px; }
+
+/* ── Aviso do filtro vindo por link ──────────────────────────────────── */
+.rpro__linkfilter {
+  display: flex; align-items: center; gap: 9px; padding: 10px 14px;
+  border: 1px solid var(--info); border-radius: var(--radius-md);
+  background: var(--info-subtle); color: var(--info-text); font-size: 12.5px;
+}
+.rpro__linkfilter button {
+  margin-left: auto; padding: 0; border: 0; background: none; cursor: pointer;
+  color: inherit; font: var(--weight-bold) 12.5px/1 var(--font-sans); text-decoration: underline;
+}
 
 /* ── Toolbar ────────────────────────────────────────────────────────── */
 .rpro__toolbar {

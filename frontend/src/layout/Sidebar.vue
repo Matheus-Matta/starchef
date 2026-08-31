@@ -214,6 +214,7 @@ const groups = computed(() =>
       label: "Logistica",
       module: "logistica",
       items: [
+        canManage.value ? { id: "estoque-posicao", label: "Posição de estoque", icon: "layers" } : null,
         canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
         canManage.value ? { id: "estoque-saidas", label: "Saidas", icon: "truck" } : null,
         canManage.value ? { id: "estoque-lotes", label: "Lotes e validades", icon: "clipboard-list" } : null,

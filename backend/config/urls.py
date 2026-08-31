@@ -79,6 +79,7 @@ from apps.stock.views import (
     StockLocationViewSet,
     StockLotViewSet,
     StockMovementViewSet,
+    StockPositionView,
     StockSettingsViewSet,
 )
 from apps.data_exchange.views import CsvExportView, CsvParseView
@@ -182,6 +183,7 @@ urlpatterns = [
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
+    path("api/v1/stock/positions/", StockPositionView.as_view(), name="stock-positions"),
     path("api/v1/stock/reports/expiry/", StockExpiryReportView.as_view(), name="stock-expiry-report"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
     path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),

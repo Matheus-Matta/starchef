@@ -316,6 +316,7 @@ export const resources = [
       { key: "name", label: "Ingrediente" },
       { key: "unit", label: "Unidade" },
       { key: "minimum_stock", label: "Estoque min.", align: "right" },
+      { key: "average_cost", label: "Custo medio", type: "money", align: "right", module: "logistica" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -398,6 +399,13 @@ export const resources = [
     module: "logistica",
     title: "Estoque",
     endpoint: "/stock/movements/",
+    // A posicao de estoque manda o operador para ca com o insumo ja escolhido.
+    pro: {
+      linkFilters: [
+        { key: "ingredient", label: "um insumo" },
+        { key: "location", label: "um local" },
+      ],
+    },
     columns: [
       { key: "ingredient_name", label: "Ingrediente" },
       { key: "location_name", label: "Local" },
@@ -432,6 +440,14 @@ export const resources = [
     pro: {
       primaryAction: { label: "Nova entrada", icon: "pi pi-plus", route: "estoque-entrada-nova" },
       detailRoute: "estoque-entrada-documento",
+      // Recompra do mesmo fornecedor e a rotina: abre a nova entrada com as
+      // linhas da anterior ja preenchidas, para so ajustar o que mudou.
+      headerActions: [
+        { key: "copy-last-entry", label: "Copiar última entrada", icon: "pi pi-copy", type: "route", routeName: "estoque-entrada-nova", query: { copy: "last" } },
+      ],
+      rowActions: [
+        { label: "Duplicar entrada", icon: "pi pi-copy", type: "duplicate", routeName: "estoque-entrada-nova" },
+      ],
     },
     module: "logistica",
     title: "Entradas de Estoque",
@@ -450,6 +466,12 @@ export const resources = [
     pro: {
       primaryAction: { label: "Nova saída", icon: "pi pi-plus", route: "estoque-saida-nova" },
       detailRoute: "estoque-saida-documento",
+      headerActions: [
+        { key: "copy-last-exit", label: "Copiar última saída", icon: "pi pi-copy", type: "route", routeName: "estoque-saida-nova", query: { copy: "last" } },
+      ],
+      rowActions: [
+        { label: "Duplicar saída", icon: "pi pi-copy", type: "duplicate", routeName: "estoque-saida-nova" },
+      ],
     },
     module: "logistica",
     title: "Saidas de Estoque",

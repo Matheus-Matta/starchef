@@ -45,6 +45,14 @@
 
     <div v-if="error" class="stock-doc__alert"><i class="pi pi-exclamation-triangle" /> {{ error }}</div>
 
+    <div v-if="copiedFrom" class="stock-doc__alert stock-doc__alert--info">
+      <i class="pi pi-copy" />
+      <span>
+        Cópia da entrada de {{ formatDate(copiedFrom.effective_date) }}<template v-if="copiedFrom.document_number"> (documento {{ copiedFrom.document_number }})</template>.
+        A data já está a de hoje; confira o número do documento, os lotes, as validades e os custos antes de confirmar.
+      </span>
+    </div>
+
     <div v-if="loading" class="stock-card"><Skeleton height="220px" /></div>
 
     <template v-else>
@@ -231,10 +239,13 @@ const unitOptions = UNIT_OPTIONS;
 
 const entryId = computed(() => props.id || route.params.id || "");
 const isNew = computed(() => !entryId.value);
+// `?copy=last` (botao da listagem) ou `?copy=<id>` (duplicar uma entrada).
+const copyRequest = computed(() => String(route.query.copy || ""));
+const copiedFrom = ref(null);
 
 const form = reactive({
   location: null,
-  effective_date: new Date().toISOString().slice(0, 10),
+  effective_date: today(),
   supplier: "",
   document_number: "",
   notes: "",
@@ -299,6 +310,48 @@ function baseQuantityLabel(row) {
   const converted = convertUnit(total, row.content_unit || ingredient.unit, ingredient.unit);
   if (converted === null) return "unidade incompatível";
   return `${converted.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${ingredient.unit}`;
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  const [year, month, day] = String(value).split("-");
+  return day ? `${day}/${month}/${year}` : value;
+}
+
+/**
+ * Ultima entrada que serve de modelo.
+ *
+ * A listagem ja vem da mais recente para a mais antiga; o que se pula e a
+ * cancelada — copiar justamente o documento que alguem desfez e o oposto do
+ * que o botao promete. Se so houver canceladas, a mais recente ainda e um
+ * ponto de partida melhor do que uma tela em branco.
+ */
+async function findLastEntryId() {
+  const { data } = await api.get("/stock/entries/", { params: { page_size: 5 } });
+  const list = data.results || data || [];
+  return (list.find((item) => item.status !== "cancelled") || list[0])?.id || "";
+}
+
+/** Abre a tela com os dados de outra entrada, como rascunho novo. */
+async function applyCopy() {
+  const sourceId = copyRequest.value === "last" ? await findLastEntryId() : copyRequest.value;
+  if (!sourceId) {
+    toast.add({ severity: "info", summary: "Nao ha entrada anterior para copiar", life: 4000 });
+    addRow();
+    return;
+  }
+  const { data } = await api.get(`/stock/entries/${sourceId}/`);
+  applyEntry(data);
+  // O que nao se copia: a identidade e a situacao do documento antigo. A data
+  // volta para hoje — repetir a data copiada lancaria o estoque no passado.
+  form.status = "draft";
+  form.effective_date = today();
+  lots.value = [];
+  copiedFrom.value = { effective_date: data.effective_date, document_number: data.document_number };
 }
 
 function goBack() {
@@ -467,6 +520,8 @@ async function load() {
     if (entryId.value) {
       const { data } = await api.get(`/stock/entries/${entryId.value}/`);
       applyEntry(data);
+    } else if (copyRequest.value) {
+      await applyCopy();
     } else {
       addRow();
     }
@@ -482,4 +537,6 @@ onMounted(load);
 
 <style scoped>
 @import "../styles/stock-document.css";
+
+.stock-doc__alert--info { border-color: var(--info); background: var(--info-subtle); color: var(--info-text); }
 </style>
