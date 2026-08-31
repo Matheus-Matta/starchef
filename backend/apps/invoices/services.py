@@ -32,6 +32,7 @@ from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
 from apps.invoices.providers import (
     FiscalAmbiguous,
     FiscalConfigurationError,
+    FiscalNotFound,
     FiscalProviderError,
     FiscalRejection,
     FiscalUnavailable,
@@ -526,6 +527,8 @@ def resend_fiscal_invoice(invoice, *, user=None):
                 # segura: um POST novo criaria uma segunda nota.
                 try:
                     get_provider(config.provider).status(locked)
+                except FiscalNotFound as exc:
+                    _mark_awaiting(locked, AWAITING_TRANSMISSION, exc)
                 except FiscalUnavailable as exc:
                     _mark_awaiting(locked, AWAITING_RECONCILIATION, exc)
                 except FiscalConfigurationError as exc:
@@ -653,6 +656,10 @@ def reprocess_pending_fiscal_invoices(*, account=None):
                     provider.emit(invoice, config)
                 else:
                     provider.status(invoice)
+            except FiscalNotFound as exc:
+                # O provedor nao tem o documento: nada foi emitido, entao
+                # retransmitir nao duplica. Resolve a reconciliacao.
+                _mark_awaiting(invoice, AWAITING_TRANSMISSION, exc)
             except FiscalAmbiguous as exc:
                 _mark_awaiting(invoice, AWAITING_RECONCILIATION, exc)
             except FiscalUnavailable as exc:
@@ -966,6 +973,61 @@ def print_sale_documents(order, *, invoice=None, user=None):
     if is_fiscally_printable(invoice) and not _already_printed(order, PrintJob.TYPE_FISCAL):
         jobs.append(print_fiscal_invoice(invoice, user=user, printer=printer))
     return jobs
+
+
+def refresh_fiscal_invoice_status(invoice, *, user=None):
+    """Consulta o provedor e persiste a situacao real da nota.
+
+    Antes isto vivia na view e chamava `get_provider(invoice.provider)`. O campo
+    `provider` so e gravado quando a emissao chega ao provedor, entao numa nota
+    que nunca saiu daqui ele esta vazio — e `get_provider("")` devolve o
+    provedor Manual, cujo `status()` apenas repete o que ja estava no banco. A
+    consulta respondia 200 sem ter consultado nada.
+
+    Agora o provedor sai da configuracao quando o campo esta vazio, e quem nao
+    transmite recusa a consulta com o motivo em vez de fingir que consultou.
+    """
+    with transaction.atomic():
+        locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
+        with tenant_context(locked.account):
+            config = _resolve_fiscal_config(locked.restaurant, locked.branch)
+            if config is None:
+                raise ValidationError("Configuracao fiscal ativa nao encontrada para esta nota.")
+
+            provider = get_provider(locked.provider or config.provider)
+            if not provider.transmits:
+                raise ValidationError(
+                    "Esta nota nunca foi transmitida a um provedor fiscal, entao nao ha "
+                    "situacao a consultar. Use o reenvio para transmiti-la."
+                )
+
+            try:
+                provider.status(locked)
+            except FiscalNotFound as exc:
+                # O provedor nao conhece esta referencia: o documento nao existe
+                # la. E a resposta que resolve uma nota presa em reconciliacao.
+                _mark_awaiting(locked, AWAITING_TRANSMISSION, exc)
+            except FiscalUnavailable as exc:
+                raise ValidationError(str(exc)) from exc
+            except FiscalConfigurationError as exc:
+                _mark_failed(locked, FAILURE_CONFIGURATION, exc)
+            except FiscalProviderError as exc:
+                _mark_failed(locked, FAILURE_REJECTION, exc)
+            else:
+                if locked.status == Invoice.STATUS_PENDING:
+                    _mark_awaiting(locked, AWAITING_AUTHORIZATION)
+
+            locked.updated_by = user
+            locked.save()
+            # A consulta pode ter sido o momento em que a nota virou autorizada.
+            ensure_fiscal_print_job(locked, user=user)
+            record_audit(
+                action=AuditLog.ACTION_UPDATED,
+                instance=locked,
+                actor=user,
+                metadata={"fiscal_refresh": True, "status": locked.status},
+            )
+            return locked
 
 
 def ensure_fiscal_print_job(invoice, *, user=None):

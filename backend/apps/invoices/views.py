@@ -27,7 +27,7 @@ from apps.invoices.cosmos import (
     suggest_fiscal_profile,
 )
 from apps.invoices.models import FiscalConfig, FiscalProfile, Invoice
-from apps.invoices.providers import FocusNfeProvider, get_provider
+from apps.invoices.providers import FocusNfeProvider
 from apps.invoices.serializers import FiscalConfigSerializer, FiscalProfileSerializer, InvoiceSerializer
 from apps.invoices.services import (
     cancel_fiscal_invoice,
@@ -37,6 +37,7 @@ from apps.invoices.services import (
     fiscal_emission_unavailable_reason,
     fiscal_readiness,
     print_fiscal_invoice,
+    refresh_fiscal_invoice_status,
     resend_fiscal_invoice,
     with_fiscal_state,
 )
@@ -343,15 +344,10 @@ class InvoiceViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="refresh-status")
     def refresh_status(self, request, pk=None):
-        invoice = self.get_object()
         try:
-            get_provider(invoice.provider).status(invoice)
-        except RuntimeError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        invoice.updated_by = request.user
-        invoice.save()
-        # A consulta pode ter sido o momento em que a nota virou autorizada.
-        ensure_fiscal_print_job(invoice, user=request.user)
+            invoice = refresh_fiscal_invoice_status(self.get_object(), user=request.user)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return self._serialize(invoice)
 
     @action(detail=True, methods=["post"], url_path="resend")

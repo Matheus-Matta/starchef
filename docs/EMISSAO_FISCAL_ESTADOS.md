@@ -91,6 +91,14 @@ A distinção que sustenta tudo isso são as exceções tipadas em `providers.py
 | `FiscalRejection` | Recusa da SEFAZ, documento inválido, HTTP 4xx | Para de tentar |
 | `FiscalConfigurationError` | HTTP 401/403, token/URL/modelo ausente | Para de tentar; não é problema deste pedido |
 | `FiscalAmbiguous` | `already_processed` sem consulta bem-sucedida; chave inválida numa resposta autorizada | Consultar antes de qualquer reenvio |
+| `FiscalNotFound` | HTTP 404 numa **consulta** | O documento não está no provedor: libera a retransmissão |
+
+`FiscalNotFound` existe separado de propósito. Pelo classificador geral, um 404
+seria `FiscalRejection` — e marcaria como recusada justamente a nota que nunca
+conseguiu ser transmitida. Numa consulta, 404 quer dizer "o documento não está
+aqui", e é a única resposta que resolve uma nota presa em
+`reconciliation_required` com segurança: se o provedor não tem o documento,
+retransmitir não duplica nada.
 
 Reenviar às cegas depois de uma resposta perdida é o caminho para **duplicar
 documento fiscal**. Por isso `reprocess_pending_fiscal_invoices` e
@@ -145,6 +153,20 @@ tardiamente enfileira o DANFE na impressora do pedido:
 | `reprocess_pending_invoices` | A conexão voltou e o lote retransmitiu |
 | `POST /invoices/{id}/resend/` | Reenvio manual de uma nota que não saiu |
 | `POST /invoices/{id}/refresh-status/` | Consulta manual encontrou a autorização |
+
+### A consulta não finge que consultou
+
+`refresh-status` chamava `get_provider(invoice.provider)`. O campo `provider` só
+é gravado quando a emissão chega ao provedor, então numa nota que nunca saiu
+daqui ele está vazio — e `get_provider("")` devolve o provedor Manual, cujo
+`status()` apenas repete o que já estava no banco. A API respondia 200 sem ter
+falado com ninguém.
+
+`refresh_fiscal_invoice_status()` resolve o provedor pela configuração quando o
+campo está vazio, e recusa com o motivo quando nenhum provedor configurado
+transmite — em vez de devolver um 200 vazio de significado. O resultado é
+persistido com o mesmo vocabulário dos outros caminhos (`awaiting` / `failure`),
+auditado, e dispara a impressão se a nota tiver acabado de ser autorizada.
 
 É idempotente por pedido (`_already_printed`), então chamar de vários caminhos
 não gera cupom duplicado. E nunca levanta: impressora fora do ar não pode

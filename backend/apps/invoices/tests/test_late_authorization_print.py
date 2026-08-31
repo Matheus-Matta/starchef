@@ -15,11 +15,17 @@ import pytest
 
 from apps.core.tenant import tenant_context
 from apps.invoices.models import FiscalConfig, FiscalProfile, Invoice
-from apps.invoices.providers import FiscalProvider, FiscalUnavailable, register_provider
+from apps.invoices.providers import (
+    FiscalNotFound,
+    FiscalProvider,
+    FiscalUnavailable,
+    register_provider,
+)
 from apps.invoices.services import (
     emit_fiscal_invoice,
     ensure_fiscal_print_job,
     print_sale_documents,
+    refresh_fiscal_invoice_status,
     reprocess_pending_fiscal_invoices,
     resend_fiscal_invoice,
 )
@@ -189,3 +195,87 @@ def test_a_note_that_is_still_pending_never_gets_a_danfe(pending_invoice, printe
     """O guarda continua sendo a autorizacao, nao a passagem pela funcao."""
     assert ensure_fiscal_print_job(pending_invoice) is None
     assert not _fiscal_jobs(pending_invoice.order).exists()
+
+
+# ------------------------------------------------- consulta de situacao
+
+def test_refresh_refuses_when_no_provider_transmits(
+    account, pending_invoice, fiscal_config, api_client
+):
+    """A consulta deixou de fingir que consultou.
+
+    `invoice.provider` so e gravado quando a emissao chega ao provedor. Com o
+    campo vazio, `get_provider("")` devolvia o provedor Manual, cujo `status()`
+    apenas repete o que ja estava no banco: a API respondia 200 sem ter falado
+    com ninguem. Agora recusa com o motivo.
+    """
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    pending_invoice.provider = ""
+    pending_invoice.save(update_fields=["provider", "updated_at"])
+    fiscal_config.provider = "manual"
+    fiscal_config.save(update_fields=["provider", "updated_at"])
+
+    response = api_client.post(
+        f"/api/v1/invoices/{pending_invoice.id}/refresh-status/", {}, format="json"
+    )
+
+    assert response.status_code == 400, response.data
+    assert "nunca foi transmitida" in " ".join(response.data["detail"])
+
+
+def test_refresh_uses_the_configured_provider_when_the_field_is_empty(
+    account, pending_invoice, printer, api_client
+):
+    """Campo vazio numa nota que ja foi transmitida cai na config, nao no Manual."""
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    pending_invoice.provider = ""
+    pending_invoice.fiscal_payload = {**pending_invoice.fiscal_payload, "awaiting": "authorization"}
+    pending_invoice.save(update_fields=["provider", "fiscal_payload", "updated_at"])
+
+    response = api_client.post(
+        f"/api/v1/invoices/{pending_invoice.id}/refresh-status/", {}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    pending_invoice.refresh_from_db()
+    # A config aponta para um provider que transmite: a consulta aconteceu.
+    assert pending_invoice.status == Invoice.STATUS_ISSUED
+    assert _fiscal_jobs(pending_invoice.order).count() == 1
+
+
+@register_provider
+class _NotFoundOnStatusProvider(FiscalProvider):
+    """O provedor nao conhece a referencia consultada."""
+
+    name = "test_status_not_found"
+    transmits = True
+
+    def emit(self, invoice, config):
+        raise FiscalUnavailable("SEFAZ indisponivel (simulado)")
+
+    def status(self, invoice):
+        raise FiscalNotFound("Nenhum documento com esta referencia (simulado).")
+
+
+def test_a_consult_that_finds_nothing_releases_the_note_for_retransmission(
+    pending_invoice, fiscal_config, manager_user
+):
+    """404 na consulta nao e recusa: e "o documento nao esta aqui".
+
+    Tratar como rejeicao marcaria como recusada justamente a nota que nao
+    conseguiu ser transmitida. E, para uma nota presa em reconciliacao, esta e
+    a unica resposta que libera a retransmissao com seguranca — se o provedor
+    nao tem o documento, reenviar nao duplica nada.
+    """
+    fiscal_config.provider = _NotFoundOnStatusProvider.name
+    fiscal_config.save(update_fields=["provider", "updated_at"])
+    pending_invoice.provider = ""
+    pending_invoice.fiscal_payload = {**pending_invoice.fiscal_payload, "awaiting": "reconciliation"}
+    pending_invoice.save(update_fields=["provider", "fiscal_payload", "updated_at"])
+
+    refreshed = refresh_fiscal_invoice_status(pending_invoice, user=manager_user)
+
+    assert refreshed.status == Invoice.STATUS_PENDING
+    assert refreshed.fiscal_payload["awaiting"] == "transmission"

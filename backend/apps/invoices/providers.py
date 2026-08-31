@@ -45,6 +45,15 @@ class FiscalUnavailable(FiscalProviderError):
     """
 
 
+class FiscalNotFound(FiscalProviderError):
+    """A consulta nao encontrou o documento no provedor.
+
+    Nao e recusa: e a resposta esperada para uma nota que nunca chegou la. E a
+    unica forma de resolver com seguranca uma nota em reconciliacao — se o
+    provedor nao tem o documento, retransmitir nao duplica nada.
+    """
+
+
 class FiscalAmbiguous(FiscalProviderError):
     """A emissao pode ter acontecido, mas o resultado nao foi confirmado.
 
@@ -525,6 +534,13 @@ class FocusNfeProvider(FiscalProvider):
             timeout=self._timeout(config),
         )
         data = response.json() if response.content else {}
+        if response.status_code == 404:
+            # Numa consulta, 404 quer dizer "o documento nao esta aqui" — nao
+            # que ele foi recusado. Tratar como rejeicao marcaria como recusada
+            # justamente a nota que nunca conseguiu ser transmitida.
+            raise FiscalNotFound(
+                "Focus NFe: nenhum documento com esta referencia foi encontrado no provedor."
+            )
         if response.status_code >= 400 or data.get("status") is None:
             raise self._classify_http(response, data)
         self.apply_response(invoice, data)

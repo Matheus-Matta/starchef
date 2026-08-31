@@ -362,3 +362,28 @@ def test_lost_response_after_post_requires_reconciliation(
     assert invoice.status == Invoice.STATUS_ISSUED
     # O segundo POST nunca aconteceu: a reconciliacao so consulta.
     assert mock_post.call_count == 1
+
+
+@patch("requests.get")
+@patch("requests.post")
+def test_status_404_is_not_found_not_a_rejection(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    """Consultar uma referencia que a Focus nao conhece devolve 404.
+
+    Pelo classificador geral isso viraria `FiscalRejection` e marcaria como
+    recusada uma nota que apenas nunca chegou la.
+    """
+    from apps.invoices.providers import FiscalNotFound
+
+    mock_post.side_effect = __import__("requests").ConnectionError("sem rede")
+    mock_get.return_value = _fake_response(404, {"codigo": "nao_encontrado"})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    from apps.core.tenant import tenant_context
+
+    with tenant_context(account), pytest.raises(FiscalNotFound):
+        FocusNfeProvider().status(invoice)
