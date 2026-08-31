@@ -3,7 +3,13 @@
 Este documento descreve o comportamento **atual** do StarChef, do fechamento e
 pagamento de um pedido até a geração, autorização e impressão do documento
 fiscal. O fluxo foi conferido no backend Django, na retaguarda Vue e no PDV
-Flutter em 30/08/2026.
+Flutter em 30/08/2026 e revisado em 31/08/2026.
+
+> **Revisão de 31/08/2026:** os estados fiscais, o fim da contingência
+> `tpEmis = 9` no fluxo cloud, a impressão restrita a nota autorizada e o
+> tratamento de cadastro incompleto estão explicados em
+> [`EMISSAO_FISCAL_ESTADOS.md`](EMISSAO_FISCAL_ESTADOS.md). As seções abaixo já
+> refletem essa revisão.
 
 > **Aviso fiscal:** CRT, CFOP, NCM, CEST, CSOSN/CST, PIS, COFINS, série e
 > numeração devem ser definidos ou validados pela contabilidade. O StarChef
@@ -32,9 +38,10 @@ Pagamento e emissão fiscal são operações separadas:
   **SEM VALOR FISCAL — HOMOLOGAÇÃO**;
 - cada item usa primeiro o perfil fiscal do produto e depois o perfil padrão
   da configuração fiscal;
-- sem qualquer perfil, a emissão não é bloqueada antecipadamente: o backend
-  envia fallbacks genéricos, inclusive NCM `00000000`, que normalmente causam
-  rejeição fiscal.
+- sem qualquer perfil, o que falta é **registrado** na nota e devolvido ao
+  terminal; com `strict_fiscal_profile` ligado, a nota nem é transmitida;
+- o DANFE só é impresso para nota **autorizada**: uma nota pendente tem chave
+  montada localmente, que a SEFAZ não reconhece.
 
 ## Visão geral do fluxo
 
@@ -61,7 +68,8 @@ flowchart TD
     Q --> R{Resposta}
     R -- Autorizado --> S[Invoice issued]
     R -- Processando --> T[Invoice pending normal]
-    R -- Falha ou rejeição --> U[Invoice pending em contingência]
+    R -- Indisponibilidade --> U[Invoice pending aguardando transmissão]
+    R -- Rejeição ou configuração --> W[Invoice error, sem retentativa]
     S --> V[Geração e impressão do DANFE]
     T --> V
     U --> V
@@ -265,10 +273,19 @@ pedido e monta a nota em uma transação:
 8. cria um snapshot tributário de cada linha em `InvoiceItem`;
 9. chama o provedor Focus;
 10. incrementa `FiscalConfig.next_number`, inclusive quando a nota fica
-    processando ou entra em contingência.
+    processando ou aguardando transmissão.
+
+Entre os passos 8 e 9 entra a validação do perfil fiscal de cada item
+(`fiscal_invoice_issues`). Com `strict_fiscal_profile` ligado ela interrompe
+aqui, antes de qualquer chamada ao provedor.
 
 O relacionamento `Order -> Invoice` é um para um. Alterar um produto ou perfil
-depois da emissão não muda os `InvoiceItem` já gravados.
+depois da emissão não muda os `InvoiceItem` de uma nota que já existe na SEFAZ.
+
+A exceção é o **reenvio de uma nota que nunca foi transmitida**: nesse caso não
+há documento, e `resend_fiscal_invoice` remonta os itens com o cadastro atual —
+é o que permite corrigir o perfil fiscal que faltava e reenviar. Notas em
+`processing` ou `reconciliation_required` são consultadas, nunca remontadas.
 
 ### Estado do pedido exigido
 
@@ -289,27 +306,31 @@ perfil = produto.fiscal_profile OU configuracao_fiscal.default_profile
 |---|---|---|
 | Produto com perfil próprio | Copia todos os campos daquele perfil | Usa o snapshot do perfil |
 | Produto sem perfil, com `default_profile` na filial | Copia o perfil padrão | Usa o snapshot do perfil padrão |
-| Produto e filial sem perfil | Campos fiscais ficam vazios ou zerados | Aplica fallbacks genéricos |
+| Produto e filial sem perfil | Campos fiscais ficam vazios ou zerados | Registra pendência; aplica padrões se `strict` estiver desligado |
 
-Os fallbacks enviados à Focus quando nenhum perfil existe são:
+Os padrões aplicados quando nenhum perfil existe são:
 
-| Campo | Fallback atual |
-|---|---|
-| NCM | `00000000` |
-| CEST | omitido |
-| CFOP | `5102` |
-| Origem ICMS | `0` |
-| Situação ICMS | `102` |
-| CST PIS | `49` |
-| Valor PIS | `0` |
-| CST COFINS | `49` |
-| Valor COFINS | `0` |
-| Tributos aproximados | `0` |
+| Campo | Padrão | Sob `strict_fiscal_profile` |
+|---|---|---|
+| NCM | `00000000` | Bloqueia |
+| CEST | omitido | — |
+| CFOP | `5102` | Bloqueia |
+| Origem ICMS | `0` | — |
+| Situação ICMS | `102` no Simples; **falha** em regime normal sem CST | Bloqueia |
+| CST PIS | `49` | — |
+| CST COFINS | `49` | — |
+| Tributos aproximados | `0` | — |
 
-Isso permite que o documento seja montado, mas `00000000` não é um NCM real.
-O comportamento esperado na prática é rejeição pela Focus/SEFAZ. Por isso um
-produto sem perfil próprio só deve ser faturado se a filial possuir um
-`default_profile` completo e adequado àquele produto.
+`00000000` não é um NCM real, e o risco dele não é a recusa: é ser **aceito** e
+gerar um documento fiscalmente errado. Por isso, mesmo com `strict` desligado, as
+pendências ficam gravadas em `Invoice.fiscal_payload["fiscal_profile_issues"]` e
+são devolvidas ao terminal — e podem ser conferidas antes do turno em
+`GET /api/v1/fiscal/config/readiness/?restaurant=<id>`.
+
+A situação do ICMS é escolhida pelo CRT da empresa: CSOSN no Simples, CST no
+regime normal. Uma empresa em regime normal sem CST falha com mensagem clara
+independentemente do flag — enviar CSOSN ali seria recusa certa de qualquer
+forma. Ver [`EMISSAO_FISCAL_ESTADOS.md`](EMISSAO_FISCAL_ESTADOS.md).
 
 O código atual também não ignora automaticamente um perfil marcado como
 inativo se ele ainda estiver associado ao produto ou configurado como padrão.
@@ -372,26 +393,25 @@ ser NF-e `55`; quem decide entre `/v2/nfe` e `/v2/nfce` é o backend.
 | Resposta/situação | Estado local |
 |---|---|
 | `autorizado` | `status = issued`, emissão normal |
-| `processando` ou `processando_autorizacao` | `status = pending`, emissão normal |
+| `processando` ou `processando_autorizacao` | `status = pending`, `fiscal_state = processing` |
 | `cancelado` | `status = cancelled` |
-| Timeout, erro de rede ou resposta inesperada | `status = pending`, `emission_type = 9` |
-| Rejeição fiscal | Atualmente também vira `pending`, `emission_type = 9` |
+| Timeout, erro de rede, HTTP 429/5xx | `status = pending`, `fiscal_state = awaiting_transmission` |
+| HTTP 401/403 ou credencial ausente | `status = error`, `fiscal_state = configuration_error` |
+| Rejeição fiscal ou HTTP 4xx | `status = error`, `fiscal_state = rejected`, sem retentativa |
+| `already_processed` sem consulta bem-sucedida | `status = pending`, `fiscal_state = reconciliation_required` |
 
 Quando autorizada, a nota recebe chave, protocolo, número/série confirmados,
 data de autorização, URLs de XML/DANFE e QR Code retornados pela Focus.
 
-Quando a chamada ao provedor lança qualquer exceção, o serviço preserva a venda
-e converte a nota para contingência:
+A venda é sempre preservada, mas o motivo da falha decide o que acontece com a
+nota. `tpEmis = 9` **não é mais gravado** em notas novas: o que existia não era
+contingência de verdade, porque o payload da Focus nunca levou
+`forma_emissao`/`numero`/`serie` — o cupom saía com uma chave que a SEFAZ não
+reconheceria. Notas antigas com `tpEmis = 9` continuam sendo reprocessadas.
 
-- refaz a chave de acesso com `tpEmis = 9`;
-- mantém a nota `pending`;
-- grava o motivo em `error_message`;
-- permite gerar DANFE com aviso de contingência;
-- mantém o número consumido.
-
-Hoje esse tratamento amplo inclui uma rejeição explícita da SEFAZ, não somente
-indisponibilidade técnica. Esse comportamento exige cuidado: corrigir cadastro
-fiscal e indisponibilidade de rede são problemas diferentes.
+Indisponibilidade mantém a nota `pending` e ela volta no reprocessamento;
+rejeição e erro de configuração viram `error` e param de ser tentados. Ver
+[`EMISSAO_FISCAL_ESTADOS.md`](EMISSAO_FISCAL_ESTADOS.md).
 
 ## 11. DANFE, impressão e acompanhamento
 
@@ -412,20 +432,24 @@ O backend renderiza:
 Depois cria um `PrintJob` do tipo `fiscal_danfe`. A impressão física é feita
 pelo navegador ou pelo agente local do PDV, conforme o cliente.
 
-O endpoint de impressão não exige hoje `status = issued`. Assim, também é
-possível gerar DANFE de nota `pending` ou em contingência. Nesse caso ele mostra
-“AGUARDANDO AUTORIZAÇÃO” ou o aviso correspondente.
+O endpoint de impressão **exige documento autorizado** (`is_fiscally_printable`).
+Uma nota `pending` tem chave montada localmente, que a consulta no portal da
+SEFAZ não encontra: imprimi-la entregaria ao cliente um cupom que não
+corresponde a documento fiscal nenhum. Nesse caso o endpoint devolve **400** com
+o motivo, e a impressão automática do pagamento emite só o recibo da venda.
+Contingência legada (`tpEmis = 9` já gravado) continua imprimível.
 
 Para acompanhar documentos assíncronos:
 
 - `POST /api/v1/invoices/{id}/refresh-status/` consulta a Focus;
 - o webhook Focus atualiza a nota pela referência;
 - `POST /api/v1/invoices/{id}/cancel/` solicita cancelamento;
-- `python manage.py reprocess_pending_invoices` retransmite notas `pending` em
-  contingência.
+- `python manage.py reprocess_pending_invoices` reprocessa notas `pending`:
+  transmite as que aguardam transmissão e **consulta** as que estão processando
+  ou em reconciliação — reenviar essas duplicaria o documento.
 
-O reprocessamento de contingência não possui agendamento Celery/Beat no código
-atual. O comando precisa ser executado manualmente ou agendado externamente.
+O reprocessamento não possui agendamento Celery/Beat no código atual. O comando
+precisa ser executado manualmente ou agendado externamente.
 
 ## 12. Pontos de atenção da implementação atual
 
@@ -437,10 +461,11 @@ ideal desejado.
 2. **Flutter coloca toda emissão na fila fiscal.** A chamada inicial não recebe
    imediatamente a nota autorizada e, por isso, não imprime o DANFE naquele
    gesto.
-3. **A fila Flutter considera qualquer HTTP bem-sucedido como autorizado.** Um
-   retorno HTTP 200 com `emitted: false`, usado pelo modo Manual ou por Focus
-   incompleto, também é marcado localmente como `AUTHORIZED` porque
-   `pushFiscal` não inspeciona esse campo.
+3. **A fila Flutter lê a situação fiscal real.** `pushFiscal` interpreta
+   `fiscal_state` e distingue autorizada, aguardando transmissão, processando,
+   em reconciliação, recusada e erro de configuração. Um HTTP 200 com
+   `emitted: false` não vira mais `AUTHORIZED`, e um 5xx volta para a escada de
+   retentativa em vez de encerrar a nota.
 4. **Não há impressão automática após a fila autorizar.** O retorno da fila é
    salvo localmente, mas não chama `/invoices/{id}/print/` depois.
 5. **Resposta de impressão e Flutter divergem.** O endpoint retorna

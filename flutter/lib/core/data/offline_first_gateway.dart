@@ -8,6 +8,7 @@ import 'cash_register_repository.dart';
 import 'entity_catalog.dart';
 import 'entity_repository.dart';
 import 'fiscal_queue_service.dart';
+import 'fiscal_snapshot.dart';
 import 'local_id.dart';
 import 'order_repository.dart';
 import 'payload_cipher.dart';
@@ -358,10 +359,12 @@ class OfflineFirstGateway {
 
     if (path.startsWith('/invoices/')) {
       final orderId = '${payload['order'] ?? payload['order_id'] ?? ''}';
+      final snapshot = await _captureFiscalSnapshot(orderId, payload);
       final document = await fiscalQueue.enqueue(
         scope: scope,
         orderId: orderId,
         payload: payload,
+        snapshot: snapshot?.data,
       );
       // A venda já está concluída; a nota entra na própria fila (§16).
       return LocalResult({
@@ -369,6 +372,10 @@ class OfflineFirstGateway {
         'order': orderId,
         'fiscal_status': document.status.code,
         '_fiscal_pending': true,
+        // A tela precisa saber que o retrato saiu incompleto: emitir com
+        // cadastro faltando só adia a recusa para a SEFAZ.
+        if (snapshot != null && !snapshot.isComplete)
+          '_fiscal_issues': snapshot.issues,
       }, queued: true);
     }
 
@@ -444,6 +451,34 @@ class OfflineFirstGateway {
     }
     // PATCH/DELETE direto no pedido.
     return _writeGeneric(route, method, path, body, null);
+  }
+
+  /// Captura o retrato fiscal da venda antes de enfileirar a nota (§16).
+  ///
+  /// Roda no mesmo gesto do pagamento, com o pedido já fechado: é o único
+  /// momento em que se sabe, com certeza, o que foi vendido e por qual
+  /// cadastro. Falhar aqui não pode derrubar a venda — ela já está paga —,
+  /// então o erro vira uma pendência registrada no próprio snapshot.
+  Future<FiscalSnapshot?> _captureFiscalSnapshot(
+    String orderId,
+    Map<String, dynamic> payload,
+  ) async {
+    if (orderId.isEmpty) return null;
+    try {
+      final order = await orders.read(orderId);
+      if (order == null) return null;
+      return await fiscalSnapshotBuilder(repository).build(
+        order: order.payload,
+        restaurantId: '${order.payload['restaurant'] ?? _restaurantId ?? ''}',
+        cpf: '${payload['cpf'] ?? ''}',
+        cpfName: '${payload['cpf_name'] ?? ''}',
+      );
+    } on Object catch (error) {
+      return FiscalSnapshot(
+        data: const {'snapshot_version': FiscalSnapshotBuilder.version},
+        issues: ['Falha ao capturar o retrato fiscal da venda: $error'],
+      );
+    }
   }
 
   /// Espelha na gaveta o recebimento em dinheiro que acabou de ser lançado.
@@ -903,6 +938,9 @@ class OfflineFirstGateway {
         'failed': summary.failed,
       },
       'fiscal_pending': await fiscalQueue.pendingCount(scope: scope),
+      // Recusa fiscal e erro de configuracao saem de `fiscal_pending` porque
+      // esperar nao os resolve — sem esta linha eles sumiriam do diagnostico.
+      'fiscal_blocked': await fiscalQueue.blockedCount(scope: scope),
       'print_queue': {'pending': printing.pending, 'failed': printing.failed},
       'entities': {
         for (final row in counts)

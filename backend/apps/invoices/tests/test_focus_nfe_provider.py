@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FocusNfeProvider
-from apps.invoices.services import emit_fiscal_invoice
+from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -204,10 +204,17 @@ def test_processing_response_stays_pending_without_contingency(mock_post, accoun
 
 
 @patch("requests.post")
-def test_rejected_response_falls_back_to_contingency(mock_post, account, restaurant, branch, manager_user):
+def test_rejected_response_becomes_an_error_without_contingency(
+    mock_post, account, restaurant, branch, manager_user
+):
+    """Rejeicao tributaria nao e indisponibilidade.
+
+    Antes qualquer excecao do provider virava tpEmis=9, e a nota recusada em
+    definitivo entrava no laco de retransmissao para tomar a mesma recusa.
+    """
     mock_post.return_value = _fake_response(200, {
         "status": "erro_autorizacao",
-        "mensagem_sefaz": "Rejeicao: CNPJ do emitente invalido",
+        "mensagem_sefaz": "Rejeicao 539: duplicidade de NF-e",
     })
     product = _make_product(account, restaurant, branch)
     _make_fiscal_config(account, restaurant, branch)
@@ -215,13 +222,16 @@ def test_rejected_response_falls_back_to_contingency(mock_post, account, restaur
 
     invoice = emit_fiscal_invoice(order, user=manager_user)
 
-    assert invoice.emission_type == Invoice.EMISSION_CONTINGENCY
-    assert invoice.status == Invoice.STATUS_PENDING
-    assert "CNPJ do emitente invalido" in invoice.error_message
+    assert invoice.status == Invoice.STATUS_ERROR
+    assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.fiscal_payload["failure"] == "rejection"
+    assert "Rejeicao 539" in invoice.error_message
 
 
 @patch("requests.post")
-def test_network_error_falls_back_to_contingency(mock_post, account, restaurant, branch, manager_user):
+def test_network_error_keeps_the_note_awaiting_transmission(
+    mock_post, account, restaurant, branch, manager_user
+):
     import requests
 
     mock_post.side_effect = requests.ConnectionError("timeout")
@@ -231,8 +241,9 @@ def test_network_error_falls_back_to_contingency(mock_post, account, restaurant,
 
     invoice = emit_fiscal_invoice(order, user=manager_user)
 
-    assert invoice.emission_type == Invoice.EMISSION_CONTINGENCY
     assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.fiscal_payload["awaiting"] == "transmission"
 
 
 @patch("requests.post")
@@ -303,3 +314,51 @@ def test_authorized_response_rejects_malformed_access_key():
         )
 
     assert invoice.access_key == original_key
+
+
+@patch("requests.post")
+def test_unauthorized_response_is_a_configuration_error(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(401, {"codigo": "permissao_negada"})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_ERROR
+    assert invoice.fiscal_payload["failure"] == "configuration"
+
+
+@patch("requests.get")
+@patch("requests.post")
+def test_lost_response_after_post_requires_reconciliation(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    """A Focus ja tem o documento e a consulta nao respondeu.
+
+    Reenviar as cegas duplicaria a nota, entao ela fica marcada para
+    reconciliacao — e o reprocessamento consulta em vez de transmitir.
+    """
+    mock_post.return_value = _fake_response(422, {"codigo": "already_processed"})
+    mock_get.return_value = _fake_response(500, {})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.fiscal_payload["awaiting"] == "reconciliation"
+
+    mock_get.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "NFe35" + "7" * 42,
+        "protocolo": "135250000000009",
+    })
+    retried, issued = reprocess_pending_fiscal_invoices()
+    invoice.refresh_from_db()
+
+    assert (retried, issued) == (1, 1)
+    assert invoice.status == Invoice.STATUS_ISSUED
+    # O segundo POST nunca aconteceu: a reconciliacao so consulta.
+    assert mock_post.call_count == 1

@@ -10,7 +10,7 @@ from decimal import Decimal
 import pytest
 
 from apps.invoices.models import FiscalConfig, Invoice
-from apps.invoices.providers import FiscalProvider, register_provider
+from apps.invoices.providers import FiscalProvider, FiscalUnavailable, register_provider
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -23,11 +23,15 @@ pytestmark = pytest.mark.django_db
 
 @register_provider
 class _AutoIssueProvider(FiscalProvider):
+    """Autoriza na hora, como um provedor real com SEFAZ no ar."""
+
     name = "test_auto_issue"
+    transmits = True
 
     def emit(self, invoice, config):
         invoice.provider = self.name
-        invoice.status = Invoice.STATUS_PENDING
+        invoice.status = Invoice.STATUS_ISSUED
+        invoice.authorization_protocol = "135260000000001"
         return invoice
 
     def cancel(self, invoice, reason):
@@ -36,6 +40,17 @@ class _AutoIssueProvider(FiscalProvider):
 
     def status(self, invoice):
         return invoice.status
+
+
+@register_provider
+class _UnavailableProvider(FiscalProvider):
+    """SEFAZ/integrador fora do ar no momento do pagamento."""
+
+    name = "test_auto_issue_unavailable"
+    transmits = True
+
+    def emit(self, invoice, config):
+        raise FiscalUnavailable("SEFAZ indisponivel (simulado)")
 
 
 @pytest.fixture
@@ -105,7 +120,7 @@ def test_full_payment_issues_the_invoice(
         _pay(order, cash_method, manager_user)
 
     invoice = Invoice.all_objects.get(order=order)
-    assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.status == Invoice.STATUS_ISSUED
     assert invoice.access_key
 
 
@@ -119,6 +134,25 @@ def test_full_payment_prints_receipt_and_danfe_on_the_resolved_printer(
     assert set(jobs) == {PrintJob.TYPE_RECEIPT, PrintJob.TYPE_FISCAL}
     # Sem impressora no trabalho, o agente local pula o cupom e a nota nunca sai.
     assert {job.printer_id for job in jobs.values()} == {printer.id}
+
+
+def test_unauthorized_invoice_prints_the_receipt_but_not_the_danfe(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    """O cliente nao pode receber um DANFE cuja chave nao existe na SEFAZ.
+
+    A venda ja esta paga e o recibo sai normalmente; o cupom fiscal so sai
+    quando (e se) a autorizacao chegar.
+    """
+    fiscal_config.provider = _UnavailableProvider.name
+    fiscal_config.save(update_fields=["provider", "updated_at"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    invoice = Invoice.all_objects.get(order=order)
+    assert invoice.status == Invoice.STATUS_PENDING
+    assert [job.job_type for job in PrintJob.all_objects.filter(order=order)] == [PrintJob.TYPE_RECEIPT]
 
 
 def test_partial_payment_issues_nothing(

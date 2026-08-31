@@ -4,6 +4,7 @@ import '../logging/app_logger.dart';
 import '../network/api_exception.dart';
 import '../network/relay_origin.dart';
 import 'entity_catalog.dart';
+import 'fiscal_queue_service.dart';
 import 'local_id.dart';
 import 'offline_first_gateway.dart';
 import 'sync_operation.dart';
@@ -51,6 +52,7 @@ class SyncSnapshot {
     this.pending = 0,
     this.failed = 0,
     this.fiscalPending = 0,
+    this.fiscalBlocked = 0,
     this.lastError,
     this.nextRetryAt,
   });
@@ -59,6 +61,11 @@ class SyncSnapshot {
   final int pending;
   final int failed;
   final int fiscalPending;
+
+  /// Documentos que pararam e precisam de alguém: rejeição tributária,
+  /// configuração fiscal inválida ou falha sem classificação. Esperar não
+  /// resolve nenhum deles, então não podem se esconder em `fiscalPending`.
+  final int fiscalBlocked;
   final String? lastError;
   final DateTime? nextRetryAt;
 
@@ -74,12 +81,13 @@ class SyncSnapshot {
       pending == other.pending &&
       failed == other.failed &&
       fiscalPending == other.fiscalPending &&
+      fiscalBlocked == other.fiscalBlocked &&
       lastError == other.lastError &&
       nextRetryAt == other.nextRetryAt;
 
   @override
   int get hashCode =>
-      Object.hash(phase, pending, failed, fiscalPending, lastError, nextRetryAt);
+      Object.hash(phase, pending, failed, fiscalPending, fiscalBlocked, lastError, nextRetryAt);
 }
 
 /// Sincronização entre o SQLite local e o backend, nos dois sentidos.
@@ -473,11 +481,17 @@ class SyncService {
   ///
   /// Roda separado da fila de vendas de propósito: uma nota recusada pela
   /// SEFAZ não pode segurar a sincronização de um pedido.
+  ///
+  /// A resposta é LIDA, não presumida. Antes, qualquer HTTP bem-sucedido virava
+  /// `AUTHORIZED` aqui — inclusive `{"emitted": false}`, que é exatamente o
+  /// servidor dizendo que a nota não saiu, e inclusive uma nota que ficou
+  /// aguardando autorização. O caixa via "nota autorizada" nos três casos.
   Future<void> pushFiscal({String emitPath = '/invoices/emit/'}) async {
     final scope = gateway.scope;
     if (scope == null) return;
     final document = await gateway.fiscalQueue.claimNext(scope: scope);
     if (document == null) return;
+    final attempts = document.attempts + 1;
     try {
       final response = await transport.send(
         'POST',
@@ -485,19 +499,42 @@ class SyncService {
         body: document.payload,
         idempotencyKey: document.documentId,
       );
-      await gateway.fiscalQueue.markAuthorized(
+      final status = FiscalStatus.fromResponse(response);
+      await gateway.fiscalQueue.applyOutcome(
         document.id,
-        protocol: '${response['protocol'] ?? response['authorization_protocol'] ?? ''}',
+        status: status,
+        attempts: attempts,
         response: response,
+        error: status.hasFiscalDocument
+            ? null
+            : '${response['error_message'] ?? response['message'] ?? ''}',
       );
     } on TransientSyncFailure catch (error) {
       await gateway.fiscalQueue.markRetry(
         document.id,
-        attempts: document.attempts + 1,
+        attempts: attempts,
         error: error.message,
       );
     } on ApiException catch (error) {
-      await gateway.fiscalQueue.markFailed(document.id, error: error.message);
+      // Um 5xx ou um 429 não dizem nada sobre a nota: são o servidor fora do
+      // ar, e desistir aqui deixaria uma venda paga sem documento fiscal para
+      // sempre. Só uma recusa do próprio servidor encerra a tentativa.
+      final code = error.statusCode ?? 0;
+      if (error.isConnectivity || code == 429 || code >= 500) {
+        await gateway.fiscalQueue.markRetry(
+          document.id,
+          attempts: attempts,
+          error: error.message,
+        );
+        return;
+      }
+      await gateway.fiscalQueue.markFailed(
+        document.id,
+        error: error.message,
+        status: code == 401 || code == 403
+            ? FiscalStatus.configurationError
+            : FiscalStatus.rejected,
+      );
     }
   }
 
@@ -518,6 +555,7 @@ class SyncService {
     if (scope == null || _disposed) return;
     final summary = await gateway.queue.summary(scope: scope);
     final fiscalPending = await gateway.fiscalQueue.pendingCount(scope: scope);
+    final fiscalBlocked = await gateway.fiscalQueue.blockedCount(scope: scope);
     final effective = summary.failed > 0 && phase == SyncPhase.idle
         ? SyncPhase.blocked
         : phase;
@@ -526,6 +564,7 @@ class SyncService {
       pending: summary.pending + summary.processing,
       failed: summary.failed,
       fiscalPending: fiscalPending,
+      fiscalBlocked: fiscalBlocked,
       lastError: error,
       nextRetryAt: nextRetryAt,
     );

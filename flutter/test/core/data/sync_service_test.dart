@@ -385,10 +385,135 @@ void main() {
     final documents = await stack.fiscalQueue.documents(
       scope: TestPdvStack.scope,
     );
-    expect(documents.single.status, FiscalStatus.failed);
+    expect(documents.single.status, FiscalStatus.rejected);
     expect(
       transport.requests.where((r) => r.path == '/invoices/emit/'),
       hasLength(1),
     );
+  });
+
+  test('resposta dizendo que a nota NÃO saiu não vira autorizada', () async {
+    // O caso mais caro do comportamento antigo: `emitted: false` chega em um
+    // HTTP 200, e qualquer 200 era gravado como AUTHORIZED. O caixa via "nota
+    // autorizada" para uma venda cujo documento nunca existiu.
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'emitted': false,
+      'fiscal_state': 'configuration_error',
+      'message': 'Nota fiscal nao emitida: certificado vencido.',
+    };
+
+    await sync.pushFiscal();
+    await sync.pushFiscal();
+
+    final documents = await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    );
+    expect(documents.single.status, FiscalStatus.configurationError);
+    // Configuração inválida não se resolve tentando de novo.
+    expect(
+      transport.requests.where((r) => r.path == '/invoices/emit/'),
+      hasLength(1),
+    );
+  });
+
+  test('nota que ainda não foi transmitida continua na fila', () async {
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'id': 'nota-1',
+      'status': 'pending',
+      'fiscal_state': 'awaiting_transmission',
+      'emitted': true,
+    };
+
+    await sync.pushFiscal();
+
+    final documents = await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    );
+    expect(documents.single.status, FiscalStatus.pending);
+    expect(documents.single.invoiceId, 'nota-1');
+    expect(
+      await stack.fiscalQueue.pendingCount(scope: TestPdvStack.scope),
+      1,
+    );
+  });
+
+  test('resposta perdida marca reconciliação e segue elegível', () async {
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'id': 'nota-1',
+      'status': 'pending',
+      'fiscal_state': 'reconciliation_required',
+      'emitted': true,
+    };
+
+    await sync.pushFiscal();
+
+    final documents = await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    );
+    expect(documents.single.status, FiscalStatus.reconciliationRequired);
+    // Continua contando como pendente: a próxima ação é consultar, e a
+    // emissão do StarChef é idempotente por pedido — repetir não duplica.
+    expect(
+      await stack.fiscalQueue.pendingCount(scope: TestPdvStack.scope),
+      1,
+    );
+  });
+
+  test('servidor fora do ar não desiste da nota', () async {
+    // Um 503 não diz nada sobre o documento. Desistir aqui deixaria uma venda
+    // paga sem nota para sempre.
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) =>
+        const ApiException('Serviço indisponível.', statusCode: 503);
+
+    await sync.pushFiscal();
+
+    final documents = await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    );
+    expect(documents.single.status, FiscalStatus.pending);
+    expect(documents.single.nextRetryAt, isNotNull);
+  });
+
+  test('a resposta não sobrescreve o que foi enviado', () async {
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1', 'cpf': '12345678909'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'id': 'nota-1',
+      'status': 'issued',
+      'authorization_protocol': '135260000000001',
+    };
+
+    await sync.pushFiscal();
+
+    final document = (await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    )).single;
+    expect(document.status, FiscalStatus.authorized);
+    expect(document.protocol, '135260000000001');
+    expect(document.payload['cpf'], '12345678909');
+    expect(document.response?['id'], 'nota-1');
   });
 }

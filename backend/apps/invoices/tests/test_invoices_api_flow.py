@@ -292,9 +292,23 @@ class TestFullEmissionFlow:
         assert resp.status_code == 200
         assert [row["id"] for row in resp.data["results"]] == [invoice_id]
 
+    def test_print_danfe_is_refused_before_authorization(self):
+        """DANFE de nota nao autorizada nao sai: a chave dela nao existe na SEFAZ."""
+        emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
+
+        resp = self.client.post(f"/api/v1/invoices/{emitted.data['id']}/print/", {}, format="json")
+
+        assert resp.status_code == 400, resp.data
+        assert emitted.data["printable"] is False
+        assert emitted.data["fiscal_state"] == "awaiting_transmission"
+
     def test_print_danfe_after_emit(self):
         emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
         invoice_id = emitted.data["id"]
+        invoice = Invoice.all_objects.get(pk=invoice_id)
+        invoice.status = Invoice.STATUS_ISSUED
+        invoice.authorization_protocol = "135260000000001"
+        invoice.save(update_fields=["status", "authorization_protocol", "updated_at"])
 
         resp = self.client.post(f"/api/v1/invoices/{invoice_id}/print/", {}, format="json")
         assert resp.status_code == 201, resp.data

@@ -34,8 +34,10 @@ from apps.invoices.services import (
     emit_fiscal_invoice,
     ensure_fiscal_config,
     fiscal_emission_unavailable_reason,
+    fiscal_readiness,
     print_fiscal_invoice,
     resend_fiscal_invoice,
+    with_fiscal_state,
 )
 from apps.restaurants.models import Restaurant
 
@@ -126,6 +128,34 @@ class FiscalConfigViewSet(BaseTenantViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
         return Response(self.get_serializer(config).data)
+
+    @action(detail=False, methods=["get"], url_path="readiness")
+    def readiness(self, request):
+        """Conferencia fiscal do turno: `GET ?restaurant=<id>`.
+
+        Existe para o cadastro incompleto aparecer ANTES da primeira venda. A
+        alternativa e o que acontecia: o item saia com NCM `00000000` e o
+        problema so viravam recusa da SEFAZ depois de o cliente pagar e ir
+        embora.
+        """
+        restaurant_id = request.query_params.get("restaurant")
+        if not restaurant_id:
+            return Response({"detail": "Informe o restaurante em ?restaurant=."}, status=status.HTTP_400_BAD_REQUEST)
+
+        restaurant = self._scoped_restaurant(restaurant_id)
+        if restaurant is None:
+            return Response({"detail": "Restaurante nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        config = FiscalConfig.objects.filter(restaurant=restaurant, is_active=True).first()
+        if config is None:
+            return Response(
+                {
+                    "ready": False,
+                    "detail": "Este restaurante nao tem configuracao fiscal ativa e nao emite NFC-e.",
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(fiscal_readiness(config))
 
     def _scoped_restaurant(self, restaurant_id):
         """Restaurante da conta do request, respeitando o recorte do perfil."""
@@ -253,6 +283,8 @@ class InvoiceViewSet(BaseTenantViewSet):
             return Response(
                 {
                     "emitted": False,
+                    "fiscal_state": "configuration_error",
+                    "printable": False,
                     "message": f"Nota fiscal nao emitida: {unavailable_reason}",
                 },
                 status=status.HTTP_200_OK,
@@ -265,8 +297,7 @@ class InvoiceViewSet(BaseTenantViewSet):
         # que existe E a resposta.
         existing = getattr(order, "invoice", None)
         if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
-            data = InvoiceSerializer(existing, context={"request": request}).data
-            data["emitted"] = True
+            data = with_fiscal_state(InvoiceSerializer(existing, context={"request": request}).data, existing)
             return Response(data, status=status.HTTP_200_OK)
 
         try:
@@ -278,8 +309,7 @@ class InvoiceViewSet(BaseTenantViewSet):
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        data = InvoiceSerializer(invoice, context={"request": request}).data
-        data["emitted"] = True
+        data = with_fiscal_state(InvoiceSerializer(invoice, context={"request": request}).data, invoice)
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="print")
@@ -295,7 +325,10 @@ class InvoiceViewSet(BaseTenantViewSet):
                 printer_qs = printer_qs.filter(account=self._account())
             printer = printer_qs.filter(pk=request.data["printer"]).first()
 
-        job = print_fiscal_invoice(invoice, user=request.user, printer=printer, manual_only=True)
+        try:
+            job = print_fiscal_invoice(invoice, user=request.user, printer=printer, manual_only=True)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             {"print_job_id": str(job.id), "status": job.status, "html": job.html_content},
             status=status.HTTP_201_CREATED,

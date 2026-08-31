@@ -154,6 +154,13 @@ class FiscalConfig(TenantModel):
     default_profile = models.ForeignKey(
         FiscalProfile, null=True, blank=True, related_name="+", on_delete=models.SET_NULL
     )
+    strict_fiscal_profile = models.BooleanField(
+        default=False,
+        help_text=(
+            "Recusar a emissao quando o perfil fiscal de algum item estiver incompleto, "
+            "em vez de completar com valores padrao."
+        ),
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:

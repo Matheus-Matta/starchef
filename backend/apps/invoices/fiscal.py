@@ -109,3 +109,111 @@ def compute_item_taxes(*, total_price, profile):
         "cofins_value": cofins_value,
         "approx_tax_value": approx_value,
     }
+
+
+# ---------------------------------------------------------------- validacao
+#
+# Um item so vira NFC-e valida se o perfil fiscal do produto estiver completo.
+# O que existia antes era o contrario disso: `_build_item` preenchia o que
+# faltasse com `00000000`, `5102`, `102` e `49` na hora de transmitir — depois
+# de o cliente ja ter pago, longe de quem podia corrigir, e sem deixar rastro.
+#
+# Os defaults nao sao todos iguais. NCM `00000000` e o mais perigoso porque
+# pode ser ACEITO e gerar um documento fiscalmente errado, que e pior do que
+# uma recusa. CFOP 5102 esta certo na esmagadora maioria da venda de balcao,
+# mas erra em producao propria (5101) e substituicao tributaria (5405).
+# PIS/COFINS 49 ("outras operacoes") e amplamente aceito e continua sendo um
+# default legitimo. Por isso a validacao aponta o que falta em vez de recusar
+# tudo: quem decide o rigor e `FiscalConfig.strict_fiscal_profile`.
+
+SIMPLES_REGIMES = {"1", "2"}
+
+
+def _issue(field, label, message, **extra):
+    return {"field": field, "label": label, "message": message, **extra}
+
+
+def icms_situation_field(crt):
+    """Qual campo de situacao tributaria do ICMS vale para este regime.
+
+    Simples Nacional usa CSOSN; regime normal usa CST. Trocar os dois nao e
+    detalhe: um CSOSN numa empresa de regime normal e recusado pela SEFAZ.
+    """
+    return "csosn" if str(crt) in SIMPLES_REGIMES else "cst_icms"
+
+
+def fiscal_profile_issues(profile, *, crt, subject=""):
+    """Pendencias que impedem um perfil fiscal de virar item de NFC-e.
+
+    Nunca levanta: alimenta tanto a conferencia de tela quanto a decisao de
+    emitir, e um cadastro vazio demais precisa virar lista, nao excecao.
+    """
+    prefix = f"{subject}: " if subject else ""
+    if profile is None:
+        return [
+            _issue(
+                "fiscal_profile",
+                "Perfil fiscal",
+                f"{prefix}sem perfil fiscal definido.",
+                subject=subject,
+            )
+        ]
+
+    issues = []
+    ncm = only_digits(getattr(profile, "ncm", ""))
+    if not ncm:
+        issues.append(_issue("ncm", "NCM", f"{prefix}NCM nao informado.", subject=subject))
+    elif len(ncm) != 8:
+        issues.append(
+            _issue("ncm", "NCM", f"{prefix}NCM deve ter 8 digitos.", subject=subject)
+        )
+
+    cfop = only_digits(getattr(profile, "cfop", ""))
+    if not cfop:
+        issues.append(_issue("cfop", "CFOP", f"{prefix}CFOP nao informado.", subject=subject))
+    elif len(cfop) != 4:
+        issues.append(
+            _issue("cfop", "CFOP", f"{prefix}CFOP deve ter 4 digitos.", subject=subject)
+        )
+
+    field = icms_situation_field(crt)
+    if field == "csosn":
+        if not getattr(profile, "csosn", ""):
+            issues.append(
+                _issue(
+                    "csosn",
+                    "CSOSN",
+                    f"{prefix}CSOSN nao informado (empresa no Simples Nacional).",
+                    subject=subject,
+                )
+            )
+    elif not getattr(profile, "cst_icms", ""):
+        issues.append(
+            _issue(
+                "cst_icms",
+                "CST do ICMS",
+                f"{prefix}CST do ICMS nao informado (empresa em regime normal).",
+                subject=subject,
+            )
+        )
+    return issues
+
+
+def fiscal_item_issues(item, *, crt):
+    """Mesma validacao, aplicada ao item ja congelado na nota.
+
+    O item guarda a tributacao COPIADA do perfil no momento da venda, entao e
+    ele — nao o cadastro de hoje — que diz se aquela nota podia sair.
+    """
+    return fiscal_profile_issues(
+        item, crt=crt, subject=item.description or f"item {item.line_number}"
+    )
+
+
+def fiscal_invoice_issues(invoice, config):
+    """Tudo que falta para os itens desta nota formarem uma NFC-e valida."""
+    issues = []
+    for item in invoice.items.all().order_by("line_number"):
+        for issue in fiscal_item_issues(item, crt=config.crt):
+            issues.append({**issue, "line_number": item.line_number, "product": str(item.product_id or "")})
+    return issues

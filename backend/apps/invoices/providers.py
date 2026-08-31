@@ -11,6 +11,48 @@ _REGISTRY = {}
 TWO_PLACES = Decimal("0.01")
 
 
+class FiscalProviderError(RuntimeError):
+    """Base das falhas de emissao.
+
+    O servico precisa saber POR QUE a emissao falhou para decidir o que fazer:
+    reenviar, parar, ou consultar antes de reenviar. Antes tudo era
+    ``RuntimeError`` e uma rejeicao tributaria era tratada igual a uma queda de
+    rede — o que gerava retransmissao infinita de uma nota que a SEFAZ ja
+    recusou em definitivo.
+    """
+
+
+class FiscalRejection(FiscalProviderError):
+    """Documento recusado: a SEFAZ negou, ou ele nem e valido para transmitir.
+
+    Nao existe retentativa automatica: reenviar repete a mesma recusa. So sai
+    do lugar depois que alguem corrigir o cadastro ou o pedido.
+    """
+
+
+class FiscalConfigurationError(FiscalProviderError):
+    """Certificado, token, CSC ou URL ausente/invalido.
+
+    Nenhuma nota da empresa sai enquanto nao for corrigido, entao nao adianta
+    tratar como indisponibilidade momentanea.
+    """
+
+
+class FiscalUnavailable(FiscalProviderError):
+    """Falha tecnica temporaria: rede, timeout, 5xx, SEFAZ fora do ar.
+
+    E a UNICA familia que justifica retentativa automatica.
+    """
+
+
+class FiscalAmbiguous(FiscalProviderError):
+    """A emissao pode ter acontecido, mas o resultado nao foi confirmado.
+
+    Exige consulta pela referencia antes de qualquer reenvio — reenviar as
+    cegas e o caminho para duplicar documento fiscal.
+    """
+
+
 def register_provider(cls):
     _REGISTRY[cls.name] = cls
     return cls
@@ -29,6 +71,11 @@ def fiscal_provider_unavailable_reason(config):
 
 class FiscalProvider:
     name = "base"
+
+    #: O provider realmente transmite o documento para fora do StarChef?
+    #: Uma nota `pending` de um provider que nao transmite nao esta esperando
+    #: autorizacao de ninguem — nao adianta reconsultar nem retransmitir.
+    transmits = False
 
     def emit(self, invoice, config):
         raise NotImplementedError
@@ -74,6 +121,7 @@ class FocusNfeProvider(FiscalProvider):
     """Emite NF-e/NFC-e pela Focus, sem comunicacao SEFAZ direta."""
 
     name = FiscalConfig.PROVIDER_FOCUS_NFE
+    transmits = True
 
     @staticmethod
     def _account_config(config):
@@ -102,10 +150,10 @@ class FocusNfeProvider(FiscalProvider):
     def _base_url(self, config):
         account_config = self._account_config(config)
         if account_config is None:
-            raise RuntimeError("Focus NFe: configuracao da conta nao encontrada.")
+            raise FiscalConfigurationError("Focus NFe: configuracao da conta nao encontrada.")
         base_url = account_config.production_url if config.environment == config.ENV_PRODUCTION else account_config.homologation_url
         if not base_url:
-            raise RuntimeError("Focus NFe: URL do ambiente selecionado nao configurada para esta conta.")
+            raise FiscalConfigurationError("Focus NFe: URL do ambiente selecionado nao configurada para esta conta.")
         return base_url.rstrip("/")
 
     def _timeout(self, config):
@@ -124,7 +172,7 @@ class FocusNfeProvider(FiscalProvider):
             else config.focus_token_homologation
         )
         if not token:
-            raise RuntimeError(
+            raise FiscalConfigurationError(
                 "Focus NFe: empresa ainda sem token para o ambiente selecionado. Sincronize o cadastro fiscal."
             )
         return token
@@ -135,7 +183,7 @@ class FocusNfeProvider(FiscalProvider):
             return "nfe"
         if document_model == FiscalConfig.MODEL_NFCE:
             return "nfce"
-        raise RuntimeError("Focus NFe: o modelo SAT/CF-e nao e suportado por este provedor.")
+        raise FiscalConfigurationError("Focus NFe: o modelo SAT/CF-e nao e suportado por este provedor.")
 
     @staticmethod
     def _payment_code(payment):
@@ -175,7 +223,7 @@ class FocusNfeProvider(FiscalProvider):
 
         products_total = sum((item.total_price for item in items), start=Decimal("0.00"))
         if products_total <= 0:
-            raise RuntimeError("Focus NFe: nao e possivel ratear valores em uma nota sem produtos.")
+            raise FiscalRejection("Focus NFe: nao e possivel ratear valores em uma nota sem produtos.")
 
         allocations = {}
         allocated = Decimal("0.00")
@@ -199,20 +247,45 @@ class FocusNfeProvider(FiscalProvider):
         invoice_total = invoice.total_amount.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
 
         if items_total != products_total:
-            raise RuntimeError(
+            raise FiscalRejection(
                 "Focus NFe: total dos itens difere do valor dos produtos "
                 f"({items_total} != {products_total})."
             )
         if discount_total < 0 or discount_total > products_total:
-            raise RuntimeError("Focus NFe: o desconto fiscal deve estar entre zero e o valor dos produtos.")
+            raise FiscalRejection("Focus NFe: o desconto fiscal deve estar entre zero e o valor dos produtos.")
 
         other_expenses = invoice_total - products_total + discount_total
         if other_expenses < 0:
-            raise RuntimeError(
+            raise FiscalRejection(
                 "Focus NFe: total fiscal inconsistente; o valor total deve corresponder a "
                 "produtos - desconto + outras despesas."
             )
         return other_expenses
+
+    @staticmethod
+    def _icms_situation(item, config):
+        """Situacao tributaria do ICMS, escolhida pelo REGIME da empresa.
+
+        Antes era `item.csosn or item.cst_icms or "102"`, sem olhar o CRT. Numa
+        empresa de regime normal isso mandava um CSOSN — que so existe no
+        Simples — e a SEFAZ recusava de qualquer jeito: o fallback nao evitava
+        problema nenhum, so trocava "cadastro incompleto" por "rejeicao".
+
+        Por isso o regime normal sem CST falha aqui mesmo com
+        `strict_fiscal_profile` desligado: nao existe valor padrao seguro, e
+        adivinhar um CST produziria um documento aceito e errado — pior que a
+        recusa. No Simples, CSOSN 102 (tributada sem permissao de credito)
+        continua valendo como padrao do varejo.
+        """
+        if str(config.crt) in {FiscalConfig.CRT_SIMPLES, FiscalConfig.CRT_SIMPLES_EXCESSO}:
+            return item.csosn or "102"
+        if item.cst_icms:
+            return item.cst_icms
+        raise FiscalRejection(
+            f'Focus NFe: o item "{item.description}" esta sem CST do ICMS e a empresa '
+            "esta em regime normal (CRT 3). Informe o CST no perfil fiscal do produto — "
+            "CSOSN so vale para o Simples Nacional."
+        )
 
     def _build_item(self, item, config, *, discount=Decimal("0.00"), other_expenses=Decimal("0.00")):
         payload = {
@@ -229,7 +302,7 @@ class FocusNfeProvider(FiscalProvider):
             "quantidade_tributavel": str(item.quantity),
             "valor_unitario_tributavel": str(item.unit_price),
             "icms_origem": item.origem or "0",
-            "icms_situacao_tributaria": item.csosn or item.cst_icms or "102",
+            "icms_situacao_tributaria": self._icms_situation(item, config),
             "pis_situacao_tributaria": item.pis_cst or "49",
             "pis_valor": str(item.pis_value),
             "cofins_situacao_tributaria": item.cofins_cst or "49",
@@ -261,7 +334,7 @@ class FocusNfeProvider(FiscalProvider):
     def _build_payload(self, invoice, config):
         items = list(invoice.items.all().order_by("line_number"))
         if not items:
-            raise RuntimeError("Focus NFe: a nota nao possui itens fiscais.")
+            raise FiscalRejection("Focus NFe: a nota nao possui itens fiscais.")
         other_expenses = self._validate_totals(invoice, items)
         discounts_by_item = self._allocate_total(items, invoice.discount_total)
         expenses_by_item = self._allocate_total(items, other_expenses)
@@ -315,7 +388,7 @@ class FocusNfeProvider(FiscalProvider):
             raw_value = raw_value[3:]
         access_key = "".join(character for character in raw_value if character in "0123456789")
         if len(access_key) != 44:
-            raise RuntimeError(
+            raise FiscalAmbiguous(
                 "Focus NFe: chave de acesso invalida na resposta; "
                 f"esperados 44 digitos, recebidos {len(access_key)}."
             )
@@ -350,21 +423,58 @@ class FocusNfeProvider(FiscalProvider):
             reason = data.get("mensagem_sefaz") or data.get("mensagem") or f"status={status}"
             invoice.status = Invoice.STATUS_ERROR
             invoice.error_message = str(reason)
-            raise RuntimeError(f"Focus NFe rejeitou a nota: {reason}")
+            raise FiscalRejection(f"Focus NFe rejeitou a nota: {reason}")
         return invoice
 
-    def emit(self, invoice, config):
+    @staticmethod
+    def _request(method, url, **kwargs):
+        """Executa a chamada HTTP traduzindo falha de transporte em `FiscalUnavailable`.
+
+        Uma conexao recusada ou um timeout nao dizem nada sobre a validade do
+        documento: sao indisponibilidade, e so elas autorizam retentativa. O
+        reenvio depois de um timeout e seguro porque a Focus trata `ref` como
+        chave de idempotencia — um POST repetido devolve `already_processed`, e
+        o resultado real vem da consulta feita em seguida.
+        """
         import requests
 
+        call = {"GET": requests.get, "POST": requests.post, "DELETE": requests.delete}[method]
+        try:
+            return call(url, **kwargs)
+        except requests.Timeout as exc:
+            raise FiscalUnavailable(f"Focus NFe: tempo esgotado ao falar com o provedor ({exc}).") from exc
+        except requests.RequestException as exc:
+            raise FiscalUnavailable(f"Focus NFe: falha de comunicacao com o provedor ({exc}).") from exc
+
+    @staticmethod
+    def _classify_http(response, data):
+        """Traduz uma resposta HTTP sem situacao fiscal utilizavel na falha correspondente."""
+        code = response.status_code
+        detail = data or (response.text or "")[:300]
+        if code in (401, 403):
+            return FiscalConfigurationError(
+                f"Focus NFe: token recusado pelo provedor (HTTP {code}). Verifique o cadastro fiscal."
+            )
+        if code == 429 or code >= 500:
+            return FiscalUnavailable(f"Focus NFe: provedor indisponivel (HTTP {code}): {detail}")
+        if code >= 400:
+            return FiscalRejection(f"Focus NFe recusou a requisicao (HTTP {code}): {detail}")
+        return FiscalAmbiguous(f"Focus NFe: resposta sem situacao fiscal (HTTP {code}): {detail}")
+
+    def emit(self, invoice, config):
         invoice.provider = self.name
         invoice.provider_reference = self._reference(invoice)
         resource = self._resource(invoice.document_model)
-        document_url = f"{self._base_url(config)}/v2/{resource}/{invoice.provider_reference}"
-        response = requests.post(
-            f"{self._base_url(config)}/v2/{resource}?ref={invoice.provider_reference}",
+        base_url = self._base_url(config)
+        token = self._token(config)
+        timeout = self._timeout(config)
+        document_url = f"{base_url}/v2/{resource}/{invoice.provider_reference}"
+        response = self._request(
+            "POST",
+            f"{base_url}/v2/{resource}?ref={invoice.provider_reference}",
             json=self._build_payload(invoice, config),
-            auth=(self._token(config), ""),
-            timeout=self._timeout(config),
+            auth=(token, ""),
+            timeout=timeout,
         )
         data = response.json() if response.content else {}
         if response.status_code == 422 and data.get("codigo") == "already_processed":
@@ -373,53 +483,49 @@ class FocusNfeProvider(FiscalProvider):
             # mesmo que a nota tenha sido autorizada. Consulte o documento ja
             # existente para reconciliar o estado local em vez de marca-lo como
             # erro e induzir novos reenvios.
-            response = requests.get(
-                document_url,
-                auth=(self._token(config), ""),
-                timeout=self._timeout(config),
-            )
+            response = self._request("GET", document_url, auth=(token, ""), timeout=timeout)
             data = response.json() if response.content else {}
             if response.status_code >= 400 or data.get("status") is None:
-                raise RuntimeError(
+                # O documento existe do lado da Focus e nao sabemos como ele
+                # terminou: reenviar as cegas duplicaria a nota.
+                raise FiscalAmbiguous(
                     "Focus NFe: a nota ja foi processada, mas nao foi possivel "
                     f"consultar o resultado (HTTP {response.status_code}): {data}"
                 )
-        if response.status_code >= 500 or data.get("status") is None:
-            raise RuntimeError(f"Focus NFe: resposta inesperada (HTTP {response.status_code}): {data}")
+        if response.status_code >= 400 or data.get("status") is None:
+            raise self._classify_http(response, data)
         return self.apply_response(invoice, data)
 
     def cancel(self, invoice, reason):
-        import requests
-
         config = FiscalConfig.objects.filter(branch=invoice.branch, is_active=True).first()
         if not config:
-            raise RuntimeError("Sem configuracao fiscal para cancelar a nota.")
+            raise FiscalConfigurationError("Sem configuracao fiscal para cancelar a nota.")
         resource = self._resource(invoice.document_model)
-        response = requests.delete(
+        response = self._request(
+            "DELETE",
             f"{self._base_url(config)}/v2/{resource}/{self._reference(invoice)}",
             json={"justificativa": reason or "Cancelamento solicitado pelo operador."},
             auth=(self._token(config), ""),
             timeout=self._timeout(config),
         )
         if response.status_code >= 400:
-            raise RuntimeError(f"Focus NFe: falha ao cancelar (HTTP {response.status_code}): {response.text}")
+            raise self._classify_http(response, response.json() if response.content else {})
         data = response.json() if response.content else {"status": "cancelado"}
         return self.apply_response(invoice, data)
 
     def status(self, invoice):
-        import requests
-
         config = FiscalConfig.objects.filter(branch=invoice.branch, is_active=True).first()
         if not config:
-            raise RuntimeError("Sem configuracao fiscal para consultar a nota.")
+            raise FiscalConfigurationError("Sem configuracao fiscal para consultar a nota.")
         resource = self._resource(invoice.document_model)
-        response = requests.get(
+        response = self._request(
+            "GET",
             f"{self._base_url(config)}/v2/{resource}/{self._reference(invoice)}",
             auth=(self._token(config), ""),
             timeout=self._timeout(config),
         )
         data = response.json() if response.content else {}
-        if response.status_code >= 400:
-            raise RuntimeError(f"Focus NFe: falha ao consultar (HTTP {response.status_code}): {data}")
+        if response.status_code >= 400 or data.get("status") is None:
+            raise self._classify_http(response, data)
         self.apply_response(invoice, data)
         return invoice.status

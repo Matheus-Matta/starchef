@@ -26,7 +26,7 @@ class PdvDatabase {
     _ready = _initialize();
   }
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
 
   final File _file;
   late final SqliteDatabase _database;
@@ -50,7 +50,8 @@ class PdvDatabase {
       ..add(SqliteMigration(2, _createPrintQueue))
       ..add(SqliteMigration(3, _createSecureValues))
       ..add(SqliteMigration(4, _createQueueOrigin))
-      ..add(SqliteMigration(5, _createCodeIndex));
+      ..add(SqliteMigration(5, _createCodeIndex))
+      ..add(SqliteMigration(6, _createFiscalSnapshot));
     await migrations.migrate(_database);
     // WAL permite ler enquanto se grava (§20). `sqlite_async` já o ativa por
     // padrão; o comando explícito documenta a dependência e protege contra uma
@@ -184,6 +185,23 @@ class PdvDatabase {
   /// ler e decifrar milhares de payloads a cada bipe — no balcão, com o
   /// cliente esperando. Uma tabela pequena, indexada pelo código, transforma
   /// isso em uma consulta direta.
+  /// Retrato fiscal e resposta do servidor na fila de notas.
+  ///
+  /// `snapshot` guarda a tributação resolvida no instante do pagamento — sem
+  /// ele, emitir sem o servidor é impossível, porque a fila só tinha pedido e
+  /// CPF. `response` existe porque a resposta era gravada por cima de
+  /// `payload`, apagando o que havia sido enviado justamente quando alguém
+  /// precisava comparar os dois.
+  static Future<void> _createFiscalSnapshot(SqliteWriteContext tx) async {
+    for (final column in ['snapshot TEXT', 'response TEXT', 'invoice_id TEXT']) {
+      try {
+        await tx.execute('ALTER TABLE fiscal_queue ADD COLUMN $column');
+      } on Object {
+        // Coluna já existe (banco criado pelo schema novo): nada a fazer.
+      }
+    }
+  }
+
   static Future<void> _createCodeIndex(SqliteWriteContext tx) async {
     await tx.execute('''
       CREATE TABLE IF NOT EXISTS entity_codes (
@@ -313,6 +331,9 @@ class PdvDatabase {
         scope TEXT NOT NULL,
         order_id TEXT NOT NULL,
         payload TEXT NOT NULL,
+        snapshot TEXT,
+        response TEXT,
+        invoice_id TEXT,
         status TEXT NOT NULL DEFAULT 'PENDING',
         attempts INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,

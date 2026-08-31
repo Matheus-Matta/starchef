@@ -3974,8 +3974,12 @@ class _HomePageState extends State<HomePage> {
   /// A venda NÃO depende disto. Sem conexão, a emissão entra na fila fiscal e
   /// o documento fica `PENDING` enquanto o pedido já está pago — antes, a
   /// mesma situação devolvia um erro no meio do recebimento, como se a venda
-  /// tivesse falhado. A impressão do DANFE continua exigindo o servidor: sem
-  /// nota autorizada não há o que imprimir.
+  /// tivesse falhado.
+  ///
+  /// O DANFE só é impresso para nota AUTORIZADA. Uma nota pendente tem chave
+  /// montada localmente, que a consulta no portal da SEFAZ não encontra:
+  /// imprimi-la entregaria ao cliente um cupom que não corresponde a documento
+  /// fiscal nenhum.
   ///
   /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
   /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
@@ -4016,11 +4020,17 @@ class _HomePageState extends State<HomePage> {
       // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
       // quando a nota for autorizada.
       if (invoice['_fiscal_pending'] == true) {
-        if (!silentIfUnconfigured) {
+        final issues = (invoice['_fiscal_issues'] as List? ?? const [])
+            .map((issue) => '$issue')
+            .toList();
+        if (!silentIfUnconfigured || issues.isNotEmpty) {
           showAppToast(
             context,
-            'Venda concluída. A NFC-e ficou pendente e será emitida assim que '
-            'a conexão com o provedor fiscal voltar.',
+            issues.isEmpty
+                ? 'Venda concluída. A NFC-e ficou pendente e será emitida '
+                      'assim que a conexão com o provedor fiscal voltar.'
+                : 'Venda concluída, mas o cadastro fiscal está incompleto e a '
+                      'NFC-e não vai passar assim: ${issues.first}',
             severity: AppErrorSeverity.warning,
           );
         }
@@ -4038,14 +4048,44 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      // `fiscal_state` é a situação real do documento; `status` sozinho não
+      // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
+      // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
+      // DANFE só é oferecido quando `printable` vem verdadeiro.
+      final state = '${invoice['fiscal_state'] ?? ''}';
+      if (invoice['printable'] != true) {
+        showAppToast(
+          context,
+          switch (state) {
+            'rejected' =>
+              'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
+                  'Não haverá reenvio automático.',
+            'configuration_error' =>
+              'NFC-e não emitida: a configuração fiscal está inválida '
+                  '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
+            'reconciliation_required' =>
+              'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
+                  'consultada antes de qualquer reenvio — não emita de novo.',
+            'processing' =>
+              'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
+                  'fiscal sai quando a autorização chegar.',
+            _ =>
+              'Venda concluída. A NFC-e ainda não foi transmitida e será '
+                  'enviada assim que a conexão voltar.',
+          },
+          severity: state == 'rejected' || state == 'configuration_error'
+              ? AppErrorSeverity.failure
+              : AppErrorSeverity.warning,
+        );
+        return;
+      }
+
       if (invoice['emission_type'] == '9') {
         showAppToast(
           context,
           'NFC-e emitida em contingência — será retransmitida quando a conexão com a SEFAZ voltar.',
           severity: AppErrorSeverity.warning,
         );
-      } else if (invoice['status'] != 'issued') {
-        showAppToast(context, 'NFC-e emitida, aguardando autorização.');
       }
 
       final printers = await _list(

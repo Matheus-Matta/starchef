@@ -110,11 +110,16 @@ Quando não há configuração fiscal ativa, o provedor é manual/desconhecido o
 }
 ```
 
-O reenvio individual aceita somente notas com `status = error` ou notas
-`pending` em contingência (`emission_type = 9`). Notas autorizadas, canceladas
-ou apenas processando em emissão normal são recusadas para evitar duplicidade.
-Se a Focus rejeitar novamente, a nota passa para `error` e a mensagem real fica
-em `error_message`.
+O reenvio individual aceita notas com `status = error` e notas `pending` que
+ainda não foram transmitidas (`fiscal_state = awaiting_transmission`, ou a
+contingência legada `emission_type = 9`). Notas autorizadas ou canceladas são
+recusadas para evitar duplicidade. Uma nota em `reconciliation_required` é
+**consultada** em vez de retransmitida — o provedor pode já tê-la, e um POST novo
+criaria uma segunda. Se a Focus rejeitar novamente, a nota passa para `error` e a
+mensagem real fica em `error_message`.
+
+Os estados fiscais e o motivo de cada decisão estão em
+[`EMISSAO_FISCAL_ESTADOS.md`](EMISSAO_FISCAL_ESTADOS.md).
 
 A exclusão remota é irreversível, restrita a administrador e exige o corpo:
 
