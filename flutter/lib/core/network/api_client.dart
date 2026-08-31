@@ -864,16 +864,22 @@ class ApiClient {
       if (body != null) request.body = jsonEncode(body);
       final streamed = await _client.send(request).timeout(requestTimeout);
       final response = await http.Response.fromStream(streamed);
-      final raw = response.body.isEmpty
-          ? <String, dynamic>{}
-          : jsonDecode(utf8.decode(response.bodyBytes));
-      final decoded = raw is List
-          ? <String, dynamic>{'results': raw}
-          : (raw as Map<String, dynamic>);
+      // O CÓDIGO DE STATUS VEM PRIMEIRO. Decodificar antes de olhar o status
+      // fazia uma resposta de erro sem JSON — a página HTML de um 502 do proxy,
+      // ou um 500 do Django — estourar `FormatException` e virar um
+      // `ApiException` sem `statusCode`. A fila trata isso como recusa de
+      // negócio e tira a operação de rotação para sempre: uma oscilação de
+      // gateway matava permanentemente um fechamento de caixa enfileirado.
+      final text = response.bodyBytes.isEmpty
+          ? ''
+          : utf8.decode(response.bodyBytes, allowMalformed: true);
+      final decoded = _decodeBody(text);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final error = ApiException(
-          _messageFor(response.statusCode, decoded),
+          decoded == null
+              ? _nonJsonErrorMessage(response.statusCode, text)
+              : _messageFor(response.statusCode, decoded),
           statusCode: response.statusCode,
         );
         if (_isRetryableStatus(response.statusCode)) {
@@ -885,14 +891,24 @@ class ApiClient {
         }
         throw error;
       }
+      // Só aqui "resposta inválida" é o diagnóstico certo: o servidor disse que
+      // deu certo e mandou algo que não é JSON.
+      if (decoded == null) {
+        throw ApiException(
+          'A API retornou uma resposta inválida. Servidor configurado: $baseUrl.',
+          statusCode: response.statusCode,
+        );
+      }
       return decoded;
     } on ApiException {
       rethrow;
     } on _NetworkUnavailable {
       rethrow;
     } on FormatException {
+      // Sobra para o que não é a resposta: URL malformada, corpo que não
+      // serializa. A resposta em si já foi tratada acima, com o status.
       throw ApiException(
-        'A API retornou uma resposta inválida. Servidor configurado: $baseUrl.',
+        'A requisição não pôde ser montada. Servidor configurado: $baseUrl.',
       );
     } on TimeoutException {
       throw _NetworkUnavailable(
@@ -1458,6 +1474,42 @@ class ApiClient {
       }
     } catch (_) {}
     return 'authenticated';
+  }
+
+  /// Corpo da resposta como mapa, ou `null` quando não é JSON de objeto.
+  ///
+  /// Uma lista vira `{'results': [...]}` como antes. Um escalar (`"erro"`, `12`)
+  /// vira `null` em vez de estourar `TypeError` no cast — outra forma de a
+  /// mesma resposta derrubar a chamada por um motivo que não é o real.
+  static Map<String, dynamic>? _decodeBody(String text) {
+    if (text.isEmpty) return <String, dynamic>{};
+    try {
+      final raw = jsonDecode(text);
+      if (raw is List) return <String, dynamic>{'results': raw};
+      if (raw is Map) return Map<String, dynamic>.from(raw);
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Mensagem de um erro que não veio em JSON.
+  ///
+  /// Guarda o status e um trecho do corpo: sem isso, a causa real (o 502 do
+  /// proxy, o 500 do backend) era descartada e o operador via só "resposta
+  /// inválida", que não diz para onde olhar.
+  static String _nonJsonErrorMessage(int status, String text) {
+    final snippet = text
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final detail = snippet.isEmpty
+        ? ''
+        : ' ${snippet.length > 200 ? '${snippet.substring(0, 200)}…' : snippet}';
+    if (status >= 500) {
+      return 'O servidor respondeu com erro $status.$detail';
+    }
+    return 'O servidor respondeu $status sem detalhamento.$detail';
   }
 
   String _messageFor(int status, Map<String, dynamic> body) {

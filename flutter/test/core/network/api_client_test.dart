@@ -343,4 +343,115 @@ void main() {
     await client.dispose();
     await directory.delete(recursive: true);
   });
+
+  // O status da resposta precisa ser lido ANTES do corpo. Decodificar primeiro
+  // fazia uma página HTML de erro — 502 do proxy, 500 do Django — estourar
+  // `FormatException` e virar um `ApiException` sem `statusCode`. A fila trata
+  // isso como recusa de negócio e tira a operação de rotação para sempre: uma
+  // oscilação de gateway matava permanentemente um fechamento de caixa
+  // enfileirado, e nada no servidor ficava pendente de aprovação.
+  test('erro 502 em HTML é indisponibilidade, não recusa definitiva', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html><head><title>502 Bad Gateway</title></head>'
+          '<body><h1>502 Bad Gateway</h1></body></html>',
+          502,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    // `isConnectivity` é o que a fila lê: o transporte o converte em
+    // `TransientSyncFailure` (reagenda) em vez de recusa definitiva.
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.isConnectivity, 'isConnectivity', isTrue)
+            .having((error) => error.message, 'message', contains('502')),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('erro 4xx sem JSON preserva o status e um trecho do corpo', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html><body>Request Entity Too Large</body></html>',
+          413,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 413)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('Request Entity Too Large'),
+            ),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('corpo escalar num erro não derruba a chamada por outro motivo', () async {
+    // `raw as Map<String, dynamic>` estourava `TypeError` num corpo assim.
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '"falha"',
+          400,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>().having((error) => error.statusCode, 'statusCode', 400),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('sucesso com corpo não-JSON continua sendo resposta inválida', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html>ok</html>',
+          200,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('resposta inválida'),
+        ),
+      ),
+    );
+
+    await client.dispose();
+  });
+
 }
