@@ -91,6 +91,42 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
     assert sent_payload["items"][0]["descricao"] == "X-Burger"
 
 
+@patch("requests.get")
+@patch("requests.post")
+def test_already_processed_reconciles_authorized_invoice(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    mock_post.return_value = _fake_response(
+        422,
+        {"codigo": "already_processed", "mensagem": "A nota fiscal ja foi autorizada"},
+    )
+    mock_get.return_value = _fake_response(
+        200,
+        {
+            "status": "autorizado",
+            "chave_nfe": "NFe35" + "2" * 42,
+            "protocolo": "135250000000003",
+            "caminho_danfe": "https://focusnfe.com.br/danfe/existing",
+        },
+    )
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.error_message == ""
+    assert invoice.access_key == "35" + "2" * 42
+    assert invoice.authorization_protocol == "135250000000003"
+    assert invoice.danfe_url == "https://focusnfe.com.br/danfe/existing"
+    mock_get.assert_called_once_with(
+        f"https://homologacao.focusnfe.com.br/v2/nfce/{invoice.provider_reference}",
+        auth=("fake-token", ""),
+        timeout=30,
+    )
+
+
 @patch("requests.post")
 def test_payload_maps_approved_payments_and_cash_change(mock_post, account, restaurant, branch, manager_user):
     mock_post.return_value = _fake_response(200, {

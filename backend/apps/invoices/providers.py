@@ -359,6 +359,7 @@ class FocusNfeProvider(FiscalProvider):
         invoice.provider = self.name
         invoice.provider_reference = self._reference(invoice)
         resource = self._resource(invoice.document_model)
+        document_url = f"{self._base_url(config)}/v2/{resource}/{invoice.provider_reference}"
         response = requests.post(
             f"{self._base_url(config)}/v2/{resource}?ref={invoice.provider_reference}",
             json=self._build_payload(invoice, config),
@@ -366,6 +367,23 @@ class FocusNfeProvider(FiscalProvider):
             timeout=self._timeout(config),
         )
         data = response.json() if response.content else {}
+        if response.status_code == 422 and data.get("codigo") == "already_processed":
+            # A Focus usa a referencia como chave de idempotencia. Se a resposta
+            # da primeira emissao nao chegou ao StarChef, um reenvio devolve 422
+            # mesmo que a nota tenha sido autorizada. Consulte o documento ja
+            # existente para reconciliar o estado local em vez de marca-lo como
+            # erro e induzir novos reenvios.
+            response = requests.get(
+                document_url,
+                auth=(self._token(config), ""),
+                timeout=self._timeout(config),
+            )
+            data = response.json() if response.content else {}
+            if response.status_code >= 400 or data.get("status") is None:
+                raise RuntimeError(
+                    "Focus NFe: a nota ja foi processada, mas nao foi possivel "
+                    f"consultar o resultado (HTTP {response.status_code}): {data}"
+                )
         if response.status_code >= 500 or data.get("status") is None:
             raise RuntimeError(f"Focus NFe: resposta inesperada (HTTP {response.status_code}): {data}")
         return self.apply_response(invoice, data)
