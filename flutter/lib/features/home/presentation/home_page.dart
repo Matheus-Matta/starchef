@@ -4235,33 +4235,51 @@ class _HomePageState extends State<HomePage> {
     // se relê o que ficou gravado.
     await _refreshOrder();
     registeredPayments = await _loadRegisteredPayments();
-    if (result['_queued_offline'] != true) {
-      if (method['method_type'] == 'cash') {
-        try {
-          cashSession = await api.get(
-            '/cash-register/current/',
-            query: {
-              if (selectedRestaurantId != null)
-                'restaurant': selectedRestaurantId,
-            },
-            accessToken: token,
-          );
-        } on ApiException {
-          // O pagamento já foi registrado; a atualização geral tenta de novo.
-        }
-      }
-    }
+    if (method['method_type'] == 'cash') await _refreshCashSession();
     paymentDigits = (remainingTotal * 100).round().toString();
     _syncPaymentAmount();
     paymentReference.clear();
     setState(() {});
   }
 
-  /// Remove um pagamento já confirmado, como no frontend web.
+  /// O recebimento saiu da gaveta?
   ///
-  /// Só se aplica a pagamentos com id real: um pagamento ainda na fila
-  /// offline nunca chegou ao servidor, então não há o que cancelar lá — a
-  /// remoção correta nesse caso é esperar a sincronização.
+  /// O lançamento criado aqui guarda `method_type`; o que vem do servidor usa
+  /// `payment_method_type` (ver `PaymentSerializer`). A mesma lista mistura os
+  /// dois, e olhar só um dos nomes deixava o saldo do caixa parado depois de
+  /// remover um recebimento já sincronizado.
+  static bool _isCashPayment(Map<String, dynamic> payment) =>
+      '${payment['method_type'] ?? payment['payment_method_type'] ?? ''}' ==
+      'cash';
+
+  /// Relê o saldo da gaveta depois de mexer em dinheiro.
+  ///
+  /// A leitura é local (o SQLite deste terminal já foi atualizado junto do
+  /// recebimento), então vale também sem rede — antes a atualização só
+  /// acontecia quando havia conexão, e o caixa ficava parado na tela
+  /// exatamente durante a operação offline.
+  Future<void> _refreshCashSession() async {
+    try {
+      cashSession = await api.get(
+        '/cash-register/current/',
+        query: {
+          if (selectedRestaurantId != null) 'restaurant': selectedRestaurantId,
+        },
+        accessToken: token,
+      );
+    } on ApiException {
+      // O recebimento já foi registrado; a atualização geral tenta de novo.
+    }
+  }
+
+  /// Remove um pagamento do pedido, como no frontend web.
+  ///
+  /// Vale para os dois casos, e quem decide é o identificador: o recebimento
+  /// que ainda está na fila é desfeito aqui mesmo (nunca chegou ao servidor,
+  /// e mandar o `offline-…` para lá só devolvia "não é um UUID válido"); o
+  /// que já subiu é cancelado pelo servidor, que é quem sabe reabrir mesa,
+  /// comanda e estorno de estoque. As duas rotas são a mesma chamada — o
+  /// roteador offline-first escolhe o caminho.
   Future<void> _removePayment(Map<String, dynamic> payment) async {
     final id = payment['id'];
     if (id == null || removingPaymentId != null) return;
@@ -4271,7 +4289,9 @@ class _HomePageState extends State<HomePage> {
         '/orders/${activeOrder!['id']}/payments/$id/',
         accessToken: token,
       );
+      await _refreshOrder();
       registeredPayments = await _loadRegisteredPayments();
+      if (_isCashPayment(payment)) await _refreshCashSession();
       paymentDigits = (remainingTotal * 100).round().toString();
       _syncPaymentAmount();
     } catch (error) {

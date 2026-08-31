@@ -7,6 +7,7 @@ scaffold e o ManualFiscalProvider (deixa a nota `pending`, sem protocolo).
 """
 import base64
 import io
+import logging
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -508,11 +509,23 @@ def _danfe_nfce_text(invoice, config):
     return "\n".join(lines)
 
 
-def print_fiscal_invoice(invoice, *, user=None, printer=None):
-    """Renderiza o DANFE NFC-e e cria o PrintJob (reaproveita o pipeline de impressao)."""
+def print_fiscal_invoice(invoice, *, user=None, printer=None, manual_only=False):
+    """Renderiza o DANFE NFC-e e cria o PrintJob (reaproveita o pipeline de impressao).
+
+    `manual_only` diz que quem pediu foi um terminal, e que e ele quem vai
+    imprimir. Nesse caso o cupom que a emissao automatica ja criou e assumido
+    em vez de duplicado — a nota do cliente sai uma vez so.
+    """
     from apps.printers.models import PrintJob
+    from apps.printers.services import claim_pending_job
 
     with tenant_context(invoice.account):
+        if manual_only and invoice.order_id:
+            claimed = claim_pending_job(
+                order=invoice.order, job_type=PrintJob.TYPE_FISCAL, printer=printer, user=user
+            )
+            if claimed is not None:
+                return claimed
         config = _resolve_fiscal_config(invoice.restaurant, invoice.branch)
         is_contingency = invoice.emission_type == Invoice.EMISSION_CONTINGENCY
         context = {
@@ -553,3 +566,71 @@ def print_fiscal_invoice(invoice, *, user=None, printer=None):
         )
         record_audit(action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": PrintJob.TYPE_FISCAL})
         return job
+
+
+def _already_printed(order, job_type):
+    """Ja existe um trabalho deste tipo para o pedido?
+
+    Impressao automatica nao pode competir com a do PDV: o terminal cria o
+    proprio trabalho ao concluir a venda (e imprime na hora, pela impressora
+    master dele). Quem chegar primeiro imprime; o segundo desiste, em vez de
+    sair um cupom duplicado da mesma venda.
+    """
+    from apps.printers.models import PrintJob
+
+    return PrintJob.objects.filter(order=order, job_type=job_type).exists()
+
+
+def print_sale_documents(order, *, invoice=None, user=None):
+    """Imprime o recibo da venda e, quando houver, o DANFE da NFC-e.
+
+    Sem impressora resolvida nao ha o que fazer: `resolve_printer_for` levanta
+    `ValidationError` e o chamador registra o motivo. Um pedido pago nunca
+    depende disto para continuar pago.
+    """
+    from apps.printers.models import PrintJob
+    from apps.printers.services import register_print_job, resolve_printer_for
+
+    jobs = []
+    printer = resolve_printer_for(order, PrintJob.TYPE_RECEIPT)
+    if not _already_printed(order, PrintJob.TYPE_RECEIPT):
+        jobs.append(register_print_job(order=order, user=user, job_type=PrintJob.TYPE_RECEIPT, printer=printer))
+    if invoice is not None and not _already_printed(order, PrintJob.TYPE_FISCAL):
+        jobs.append(print_fiscal_invoice(invoice, user=user, printer=printer))
+    return jobs
+
+
+def issue_invoice_for_paid_order(order, *, user=None):
+    """Emite a nota do pedido quitado e manda recibo e DANFE para a impressora.
+
+    E o caminho automatico (`order_fully_paid`): o operador nao precisa voltar
+    ao historico do pedido para emitir. Nada aqui pode derrubar o recebimento
+    — ele ja foi gravado e commitado —, entao cada etapa registra o proprio
+    motivo de falha e devolve o controle.
+
+    Restaurante sem configuracao fiscal ativa nao e erro: e um restaurante que
+    nao emite NFC-e. Nesse caso so o recibo da venda sai.
+    """
+    logger = logging.getLogger(__name__)
+    invoice = None
+    with tenant_context(order.account):
+        reason = fiscal_emission_unavailable_reason(order)
+        if reason:
+            logger.info("Nota automatica dispensada para o pedido %s: %s", order.id, reason)
+        else:
+            existing = getattr(order, "invoice", None)
+            if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
+                # O PDV pode ter emitido no mesmo instante; imprimir a que existe
+                # e o comportamento certo, nao tentar montar uma segunda.
+                invoice = existing
+            else:
+                try:
+                    invoice = emit_fiscal_invoice(order, user=user)
+                except (ValidationError, RuntimeError) as exc:
+                    logger.warning("Falha ao emitir a nota do pedido %s: %s", order.id, exc)
+
+        try:
+            print_sale_documents(order, invoice=invoice, user=user)
+        except (ValidationError, RuntimeError) as exc:
+            logger.warning("Pedido %s pago, mas a impressao nao saiu: %s", order.id, exc)
+    return invoice

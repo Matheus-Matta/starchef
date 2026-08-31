@@ -372,6 +372,47 @@ class SyncQueueService {
     });
   }
 
+  /// Descarta a operação PENDENTE que criaria este sub-recurso no servidor.
+  ///
+  /// É o que desfaz de verdade um recebimento removido antes de subir: o
+  /// pagamento nunca chegou à nuvem, e deixar a operação na fila faria o
+  /// servidor registrar depois um dinheiro que o operador já apagou aqui.
+  ///
+  /// `PROCESSING` fica de fora de propósito — essa já pode estar no ar, e
+  /// cancelar uma cobrança que talvez tenha sido aceita é decisão do servidor,
+  /// não da fila. Devolver `null` é o sinal de "espere a sincronização".
+  ///
+  /// O corpo descartado volta junto porque ele é o único lugar que sabe o
+  /// contexto da operação desfeita — a sessão de caixa em que o dinheiro
+  /// entrou, por exemplo.
+  Future<Map<String, dynamic>?> discardPendingChild({
+    required String scope,
+    required String field,
+    required String clientId,
+  }) async {
+    if (clientId.isEmpty) return null;
+    return database.write((tx) async {
+      final row = await tx.getOptional(
+        '''
+        SELECT id, payload FROM sync_queue
+        WHERE scope = ? AND status = 'PENDING'
+          AND instr(COALESCE(payload, ''), ?) > 0
+        ORDER BY id LIMIT 1
+        ''',
+        [scope, '"$field":"$clientId"'],
+      );
+      if (row == null) return null;
+      await tx.execute(
+        "DELETE FROM sync_queue WHERE id = ? AND status = 'PENDING'",
+        [row['id']],
+      );
+      final payload = jsonDecode('${row['payload'] ?? '{}'}');
+      return payload is Map
+          ? Map<String, dynamic>.from(payload)
+          : <String, dynamic>{};
+    });
+  }
+
   Future<SyncQueueSummary> summary({required String scope}) async {
     final rows = await database.query(
       '''

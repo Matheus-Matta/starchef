@@ -270,6 +270,84 @@ def render_print_html(order, job_type, **extra):
     return render_to_string(template, context)
 
 
+def active_printers_for(order):
+    """Impressoras ativas que atendem este pedido (restaurante + filial)."""
+    active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
+    if order.branch_id:
+        active = active.filter(Q(branch_id=order.branch_id) | Q(branch__isnull=True))
+    return active
+
+
+def resolve_printer_for(order, job_type=PrintJob.TYPE_RECEIPT):
+    """A impressora de destino de um trabalho, quando ninguem escolheu uma.
+
+    Extraido de `register_print_job` porque o cupom fiscal precisa da MESMA
+    escolha: um DANFE criado sem impressora fica parado — o agente local pula
+    o trabalho que nao aponta para nenhuma ("printer unavailable") e a nota
+    simplesmente nunca sai.
+    """
+    active = active_printers_for(order)
+    if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
+        sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
+        printer = (
+            active.filter(sector_id__in=sector_ids).order_by("name").first()
+            or active.filter(sector=None).order_by("name").first()
+            or active.order_by("name").first()
+        )
+    else:
+        # Recibo/conta/fechamento preferem uma impressora sem setor,
+        # evitando enviar o pedido inteiro a uma cozinha por engano.
+        printer = active.filter(sector=None).order_by("name").first()
+        if printer is None:
+            # Restaurantes pequenos frequentemente usam uma única
+            # impressora física no caixa e na cozinha. Se só há uma
+            # opção compatível com a filial, a escolha é inequívoca
+            # mesmo que ela esteja vinculada a um setor.
+            candidates = list(active.order_by("name")[:2])
+            if len(candidates) == 1:
+                printer = candidates[0]
+
+    if printer is not None:
+        return printer
+    if active.exists():
+        raise ValidationError(
+            "Há mais de uma impressora setorizada ativa. Cadastre uma "
+            "impressora sem setor para ser o destino automático dos recibos."
+        )
+    raise ValidationError("Nenhuma impressora ativa foi encontrada para este restaurante e filial.")
+
+
+def claim_pending_job(*, order, job_type, printer, user):
+    """O terminal assume um cupom que ja existe, em vez de criar um segundo.
+
+    A emissao automatica do pagamento ja cria o recibo e o DANFE; quando o PDV
+    pede para imprimir em seguida, e o MESMO documento. Criar outro faria sair
+    duas vias da mesma venda em quem tem `auto_print` ligado na impressora do
+    caixa. Marcar `manual_only` tira o trabalho do laco do agente: quem imprime
+    passa a ser o terminal que esta na frente do cliente.
+
+    So vale para o que ainda nao saiu — uma reimpressao de um cupom ja impresso
+    continua sendo um trabalho novo.
+    """
+    claimed = (
+        PrintJob.objects.filter(
+            order=order,
+            job_type=job_type,
+            status__in=[PrintJob.STATUS_PENDING, PrintJob.STATUS_RENDERED],
+        )
+        .order_by("created_at")
+        .first()
+    )
+    if claimed is None:
+        return None
+    claimed.payload = {**(claimed.payload or {}), "manual_only": True}
+    if printer is not None:
+        claimed.printer = printer
+    claimed.updated_by = user
+    claimed.save(update_fields=["payload", "printer", "updated_by", "updated_at"])
+    return claimed
+
+
 def register_print_job(
     *,
     order,
@@ -285,38 +363,12 @@ def register_print_job(
         if printer and printer.account_id != order.account_id:
             raise ValueError("Printer does not belong to the order account.")
         if printer is None:
-            active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
-            if order.branch_id:
-                active = active.filter(Q(branch_id=order.branch_id) | Q(branch__isnull=True))
-            if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
-                sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
-                printer = (
-                    active.filter(sector_id__in=sector_ids).order_by("name").first()
-                    or active.filter(sector=None).order_by("name").first()
-                    or active.order_by("name").first()
-                )
-            else:
-                # Recibo/conta/fechamento preferem uma impressora sem setor,
-                # evitando enviar o pedido inteiro a uma cozinha por engano.
-                printer = active.filter(sector=None).order_by("name").first()
-                if printer is None:
-                    # Restaurantes pequenos frequentemente usam uma única
-                    # impressora física no caixa e na cozinha. Se só há uma
-                    # opção compatível com a filial, a escolha é inequívoca
-                    # mesmo que ela esteja vinculada a um setor.
-                    candidates = list(active.order_by("name")[:2])
-                    if len(candidates) == 1:
-                        printer = candidates[0]
+            printer = resolve_printer_for(order, job_type)
 
-        if printer is None:
-            if active.exists():
-                raise ValidationError(
-                    "Há mais de uma impressora setorizada ativa. Cadastre uma "
-                    "impressora sem setor para ser o destino automático dos recibos."
-                )
-            raise ValidationError(
-                "Nenhuma impressora ativa foi encontrada para este restaurante e filial."
-            )
+        if manual_only:
+            claimed = claim_pending_job(order=order, job_type=job_type, printer=printer, user=user)
+            if claimed is not None:
+                return claimed
 
         barcode = _order_command_barcode(order)
         html = render_print_html(

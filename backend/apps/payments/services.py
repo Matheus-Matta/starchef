@@ -13,6 +13,7 @@ from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
+from apps.orders.signals import order_fully_paid
 from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
 from apps.payments.terminals import (
     CashSessionConflict,
@@ -605,6 +606,13 @@ def register_payment(
                 deduct_order_stock(order=order, user=user)
 
         record_audit(action=AuditLog.ACTION_PAYMENT, instance=payment, actor=user, metadata={"order": str(order.id)})
+        if paid_in_full:
+            # Depois do COMMIT: quem escuta emite a nota fiscal e manda
+            # imprimir — chamadas externas que nao podem rodar dentro da
+            # transacao do recebimento nem sobreviver a um rollback dela.
+            transaction.on_commit(
+                lambda: order_fully_paid.send(sender=Order, order=order, user=user)
+            )
         return payment
 
 

@@ -4,6 +4,7 @@ import '../formatters/value_formatters.dart';
 import '../network/api_exception.dart';
 import 'cash_session_status.dart';
 import 'entity_catalog.dart';
+import 'entity_record.dart';
 import 'entity_repository.dart';
 import 'local_id.dart';
 import 'sync_operation.dart';
@@ -161,6 +162,7 @@ class CashRegisterRepository extends EntityRepository {
         'status': CashSessionStatus.open,
         'opening_amount': opening.toStringAsFixed(2),
         'expected_amount': opening.toStringAsFixed(2),
+        'current_balance': opening.toStringAsFixed(2),
         'notes': body['notes'] ?? '',
         'station': body['station'] ?? 'PDV principal',
         'device_identifier': installationId ?? body['device_identifier'] ?? '',
@@ -248,7 +250,7 @@ class CashRegisterRepository extends EntityRepository {
       installationId: installationId,
     );
     final actual = ValueFormatters.number(body['actual_amount']);
-    final expected = _expectedAmount(session.payload);
+    final expected = _drawerAmount(session.payload);
     final difference = actual - expected;
     final record = await saveLocal(
       {
@@ -308,7 +310,8 @@ class CashRegisterRepository extends EntityRepository {
     final record = await saveLocal(
       {
         ...updated,
-        'expected_amount': _expectedAmount(updated).toStringAsFixed(2),
+        'current_balance': _drawerAmount(updated).toStringAsFixed(2),
+        'expected_amount': _drawerAmount(updated).toStringAsFixed(2),
       },
       operation: SyncOperation.update,
       method: 'POST',
@@ -394,17 +397,159 @@ class CashRegisterRepository extends EntityRepository {
     return record.toApiJson();
   }
 
-  /// Saldo previsto: abertura + suprimentos - sangrias + recebimentos em
-  /// dinheiro já informados pelo servidor.
-  static double _expectedAmount(Map<String, dynamic> session) {
-    var total = ValueFormatters.number(session['opening_amount']);
-    total += ValueFormatters.number(session['cash_sales_amount']);
-    for (final movement in _movementsOf(session)) {
-      final amount = ValueFormatters.number(movement['amount']);
-      total += '${movement['movement_type']}' == 'supply' ? amount : -amount;
+  /// Lança na gaveta deste terminal um recebimento em dinheiro.
+  ///
+  /// O movimento equivalente nasce no servidor junto do pagamento
+  /// (`register_payment`), mas só chega aqui na leitura seguinte da sessão — e
+  /// até lá o operador via o caixa parado logo depois de receber em dinheiro.
+  ///
+  /// O lançamento local usa o id do PRÓPRIO pagamento. É o que faz ele sumir
+  /// sozinho na hora certa: quando a fila entrega o recebimento,
+  /// `replaceReference` troca esse id pelo definitivo, o movimento deixa de
+  /// ser temporário, e a cópia seguinte do servidor — que já traz o movimento
+  /// de verdade — passa a valer sem somar o mesmo dinheiro duas vezes.
+  Future<void> registerLocalSale(
+    String sessionId, {
+    required String paymentId,
+    required double amount,
+    String reason = '',
+  }) async {
+    if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
+    final session = await read(sessionId);
+    if (session == null) return;
+    final movements = _movementsOf(session.payload);
+    if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
+    movements.add({
+      'id': paymentId,
+      'cash_register': sessionId,
+      'payment': paymentId,
+      'movement_type': 'sale',
+      'amount': amount.toStringAsFixed(2),
+      'reason': reason,
+      'status': 'approved',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      '_offline_pending': true,
+    });
+    await _saveWithBalance(session.payload, movements);
+  }
+
+  /// Desfaz o lançamento de um recebimento removido antes de subir.
+  Future<void> removeLocalSale(
+    String sessionId, {
+    required String paymentId,
+  }) async {
+    if (sessionId.isEmpty || paymentId.isEmpty) return;
+    final session = await read(sessionId);
+    if (session == null) return;
+    final movements = _movementsOf(
+      session.payload,
+    ).where((movement) => '${movement['id']}' != paymentId).toList();
+    await _saveWithBalance(session.payload, movements);
+  }
+
+  /// Grava a sessão com o saldo recalculado, sem enfileirar nada.
+  ///
+  /// O dinheiro já está na fila pela operação que o gerou (o `pay` do pedido,
+  /// a sangria do caixa); repetir a operação aqui a lançaria duas vezes.
+  Future<void> _saveWithBalance(
+    Map<String, dynamic> session,
+    List<Map<String, dynamic>> movements,
+  ) async {
+    final updated = {...session, 'movements': movements};
+    await saveLocalEffect({
+      ...updated,
+      'current_balance': _drawerAmount(updated).toStringAsFixed(2),
+      'expected_amount': _drawerAmount(updated).toStringAsFixed(2),
+    });
+  }
+
+  /// Mantém na tela o que este terminal lançou e o servidor ainda não viu.
+  ///
+  /// Sem isto, qualquer leitura da sessão apagava a sangria e o recebimento em
+  /// dinheiro que ainda estavam na fila: o saldo voltava atrás sozinho e só se
+  /// corrigia quando a operação subia.
+  @override
+  Future<EntityRecord?> applyRemote(
+    Map<String, dynamic> payload, {
+    bool overwriteLocalChanges = false,
+    String? ignoreQueuedOperationId,
+  }) async {
+    final stored = await read('${payload['id'] ?? ''}', includeDeleted: true);
+    final pending = stored == null
+        ? const <Map<String, dynamic>>[]
+        : _movementsOf(stored.payload)
+              .where((movement) => LocalId.isTemporary('${movement['id']}'))
+              .toList();
+    if (pending.isEmpty) {
+      return super.applyRemote(
+        payload,
+        overwriteLocalChanges: overwriteLocalChanges,
+        ignoreQueuedOperationId: ignoreQueuedOperationId,
+      );
     }
+    final merged = {
+      ...payload,
+      'movements': [..._movementsOf(payload), ...pending],
+    };
+    return super.applyRemote(
+      {
+        ...merged,
+        'current_balance': _drawerAmount(merged).toStringAsFixed(2),
+        'expected_amount': _drawerAmount(merged).toStringAsFixed(2),
+      },
+      overwriteLocalChanges: overwriteLocalChanges,
+      ignoreQueuedOperationId: ignoreQueuedOperationId,
+    );
+  }
+
+  /// Dinheiro na gaveta, na mesma conta do backend.
+  ///
+  /// `current_balance` (serializer) e `expected_amount` (fechamento) saem os
+  /// dois de `movements(status=approved).sum()`: uma soma só, com o sinal que
+  /// cada movimento carrega. A conta anterior somava um `cash_sales_amount`
+  /// que a API nunca enviou e ainda invertia o sinal de tudo que não fosse
+  /// suprimento — um recebimento em dinheiro DIMINUÍA o esperado do caixa.
+  static double _drawerAmount(Map<String, dynamic> session) {
+    var total = _approvedMovements(session).fold<double>(
+      0,
+      (sum, movement) => sum + _signedAmount(movement),
+    );
+    // Enquanto a sessão só existe aqui não há movimento de abertura — o valor
+    // contado está em `opening_amount`. Depois de subir ele vira um movimento
+    // `opening`, e somar os dois contaria o troco inicial duas vezes.
+    final hasOpening = _approvedMovements(
+      session,
+    ).any((movement) => '${movement['movement_type']}' == 'opening');
+    if (!hasOpening) total += ValueFormatters.number(session['opening_amount']);
     return total;
   }
+
+  /// Sangria e estorno saem da gaveta.
+  ///
+  /// O backend já grava a sangria negativa (`register_cash_movement`); um
+  /// movimento criado aqui nasce positivo. Normalizar na leitura aceita as
+  /// duas origens sem reescrever o que já está gravado.
+  static double _signedAmount(Map<String, dynamic> movement) {
+    final amount = ValueFormatters.number(movement['amount']).abs();
+    return switch ('${movement['movement_type']}') {
+      'withdrawal' || 'refund' => -amount,
+      _ => amount,
+    };
+  }
+
+  /// Só o que ainda conta como dinheiro.
+  ///
+  /// O backend filtra `status = 'approved'`; um movimento criado aqui não traz
+  /// situação nenhuma, e para ele a ausência é o próprio "aprovado" — a
+  /// sangria offline entra no saldo no instante em que o dinheiro sai da
+  /// gaveta (§30). O que este filtro tira é o que o servidor já recusou ou
+  /// cancelou.
+  static List<Map<String, dynamic>> _approvedMovements(
+    Map<String, dynamic> session,
+  ) => _movementsOf(session).where((movement) {
+    final status = '${movement['status'] ?? 'approved'}';
+    return status == 'approved' || status.isEmpty;
+  }).toList();
 
   static List<Map<String, dynamic>> _movementsOf(Map<String, dynamic> session) =>
       (session['movements'] as List? ?? const [])

@@ -478,6 +478,47 @@ class OrderRepository extends EntityRepository {
     return {...record.toApiJson(), '_created_payment': payment};
   }
 
+  /// Remove um recebimento que ainda não subiu para o servidor.
+  ///
+  /// Um pagamento lançado aqui só existe neste terminal até a fila entregá-lo.
+  /// A tela mandava `DELETE /orders/<id>/payments/offline-…/` mesmo assim, e o
+  /// servidor respondia "não é um UUID válido" — o operador ficava sem
+  /// conseguir corrigir a forma de pagamento que acabara de escolher.
+  ///
+  /// Desfazer aqui é a operação inteira: a linha sai do pedido, os totais
+  /// voltam ao que eram e a operação `pay` correspondente sai da fila (quem
+  /// remove é o chamador, que sabe o escopo). Sem tirá-la da fila, o servidor
+  /// registraria depois um dinheiro que o operador já apagou.
+  Future<Map<String, dynamic>> removePendingPayment(
+    String orderId, {
+    required String paymentId,
+  }) async {
+    final order = await read(orderId);
+    if (order == null) {
+      throw StateError('Pedido $orderId não existe no armazenamento local.');
+    }
+    final remaining = _paymentsOf(
+      order.payload,
+    ).where((payment) => '${payment['id']}' != paymentId).toList();
+
+    final total = ValueFormatters.number(order.payload['total']);
+    final paid = [..._serverPaymentsOf(order.payload), ...remaining].fold<double>(
+      0,
+      (sum, payment) => sum + ValueFormatters.number(payment['amount']),
+    );
+    final record = await saveLocalEffect({
+      ...order.payload,
+      'offline_payments': remaining,
+      'payment_status': paid <= 0
+          ? 'pending'
+          : (paid >= total - 0.009 ? 'paid' : 'partial'),
+      // Um pedido que deixou de estar quitado volta a aguardar pagamento —
+      // é o mesmo estado que `cancel_payment` grava no servidor.
+      'status': paid >= total - 0.009 ? 'paid' : 'awaiting_payment',
+    }, id: orderId);
+    return record.toApiJson();
+  }
+
   /// Recebimentos conhecidos localmente, no formato de `/orders/<id>/payments/`.
   ///
   /// Junta o que o servidor confirmou com o que ainda está na fila, sem

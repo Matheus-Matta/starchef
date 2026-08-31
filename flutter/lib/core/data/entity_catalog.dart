@@ -9,6 +9,10 @@
 /// `LocalTopologyService` e a lista de rotas carregadas na abertura no
 /// `PdvRepository`. As três divergiram ao longo do tempo, e o sintoma era um
 /// recurso que funcionava online e sumia offline.
+library;
+
+import 'local_id.dart';
+
 enum EntityOrdering {
   /// Mais recente primeiro: pedidos, movimentações, sessões de caixa.
   recentFirst,
@@ -317,15 +321,29 @@ abstract final class EntityCatalog {
   /// A ação desta rota pode ser aplicada localmente?
   ///
   /// `null` (uma escrita direta no recurso) sempre pode; o resto precisa estar
-  /// na lista. Cancelamento de item é a única ação aninhada aceita, no formato
-  /// `items/<id>/void`.
+  /// na lista. Cancelamento de item e remoção de um recebimento ainda na fila
+  /// são as ações aninhadas aceitas.
   static bool isLocalAction(String type, String? action) {
     if (action == null || action.isEmpty) return true;
     if (type == order &&
         RegExp(r'^items/[^/]+/void$').hasMatch(action)) {
       return true;
     }
+    if (type == order && isPendingPaymentAction(action)) return true;
     return localActions[type]?.contains(action) ?? false;
+  }
+
+  /// `payments/<id>` de um recebimento que ainda não subiu.
+  ///
+  /// Um pagamento lançado aqui só existe neste terminal até a fila entregá-lo,
+  /// e o identificador dele é temporário. Mandar esse `offline-…` para a API
+  /// devolvia "não é um UUID válido" e travava o operador: para desfazer o
+  /// lançamento não há nada a cancelar no servidor — o cancelamento é local.
+  /// Com o id definitivo a rota volta a ser do servidor, que é quem sabe
+  /// reabrir mesa, comanda e estorno de estoque.
+  static bool isPendingPaymentAction(String action) {
+    final match = RegExp(r'^payments/([^/]+)$').firstMatch(action);
+    return match != null && LocalId.isTemporary(match.group(1));
   }
 
   /// Modelo do backend (`app_label.modelname`) -> tipo local.

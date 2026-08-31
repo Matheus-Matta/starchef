@@ -273,11 +273,16 @@ class TestFullEmissionFlow:
         assert resp.data["emission_type"] == Invoice.EMISSION_NORMAL
         assert resp.data["recipient_cpf"] == "12345678909"
 
-    def test_emit_twice_for_same_order_is_rejected(self):
+    def test_emit_twice_for_same_order_returns_the_same_invoice(self):
+        # Emitir e idempotente por pedido: com a emissao automatica do
+        # pagamento, o PDV chega aqui com a nota do pedido ja criada, e
+        # recusar a segunda chamada mostrava um erro numa venda que deu certo.
         first = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
         assert first.status_code == 201
         second = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")
-        assert second.status_code == 400
+        assert second.status_code == 200
+        assert second.data["id"] == first.data["id"]
+        assert second.data["emitted"] is True
 
     def test_filter_invoices_by_order(self):
         emitted = self.client.post("/api/v1/invoices/emit/", {"order": str(self.order.id)}, format="json")

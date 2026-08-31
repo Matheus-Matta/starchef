@@ -1,0 +1,217 @@
+"""Nota fiscal automatica no pagamento (`order_fully_paid`).
+
+O que se garante aqui: quitar o pedido emite a NFC-e e manda recibo e DANFE
+para a impressora, sem ninguem clicar em nada — e, principalmente, que nada
+disso pode derrubar um recebimento que ja foi gravado.
+"""
+import uuid
+from decimal import Decimal
+
+import pytest
+
+from apps.invoices.models import FiscalConfig, Invoice
+from apps.invoices.providers import FiscalProvider, register_provider
+from apps.menu.models import Product
+from apps.orders.models import Order
+from apps.orders.services import add_order_item, create_order
+from apps.payments.models import PaymentMethod
+from apps.payments.services import register_payment
+from apps.printers.models import PrintJob, Printer
+
+pytestmark = pytest.mark.django_db
+
+
+@register_provider
+class _AutoIssueProvider(FiscalProvider):
+    name = "test_auto_issue"
+
+    def emit(self, invoice, config):
+        invoice.provider = self.name
+        invoice.status = Invoice.STATUS_PENDING
+        return invoice
+
+    def cancel(self, invoice, reason):
+        invoice.status = Invoice.STATUS_CANCELLED
+        return invoice
+
+    def status(self, invoice):
+        return invoice.status
+
+
+@pytest.fixture
+def product(account, restaurant, branch):
+    return Product.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        name="X-Burger", internal_code=f"P{uuid.uuid4().hex[:6]}", sale_price=Decimal("25.00"),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_cash_register_required(restaurant):
+    """O recorte destes testes e o fiscal, nao a gaveta.
+
+    Exigir caixa aberto acrescentaria uma sessao a cada cenario sem mudar nada
+    do que se quer provar aqui.
+    """
+    restaurant.require_open_cash_register = False
+    restaurant.save(update_fields=["require_open_cash_register"])
+    return restaurant
+
+
+@pytest.fixture
+def order(restaurant, branch, product, manager_user):
+    order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_COUNTER, user=manager_user)
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order.refresh_from_db()
+    return order
+
+
+@pytest.fixture
+def cash_method(account, restaurant, branch, manager_user):
+    return PaymentMethod.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="Dinheiro",
+        method_type=PaymentMethod.TYPE_CASH, created_by=manager_user, updated_by=manager_user,
+    )
+
+
+@pytest.fixture
+def printer(account, restaurant, branch, manager_user):
+    return Printer.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="Caixa",
+        auto_print=True, created_by=manager_user, updated_by=manager_user,
+    )
+
+
+@pytest.fixture
+def fiscal_config(account, restaurant, branch):
+    return FiscalConfig.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        provider=_AutoIssueProvider.name, cnpj="11222333000181", uf="SP",
+        environment=FiscalConfig.ENV_HOMOLOGATION, series=1, next_number=1,
+    )
+
+
+def _pay(order, method, user, amount=None):
+    return register_payment(
+        order=order, user=user, payment_method_id=method.id,
+        amount=amount if amount is not None else order.total,
+    )
+
+
+def test_full_payment_issues_the_invoice(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    invoice = Invoice.all_objects.get(order=order)
+    assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.access_key
+
+
+def test_full_payment_prints_receipt_and_danfe_on_the_resolved_printer(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    jobs = {job.job_type: job for job in PrintJob.all_objects.filter(order=order)}
+    assert set(jobs) == {PrintJob.TYPE_RECEIPT, PrintJob.TYPE_FISCAL}
+    # Sem impressora no trabalho, o agente local pula o cupom e a nota nunca sai.
+    assert {job.printer_id for job in jobs.values()} == {printer.id}
+
+
+def test_partial_payment_issues_nothing(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user, amount=Decimal("1.00"))
+
+    assert not Invoice.all_objects.filter(order=order).exists()
+    assert not PrintJob.all_objects.filter(order=order).exists()
+
+
+def test_restaurant_without_fiscal_config_still_prints_the_receipt(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer
+):
+    # Nao emitir NFC-e e uma escolha valida do restaurante, nao uma falha: a
+    # venda continua imprimindo o recibo.
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    assert not Invoice.all_objects.filter(order=order).exists()
+    assert [job.job_type for job in PrintJob.all_objects.filter(order=order)] == [PrintJob.TYPE_RECEIPT]
+
+
+def test_payment_survives_a_restaurant_without_any_printer(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, fiscal_config
+):
+    # Nenhuma impressora cadastrada: `resolve_printer_for` recusa, e o
+    # recebimento ja commitado nao pode ser derrubado por isso.
+    with django_capture_on_commit_callbacks(execute=True):
+        payment = _pay(order, cash_method, manager_user)
+
+    order.refresh_from_db()
+    assert order.payment_status == Order.PAYMENT_PAID
+    assert payment.pk is not None
+    assert Invoice.all_objects.filter(order=order).exists()
+    assert not PrintJob.all_objects.filter(order=order).exists()
+
+
+def test_receipt_is_not_printed_twice_when_the_pdv_already_printed(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    # O PDV imprime o proprio recibo ao concluir a venda; a impressao
+    # automatica nao pode fazer sair um segundo cupom da mesma venda.
+    from apps.printers.services import register_print_job
+
+    register_print_job(order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT)
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    assert PrintJob.all_objects.filter(order=order, job_type=PrintJob.TYPE_RECEIPT).count() == 1
+
+
+def test_pdv_printing_claims_the_automatic_job_instead_of_duplicating_it(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    """O cupom do cliente sai uma vez so.
+
+    A emissao automatica ja criou recibo e DANFE; quando o terminal pede para
+    imprimir logo depois, e o MESMO documento. Antes saiam duas vias em quem
+    tem impressao automatica ligada na impressora do caixa.
+    """
+    from apps.invoices.services import print_fiscal_invoice
+    from apps.printers.services import register_print_job
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+    invoice = Invoice.all_objects.get(order=order)
+
+    receipt = register_print_job(
+        order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT, manual_only=True
+    )
+    danfe = print_fiscal_invoice(invoice, user=manager_user, printer=printer, manual_only=True)
+
+    assert PrintJob.all_objects.filter(order=order).count() == 2
+    # O terminal assume os dois: `manual_only` tira o trabalho do laco do agente.
+    assert receipt.payload["manual_only"] is True
+    assert danfe.payload["manual_only"] is True
+
+
+def test_reprinting_an_already_printed_receipt_creates_a_new_job(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    from apps.printers.services import register_print_job
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+    printed = PrintJob.all_objects.get(order=order, job_type=PrintJob.TYPE_RECEIPT)
+    printed.status = PrintJob.STATUS_PRINTED
+    printed.save(update_fields=["status"])
+
+    reprint = register_print_job(
+        order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT, manual_only=True
+    )
+
+    assert reprint.pk != printed.pk

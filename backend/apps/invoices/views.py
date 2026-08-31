@@ -258,6 +258,17 @@ class InvoiceViewSet(BaseTenantViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        # O pedido pago ja emite sozinho (`order_fully_paid`). Quando o PDV
+        # pede a emissao logo depois, a nota do pedido ja existe — e devolver
+        # 400 aqui fazia o caixa ver "Pedido ja possui nota fiscal emitida"
+        # numa venda que deu certo. Emitir e idempotente por pedido: a nota
+        # que existe E a resposta.
+        existing = getattr(order, "invoice", None)
+        if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
+            data = InvoiceSerializer(existing, context={"request": request}).data
+            data["emitted"] = True
+            return Response(data, status=status.HTTP_200_OK)
+
         try:
             invoice = emit_fiscal_invoice(
                 order,
@@ -284,7 +295,7 @@ class InvoiceViewSet(BaseTenantViewSet):
                 printer_qs = printer_qs.filter(account=self._account())
             printer = printer_qs.filter(pk=request.data["printer"]).first()
 
-        job = print_fiscal_invoice(invoice, user=request.user, printer=printer)
+        job = print_fiscal_invoice(invoice, user=request.user, printer=printer, manual_only=True)
         return Response(
             {"print_job_id": str(job.id), "status": job.status, "html": job.html_content},
             status=status.HTTP_201_CREATED,

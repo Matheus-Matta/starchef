@@ -280,6 +280,58 @@ class EntityRepository {
     });
   }
 
+  /// Grava uma alteração local que NÃO gera operação de saída.
+  ///
+  /// Existe para o efeito colateral de uma operação que já está na fila por
+  /// outro caminho: o recebimento em dinheiro sobe como `pay` do PEDIDO, e a
+  /// mesma venda também precisa aparecer no saldo do caixa deste terminal.
+  /// Enfileirar aqui de novo lançaria o dinheiro duas vezes.
+  ///
+  /// Também é o caminho de desfazer localmente o que ainda não subiu — nesse
+  /// caso a operação correspondente é removida da fila pelo chamador.
+  Future<EntityRecord> saveLocalEffect(
+    Map<String, dynamic> payload, {
+    String? id,
+    SyncStatus syncStatus = SyncStatus.pending,
+  }) async {
+    final entityId = id ?? '${payload['id'] ?? ''}';
+    if (entityId.isEmpty) {
+      throw ArgumentError('Uma entidade local precisa de identificador.');
+    }
+    final now = DateTime.now().toUtc();
+    final merged = {...sanitize(payload), 'id': entityId};
+    final encoded = await _cipher.encrypt(jsonEncode(merged));
+    final existing = await read(entityId, includeDeleted: true);
+    final version = (existing?.version ?? 0) + 1;
+    final createdAt = (existing?.createdAt ?? now).toIso8601String();
+
+    await database.write(
+      (tx) => _upsert(
+        tx,
+        entityId: entityId,
+        payload: merged,
+        encodedPayload: encoded,
+        version: version,
+        source: ChangeSource.local,
+        syncStatus: syncStatus,
+        createdAt: createdAt,
+        updatedAt: now.toIso8601String(),
+        deletedAt: existing?.deletedAt?.toIso8601String(),
+      ),
+    );
+    return EntityRecord(
+      type: type,
+      id: entityId,
+      payload: merged,
+      version: version,
+      source: ChangeSource.local,
+      syncStatus: syncStatus,
+      createdAt: DateTime.tryParse(createdAt)?.toUtc() ?? now,
+      updatedAt: now,
+      deletedAt: existing?.deletedAt,
+    );
+  }
+
   /// Aplica uma alteração vinda do servidor ou do WebSocket (§11, §12).
   ///
   /// Não gera operação de saída: seria exatamente o laço descrito em §12.

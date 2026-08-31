@@ -431,14 +431,74 @@ class OfflineFirstGateway {
       );
     }
     if (action == 'pay') {
-      return orders.pay(
-        orderId,
-        body: body,
-        method: context?['payment_method'] as Map<String, dynamic>?,
-      );
+      final method = context?['payment_method'] as Map<String, dynamic>?;
+      final result = await orders.pay(orderId, body: body, method: method);
+      await _mirrorCashSale(body, method, result);
+      return result;
+    }
+    // Remover um recebimento que ainda não subiu é operação deste terminal: o
+    // pagamento nunca existiu no servidor, e mandar o `offline-…` para lá só
+    // devolvia "não é um UUID válido".
+    if (method == 'DELETE' && EntityCatalog.isPendingPaymentAction(action)) {
+      return _removePendingPayment(orderId, action.split('/')[1]);
     }
     // PATCH/DELETE direto no pedido.
     return _writeGeneric(route, method, path, body, null);
+  }
+
+  /// Espelha na gaveta o recebimento em dinheiro que acabou de ser lançado.
+  ///
+  /// O servidor cria o `CashMovement` junto do pagamento, mas ele só chega
+  /// aqui na leitura seguinte da sessão — e até lá o operador via o caixa
+  /// parado depois de receber em dinheiro.
+  Future<void> _mirrorCashSale(
+    Map<String, dynamic> body,
+    Map<String, dynamic>? method,
+    Map<String, dynamic> result,
+  ) async {
+    if ('${method?['method_type'] ?? ''}' != 'cash') return;
+    final payment = result['_created_payment'] as Map<String, dynamic>?;
+    if (payment == null) return;
+    final sessionId = '${body['cash_register'] ?? ''}';
+    if (sessionId.isEmpty) return;
+    // Só o valor APLICADO entra na gaveta: o troco volta para o cliente.
+    await cashRegister.registerLocalSale(
+      sessionId,
+      paymentId: '${payment['id'] ?? ''}',
+      amount: ValueFormatters.number(payment['amount']),
+      reason: 'Recebimento do pedido',
+    );
+  }
+
+  /// Desfaz um recebimento que ainda não saiu deste terminal.
+  ///
+  /// A ordem importa: a operação sai da fila ANTES de o pedido ser reescrito.
+  /// Se ela já estiver em entrega (`PROCESSING`), o dinheiro pode já ter sido
+  /// aceito lá — e quem desfaz nesse caso é o servidor, com o id definitivo.
+  Future<Map<String, dynamic>> _removePendingPayment(
+    String orderId,
+    String paymentId,
+  ) async {
+    final scope = _requireScope();
+    final discarded = await queue.discardPendingChild(
+      scope: scope,
+      field: 'client_payment_id',
+      clientId: paymentId,
+    );
+    if (discarded == null) {
+      throw ApiException(
+        'Este recebimento já está subindo para o servidor. '
+        'Aguarde a sincronização para poder removê-lo.',
+        statusCode: 409,
+      );
+    }
+    // A sessão sai do corpo da própria operação desfeita: é a gaveta em que
+    // aquele dinheiro entrou, e não necessariamente a que está aberta agora.
+    await cashRegister.removeLocalSale(
+      '${discarded['cash_register'] ?? ''}',
+      paymentId: paymentId,
+    );
+    return orders.removePendingPayment(orderId, paymentId: paymentId);
   }
 
   static final _scaleCheckout = RegExp(r'^/scales/([^/]+)/checkout-command/$');
@@ -742,6 +802,15 @@ class OfflineFirstGateway {
         remoteId: realId,
       );
       await repo.replaceReference(entry.entityId, childLocalId, realId);
+      // O recebimento em dinheiro também deixou um lançamento na gaveta deste
+      // terminal, com o id temporário do pagamento. Ele precisa apontar para o
+      // id que o servidor confirmou: enquanto for temporário, a leitura da
+      // sessão o preserva — e passaria a somar o mesmo dinheiro do movimento
+      // que o servidor já devolve.
+      final sessionId = '${entry.payload?['cash_register'] ?? ''}';
+      if (sessionId.isNotEmpty) {
+        await cashRegister.replaceReference(sessionId, childLocalId, realId);
+      }
     }
     await repo.markSynced(
       entry.entityId,
