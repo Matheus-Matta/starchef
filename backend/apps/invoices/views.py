@@ -27,13 +27,12 @@ from apps.invoices.cosmos import (
     suggest_fiscal_profile,
 )
 from apps.invoices.models import FiscalConfig, FiscalProfile, Invoice
-from apps.invoices.providers import FocusNfeProvider
 from apps.invoices.serializers import FiscalConfigSerializer, FiscalProfileSerializer, InvoiceSerializer
 from apps.invoices.services import (
+    apply_focus_webhook,
     cancel_fiscal_invoice,
     emit_fiscal_invoice,
     ensure_fiscal_config,
-    ensure_fiscal_print_job,
     fiscal_emission_unavailable_reason,
     fiscal_readiness,
     print_fiscal_invoice,
@@ -339,7 +338,12 @@ class InvoiceViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         """Cancela a nota (transmissao do evento a SEFAZ e a parte externa/em branco)."""
-        invoice = cancel_fiscal_invoice(self.get_object(), reason=request.data.get("reason", ""), user=request.user)
+        try:
+            invoice = cancel_fiscal_invoice(
+                self.get_object(), reason=request.data.get("reason", ""), user=request.user
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return self._serialize(invoice)
 
     @action(detail=True, methods=["post"], url_path="refresh-status")
@@ -395,16 +399,5 @@ class FocusNfeWebhookView(APIView):
         received = request.headers.get(header, "")
         if not expected or not secrets.compare_digest(str(received), str(expected)):
             return Response({"detail": "Webhook Focus NFe nao autorizado."}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            FocusNfeProvider().apply_response(invoice, document)
-        except RuntimeError:
-            # Rejeicoes tambem sao estados finais validos do webhook e precisam
-            # ser persistidas, sem pedir reenvio infinito para a Focus.
-            pass
-        invoice.save()
-        # O webhook e o caminho normal da autorizacao assincrona: e aqui que a
-        # maioria das notas pendentes vira autorizada, e o cupom do cliente
-        # ainda nao saiu. Falha de impressora nao pode virar erro no webhook,
-        # ou a Focus reenviaria o aviso achando que nao entregamos.
-        ensure_fiscal_print_job(invoice)
+        apply_focus_webhook(invoice, document)
         return Response({"ok": True})

@@ -31,6 +31,7 @@ from apps.invoices.fiscal import (
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
 from apps.invoices.providers import (
     FiscalAmbiguous,
+    FocusNfeProvider,
     FiscalConfigurationError,
     FiscalNotFound,
     FiscalProviderError,
@@ -63,6 +64,19 @@ def _mark_awaiting(invoice, reason, message=""):
     invoice.fiscal_payload = payload
     invoice.status = Invoice.STATUS_PENDING
     invoice.error_message = str(message or "")
+
+
+def _clear_pending_markers(invoice):
+    """Tira da nota os marcadores de "esperando" e de falha.
+
+    Um estado final que herda o `awaiting` da tentativa anterior faz o
+    reprocessamento tratar como pendente algo que ja terminou — no pior caso,
+    retransmitindo uma nota que o provedor ja tem.
+    """
+    payload = dict(invoice.fiscal_payload or {})
+    payload.pop("awaiting", None)
+    payload.pop("failure", None)
+    invoice.fiscal_payload = payload
 
 
 def _mark_failed(invoice, kind, message):
@@ -126,7 +140,7 @@ def is_fiscally_printable(invoice):
     nunca saiu daqui tem chave montada localmente: imprimi-la entrega ao
     cliente um cupom cuja consulta no portal nunca vai encontrar nada.
     """
-    if invoice is None:
+    if invoice is None or invoice.status == Invoice.STATUS_CANCELLED:
         return False
     if invoice.status == Invoice.STATUS_ISSUED:
         return True
@@ -464,14 +478,70 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
 
 @transaction.atomic
 def cancel_fiscal_invoice(invoice, reason="", user=None):
-    with tenant_context(invoice.account):
-        config = _resolve_fiscal_config(invoice.restaurant, invoice.branch)
-        provider = get_provider(config.provider if config else None)
-        provider.cancel(invoice, reason)
-        invoice.updated_by = user
-        invoice.save(update_fields=["status", "error_message", "updated_by", "updated_at"])
-        record_audit(action=AuditLog.ACTION_CANCELLED, instance=invoice, actor=user, reason=reason)
-        return invoice
+    """Cancela a nota — transmitindo o evento a SEFAZ quando ha o que cancelar.
+
+    Sao duas operacoes diferentes debaixo do mesmo botao, e tratar as duas como
+    uma so escondia as duas:
+
+    * **nota autorizada** — existe documento na SEFAZ, entao o cancelamento e um
+      evento fiscal que precisa ser transmitido e pode ser recusado (fora do
+      prazo, por exemplo);
+    * **nota nunca autorizada** — nao existe documento nenhum para cancelar. O
+      que se faz e descartar localmente; o numero reservado fica para
+      inutilizacao.
+
+    O `save` tambem deixou de ser parcial. `update_fields` listava quatro campos,
+    mas `apply_response` escreve chave, numero, serie, protocolo, XML, DANFE e
+    data de autorizacao — tudo isso era descartado na gravacao.
+    """
+    with transaction.atomic():
+        locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
+        with tenant_context(locked.account):
+            if locked.status == Invoice.STATUS_CANCELLED:
+                return locked  # idempotente: cancelar de novo nao e erro.
+
+            config = _resolve_fiscal_config(locked.restaurant, locked.branch)
+            if config is None:
+                raise ValidationError("Configuracao fiscal ativa nao encontrada para esta nota.")
+            provider = get_provider(locked.provider or config.provider)
+            transmitted_event = False
+
+            if locked.status == Invoice.STATUS_ISSUED:
+                if not provider.transmits:
+                    raise ValidationError(
+                        "Esta nota esta autorizada, mas o provedor configurado nao transmite "
+                        "eventos. O cancelamento precisa ser feito no portal da SEFAZ."
+                    )
+                try:
+                    provider.cancel(locked, reason)
+                except FiscalNotFound as exc:
+                    raise ValidationError(
+                        f"O provedor nao encontrou esta nota para cancelar: {exc}"
+                    ) from exc
+                except FiscalUnavailable as exc:
+                    raise ValidationError(
+                        f"Nao foi possivel cancelar agora: {exc} Tente novamente."
+                    ) from exc
+                except FiscalProviderError as exc:
+                    raise ValidationError(str(exc)) from exc
+                transmitted_event = True
+            else:
+                # Nada foi autorizado: o cancelamento e local, e dizer isso e
+                # melhor do que chamar o provedor para cancelar o que nao existe.
+                locked.status = Invoice.STATUS_CANCELLED
+                locked.error_message = reason or ""
+
+            _clear_pending_markers(locked)
+            locked.updated_by = user
+            locked.save()
+            record_audit(
+                action=AuditLog.ACTION_CANCELLED,
+                instance=locked,
+                actor=user,
+                reason=reason,
+                metadata={"fiscal_event": transmitted_event},
+            )
+            return locked
 
 
 def _refresh_emission_for_retry(invoice, config):
@@ -596,6 +666,8 @@ def resend_fiscal_invoice(invoice, *, user=None):
             else:
                 if locked.status == Invoice.STATUS_PENDING:
                     _mark_awaiting(locked, AWAITING_AUTHORIZATION)
+                else:
+                    _clear_pending_markers(locked)
             locked.updated_by = user
             locked.save()
             ensure_fiscal_print_job(locked, user=user)
@@ -677,6 +749,8 @@ def reprocess_pending_fiscal_invoices(*, account=None):
             else:
                 if invoice.status == Invoice.STATUS_PENDING:
                     _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
+                else:
+                    _clear_pending_markers(invoice)
             invoice.save()
             if invoice.status == Invoice.STATUS_ISSUED:
                 issued += 1
@@ -975,6 +1049,40 @@ def print_sale_documents(order, *, invoice=None, user=None):
     return jobs
 
 
+def apply_focus_webhook(invoice, document):
+    """Aplica o aviso assincrono da Focus e devolve a nota atualizada.
+
+    O webhook e o caminho normal da autorizacao: e por aqui que a maioria das
+    notas pendentes vira autorizada. A view engolia qualquer `RuntimeError` com
+    um `pass` e salvava — o que persistia o novo `status` mas deixava o
+    `awaiting` da tentativa anterior no payload. Uma nota que a Focus ja tinha
+    voltava a ser tratada como "nunca transmitida" pelo reprocessamento, que
+    tentaria transmiti-la de novo.
+    """
+    logger = logging.getLogger(__name__)
+    with tenant_context(invoice.account):
+        try:
+            FocusNfeProvider().apply_response(invoice, document)
+        except FiscalRejection as exc:
+            # Recusa tambem e estado final valido do webhook; persistir sem
+            # pedir reenvio infinito para a Focus.
+            _mark_failed(invoice, FAILURE_REJECTION, exc)
+        except FiscalProviderError as exc:
+            _mark_failed(invoice, FAILURE_REJECTION, exc)
+        except Exception as exc:  # noqa: BLE001 — o webhook nao pode responder 500.
+            logger.exception("Webhook Focus com payload inesperado na nota %s", invoice.id)
+            _mark_failed(invoice, FAILURE_REJECTION, exc)
+        else:
+            if invoice.status == Invoice.STATUS_PENDING:
+                _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
+            else:
+                _clear_pending_markers(invoice)
+        invoice.save()
+        # A autorizacao chegou agora; o cupom do cliente ainda nao saiu.
+        ensure_fiscal_print_job(invoice)
+        return invoice
+
+
 def refresh_fiscal_invoice_status(invoice, *, user=None):
     """Consulta o provedor e persiste a situacao real da nota.
 
@@ -1016,6 +1124,8 @@ def refresh_fiscal_invoice_status(invoice, *, user=None):
             else:
                 if locked.status == Invoice.STATUS_PENDING:
                     _mark_awaiting(locked, AWAITING_AUTHORIZATION)
+                else:
+                    _clear_pending_markers(locked)
 
             locked.updated_by = user
             locked.save()

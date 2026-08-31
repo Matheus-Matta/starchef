@@ -174,6 +174,39 @@ desfazer uma autorização que já aconteceu, nem derrubar o lote de
 reprocessamento — o trabalho fica na fila de impressão, que tem retentativa
 própria.
 
+## Cancelamento: duas operações, um botão
+
+Cancelar uma nota **autorizada** e cancelar uma que **nunca saiu daqui** são
+coisas diferentes, e tratá-las como uma só escondia as duas:
+
+| Situação da nota | O que acontece |
+|---|---|
+| `authorized` | Evento fiscal transmitido à SEFAZ; pode ser recusado (prazo expirado) |
+| Qualquer outra | Descarte local — não existe documento para cancelar; o número reservado fica para inutilização |
+
+Uma recusa do evento ou uma queda de rede **não** marcam a nota como cancelada:
+seria dar por encerrada uma nota que continua viva na SEFAZ. As duas viram 400
+com o motivo. Cancelar de novo é idempotente, e uma nota cancelada nunca é
+imprimível.
+
+O `save` também deixou de ser parcial: `update_fields` listava quatro campos,
+mas o provedor devolve chave, número, série, protocolo, XML, DANFE e data de
+autorização no cancelamento — tudo isso era descartado na gravação.
+
+## O webhook não deixa a nota parecendo não transmitida
+
+O webhook da Focus é o caminho normal da autorização assíncrona. Ele engolia
+qualquer erro com um `pass` e salvava — o que persistia o novo `status` mas
+**mantinha o `awaiting` da tentativa anterior**. Uma nota que a Focus já tinha
+voltava a parecer "nunca transmitida" para o reprocessamento, que tentaria
+transmiti-la de novo.
+
+`apply_focus_webhook()` fecha isso: trata as exceções tipadas, atualiza
+`awaiting`/`failure` de forma consistente com os outros caminhos, e limpa os
+marcadores em qualquer estado final. Um payload inesperado vira `error`
+persistido em vez de 500 — a Focus reenvia o aviso quando recebe erro, e um 500
+aqui viraria laço.
+
 ## O retrato fiscal fica no terminal
 
 Antes, a fila fiscal do PDV guardava `{order, cpf, client_document_id}` e toda a

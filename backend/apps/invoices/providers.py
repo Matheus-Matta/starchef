@@ -174,6 +174,26 @@ class FocusNfeProvider(FiscalProvider):
         return invoice.provider_reference or f"starchef-{invoice.id}"
 
     @staticmethod
+    def _config_for(invoice):
+        """Configuracao fiscal da nota, com o mesmo recuo do servico.
+
+        Buscar so por `branch` deixava de fora a nota cuja filial esta nula —
+        situacao normal enquanto a unificacao Restaurant/Filial nao acontece
+        (ver `_resolve_fiscal_config`). A consulta e o cancelamento falhavam
+        com "sem configuracao fiscal" numa nota perfeitamente emitida.
+        """
+        config = None
+        if invoice.branch_id:
+            config = FiscalConfig.objects.filter(branch_id=invoice.branch_id, is_active=True).first()
+        if config is None and invoice.restaurant_id:
+            config = FiscalConfig.objects.filter(
+                branch__restaurant_id=invoice.restaurant_id, is_active=True
+            ).first()
+        if config is None:
+            raise FiscalConfigurationError("Sem configuracao fiscal ativa para esta nota.")
+        return config
+
+    @staticmethod
     def _token(config):
         token = (
             config.focus_token_production
@@ -506,9 +526,7 @@ class FocusNfeProvider(FiscalProvider):
         return self.apply_response(invoice, data)
 
     def cancel(self, invoice, reason):
-        config = FiscalConfig.objects.filter(branch=invoice.branch, is_active=True).first()
-        if not config:
-            raise FiscalConfigurationError("Sem configuracao fiscal para cancelar a nota.")
+        config = self._config_for(invoice)
         resource = self._resource(invoice.document_model)
         response = self._request(
             "DELETE",
@@ -517,15 +535,17 @@ class FocusNfeProvider(FiscalProvider):
             auth=(self._token(config), ""),
             timeout=self._timeout(config),
         )
+        if response.status_code == 404:
+            raise FiscalNotFound(
+                "Focus NFe: nenhum documento com esta referencia foi encontrado para cancelar."
+            )
         if response.status_code >= 400:
             raise self._classify_http(response, response.json() if response.content else {})
         data = response.json() if response.content else {"status": "cancelado"}
         return self.apply_response(invoice, data)
 
     def status(self, invoice):
-        config = FiscalConfig.objects.filter(branch=invoice.branch, is_active=True).first()
-        if not config:
-            raise FiscalConfigurationError("Sem configuracao fiscal para consultar a nota.")
+        config = self._config_for(invoice)
         resource = self._resource(invoice.document_model)
         response = self._request(
             "GET",
