@@ -96,5 +96,49 @@ void main() {
       expect(wildcard.canProcessPayments, isTrue);
       expect(wildcard.canManageDevices, isTrue);
     });
+
+    // O caixa faz a conferência às cegas — ninguém que conta dinheiro pode
+    // primeiro ver o saldo esperado. `canViewCashBalanceFreely` é a única
+    // exceção a essa regra, e precisa ser mais estreita que `canAccessCash`:
+    // um gerente ACESSA o Financeiro (vê os botões de abrir/fechar/sangria),
+    // mas não é dispensado de digitar a senha para ler o número.
+    group('acesso irrestrito ao saldo do caixa (conferência às cegas)', () {
+      test('gerente com permissão total de caixa ainda precisa da senha', () {
+        final manager = userWith([
+          '*',
+        ], profileType: 'manager');
+        // Mesmo com o coringa de permissões, profileType decide aqui — ao
+        // contrário das demais checagens, que aceitam '*' como bypass.
+        expect(manager.canAccessCash, isTrue);
+        expect(manager.canViewCashBalanceFreely, isFalse);
+      });
+
+      test('caixa (operador comum) precisa da senha', () {
+        final cashier = userWith([
+          'cash.manage.own',
+        ], profileType: 'cashier');
+
+        expect(cashier.canViewCashBalanceFreely, isFalse);
+      });
+
+      test('admin e owner veem livremente, sem senha', () {
+        final admin = userWith([], profileType: 'admin');
+        final owner = userWith([], profileType: 'owner');
+
+        expect(admin.canViewCashBalanceFreely, isTrue);
+        expect(owner.canViewCashBalanceFreely, isTrue);
+      });
+
+      test('superusuário da plataforma vê livremente mesmo sem profileType', () {
+        final superuser = AuthUser(
+          id: 'user-id',
+          username: 'suporte',
+          name: 'Suporte',
+          isSuperuser: true,
+        );
+
+        expect(superuser.canViewCashBalanceFreely, isTrue);
+      });
+    });
   });
 }

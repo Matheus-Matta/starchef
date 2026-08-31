@@ -46,6 +46,7 @@ import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
+import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
@@ -107,6 +108,12 @@ class _HomePageState extends State<HomePage> {
   /// A sessão de caixa veio do cache local, não de uma leitura ao servidor.
   /// O estado pode ter mudado em outro terminal enquanto este esteve offline.
   bool cashSessionFromCache = false;
+
+  /// Id da sessão para a qual o saldo foi liberado nesta tela (§conferência
+  /// às cegas). Guardar o id, e não um `bool`, faz a liberação esquecer
+  /// sozinha quando o turno muda — sem isso, o saldo revelado num fechamento
+  /// continuaria visível no caixa seguinte, aberto por outra pessoa.
+  String? _cashBalanceRevealedForSessionId;
   Map<String, dynamic>? activeOrder;
   Map<String, dynamic>? selectedTable;
   Map<String, dynamic>? selectedCommand;
@@ -242,6 +249,55 @@ class _HomePageState extends State<HomePage> {
         .cast<Map<String, dynamic>>()
         .where((movement) => movement['status'] == 'approved')
         .fold(0, (total, movement) => total + _number(movement['amount']));
+  }
+
+  /// O operador pode ver o número de `cashBalance` agora?
+  ///
+  /// Por padrão não: o caixa faz a conferência às cegas, sem saber quanto o
+  /// sistema espera encontrar. Só quem administra a conta vê livremente
+  /// ([AuthUser.canViewCashBalanceFreely]); qualquer outro perfil — inclusive
+  /// gerente — precisa da senha de ações do caixa, verificada localmente e
+  /// sem depender de rede (ver [_toggleCashBalanceVisibility]).
+  bool get _canSeeCashBalance =>
+      widget.controller.session?.user.canViewCashBalanceFreely == true ||
+      (_cashBalanceRevealedForSessionId != null &&
+          _cashBalanceRevealedForSessionId == '${cashSession?['id'] ?? ''}');
+
+  String get _cashBalanceLabel =>
+      _canSeeCashBalance ? _money(cashBalance) : '••••••';
+
+  /// Alterna a visibilidade do saldo no sidebar e no Financeiro do caixa.
+  ///
+  /// Esconder é imediato. Revelar exige senha — a mesma "senha de ações do
+  /// caixa" já usada para autorizar sangria e divergência, conferida OFFLINE
+  /// contra o hash sincronizado neste terminal — a menos que o próprio login
+  /// já seja de administrador/proprietário.
+  Future<void> _toggleCashBalanceVisibility() async {
+    final sessionId = '${cashSession?['id'] ?? ''}';
+    if (_canSeeCashBalance) {
+      // Um admin que "esconde" o próprio acesso livre não trava nada — ele
+      // continua vendo no próximo tap. Isso é intencional: a única coisa que
+      // este botão sempre garante é apagar o que uma senha alheia liberou.
+      setState(() => _cashBalanceRevealedForSessionId = null);
+      return;
+    }
+    if (sessionId.isEmpty) return;
+    final cashAuth = widget.controller.repository.cashAuth;
+    final restaurant = restaurantId;
+    if (cashAuth == null || restaurant == null) return;
+    final authorized = await showCashAuthDialog(
+      context,
+      cashAuth: cashAuth,
+      restaurantId: restaurant,
+      title: 'Ver saldo do caixa',
+      message:
+          'Informe a senha de ações do caixa para ver o valor em dinheiro. '
+          'A conferência deve ser feita às cegas — só libere se for '
+          'realmente necessário.',
+    );
+    if (authorized && mounted) {
+      setState(() => _cashBalanceRevealedForSessionId = sessionId);
+    }
   }
 
   @override
@@ -1154,7 +1210,7 @@ class _HomePageState extends State<HomePage> {
     final action = await PdvCashCenterDialog.show(
       context,
       cashSession: cashSession,
-      balanceLabel: _money(cashBalance),
+      balanceLabel: _cashBalanceLabel,
     );
     if (!mounted || action == null) return;
     if (action == 'open') await _openCash();
@@ -4887,29 +4943,45 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onCashMenuSelected(String value) {
+    if (value == 'toggle_balance') {
+      unawaited(_toggleCashBalanceVisibility());
+      return;
+    }
     if (value == 'supply' || value == 'withdrawal') {
       _cashMovement(value);
     }
     if (value == 'close') _closeCash();
   }
 
-  List<PopupMenuEntry<String>> _cashMenuItems() => const [
+  List<PopupMenuEntry<String>> _cashMenuItems() => [
     PopupMenuItem(
+      value: 'toggle_balance',
+      child: ListTile(
+        leading: Icon(
+          _canSeeCashBalance
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
+        ),
+        title: Text(_canSeeCashBalance ? 'Ocultar saldo' : 'Ver saldo'),
+      ),
+    ),
+    const PopupMenuDivider(),
+    const PopupMenuItem(
       value: 'supply',
       child: ListTile(
         leading: Icon(Icons.add_circle_outline),
         title: Text('Suprimento'),
       ),
     ),
-    PopupMenuItem(
+    const PopupMenuItem(
       value: 'withdrawal',
       child: ListTile(
         leading: Icon(Icons.remove_circle_outline),
         title: Text('Sangria'),
       ),
     ),
-    PopupMenuDivider(),
-    PopupMenuItem(
+    const PopupMenuDivider(),
+    const PopupMenuItem(
       value: 'close',
       child: ListTile(leading: Icon(Icons.lock), title: Text('Fechar caixa')),
     ),
@@ -4943,7 +5015,7 @@ class _HomePageState extends State<HomePage> {
         );
       }
       return PopupMenuButton<String>(
-        tooltip: 'Caixa aberto · ${_money(cashBalance)}',
+        tooltip: 'Caixa aberto · $_cashBalanceLabel',
         onSelected: _onCashMenuSelected,
         itemBuilder: (_) => _cashMenuItems(),
         child: Container(
@@ -5042,10 +5114,11 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _money(cashBalance),
+                          _cashBalanceLabel,
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w900,
+                            letterSpacing: .5,
                           ),
                         ),
                         Text(
