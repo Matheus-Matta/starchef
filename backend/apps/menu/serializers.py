@@ -237,11 +237,28 @@ class ProductSerializer(TenantModelSerializer):
         )
 
 
+class IngredientListSerializer(serializers.ListSerializer):
+    def validate(self, attrs):
+        seen = set()
+        errors = {}
+        for index, row in enumerate(attrs):
+            normalized = str(row.get("name") or "").strip().casefold()
+            if normalized in seen:
+                errors[index] = {"name": "O nome do insumo esta repetido neste lote."}
+            seen.add(normalized)
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+
 class IngredientSerializer(TenantModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
+
     class Meta:
         model = Ingredient
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+        list_serializer_class = IngredientListSerializer
 
     def validate_minimum_stock(self, value):
         # Opcional, mas não pode ser negativo quando informado (STC-031).

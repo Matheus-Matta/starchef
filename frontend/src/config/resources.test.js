@@ -111,6 +111,16 @@ describe("recursos de estoque por lote", () => {
     }
   });
 
+  it("expoe o cadastro de fornecedores na Logistica", () => {
+    const suppliers = byName("fornecedores");
+    expect(suppliers).toBeDefined();
+    expect(suppliers.module).toBe("logistica");
+    expect(suppliers.endpoint).toBe("/stock/suppliers/");
+    expect(suppliers.formFields.map((field) => field.name)).toEqual(
+      expect.arrayContaining(["name", "legal_name", "tax_id", "contact_name", "phone", "email"]),
+    );
+  });
+
   it("entrada e saida usam tela de documento, nao o formulario generico", () => {
     // Um documento tem uma LISTA de linhas que cresce enquanto o operador
     // digita; o formulario de campos fixos nao representa isso.
@@ -183,5 +193,23 @@ describe("vinculo de consumo de insumo (Fase 0 do plano de estoque)", () => {
         "stock_consumption_unit",
       ]),
     );
+  });
+});
+
+describe("cadastro e compra de insumos", () => {
+  const byName = (name) => resources.find((resource) => resource.name === name);
+
+  it("vincula o fornecedor padrao ao insumo", () => {
+    const ingredient = byName("ingredientes");
+    const supplier = ingredient.formFields.find((field) => field.name === "supplier");
+    expect(supplier.endpoint).toBe("/stock/suppliers/");
+    expect(supplier.module).toBe("logistica");
+    expect(ingredient.columns.some((column) => column.key === "supplier_name")).toBe(true);
+  });
+
+  it("oferece o formulario repetivel de cadastro em lote", () => {
+    const action = byName("ingredientes").pro.headerActions.find((item) => item.key === "bulk-create");
+    expect(action.type).toBe("route");
+    expect(action.routeName).toBe("ingredientes-lote");
   });
 });

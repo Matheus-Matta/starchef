@@ -42,8 +42,8 @@ class ProductAddonAdmin(TenantModelAdmin):
 
 @admin.register(Ingredient)
 class IngredientAdmin(TenantModelAdmin):
-    list_display = ("name", "account", "branch", "unit", "average_cost", "minimum_stock", "is_active")
-    list_filter = ("account", "restaurant", "branch", "unit", "is_active")
+    list_display = ("name", "account", "branch", "unit", "supplier", "average_cost", "minimum_stock", "is_active")
+    list_filter = ("account", "restaurant", "branch", "unit", "supplier", "is_active")
     search_fields = ("name",)
 
 

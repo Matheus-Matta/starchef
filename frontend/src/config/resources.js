@@ -306,15 +306,21 @@ export const resources = [
   },
   {
     name: "ingredientes",
-    title: "Ingredientes",
+    title: "Insumos",
     endpoint: "/menu/ingredients/",
+    pro: {
+      headerActions: [
+        { key: "bulk-create", label: "Cadastrar em lote", icon: "pi pi-list", type: "route", routeName: "ingredientes-lote" },
+      ],
+    },
     // Compartilhados entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
     sharedAcrossRestaurants: true,
     // Regra de negocio (Modulo Base): o ingrediente serve para composicao/ficha
     // tecnica, SEM dados de custo/preco. Custo e estoque sao do Modulo Logistica.
     columns: [
-      { key: "name", label: "Ingrediente" },
+      { key: "name", label: "Insumo" },
       { key: "unit", label: "Unidade" },
+      { key: "supplier_name", label: "Fornecedor", module: "logistica" },
       { key: "minimum_stock", label: "Estoque min.", align: "right" },
       { key: "average_cost", label: "Custo medio", type: "money", align: "right", module: "logistica" },
       { key: "is_active", label: "Ativo", type: "boolean" },
@@ -322,8 +328,34 @@ export const resources = [
     formFields: [
       { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
       { name: "unit", label: "Unidade de medida", type: "dropdown", options: UNIT_OPTIONS, section: "Identificação" },
+      { name: "supplier", label: "Fornecedor padrão", type: "remote-dropdown", endpoint: "/stock/suppliers/", optionLabel: "name", optionValue: "id", placeholder: "Sem fornecedor padrão", module: "logistica", section: "Logística" },
       // Estoque mínimo (STC-031/032): opcional e só aparece com o Módulo Logística.
       { name: "minimum_stock", label: "Estoque minimo", type: "decimal", module: "logistica", section: "Logística" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
+    ],
+  },
+  {
+    name: "fornecedores",
+    module: "logistica",
+    title: "Fornecedores",
+    endpoint: "/stock/suppliers/",
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Fornecedor" },
+      { key: "tax_id", label: "CPF / CNPJ" },
+      { key: "contact_name", label: "Contato" },
+      { key: "phone", label: "Telefone" },
+      { key: "email", label: "E-mail" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
+      { name: "legal_name", label: "Razão social", type: "text", section: "Identificação" },
+      { name: "tax_id", label: "CPF / CNPJ", type: "text", section: "Identificação" },
+      { name: "contact_name", label: "Pessoa de contato", type: "text", section: "Contato" },
+      { name: "phone", label: "Telefone", type: "text", section: "Contato" },
+      { name: "email", label: "E-mail", type: "text", inputType: "email", section: "Contato" },
+      { name: "notes", label: "Observações", type: "textarea", full: true, section: "Observações" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
     ],
   },

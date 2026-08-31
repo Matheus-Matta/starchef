@@ -13,6 +13,7 @@ from apps.stock.models import (
     StockLot,
     StockMovement,
     StockSettings,
+    Supplier,
 )
 
 
@@ -21,6 +22,27 @@ class StockLocationSerializer(TenantModelSerializer):
         model = StockLocation
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+
+class SupplierSerializer(TenantModelSerializer):
+    class Meta:
+        model = Supplier
+        fields = "__all__"
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate_name(self, value):
+        name = str(value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Informe o nome do fornecedor.")
+        account = getattr(self.context.get("request"), "account", None)
+        duplicates = Supplier.all_objects.filter(name__iexact=name, deleted_at__isnull=True)
+        if account is not None:
+            duplicates = duplicates.filter(account=account)
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError("Ja existe um fornecedor com este nome.")
+        return name
 
 
 class StockSettingsSerializer(TenantModelSerializer):
@@ -79,12 +101,22 @@ class StockLotSerializer(TenantModelSerializer):
 class StockEntryItemSerializer(TenantModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
     ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True)
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
     lots = StockLotSerializer(many=True, read_only=True)
 
     class Meta:
         model = StockEntryItem
         fields = "__all__"
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "entry", "base_quantity", "total_cost"]
+
+    def validate(self, attrs):
+        ingredient = attrs.get("ingredient") or getattr(self.instance, "ingredient", None)
+        if ingredient is not None:
+            if not attrs.get("content_unit"):
+                attrs["content_unit"] = ingredient.unit
+            if attrs.get("supplier") is None:
+                attrs["supplier"] = ingredient.supplier
+        return super().validate(attrs)
 
 
 class StockEntrySerializer(TenantModelSerializer):
@@ -109,7 +141,10 @@ class StockEntrySerializer(TenantModelSerializer):
     def _write_items(self, entry, items_data):
         entry.items.all().delete()
         for row in items_data:
-            row.pop("entry", None)
+            for inherited_field in (
+                "entry", "account", "restaurant", "branch", "created_by", "updated_by"
+            ):
+                row.pop(inherited_field, None)
             StockEntryItem.objects.create(
                 entry=entry,
                 account=entry.account,
@@ -119,6 +154,16 @@ class StockEntrySerializer(TenantModelSerializer):
                 updated_by=entry.updated_by,
                 **row,
             )
+        supplier_names = list(
+            entry.items.filter(supplier__isnull=False)
+            .order_by("supplier__name")
+            .values_list("supplier__name", flat=True)
+            .distinct()
+        )
+        if supplier_names:
+            summary = ", ".join(supplier_names)
+            entry.supplier = summary if len(summary) <= 160 else "Varios fornecedores"
+            entry.save(update_fields=["supplier", "updated_at"])
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
@@ -189,7 +234,10 @@ class StockExitSerializer(TenantModelSerializer):
     def _write_items(self, exit_document, items_data):
         exit_document.items.all().delete()
         for row in items_data:
-            row.pop("exit", None)
+            for inherited_field in (
+                "exit", "account", "restaurant", "branch", "created_by", "updated_by"
+            ):
+                row.pop(inherited_field, None)
             StockExitItem.objects.create(
                 exit=exit_document,
                 account=exit_document.account,

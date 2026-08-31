@@ -76,8 +76,8 @@
             <InputText v-model="form.effective_date" type="date" :disabled="!editable" fluid />
           </label>
           <label class="stock-field">
-            <span>Fornecedor</span>
-            <InputText v-model="form.supplier" :disabled="!editable" fluid />
+            <span>Fornecedor(es)</span>
+            <InputText :model-value="supplierSummary" disabled placeholder="Definido em cada insumo" fluid />
           </label>
           <label class="stock-field">
             <span>Nota / documento</span>
@@ -123,6 +123,20 @@
                 :disabled="!editable"
                 fluid
                 @change="onIngredientChange(row)"
+              />
+            </label>
+            <label class="stock-field stock-field--wide">
+              <span>Fornecedor</span>
+              <Select
+                v-model="row.supplier"
+                :options="suppliers"
+                option-label="name"
+                option-value="id"
+                filter
+                show-clear
+                placeholder="Sem fornecedor"
+                :disabled="!editable"
+                fluid
               />
             </label>
             <label class="stock-field">
@@ -233,6 +247,7 @@ const loadingLabels = ref(false);
 const error = ref("");
 const locations = ref([]);
 const ingredients = ref([]);
+const suppliers = ref([]);
 const lots = ref([]);
 const expiryRequired = ref(false);
 const unitOptions = UNIT_OPTIONS;
@@ -264,11 +279,20 @@ const statusLabel = computed(
 const statusSeverity = computed(
   () => ({ draft: "warning", posted: "success", cancelled: "danger" })[form.status] || "info",
 );
+const supplierSummary = computed(() => {
+  const names = [...new Set(
+    rows.value
+      .map((row) => suppliers.value.find((supplier) => supplier.id === row.supplier)?.name)
+      .filter(Boolean),
+  )];
+  return names.join(", ") || form.supplier || "";
+});
 
 function blankRow() {
   return {
     _key: ++rowSeq,
     ingredient: null,
+    supplier: null,
     package_quantity: 1,
     content_per_package: null,
     content_unit: "",
@@ -289,10 +313,15 @@ function ingredientOf(row) {
   return ingredients.value.find((item) => item.id === row.ingredient) || null;
 }
 
-/** Ao escolher o insumo, a unidade dele é o palpite mais provável. */
+/** Ao escolher o insumo, traz os dados padrão usados no recebimento. */
 function onIngredientChange(row) {
   const ingredient = ingredientOf(row);
-  if (ingredient && !row.content_unit) row.content_unit = ingredient.unit;
+  if (!ingredient) return;
+  row.content_unit = ingredient.unit;
+  row.supplier = ingredient.supplier || null;
+  if ((row.unit_cost === null || Number(row.unit_cost) === 0) && Number(ingredient.average_cost) > 0) {
+    row.unit_cost = Number(ingredient.average_cost);
+  }
 }
 
 /**
@@ -362,11 +391,12 @@ function toPayload() {
   return {
     location: form.location,
     effective_date: form.effective_date,
-    supplier: form.supplier,
+    supplier: supplierSummary.value,
     document_number: form.document_number,
     notes: form.notes,
     items: rows.value.map((row) => ({
       ingredient: row.ingredient,
+      supplier: row.supplier || null,
       package_quantity: row.package_quantity || 0,
       content_per_package: row.content_per_package || 0,
       content_unit: row.content_unit || "",
@@ -392,6 +422,7 @@ function applyEntry(data) {
   rows.value = (data.items || []).map((item) => ({
     _key: ++rowSeq,
     ingredient: item.ingredient,
+    supplier: item.supplier || null,
     package_quantity: Number(item.package_quantity),
     content_per_package: Number(item.content_per_package),
     content_unit: item.content_unit || "",
@@ -505,13 +536,15 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [locationsResponse, ingredientsResponse, settingsResponse] = await Promise.all([
+    const [locationsResponse, ingredientsResponse, suppliersResponse, settingsResponse] = await Promise.all([
       api.get("/stock/locations/", { params: { is_active: true, page_size: 200 } }),
       api.get("/menu/ingredients/", { params: { is_active: true, page_size: 500 } }),
+      api.get("/stock/suppliers/", { params: { is_active: true, page_size: 500 } }),
       api.get("/stock/settings/current/"),
     ]);
     locations.value = locationsResponse.data.results || locationsResponse.data;
     ingredients.value = ingredientsResponse.data.results || ingredientsResponse.data;
+    suppliers.value = suppliersResponse.data.results || suppliersResponse.data;
     expiryRequired.value = !!settingsResponse.data?.expiry_control_enabled;
     if (!form.location && settingsResponse.data?.default_location) {
       form.location = settingsResponse.data.default_location;

@@ -28,6 +28,7 @@ from apps.stock.models import (
     StockLot,
     StockMovement,
     StockSettings,
+    Supplier,
 )
 from apps.stock.serializers import (
     StockAllocationSerializer,
@@ -38,6 +39,7 @@ from apps.stock.serializers import (
     StockLotSerializer,
     StockMovementSerializer,
     StockSettingsSerializer,
+    SupplierSerializer,
 )
 
 
@@ -47,6 +49,16 @@ class StockLocationViewSet(BaseTenantViewSet):
     queryset = StockLocation.objects.select_related("restaurant", "branch").all()
     filterset_fields = ["is_active"]
     search_fields = ["name"]
+
+
+class SupplierViewSet(BaseTenantViewSet):
+    required_module = MODULE_LOGISTICA
+    serializer_class = SupplierSerializer
+    queryset = Supplier.objects.select_related("restaurant", "branch").all()
+    filterset_fields = ["is_active"]
+    search_fields = ["name", "legal_name", "tax_id", "contact_name", "email", "phone"]
+    ordering_fields = ["name", "created_at", "updated_at"]
+    ordering = ["name"]
 
 
 class StockSettingsViewSet(BaseTenantViewSet):
@@ -134,7 +146,7 @@ class StockEntryViewSet(BaseTenantViewSet):
     serializer_class = StockEntrySerializer
     queryset = (
         StockEntry.objects.select_related("restaurant", "branch", "location")
-        .prefetch_related("items__ingredient", "items__lots")
+        .prefetch_related("items__ingredient", "items__supplier", "items__lots")
         .all()
     )
     filterset_fields = ["status", "location"]

@@ -269,6 +269,14 @@ class Ingredient(TenantModel):
     )
     name = models.CharField(max_length=160)
     unit = models.CharField(max_length=12, choices=UNIT_CHOICES, default=UNIT_UNIT)
+    supplier = models.ForeignKey(
+        "stock.Supplier",
+        null=True,
+        blank=True,
+        related_name="ingredients",
+        on_delete=models.PROTECT,
+        help_text="Fornecedor padrao sugerido nas entradas deste insumo.",
+    )
     average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
     # Estoque mínimo é opcional (STC-031): campo do Módulo Logística. Pode ficar
     # vazio (null) quando a logística não é usada; quando informado, não pode ser negativo.

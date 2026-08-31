@@ -81,6 +81,7 @@ from apps.stock.views import (
     StockMovementViewSet,
     StockPositionView,
     StockSettingsViewSet,
+    SupplierViewSet,
 )
 from apps.data_exchange.views import CsvExportView, CsvParseView
 
@@ -146,6 +147,7 @@ router.register("print-jobs", PrintJobViewSet, basename="print-jobs")
 router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings")
 router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
+router.register("stock/suppliers", SupplierViewSet, basename="stock-suppliers")
 router.register("stock/settings", StockSettingsViewSet, basename="stock-settings")
 router.register("stock/label-templates", StockLabelTemplateViewSet, basename="stock-label-templates")
 router.register("stock/lots", StockLotViewSet, basename="stock-lots")

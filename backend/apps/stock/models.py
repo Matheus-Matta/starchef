@@ -20,6 +20,39 @@ class StockLocation(TenantModel):
         return self.name
 
 
+class Supplier(TenantModel):
+    """Fornecedor reutilizavel pelos insumos e documentos de entrada da conta."""
+
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="supplier_set",
+        on_delete=models.PROTECT,
+    )
+    name = models.CharField(max_length=160)
+    legal_name = models.CharField(max_length=180, blank=True)
+    tax_id = models.CharField(max_length=18, blank=True)
+    contact_name = models.CharField(max_length=120, blank=True)
+    phone = models.CharField(max_length=30, blank=True)
+    email = models.EmailField(blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "name"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_supplier_name_by_account",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class StockSettings(TenantModel):
     """Configuracao do estoque de uma filial.
 
@@ -151,6 +184,13 @@ class StockEntryItem(TenantModel):
 
     entry = models.ForeignKey(StockEntry, related_name="items", on_delete=models.CASCADE)
     ingredient = models.ForeignKey("menu.Ingredient", related_name="entry_items", on_delete=models.PROTECT)
+    supplier = models.ForeignKey(
+        Supplier,
+        null=True,
+        blank=True,
+        related_name="entry_items",
+        on_delete=models.PROTECT,
+    )
     # "2 pacotes de 5 kg": package_quantity=2, content_per_package=5, content_unit=kg.
     package_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=1)
     content_per_package = models.DecimalField(max_digits=12, decimal_places=3, default=1)

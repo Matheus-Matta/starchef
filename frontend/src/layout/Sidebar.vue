@@ -192,7 +192,7 @@ const groups = computed(() =>
         { id: "cardapio", label: "Produtos", icon: "book-open" },
         { id: "categorias", label: "Categorias", icon: "tag" },
         { id: "adicionais", label: "Adicionais", icon: "plus" },
-        canManage.value ? { id: "ingredientes", label: "Ingredientes", icon: "flask" } : null,
+        canManage.value ? { id: "ingredientes", label: "Insumos", icon: "flask" } : null,
         canManage.value ? { id: "receitas", label: "Receitas", icon: "salad" } : null,
       ].filter(Boolean),
     },
@@ -214,6 +214,7 @@ const groups = computed(() =>
       label: "Logistica",
       module: "logistica",
       items: [
+        canManage.value ? { id: "fornecedores", label: "Fornecedores", icon: "store" } : null,
         canManage.value ? { id: "estoque-posicao", label: "Posição de estoque", icon: "layers" } : null,
         canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
         canManage.value ? { id: "estoque-saidas", label: "Saidas", icon: "truck" } : null,

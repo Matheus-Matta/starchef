@@ -108,6 +108,13 @@ Dois composables sustentam isso:
 - **`useResourceList.js`** — paginação/ordenação/busca server-side para `ResourceListViewPro`.
 - **`useResourceForm.js`** — carrega o registro, monta o form a partir de `formFields`, faz POST/PATCH, mapeia erros de validação do backend para os campos.
 
+Em **Ingredientes**, a ação “Cadastrar em lote” abre um formulário repetível e
+salva todas as linhas numa única operação atômica. A Logística também oferece o
+CRUD de **Fornecedores**; o fornecedor padrão fica vinculado ao insumo. Na tela
+de entrada, selecionar o insumo preenche sua unidade, fornecedor e, quando
+disponível, o último custo médio, mantendo os campos editáveis para a compra
+atual.
+
 Na criação de um perfil fiscal, `CosmosFiscalAssist.vue` observa o nome e,
 quando a integração da conta está ativa, consulta a Cosmos depois de uma pausa
 curta na digitação. NCM e CEST encontrados preenchem o formulário para revisão,

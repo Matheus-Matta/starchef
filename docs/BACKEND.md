@@ -34,7 +34,7 @@ backend/
     kitchen/               telas/config do KDS (estações e colunas)
     payments/              formas de pagamento, pagamentos, caixa (CashRegister/CashMovement)
     printers/              impressoras, balanças, leituras de peso, fila de impressão (PrintJob)
-    stock/                 locais de estoque e movimentações
+    stock/                 fornecedores, locais, entradas, lotes e movimentações de estoque
     invoices/               perfil/config fiscal, notas e provedores Manual + Focus NFe
     integrations/           contratos de integração externa (ex.: FiscalProvider)
     reports/                endpoints de relatórios agregados
@@ -175,6 +175,8 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 - `/admin/` — Django Admin (Unfold), com `/admin/login/` cobrindo o fluxo de primeiro acesso.
 - Todo o resto é `router.urls` (DRF `DefaultRouter`) — um ViewSet por recurso, RESTful padrão (list/retrieve/create/update/partial_update/destroy) mais actions customizadas onde necessário (ex.: `orders/send-to-kitchen`, `cash-register/open`, `cash-register/close`).
 - `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
+- `/api/v1/stock/suppliers/` mantém os fornecedores da conta. O insumo pode apontar para um fornecedor padrão e cada linha da entrada registra o fornecedor efetivamente usado.
+- `POST /api/v1/menu/ingredients/bulk/` recebe `{ "items": [...] }` e cria até 100 insumos atomicamente. Unidade e fornecedor padrão do insumo também são aplicados pelo backend quando a linha de entrada os omite.
 
 ## 10. Configuração / variáveis de ambiente
 
