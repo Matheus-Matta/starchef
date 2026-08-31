@@ -534,6 +534,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
                     _mark_failed(locked, FAILURE_REJECTION, exc)
                 locked.updated_by = user
                 locked.save()
+                ensure_fiscal_print_job(locked, user=user)
                 record_audit(
                     action=AuditLog.ACTION_UPDATED,
                     instance=locked,
@@ -594,6 +595,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
                     _mark_awaiting(locked, AWAITING_AUTHORIZATION)
             locked.updated_by = user
             locked.save()
+            ensure_fiscal_print_job(locked, user=user)
             record_audit(
                 action=AuditLog.ACTION_UPDATED,
                 instance=locked,
@@ -671,6 +673,8 @@ def reprocess_pending_fiscal_invoices(*, account=None):
             invoice.save()
             if invoice.status == Invoice.STATUS_ISSUED:
                 issued += 1
+                # A autorizacao chegou agora; o cupom do cliente ainda nao saiu.
+                ensure_fiscal_print_job(invoice)
                 record_audit(action=AuditLog.ACTION_UPDATED, instance=invoice, metadata={"reprocessed": True})
     return retried, issued
 
@@ -962,6 +966,40 @@ def print_sale_documents(order, *, invoice=None, user=None):
     if is_fiscally_printable(invoice) and not _already_printed(order, PrintJob.TYPE_FISCAL):
         jobs.append(print_fiscal_invoice(invoice, user=user, printer=printer))
     return jobs
+
+
+def ensure_fiscal_print_job(invoice, *, user=None):
+    """Enfileira o DANFE de uma nota que foi autorizada DEPOIS do pagamento.
+
+    Sem isto, a venda offline terminava sem cupom fiscal nenhum: o DANFE nao
+    sai mais no pagamento (a nota ainda nao existe na SEFAZ) e nada criava o
+    trabalho quando a autorizacao chegava — a nota ficava autorizada no banco e
+    o cliente nunca recebia o documento. Alguem precisava abrir o pedido e
+    clicar em imprimir, sem nenhum aviso de que precisava.
+
+    Idempotente por pedido: `_already_printed` impede um segundo cupom da mesma
+    venda, entao chamar isto em todo caminho que autoriza uma nota e seguro.
+    Nunca levanta — impressora fora do ar nao pode desfazer uma autorizacao que
+    ja aconteceu, nem derrubar o lote de reprocessamento.
+    """
+    from apps.printers.models import PrintJob
+    from apps.printers.services import resolve_printer_for
+
+    logger = logging.getLogger(__name__)
+    if not is_fiscally_printable(invoice) or not invoice.order_id:
+        return None
+    try:
+        with tenant_context(invoice.account):
+            order = invoice.order
+            if _already_printed(order, PrintJob.TYPE_FISCAL):
+                return None
+            printer = resolve_printer_for(order, PrintJob.TYPE_FISCAL)
+            return print_fiscal_invoice(invoice, user=user, printer=printer)
+    except (ValidationError, RuntimeError) as exc:
+        logger.warning(
+            "Nota %s autorizada, mas o DANFE nao foi enfileirado: %s", invoice.id, exc
+        )
+        return None
 
 
 def issue_invoice_for_paid_order(order, *, user=None):

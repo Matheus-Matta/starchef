@@ -466,8 +466,11 @@ ideal desejado.
    em reconciliação, recusada e erro de configuração. Um HTTP 200 com
    `emitted: false` não vira mais `AUTHORIZED`, e um 5xx volta para a escada de
    retentativa em vez de encerrar a nota.
-4. **Não há impressão automática após a fila autorizar.** O retorno da fila é
-   salvo localmente, mas não chama `/invoices/{id}/print/` depois.
+4. **A autorização tardia enfileira o DANFE sozinha.** Webhook, reprocessamento,
+   reenvio e `refresh-status` chamam `ensure_fiscal_print_job`, que cria o
+   trabalho fiscal na impressora do pedido — idempotente por pedido, então não
+   sai cupom duplicado. O retorno da fila do PDV continua sendo só gravado
+   localmente; quem imprime é o backend, pelo `PrintJob`.
 5. **Resposta de impressão e Flutter divergem.** O endpoint retorna
    `print_job_id`, `status` e `html`; o Flutter procura também um objeto
    `printer` na resposta para imprimir manualmente.

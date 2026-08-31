@@ -129,6 +129,29 @@ que a consulta no portal da SEFAZ não encontra.
 - a impressão automática do pagamento emite só o recibo da venda;
 - o PDV usa o campo `printable` da resposta para nem oferecer o DANFE.
 
+### E o cupom sai quando a autorização chega
+
+Bloquear a impressão sem mais nada deixaria a venda offline **sem cupom fiscal
+nenhum**: o DANFE não sai no pagamento e, antes, nada criava o trabalho quando a
+autorização chegava depois — a nota ficava autorizada no banco e alguém teria que
+abrir o pedido e clicar em imprimir, sem nenhum aviso de que precisava.
+
+`ensure_fiscal_print_job()` fecha esse ciclo. Todo caminho que autoriza uma nota
+tardiamente enfileira o DANFE na impressora do pedido:
+
+| Caminho | Quando acontece |
+|---|---|
+| Webhook da Focus | Autorização assíncrona; é o caso mais comum |
+| `reprocess_pending_invoices` | A conexão voltou e o lote retransmitiu |
+| `POST /invoices/{id}/resend/` | Reenvio manual de uma nota que não saiu |
+| `POST /invoices/{id}/refresh-status/` | Consulta manual encontrou a autorização |
+
+É idempotente por pedido (`_already_printed`), então chamar de vários caminhos
+não gera cupom duplicado. E nunca levanta: impressora fora do ar não pode
+desfazer uma autorização que já aconteceu, nem derrubar o lote de
+reprocessamento — o trabalho fica na fila de impressão, que tem retentativa
+própria.
+
 ## O retrato fiscal fica no terminal
 
 Antes, a fila fiscal do PDV guardava `{order, cpf, client_document_id}` e toda a

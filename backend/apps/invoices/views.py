@@ -33,6 +33,7 @@ from apps.invoices.services import (
     cancel_fiscal_invoice,
     emit_fiscal_invoice,
     ensure_fiscal_config,
+    ensure_fiscal_print_job,
     fiscal_emission_unavailable_reason,
     fiscal_readiness,
     print_fiscal_invoice,
@@ -349,6 +350,8 @@ class InvoiceViewSet(BaseTenantViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         invoice.updated_by = request.user
         invoice.save()
+        # A consulta pode ter sido o momento em que a nota virou autorizada.
+        ensure_fiscal_print_job(invoice, user=request.user)
         return self._serialize(invoice)
 
     @action(detail=True, methods=["post"], url_path="resend")
@@ -403,4 +406,9 @@ class FocusNfeWebhookView(APIView):
             # ser persistidas, sem pedir reenvio infinito para a Focus.
             pass
         invoice.save()
+        # O webhook e o caminho normal da autorizacao assincrona: e aqui que a
+        # maioria das notas pendentes vira autorizada, e o cupom do cliente
+        # ainda nao saiu. Falha de impressora nao pode virar erro no webhook,
+        # ou a Focus reenviaria o aviso achando que nao entregamos.
+        ensure_fiscal_print_job(invoice)
         return Response({"ok": True})
