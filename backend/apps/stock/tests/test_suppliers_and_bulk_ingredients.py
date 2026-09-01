@@ -100,6 +100,7 @@ def test_stock_entry_inherits_unit_and_supplier_from_ingredient(
     response = api_client.post(
         "/api/v1/stock/entries/",
         {
+            "restaurant": str(restaurant.id),
             "location": str(location.id),
             "effective_date": "2026-08-31",
             "items": [
@@ -123,3 +124,47 @@ def test_stock_entry_inherits_unit_and_supplier_from_ingredient(
     item = StockEntryItem.all_objects.get(entry=entry)
     assert item.supplier == supplier
     assert item.content_unit == ingredient.unit
+
+
+def test_stock_entry_returns_specific_nested_field_error(
+    api_client, account_with_logistica, restaurant, branch, manager_user
+):
+    ingredient = Ingredient.all_objects.create(
+        account=account_with_logistica,
+        restaurant=restaurant,
+        branch=branch,
+        name="Farinha",
+        unit="kg",
+        created_by=manager_user,
+        updated_by=manager_user,
+    )
+    location = StockLocation.all_objects.create(
+        account=account_with_logistica,
+        restaurant=restaurant,
+        branch=branch,
+        name="Estoque seco",
+        created_by=manager_user,
+        updated_by=manager_user,
+    )
+
+    response = api_client.post(
+        "/api/v1/stock/entries/",
+        {
+            "restaurant": str(restaurant.id),
+            "location": str(location.id),
+            "effective_date": "2026-09-01",
+            "items": [
+                {
+                    "ingredient": str(ingredient.id),
+                    "package_quantity": "10",
+                    "content_per_package": None,
+                    "content_unit": "kg",
+                }
+            ],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    detail = response.data.get("error", {}).get("message", response.data)
+    assert "quanto ha em cada embalagem" in str(detail["items"][0]["content_per_package"]).lower()

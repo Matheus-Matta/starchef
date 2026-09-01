@@ -108,6 +108,33 @@ class StockEntryItemSerializer(TenantModelSerializer):
         model = StockEntryItem
         fields = "__all__"
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "entry", "base_quantity", "total_cost"]
+        extra_kwargs = {
+            "ingredient": {
+                "error_messages": {
+                    "null": "Selecione o insumo recebido.",
+                    "required": "Selecione o insumo recebido.",
+                    "does_not_exist": "O insumo selecionado nao foi encontrado neste restaurante.",
+                }
+            },
+            "package_quantity": {
+                "error_messages": {
+                    "null": "Informe quantas embalagens foram recebidas.",
+                    "invalid": "Informe uma quantidade de embalagens valida.",
+                }
+            },
+            "content_per_package": {
+                "error_messages": {
+                    "null": "Informe quanto ha em cada embalagem, por exemplo: 1 para um pacote de 1 kg.",
+                    "invalid": "Informe um conteudo por embalagem valido.",
+                }
+            },
+            "manufactured_at": {
+                "error_messages": {"invalid": "Informe uma data de fabricacao valida."}
+            },
+            "expires_at": {
+                "error_messages": {"invalid": "Informe uma data de validade valida."}
+            },
+        }
 
     def validate(self, attrs):
         ingredient = attrs.get("ingredient") or getattr(self.instance, "ingredient", None)
@@ -116,6 +143,29 @@ class StockEntryItemSerializer(TenantModelSerializer):
                 attrs["content_unit"] = ingredient.unit
             if attrs.get("supplier") is None:
                 attrs["supplier"] = ingredient.supplier
+
+        errors = {}
+        package_quantity = attrs.get("package_quantity", getattr(self.instance, "package_quantity", 1))
+        content_per_package = attrs.get(
+            "content_per_package", getattr(self.instance, "content_per_package", 1)
+        )
+        if package_quantity is None or package_quantity <= 0:
+            errors["package_quantity"] = "Informe uma quantidade de embalagens maior que zero."
+        if content_per_package is None or content_per_package <= 0:
+            errors["content_per_package"] = (
+                "Informe quanto ha em cada embalagem com um valor maior que zero. "
+                "Exemplo: para um pacote de 1 kg, informe 1 e selecione kg."
+            )
+
+        manufactured_at = attrs.get("manufactured_at", getattr(self.instance, "manufactured_at", None))
+        expires_at = attrs.get("expires_at", getattr(self.instance, "expires_at", None))
+        if manufactured_at and expires_at and manufactured_at > expires_at:
+            errors["expires_at"] = "A validade deve ser posterior a data de fabricacao."
+        label_count = attrs.get("label_count", getattr(self.instance, "label_count", 1))
+        if label_count is not None and not 1 <= label_count <= 99:
+            errors["label_count"] = "Informe uma quantidade de etiquetas entre 1 e 99."
+        if errors:
+            raise serializers.ValidationError(errors)
         return super().validate(attrs)
 
 
@@ -137,6 +187,68 @@ class StockEntrySerializer(TenantModelSerializer):
         read_only_fields = [
             *AUDIT_READ_ONLY_FIELDS, "status", "posted_at", "posted_by", "cancelled_at", "cancelled_by"
         ]
+        extra_kwargs = {
+            "restaurant": {
+                "error_messages": {
+                    "null": "Selecione o restaurante desta entrada.",
+                    "required": "Selecione o restaurante desta entrada.",
+                    "does_not_exist": "O restaurante selecionado nao foi encontrado.",
+                }
+            },
+            "location": {
+                "error_messages": {
+                    "null": "Selecione o armazem que recebera os produtos.",
+                    "required": "Selecione o armazem que recebera os produtos.",
+                    "does_not_exist": "O armazem selecionado nao foi encontrado neste restaurante.",
+                }
+            },
+            "effective_date": {
+                "error_messages": {
+                    "null": "Informe a data da entrada.",
+                    "required": "Informe a data da entrada.",
+                    "invalid": "Informe uma data de entrada valida.",
+                }
+            },
+        }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        restaurant = attrs.get("restaurant") or getattr(self.instance, "restaurant", None)
+        location = attrs.get("location") or getattr(self.instance, "location", None)
+        items = attrs.get("items")
+        errors = {}
+
+        if restaurant is not None and location is not None and location.restaurant_id != restaurant.id:
+            errors["location"] = "Selecione um armazem do restaurante escolhido."
+
+        if restaurant is not None and items is not None:
+            item_errors = []
+            has_item_error = False
+            for row in items:
+                row_error = {}
+                ingredient = row.get("ingredient")
+                if ingredient is not None and ingredient.restaurant_id != restaurant.id:
+                    row_error["ingredient"] = "Selecione um insumo do restaurante escolhido."
+                    has_item_error = True
+                item_errors.append(row_error)
+            if has_item_error:
+                errors["items"] = item_errors
+
+        effective_date = attrs.get("effective_date", getattr(self.instance, "effective_date", None))
+        if effective_date is not None and items is not None:
+            item_errors = errors.get("items", [{} for _ in items])
+            for index, row in enumerate(items):
+                expires_at = row.get("expires_at")
+                if expires_at and expires_at < effective_date:
+                    item_errors[index]["expires_at"] = (
+                        "A validade nao pode ser anterior a data da entrada."
+                    )
+            if any(item_errors):
+                errors["items"] = item_errors
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def _write_items(self, entry, items_data):
         entry.items.all().delete()

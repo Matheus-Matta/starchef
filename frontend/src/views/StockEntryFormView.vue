@@ -59,21 +59,58 @@
       <section class="stock-card">
         <h2>Documento</h2>
         <div class="stock-grid">
-          <label class="stock-field">
-            <span>Local de destino *</span>
+          <label class="stock-field" :class="{ 'stock-field--error': formFieldError('restaurant') }">
+            <span>Restaurante *</span>
+            <Select
+              v-model="form.restaurant"
+              :options="restaurants"
+              option-label="trade_name"
+              option-value="id"
+              placeholder="Selecione o restaurante"
+              :disabled="!isNew || !editable"
+              :class="{ 'p-invalid': formFieldError('restaurant') }"
+              fluid
+              @change="onRestaurantChange"
+            />
+            <small v-if="formFieldError('restaurant')" class="stock-field__error" role="alert">
+              {{ formFieldError("restaurant") }}
+            </small>
+          </label>
+          <label class="stock-field" :class="{ 'stock-field--error': formFieldError('location') }">
+            <span>Armazém de destino *</span>
             <Select
               v-model="form.location"
               :options="locations"
               option-label="name"
               option-value="id"
-              placeholder="Selecione o local"
-              :disabled="!editable"
+              placeholder="Selecione o armazém"
+              :disabled="!editable || !form.restaurant"
+              :loading="loadingContext"
+              :class="{ 'p-invalid': formFieldError('location') }"
               fluid
+              @change="clearFormError('location')"
             />
+            <small v-if="formFieldError('location')" class="stock-field__error" role="alert">
+              {{ formFieldError("location") }}
+            </small>
           </label>
-          <label class="stock-field">
+          <label class="stock-field" :class="{ 'stock-field--error': formFieldError('effective_date') }">
             <span>Data da entrada *</span>
-            <InputText v-model="form.effective_date" type="date" :disabled="!editable" fluid />
+            <Calendar
+              v-model="form.effective_date"
+              class="stock-datepicker"
+              date-format="dd/mm/yy"
+              :manual-input="false"
+              show-icon
+              icon-display="input"
+              show-button-bar
+              :disabled="!editable"
+              :class="{ 'p-invalid': formFieldError('effective_date') }"
+              @update:model-value="clearFormError('effective_date')"
+            />
+            <small v-if="formFieldError('effective_date')" class="stock-field__error" role="alert">
+              {{ formFieldError("effective_date") }}
+            </small>
           </label>
           <label class="stock-field">
             <span>Fornecedor(es)</span>
@@ -99,19 +136,19 @@
               <template v-if="expiryRequired"> Esta filial exige validade em toda linha.</template>
             </p>
           </div>
-          <Button v-if="editable" label="Adicionar insumo" icon="pi pi-plus" outlined size="small" @click="addRow" />
+          <Button v-if="editable" label="Adicionar insumo" icon="pi pi-plus" outlined size="small" :disabled="!form.restaurant" @click="addRow" />
         </div>
 
         <div v-if="!rows.length" class="stock-empty">
           <i class="pi pi-inbox" />
           <p>Nenhum insumo na entrada ainda.</p>
-          <Button v-if="editable" label="Adicionar o primeiro" icon="pi pi-plus" size="small" @click="addRow" />
+          <Button v-if="editable" label="Adicionar o primeiro" icon="pi pi-plus" size="small" :disabled="!form.restaurant" @click="addRow" />
         </div>
 
         <div v-for="(row, index) in rows" :key="row._key" class="stock-row">
           <div class="stock-row__index">{{ index + 1 }}</div>
           <div class="stock-row__fields">
-            <label class="stock-field stock-field--wide">
+            <label class="stock-field stock-field--wide" :class="{ 'stock-field--error': rowFieldError(row, 'ingredient') }">
               <span>Insumo *</span>
               <Select
                 v-model="row.ingredient"
@@ -121,9 +158,14 @@
                 filter
                 placeholder="Selecione"
                 :disabled="!editable"
+                :loading="loadingContext"
+                :class="{ 'p-invalid': rowFieldError(row, 'ingredient') }"
                 fluid
                 @change="onIngredientChange(row)"
               />
+              <small v-if="rowFieldError(row, 'ingredient')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "ingredient") }}
+              </small>
             </label>
             <label class="stock-field stock-field--wide">
               <span>Fornecedor</span>
@@ -139,24 +181,54 @@
                 fluid
               />
             </label>
-            <label class="stock-field">
-              <span>Embalagens</span>
-              <InputNumber v-model="row.package_quantity" :min-fraction-digits="0" :max-fraction-digits="3" :disabled="!editable" fluid />
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'package_quantity') }">
+              <span>Embalagens *</span>
+              <InputNumber
+                v-model="row.package_quantity"
+                :min="0.001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="3"
+                :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'package_quantity') }"
+                fluid
+                @update:model-value="clearRowError(row, 'package_quantity')"
+              />
+              <small v-if="rowFieldError(row, 'package_quantity')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "package_quantity") }}
+              </small>
             </label>
-            <label class="stock-field">
-              <span>Conteúdo por embalagem</span>
-              <InputNumber v-model="row.content_per_package" :min-fraction-digits="0" :max-fraction-digits="3" :disabled="!editable" fluid />
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'content_per_package') }">
+              <span>Conteúdo por embalagem *</span>
+              <InputNumber
+                v-model="row.content_per_package"
+                :min="0.001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="3"
+                :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'content_per_package') }"
+                fluid
+                @update:model-value="clearRowError(row, 'content_per_package')"
+              />
+              <small>Ex.: pacote de 1 kg = conteúdo 1 e unidade kg.</small>
+              <small v-if="rowFieldError(row, 'content_per_package')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "content_per_package") }}
+              </small>
             </label>
-            <label class="stock-field">
-              <span>Unidade</span>
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'content_unit') }">
+              <span>Unidade *</span>
               <Select
                 v-model="row.content_unit"
                 :options="unitOptions"
                 option-label="label"
                 option-value="value"
                 :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'content_unit') }"
                 fluid
+                @change="clearRowError(row, 'content_unit')"
               />
+              <small v-if="rowFieldError(row, 'content_unit')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "content_unit") }}
+              </small>
             </label>
             <label class="stock-field">
               <span>Custo unitário (R$)</span>
@@ -166,17 +238,57 @@
               <span>Lote do fornecedor</span>
               <InputText v-model="row.supplier_lot" :disabled="!editable" fluid />
             </label>
-            <label class="stock-field">
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'manufactured_at') }">
               <span>Fabricação</span>
-              <InputText v-model="row.manufactured_at" type="date" :disabled="!editable" fluid />
+              <Calendar
+                v-model="row.manufactured_at"
+                class="stock-datepicker"
+                date-format="dd/mm/yy"
+                :manual-input="false"
+                show-icon
+                icon-display="input"
+                show-button-bar
+                :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'manufactured_at') }"
+                @update:model-value="clearRowError(row, 'manufactured_at')"
+              />
+              <small v-if="rowFieldError(row, 'manufactured_at')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "manufactured_at") }}
+              </small>
             </label>
-            <label class="stock-field">
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'expires_at') }">
               <span>Validade <em v-if="expiryRequired">*</em></span>
-              <InputText v-model="row.expires_at" type="date" :disabled="!editable" fluid />
+              <Calendar
+                v-model="row.expires_at"
+                class="stock-datepicker"
+                date-format="dd/mm/yy"
+                :manual-input="false"
+                show-icon
+                icon-display="input"
+                show-button-bar
+                :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'expires_at') }"
+                @update:model-value="clearRowError(row, 'expires_at')"
+              />
+              <small v-if="rowFieldError(row, 'expires_at')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "expires_at") }}
+              </small>
             </label>
-            <label class="stock-field">
+            <label class="stock-field" :class="{ 'stock-field--error': rowFieldError(row, 'label_count') }">
               <span>Etiquetas</span>
-              <InputNumber v-model="row.label_count" :min="1" :max="99" show-buttons :disabled="!editable" fluid />
+              <InputNumber
+                v-model="row.label_count"
+                :min="1"
+                :max="99"
+                show-buttons
+                :disabled="!editable"
+                :class="{ 'p-invalid': rowFieldError(row, 'label_count') }"
+                fluid
+                @update:model-value="clearRowError(row, 'label_count')"
+              />
+              <small v-if="rowFieldError(row, 'label_count')" class="stock-field__error" role="alert">
+                {{ rowFieldError(row, "label_count") }}
+              </small>
             </label>
             <div class="stock-field stock-row__total">
               <span>Vai para o estoque</span>
@@ -191,7 +303,7 @@
             text
             rounded
             aria-label="Remover linha"
-            @click="rows.splice(index, 1)"
+            @click="removeRow(index)"
           />
         </div>
       </section>
@@ -215,6 +327,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
+import Calendar from "primevue/calendar";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import InputNumber from "primevue/inputnumber";
@@ -230,6 +343,12 @@ import StockLabelSheet from "../components/stock/StockLabelSheet.vue";
 import { UNIT_OPTIONS } from "../config/enums";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
+import {
+  parseApiDate,
+  stockEntryApiErrors,
+  toApiDate,
+  validateStockEntry,
+} from "../utils/stockEntryForm";
 import { convertUnit } from "../utils/units";
 
 const props = defineProps({ id: { type: String, default: "" } });
@@ -241,10 +360,14 @@ const confirm = useConfirm();
 const labelSheet = ref(null);
 
 const loading = ref(true);
+const loadingContext = ref(false);
 const saving = ref(false);
 const posting = ref(false);
 const loadingLabels = ref(false);
 const error = ref("");
+const formErrors = ref({});
+const rowErrors = ref({});
+const restaurants = ref([]);
 const locations = ref([]);
 const ingredients = ref([]);
 const suppliers = ref([]);
@@ -259,8 +382,9 @@ const copyRequest = computed(() => String(route.query.copy || ""));
 const copiedFrom = ref(null);
 
 const form = reactive({
+  restaurant: localStorage.getItem("starchef-restaurant-scope") || null,
   location: null,
-  effective_date: today(),
+  effective_date: todayDate(),
   supplier: "",
   document_number: "",
   notes: "",
@@ -298,8 +422,8 @@ function blankRow() {
     content_unit: "",
     unit_cost: null,
     supplier_lot: "",
-    manufactured_at: "",
-    expires_at: "",
+    manufactured_at: null,
+    expires_at: null,
     label_count: 1,
     notes: "",
   };
@@ -309,12 +433,78 @@ function addRow() {
   rows.value.push(blankRow());
 }
 
+function removeRow(index) {
+  const [removed] = rows.value.splice(index, 1);
+  if (removed) {
+    const next = { ...rowErrors.value };
+    delete next[String(removed._key)];
+    rowErrors.value = next;
+  }
+}
+
 function ingredientOf(row) {
   return ingredients.value.find((item) => item.id === row.ingredient) || null;
 }
 
+function formFieldError(field) {
+  return formErrors.value[field] || "";
+}
+
+function rowFieldError(row, field) {
+  return rowErrors.value[String(row._key)]?.[field] || "";
+}
+
+function clearFormError(field) {
+  if (!formErrors.value[field]) return;
+  const next = { ...formErrors.value };
+  delete next[field];
+  formErrors.value = next;
+}
+
+function clearRowError(row, field) {
+  const key = String(row._key);
+  if (!rowErrors.value[key]?.[field]) return;
+  const nextForRow = { ...rowErrors.value[key] };
+  delete nextForRow[field];
+  const next = { ...rowErrors.value };
+  if (Object.keys(nextForRow).length) next[key] = nextForRow;
+  else delete next[key];
+  rowErrors.value = next;
+}
+
+function clearValidationErrors() {
+  formErrors.value = {};
+  rowErrors.value = {};
+}
+
+function validateBeforeSubmit({ forPosting = false } = {}) {
+  const validation = validateStockEntry({
+    form,
+    rows: rows.value,
+    expiryRequired: expiryRequired.value,
+    forPosting,
+  });
+  formErrors.value = validation.formErrors;
+  rowErrors.value = validation.rowErrors;
+  if (!validation.valid) error.value = validation.message;
+  return validation.valid;
+}
+
+function applyRequestError(err) {
+  const normalized = normalizeApiError(err);
+  const fields = stockEntryApiErrors(err, rows.value);
+  if (fields.hasFieldErrors) {
+    formErrors.value = fields.formErrors;
+    rowErrors.value = fields.rowErrors;
+    error.value = fields.message;
+    return;
+  }
+  error.value = normalized.message;
+}
+
 /** Ao escolher o insumo, traz os dados padrão usados no recebimento. */
 function onIngredientChange(row) {
+  clearRowError(row, "ingredient");
   const ingredient = ingredientOf(row);
   if (!ingredient) return;
   row.content_unit = ingredient.unit;
@@ -341,14 +531,15 @@ function baseQuantityLabel(row) {
   return `${converted.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${ingredient.unit}`;
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
+function todayDate() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 function formatDate(value) {
   if (!value) return "";
-  const [year, month, day] = String(value).split("-");
-  return day ? `${day}/${month}/${year}` : value;
+  const date = value instanceof Date ? value : parseApiDate(value);
+  return date ? date.toLocaleDateString("pt-BR") : String(value);
 }
 
 /**
@@ -373,12 +564,12 @@ async function applyCopy() {
     addRow();
     return;
   }
-  const { data } = await api.get(`/stock/entries/${sourceId}/`);
+  const { data } = await api.get(`/stock/entries/${sourceId}/`, { skipRestaurantScope: true });
   applyEntry(data);
   // O que nao se copia: a identidade e a situacao do documento antigo. A data
   // volta para hoje — repetir a data copiada lancaria o estoque no passado.
   form.status = "draft";
-  form.effective_date = today();
+  form.effective_date = todayDate();
   lots.value = [];
   copiedFrom.value = { effective_date: data.effective_date, document_number: data.document_number };
 }
@@ -389,8 +580,9 @@ function goBack() {
 
 function toPayload() {
   return {
+    restaurant: form.restaurant,
     location: form.location,
-    effective_date: form.effective_date,
+    effective_date: toApiDate(form.effective_date),
     supplier: supplierSummary.value,
     document_number: form.document_number,
     notes: form.notes,
@@ -402,8 +594,8 @@ function toPayload() {
       content_unit: row.content_unit || "",
       unit_cost: row.unit_cost || 0,
       supplier_lot: row.supplier_lot || "",
-      manufactured_at: row.manufactured_at || null,
-      expires_at: row.expires_at || null,
+      manufactured_at: toApiDate(row.manufactured_at),
+      expires_at: toApiDate(row.expires_at),
       label_count: row.label_count || 1,
       notes: row.notes || "",
     })),
@@ -412,8 +604,9 @@ function toPayload() {
 
 function applyEntry(data) {
   Object.assign(form, {
+    restaurant: data.restaurant,
     location: data.location,
-    effective_date: data.effective_date,
+    effective_date: parseApiDate(data.effective_date),
     supplier: data.supplier || "",
     document_number: data.document_number || "",
     notes: data.notes || "",
@@ -428,8 +621,8 @@ function applyEntry(data) {
     content_unit: item.content_unit || "",
     unit_cost: Number(item.unit_cost),
     supplier_lot: item.supplier_lot || "",
-    manufactured_at: item.manufactured_at || "",
-    expires_at: item.expires_at || "",
+    manufactured_at: parseApiDate(item.manufactured_at),
+    expires_at: parseApiDate(item.expires_at),
     label_count: item.label_count || 1,
     notes: item.notes || "",
   }));
@@ -440,8 +633,10 @@ function applyEntry(data) {
 
 async function save() {
   if (saving.value) return;
-  saving.value = true;
   error.value = "";
+  clearValidationErrors();
+  if (!validateBeforeSubmit()) return;
+  saving.value = true;
   try {
     const payload = toPayload();
     const { data } = entryId.value
@@ -453,13 +648,16 @@ async function save() {
       router.replace({ name: "estoque-entrada-documento", params: { id: data.id } });
     }
   } catch (err) {
-    error.value = normalizeApiError(err).message;
+    applyRequestError(err);
   } finally {
     saving.value = false;
   }
 }
 
 function confirmPost() {
+  error.value = "";
+  clearValidationErrors();
+  if (!validateBeforeSubmit({ forPosting: true })) return;
   confirm.require({
     header: "Confirmar a entrada?",
     message:
@@ -472,8 +670,11 @@ function confirmPost() {
 }
 
 async function post() {
-  posting.value = true;
+  if (posting.value) return;
   error.value = "";
+  clearValidationErrors();
+  if (!validateBeforeSubmit({ forPosting: true })) return;
+  posting.value = true;
   try {
     // Salva antes: o operador pode ter mexido nas linhas sem salvar, e
     // confirmar o que está na tela é o que ele espera.
@@ -494,7 +695,7 @@ async function post() {
       router.replace({ name: "estoque-entrada-documento", params: { id: saved.id } });
     }
   } catch (err) {
-    error.value = normalizeApiError(err).message;
+    applyRequestError(err);
   } finally {
     posting.value = false;
   }
@@ -532,34 +733,82 @@ async function openLabels() {
   }
 }
 
+async function loadRestaurantContext() {
+  locations.value = [];
+  ingredients.value = [];
+  expiryRequired.value = false;
+  if (!form.restaurant) return;
+
+  loadingContext.value = true;
+  try {
+    const params = { restaurant: form.restaurant };
+    const [locationsResponse, ingredientsResponse, settingsResponse] = await Promise.all([
+      api.get("/stock/locations/", { params: { ...params, is_active: true, page_size: 200 } }),
+      api.get("/menu/ingredients/", { params: { ...params, is_active: true, page_size: 500 } }),
+      api.get("/stock/settings/current/", { params }),
+    ]);
+    locations.value = locationsResponse.data.results || locationsResponse.data;
+    ingredients.value = ingredientsResponse.data.results || ingredientsResponse.data;
+    expiryRequired.value = !!settingsResponse.data?.expiry_control_enabled;
+
+    if (form.location && !locations.value.some((location) => location.id === form.location)) {
+      form.location = null;
+    }
+    if (!form.location && settingsResponse.data?.default_location) {
+      form.location = settingsResponse.data.default_location;
+    }
+  } finally {
+    loadingContext.value = false;
+  }
+}
+
+async function onRestaurantChange() {
+  clearFormError("restaurant");
+  clearFormError("location");
+  error.value = "";
+  form.location = null;
+  rows.value = [blankRow()];
+  rowErrors.value = {};
+  try {
+    await loadRestaurantContext();
+  } catch (err) {
+    applyRequestError(err);
+  }
+}
+
 async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [locationsResponse, ingredientsResponse, suppliersResponse, settingsResponse] = await Promise.all([
-      api.get("/stock/locations/", { params: { is_active: true, page_size: 200 } }),
-      api.get("/menu/ingredients/", { params: { is_active: true, page_size: 500 } }),
-      api.get("/stock/suppliers/", { params: { is_active: true, page_size: 500 } }),
-      api.get("/stock/settings/current/"),
+    const [restaurantsResponse, suppliersResponse] = await Promise.all([
+      api.get("/restaurants/", {
+        params: { is_active: true, page_size: 200 },
+        skipRestaurantScope: true,
+      }),
+      api.get("/stock/suppliers/", {
+        params: { is_active: true, page_size: 500 },
+        skipRestaurantScope: true,
+      }),
     ]);
-    locations.value = locationsResponse.data.results || locationsResponse.data;
-    ingredients.value = ingredientsResponse.data.results || ingredientsResponse.data;
+    restaurants.value = restaurantsResponse.data.results || restaurantsResponse.data;
     suppliers.value = suppliersResponse.data.results || suppliersResponse.data;
-    expiryRequired.value = !!settingsResponse.data?.expiry_control_enabled;
-    if (!form.location && settingsResponse.data?.default_location) {
-      form.location = settingsResponse.data.default_location;
-    }
 
     if (entryId.value) {
-      const { data } = await api.get(`/stock/entries/${entryId.value}/`);
+      const { data } = await api.get(`/stock/entries/${entryId.value}/`, { skipRestaurantScope: true });
       applyEntry(data);
     } else if (copyRequest.value) {
       await applyCopy();
-    } else {
+    }
+
+    if (!form.restaurant && restaurants.value.length === 1) {
+      form.restaurant = restaurants.value[0].id;
+    }
+    if (form.restaurant) await loadRestaurantContext();
+    if (!rows.value.length) {
       addRow();
     }
   } catch (err) {
-    error.value = normalizeApiError(err).message;
+    applyRequestError(err);
   } finally {
     loading.value = false;
   }
@@ -572,4 +821,20 @@ onMounted(load);
 @import "../styles/stock-document.css";
 
 .stock-doc__alert--info { border-color: var(--info); background: var(--info-subtle); color: var(--info-text); }
+.stock-datepicker { width: 100%; }
+.stock-datepicker :deep(.p-inputtext) { width: 100%; }
+.stock-field--error > span { color: var(--danger-text); }
+.stock-field small.stock-field__error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--danger-text);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+}
+.stock-field--error :deep(.p-inputtext),
+.stock-field--error :deep(.p-dropdown) {
+  border-color: var(--danger-border) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-text) 12%, transparent) !important;
+}
 </style>
