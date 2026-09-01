@@ -98,7 +98,9 @@ class OrderFilterSet(django_filters.FilterSet):
 class OrderViewSet(BaseTenantViewSet):
     serializer_class = OrderSerializer
     queryset = (
-        Order.objects.select_related("restaurant", "branch", "table", "command", "customer", "delivery_address")
+        Order.objects.select_related(
+            "restaurant", "branch", "table", "command", "customer", "delivery_address", "invoice"
+        )
         .prefetch_related("items__product", "items__addons", "items__batch")
         .all()
     )

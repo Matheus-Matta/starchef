@@ -22,6 +22,7 @@ class OrderCartPanel extends StatelessWidget {
     required this.onPrint,
     this.onCancel,
     this.onEmitInvoice,
+    this.onPrintInvoice,
     required this.printing,
     this.emittingInvoice = false,
     this.selectedItemId,
@@ -39,6 +40,9 @@ class OrderCartPanel extends StatelessWidget {
   final VoidCallback onPrint;
   final VoidCallback? onCancel;
   final VoidCallback? onEmitInvoice;
+
+  /// Imprime o DANFE de uma nota que JA existe e esta autorizada.
+  final VoidCallback? onPrintInvoice;
   final bool printing;
   final bool emittingInvoice;
 
@@ -306,27 +310,57 @@ class OrderCartPanel extends StatelessWidget {
           ),
           if ('${order?['payment_status']}' == 'paid') ...[
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: OutlinedButton.icon(
-                onPressed: !emittingInvoice ? onEmitInvoice : null,
-                icon: emittingInvoice
-                    ? const SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.receipt_long_outlined, size: 19),
-                label: Text(
-                  emittingInvoice
-                      ? 'Emitindo NFC-e...'
-                      : 'Emitir NFC-e / Imprimir DANFE',
-                ),
-              ),
-            ),
+            _invoiceAction(),
           ],
         ],
+      ),
+    );
+  }
+
+  /// A acao fiscal do pedido, conforme a situacao da nota.
+  ///
+  /// Nota autorizada nao se emite de novo: o que falta e o papel. Deixar o
+  /// mesmo botao para os dois casos escondia isso do operador — e mandava a
+  /// impressao passar pelo `/invoices/emit/`, que sem rede vira mais uma
+  /// entrada na fila fiscal para uma nota que ja existe.
+  Widget _invoiceAction() {
+    final fiscal = order?['fiscal'] as Map<String, dynamic>?;
+    final printable = fiscal?['printable'] == true;
+    final state = '${fiscal?['fiscal_state'] ?? ''}';
+    final busy = emittingInvoice;
+
+    final label = switch (true) {
+      _ when busy && printable => 'Imprimindo DANFE...',
+      _ when busy => 'Emitindo NFC-e...',
+      _ when printable => 'Imprimir DANFE',
+      _ when state == 'rejected' || state == 'configuration_error' =>
+        'Reenviar NFC-e',
+      _ when state == 'processing' || state == 'reconciliation_required' =>
+        'NFC-e aguardando a SEFAZ',
+      _ when state == 'awaiting_transmission' => 'Transmitir NFC-e',
+      _ => 'Emitir NFC-e',
+    };
+    // Enquanto a SEFAZ nao responde nao ha o que emitir nem o que imprimir:
+    // insistir aqui so duplicaria consulta.
+    final waiting = state == 'processing' || state == 'reconciliation_required';
+    final action = printable ? onPrintInvoice : onEmitInvoice;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: busy || waiting ? null : action,
+        icon: busy
+            ? const SizedBox(
+                width: 17,
+                height: 17,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                printable ? Icons.print_outlined : Icons.receipt_long_outlined,
+                size: 19,
+              ),
+        label: Text(label),
       ),
     );
   }

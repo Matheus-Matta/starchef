@@ -67,11 +67,36 @@ class OrderBatchSerializer(TenantModelSerializer):
 
 class OrderSerializer(TenantModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    fiscal = serializers.SerializerMethodField()
     table_number = serializers.CharField(source="table.number", read_only=True, default=None)
     command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
     command_code = serializers.CharField(source="command.code", read_only=True, default=None)
     customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
     customer_document = serializers.CharField(source="customer.document", read_only=True, default=None)
+
+    def get_fiscal(self, obj):
+        """Situacao da NFC-e deste pedido, ou `None` quando ainda nao ha nota.
+
+        E o que permite a tela oferecer a acao certa — emitir quando nao ha
+        documento, imprimir quando ja existe um autorizado — em vez de um
+        botao unico que so revela o que faz depois do clique.
+
+        `Order.invoice` e OneToOne; o queryset da view usa `select_related`
+        para isto nao virar uma consulta por linha na listagem.
+        """
+        from apps.invoices.services import fiscal_state_of, is_fiscally_printable
+
+        invoice = getattr(obj, "invoice", None)
+        if invoice is None:
+            return None
+        return {
+            "id": str(invoice.id),
+            "status": invoice.status,
+            "fiscal_state": fiscal_state_of(invoice),
+            "printable": is_fiscally_printable(invoice),
+            "number": invoice.number,
+            "error_message": invoice.error_message,
+        }
 
     class Meta:
         model = Order

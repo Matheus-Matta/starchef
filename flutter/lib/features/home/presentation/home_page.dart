@@ -4144,56 +4144,87 @@ class _HomePageState extends State<HomePage> {
         );
       }
 
-      final printers = await _list(
-        '/printers/',
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
+      await _printDanfe(
+        invoiceId: '${invoice['id']}',
+        summary:
+            'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
       );
-      if (!mounted || printers.isEmpty) return;
-      // O DANFE sai logo depois do pagamento, no mesmo gesto do cupom: se o
-      // caixa fixou uma impressora master, perguntar de novo aqui aparece
-      // para ele como "o sistema ignorou a master".
-      final master = widget.preferences.masterPrinterId;
-      final hasMaster = printers.any((p) => '${p['id']}' == master);
-      final printerId = hasMaster
-          ? master
-          : await showDialog<String>(
-              context: context,
-              builder: (_) => PrinterSelectionDialog(
-                printers: printers,
-                title: 'Imprimir DANFE NFC-e',
-                summary:
-                    'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-                description:
-                    'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
-              ),
-            );
-      if (printerId == null) return;
-      final printJob = await _work(
-        () => api.post(
-          '/invoices/${invoice['id']}/print/',
-          body: {'printer': printerId},
-          accessToken: token,
-        ),
-      );
-      if (printJob == null) return;
-      final printer = printJob['printer'] as Map<String, dynamic>?;
-      if (printer == null) {
-        _error(
-          const ApiException('A impressora selecionada não foi encontrada.'),
-        );
-        return;
-      }
-      await _work(() async {
-        await deviceAgent.printJobManually(printJob, printer);
-        return true;
-      });
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
     }
+  }
+
+  /// Reimprime o DANFE de uma nota que ja esta autorizada.
+  ///
+  /// Nao passa pelo `/invoices/emit/`: a nota existe, o que falta e o papel —
+  /// e sem rede aquela rota vira mais uma entrada na fila fiscal para um
+  /// documento que ja foi emitido.
+  Future<void> _reprintDanfe(Map<String, dynamic> order) async {
+    final fiscal = order['fiscal'] as Map<String, dynamic>?;
+    final invoiceId = '${fiscal?['id'] ?? ''}';
+    if (invoiceId.isEmpty || emittingInvoice) return;
+    setState(() => emittingInvoice = true);
+    try {
+      await _printDanfe(
+        invoiceId: invoiceId,
+        summary:
+            'Pedido #${order['sequence']} · NFC-e ${fiscal?['number'] ?? ''}',
+      );
+    } finally {
+      if (mounted) setState(() => emittingInvoice = false);
+    }
+  }
+
+  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  Future<void> _printDanfe({
+    required String invoiceId,
+    required String summary,
+  }) async {
+    final printers = await _list(
+      '/printers/',
+      query: {
+        'restaurant': restaurantId,
+        'is_active': true,
+        'page_size': 100,
+      },
+    );
+    if (!mounted || printers.isEmpty) return;
+    // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
+    // para ele como "o sistema ignorou a master".
+    final master = widget.preferences.masterPrinterId;
+    final hasMaster = printers.any((p) => '${p['id']}' == master);
+    final printerId = hasMaster
+        ? master
+        : await showDialog<String>(
+            context: context,
+            builder: (_) => PrinterSelectionDialog(
+              printers: printers,
+              title: 'Imprimir DANFE NFC-e',
+              summary: summary,
+              description:
+                  'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+            ),
+          );
+    if (printerId == null) return;
+    final printJob = await _work(
+      () => api.post(
+        '/invoices/$invoiceId/print/',
+        body: {'printer': printerId},
+        accessToken: token,
+      ),
+    );
+    if (printJob == null) return;
+    final printer = printJob['printer'] as Map<String, dynamic>?;
+    if (printer == null) {
+      _error(
+        const ApiException('A impressora selecionada não foi encontrada.'),
+      );
+      return;
+    }
+    await _work(() async {
+      await deviceAgent.printJobManually(printJob, printer);
+      return true;
+    });
   }
 
   Future<void> _paymentDialog() async {
@@ -7013,6 +7044,10 @@ class _HomePageState extends State<HomePage> {
         activeOrder == null || !widget.controller.session!.user.canProcessPayments
         ? null
         : () => _emitFiscalInvoice(activeOrder!),
+    onPrintInvoice:
+        activeOrder == null || !widget.controller.session!.user.canProcessPayments
+        ? null
+        : () => _reprintDanfe(activeOrder!),
     printing: printingReceipt,
     emittingInvoice: emittingInvoice,
   );

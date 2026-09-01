@@ -360,3 +360,51 @@ def test_desktop_terminal_prints_both_documents_once_when_the_operator_concludes
     jobs = list(PrintJob.all_objects.filter(order=order))
     assert len(jobs) == 2
     assert {job.pk for job in jobs} == {receipt.pk, danfe.pk}
+
+
+# ------------------------------------------------ situacao fiscal no pedido
+
+
+def test_order_carries_the_fiscal_state_so_the_screen_offers_the_right_action(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """O PDV precisa saber se ja existe nota para oferecer emitir ou imprimir.
+
+    Sem isto o botao dizia "Emitir NFC-e / Imprimir DANFE" nos dois casos, e o
+    operador so descobria o que ia acontecer depois de clicar.
+    """
+    from apps.orders.serializers import OrderSerializer
+
+    assert OrderSerializer(order).data["fiscal"] is None
+
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=_desktop_terminal(account, restaurant),
+        )
+    order.refresh_from_db()
+
+    fiscal = OrderSerializer(order).data["fiscal"]
+    assert fiscal["fiscal_state"] == "authorized"
+    assert fiscal["printable"] is True
+    assert fiscal["id"] == str(Invoice.all_objects.get(order=order).id)
+
+
+def test_order_fiscal_state_reports_a_rejected_note(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """Nota recusada nao e imprimivel — a tela oferece reenviar, nao imprimir."""
+    from apps.orders.serializers import OrderSerializer
+
+    fiscal_config.provider = _UnavailableProvider.name
+    fiscal_config.save(update_fields=["provider", "updated_at"])
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=_desktop_terminal(account, restaurant),
+        )
+    order.refresh_from_db()
+
+    fiscal = OrderSerializer(order).data["fiscal"]
+    assert fiscal["fiscal_state"] == "awaiting_transmission"
+    assert fiscal["printable"] is False
