@@ -14,7 +14,7 @@ from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
 from apps.orders.signals import order_fully_paid
-from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod, PdvTerminal
+from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
 from apps.payments.terminals import (
     CashSessionConflict,
     active_session_for_station,
@@ -607,25 +607,31 @@ def register_payment(
 
         record_audit(action=AuditLog.ACTION_PAYMENT, instance=payment, actor=user, metadata={"order": str(order.id)})
         if paid_in_full:
-            # O PDV desktop imprime pelo proprio gesto de "Concluir pedido" —
-            # ver `home_page.dart::_completePaidOrder`. Sem este aviso, o
-            # cupom e o DANFE saiam automaticamente no instante em que o
-            # ULTIMO pagamento era registrado (aqui, via sinal), o que quase
-            # sempre acontece ANTES do operador clicar em Concluir. O terminal
-            # entao repetia a impressao ao clicar — e se o job automatico ja
-            # tivesse sido entregue pelo agente local (`auto_print` na
-            # impressora), a segunda tentativa nao encontrava mais nada para
-            # reaproveitar (`claim_pending_job`) e criava um cupom NOVO: duas
-            # vias fisicas da mesma venda, do recibo e as vezes do DANFE.
+            # QUEM PEDIU IMPRIME. Um terminal identificado tem para onde
+            # mandar o papel, e e ele quem decide a hora:
             #
-            # A nota fiscal continua sendo emitida na hora — a SEFAZ pode
-            # demorar, e nao ha razao para esperar o clique so para isso. O
-            # que fica pendente e SO a impressao: o terminal desktop entrega
-            # os dois documentos (recibo + DANFE) de uma vez quando o
-            # operador confirma. Outros canais (web, integracoes) nao tem um
-            # gesto de conclusao equivalente e continuam recebendo os dois
-            # automaticamente, como sempre.
-            auto_print = not (terminal is not None and terminal.device_type == PdvTerminal.TYPE_DESKTOP)
+            # * PDV desktop imprime nas impressoras locais dele, no gesto de
+            #   "Concluir pedido" (`home_page.dart::_completePaidOrder`) —
+            #   recibo e DANFE juntos, na master do terminal;
+            # * a web imprime no proprio navegador (`showReceipt`), com o
+            #   dialogo de impressao do sistema.
+            #
+            # Criar um PrintJob aqui mandaria o papel para a fila do agente
+            # local — a impressora do caixa — para uma venda que talvez tenha
+            # sido fechada por alguem na retaguarda, do outro lado da cidade.
+            # Alem disso duplicava o cupom do desktop: o job automatico saia
+            # no instante do ultimo pagamento (sempre ANTES do clique em
+            # Concluir) e, quando o agente local ja o tivesse entregue, o
+            # clique nao achava mais nada para reaproveitar
+            # (`claim_pending_job`) e criava um cupom NOVO.
+            #
+            # Sem terminal identificado nao ha para onde devolver o documento
+            # (integracao, cliente antigo): o comportamento automatico segue
+            # valendo, senao a venda ficaria sem cupom nenhum.
+            #
+            # A nota fiscal continua sendo emitida na hora nos dois casos — a
+            # SEFAZ pode demorar e nao ha razao para prender isso ao clique.
+            auto_print = terminal is None
             transaction.on_commit(
                 lambda: order_fully_paid.send(sender=Order, order=order, user=user, auto_print=auto_print)
             )

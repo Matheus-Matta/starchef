@@ -33,7 +33,7 @@ from apps.invoices.services import (
     cancel_fiscal_invoice,
     emit_fiscal_invoice,
     ensure_fiscal_config,
-    fiscal_emission_unavailable_reason,
+    fiscal_emission_skipped_reason,
     fiscal_readiness,
     print_fiscal_invoice,
     refresh_fiscal_invoice_status,
@@ -279,7 +279,10 @@ class InvoiceViewSet(BaseTenantViewSet):
         if not order:
             return Response({"detail": "Pedido nao encontrado."}, status=status.HTTP_404_NOT_FOUND)
 
-        unavailable_reason = fiscal_emission_unavailable_reason(order)
+        # So recusa antes de criar quando o restaurante nao emite NFC-e. Com
+        # cadastro incompleto a nota e montada assim mesmo, para o erro ficar
+        # gravado nela e o operador poder corrigir e reenviar.
+        unavailable_reason = fiscal_emission_skipped_reason(order)
         if unavailable_reason:
             return Response(
                 {

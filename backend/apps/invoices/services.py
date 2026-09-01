@@ -31,6 +31,7 @@ from apps.invoices.fiscal import (
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
 from apps.invoices.providers import (
     FiscalAmbiguous,
+    provider_class_for,
     FocusNfeProvider,
     FiscalConfigurationError,
     FiscalNotFound,
@@ -257,6 +258,31 @@ def fiscal_emission_unavailable_reason(order):
         if config is None:
             return "O restaurante nao possui configuracao fiscal ativa."
         return fiscal_provider_unavailable_reason(config)
+
+
+def fiscal_emission_skipped_reason(order):
+    """Por que este pedido nao deve gerar NEM MESMO uma nota com erro.
+
+    Sao os casos em que o restaurante simplesmente nao emite NFC-e: sem
+    configuracao fiscal, ou com um provedor que nao transmite (o manual). Criar
+    ali uma nota recusada por venda encheria o historico de lixo.
+
+    Cadastro incompleto e outra coisa: o restaurante QUER emitir e nao
+    consegue. Esse caso deixa de ser recusado antes da hora — a nota e montada,
+    a falha fica gravada nela, e o operador enxerga o motivo e pode reenviar
+    depois de corrigir. Antes, a emissao parava aqui e nao restava registro
+    nenhum de que a venda deveria ter tido nota.
+    """
+    with tenant_context(order.account):
+        config = _resolve_fiscal_config(order.restaurant, order.branch)
+        if config is None:
+            return "O restaurante nao possui configuracao fiscal ativa."
+        provider_class = provider_class_for(config.provider)
+        if provider_class is None:
+            return f"O provedor fiscal '{config.provider}' nao possui integracao de emissao configurada."
+        if not provider_class.transmits:
+            return provider_class().unavailable_reason(config)
+        return None
 
 
 def billable_order_items(order):
@@ -1196,7 +1222,7 @@ def issue_invoice_for_paid_order(order, *, user=None, auto_print=True):
     logger = logging.getLogger(__name__)
     invoice = None
     with tenant_context(order.account):
-        reason = fiscal_emission_unavailable_reason(order)
+        reason = fiscal_emission_skipped_reason(order)
         if reason:
             logger.info("Nota automatica dispensada para o pedido %s: %s", order.id, reason)
         else:

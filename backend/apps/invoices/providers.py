@@ -5,6 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import FocusNfeConfig
+from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig, Invoice
 
 _REGISTRY = {}
@@ -69,6 +70,15 @@ def register_provider(cls):
 
 def get_provider(name):
     return _REGISTRY.get(name or ManualFiscalProvider.name, ManualFiscalProvider)()
+
+
+def provider_class_for(name):
+    """A CLASSE do provedor, para quem precisa perguntar algo antes de emitir.
+
+    Devolve `None` quando o nome nao esta registrado — um provedor que saiu do
+    codigo mas continua gravado numa configuracao antiga.
+    """
+    return _REGISTRY.get(name)
 
 
 def fiscal_provider_unavailable_reason(config):
@@ -383,7 +393,14 @@ class FocusNfeProvider(FiscalProvider):
             "consumidor_final": "1",
             "finalidade_emissao": "1",
             "presenca_comprador": "4" if invoice.order.order_type == "delivery" else "1",
-            "cnpj_emitente": config.cnpj,
+            # SEM MASCARA. `FiscalConfig.cnpj` tem 18 caracteres justamente
+            # para caber "00.000.000/0000-00", e o cadastro aceita os dois
+            # formatos. A Focus compoe a CHAVE DE ACESSO a partir deste campo
+            # — mandar pontuacao produz uma chave cujo digito verificador nao
+            # fecha ("Rejeicao: Digito Verificador da chave de acesso composta
+            # invalida"). O cadastro da empresa (`focus.py`) ja normalizava; o
+            # payload da nota nao.
+            "cnpj_emitente": only_digits(config.cnpj),
             "valor_produtos": str(invoice.products_total),
             "valor_desconto": str(invoice.discount_total),
             "valor_outras_despesas": str(other_expenses),
@@ -404,7 +421,7 @@ class FocusNfeProvider(FiscalProvider):
         if change_total:
             payload["valor_troco"] = str(change_total)
         if invoice.recipient_cpf:
-            payload["cpf_destinatario"] = invoice.recipient_cpf
+            payload["cpf_destinatario"] = only_digits(invoice.recipient_cpf)
             payload["nome_destinatario"] = invoice.recipient_name
         return payload
 

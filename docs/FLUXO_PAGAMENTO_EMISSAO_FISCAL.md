@@ -40,6 +40,10 @@ Pagamento e emissão fiscal são operações separadas:
   da configuração fiscal;
 - sem qualquer perfil, o que falta é **registrado** na nota e devolvido ao
   terminal; com `strict_fiscal_profile` ligado, a nota nem é transmitida;
+- cadastro fiscal incompleto **cria a nota mesmo assim**, com o motivo gravado
+  nela (`fiscal_state = configuration_error`), para o operador ver o erro e
+  reenviar depois de corrigir. Só restaurante que não emite NFC-e (provedor
+  manual, ou sem configuração fiscal) segue sem gerar nota nenhuma;
 - o DANFE só é impresso para nota **autorizada**: uma nota pendente tem chave
   montada localmente, que a SEFAZ não reconhece.
 
@@ -199,15 +203,28 @@ operador clica, `_completePaidOrder` imprime o recibo da venda e chama
 `_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois documentos.
 Um pedido pago reaberto também exibe **Emitir NFC-e / Imprimir DANFE**.
 
-Por isso o backend **não** imprime sozinho quando o pagamento vindo de um
-terminal desktop quita o pedido: `register_payment` avisa o sinal
-`order_fully_paid` com `auto_print=False` e `issue_invoice_for_paid_order`
-emite a nota mas pula `print_sale_documents`. Sem esse recorte, o cupom saía
-no instante do último pagamento — antes do clique — e o terminal imprimia de
-novo ao concluir, entregando duas vias da mesma venda sempre que o trabalho
-automático já tivesse sido impresso pelo agente local. Os demais canais (web,
-integrações) não têm gesto de conclusão equivalente e seguem imprimindo
-automaticamente.
+**Quem pediu imprime.** Um terminal identificado tem para onde mandar o papel,
+e é ele quem decide a hora — então o backend não cria `PrintJob` sozinho:
+
+| Origem do pagamento | Quem imprime |
+|---|---|
+| PDV desktop | O próprio terminal, no clique de **Concluir pedido**, na impressora **master** — recibo e DANFE, dois trabalhos |
+| Web | O navegador de quem fechou a venda (`showReceipt`), pelo diálogo de impressão do sistema |
+| Sem terminal identificado (integração, cliente antigo) | O backend, automaticamente — não há para onde devolver o documento |
+
+`register_payment` avisa o sinal `order_fully_paid` com `auto_print=False`
+sempre que há terminal identificado, e `issue_invoice_for_paid_order` emite a
+nota mas pula `print_sale_documents`.
+
+Sem esse recorte, o papel saía **na impressora do balcão** por causa de uma
+venda que podia ter sido fechada por alguém na retaguarda. E no desktop
+duplicava: o trabalho automático nascia no instante do último pagamento
+(sempre antes do clique em Concluir) e, quando o agente local já o tivesse
+entregue, o clique não achava mais nada para reaproveitar
+(`claim_pending_job`) e criava um cupom novo.
+
+A emissão fiscal continua imediata em todos os casos — a SEFAZ pode demorar e
+não há razão para prender isso ao clique.
 
 Porém, no modo offline-first atual, toda escrita em `/invoices/` é interceptada
 antes da chamada HTTP e gravada na `fiscal_queue` local, inclusive quando a
@@ -472,8 +489,8 @@ ideal desejado.
 2. **Flutter coloca toda emissão na fila fiscal.** A chamada inicial não recebe
    imediatamente a nota autorizada e, por isso, não imprime o DANFE naquele
    gesto. Quando ela volta autorizada, os dois documentos (recibo e DANFE)
-   saem juntos no clique de **Concluir pedido** — o backend não imprime por
-   conta própria para pagamento vindo de terminal desktop.
+   saem juntos no clique de **Concluir pedido**, na impressora master — o
+   backend não imprime por conta própria quando há terminal identificado.
 3. **A fila Flutter lê a situação fiscal real.** `pushFiscal` interpreta
    `fiscal_state` e distingue autorizada, aguardando transmissão, processando,
    em reconciliação, recusada e erro de configuração. Um HTTP 200 com

@@ -102,9 +102,16 @@ def test_manual_provider_returns_200_without_creating_invoice(
     assert not Invoice.all_objects.filter(order=order_with_item).exists()
 
 
-def test_focus_without_account_credentials_returns_200_without_creating_invoice(
+def test_focus_without_account_credentials_creates_the_invoice_with_the_error(
     api_client, account_with_financeiro, account, restaurant, branch, order_with_item
 ):
+    """Cadastro incompleto deixa rastro: a nota nasce com o motivo gravado.
+
+    O restaurante QUER emitir e nao consegue. Recusar antes de criar qualquer
+    coisa — como era antes — nao deixava registro nenhum de que aquela venda
+    deveria ter tido nota, e o operador nao tinha o que consultar nem o que
+    reenviar depois de corrigir o cadastro.
+    """
     FiscalConfig.objects.create(
         account=account,
         restaurant=restaurant,
@@ -117,9 +124,37 @@ def test_focus_without_account_credentials_returns_200_without_creating_invoice(
 
     resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
 
+    assert resp.status_code == 201, resp.data
+    assert resp.data["emitted"] is False
+    assert resp.data["fiscal_state"] == "configuration_error"
+    assert resp.data["printable"] is False
+
+    invoice = Invoice.all_objects.get(order=order_with_item)
+    assert invoice.status == Invoice.STATUS_ERROR
+    assert invoice.fiscal_payload["failure"] == "configuration"
+    assert invoice.error_message
+
+
+def test_restaurant_that_does_not_issue_nfce_creates_no_invoice(
+    api_client, account_with_financeiro, account, restaurant, branch, order_with_item
+):
+    """Provedor manual = restaurante que nao emite NFC-e.
+
+    Aqui uma nota com erro por venda seria so ruido no historico.
+    """
+    FiscalConfig.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        provider=FiscalConfig.PROVIDER_MANUAL,
+        cnpj="11222333000181",
+        uf="SP",
+    )
+
+    resp = api_client.post("/api/v1/invoices/emit/", {"order": str(order_with_item.id)}, format="json")
+
     assert resp.status_code == 200
     assert resp.data["emitted"] is False
-    assert "nao emitida" in resp.data["message"]
     assert not Invoice.all_objects.filter(order=order_with_item).exists()
 
 

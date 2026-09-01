@@ -299,10 +299,15 @@ def test_desktop_payment_emits_the_invoice_but_does_not_print_automatically(
     assert not PrintJob.all_objects.filter(order=order).exists()
 
 
-def test_web_payment_keeps_printing_automatically(
+def test_web_payment_does_not_send_paper_to_the_counter_printer(
     django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
 ):
-    """A web nao tem um gesto de conclusao equivalente — continua como sempre."""
+    """A web imprime no navegador de quem fechou a venda, nao no caixa.
+
+    Um PrintJob nascido aqui iria para a fila do agente local — a impressora
+    do balcao — por causa de uma venda que pode ter sido fechada por alguem na
+    retaguarda, longe dela.
+    """
     terminal = _web_terminal(account, restaurant)
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -310,6 +315,21 @@ def test_web_payment_keeps_printing_automatically(
             order=order, user=manager_user, payment_method_id=cash_method.id,
             amount=order.total, terminal=terminal,
         )
+
+    assert Invoice.all_objects.get(order=order).status == Invoice.STATUS_ISSUED
+    assert not PrintJob.all_objects.filter(order=order).exists()
+
+
+def test_payment_without_an_identified_terminal_still_prints(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    """Integracao ou cliente antigo nao tem para onde devolver o documento.
+
+    Sem terminal identificado ninguem vai imprimir por conta propria depois —
+    a venda ficaria sem cupom nenhum.
+    """
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
 
     jobs = {job.job_type for job in PrintJob.all_objects.filter(order=order)}
     assert jobs == {PrintJob.TYPE_RECEIPT, PrintJob.TYPE_FISCAL}
