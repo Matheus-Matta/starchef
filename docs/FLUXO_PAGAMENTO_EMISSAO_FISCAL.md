@@ -200,8 +200,17 @@ Ao clicar nesse botão, a retaguarda:
 
 A impressão é do gesto de **Concluir pedido**, não do pagamento. Quando o
 operador clica, `_completePaidOrder` imprime o recibo da venda e chama
-`_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois documentos.
-Um pedido pago reaberto também exibe **Emitir NFC-e / Imprimir DANFE**.
+`_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois documentos,
+na impressora master do terminal. Um pedido pago reaberto também exibe
+**Emitir NFC-e / Imprimir DANFE**.
+
+O recibo sai **com ou sem internet**. `/orders/{id}/print/` exige servidor,
+então `_printSaleReceipt` monta o cupom no próprio terminal
+(`_printReceiptLocally`) quando a venda ainda está na fila local, quando o
+terminal é um Caixa Secundário, ou quando a chamada ao servidor é recusada no
+meio do gesto. É o mesmo caminho que a reimpressão manual já usava. O DANFE
+não tem equivalente offline: sem nota autorizada não existe documento fiscal
+para imprimir — ele sai quando a autorização chegar.
 
 **Quem pediu imprime.** Um terminal identificado tem para onde mandar o papel,
 e é ele quem decide a hora — então o backend não cria `PrintJob` sozinho:

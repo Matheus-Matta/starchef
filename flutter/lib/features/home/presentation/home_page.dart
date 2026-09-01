@@ -4409,86 +4409,16 @@ class _HomePageState extends State<HomePage> {
         registeredPayments.any(
           (payment) => payment['_offline_pending'] == true,
         );
-    if (awaitingSync) {
-      if (mounted) {
-        showAppToast(
-          context,
-          'Venda salva localmente. O recibo ficará disponível após a sincronização.',
-          severity: AppErrorSeverity.warning,
-        );
-      }
-    } else {
-      // O pagamento já foi registrado. O recibo é um efeito colateral: uma
-      // falha de impressão não pode reabrir uma venda concluída.
-      try {
-        final printers = await _list(
-          '/printers/',
-          query: {
-            'restaurant': restaurantId,
-            'is_active': true,
-            'page_size': 100,
-          },
-        );
-        if (!mounted) return;
-        if (printers.isEmpty) {
-          _error(
-            const ApiException(
-              'Nenhuma impressora ativa foi cadastrada para este restaurante.',
-            ),
-            title: 'O pagamento foi registrado, mas o recibo não saiu',
-          );
-        } else {
-          final master = widget.preferences.masterPrinterId;
-          final hasMaster = printers.any((p) => '${p['id']}' == master);
-          final printerId = hasMaster
-              ? master
-              : await showDialog<String>(
-                  context: context,
-                  builder: (_) => PrinterSelectionDialog(
-                    printers: printers,
-                    title: 'Imprimir cupom fiscal',
-                    summary:
-                        'Pedido #${activeOrder?['sequence']} · ${_money(activeOrder?['total'])}',
-                    description:
-                        'O cupom contém itens, pagamentos e totais do pedido.',
-                  ),
-                );
-          if (printerId != null && mounted) {
-            final printJob = await api.post(
-              '/orders/${activeOrder!['id']}/print/',
-              body: {
-                'job_type': 'receipt',
-                'printer': printerId,
-                'manual_only': true,
-              },
-              accessToken: token,
-            );
-            final printer = printJob['printer'] as Map<String, dynamic>?;
-            if (printer == null) {
-              // `manual_only` tira este trabalho do laço automático do
-              // agente: se ninguém imprimir aqui, ninguém imprime — e antes
-              // isso passava em silêncio, sem cupom e sem aviso.
-              throw const ApiException(
-                'O trabalho de impressão voltou sem impressora.',
-              );
-            }
-            await deviceAgent.printJobManually(printJob, printer);
-          }
-        }
-      } catch (error) {
-        if (mounted) {
-          _error(
-            error,
-            title: 'O pagamento foi registrado, mas o recibo não saiu',
-            action: 'Reimprima pela tela de Pedidos quando quiser.',
-          );
-        }
-      }
-      // Emite a NFC-e assim que o pagamento fecha, em vez de depender do
-      // caixa lembrar de voltar no histórico do pedido para emitir manual.
-      if (mounted) {
-        await _emitFiscalInvoice(activeOrder!, silentIfUnconfigured: true);
-      }
+
+    // O recibo é um efeito colateral: uma falha de impressão não pode reabrir
+    // uma venda concluída.
+    await _printSaleReceipt(offline: awaitingSync);
+    // Emite a NFC-e assim que o pagamento fecha, em vez de depender do
+    // caixa lembrar de voltar no histórico do pedido para emitir manual.
+    // Sem rede isto grava o retrato fiscal na fila; o DANFE sai quando a
+    // nota for autorizada — documento fiscal não se imprime antes de existir.
+    if (mounted) {
+      await _emitFiscalInvoice(activeOrder!, silentIfUnconfigured: true);
     }
 
     if (!mounted) return;
@@ -4503,6 +4433,103 @@ class _HomePageState extends State<HomePage> {
       flowStep = 'type';
     });
     unawaited(_load());
+  }
+
+  /// Imprime o recibo da venda no gesto de concluir o pedido.
+  ///
+  /// `offline` decide por qual caminho: sem rede (ou num Caixa Secundário) a
+  /// rota `/orders/{id}/print/` não existe para este terminal, mas o cupom
+  /// sabe ser montado aqui e a impressora é deste caixa. Antes, a venda
+  /// offline terminava com um aviso no lugar do papel — e, desde que o
+  /// backend parou de imprimir por conta própria para terminal identificado,
+  /// nem o replay da fila gerava o cupom depois. O cliente ia embora sem
+  /// comprovante nenhum.
+  Future<void> _printSaleReceipt({required bool offline}) async {
+    try {
+      final printers = await _list(
+        '/printers/',
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
+      );
+      if (!mounted) return;
+      if (printers.isEmpty) {
+        _error(
+          const ApiException(
+            'Nenhuma impressora ativa foi cadastrada para este restaurante.',
+          ),
+          title: 'O pagamento foi registrado, mas o recibo não saiu',
+        );
+        return;
+      }
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      final printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir recibo de venda',
+                summary:
+                    'Pedido #${activeOrder?['sequence']} · ${_money(activeOrder?['total'])}',
+                description:
+                    'O recibo contém itens, pagamentos e totais do pedido.',
+              ),
+            );
+      if (printerId == null || !mounted) return;
+      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => '${item?['id']}' == printerId,
+        orElse: () => null,
+      );
+
+      if ((offline || isSecondaryStation) && chosen != null) {
+        await _work(() => _printReceiptLocally(activeOrder!, chosen));
+        return;
+      }
+
+      try {
+        final printJob = await api.post(
+          '/orders/${activeOrder!['id']}/print/',
+          body: {
+            'job_type': 'receipt',
+            'printer': printerId,
+            'manual_only': true,
+          },
+          accessToken: token,
+        );
+        final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
+        if (printer == null) {
+          // `manual_only` tira este trabalho do laço automático do agente: se
+          // ninguém imprimir aqui, ninguém imprime — e antes isso passava em
+          // silêncio, sem cupom e sem aviso.
+          throw const ApiException(
+            'O trabalho de impressão voltou sem impressora.',
+          );
+        }
+        await deviceAgent.printJobManually(printJob, printer);
+      } on ApiException catch (error) {
+        // Qualquer recusa serve de gatilho — rede que caiu no meio do gesto,
+        // servidor fora, ou uma rota que este terminal não alcança. O cliente
+        // está com a mão estendida esperando o comprovante.
+        if (chosen == null) rethrow;
+        AppLogger.instance.info(
+          'recibo_montado_localmente',
+          data: {'motivo': error.message, 'origem': 'concluir_pedido'},
+        );
+        await _work(() => _printReceiptLocally(activeOrder!, chosen));
+      }
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'O pagamento foi registrado, mas o recibo não saiu',
+          action: 'Reimprima pela tela de Pedidos quando quiser.',
+        );
+      }
+    }
   }
 
   Future<void> _openCash() async {
