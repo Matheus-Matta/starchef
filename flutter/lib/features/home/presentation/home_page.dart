@@ -4958,16 +4958,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _closeCash() async {
-    if (offlinePendingCount > 0) {
-      _error(
-        const ApiException(
-          'Existem vendas ou pagamentos aguardando sincronização. '
-          'Sincronize e revise a fila antes de fechar o caixa.',
-        ),
-        title: 'O caixa ainda possui operações pendentes',
-      );
-      return;
-    }
+    // Operação na fila NÃO impede mais o fechamento. O saldo esperado sai dos
+    // movimentos gravados NESTE terminal, e a venda offline já entrou na
+    // gaveta local no momento do recebimento (`registerLocalSale`) — o número
+    // conferido é o mesmo com ou sem rede. Bloquear aqui prendia o operador
+    // no fim do turno esperando uma conexão que podia não voltar hoje.
+    final pending = offlinePendingCount;
+    final pendingNotice = pending == 1
+        ? '1 operação ainda não subiu para o servidor.'
+        : '$pending operações ainda não subiram para o servidor.';
     final amount = TextEditingController();
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -4979,6 +4978,28 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (pending > 0) ...[
+                // O operador precisa saber COM O QUE está conferindo — não
+                // ser impedido de encerrar o turno por causa disso.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$pendingNotice O fechamento usa o que está gravado '
+                        'neste terminal; a fila sobe quando a conexão voltar.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
               TextField(
                 controller: amount,
                 keyboardType: const TextInputType.numberWithOptions(

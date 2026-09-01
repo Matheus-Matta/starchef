@@ -317,6 +317,31 @@ def resolve_printer_for(order, job_type=PrintJob.TYPE_RECEIPT):
     raise ValidationError("Nenhuma impressora ativa foi encontrada para este restaurante e filial.")
 
 
+def printer_payload(printer):
+    """Os dados que o agente local precisa para falar com a impressora.
+
+    O terminal e quem manda o cupom para o hardware; o `id` sozinho nao
+    diz por onde. Compartilhado entre a rota do recibo e a do DANFE para
+    as duas nao divergirem — foi assim que a do DANFE ficou sem devolver
+    impressora nenhuma.
+    """
+    if printer is None:
+        return None
+    return {
+        "id": str(printer.id),
+        "name": printer.name,
+        "endpoint": printer.endpoint,
+        "connection_type": printer.connection_type,
+        "host": printer.host,
+        "port": printer.port,
+        "timeout_seconds": printer.timeout_seconds,
+        "driver_type": printer.driver_type,
+        "settings": printer.settings,
+        "auto_print": printer.auto_print,
+        "is_active": printer.is_active,
+    }
+
+
 def claim_pending_job(*, order, job_type, printer, user):
     """O terminal assume um cupom que ja existe, em vez de criar um segundo.
 

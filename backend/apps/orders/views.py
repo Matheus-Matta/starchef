@@ -536,7 +536,7 @@ class OrderViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="print")
     def print_order(self, request, pk=None):
         from apps.printers.models import Printer
-        from apps.printers.services import register_print_job
+        from apps.printers.services import printer_payload, register_print_job
 
         order = self.get_object()
         printer = None
@@ -574,23 +574,7 @@ class OrderViewSet(BaseTenantViewSet):
                 # rotulo com valor ("SubtotalR$ 237,00").
                 "payload": job.payload,
                 "status": job.status,
-                "printer": (
-                    {
-                        "id": str(printer.id),
-                        "name": printer.name,
-                        "endpoint": printer.endpoint,
-                        "connection_type": printer.connection_type,
-                        "host": printer.host,
-                        "port": printer.port,
-                        "timeout_seconds": printer.timeout_seconds,
-                        "driver_type": printer.driver_type,
-                        "settings": printer.settings,
-                        "auto_print": printer.auto_print,
-                        "is_active": printer.is_active,
-                    }
-                    if printer
-                    else None
-                ),
+                "printer": printer_payload(job.printer),
             }
         )
 

@@ -1126,10 +1126,11 @@ class ApiClient {
       // levaria o backoff ao teto sem nenhuma chance real de entrega.
       final hasWork = summary.pending > 0 || summary.retrying > 0;
       if (hasWork && !_syncStatus.hasConnection && !await ping()) {
-        await _publishStatus(
-          NetworkSyncPhase.offline,
-          error: 'O servidor não respondeu à verificação de saúde.',
-        );
+        // SILENCIOSO. Esta verificação roda a cada ciclo enquanto a rede está
+        // fora: anunciar "o servidor não respondeu" a cada tentativa enche a
+        // tela de um aviso que não muda nada e que o operador já lê no
+        // indicador de conexão. O estado offline é a mensagem.
+        await _publishStatus(NetworkSyncPhase.offline);
         _scheduleRetry();
         return;
       }

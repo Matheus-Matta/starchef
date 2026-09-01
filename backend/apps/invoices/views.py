@@ -333,8 +333,22 @@ class InvoiceViewSet(BaseTenantViewSet):
             job = print_fiscal_invoice(invoice, user=request.user, printer=printer, manual_only=True)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        from apps.printers.services import printer_payload
+
         return Response(
-            {"print_job_id": str(job.id), "status": job.status, "html": job.html_content},
+            {
+                "print_job_id": str(job.id),
+                "status": job.status,
+                "html": job.html_content,
+                # O agente local imprime a partir de `payload.text_content`
+                # (com o QR da NFC-e); sem ele o DANFE saia pelo conversor
+                # generico de HTML.
+                "payload": job.payload,
+                # Sem a impressora o terminal nao sabe por onde mandar, e
+                # avisava "impressora nao encontrada" para uma impressao
+                # que o agente ja tinha pego pela fila.
+                "printer": printer_payload(job.printer),
+            },
             status=status.HTTP_201_CREATED,
         )
 

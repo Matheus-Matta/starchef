@@ -313,7 +313,22 @@ abstract final class EntityCatalog {
   /// recurso — `DELETE /orders/<id>/payments/<id>/` chegou a excluir o pedido
   /// inteiro em vez de estornar um recebimento.
   static const localActions = <String, Set<String>>{
-    order: {'items', 'close', 'pay', 'send-to-kitchen', 'quantity'},
+    // `open-command` e `create-with-item` CRIAM o pedido — `resolve` já as
+    // devolve como ação de coleção e `_writeOrder` já sabe montá-las. Sem
+    // estarem aqui, `handlesWrite` recusava as duas e a abertura caía na fila
+    // legada, que batiza o pedido com a própria chave de idempotência
+    // (`offline-pdv-…`). O pedido passava a existir numa fila e a ser
+    // procurado na outra: "Pedido offline-pdv-… não existe no armazenamento
+    // local" no primeiro item lançado.
+    order: {
+      'items',
+      'close',
+      'pay',
+      'send-to-kitchen',
+      'quantity',
+      'open-command',
+      'create-with-item',
+    },
     cashSession: {'open', 'close', 'withdrawal', 'supply', 'approve'},
     command: {'link-table', 'unlink-table'},
   };

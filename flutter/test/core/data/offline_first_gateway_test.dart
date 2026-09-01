@@ -538,4 +538,62 @@ void main() {
     expect(diagnostics['fiscal_pending'], 1);
     expect((diagnostics['entities'] as Map)[EntityCatalog.product], 2);
   });
+
+  // Abrir pela comanda CRIA o pedido. Sem a acao na lista local, `handlesWrite`
+  // recusava e a abertura caia na fila legada, que batiza o pedido com a
+  // propria chave de idempotencia (`offline-pdv-...`). O pedido passava a
+  // existir numa fila e a ser procurado na outra — e o primeiro item lancado
+  // estourava "Pedido offline-pdv-... nao existe no armazenamento local".
+  test('abrir pedido pela comanda sem rede aceita itens em seguida', () async {
+    await stack.gateway.repository(EntityCatalog.command).applyRemote({
+      'id': 'comanda-7',
+      'restaurant': 'rest-1',
+      'number': 7,
+      'status': 'free',
+    });
+
+    final opened = await stack.gateway.write(
+      'POST',
+      '/orders/open-command/',
+      body: {'command': 'comanda-7'},
+      context: {
+        'command': {'id': 'comanda-7', 'number': 7},
+      },
+    );
+    final orderId = '${opened.payload['id']}';
+
+    expect(LocalId.isTemporary(orderId), isTrue);
+    // O id e do gateway (`offline-<uuid>`), nao a chave da fila legada.
+    expect(orderId, isNot(contains('offline-pdv-')));
+
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 2},
+    );
+
+    final withItem = await stack.gateway.read('/orders/$orderId/');
+    expect((withItem['items'] as List), hasLength(1));
+    expect(withItem['order_type'], 'command');
+  });
+
+  test('pedido com o primeiro item junto tambem nasce local', () async {
+    // `/orders/create-with-item/` e o caminho do app do garcom: pedido e
+    // primeiro item nascem juntos.
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/create-with-item/',
+      body: {
+        'restaurant': 'rest-1',
+        'order_type': 'counter',
+        'item': {'product': 'prod-1', 'quantity': 1},
+      },
+    );
+
+    final orderId = '${created.payload['id']}';
+    expect(orderId, isNot(contains('offline-pdv-')));
+    final stored = await stack.gateway.read('/orders/$orderId/');
+    expect((stored['items'] as List), hasLength(1));
+  });
+
 }
