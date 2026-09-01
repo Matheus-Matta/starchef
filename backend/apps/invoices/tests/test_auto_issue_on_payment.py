@@ -408,3 +408,73 @@ def test_order_fiscal_state_reports_a_rejected_note(
     fiscal = OrderSerializer(order).data["fiscal"]
     assert fiscal["fiscal_state"] == "awaiting_transmission"
     assert fiscal["printable"] is False
+
+
+# ------------------------------------------------------- medicao de tempo
+
+
+def test_emission_records_how_long_it_took(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """Sem medir, a escolha entre esperar e emitir em contingencia e um palpite."""
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=_desktop_terminal(account, restaurant),
+        )
+
+    timing = Invoice.all_objects.get(order=order).fiscal_payload["timing"]
+    assert timing["emit_state"] == "authorized"
+    assert timing["emit_ms"] >= 0
+    # Autorizou na propria emissao: o cliente nao esperaria pelo cupom.
+    assert timing["authorized_after_ms"] >= 0
+
+
+def test_late_authorization_records_the_wait(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """A nota que autoriza depois guarda quanto tempo o cliente teria esperado."""
+    from apps.invoices.services import apply_focus_webhook
+
+    fiscal_config.provider = _UnavailableProvider.name
+    fiscal_config.save(update_fields=["provider", "updated_at"])
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=_desktop_terminal(account, restaurant),
+        )
+    invoice = Invoice.all_objects.get(order=order)
+    assert "authorized_after_ms" not in invoice.fiscal_payload["timing"]
+
+    apply_focus_webhook(invoice, {
+        "status": "autorizado",
+        "chave_nfe": "NFe35" + "4" * 42,
+        "protocolo": "135260000000011",
+    })
+    invoice.refresh_from_db()
+
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.fiscal_payload["timing"]["authorized_after_ms"] >= 0
+    assert invoice.fiscal_payload["timing"]["emit_state"] == "awaiting_transmission"
+
+
+def test_fiscal_timing_command_summarises_the_measurements(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=_desktop_terminal(account, restaurant),
+        )
+
+    output = StringIO()
+    call_command("fiscal_timing", "--days", "1", stdout=output)
+    report = output.getvalue()
+
+    assert "Duracao da CHAMADA de emissao" in report
+    assert "autorizadas na propria emissao: 1" in report
+    assert "contingencia nao se justifica" in report

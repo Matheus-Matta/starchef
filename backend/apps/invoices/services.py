@@ -15,6 +15,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
@@ -78,6 +79,38 @@ def _clear_pending_markers(invoice):
     payload.pop("awaiting", None)
     payload.pop("failure", None)
     invoice.fiscal_payload = payload
+
+
+def _record_timing(invoice, **marks):
+    """Guarda tempos de emissao em `fiscal_payload["timing"]`.
+
+    Nao e telemetria de servidor: fica na propria nota, entao explica o
+    caso individual ("esta demorou 40s") e alimenta o resumo do comando
+    `fiscal_timing` sem exigir nenhuma infraestrutura nova.
+    """
+    payload = dict(invoice.fiscal_payload or {})
+    timing = {**(payload.get('timing') or {}), **marks}
+    payload['timing'] = timing
+    invoice.fiscal_payload = payload
+
+
+def _record_authorization_delay(invoice):
+    """Marca quanto tempo passou entre montar a nota e a SEFAZ autorizar.
+
+    So a primeira vez: uma consulta posterior nao pode reescrever o tempo
+    real de autorizacao.
+    """
+    if invoice.status != Invoice.STATUS_ISSUED:
+        return
+    payload = invoice.fiscal_payload or {}
+    timing = payload.get('timing') or {}
+    if 'authorized_after_ms' in timing:
+        return
+    started = parse_datetime(str(payload.get('emission') or ''))
+    if started is None:
+        return
+    elapsed = (timezone.now() - started).total_seconds() * 1000
+    _record_timing(invoice, authorized_after_ms=int(max(elapsed, 0)))
 
 
 def _mark_failed(invoice, kind, message):
@@ -464,6 +497,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
             )
             return invoice
 
+        emit_started = timezone.now()
         try:
             provider.emit(invoice, config)
         except FiscalRejection as exc:
@@ -485,6 +519,14 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
             if invoice.status == Invoice.STATUS_PENDING and provider.transmits:
                 # O provider aceitou mas a SEFAZ ainda processa: so consultar.
                 _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
+        # Quanto a chamada demorou, e se ela ja voltou autorizada. E a
+        # diferenca entre 'a SEFAZ responde na hora' e 'o cliente espera'.
+        _record_timing(
+            invoice,
+            emit_ms=int((timezone.now() - emit_started).total_seconds() * 1000),
+            emit_state=fiscal_state_of(invoice),
+        )
+        _record_authorization_delay(invoice)
         invoice.issued_at = emission_dt
         invoice.save()
 
@@ -695,6 +737,7 @@ def resend_fiscal_invoice(invoice, *, user=None):
                     _mark_awaiting(locked, AWAITING_AUTHORIZATION)
                 else:
                     _clear_pending_markers(locked)
+                    _record_authorization_delay(locked)
             locked.updated_by = user
             locked.save()
             ensure_fiscal_print_job(locked, user=user)
@@ -778,6 +821,7 @@ def reprocess_pending_fiscal_invoices(*, account=None):
                     _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
                 else:
                     _clear_pending_markers(invoice)
+                    _record_authorization_delay(invoice)
             invoice.save()
             if invoice.status == Invoice.STATUS_ISSUED:
                 issued += 1
@@ -1104,6 +1148,7 @@ def apply_focus_webhook(invoice, document):
                 _mark_awaiting(invoice, AWAITING_AUTHORIZATION)
             else:
                 _clear_pending_markers(invoice)
+                _record_authorization_delay(invoice)
         invoice.save()
         # A autorizacao chegou agora; o cupom do cliente ainda nao saiu.
         ensure_fiscal_print_job(invoice)
@@ -1153,6 +1198,7 @@ def refresh_fiscal_invoice_status(invoice, *, user=None):
                     _mark_awaiting(locked, AWAITING_AUTHORIZATION)
                 else:
                     _clear_pending_markers(locked)
+                    _record_authorization_delay(locked)
 
             locked.updated_by = user
             locked.save()
