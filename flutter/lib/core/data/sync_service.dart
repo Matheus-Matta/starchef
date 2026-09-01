@@ -486,10 +486,20 @@ class SyncService {
   /// `AUTHORIZED` aqui — inclusive `{"emitted": false}`, que é exatamente o
   /// servidor dizendo que a nota não saiu, e inclusive uma nota que ficou
   /// aguardando autorização. O caixa via "nota autorizada" nos três casos.
-  Future<void> pushFiscal({String emitPath = '/invoices/emit/'}) async {
+  /// `orderId` entrega a nota DAQUELE pedido, furando a ordem da fila —
+  /// e o caso do operador esperando o cupom fiscal no balcao.
+  Future<void> pushFiscal({
+    String emitPath = '/invoices/emit/',
+    String? orderId,
+  }) async {
     final scope = gateway.scope;
     if (scope == null) return;
-    final document = await gateway.fiscalQueue.claimNext(scope: scope);
+    final document = orderId == null
+        ? await gateway.fiscalQueue.claimNext(scope: scope)
+        : await gateway.fiscalQueue.claimForOrder(
+            scope: scope,
+            orderId: orderId,
+          );
     if (document == null) return;
     final attempts = document.attempts + 1;
     try {

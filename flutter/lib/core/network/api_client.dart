@@ -1592,6 +1592,31 @@ class ApiClient {
     await _syncService?.syncNow();
   }
 
+  /// Entrega AGORA a nota fiscal deste pedido e devolve o que o servidor
+  /// respondeu.
+  ///
+  /// A emissão sempre passa pela fila (§16), mesmo com internet — é o que
+  /// garante que uma queda no meio do caminho não perca o documento. Mas
+  /// esperar o ciclo de 30 segundos para o DANFE sair deixaria o cliente
+  /// parado no balcão: com conexão, o gesto de concluir a venda drena a
+  /// fila na hora e imprime em seguida.
+  ///
+  /// `null` quando não há nada enfileirado para o pedido, ou quando o
+  /// terminal está sem conexão — aí a nota espera a fila, como sempre.
+  Future<Map<String, dynamic>?> flushFiscalForOrder(String orderId) async {
+    final gateway = _gateway;
+    final scope = _activeScope;
+    if (gateway == null || scope == null || !syncStatus.hasConnection) {
+      return null;
+    }
+    await _syncService?.pushFiscal(orderId: orderId);
+    final document = await gateway.fiscalQueue.latestForOrder(
+      scope: scope,
+      orderId: orderId,
+    );
+    return document?.response;
+  }
+
   /// IDs temporários que já receberam um ID definitivo no servidor.
   Future<Map<String, String>> resolvedTemporaryIds() async {
     final scope = _activeScope;

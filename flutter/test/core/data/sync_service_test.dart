@@ -516,4 +516,69 @@ void main() {
     expect(document.payload['cpf'], '12345678909');
     expect(document.response?['id'], 'nota-1');
   });
+
+  // A fila e FIFO, mas o gesto de concluir a venda tem alguem parado no
+  // balcao esperando o cupom fiscal. Drenar "a proxima" entregaria a nota de
+  // outro pedido — o cliente esperaria a impressao que nao e a dele.
+  test('entrega a nota do pedido certo, furando a ordem da fila', () async {
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-antigo'},
+    );
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-do-balcao'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'id': 'nota-2',
+      'status': 'issued',
+      'fiscal_state': 'authorized',
+      'printable': true,
+    };
+
+    await sync.pushFiscal(orderId: 'pedido-do-balcao');
+
+    final documents = await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    );
+    final balcao = documents.firstWhere((d) => d.orderId == 'pedido-do-balcao');
+    final antigo = documents.firstWhere((d) => d.orderId == 'pedido-antigo');
+    expect(balcao.status, FiscalStatus.authorized);
+    // A que estava na frente continua onde estava.
+    expect(antigo.status, FiscalStatus.pending);
+  });
+
+  test('a nota do pedido sai mesmo com backoff pendente na fila', () async {
+    // Uma tentativa anterior deixou o documento em espera. Quem esta no
+    // balcao nao pode ficar refem desse relogio.
+    await stack.gateway.write(
+      'POST',
+      '/invoices/emit/',
+      body: {'order': 'pedido-1'},
+    );
+    transport.handlers['POST /invoices/emit/'] = (_) =>
+        const ApiException('Serviço indisponível.', statusCode: 503);
+    await sync.pushFiscal();
+    var document = (await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    )).single;
+    expect(document.nextRetryAt, isNotNull);
+
+    transport.handlers['POST /invoices/emit/'] = (_) => {
+      'id': 'nota-1',
+      'status': 'issued',
+      'fiscal_state': 'authorized',
+      'printable': true,
+    };
+    await sync.pushFiscal(orderId: 'pedido-1');
+
+    document = (await stack.fiscalQueue.documents(
+      scope: TestPdvStack.scope,
+    )).single;
+    expect(document.status, FiscalStatus.authorized);
+    expect(document.response?['printable'], isTrue);
+  });
+
 }

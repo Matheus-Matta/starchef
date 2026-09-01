@@ -4079,6 +4079,27 @@ class _HomePageState extends State<HomePage> {
         final issues = (invoice['_fiscal_issues'] as List? ?? const [])
             .map((issue) => '$issue')
             .toList();
+        // Toda emissao passa pela fila (§16), mesmo com internet — e o que
+        // garante que uma queda no meio do caminho nao perca o documento.
+        // Mas esperar o ciclo de 30 segundos para o cupom fiscal sair
+        // deixaria o cliente parado no balcao: com conexao, entrega a nota
+        // agora e imprime em seguida, no mesmo gesto do recibo.
+        if (issues.isEmpty) {
+          final settled = await api.flushFiscalForOrder('${order['id']}');
+          if (!mounted) return;
+          if (settled != null) {
+            if (settled['printable'] == true) {
+              await _printDanfe(
+                invoiceId: '${settled['id']}',
+                summary:
+                    'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}',
+              );
+            } else {
+              _showFiscalStateToast(settled, silent: silentIfUnconfigured);
+            }
+            return;
+          }
+        }
         if (!silentIfUnconfigured || issues.isNotEmpty) {
           showAppToast(
             context,
@@ -4108,31 +4129,8 @@ class _HomePageState extends State<HomePage> {
       // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
       // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
       // DANFE só é oferecido quando `printable` vem verdadeiro.
-      final state = '${invoice['fiscal_state'] ?? ''}';
       if (invoice['printable'] != true) {
-        showAppToast(
-          context,
-          switch (state) {
-            'rejected' =>
-              'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
-                  'Não haverá reenvio automático.',
-            'configuration_error' =>
-              'NFC-e não emitida: a configuração fiscal está inválida '
-                  '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
-            'reconciliation_required' =>
-              'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
-                  'consultada antes de qualquer reenvio — não emita de novo.',
-            'processing' =>
-              'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
-                  'fiscal sai quando a autorização chegar.',
-            _ =>
-              'Venda concluída. A NFC-e ainda não foi transmitida e será '
-                  'enviada assim que a conexão voltar.',
-          },
-          severity: state == 'rejected' || state == 'configuration_error'
-              ? AppErrorSeverity.failure
-              : AppErrorSeverity.warning,
-        );
+        _showFiscalStateToast(invoice, silent: false);
         return;
       }
 
@@ -4152,6 +4150,40 @@ class _HomePageState extends State<HomePage> {
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
     }
+  }
+
+  /// Explica ao operador por que o cupom fiscal ainda nao saiu.
+  void _showFiscalStateToast(
+    Map<String, dynamic> invoice, {
+    required bool silent,
+  }) {
+    if (!mounted) return;
+    final state = '${invoice['fiscal_state'] ?? ''}';
+    final blocking = state == 'rejected' || state == 'configuration_error';
+    // Numa emissao automatica so o que exige acao humana interrompe o
+    // operador; o resto segue seu curso pela fila.
+    if (silent && !blocking) return;
+    showAppToast(
+      context,
+      switch (state) {
+            'rejected' =>
+              'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
+                  'Não haverá reenvio automático.',
+            'configuration_error' =>
+              'NFC-e não emitida: a configuração fiscal está inválida '
+                  '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
+            'reconciliation_required' =>
+              'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
+                  'consultada antes de qualquer reenvio — não emita de novo.',
+            'processing' =>
+              'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
+                  'fiscal sai quando a autorização chegar.',
+            _ =>
+              'Venda concluída. A NFC-e ainda não foi transmitida e será '
+                  'enviada assim que a conexão voltar.',
+          },
+      severity: blocking ? AppErrorSeverity.failure : AppErrorSeverity.warning,
+    );
   }
 
   /// Reimprime o DANFE de uma nota que ja esta autorizada.

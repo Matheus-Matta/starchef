@@ -245,18 +245,42 @@ class FiscalQueueService {
   }
 
   /// Próximo documento emitível. `null` quando não há nada elegível agora.
-  Future<FiscalDocument?> claimNext({required String scope}) async {
+  /// Reserva a nota de UM pedido, mesmo que outras estejam na frente.
+  ///
+  /// Usado quando o operador esta esperando o cupom fiscal daquela venda:
+  /// a ordem da fila importa para o laco de fundo, nao para o gesto que
+  /// tem alguem parado no balcao.
+  Future<FiscalDocument?> claimForOrder({
+    required String scope,
+    required String orderId,
+  }) => _claim(scope: scope, orderId: orderId);
+
+  Future<FiscalDocument?> claimNext({required String scope}) =>
+      _claim(scope: scope);
+
+  Future<FiscalDocument?> _claim({
+    required String scope,
+    String? orderId,
+  }) async {
     return database.write((tx) async {
       final now = DateTime.now().toUtc();
+      // Com alvo, o backoff nao vale: quem pediu esta esperando o papel.
       final row = await tx.getOptional(
-        '''
+        orderId == null
+            ? '''
         SELECT * FROM fiscal_queue
         WHERE scope = ? AND status IN $_retryableCodes
           AND (next_retry_at IS NULL OR next_retry_at <= ?)
         ORDER BY id
         LIMIT 1
+        '''
+            : '''
+        SELECT * FROM fiscal_queue
+        WHERE scope = ? AND status IN $_retryableCodes AND order_id = ?
+        ORDER BY id DESC
+        LIMIT 1
         ''',
-        [scope, now.toIso8601String()],
+        [scope, orderId ?? now.toIso8601String()],
       );
       if (row == null) return null;
       await tx.execute(
@@ -397,6 +421,25 @@ class FiscalQueueService {
       [scope, orderId],
     );
     return row == null ? null : FiscalStatus.parse(row['status']);
+  }
+
+  /// O ultimo documento fiscal deste pedido, com a resposta que o
+  /// servidor devolveu. E o que permite imprimir o DANFE logo depois de
+  /// drenar a fila, sem uma segunda ida a rede so para saber se a nota
+  /// foi autorizada.
+  Future<FiscalDocument?> latestForOrder({
+    required String scope,
+    required String orderId,
+  }) async {
+    final row = await database.querySingle(
+      '''
+      SELECT * FROM fiscal_queue
+      WHERE scope = ? AND order_id = ?
+      ORDER BY id DESC LIMIT 1
+      ''',
+      [scope, orderId],
+    );
+    return row == null ? null : FiscalDocument.fromRow(row);
   }
 
   Future<int> pendingCount({required String scope}) async {
