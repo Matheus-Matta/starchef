@@ -249,3 +249,94 @@ def test_reprinting_an_already_printed_receipt_creates_a_new_job(
     )
 
     assert reprint.pk != printed.pk
+
+
+# --------------------------------------------------------- PDV desktop
+
+
+def _desktop_terminal(account, restaurant):
+    from apps.payments.models import PdvTerminal
+
+    return PdvTerminal.objects.create(
+        account=account, restaurant=restaurant,
+        installation_id=f"desktop-{uuid.uuid4().hex[:8]}",
+        device_type=PdvTerminal.TYPE_DESKTOP, role=PdvTerminal.ROLE_PRINCIPAL,
+    )
+
+
+def _web_terminal(account, restaurant):
+    from apps.payments.models import PdvTerminal
+
+    return PdvTerminal.objects.create(
+        account=account, restaurant=restaurant,
+        installation_id=f"web-{uuid.uuid4().hex[:8]}",
+        device_type=PdvTerminal.TYPE_WEB, role=PdvTerminal.ROLE_WEB,
+    )
+
+
+def test_desktop_payment_emits_the_invoice_but_does_not_print_automatically(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """O gesto de imprimir e do terminal (`_completePaidOrder`), nao do pagamento.
+
+    Sem isto, o cupom e o DANFE saiam automaticamente assim que o ULTIMO
+    pagamento era registrado — quase sempre antes do operador clicar em
+    "Concluir pedido". O terminal repetia a impressao ao clicar e, se o job
+    automatico ja tivesse sido entregue pelo agente local, a segunda tentativa
+    nao encontrava mais nada para reaproveitar e criava um cupom NOVO: duas
+    vias fisicas da mesma venda.
+    """
+    terminal = _desktop_terminal(account, restaurant)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=terminal,
+        )
+
+    invoice = Invoice.all_objects.get(order=order)
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert not PrintJob.all_objects.filter(order=order).exists()
+
+
+def test_web_payment_keeps_printing_automatically(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """A web nao tem um gesto de conclusao equivalente — continua como sempre."""
+    terminal = _web_terminal(account, restaurant)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=terminal,
+        )
+
+    jobs = {job.job_type for job in PrintJob.all_objects.filter(order=order)}
+    assert jobs == {PrintJob.TYPE_RECEIPT, PrintJob.TYPE_FISCAL}
+
+
+def test_desktop_terminal_prints_both_documents_once_when_the_operator_concludes(
+    django_capture_on_commit_callbacks, account, restaurant, order, cash_method, manager_user, printer, fiscal_config
+):
+    """Simula o clique em "Concluir pedido": os dois documentos saem, uma vez so."""
+    from apps.invoices.services import print_fiscal_invoice
+    from apps.printers.services import register_print_job
+
+    terminal = _desktop_terminal(account, restaurant)
+    with django_capture_on_commit_callbacks(execute=True):
+        register_payment(
+            order=order, user=manager_user, payment_method_id=cash_method.id,
+            amount=order.total, terminal=terminal,
+        )
+    invoice = Invoice.all_objects.get(order=order)
+    assert not PrintJob.all_objects.filter(order=order).exists()
+
+    receipt = register_print_job(
+        order=order, user=manager_user, job_type=PrintJob.TYPE_RECEIPT,
+        printer=printer, manual_only=True,
+    )
+    danfe = print_fiscal_invoice(invoice, user=manager_user, printer=printer, manual_only=True)
+
+    jobs = list(PrintJob.all_objects.filter(order=order))
+    assert len(jobs) == 2
+    assert {job.pk for job in jobs} == {receipt.pk, danfe.pk}

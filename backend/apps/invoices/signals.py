@@ -10,7 +10,7 @@ from apps.orders.signals import order_fully_paid
 
 
 @receiver(order_fully_paid, dispatch_uid="invoices_issue_on_full_payment")
-def issue_invoice_on_full_payment(sender, order, user=None, **kwargs):
+def issue_invoice_on_full_payment(sender, order, user=None, auto_print=True, **kwargs):
     from apps.invoices.services import issue_invoice_for_paid_order
 
-    issue_invoice_for_paid_order(order, user=user)
+    issue_invoice_for_paid_order(order, user=user, auto_print=auto_print)

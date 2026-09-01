@@ -194,9 +194,20 @@ Ao clicar nesse botão, a retaguarda:
 
 ### 4.2 PDV Flutter
 
-Quando o pagamento sincronizado quita o pedido, `_completePaidOrder` tenta
-imprimir o recibo e chama `_emitFiscalInvoice` automaticamente. Um pedido pago
-reaberto também exibe **Emitir NFC-e / Imprimir DANFE**.
+A impressão é do gesto de **Concluir pedido**, não do pagamento. Quando o
+operador clica, `_completePaidOrder` imprime o recibo da venda e chama
+`_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois documentos.
+Um pedido pago reaberto também exibe **Emitir NFC-e / Imprimir DANFE**.
+
+Por isso o backend **não** imprime sozinho quando o pagamento vindo de um
+terminal desktop quita o pedido: `register_payment` avisa o sinal
+`order_fully_paid` com `auto_print=False` e `issue_invoice_for_paid_order`
+emite a nota mas pula `print_sale_documents`. Sem esse recorte, o cupom saía
+no instante do último pagamento — antes do clique — e o terminal imprimia de
+novo ao concluir, entregando duas vias da mesma venda sempre que o trabalho
+automático já tivesse sido impresso pelo agente local. Os demais canais (web,
+integrações) não têm gesto de conclusão equivalente e seguem imprimindo
+automaticamente.
 
 Porém, no modo offline-first atual, toda escrita em `/invoices/` é interceptada
 antes da chamada HTTP e gravada na `fiscal_queue` local, inclusive quando a
@@ -460,7 +471,9 @@ ideal desejado.
    visualização posterior do pedido pago.
 2. **Flutter coloca toda emissão na fila fiscal.** A chamada inicial não recebe
    imediatamente a nota autorizada e, por isso, não imprime o DANFE naquele
-   gesto.
+   gesto. Quando ela volta autorizada, os dois documentos (recibo e DANFE)
+   saem juntos no clique de **Concluir pedido** — o backend não imprime por
+   conta própria para pagamento vindo de terminal desktop.
 3. **A fila Flutter lê a situação fiscal real.** `pushFiscal` interpreta
    `fiscal_state` e distingue autorizada, aguardando transmissão, processando,
    em reconciliação, recusada e erro de configuração. Um HTTP 200 com

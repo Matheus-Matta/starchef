@@ -1175,8 +1175,8 @@ def ensure_fiscal_print_job(invoice, *, user=None):
         return None
 
 
-def issue_invoice_for_paid_order(order, *, user=None):
-    """Emite a nota do pedido quitado e manda recibo e DANFE para a impressora.
+def issue_invoice_for_paid_order(order, *, user=None, auto_print=True):
+    """Emite a nota do pedido quitado e, quando `auto_print`, imprime tudo.
 
     E o caminho automatico (`order_fully_paid`): o operador nao precisa voltar
     ao historico do pedido para emitir. Nada aqui pode derrubar o recebimento
@@ -1184,7 +1184,14 @@ def issue_invoice_for_paid_order(order, *, user=None):
     motivo de falha e devolve o controle.
 
     Restaurante sem configuracao fiscal ativa nao e erro: e um restaurante que
-    nao emite NFC-e. Nesse caso so o recibo da venda sai.
+    nao emite NFC-e. Nesse caso so o recibo da venda sai (quando `auto_print`).
+
+    `auto_print=False` e o caso do PDV desktop: o terminal tem o proprio gesto
+    de conclusao (`_completePaidOrder`) que imprime recibo e DANFE juntos, e
+    imprimir aqui tambem duplicava o cupom sempre que esse clique chegava
+    depois do job automatico ja ter sido entregue pelo agente local. A emissao
+    fiscal continua acontecendo na hora de qualquer forma — so a impressao
+    fica para o terminal decidir quando.
     """
     logger = logging.getLogger(__name__)
     invoice = None
@@ -1204,8 +1211,9 @@ def issue_invoice_for_paid_order(order, *, user=None):
                 except (ValidationError, RuntimeError) as exc:
                     logger.warning("Falha ao emitir a nota do pedido %s: %s", order.id, exc)
 
-        try:
-            print_sale_documents(order, invoice=invoice, user=user)
-        except (ValidationError, RuntimeError) as exc:
-            logger.warning("Pedido %s pago, mas a impressao nao saiu: %s", order.id, exc)
+        if auto_print:
+            try:
+                print_sale_documents(order, invoice=invoice, user=user)
+            except (ValidationError, RuntimeError) as exc:
+                logger.warning("Pedido %s pago, mas a impressao nao saiu: %s", order.id, exc)
     return invoice
