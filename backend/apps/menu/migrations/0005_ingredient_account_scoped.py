@@ -108,7 +108,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="ingredient",
-            index=models.Index(fields=["account", "is_active"], name="menu_ingred_account_is_act_idx"),
+            index=models.Index(fields=["account", "is_active"], name="menu_ingred_account_f15790_idx"),
         ),
         migrations.AddConstraint(
             model_name="ingredient",
