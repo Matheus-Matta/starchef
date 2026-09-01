@@ -54,11 +54,25 @@ class Supplier(TenantModel):
 
 
 class StockSettings(TenantModel):
-    """Configuracao do estoque de uma filial.
+    """Configuracao do estoque da CONTA.
 
-    Uma por filial: FIFO/FEFO, obrigatoriedade de validade, bloqueio de vencido
-    e de saldo negativo sao decisoes da operacao daquela unidade, nao da conta.
+    FIFO/FEFO, obrigatoriedade de validade, bloqueio de vencido e de saldo
+    negativo sao politica da empresa, nao de cada unidade: o mesmo insumo
+    vence do mesmo jeito em qualquer armazem. Uma configuracao por filial
+    obrigava a repetir a mesma decisao em cada uma e deixava a rede
+    operando com regras diferentes sem ninguem perceber.
+
+    Quem localiza o estoque continua sendo o ARMAZEM (`StockLocation`).
     """
+
+    # Cadastro da conta: sobrescreve o FK obrigatorio do TenantModel.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
 
     PICKING_FIFO = "fifo"
     PICKING_FEFO = "fefo"
@@ -84,11 +98,18 @@ class StockSettings(TenantModel):
         verbose_name = "configuracao de estoque"
         verbose_name_plural = "configuracoes de estoque"
         constraints = [
-            models.UniqueConstraint(fields=["branch"], name="unique_stock_settings_by_branch"),
+            # Uma por conta. A condicao existe porque o projeto usa exclusao
+            # logica: sem ela, uma configuracao apagada bloquearia para
+            # sempre a criacao de outra.
+            models.UniqueConstraint(
+                fields=["account"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_stock_settings_by_account",
+            ),
         ]
 
     def __str__(self):
-        return f"Estoque - {self.branch or self.restaurant}"
+        return f"Estoque - {self.account}"
 
 
 class StockLabelTemplate(TenantModel):

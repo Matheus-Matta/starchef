@@ -27,21 +27,17 @@ QUANTITY_PLACES = Decimal("0.001")
 MONEY_PLACES = Decimal("0.01")
 
 
-def settings_for(branch, restaurant=None, account=None):
-    """A configuracao da filial, ou os padroes quando ela ainda nao existe.
+def settings_for(account):
+    """A configuracao da conta, ou os padroes quando ela ainda nao existe.
 
-    Nao cria a linha: uma filial que nunca abriu a tela de configuracao deve
+    Nao cria a linha: uma conta que nunca abriu a tela de configuracao deve
     operar com os padroes recomendados (FEFO, bloqueia vencido, nao permite
     negativo) em vez de falhar.
     """
-    existing = StockSettings.objects.filter(branch=branch).first()
+    existing = StockSettings.objects.filter(account=account).first()
     if existing:
         return existing
-    return StockSettings(
-        account=account,
-        restaurant=restaurant,
-        branch=branch,
-    )
+    return StockSettings(account=account)
 
 
 def base_quantity_for(item):
@@ -69,7 +65,7 @@ def post_stock_entry(*, entry, user):
         if not items:
             raise ValidationError("Adicione ao menos um insumo antes de confirmar a entrada.")
 
-        config = settings_for(entry.branch, entry.restaurant, entry.account)
+        config = settings_for(entry.account)
         lots = []
         for item in items:
             if config.expiry_control_enabled and not item.expires_at:
@@ -226,7 +222,7 @@ def suggest_exit_lots(*, exit_document, user):
         if exit_document.status != StockExit.STATUS_DRAFT:
             raise ValidationError("Somente uma saida em rascunho pode ser re-separada.")
 
-        config = settings_for(exit_document.branch, exit_document.restaurant, exit_document.account)
+        config = settings_for(exit_document.account)
         strategy = config.picking_strategy
         exit_document.picking_strategy = strategy
         exit_document.require_label_scan = (
@@ -358,7 +354,7 @@ def post_stock_exit(*, exit_document, user):
         if exit_document.status != StockExit.STATUS_DRAFT:
             raise ValidationError("Somente uma saida em rascunho pode ser confirmada.")
 
-        config = settings_for(exit_document.branch, exit_document.restaurant, exit_document.account)
+        config = settings_for(exit_document.account)
         items = list(exit_document.items.select_related("ingredient").prefetch_related("allocations__lot"))
         if not items:
             raise ValidationError("Adicione ao menos um insumo antes de confirmar a saida.")

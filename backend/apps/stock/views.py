@@ -68,24 +68,17 @@ class StockSettingsViewSet(BaseTenantViewSet):
 
     @action(detail=False, methods=["get"])
     def current(self, request):
-        """A configuracao da filial em foco, com os padroes quando nao existe.
+        """A configuracao da conta, com os padroes quando ela nao existe.
 
-        A tela precisa de algo para mostrar antes de a filial ter salvado
-        qualquer coisa; devolver 404 obrigaria o frontend a repetir os padroes
-        e os dois se desencontrariam na primeira mudanca de politica.
+        A tela precisa de algo para mostrar antes de alguem salvar qualquer
+        coisa; devolver 404 obrigaria o frontend a repetir os padroes e os
+        dois se desencontrariam na primeira mudanca de politica.
         """
-        queryset = self.filter_queryset(self.get_queryset())
-        existing = queryset.first()
+        existing = self.filter_queryset(self.get_queryset()).first()
         if existing is not None:
             return Response(self.get_serializer(existing).data)
 
-        account = getattr(request, "account", None)
-        profile = getattr(request.user, "profile", None)
-        defaults = settings_for(
-            getattr(profile, "branch", None),
-            getattr(profile, "restaurant", None),
-            account,
-        )
+        defaults = settings_for(getattr(request, "account", None))
         data = self.get_serializer(defaults).data
         data["id"] = None
         return Response(data)
@@ -185,7 +178,7 @@ class StockEntryViewSet(BaseTenantViewSet):
         if template_id:
             template = StockLabelTemplate.objects.filter(pk=template_id).first()
         if template is None:
-            config = settings_for(entry.branch, entry.restaurant, entry.account)
+            config = settings_for(entry.account)
             template = config.default_label_template
         if template is None:
             template = StockLabelTemplate.objects.filter(is_active=True).first()

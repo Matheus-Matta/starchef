@@ -238,3 +238,45 @@ def test_stock_entry_takes_the_restaurant_from_the_location(
     entry = StockEntry.all_objects.get(pk=response.data["id"])
     assert entry.restaurant_id == restaurant.id
     assert entry.branch_id == branch.id
+
+
+def test_stock_settings_are_account_wide(api_client, account_with_logistica, restaurant):
+    """A politica de estoque e da empresa: FEFO e validade nao mudam por unidade.
+
+    Uma configuracao por filial obrigava a repetir a mesma decisao em cada uma
+    — e deixava a rede operando com regras diferentes sem ninguem perceber.
+    """
+    from apps.stock.models import StockSettings
+
+    response = api_client.post(
+        "/api/v1/stock/settings/",
+        {"expiry_control_enabled": True, "expiry_warning_days": 10, "restaurant": str(restaurant.id)},
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    config = StockSettings.all_objects.get(pk=response.data["id"])
+    # Mesmo com restaurante no corpo, o vinculo nao e gravado: senao a
+    # configuracao sumiria para as outras unidades.
+    assert config.restaurant_id is None
+    assert config.branch_id is None
+
+    current = api_client.get("/api/v1/stock/settings/current/")
+    assert current.status_code == 200
+    assert current.data["expiry_control_enabled"] is True
+
+
+def test_stock_settings_current_returns_defaults_without_a_restaurant_in_scope(
+    api_client, account_with_logistica
+):
+    """A tela precisa abrir mesmo antes de existir configuracao.
+
+    Antes ela exigia um restaurante em foco e devolvia erro de campo de tenant,
+    que a retaguarda traduzia como "selecione um restaurante no seletor do
+    topo" — numa tela que vale para a conta inteira.
+    """
+    response = api_client.get("/api/v1/stock/settings/current/")
+
+    assert response.status_code == 200
+    assert response.data["id"] is None
+    assert response.data["picking_strategy"] == "fefo"

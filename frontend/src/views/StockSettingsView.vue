@@ -4,7 +4,7 @@
       <div>
         <span class="stock-doc__eyebrow">ESTOQUE</span>
         <h1>Configuração do estoque</h1>
-        <p>Estas regras valem para esta filial: como os lotes são escolhidos, se a validade é obrigatória e o que o sistema bloqueia.</p>
+        <p>Estas regras valem para toda a conta: como os lotes são escolhidos, se a validade é obrigatória e o que o sistema bloqueia. O armazém é quem diz onde o estoque está.</p>
       </div>
       <Button label="Salvar configurações" icon="pi pi-save" :loading="saving" :disabled="loading" @click="save" />
     </header>
@@ -13,7 +13,7 @@
 
     <div v-if="isDefault && !loading" class="stock-doc__alert stock-doc__alert--info">
       <i class="pi pi-info-circle" />
-      <span>Esta filial ainda não tem configuração própria. Os valores abaixo são os padrões recomendados e passam a valer ao salvar.</span>
+      <span>Esta conta ainda não tem configuração de estoque. Os valores abaixo são os padrões recomendados e passam a valer para todos os restaurantes ao salvar.</span>
     </div>
 
     <div v-if="loading" class="stock-card"><Skeleton height="240px" /></div>
@@ -163,7 +163,7 @@ const form = reactive({
   default_label_template: null,
 });
 
-/** Sem `id`, a filial ainda não salvou nada e está vendo os padrões. */
+/** Sem `id`, ninguém salvou nada ainda e a tela está mostrando os padrões. */
 const isDefault = computed(() => !settingsId.value);
 
 const strategyHint = computed(() =>

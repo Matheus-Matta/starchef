@@ -50,6 +50,16 @@ class SupplierSerializer(TenantModelSerializer):
 
 
 class StockSettingsSerializer(TenantModelSerializer):
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Politica da empresa, nao da unidade: gravar restaurante aqui faria
+        # a configuracao sumir para as outras (o recorte por tenant esconde
+        # o que e de outro restaurante) e pediria um seletor de unidade numa
+        # tela que vale para a conta inteira.
+        attrs["restaurant"] = None
+        attrs["branch"] = None
+        return attrs
+
     class Meta:
         model = StockSettings
         fields = "__all__"
