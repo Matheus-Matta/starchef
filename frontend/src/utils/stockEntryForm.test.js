@@ -46,14 +46,16 @@ describe("validateStockEntry", () => {
     expect(result.message).toMatch(/Linha 1/i);
   });
 
-  it("exige restaurante e armazém nos campos corretos", () => {
+  // O restaurante deixou de ser perguntado: quem localiza o estoque é o
+  // armazém, e é dele que a entrada tira a unidade.
+  it("exige o armazém, e não pede mais o restaurante", () => {
     const result = validateStockEntry({
-      form: { ...validForm, restaurant: null, location: null },
+      form: { ...validForm, location: null },
       rows: [validRow],
     });
 
-    expect(result.formErrors.restaurant).toMatch(/restaurante/i);
     expect(result.formErrors.location).toMatch(/armazém/i);
+    expect(result.formErrors.restaurant).toBeUndefined();
   });
 
   it("exige validade somente ao confirmar quando a filial controla validade", () => {

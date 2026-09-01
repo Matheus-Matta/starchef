@@ -258,8 +258,12 @@ class Ingredient(TenantModel):
 
     UNIT_CHOICES = UNIT_CHOICES
 
-    # Ingredientes são compartilhados entre restaurantes (reutilizáveis): o vínculo
-    # de restaurante é opcional. Sobrescreve o FK obrigatório do TenantModel.
+    # O insumo é cadastro da CONTA, não do restaurante: "farinha" é a mesma
+    # farinha em toda a rede, e duplicá-la por unidade só fazia o mesmo item
+    # aparecer várias vezes na busca. Quem localiza o estoque é o ARMAZÉM
+    # (`StockLocation`), que continua pertencendo a um restaurante — o saldo
+    # de uma unidade é a soma do que está nos armazéns dela.
+    # Sobrescreve o FK obrigatório do TenantModel.
     restaurant = models.ForeignKey(
         "restaurants.Restaurant",
         null=True,
@@ -285,10 +289,17 @@ class Ingredient(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_ingredient_by_branch"),
+            # Nome único na CONTA. A condição existe porque o projeto usa
+            # exclusão lógica: sem ela, um insumo apagado impediria para
+            # sempre que outro com o mesmo nome fosse cadastrado.
+            models.UniqueConstraint(
+                fields=["account", "name"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_ingredient_by_account",
+            ),
         ]
         indexes = [
-            models.Index(fields=["branch", "is_active"]),
+            models.Index(fields=["account", "is_active"]),
         ]
 
     def __str__(self):

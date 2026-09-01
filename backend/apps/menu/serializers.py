@@ -268,17 +268,22 @@ class IngredientSerializer(TenantModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        # Nome único por filial — erro claro no campo em vez de 500/duplicidade (STC-033).
+        # O insumo é da conta: não se prende a restaurante nem a filial, e
+        # aceitar um vínculo aqui faria ele sumir da busca das outras
+        # unidades (o recorte por tenant esconde o que é de outro).
+        attrs["restaurant"] = None
+        attrs["branch"] = None
+        # Nome único na CONTA — erro claro no campo em vez de 500 por
+        # violação de constraint (STC-033).
         name = attrs.get("name", getattr(self.instance, "name", None))
-        branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if name is not None:
             siblings = Ingredient.objects.filter(name__iexact=name)
-            if branch is not None:
-                siblings = siblings.filter(branch=branch)
             if self.instance is not None:
                 siblings = siblings.exclude(pk=self.instance.pk)
             if siblings.exists():
-                raise serializers.ValidationError({"name": "Já existe um ingrediente com este nome."})
+                raise serializers.ValidationError(
+                    {"name": "Já existe um insumo com este nome nesta conta."}
+                )
         return attrs
 
 

@@ -168,3 +168,73 @@ def test_stock_entry_returns_specific_nested_field_error(
     assert response.status_code == 400
     detail = response.data.get("error", {}).get("message", response.data)
     assert "quanto ha em cada embalagem" in str(detail["items"][0]["content_per_package"]).lower()
+
+
+# ------------------------------- insumo da conta, estoque localizado no armazem
+
+
+def test_ingredient_is_shared_across_restaurants(api_client, account_with_logistica, restaurant):
+    """O insumo e cadastro da CONTA: "farinha" e a mesma em toda a rede."""
+    response = api_client.post(
+        "/api/v1/menu/ingredients/",
+        {"name": "Farinha de trigo", "unit": "kg", "restaurant": str(restaurant.id)},
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    ingredient = Ingredient.all_objects.get(pk=response.data["id"])
+    # Mesmo com restaurante no corpo, o vinculo nao e gravado — senao o insumo
+    # sumiria da busca das outras unidades.
+    assert ingredient.restaurant_id is None
+    assert ingredient.branch_id is None
+
+
+def test_ingredient_name_is_unique_per_account(api_client, account_with_logistica):
+    api_client.post("/api/v1/menu/ingredients/", {"name": "Acucar", "unit": "kg"}, format="json")
+
+    repeated = api_client.post(
+        "/api/v1/menu/ingredients/", {"name": "acucar", "unit": "kg"}, format="json"
+    )
+
+    assert repeated.status_code == 400
+    assert "nesta conta" in str(repeated.data)
+
+
+def test_stock_entry_takes_the_restaurant_from_the_location(
+    api_client, account_with_logistica, restaurant, branch, manager_user
+):
+    """Quem localiza o estoque e o armazem — a entrada nao pergunta a unidade.
+
+    Com os dois campos, nada impedia a entrada dizer um restaurante e o
+    estoque cair no armazem de outro.
+    """
+    ingredient = Ingredient.all_objects.create(
+        account=account_with_logistica, name="Sal", unit="kg",
+        created_by=manager_user, updated_by=manager_user,
+    )
+    location = StockLocation.all_objects.create(
+        account=account_with_logistica, restaurant=restaurant, branch=branch,
+        name="Deposito central", created_by=manager_user, updated_by=manager_user,
+    )
+
+    response = api_client.post(
+        "/api/v1/stock/entries/",
+        {
+            "location": str(location.id),
+            "effective_date": "2026-09-01",
+            "items": [
+                {
+                    "ingredient": str(ingredient.id),
+                    "package_quantity": "1",
+                    "content_per_package": "10",
+                    "unit_cost": "3.00",
+                }
+            ],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    entry = StockEntry.all_objects.get(pk=response.data["id"])
+    assert entry.restaurant_id == restaurant.id
+    assert entry.branch_id == branch.id

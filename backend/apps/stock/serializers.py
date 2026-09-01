@@ -18,6 +18,10 @@ from apps.stock.models import (
 
 
 class StockLocationSerializer(TenantModelSerializer):
+    # O armazem e quem localiza o estoque, entao a tela precisa dizer de
+    # QUAL unidade ele e — a lista mistura os armazens de toda a conta.
+    restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True, default="")
+
     class Meta:
         model = StockLocation
         fields = "__all__"
@@ -187,14 +191,11 @@ class StockEntrySerializer(TenantModelSerializer):
         read_only_fields = [
             *AUDIT_READ_ONLY_FIELDS, "status", "posted_at", "posted_by", "cancelled_at", "cancelled_by"
         ]
+        # O restaurante NAO e perguntado: ele sai do armazem escolhido.
+        # Perguntar os dois abria espaco para a entrada dizer um
+        # restaurante e o estoque cair em outro.
         extra_kwargs = {
-            "restaurant": {
-                "error_messages": {
-                    "null": "Selecione o restaurante desta entrada.",
-                    "required": "Selecione o restaurante desta entrada.",
-                    "does_not_exist": "O restaurante selecionado nao foi encontrado.",
-                }
-            },
+            "restaurant": {"required": False, "allow_null": True},
             "location": {
                 "error_messages": {
                     "null": "Selecione o armazem que recebera os produtos.",
@@ -213,26 +214,19 @@ class StockEntrySerializer(TenantModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        restaurant = attrs.get("restaurant") or getattr(self.instance, "restaurant", None)
         location = attrs.get("location") or getattr(self.instance, "location", None)
         items = attrs.get("items")
         errors = {}
 
-        if restaurant is not None and location is not None and location.restaurant_id != restaurant.id:
-            errors["location"] = "Selecione um armazem do restaurante escolhido."
-
-        if restaurant is not None and items is not None:
-            item_errors = []
-            has_item_error = False
-            for row in items:
-                row_error = {}
-                ingredient = row.get("ingredient")
-                if ingredient is not None and ingredient.restaurant_id != restaurant.id:
-                    row_error["ingredient"] = "Selecione um insumo do restaurante escolhido."
-                    has_item_error = True
-                item_errors.append(row_error)
-            if has_item_error:
-                errors["items"] = item_errors
+        # O armazem e quem localiza o estoque; o restaurante da entrada e
+        # consequencia dele. Assim o saldo de uma unidade e sempre a soma
+        # dos armazens dela, sem depender de dois campos concordarem.
+        #
+        # O insumo nao entra nesta conferencia: ele e cadastro da CONTA e
+        # vale para qualquer armazem (ver `menu.Ingredient`).
+        if location is not None:
+            attrs["restaurant"] = location.restaurant
+            attrs["branch"] = location.branch
 
         effective_date = attrs.get("effective_date", getattr(self.instance, "effective_date", None))
         if effective_date is not None and items is not None:

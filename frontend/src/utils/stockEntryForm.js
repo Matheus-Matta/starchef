@@ -1,5 +1,4 @@
 const FIELD_MESSAGES = {
-  restaurant: "Selecione o restaurante desta entrada.",
   location: "Selecione o armazém que receberá os produtos.",
   effective_date: "Informe a data da entrada.",
   ingredient: "Selecione o insumo recebido.",
@@ -71,7 +70,6 @@ export function validateStockEntry({ form, rows, expiryRequired = false, forPost
     if (!firstError) firstError = `Linha ${index + 1}: ${message}`;
   };
 
-  if (!form.restaurant) addFormError("restaurant");
   if (!form.location) addFormError("location");
   if (!toApiDate(form.effective_date)) addFormError("effective_date");
   if (forPosting && rows.length === 0) {
@@ -128,7 +126,7 @@ export function stockEntryApiErrors(error, rows = []) {
     return { formErrors, rowErrors, message: messageText(detail), hasFieldErrors: false };
   }
 
-  for (const field of ["restaurant", "location", "effective_date", "document_number", "notes"]) {
+  for (const field of ["location", "effective_date", "document_number", "notes"]) {
     if (detail[field] == null) continue;
     formErrors[field] = friendlyMessage(field, detail[field]);
     if (!firstError) firstError = formErrors[field];

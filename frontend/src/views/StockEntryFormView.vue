@@ -59,36 +59,22 @@
       <section class="stock-card">
         <h2>Documento</h2>
         <div class="stock-grid">
-          <label class="stock-field" :class="{ 'stock-field--error': formFieldError('restaurant') }">
-            <span>Restaurante *</span>
-            <Select
-              v-model="form.restaurant"
-              :options="restaurants"
-              option-label="trade_name"
-              option-value="id"
-              placeholder="Selecione o restaurante"
-              :disabled="!isNew || !editable"
-              :class="{ 'p-invalid': formFieldError('restaurant') }"
-              fluid
-              @change="onRestaurantChange"
-            />
-            <small v-if="formFieldError('restaurant')" class="stock-field__error" role="alert">
-              {{ formFieldError("restaurant") }}
-            </small>
-          </label>
+          <!-- O armazém é o ponto de partida: é ele que diz onde o
+               estoque entra, e de qual restaurante é a entrada. -->
           <label class="stock-field" :class="{ 'stock-field--error': formFieldError('location') }">
             <span>Armazém de destino *</span>
             <Select
               v-model="form.location"
-              :options="locations"
-              option-label="name"
+              :options="locationOptions"
+              option-label="label"
               option-value="id"
               placeholder="Selecione o armazém"
-              :disabled="!editable || !form.restaurant"
+              :disabled="!editable"
               :loading="loadingContext"
               :class="{ 'p-invalid': formFieldError('location') }"
+              filter
               fluid
-              @change="clearFormError('location')"
+              @change="onLocationChange"
             />
             <small v-if="formFieldError('location')" class="stock-field__error" role="alert">
               {{ formFieldError("location") }}
@@ -136,13 +122,13 @@
               <template v-if="expiryRequired"> Esta filial exige validade em toda linha.</template>
             </p>
           </div>
-          <Button v-if="editable" label="Adicionar insumo" icon="pi pi-plus" outlined size="small" :disabled="!form.restaurant" @click="addRow" />
+          <Button v-if="editable" label="Adicionar insumo" icon="pi pi-plus" outlined size="small" :disabled="!form.location" @click="addRow" />
         </div>
 
         <div v-if="!rows.length" class="stock-empty">
           <i class="pi pi-inbox" />
           <p>Nenhum insumo na entrada ainda.</p>
-          <Button v-if="editable" label="Adicionar o primeiro" icon="pi pi-plus" size="small" :disabled="!form.restaurant" @click="addRow" />
+          <Button v-if="editable" label="Adicionar o primeiro" icon="pi pi-plus" size="small" :disabled="!form.location" @click="addRow" />
         </div>
 
         <div v-for="(row, index) in rows" :key="row._key" class="stock-row">
@@ -367,7 +353,15 @@ const loadingLabels = ref(false);
 const error = ref("");
 const formErrors = ref({});
 const rowErrors = ref({});
-const restaurants = ref([]);
+/** "Depósito central — Unidade Centro": a lista mistura toda a conta. */
+const locationOptions = computed(() =>
+  locations.value.map((location) => ({
+    id: location.id,
+    label: location.restaurant_name
+      ? `${location.name} — ${location.restaurant_name}`
+      : location.name,
+  })),
+);
 const locations = ref([]);
 const ingredients = ref([]);
 const suppliers = ref([]);
@@ -382,7 +376,6 @@ const copyRequest = computed(() => String(route.query.copy || ""));
 const copiedFrom = ref(null);
 
 const form = reactive({
-  restaurant: localStorage.getItem("starchef-restaurant-scope") || null,
   location: null,
   effective_date: todayDate(),
   supplier: "",
@@ -580,7 +573,6 @@ function goBack() {
 
 function toPayload() {
   return {
-    restaurant: form.restaurant,
     location: form.location,
     effective_date: toApiDate(form.effective_date),
     supplier: supplierSummary.value,
@@ -604,7 +596,6 @@ function toPayload() {
 
 function applyEntry(data) {
   Object.assign(form, {
-    restaurant: data.restaurant,
     location: data.location,
     effective_date: parseApiDate(data.effective_date),
     supplier: data.supplier || "",
@@ -733,44 +724,56 @@ async function openLabels() {
   }
 }
 
-async function loadRestaurantContext() {
-  locations.value = [];
-  ingredients.value = [];
-  expiryRequired.value = false;
-  if (!form.restaurant) return;
-
+/** Armazéns e insumos da CONTA — o insumo não é de unidade nenhuma. */
+async function loadContext() {
   loadingContext.value = true;
   try {
-    const params = { restaurant: form.restaurant };
-    const [locationsResponse, ingredientsResponse, settingsResponse] = await Promise.all([
-      api.get("/stock/locations/", { params: { ...params, is_active: true, page_size: 200 } }),
-      api.get("/menu/ingredients/", { params: { ...params, is_active: true, page_size: 500 } }),
-      api.get("/stock/settings/current/", { params }),
+    const [locationsResponse, ingredientsResponse] = await Promise.all([
+      api.get("/stock/locations/", {
+        params: { is_active: true, page_size: 500 },
+        skipRestaurantScope: true,
+      }),
+      api.get("/menu/ingredients/", {
+        params: { is_active: true, page_size: 500 },
+        skipRestaurantScope: true,
+      }),
     ]);
     locations.value = locationsResponse.data.results || locationsResponse.data;
     ingredients.value = ingredientsResponse.data.results || ingredientsResponse.data;
-    expiryRequired.value = !!settingsResponse.data?.expiry_control_enabled;
-
     if (form.location && !locations.value.some((location) => location.id === form.location)) {
       form.location = null;
-    }
-    if (!form.location && settingsResponse.data?.default_location) {
-      form.location = settingsResponse.data.default_location;
     }
   } finally {
     loadingContext.value = false;
   }
 }
 
-async function onRestaurantChange() {
-  clearFormError("restaurant");
+/** As regras de validade são do restaurante — e ele vem do armazém. */
+async function loadLocationSettings() {
+  const location = locations.value.find((item) => item.id === form.location);
+  if (!location?.restaurant) {
+    expiryRequired.value = false;
+    return;
+  }
+  try {
+    const { data } = await api.get("/stock/settings/current/", {
+      params: { restaurant: location.restaurant },
+      skipRestaurantScope: true,
+    });
+    expiryRequired.value = !!data?.expiry_control_enabled;
+  } catch {
+    // Sem as configurações a entrada continua possível; o controle de
+    // validade é que deixa de ser exigido nesta tela — o servidor ainda
+    // recusa se for obrigatório.
+    expiryRequired.value = false;
+  }
+}
+
+async function onLocationChange() {
   clearFormError("location");
   error.value = "";
-  form.location = null;
-  rows.value = [blankRow()];
-  rowErrors.value = {};
   try {
-    await loadRestaurantContext();
+    await loadLocationSettings();
   } catch (err) {
     applyRequestError(err);
   }
@@ -780,18 +783,12 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [restaurantsResponse, suppliersResponse] = await Promise.all([
-      api.get("/restaurants/", {
-        params: { is_active: true, page_size: 200 },
-        skipRestaurantScope: true,
-      }),
-      api.get("/stock/suppliers/", {
-        params: { is_active: true, page_size: 500 },
-        skipRestaurantScope: true,
-      }),
-    ]);
-    restaurants.value = restaurantsResponse.data.results || restaurantsResponse.data;
+    const suppliersResponse = await api.get("/stock/suppliers/", {
+      params: { is_active: true, page_size: 500 },
+      skipRestaurantScope: true,
+    });
     suppliers.value = suppliersResponse.data.results || suppliersResponse.data;
+    await loadContext();
 
     if (entryId.value) {
       const { data } = await api.get(`/stock/entries/${entryId.value}/`, { skipRestaurantScope: true });
@@ -800,10 +797,7 @@ async function load() {
       await applyCopy();
     }
 
-    if (!form.restaurant && restaurants.value.length === 1) {
-      form.restaurant = restaurants.value[0].id;
-    }
-    if (form.restaurant) await loadRestaurantContext();
+    if (form.location) await loadLocationSettings();
     if (!rows.value.length) {
       addRow();
     }
