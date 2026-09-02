@@ -2326,6 +2326,31 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Executa uma impressão FORA da trava de operação da tela.
+  ///
+  /// `_work` existe para impedir o operador de disparar duas operações de
+  /// venda ao mesmo tempo, e por isso ele DESISTE (`if (busy) return null`)
+  /// quando já há uma em curso. Papel de venda concluída não pode obedecer a
+  /// essa trava: o DANFE sai por uma espera em segundo plano — a autorização
+  /// da SEFAZ chega segundos depois do clique — e nesse intervalo o operador
+  /// já começou a próxima venda. Com `busy` verdadeiro, `_work` devolvia
+  /// `null`, o `if (printJob == null) return;` seguinte engolia o caso, e o
+  /// cupom fiscal simplesmente não existia: sem erro, sem fila, sem papel.
+  ///
+  /// Falha continua sendo mostrada — o que não pode é desaparecer.
+  Future<bool> _printingStep(
+    Future<void> Function() action, {
+    required String title,
+  }) async {
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      if (mounted) _error(error, title: title);
+      return false;
+    }
+  }
+
   Future<void> _openTable(Map<String, dynamic> table) async {
     setState(() {
       selectedTable = table;
@@ -3951,7 +3976,10 @@ class _HomePageState extends State<HomePage> {
       // requisito — e num secundário essa rota nem existe, o que antes fazia
       // o botão não produzir absolutamente nada.
       if (chosen != null && isSecondaryStation) {
-        await _work(() => _printReceiptLocally(order, chosen));
+        await _printingStep(
+          () => _printReceiptLocally(order, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
         return;
       }
       try {
@@ -3984,7 +4012,10 @@ class _HomePageState extends State<HomePage> {
           'recibo_montado_localmente',
           data: {'motivo': error.message},
         );
-        await _work(() => _printReceiptLocally(order, chosen));
+        await _printingStep(
+          () => _printReceiptLocally(order, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
       }
     } catch (error) {
       // Sem isto o erro virava exceção assíncrona sem dono: o operador
@@ -4137,8 +4168,14 @@ class _HomePageState extends State<HomePage> {
     if (emittingInvoice) return;
     setState(() => emittingInvoice = true);
     try {
-      final invoice = await _work(
-        () => api.post(
+      // NÃO passa por `_work`: aquela trava serve para o operador não disparar
+      // duas operações de venda ao mesmo tempo, e DESISTE quando já há uma em
+      // curso (`if (busy) return null`). A emissão é efeito de uma venda que
+      // já terminou — engolida pela trava, a nota simplesmente não era pedida:
+      // sem erro, sem fila fiscal, sem cupom.
+      Map<String, dynamic>? invoice;
+      try {
+        invoice = await api.post(
           '/invoices/emit/',
           body: {
             'order': order['id'],
@@ -4148,17 +4185,18 @@ class _HomePageState extends State<HomePage> {
               'cpf_name': selectedCustomer!['name'],
           },
           accessToken: token,
-        ),
-        errorTitle: 'Não foi possível emitir a NFC-e',
-        onError: silentIfUnconfigured
-            ? (error) {
-                if (!'$error'.toLowerCase().contains('configuracao fiscal')) {
-                  _error(error, title: 'Não foi possível emitir a NFC-e');
-                }
-              }
-            : null,
-      );
-      if (invoice == null || !mounted) return;
+        );
+      } catch (error) {
+        if (!mounted) return;
+        // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
+        // numa emissão automática — o resto o operador precisa ver.
+        if (!silentIfUnconfigured ||
+            !'$error'.toLowerCase().contains('configuracao fiscal')) {
+          _error(error, title: 'Não foi possível emitir a NFC-e');
+        }
+        return;
+      }
+      if (!mounted) return;
 
       // Emissão adiada (§16): a venda já está concluída e o documento entrou
       // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
@@ -4329,9 +4367,11 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         );
       } catch (_) {
-        // Sem rede ou servidor fora: a esteira periódica assume daqui. Nenhum
-        // aviso — o operador já viu o estado da nota no toast anterior.
-        return;
+        // Um tropeço de rede não abandona a nota: a próxima volta tenta de
+        // novo. Desistir aqui era barato quando o servidor criava o cupom
+        // sozinho — não é mais: numa venda de terminal (`terminal_prints`)
+        // ninguém mais imprime este DANFE se esta espera desistir.
+        continue;
       }
       if (!mounted) return;
       if (current['printable'] == true) {
@@ -4349,6 +4389,16 @@ class _HomePageState extends State<HomePage> {
         return;
       }
     }
+    // A janela acabou e a autorização não chegou. O operador precisa saber:
+    // numa venda de terminal o servidor não cria cupom automático, então este
+    // DANFE só sai se alguém mandar imprimir pelo histórico do pedido.
+    if (!mounted) return;
+    showAppToast(
+      context,
+      'A SEFAZ ainda não autorizou a NFC-e desta venda. Quando autorizar, '
+      'imprima o DANFE pelo pedido em Pedidos.',
+      severity: AppErrorSeverity.warning,
+    );
   }
 
   /// Insiste em entregar a nota antes de desistir e avisar o operador.
@@ -4465,14 +4515,18 @@ class _HomePageState extends State<HomePage> {
             ),
           );
     if (printerId == null) return;
-    final printJob = await _work(
-      () => api.post(
+    final Map<String, dynamic> printJob;
+    try {
+      printJob = await api.post(
         '/invoices/$invoiceId/print/',
         body: {'printer': printerId},
         accessToken: token,
-      ),
-    );
-    if (printJob == null) return;
+      );
+    } catch (error) {
+      if (mounted) _error(error, title: 'O DANFE não pôde ser gerado');
+      return;
+    }
+    if (!mounted) return;
     final printer = printJob['printer'] as Map<String, dynamic>?;
     if (printer == null) {
       _error(
@@ -4480,14 +4534,11 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
-    await _work(() async {
-      await deviceAgent.printJobManually(
-        printJob,
-        printer,
-        automatic: automatic,
-      );
-      return true;
-    });
+    await _printingStep(
+      () =>
+          deviceAgent.printJobManually(printJob, printer, automatic: automatic),
+      title: 'O DANFE não saiu na impressora',
+    );
   }
 
   Future<void> _paymentDialog() async {
@@ -4891,7 +4942,10 @@ class _HomePageState extends State<HomePage> {
       );
 
       if ((offline || isSecondaryStation) && chosen != null) {
-        await _work(() => _printReceiptLocally(activeOrder!, chosen));
+        await _printingStep(
+          () => _printReceiptLocally(activeOrder!, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
         return;
       }
 
@@ -4924,7 +4978,10 @@ class _HomePageState extends State<HomePage> {
           'recibo_montado_localmente',
           data: {'motivo': error.message, 'origem': 'concluir_pedido'},
         );
-        await _work(() => _printReceiptLocally(activeOrder!, chosen));
+        await _printingStep(
+          () => _printReceiptLocally(activeOrder!, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
       }
     } catch (error) {
       if (mounted) {

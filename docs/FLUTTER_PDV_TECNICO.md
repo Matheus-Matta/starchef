@@ -606,6 +606,22 @@ Rotas que exigem servidor (`/orders/{id}/print/`, por exemplo) não passam por
 aqui: elas dependem de a tela já ter relido o pedido, o que `_refreshOrder`
 faz em todo gesto que muda a venda.
 
+**Papel de venda concluída não obedece à trava de operação.** `_work` existe
+para o operador não disparar duas operações de venda ao mesmo tempo, e por
+isso ele **desiste** quando já há uma em curso (`if (busy) return null`).
+Impressão e emissão fiscal de uma venda que JÁ terminou não podem obedecer a
+essa trava:
+
+- o DANFE sai por uma espera em segundo plano (a autorização da SEFAZ chega
+  segundos depois do clique) e, nesse intervalo, o operador já começou a
+  próxima venda — `busy` verdadeiro, `_work` devolvendo `null`, e o cupom
+  fiscal simplesmente não existia: sem erro, sem fila, sem papel;
+- o recibo montado localmente e a própria chamada de emissão tinham o mesmo
+  buraco.
+
+Os três passam agora por `_printingStep` (ou try/catch direto), fora da trava.
+Falha continua sendo mostrada ao operador — o que não pode é desaparecer.
+
 **Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
 não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
 unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam
