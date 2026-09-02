@@ -576,13 +576,22 @@ ideal desejado.
    duas consultam `refresh-status` em segundo plano e imprimem quando a
    autorização chega. Uma recusa interrompe a espera e avisa o operador.
 
-   Quem consulta esperando o papel manda `manual_print: true`, e o cupom
-   criado por essa consulta nasce `manual_only` — fora do laço automático do
-   agente local. Sem isso saíam **dois DANFEs** da mesma venda: o que o agente
-   pegava da fila e o que o terminal mandava em seguida. Webhook e
-   reprocessamento periódico continuam criando trabalho automático: ali não há
-   ninguém na frente do cliente, e uma autorização que chega horas depois não
-   sairia em impressora nenhuma.
+   **Quem imprime fica gravado na nota.** `fiscal_payload.terminal_prints`
+   marca que a venda saiu de um terminal identificado, e então NENHUM caminho
+   de autorização cria cupom automático — nem o webhook da Focus, que costuma
+   chegar antes de o PDV consultar. Sem isso saíam **dois DANFEs** da mesma
+   venda: o que o agente local pegava da fila e o que o terminal mandava em
+   seguida.
+
+   A marca é gravada em dois pontos, porque a nota pode nascer por qualquer um
+   deles: no pagamento (`issue_invoice_for_paid_order`, quando
+   `auto_print=False`) e na emissão pedida pelo terminal (`POST /invoices/emit/`
+   com `X-Terminal-Id`). A consulta também aceita `manual_print: true`, que
+   cobre o caso de uma nota antiga sem a marca.
+
+   Sem terminal identificado (integração, cliente antigo) o trabalho continua
+   automático: ali não há ninguém na frente do cliente, e uma autorização que
+   chega horas depois não sairia em impressora nenhuma.
 6. **Produto sem perfil não é barrado por padrão.** Com
    `strict_fiscal_profile` desligado, o fallback NCM `00000000` ainda segue
    até a Focus (e tende a causar rejeição) — mas o que foi suprido fica

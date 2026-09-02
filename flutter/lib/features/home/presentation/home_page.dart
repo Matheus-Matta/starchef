@@ -203,6 +203,14 @@ class _HomePageState extends State<HomePage> {
 
   /// Numerador dos recebimentos encenados, para dar um id local a cada linha.
   int stagedPaymentSequence = 0;
+
+  /// Conclusão em curso. Sem isto, um duplo clique em "Concluir pedido"
+  /// percorria o gesto inteiro duas vezes — dois recibos e dois DANFEs.
+  bool completingOrder = false;
+
+  /// Notas cuja autorização já está sendo aguardada nesta tela. Dois
+  /// vigias sobre a mesma nota mandariam o DANFE para a impressora duas vezes.
+  final Set<String> watchedFiscalInvoices = {};
   bool sidebarExpanded = true;
 
   List<Map<String, dynamic>> get visibleProducts => products.where((product) {
@@ -4266,10 +4274,25 @@ class _HomePageState extends State<HomePage> {
         !inFlight.contains(state)) {
       return;
     }
+    // Um segundo vigia sobre a mesma nota mandaria o DANFE para a impressora
+    // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
+    // primeira já teria saído.
+    if (!watchedFiscalInvoices.add(invoiceId)) return;
     unawaited(_pollFiscalAuthorization(invoiceId: invoiceId, summary: summary));
   }
 
   Future<void> _pollFiscalAuthorization({
+    required String invoiceId,
+    required String summary,
+  }) async {
+    try {
+      await _pollFiscalAuthorizationNow(invoiceId: invoiceId, summary: summary);
+    } finally {
+      watchedFiscalInvoices.remove(invoiceId);
+    }
+  }
+
+  Future<void> _pollFiscalAuthorizationNow({
     required String invoiceId,
     required String summary,
   }) async {
@@ -4704,10 +4727,20 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _completePaidOrder() async {
+    if (completingOrder) return;
     if (remainingTotal > .009) {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
       return;
     }
+    completingOrder = true;
+    try {
+      await _completePaidOrderNow();
+    } finally {
+      if (mounted) setState(() => completingOrder = false);
+    }
+  }
+
+  Future<void> _completePaidOrderNow() async {
     // Os recebimentos sobem AGORA, todos juntos, e só então a venda vira paga.
     // É o que mantém recibo e DANFE no mesmo gesto: sem isto, o pedido já
     // estava pago desde que o operador escolheu a forma de pagamento, e o

@@ -24,6 +24,7 @@ from apps.invoices.providers import (
 from apps.invoices.services import (
     emit_fiscal_invoice,
     ensure_fiscal_print_job,
+    mark_terminal_prints,
     print_sale_documents,
     refresh_fiscal_invoice_status,
     reprocess_pending_fiscal_invoices,
@@ -219,6 +220,36 @@ def test_autorizacao_sem_ninguem_esperando_continua_automatica(
 
     assert response.status_code == 200, response.data
     job = _fiscal_jobs(pending_invoice.order).get()
+    assert job.payload["manual_only"] is False
+
+
+def test_venda_de_terminal_nunca_gera_cupom_automatico(pending_invoice, printer):
+    """A marca vive na NOTA, entao vale para todo caminho de autorizacao.
+
+    O webhook da Focus costuma chegar ANTES de o PDV consultar: ele criava um
+    cupom automatico, o agente local imprimia a via dele, e o terminal imprimia
+    a sua em seguida. Duas vias da mesma venda — e o `manual_print` da consulta
+    nao alcancava esse caso, porque o trabalho ja tinha nascido automatico.
+    """
+    mark_terminal_prints(pending_invoice)
+    pending_invoice.save(update_fields=["fiscal_payload", "updated_at"])
+    pending_invoice.status = Invoice.STATUS_ISSUED
+    pending_invoice.save(update_fields=["status", "updated_at"])
+
+    job = ensure_fiscal_print_job(pending_invoice)
+
+    assert job is not None
+    assert job.payload["manual_only"] is True
+
+
+def test_venda_sem_terminal_continua_saindo_sozinha(pending_invoice, printer):
+    """Integracao e cliente antigo nao tem quem imprima do outro lado."""
+    pending_invoice.status = Invoice.STATUS_ISSUED
+    pending_invoice.save(update_fields=["status", "updated_at"])
+
+    job = ensure_fiscal_print_job(pending_invoice)
+
+    assert job is not None
     assert job.payload["manual_only"] is False
 
 

@@ -122,6 +122,32 @@ def _mark_failed(invoice, kind, message):
     invoice.error_message = str(message)
 
 
+def mark_terminal_prints(invoice, *, terminal_prints=True):
+    """Grava na nota que QUEM IMPRIME e o terminal, nao o agente automatico.
+
+    A regra ja existia no instante do pagamento (`auto_print = terminal is
+    None`), mas morria ali: a autorizacao da SEFAZ chega DEPOIS, por webhook,
+    consulta ou reprocessamento, e nenhum desses caminhos sabia de onde a venda
+    tinha saido. Cada um criava um cupom automatico, o agente local imprimia a
+    via dele, e o terminal imprimia a sua em seguida — duas vias da mesma
+    venda, sempre que o webhook chegava antes do PDV pedir.
+
+    Fica em `fiscal_payload` porque a decisao pertence a NOTA: ela sobrevive ao
+    processo que a emitiu e e lida horas depois, quando a autorizacao volta.
+    """
+    payload = dict(invoice.fiscal_payload or {})
+    if payload.get("terminal_prints") == terminal_prints:
+        return False
+    payload["terminal_prints"] = terminal_prints
+    invoice.fiscal_payload = payload
+    return True
+
+
+def terminal_prints_this(invoice):
+    """O DANFE desta nota e impresso pelo terminal que fez a venda?"""
+    return bool((getattr(invoice, "fiscal_payload", None) or {}).get("terminal_prints"))
+
+
 def fiscal_state_of(invoice):
     """Situacao fiscal detalhada, no vocabulario que o terminal grava na fila.
 
@@ -1239,10 +1265,15 @@ def ensure_fiscal_print_job(invoice, *, user=None, manual_only=False):
     Nunca levanta — impressora fora do ar nao pode desfazer uma autorizacao que
     ja aconteceu, nem derrubar o lote de reprocessamento.
 
-    `manual_only` marca o trabalho como "o terminal imprime". So quem esta na
-    frente do cliente esperando o papel pede isso; o webhook e o
-    reprocessamento periodico continuam criando trabalho automatico, senao uma
-    autorizacao que chega horas depois nao sairia em impressora nenhuma.
+    `manual_only` marca o trabalho como "o terminal imprime". Alem do parametro,
+    a PROPRIA NOTA pode dizer isso (`terminal_prints`): uma venda fechada num
+    PDV desktop imprime no gesto de concluir, e ai nenhum caminho de
+    autorizacao pode criar cupom automatico — nem o webhook, que costuma
+    chegar antes de o terminal pedir o dele.
+
+    Sem a marca (integracao, cliente antigo, venda sem terminal identificado) o
+    trabalho continua automatico: ali nao ha ninguem na frente do cliente, e
+    uma autorizacao que chega horas depois nao sairia em impressora nenhuma.
     """
     from apps.printers.models import PrintJob
     from apps.printers.services import resolve_printer_for
@@ -1257,7 +1288,10 @@ def ensure_fiscal_print_job(invoice, *, user=None, manual_only=False):
                 return None
             printer = resolve_printer_for(order, PrintJob.TYPE_FISCAL)
             return print_fiscal_invoice(
-                invoice, user=user, printer=printer, manual_only=manual_only
+                invoice,
+                user=user,
+                printer=printer,
+                manual_only=manual_only or terminal_prints_this(invoice),
             )
     except (ValidationError, RuntimeError) as exc:
         logger.warning(
@@ -1301,6 +1335,15 @@ def issue_invoice_for_paid_order(order, *, user=None, auto_print=True):
                     invoice = emit_fiscal_invoice(order, user=user)
                 except (ValidationError, RuntimeError) as exc:
                     logger.warning("Falha ao emitir a nota do pedido %s: %s", order.id, exc)
+
+        # Quem imprime fica gravado NA NOTA. `auto_print=False` significa que a
+        # venda saiu de um terminal identificado, e e ele quem entrega o cupom;
+        # a autorizacao chega depois, por webhook ou consulta, e sem esta marca
+        # aqueles caminhos criavam um cupom automatico que virava a segunda via.
+        if invoice is not None and mark_terminal_prints(
+            invoice, terminal_prints=not auto_print
+        ):
+            invoice.save(update_fields=["fiscal_payload", "updated_at"])
 
         if auto_print:
             try:
