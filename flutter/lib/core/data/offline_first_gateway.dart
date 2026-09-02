@@ -197,6 +197,69 @@ class OfflineFirstGateway {
   // ------------------------------------------------------------- roteamento
 
   /// A rota exige servidor de verdade?
+  /// Troca IDs temporários já promovidos pelos definitivos.
+  ///
+  /// Quando a criação sobe, o registro local passa a viver sob o id do
+  /// servidor (`EntityRepository.replaceId`) e o temporário só sobrevive no
+  /// `id_map`. A TELA, porém, continua segurando o id antigo: ela pediu o
+  /// pedido antes de a fila entregar. O resultado era um pedido recém-criado
+  /// pela comanda que recusava o primeiro item com "Pedido offline-… não
+  /// existe no armazenamento local" — e só voltava a funcionar quando o
+  /// operador saía e entrava de novo, porque aí a tela relia o id novo.
+  ///
+  /// A tradução vale para caminho, filtros e corpo: o id antigo aparece nos
+  /// três (`/orders/offline-…/items/`, `?order=offline-…`, `{"order": "…"}`).
+  /// Só custa uma consulta quando existe mesmo um id temporário à vista.
+  Future<
+    ({String path, Map<String, dynamic>? body, Map<String, dynamic>? query})
+  >
+  _promoted(
+    String path, {
+    Map<String, dynamic>? body,
+    Map<String, dynamic>? query,
+  }) async {
+    // O corpo de uma escrita é sempre JSON (é o que vai para a API), mas um
+    // valor inesperado no `context` de alguma tela não pode derrubar uma
+    // operação que antes passava: sem o retrato serializado, traduz-se ao
+    // menos o caminho, que é onde o id aparece na esmagadora maioria dos casos.
+    String? probe;
+    try {
+      probe = jsonEncode({'p': path, 'b': body, 'q': query});
+    } catch (_) {
+      probe = null;
+    }
+    if (probe == null) {
+      if (!path.contains(LocalId.temporaryPrefix)) {
+        return (path: path, body: body, query: query);
+      }
+      final onlyPath = await queue.resolvedIds(scope: _requireScope());
+      var translated = path;
+      onlyPath.forEach((local, remote) {
+        translated = translated.replaceAll(local, remote);
+      });
+      return (path: translated, body: body, query: query);
+    }
+    if (!probe.contains(LocalId.temporaryPrefix)) {
+      return (path: path, body: body, query: query);
+    }
+    final mappings = await queue.resolvedIds(scope: _requireScope());
+    if (mappings.isEmpty) return (path: path, body: body, query: query);
+    var encoded = probe;
+    mappings.forEach((local, remote) {
+      encoded = encoded.replaceAll(local, remote);
+    });
+    final decoded = jsonDecode(encoded) as Map<String, dynamic>;
+    return (
+      path: '${decoded['p']}',
+      body: decoded['b'] is Map
+          ? Map<String, dynamic>.from(decoded['b'] as Map)
+          : body,
+      query: decoded['q'] is Map
+          ? Map<String, dynamic>.from(decoded['q'] as Map)
+          : query,
+    );
+  }
+
   /// A rota é a EMISSÃO de uma nota (a única `/invoices/` que vai para a fila
   /// fiscal)? As outras — consultar autorização, reenviar, cancelar — falam
   /// com o servidor e com a SEFAZ; enfileirá-las criava documento fantasma.
@@ -297,6 +360,11 @@ class OfflineFirstGateway {
     String path, {
     Map<String, dynamic>? query,
   }) async {
+    // A tela pode estar segurando o id que o registro tinha ANTES de a criação
+    // subir; aqui ele vira o definitivo.
+    final resolved = await _promoted(path, query: query);
+    path = resolved.path;
+    query = resolved.query;
     final route = EntityCatalog.resolve(path);
     if (route == null) {
       throw ArgumentError('Rota $path não é uma entidade local.');
@@ -316,8 +384,11 @@ class OfflineFirstGateway {
         installationId: origin?.installationId ?? installationId,
       );
       if (session == null) {
-        return {'detail': 'Nenhuma sessão de caixa aberta neste terminal.',
-          '_local': true, '_empty': true};
+        return {
+          'detail': 'Nenhuma sessão de caixa aberta neste terminal.',
+          '_local': true,
+          '_empty': true,
+        };
       }
       return {...session, '_local': true};
     }
@@ -361,6 +432,14 @@ class OfflineFirstGateway {
     Map<String, dynamic>? context,
   }) async {
     final scope = _requireScope();
+    // Mesmo motivo da leitura: o pedido criado há dez segundos já pode viver
+    // sob o id do servidor, e a tela ainda pede pelo temporário. Sem esta
+    // tradução, o primeiro item de um pedido novo era recusado com "Pedido
+    // offline-… não existe no armazenamento local".
+    final resolved = await _promoted(path, body: body, query: query);
+    path = resolved.path;
+    body = resolved.body;
+    query = resolved.query;
     final payload = body ?? const <String, dynamic>{};
 
     if (_isScaleCheckout(path)) {
@@ -398,8 +477,19 @@ class OfflineFirstGateway {
     }
 
     final result = switch (route.type) {
-      EntityCatalog.order => await _writeOrder(route, method, path, payload, context),
-      EntityCatalog.cashSession => await _writeCashRegister(route, path, payload, context),
+      EntityCatalog.order => await _writeOrder(
+        route,
+        method,
+        path,
+        payload,
+        context,
+      ),
+      EntityCatalog.cashSession => await _writeCashRegister(
+        route,
+        path,
+        payload,
+        context,
+      ),
       EntityCatalog.command when route.action != null =>
         await _writeCommandTableLink(route, path, payload),
       _ => await _writeGeneric(route, method, path, payload, query),
@@ -630,10 +720,7 @@ class OfflineFirstGateway {
     // `table` é aceito só por tolerância a chamadas antigas.
     final tableId = body['table_id'] ?? body['table'];
     final record = await repo.saveLocal(
-      {
-        ...stored.payload,
-        'current_table': linking ? tableId : null,
-      },
+      {...stored.payload, 'current_table': linking ? tableId : null},
       operation: SyncOperation.update,
       method: 'POST',
       path: path,
@@ -662,8 +749,7 @@ class OfflineFirstGateway {
         body: body,
         restaurantId: '${body['restaurant'] ?? _restaurantId ?? ''}',
         station: context?['cash_station'] as Map<String, dynamic>?,
-        operatorName:
-            origin?.actorName.isNotEmpty == true
+        operatorName: origin?.actorName.isNotEmpty == true
             ? origin!.actorName
             : context?['operator_name'] as String?,
         operatorId: actor,

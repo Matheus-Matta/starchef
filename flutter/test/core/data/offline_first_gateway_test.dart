@@ -98,6 +98,42 @@ void main() {
     expect(payment['change_amount'], '3.50');
   });
 
+  test('pedido que ja subiu continua respondendo pelo id antigo', () async {
+    // A tela pega o id no momento em que o pedido nasce. Quando a criação sobe,
+    // o registro passa a viver sob o id do SERVIDOR e o temporário some do
+    // armazenamento — mas a tela continua com ele em mãos. Era assim que um
+    // pedido recém-aberto pela comanda recusava o primeiro item com "Pedido
+    // offline-… não existe no armazenamento local", e só voltava a funcionar
+    // quando o operador saía e entrava de novo.
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/',
+      body: {'restaurant': 'rest-1', 'order_type': 'command'},
+    );
+    final temporaryId = '${created.payload['id']}';
+    expect(LocalId.isTemporary(temporaryId), isTrue);
+
+    const remoteId = '3f1a2b4c-0000-4000-8000-0000000000aa';
+    await stack.gateway
+        .repository(EntityCatalog.order)
+        .replaceId(temporaryId, remoteId);
+
+    // O id antigo já não existe como registro; só no mapa de IDs.
+    final added = await stack.gateway.write(
+      'POST',
+      '/orders/$temporaryId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+
+    expect('${added.payload['id']}', remoteId);
+    expect((added.payload['items'] as List), hasLength(1));
+
+    // E a leitura pelo id antigo devolve o pedido de verdade, não um vazio.
+    final read = await stack.gateway.read('/orders/$temporaryId/');
+    expect('${read['id']}', remoteId);
+    expect((read['items'] as List), hasLength(1));
+  });
+
   test('cancelar item recalcula o total sem apagar a linha', () async {
     final created = await stack.gateway.write(
       'POST',

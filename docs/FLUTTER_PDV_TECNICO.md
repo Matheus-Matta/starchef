@@ -589,6 +589,23 @@ catálogo, carrinho, pagamento, caixa e navegação. É reconhecidamente grande;
 qualquer trabalho novo ali deve extrair para painéis, como já foi feito com
 `product_catalog_panel.dart` e `order_cart_panel.dart`.
 
+**O id antigo continua respondendo.** Todo registro nasce com um id
+temporário (`offline-<uuid>`) e, quando a criação sobe, passa a viver sob o id
+do SERVIDOR — `EntityRepository.replaceId` reescreve a linha e guarda o
+`local → remoto` no `id_map`. A tela, porém, pegou o id no momento em que o
+pedido nasceu e continua com ele em mãos.
+
+Por isso `OfflineFirstGateway.read`/`write` traduzem caminho, filtros e corpo
+antes de resolver a rota (`_promoted`). Sem essa tradução, um pedido aberto
+pela comanda recusava o PRIMEIRO item com "Pedido offline-… não existe no
+armazenamento local", e só voltava a funcionar quando o operador saía e
+entrava de novo — porque aí a tela relia o pedido e ficava com o id novo. A
+consulta ao `id_map` só acontece quando existe mesmo um `offline-` à vista.
+
+Rotas que exigem servidor (`/orders/{id}/print/`, por exemplo) não passam por
+aqui: elas dependem de a tela já ter relido o pedido, o que `_refreshOrder`
+faz em todo gesto que muda a venda.
+
 **Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
 não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
 unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam
