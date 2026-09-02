@@ -166,6 +166,11 @@ def test_refresh_status_endpoint_enqueues_the_danfe(
 
     assert response.status_code == 200, response.data
     assert _fiscal_jobs(pending_invoice.order).count() == 1
+    # O PDV decide pela resposta se ja existe cupom para imprimir. Sem estes
+    # dois campos a nota voltava autorizada e a tela continuava tratando como
+    # "nao imprimivel" — o operador tinha de mandar imprimir na mao.
+    assert response.data["fiscal_state"] == "authorized"
+    assert response.data["printable"] is True
 
 
 def test_the_danfe_is_never_printed_twice(pending_invoice, printer, manager_user):

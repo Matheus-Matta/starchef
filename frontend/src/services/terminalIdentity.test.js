@@ -66,6 +66,21 @@ describe("identidade do terminal", () => {
     setItem.mockRestore();
   });
 
+  it("escapa o nome acentuado no cabeçalho e mantém ASCII intacto", async () => {
+    // Cabeçalho HTTP não carrega UTF-8: "Balcão 01" chegaria ao servidor como
+    // latin-1 (mojibake no cadastro do terminal) e, no PDV desktop, o cliente
+    // HTTP nem chega a enviar — estoura antes.
+    const { setTerminalName, terminalNameHeader } = await loadModule();
+
+    setTerminalName("Balcão 01");
+    const escaped = terminalNameHeader();
+    expect(escaped).toBe("Balc%C3%A3o%2001");
+    expect(decodeURIComponent(escaped)).toBe("Balcão 01");
+
+    setTerminalName("Caixa 02");
+    expect(terminalNameHeader()).toBe("Caixa 02");
+  });
+
   it("usa o nome definido para o terminal quando existe", async () => {
     const { setTerminalName, terminalPayload } = await loadModule();
 

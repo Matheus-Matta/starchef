@@ -197,6 +197,14 @@ class OfflineFirstGateway {
   // ------------------------------------------------------------- roteamento
 
   /// A rota exige servidor de verdade?
+  /// A rota é a EMISSÃO de uma nota (a única `/invoices/` que vai para a fila
+  /// fiscal)? As outras — consultar autorização, reenviar, cancelar — falam
+  /// com o servidor e com a SEFAZ; enfileirá-las criava documento fantasma.
+  static bool isFiscalEmission(String path) {
+    final clean = path.split('?').first;
+    return clean == '/invoices/emit/' || clean == '/invoices/emit';
+  }
+
   static bool requiresServer(String path) =>
       _serverOnlyFragments.any(path.contains);
 
@@ -247,7 +255,12 @@ class OfflineFirstGateway {
       return !relayOnly && !(connectivity?.call() ?? false);
     }
     if (requiresServer(path)) return false;
-    if (path.startsWith('/invoices/')) return true;
+    // SÓ A EMISSÃO. `refresh-status`, `resend` e `cancel` também começam com
+    // `/invoices/`, e caíam aqui: cada consulta de autorização virava um
+    // DOCUMENTO NOVO na fila fiscal, sem pedido (o corpo dessas rotas não tem
+    // `order`), que depois tentava emitir sozinho. Consultar a SEFAZ e
+    // cancelar uma nota são operações do servidor — sem rede elas não existem.
+    if (path.startsWith('/invoices/')) return isFiscalEmission(path);
     // Uma leitura física de balança é um registro do servidor criado no
     // instante da pesagem: enfileirá-la depois não faz sentido. O peso em si
     // (`weight_kg`, `tare_kg`) é apenas um valor e viaja normalmente — sem
@@ -357,7 +370,7 @@ class OfflineFirstGateway {
       );
     }
 
-    if (path.startsWith('/invoices/')) {
+    if (isFiscalEmission(path)) {
       final orderId = '${payload['order'] ?? payload['order_id'] ?? ''}';
       final snapshot = await _captureFiscalSnapshot(orderId, payload);
       final document = await fiscalQueue.enqueue(

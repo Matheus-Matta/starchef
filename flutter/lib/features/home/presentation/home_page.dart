@@ -4088,14 +4088,16 @@ class _HomePageState extends State<HomePage> {
           final settled = await api.flushFiscalForOrder('${order['id']}');
           if (!mounted) return;
           if (settled != null) {
+            final summary =
+                'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
             if (settled['printable'] == true) {
               await _printDanfe(
                 invoiceId: '${settled['id']}',
-                summary:
-                    'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}',
+                summary: summary,
               );
             } else {
               _showFiscalStateToast(settled, silent: silentIfUnconfigured);
+              _watchFiscalAuthorization(settled, summary: summary);
             }
             return;
           }
@@ -4131,6 +4133,11 @@ class _HomePageState extends State<HomePage> {
       // DANFE só é oferecido quando `printable` vem verdadeiro.
       if (invoice['printable'] != true) {
         _showFiscalStateToast(invoice, silent: false);
+        _watchFiscalAuthorization(
+          invoice,
+          summary:
+              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+        );
         return;
       }
 
@@ -4149,6 +4156,76 @@ class _HomePageState extends State<HomePage> {
       );
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
+    }
+  }
+
+  /// Espera a SEFAZ autorizar e manda o DANFE para a impressora sozinho.
+  ///
+  /// Online, a emissão quase nunca volta autorizada: o provedor ACEITA a nota
+  /// e a SEFAZ responde um instante depois. O "Concluir pedido" terminava
+  /// então com um aviso e nenhum cupom fiscal — o operador tinha de voltar no
+  /// pedido e mandar imprimir na mão, para uma nota que já estava autorizada
+  /// havia dois segundos.
+  ///
+  /// Consulta em segundo plano, com espera crescente: o caixa já pode começar
+  /// a próxima venda. Se a autorização não chegar na janela, nada se perde —
+  /// a nota continua na esteira normal (webhook e consulta periódica) e o
+  /// cupom sai pela reimpressão no histórico do pedido.
+  void _watchFiscalAuthorization(
+    Map<String, dynamic> invoice, {
+    required String summary,
+  }) {
+    final invoiceId = '${invoice['id'] ?? ''}';
+    final state = '${invoice['fiscal_state'] ?? ''}';
+    // Só faz sentido esperar por uma nota que está a caminho. Recusa e erro de
+    // configuração pedem correção humana; documento local ainda na fila (id
+    // `offline-…`) nem existe no servidor para ser consultado.
+    const inFlight = {'processing', 'awaiting_transmission'};
+    if (invoiceId.isEmpty ||
+        invoiceId.startsWith('offline-') ||
+        !inFlight.contains(state)) {
+      return;
+    }
+    unawaited(_pollFiscalAuthorization(invoiceId: invoiceId, summary: summary));
+  }
+
+  Future<void> _pollFiscalAuthorization({
+    required String invoiceId,
+    required String summary,
+  }) async {
+    const backoff = [
+      Duration(milliseconds: 1200),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+      Duration(seconds: 4),
+      Duration(seconds: 5),
+    ];
+    for (final wait in backoff) {
+      await Future<void>.delayed(wait);
+      if (!mounted) return;
+      final Map<String, dynamic> current;
+      try {
+        current = await api.post(
+          '/invoices/$invoiceId/refresh-status/',
+          body: const {},
+          accessToken: token,
+        );
+      } catch (_) {
+        // Sem rede ou servidor fora: a esteira periódica assume daqui. Nenhum
+        // aviso — o operador já viu o estado da nota no toast anterior.
+        return;
+      }
+      if (!mounted) return;
+      if (current['printable'] == true) {
+        await _printDanfe(invoiceId: invoiceId, summary: summary);
+        return;
+      }
+      final state = '${current['fiscal_state'] ?? ''}';
+      if (state == 'rejected' || state == 'configuration_error') {
+        // Agora sim interrompe: isto não se resolve esperando.
+        _showFiscalStateToast(current, silent: false);
+        return;
+      }
     }
   }
 

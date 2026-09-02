@@ -1,7 +1,10 @@
 import axios from "axios";
 
 import { clearSession, hasSession } from "./tokenStorage";
-import { terminalInstallationId, terminalName } from "./terminalIdentity";
+import {
+  terminalInstallationId,
+  terminalNameHeader,
+} from "./terminalIdentity";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -49,7 +52,7 @@ function applyTerminalIdentity(config) {
   config.headers = config.headers || {};
   if (!config.headers["X-Terminal-Id"]) {
     config.headers["X-Terminal-Id"] = terminalInstallationId();
-    config.headers["X-Terminal-Name"] = terminalName();
+    config.headers["X-Terminal-Name"] = terminalNameHeader();
   }
 }
 
@@ -155,7 +158,7 @@ export async function temporaryAuthenticatedPost(path, payload, access) {
     headers: {
       Authorization: `Bearer ${access}`,
       "X-Terminal-Id": terminalInstallationId(),
-      "X-Terminal-Name": terminalName(),
+      "X-Terminal-Name": terminalNameHeader(),
     },
   });
 }

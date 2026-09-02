@@ -823,6 +823,26 @@ class ApiClient {
     return _refreshInFlight = attempt;
   }
 
+  /// Valor de cabeçalho HTTP a partir de um texto qualquer.
+  ///
+  /// Cabeçalho não é UTF-8: `dart:io` recusa qualquer byte acima de 127 com
+  /// `FormatException`, e esse estouro caía no `catch` de baixo virando "a
+  /// requisição não pôde ser montada" — uma mensagem que acusava o IP do
+  /// servidor por um problema que era nosso. Bastava o terminal se chamar
+  /// "Caixa Secundário" ou a loja batizá-lo de "Balcão 01" para o aplicativo
+  /// parar de falar com a API até ser reiniciado (reiniciar limpava o nome da
+  /// memória, e por isso só o LOGIN DEPOIS DO LOGOUT parecia quebrado: antes
+  /// do primeiro login ninguém tinha preenchido o nome ainda).
+  ///
+  /// Percent-encoding em vez de tirar os acentos: o servidor desfaz
+  /// (`unquote`) e o nome chega inteiro no cadastro do terminal. Texto já
+  /// ASCII atravessa igual — `unquote` de um nome sem `%` devolve o próprio
+  /// nome, então um cliente antigo continua entendido.
+  static String _headerSafe(String value) {
+    final needsEncoding = value.codeUnits.any((unit) => unit > 127);
+    return needsEncoding ? Uri.encodeComponent(value) : value;
+  }
+
   Future<Map<String, dynamic>> _requestOnline(
     String method,
     String path, {
@@ -858,7 +878,9 @@ class ApiClient {
         final label = origin?.installationId.isNotEmpty == true
             ? origin!.terminalName
             : (_gateway?.terminalLabel ?? '');
-        if (label.isNotEmpty) headers['X-Terminal-Name'] = label;
+        if (label.isNotEmpty) {
+          headers['X-Terminal-Name'] = _headerSafe(label);
+        }
       }
       final request = http.Request(method, uri)..headers.addAll(headers);
       if (body != null) request.body = jsonEncode(body);
@@ -904,11 +926,16 @@ class ApiClient {
       rethrow;
     } on _NetworkUnavailable {
       rethrow;
-    } on FormatException {
+    } on FormatException catch (error) {
       // Sobra para o que não é a resposta: URL malformada, corpo que não
-      // serializa. A resposta em si já foi tratada acima, com o status.
+      // serializa, cabeçalho fora do ASCII. A resposta em si já foi tratada
+      // acima, com o status.
+      //
+      // A mensagem NÃO acusa mais o endereço do servidor. Ela acusava, e um
+      // nome de terminal acentuado — problema inteiramente nosso, deste lado
+      // — chegava ao operador como "o IP do backend está errado".
       throw ApiException(
-        'A requisição não pôde ser montada. Servidor configurado: $baseUrl.',
+        'Não foi possível montar a requisição para $path: ${error.message}',
       );
     } on TimeoutException {
       throw _NetworkUnavailable(

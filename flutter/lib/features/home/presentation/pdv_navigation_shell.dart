@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -343,8 +345,85 @@ class _PdvVersionIndicator extends StatelessWidget {
   }
 }
 
-class PdvConnectionBadge extends StatelessWidget {
+/// O indicador de conexão da barra, com histerese.
+///
+/// O estado real oscila por motivos legítimos e curtos: uma venda entra na
+/// fila e sai 300ms depois, um GET falha e o seguinte passa, o ciclo de
+/// entrega abre e fecha. Pintar cada oscilação transformava o indicador num
+/// pisca-pisca — o operador vê movimento o tempo todo, para de ler, e o aviso
+/// que importa (offline, fila para revisar) se perde no ruído.
+///
+/// Então: uma fase nova só é pintada depois de se manter por [_settle], e uma
+/// fase pintada permanece por pelo menos [_minDwell]. Contadores dentro da
+/// MESMA fase ("Sincronizando 3" → "Sincronizando 2") passam na hora, porque
+/// aí o movimento é a informação. O primeiro estado nunca espera: abrir o PDV
+/// mostrando a verdade imediatamente é o certo.
+class PdvConnectionBadge extends StatefulWidget {
   const PdvConnectionBadge({super.key, required this.status, this.onPressed});
+
+  final NetworkSyncStatus status;
+  final VoidCallback? onPressed;
+
+  /// Quanto tempo uma fase precisa se manter para valer a repintura.
+  static const _settle = Duration(milliseconds: 1200);
+
+  /// Quanto tempo uma fase pintada fica na tela antes de poder ser trocada.
+  static const _minDwell = Duration(seconds: 2);
+
+  @override
+  State<PdvConnectionBadge> createState() => _PdvConnectionBadgeState();
+}
+
+class _PdvConnectionBadgeState extends State<PdvConnectionBadge> {
+  late NetworkSyncStatus _shown = widget.status;
+  late DateTime _shownAt = DateTime.now();
+  Timer? _settleTimer;
+
+  @override
+  void didUpdateWidget(PdvConnectionBadge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final incoming = widget.status;
+    if (incoming == _shown) {
+      // Voltou para o que já está na tela antes de assentar: a oscilação
+      // simplesmente não aconteceu, do ponto de vista de quem olha.
+      _settleTimer?.cancel();
+      _settleTimer = null;
+      return;
+    }
+    if (incoming.phase == _shown.phase) {
+      _settleTimer?.cancel();
+      _settleTimer = null;
+      setState(() => _shown = incoming);
+      return;
+    }
+    final held = DateTime.now().difference(_shownAt);
+    final remaining = PdvConnectionBadge._minDwell - held;
+    final wait = remaining > PdvConnectionBadge._settle
+        ? remaining
+        : PdvConnectionBadge._settle;
+    _settleTimer?.cancel();
+    _settleTimer = Timer(wait, () {
+      if (!mounted) return;
+      setState(() {
+        _shown = widget.status;
+        _shownAt = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _settleTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      _ConnectionBadgeView(status: _shown, onPressed: widget.onPressed);
+}
+
+class _ConnectionBadgeView extends StatelessWidget {
+  const _ConnectionBadgeView({required this.status, this.onPressed});
 
   final NetworkSyncStatus status;
   final VoidCallback? onPressed;

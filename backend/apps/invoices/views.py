@@ -265,7 +265,14 @@ class InvoiceViewSet(BaseTenantViewSet):
         return getattr(self.request, "account", None)
 
     def _serialize(self, invoice, code=status.HTTP_200_OK):
-        return Response(InvoiceSerializer(invoice, context={"request": self.request}).data, status=code)
+        # `fiscal_state` e `printable` viajam SEMPRE. O PDV e o retaguarda
+        # decidem por eles se ha cupom para imprimir; sem isso, consultar a
+        # autorizacao devolvia uma nota ja autorizada que a tela continuava
+        # tratando como "nao imprimivel".
+        data = with_fiscal_state(
+            InvoiceSerializer(invoice, context={"request": self.request}).data, invoice
+        )
+        return Response(data, status=code)
 
     @action(detail=False, methods=["post"], url_path="emit")
     def emit(self, request):
@@ -378,7 +385,9 @@ class InvoiceViewSet(BaseTenantViewSet):
             invoice = resend_fiscal_invoice(self.get_object(), user=request.user)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        data = InvoiceSerializer(invoice, context={"request": request}).data
+        data = with_fiscal_state(
+            InvoiceSerializer(invoice, context={"request": request}).data, invoice
+        )
         data["resent"] = invoice.status != Invoice.STATUS_ERROR
         if invoice.status == Invoice.STATUS_ERROR:
             message = invoice.error_message or "A Focus rejeitou o reenvio da nota."

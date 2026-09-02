@@ -134,6 +134,21 @@ por token vencido, a segunda chamada é reconhecida como repetição.
 Rotas sob `/auth/` nunca entram nesse caminho: um 401 ali significa credencial
 inválida, e insistir criaria laço.
 
+**Cabeçalho de identidade e ASCII.** Toda requisição leva `X-Terminal-Id` (o
+`nodeId` da topologia) e `X-Terminal-Name`. Cabeçalho HTTP **não carrega
+UTF-8**: `dart:io` recusa qualquer byte acima de 127 com `FormatException`, e o
+rótulo padrão do secundário — "Caixa Secundário …" — tem acento. O estouro
+acontecia antes de a requisição sair da máquina e caía no `catch` genérico,
+virando uma mensagem que acusava o endereço do servidor.
+
+Como o rótulo só é preenchido depois do login (`_onTopologyChanged`) e
+`clearSession()` não limpa a identidade da INSTALAÇÃO — ela é da máquina, não
+da sessão —, o sintoma aparecia como "logout, e o login seguinte falha
+dizendo que a API não pode ser montada"; reiniciar o app "resolvia" só porque
+zerava o campo em memória. `_headerSafe` percent-encoda o valor quando ele tem
+acento e o backend desfaz (`terminal_name_from_request`), então o nome chega
+inteiro ao cadastro do terminal. Texto já ASCII atravessa igual.
+
 **Contrato de status para credenciais.** O `TenantMiddleware` do backend roda
 antes do DRF e decide:
 

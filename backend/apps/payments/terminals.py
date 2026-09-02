@@ -5,6 +5,8 @@ Separado de `services.py` porque e a peca que responde a UMA pergunta:
 sangria, o suprimento e o pagamento fazem todos a mesma pergunta — bloquear so
 o botao de abrir nao impediria ninguem de chamar os outros endpoints direto.
 """
+from urllib.parse import unquote
+
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
@@ -52,6 +54,25 @@ def installation_id_from_request(request):
     ).strip()
 
 
+def terminal_name_from_request(request):
+    """O nome amigavel do terminal que veio no cabecalho, ja desescapado.
+
+    Cabecalho HTTP nao carrega UTF-8: um terminal chamado "Balcao 01" (com
+    til) faz o cliente Dart estourar `FormatException` antes de enviar, e o
+    navegador manda latin-1 cru. Por isso o PDV percent-encoda o valor quando
+    ele tem acento, e aqui desfazemos. Nome ja em ASCII puro atravessa igual
+    — `unquote` sem `%` devolve o proprio texto —, entao um cliente antigo
+    continua sendo entendido.
+    """
+    raw = request.headers.get("X-Terminal-Name") or ""
+    try:
+        return unquote(raw)
+    except (UnicodeDecodeError, ValueError):
+        # Escape malformado nao pode custar a identificacao do terminal: o
+        # nome e so o rotulo, o `installation_id` e quem manda.
+        return raw
+
+
 def terminal_from_request(request, *, restaurant=None):
     """Resolve (cadastrando na primeira vez) o PdvTerminal desta requisicao."""
     data = request.data if isinstance(request.data, dict) else {}
@@ -59,7 +80,7 @@ def terminal_from_request(request, *, restaurant=None):
         account=getattr(request, "account", None),
         installation_id=installation_id_from_request(request),
         restaurant=restaurant,
-        name=data.get("terminal_name") or request.headers.get("X-Terminal-Name") or "",
+        name=data.get("terminal_name") or terminal_name_from_request(request),
         device_type=data.get("terminal_type") or "",
         role=data.get("terminal_role") or "",
     )

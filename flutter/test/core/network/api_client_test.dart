@@ -6,9 +6,74 @@ import 'package:http/testing.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/api_exception.dart';
 import 'package:starchef_pdv/core/network/offline_store.dart';
+import 'package:starchef_pdv/core/network/relay_origin.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
 
 void main() {
+  test('nome de terminal acentuado não quebra a requisição', () async {
+    // O cabeçalho HTTP só aceita ASCII: `dart:io` recusa qualquer byte acima
+    // de 127 com `FormatException`. Como o rótulo padrão do secundário é
+    // "Caixa Secundário", bastava um logout — que deixa o rótulo na memória —
+    // para o LOGIN seguinte estourar antes de sair da máquina, acusando o
+    // endereço do servidor por um problema que era nosso.
+    late http.BaseRequest sent;
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"ok": true}', 200);
+      }),
+    );
+
+    await client.syncTransport.send(
+      'POST',
+      '/payments/cash-registers/open/',
+      body: const {'opening_amount': 0},
+      origin: const RelayOrigin(
+        accessToken: 'token-do-secundario',
+        actorId: 'operador-2',
+        installationId: 'instalacao-2',
+        terminalName: 'Caixa Secundário ab12cd',
+      ),
+    );
+
+    final label = sent.headers['X-Terminal-Name']!;
+    expect(
+      label.codeUnits.every((unit) => unit <= 127),
+      isTrue,
+      reason: 'o valor precisa atravessar o cliente HTTP real',
+    );
+    // E o servidor recupera o nome inteiro: nada de acento perdido no caminho.
+    expect(Uri.decodeComponent(label), 'Caixa Secundário ab12cd');
+
+    await client.dispose();
+  });
+
+  test('nome de terminal em ASCII viaja sem escapes', () async {
+    late http.BaseRequest sent;
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"ok": true}', 200);
+      }),
+    );
+
+    await client.syncTransport.send(
+      'GET',
+      '/payments/cash-registers/',
+      origin: const RelayOrigin(
+        accessToken: 'token',
+        actorId: 'operador-1',
+        installationId: 'instalacao-1',
+        terminalName: 'Caixa Principal ab12cd',
+      ),
+    );
+
+    expect(sent.headers['X-Terminal-Name'], 'Caixa Principal ab12cd');
+    await client.dispose();
+  });
+
   test('troca a API em memória sem reiniciar o aplicativo', () async {
     final directory = await Directory.systemTemp.createTemp(
       'starchef-api-switch-',

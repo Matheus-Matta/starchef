@@ -544,6 +544,63 @@ void main() {
     });
   });
 
+  testWidgets('PdvConnectionBadge não pisca com oscilação curta de fase', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+    expect(find.text('Online'), findsOneWidget);
+
+    // Uma venda entra na fila e sai em 300ms: o operador não deve ver o
+    // indicador trocar de estado por causa disso.
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.syncing, pending: 1),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Online'), findsOneWidget);
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Online'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge assume a fase que se mantém', (tester) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.offline),
+      ),
+    );
+    // Ficar offline importa demais para ser escondido: some depois da
+    // carência, não some para sempre.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Offline'), findsOneWidget);
+  });
+
   testWidgets('PdvConnectionBadge online usa verde escuro com alto contraste', (
     tester,
   ) async {

@@ -235,19 +235,49 @@ entregue, o clique não achava mais nada para reaproveitar
 A emissão fiscal continua imediata em todos os casos — a SEFAZ pode demorar e
 não há razão para prender isso ao clique.
 
-Porém, no modo offline-first atual, toda escrita em `/invoices/` é interceptada
-antes da chamada HTTP e gravada na `fiscal_queue` local, inclusive quando a
-internet está disponível. A fila fiscal:
+No modo offline-first, a **emissão** (`POST /invoices/emit/`) é interceptada
+antes da chamada HTTP e gravada na `fiscal_queue` local, inclusive com
+internet disponível — é isso que impede uma queda no meio do caminho de perder
+o documento de uma venda já paga. A fila fiscal:
 
 - é separada da fila de vendas;
 - envia uma nota por ciclo, a cada 30 segundos, ou em **Sincronizar agora**;
 - repete falhas transitórias em 15 s, 30 s, 1 min, 5 min e 15 min;
 - marca erros HTTP/validação como `FAILED` e não insiste automaticamente.
 
-Como a chamada inicial retorna `_fiscal_pending: true`, o Flutter não solicita
-o DANFE naquele momento. A autorização posterior da fila também não dispara
-hoje uma segunda etapa automática de impressão. Essa limitação está registrada
-na seção [Pontos de atenção da implementação atual](#12-pontos-de-atenção-da-implementação-atual).
+**Só a emissão passa pela fila.** `refresh-status`, `resend`, `cancel` e
+`/invoices/{id}/print/` são operações do servidor: consultar a SEFAZ e
+cancelar uma nota não existem sem rede. Interceptá-las criava um documento
+fantasma na fila fiscal — sem pedido, porque o corpo dessas rotas não tem
+`order` — que depois tentava emitir sozinho
+(`OfflineFirstGateway.isFiscalEmission`).
+
+### Com internet, o cupom fiscal sai no mesmo gesto
+
+A chamada inicial devolve `_fiscal_pending: true`, mas o PDV não espera o
+ciclo de 30 segundos: `flushFiscalForOrder` entrega a nota na hora. Duas
+respostas são possíveis:
+
+1. **autorizada** (`printable: true`) — o DANFE vai para a impressora master
+   junto com o recibo, no mesmo clique;
+2. **em trânsito** (`processing` / `awaiting_transmission`) — o caso comum: a
+   Focus aceita e a SEFAZ autoriza um instante depois.
+
+No segundo caso `_watchFiscalAuthorization` consulta
+`POST /invoices/{id}/refresh-status/` em segundo plano, com espera crescente
+(1,2 s, 2 s, 3 s, 4 s, 5 s — cerca de 15 s no total), e imprime o DANFE assim
+que a autorização chega. Não bloqueia o caixa: a próxima venda já pode
+começar. Uma recusa (`rejected`, `configuration_error`) interrompe a espera e
+avisa o operador — isso não se resolve esperando.
+
+Se a autorização não chegar nessa janela, nada se perde: a nota segue na
+esteira normal (webhook da Focus e consulta periódica), e o backend enfileira
+o DANFE por `ensure_fiscal_print_job`. O cupom também pode ser reimpresso pelo
+histórico do pedido.
+
+Toda resposta de nota (`emit`, `refresh-status`, `resend`, `cancel`) carrega
+`fiscal_state` e `printable`. Sem esses dois campos, uma nota que voltava
+autorizada da consulta continuava sendo tratada pela tela como não-imprimível.
 
 Se o pagamento inteiro ainda estiver apenas no SQLite aguardando
 sincronização, `_completePaidOrder` não chama a emissão automática. Primeiro a
@@ -495,11 +525,14 @@ ideal desejado.
 
 1. **Retaguarda não emite no clique de pagamento.** O botão de emissão fica na
    visualização posterior do pedido pago.
-2. **Flutter coloca toda emissão na fila fiscal.** A chamada inicial não recebe
-   imediatamente a nota autorizada e, por isso, não imprime o DANFE naquele
-   gesto. Quando ela volta autorizada, os dois documentos (recibo e DANFE)
-   saem juntos no clique de **Concluir pedido**, na impressora master — o
-   backend não imprime por conta própria quando há terminal identificado.
+2. **Toda emissão do PDV passa pela fila fiscal**, inclusive com internet — é
+   o que impede uma queda no meio do caminho de perder o documento de uma
+   venda já paga. Com conexão, porém, o PDV não espera o ciclo de 30 s: entrega
+   a nota na hora (`flushFiscalForOrder`) e, se ela voltar `processing`,
+   consulta a autorização por cerca de 15 s antes de imprimir. Os dois
+   documentos (recibo e DANFE) saem na impressora master, no clique de
+   **Concluir pedido** — o backend não imprime por conta própria quando há
+   terminal identificado.
 3. **A fila Flutter lê a situação fiscal real.** `pushFiscal` interpreta
    `fiscal_state` e distingue autorizada, aguardando transmissão, processando,
    em reconciliação, recusada e erro de configuração. Um HTTP 200 com
@@ -508,21 +541,22 @@ ideal desejado.
 4. **A autorização tardia enfileira o DANFE sozinha.** Webhook, reprocessamento,
    reenvio e `refresh-status` chamam `ensure_fiscal_print_job`, que cria o
    trabalho fiscal na impressora do pedido — idempotente por pedido, então não
-   sai cupom duplicado. O retorno da fila do PDV continua sendo só gravado
-   localmente; quem imprime é o backend, pelo `PrintJob`.
-5. **Resposta de impressão e Flutter divergem.** O endpoint retorna
-   `print_job_id`, `status` e `html`; o Flutter procura também um objeto
-   `printer` na resposta para imprimir manualmente.
-6. **Produto sem perfil não é barrado.** O fallback NCM `00000000` segue até a
-   Focus e tende a causar rejeição.
-7. **Rejeição vira contingência.** O `except` amplo do serviço trata rejeição
-   fiscal como se fosse indisponibilidade técnica.
-8. **O backend não exige pedido pago.** A UI restringe o botão, mas a API aceita
+   sai cupom duplicado.
+5. **Nenhuma tela imprime nota não autorizada.** PDV e retaguarda só mandam o
+   DANFE para o papel com `printable: true`; enquanto a SEFAZ processa, as
+   duas consultam `refresh-status` em segundo plano e imprimem quando a
+   autorização chega. Uma recusa interrompe a espera e avisa o operador.
+6. **Produto sem perfil não é barrado por padrão.** Com
+   `strict_fiscal_profile` desligado, o fallback NCM `00000000` ainda segue
+   até a Focus (e tende a causar rejeição) — mas o que foi suprido fica
+   registrado na nota e na auditoria. Com a flag ligada, a nota nem é
+   transmitida.
+7. **O backend não exige pedido pago.** A UI restringe o botão, mas a API aceita
    emissão direta de pedido aberto.
-9. **Status “processando” pode ser impresso.** A retaguarda chama impressão logo
-   depois da resposta 201, mesmo que a nota ainda esteja `pending`.
-10. **Segunda emissão é bloqueada.** Nota `pending` ou `issued` vinculada ao
-    pedido faz uma nova tentativa retornar HTTP 400.
+8. **Emitir é idempotente por pedido.** Uma nota `pending` ou `issued` já
+   vinculada ao pedido faz o endpoint devolver a nota existente, não um HTTP
+   400 — o PDV emite logo depois do pagamento automático e não pode ver
+   "pedido já possui nota" numa venda que deu certo.
 
 ## 13. Matriz dos cenários principais
 

@@ -629,6 +629,79 @@ async function printOrder() {
   }
 }
 
+/**
+ * Espera a SEFAZ autorizar, consultando a nota em segundo plano.
+ *
+ * A Focus ACEITA a nota e a autorizacao chega um instante depois: emitir e
+ * imprimir no mesmo gesto pegava quase sempre uma nota `processing`. A espera
+ * e curta (cerca de 15s) porque o operador esta na frente da tela; passando
+ * disso, a nota segue na esteira normal (webhook e consulta periodica) e o
+ * DANFE fica disponivel na proxima abertura do pedido.
+ *
+ * Devolve a nota autorizada, ou `null` quando nao ha o que imprimir.
+ */
+async function waitForAuthorization(invoice) {
+  const inFlight = ["processing", "awaiting_transmission"];
+  if (!inFlight.includes(invoice.fiscal_state)) {
+    toast.add({
+      severity: invoice.fiscal_state === "rejected" || invoice.fiscal_state === "configuration_error" ? "error" : "warn",
+      summary: "Ainda não há DANFE para imprimir",
+      detail: fiscalStateDetail(invoice),
+      life: 6000,
+    });
+    return null;
+  }
+  for (const wait of [1200, 2000, 3000, 4000, 5000]) {
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    let current;
+    try {
+      ({ data: current } = await api.post(`/invoices/${invoice.id}/refresh-status/`, {}));
+    } catch {
+      return null; // A esteira periodica assume daqui.
+    }
+    if (current.printable === true) return current;
+    if (current.fiscal_state === "rejected" || current.fiscal_state === "configuration_error") {
+      toast.add({ severity: "error", summary: "NFC-e não autorizada", detail: fiscalStateDetail(current), life: 6000 });
+      return null;
+    }
+  }
+  toast.add({
+    severity: "warn",
+    summary: "Aguardando autorização da SEFAZ",
+    detail: "A nota foi transmitida. O DANFE fica disponível assim que a autorização chegar.",
+    life: 6000,
+  });
+  return null;
+}
+
+function fiscalStateDetail(invoice) {
+  switch (invoice.fiscal_state) {
+    case "rejected":
+      return `${invoice.error_message || "Verifique o cadastro fiscal do pedido"}. Não haverá reenvio automático.`;
+    case "configuration_error":
+      return `Configuração fiscal inválida (${invoice.error_message || "certificado, token ou CSC"}).`;
+    case "reconciliation_required":
+      return "A nota pode ter sido emitida e a resposta se perdeu. Ela será consultada antes de qualquer reenvio.";
+    default:
+      return "A nota ainda não foi transmitida e será enviada assim que a conexão com o provedor voltar.";
+  }
+}
+
+/** Abre a janela de impressao do DANFE de uma nota ja autorizada. */
+async function openDanfe(invoiceId) {
+  const { data: printJob } = await api.post(`/invoices/${invoiceId}/print/`, {});
+  const win = window.open("", "_blank", "width=420,height=720");
+  if (!win) {
+    toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir o DANFE.", life: 4000 });
+    return;
+  }
+  win.document.write(printJob.html || "<p>DANFE indisponível.</p>");
+  win.document.close();
+  win.focus();
+  win.print();
+  toast.add({ severity: "success", summary: "Nota fiscal autorizada", detail: "DANFE preparado para impressão.", life: 4000 });
+}
+
 /** Emite a NF-e/NFC-e configurada e abre o DANFE para impressao. */
 async function emitOrderInvoice() {
   if (!recordId.value || emittingInvoice.value) return;
@@ -648,17 +721,12 @@ async function emitOrderInvoice() {
       });
       return;
     }
-    const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
-    const win = window.open("", "_blank", "width=420,height=720");
-    if (!win) {
-      toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir o DANFE.", life: 4000 });
-      return;
-    }
-    win.document.write(printJob.html || "<p>DANFE indisponível.</p>");
-    win.document.close();
-    win.focus();
-    win.print();
-    toast.add({ severity: "success", summary: "Nota fiscal emitida", detail: "DANFE preparado para impressão.", life: 4000 });
+    // So um documento AUTORIZADO tem chave que a SEFAZ reconhece. Imprimir
+    // logo depois do 201 mandava para o papel uma nota que ainda estava
+    // processando — ou recusada — como se fosse cupom fiscal valido.
+    const authorized = invoice.printable === true ? invoice : await waitForAuthorization(invoice);
+    if (!authorized) return;
+    await openDanfe(authorized.id);
   } catch (err) {
     toast.add({ severity: "error", summary: "Não foi possível emitir a nota fiscal", detail: normalizeApiError(err).message, life: 5000 });
   } finally {

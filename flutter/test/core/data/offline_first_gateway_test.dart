@@ -397,6 +397,28 @@ void main() {
     );
   });
 
+  test('consultar, reenviar e cancelar nota não viram documento na fila', () async {
+    // As três começam com `/invoices/` e caíam na fila fiscal: cada consulta
+    // de autorização criava um DOCUMENTO NOVO, sem pedido (o corpo dessas
+    // rotas não tem `order`), que depois tentava emitir sozinho. Consultar a
+    // SEFAZ e cancelar uma nota são operações do servidor.
+    for (final path in const [
+      '/invoices/nota-1/refresh-status/',
+      '/invoices/nota-1/resend/',
+      '/invoices/nota-1/cancel/',
+    ]) {
+      expect(
+        stack.gateway.handlesWrite('POST', path, const {}),
+        isFalse,
+        reason: path,
+      );
+    }
+    expect(
+      await stack.gateway.fiscalQueue.pendingCount(scope: TestPdvStack.scope),
+      0,
+    );
+  });
+
   test('rotas que exigem servidor de verdade não são atendidas localmente', () async {
     for (final path in const [
       '/auth/login/',
