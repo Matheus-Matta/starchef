@@ -4182,6 +4182,7 @@ class _HomePageState extends State<HomePage> {
               await _printDanfe(
                 invoiceId: '${settled['id']}',
                 summary: summary,
+                automatic: true,
               );
             } else {
               _showFiscalStateToast(settled, silent: silentIfUnconfigured);
@@ -4241,6 +4242,7 @@ class _HomePageState extends State<HomePage> {
         invoiceId: '${invoice['id']}',
         summary:
             'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+        automatic: true,
       );
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
@@ -4324,7 +4326,11 @@ class _HomePageState extends State<HomePage> {
       }
       if (!mounted) return;
       if (current['printable'] == true) {
-        await _printDanfe(invoiceId: invoiceId, summary: summary);
+        await _printDanfe(
+          invoiceId: invoiceId,
+          summary: summary,
+          automatic: true,
+        );
         return;
       }
       final state = '${current['fiscal_state'] ?? ''}';
@@ -4392,9 +4398,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  ///
+  /// `automatic` é a impressão que o gesto de concluir dispara sozinho. Ela não
+  /// repete um DANFE que já saiu deste terminal: o servidor pode ter criado um
+  /// cupom automático quando a autorização chegou, e o cliente receberia duas
+  /// vias idênticas. A reimpressão pedida pelo operador ignora isso — quem
+  /// clicou quer outra via.
   Future<void> _printDanfe({
     required String invoiceId,
     required String summary,
+    bool automatic = false,
   }) async {
     final printers = await _list(
       '/printers/',
@@ -4434,7 +4448,11 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     await _work(() async {
-      await deviceAgent.printJobManually(printJob, printer);
+      await deviceAgent.printJobManually(
+        printJob,
+        printer,
+        automatic: automatic,
+      );
       return true;
     });
   }

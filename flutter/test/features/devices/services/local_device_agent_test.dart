@@ -10,6 +10,96 @@ import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 import '../../../core/data/pdv_test_support.dart';
 
 void main() {
+  group('DANFE não sai duas vezes', () {
+    Map<String, dynamic> danfeJob({String key = 'CHAVE-1'}) => {
+      'id': 'job-1',
+      'job_type': 'fiscal_danfe',
+      'payload': {
+        'payload_version': 2,
+        'invoice_id': 'nota-1',
+        'access_key': key,
+        'text_content': 'DANFE NFC-e',
+      },
+    };
+
+    test('a chave é da NOTA, não do trabalho de impressão', () {
+      // Dois trabalhos diferentes para a mesma nota são exatamente o que fazia
+      // o cliente receber duas vias idênticas.
+      final first = LocalDeviceAgent.fiscalDedupeKey(danfeJob());
+      final second = LocalDeviceAgent.fiscalDedupeKey({
+        ...danfeJob(),
+        'id': 'job-2',
+      });
+
+      expect(first, 'danfe:CHAVE-1');
+      expect(second, first);
+    });
+
+    test('recibo e comanda continuam podendo sair mais de uma vez', () {
+      for (final type in ['receipt', 'kitchen', 'weigh_ticket']) {
+        expect(
+          LocalDeviceAgent.fiscalDedupeKey({
+            ...danfeJob(),
+            'job_type': type,
+          }),
+          isNull,
+          reason: type,
+        );
+      }
+    });
+
+    test('nota sem chave nem id não inventa identidade', () {
+      expect(
+        LocalDeviceAgent.fiscalDedupeKey({
+          'job_type': 'fiscal_danfe',
+          'payload': {'payload_version': 2, 'text_content': 'DANFE'},
+        }),
+        isNull,
+      );
+    });
+
+    test('a marca do documento impresso sobrevive no banco local', () async {
+      final stack = await TestPdvStack.create();
+      addTearDown(stack.dispose);
+      final queue = stack.gateway.printQueue;
+      const key = 'danfe:CHAVE-1';
+
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: key,
+        ),
+        isFalse,
+      );
+
+      await queue.markDocumentPrinted(
+        scope: TestPdvStack.scope,
+        dedupeKey: key,
+      );
+
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: key,
+        ),
+        isTrue,
+      );
+      // Marcar de novo não é erro: os dois caminhos (fila e impressão manual)
+      // escrevem a mesma chave.
+      await queue.markDocumentPrinted(
+        scope: TestPdvStack.scope,
+        dedupeKey: key,
+      );
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: 'danfe:OUTRA',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('LocalDeviceAgent filtro de evento em tempo real', () {
     test('aceita PrintJob do próprio restaurante', () {
       final event = RealtimeEvent('model.updated', {

@@ -137,6 +137,39 @@ class PrintQueueService {
   PrintQueueService({required this.database, String? leaseOwner})
     : _leaseOwner = leaseOwner ?? 'spooler-${LocalId.uuid()}';
 
+  /// Este documento já saiu no papel neste terminal?
+  ///
+  /// A pergunta é sobre a NOTA, não sobre o trabalho de impressão: dois
+  /// trabalhos diferentes para a mesma nota fiscal são exatamente o que fazia
+  /// o cliente receber dois DANFEs idênticos.
+  Future<bool> wasDocumentPrinted({
+    required String scope,
+    required String dedupeKey,
+  }) async {
+    if (dedupeKey.isEmpty) return false;
+    final row = await database.querySingle(
+      'SELECT 1 FROM printed_documents WHERE scope = ? AND dedupe_key = ?',
+      [scope, dedupeKey],
+    );
+    return row != null;
+  }
+
+  /// Registra que este documento saiu no papel neste terminal.
+  Future<void> markDocumentPrinted({
+    required String scope,
+    required String dedupeKey,
+  }) async {
+    if (dedupeKey.isEmpty) return;
+    await database.execute(
+      '''
+      INSERT INTO printed_documents(scope, dedupe_key, printed_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(scope, dedupe_key) DO UPDATE SET printed_at = excluded.printed_at
+      ''',
+      [scope, dedupeKey, DateTime.now().toUtc().toIso8601String()],
+    );
+  }
+
   /// Escada de espera entre tentativas: cada falha espera mais que a anterior.
   ///
   /// Começa em segundos porque a causa mais comum (papel, cabo, impressora
@@ -259,8 +292,7 @@ class PrintQueueService {
       if (row == null) return null;
 
       final createdAt = DateTime.tryParse('${row['created_at']}')?.toUtc();
-      if (createdAt != null &&
-          now.difference(createdAt) > expiresAfter) {
+      if (createdAt != null && now.difference(createdAt) > expiresAfter) {
         await tx.execute(
           '''
           UPDATE print_queue

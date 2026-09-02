@@ -592,6 +592,15 @@ ideal desejado.
    Sem terminal identificado (integração, cliente antigo) o trabalho continua
    automático: ali não há ninguém na frente do cliente, e uma autorização que
    chega horas depois não sairia em impressora nenhuma.
+
+   **E há uma última linha de defesa, no terminal.** O agente local guarda o
+   que já entregou em `printed_documents`, com chave na NOTA
+   (`danfe:<chave de acesso>`) e não no trabalho de impressão. Todo caminho
+   automático — o laço do agente e a impressão que o gesto de concluir dispara
+   — consulta essa marca antes de mandar papel. Assim, mesmo que dois
+   trabalhos existam para a mesma nota, só um vira via. A reimpressão pedida
+   pelo operador ignora a marca de propósito: quem clicou quer outra via, e
+   isso é uma decisão, não uma duplicação.
 6. **Produto sem perfil não é barrado por padrão.** Com
    `strict_fiscal_profile` desligado, o fallback NCM `00000000` ainda segue
    até a Focus (e tende a causar rejeição) — mas o que foi suprido fica

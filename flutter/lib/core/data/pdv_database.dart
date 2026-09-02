@@ -97,7 +97,10 @@ class PdvDatabase {
     return _database.getOptional(sql, parameters);
   }
 
-  Future<void> execute(String sql, [List<Object?> parameters = const []]) async {
+  Future<void> execute(
+    String sql, [
+    List<Object?> parameters = const [],
+  ]) async {
     await _ready;
     await _database.execute(sql, parameters);
   }
@@ -144,6 +147,25 @@ class PdvDatabase {
       CREATE UNIQUE INDEX IF NOT EXISTS print_queue_remote_idx
       ON print_queue(scope, remote_job_id)
       WHERE remote_job_id IS NOT NULL
+    ''');
+    // O DOCUMENTO que já saiu no papel, e não o trabalho que o trouxe.
+    //
+    // O índice acima impede o mesmo `PrintJob` de entrar duas vezes; não
+    // impede DOIS trabalhos diferentes para a MESMA nota fiscal — e é isso que
+    // acontece quando o servidor cria um cupom automático (webhook, consulta,
+    // reprocessamento) e o terminal pede o dele em seguida. O cliente recebia
+    // dois DANFEs idênticos. Aqui a chave é a nota, então o segundo cupom
+    // automático não vira papel.
+    //
+    // Reimpressão pedida por gente não consulta esta tabela: quem clicou quer
+    // outra via, e isso é uma decisão, não uma duplicação.
+    await tx.execute('''
+      CREATE TABLE IF NOT EXISTS printed_documents (
+        scope TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        printed_at TEXT NOT NULL,
+        PRIMARY KEY (scope, dedupe_key)
+      )
     ''');
   }
 
@@ -193,7 +215,11 @@ class PdvDatabase {
   /// `payload`, apagando o que havia sido enviado justamente quando alguém
   /// precisava comparar os dois.
   static Future<void> _createFiscalSnapshot(SqliteWriteContext tx) async {
-    for (final column in ['snapshot TEXT', 'response TEXT', 'invoice_id TEXT']) {
+    for (final column in [
+      'snapshot TEXT',
+      'response TEXT',
+      'invoice_id TEXT',
+    ]) {
       try {
         await tx.execute('ALTER TABLE fiscal_queue ADD COLUMN $column');
       } on Object {

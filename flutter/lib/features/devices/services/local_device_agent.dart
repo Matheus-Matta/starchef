@@ -440,6 +440,36 @@ class LocalDeviceAgent {
   ///
   /// Uma falha aqui significa apenas "não há novidade do servidor": o que já
   /// está na fila continua saindo normalmente.
+  /// Identidade do DOCUMENTO fiscal, para não sair duas vezes no papel.
+  ///
+  /// O cupom é da NOTA, não do trabalho de impressão que o trouxe. Dois
+  /// trabalhos para a mesma nota — um automático criado pelo servidor quando a
+  /// autorização chega, outro pedido pelo terminal — entregavam dois DANFEs
+  /// idênticos ao cliente. `null` para tudo que não é DANFE: recibo e comanda
+  /// de cozinha podem legitimamente sair mais de uma vez.
+  static String? fiscalDedupeKey(Map<String, dynamic> job) {
+    final rawType = '${job['job_type'] ?? ''}'.trim();
+    if (PrintJobType.parse(rawType) != PrintJobType.fiscalDanfe) return null;
+    final payload = job['payload'] is Map<String, dynamic>
+        ? job['payload'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    // A chave de acesso identifica a nota na SEFAZ; o id serve de reserva para
+    // um payload antigo que não a trazia.
+    final key = '${payload['access_key'] ?? ''}'.trim();
+    final id = '${payload['invoice_id'] ?? ''}'.trim();
+    if (key.isEmpty && id.isEmpty) return null;
+    return 'danfe:${key.isNotEmpty ? key : id}';
+  }
+
+  /// Registra que este DANFE já saiu no papel deste terminal.
+  Future<void> _rememberFiscalPrint(Map<String, dynamic> job) async {
+    final key = fiscalDedupeKey(job);
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (key == null || queue == null || scope == null) return;
+    await queue.markDocumentPrinted(scope: scope, dedupeKey: key);
+  }
+
   Future<void> _ingestRemotePrintJobs() async {
     final queue = _printQueue;
     final scope = _printScope;
@@ -498,6 +528,24 @@ class LocalDeviceAgent {
           continue;
         }
         final payload = job['payload'] as Map<String, dynamic>? ?? const {};
+        // O MESMO DOCUMENTO já saiu daqui. Não é o mesmo trabalho (o índice do
+        // banco já cuida disso): é outro trabalho para a mesma nota, criado
+        // pelo servidor quando a autorização chegou, depois de o terminal já
+        // ter entregue o cupom ao cliente. Automático nenhum repete papel.
+        final dedupeKey = fiscalDedupeKey(job);
+        if (dedupeKey != null &&
+            queue != null &&
+            scope != null &&
+            await queue.wasDocumentPrinted(
+              scope: scope,
+              dedupeKey: dedupeKey,
+            )) {
+          AppLogger.instance.info(
+            'print_job_skipped_documento_ja_impresso',
+            data: {'job_id': jobId, 'documento': dedupeKey},
+          );
+          continue;
+        }
         if (payload['manual_only'] == true) {
           // Sem este registro, um trabalho marcado como manual sumia sem
           // deixar rastro: "não imprimiu e não deu erro" ficava impossível de
@@ -537,6 +585,13 @@ class LocalDeviceAgent {
           );
           ingested++;
           continue;
+        }
+        // A marca vale a partir daqui, e não da saída do papel: a fila LOCAL
+        // já se comprometeu a entregar este cupom (se a impressora estiver
+        // fora, ela insiste). Esperar a confirmação deixaria uma janela em que
+        // o terminal ainda mandaria a sua via, que é a segunda.
+        if (dedupeKey != null) {
+          await queue.markDocumentPrinted(scope: scope, dedupeKey: dedupeKey);
         }
         // `remoteJobId` é a chave que impede o mesmo cupom de entrar duas
         // vezes: enquanto o `mark-printed` não é confirmado, o trabalho volta
@@ -935,10 +990,32 @@ class LocalDeviceAgent {
 
   /// Imprime agora um `PrintJob` renderizado pelo servidor, a pedido do
   /// operador — sem fila, porque quem clicou está olhando a impressora.
+  /// Manda um trabalho para a impressora deste terminal.
+  ///
+  /// `automatic` marca a impressão que o PDV dispara sozinho ao concluir a
+  /// venda — essa NÃO repete um DANFE que já saiu daqui. A reimpressão pedida
+  /// por gente sempre sai: quem clicou quer outra via, e isso é uma decisão,
+  /// não uma duplicação.
   Future<void> printJobManually(
     Map<String, dynamic> job,
-    Map<String, dynamic> printer,
-  ) async {
+    Map<String, dynamic> printer, {
+    bool automatic = false,
+  }) async {
+    if (automatic) {
+      final key = fiscalDedupeKey(job);
+      final queue = _printQueue;
+      final scope = _printScope;
+      if (key != null &&
+          queue != null &&
+          scope != null &&
+          await queue.wasDocumentPrinted(scope: scope, dedupeKey: key)) {
+        AppLogger.instance.info(
+          'print_manual_skipped_documento_ja_impresso',
+          data: {'documento': key},
+        );
+        return;
+      }
+    }
     // O papel vale mais que o registro: num Caixa Secundário este agente fica
     // parado de propósito (quem serve a fila da nuvem é o Principal), e exigir
     // sessão aqui fazia o botão "imprimir" não produzir nada num terminal com
@@ -961,6 +1038,7 @@ class LocalDeviceAgent {
         runtime: printing,
       ).send(document);
       printed = true;
+      await _rememberFiscalPrint(job);
       // Sem sessão ou sem id remoto não há o que confirmar: o cupom já está
       // com o operador, e é isso que ele pediu.
       if (token == null || jobId.isEmpty) return;
@@ -1070,10 +1148,7 @@ class LocalDeviceAgent {
       // restaurante ainda não definido), e não cadastro faltando.
       AppLogger.instance.warning(
         'print_agent_sem_impressoras',
-        data: {
-          'agente_ativo': isRunning,
-          'restaurante': _restaurantId,
-        },
+        data: {'agente_ativo': isRunning, 'restaurante': _restaurantId},
       );
     }
     return knownPrinters;
