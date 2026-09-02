@@ -284,15 +284,26 @@ fantasma na fila fiscal — sem pedido, porque o corpo dessas rotas não tem
 ### Com internet, o cupom fiscal sai no mesmo gesto
 
 A chamada inicial devolve `_fiscal_pending: true`, mas o PDV não espera o
-ciclo de 30 segundos: `flushFiscalForOrder` entrega a nota na hora. Duas
-respostas são possíveis:
+ciclo de 30 segundos: `flushFiscalForOrder` entrega a nota na hora, com até
+cinco tentativas curtas (`_flushFiscalWithRetries`, ~10s no total) para
+cobrir uma entrega que estava só um instante atrás da nossa — outro ciclo de
+sincronização em voo, um `ping` que falhou uma vez. Três respostas são
+possíveis:
 
 1. **autorizada** (`printable: true`) — o DANFE vai para a impressora master
    junto com o recibo, no mesmo clique;
 2. **em trânsito** (`processing` / `awaiting_transmission`) — o caso comum: a
-   Focus aceita e a SEFAZ autoriza um instante depois.
+   Focus aceita e a SEFAZ autoriza um instante depois;
+3. **ainda não confirmada** mesmo após as tentativas — sem conexão no
+   instante, ou a fila genuinamente não conseguiu entregar ainda. **A venda
+   NUNCA termina em silêncio**: um aviso avisa o operador, e a nota segue na
+   fila fiscal local até o ciclo automático de 30s (ou até o operador
+   reabrir o pedido) conseguir. Antes, esse aviso ficava escondido atrás da
+   mesma bandeira que evita nagging num restaurante sem NFC-e
+   (`silentIfUnconfigured`) — a venda terminava só com o recibo, sem
+   explicação nenhuma.
 
-No segundo caso `_watchFiscalAuthorization` consulta
+No caso 2, `_watchFiscalAuthorization` consulta
 `POST /invoices/{id}/refresh-status/` em segundo plano, com espera crescente
 (1,2 s, 2 s, 3 s, 4 s, 5 s — cerca de 15 s no total), e imprime o DANFE assim
 que a autorização chega. Não bloqueia o caixa: a próxima venda já pode
@@ -301,12 +312,29 @@ avisa o operador — isso não se resolve esperando.
 
 Se a autorização não chegar nessa janela, nada se perde: a nota segue na
 esteira normal (webhook da Focus e consulta periódica), e o backend enfileira
-o DANFE por `ensure_fiscal_print_job`. O cupom também pode ser reimpresso pelo
-histórico do pedido.
+o DANFE por `ensure_fiscal_print_job` — a menos que a venda já esteja marcada
+`terminal_prints` (§4.2), caso em que só o próprio terminal insiste. O cupom
+também pode ser reimpresso pelo histórico do pedido.
 
 Toda resposta de nota (`emit`, `refresh-status`, `resend`, `cancel`) carrega
 `fiscal_state` e `printable`. Sem esses dois campos, uma nota que voltava
 autorizada da consulta continuava sendo tratada pela tela como não-imprimível.
+
+### `push()` da fila de vendas é reentrante
+
+`SyncService.push()` drena a fila de vendas (`sync_queue`). Ele roda também
+por um timer periódico (debounce de 450ms após qualquer escrita local), e o
+gesto de concluir o pedido precisa da GARANTIA de que o recebimento chegou ao
+servidor antes de emitir a nota (§3.1) — por isso chama `push()` de novo,
+possivelmente enquanto o ciclo periódico ainda está em voo.
+
+Uma chamada concorrente não desiste mais quando outra já está em andamento:
+ela marca que precisa de mais uma volta e ESPERA o mesmo ciclo terminar
+(`_pushCycle`/`_pushAgain`). Antes, a segunda chamada retornava
+IMEDIATAMENTE — um no-op silencioso — e quem chamou seguia em frente achando
+a fila drenada sem ela estar. Era mais uma via para a venda terminar só com o
+recibo: a emissão fiscal partia com o pedido ainda sem o pagamento
+confirmado no servidor.
 
 Se o pagamento inteiro ainda estiver apenas no SQLite aguardando
 sincronização, `_completePaidOrder` não chama a emissão automática. Primeiro a

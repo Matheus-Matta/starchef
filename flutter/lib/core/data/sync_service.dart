@@ -34,7 +34,11 @@ abstract interface class SyncTransport {
 
 /// Falha temporária de rede — a operação volta para a fila (§23).
 class TransientSyncFailure implements Exception {
-  const TransientSyncFailure(this.message, {this.retryAfter, this.offline = true});
+  const TransientSyncFailure(
+    this.message, {
+    this.retryAfter,
+    this.offline = true,
+  });
 
   final String message;
   final Duration? retryAfter;
@@ -86,8 +90,15 @@ class SyncSnapshot {
       nextRetryAt == other.nextRetryAt;
 
   @override
-  int get hashCode =>
-      Object.hash(phase, pending, failed, fiscalPending, fiscalBlocked, lastError, nextRetryAt);
+  int get hashCode => Object.hash(
+    phase,
+    pending,
+    failed,
+    fiscalPending,
+    fiscalBlocked,
+    lastError,
+    nextRetryAt,
+  );
 }
 
 /// Sincronização entre o SQLite local e o backend, nos dois sentidos.
@@ -142,7 +153,19 @@ class SyncService {
   Timer? _pushTimer;
   Timer? _pullTimer;
   Timer? _fiscalTimer;
-  bool _pushing = false;
+
+  /// Ciclo de entrega em andamento, se houver. Concorrentes esperam ESTE
+  /// mesmo `Future` em vez de simplesmente desistir — era isso que fazia
+  /// `flushSalesQueue` (chamado no gesto de concluir o pedido, para o
+  /// recebimento chegar ao servidor ANTES da emissão fiscal) virar um no-op
+  /// silencioso sempre que um ciclo periódico (dos 450 ms de debounce de uma
+  /// escrita anterior — fechar o pedido, por exemplo) ainda estava em voo: o
+  /// recebimento ficava na fila, a nota emitia sem ele, e só o recibo saía.
+  Future<void>? _pushCycle;
+
+  /// Chegou trabalho novo enquanto um ciclo já rodava — o ciclo atual não vai
+  /// vê-lo, então mais uma volta é necessária antes de dar por concluído.
+  bool _pushAgain = false;
   bool _pulling = false;
   bool _disposed = false;
 
@@ -198,55 +221,77 @@ class SyncService {
   // ------------------------------------------------------------------ saída
 
   /// Entrega as operações pendentes ao backend, em ordem (§6).
-  Future<void> push() async {
-    final scope = gateway.scope;
-    if (_disposed || _pushing || scope == null) return;
-    _pushing = true;
+  ///
+  /// Reentrante: uma chamada que chega com outra já em voo NÃO desiste — ela
+  /// marca que precisa de mais uma volta e espera o mesmo ciclo terminar.
+  /// Sem isso, quem precisa da GARANTIA de entrega (como o "Concluir pedido"
+  /// esperando o recebimento chegar antes de emitir a nota) podia receber de
+  /// volta um retorno vazio sem ter entregado nada.
+  Future<void> push() {
+    if (_disposed || gateway.scope == null) return Future.value();
+    final inFlight = _pushCycle;
+    if (inFlight != null) {
+      _pushAgain = true;
+      return inFlight;
+    }
+    final cycle = _runPushCycles();
+    _pushCycle = cycle;
+    return cycle;
+  }
+
+  Future<void> _runPushCycles() async {
     try {
-      var summary = await gateway.queue.summary(scope: scope);
-      if (!summary.hasWork) {
-        await _publish(
-          summary.failed > 0 ? SyncPhase.blocked : SyncPhase.idle,
-        );
-        return;
-      }
-
-      // Confirma que o servidor responde antes de gastar tentativas: sem
-      // isso, um ciclo com a rede caída levaria o backoff de cada operação ao
-      // teto sem nenhuma chance real de entrega.
-      if (!_snapshot.hasConnection && !await transport.ping()) {
-        await _publish(
-          SyncPhase.offline,
-          error: 'O servidor não respondeu à verificação de saúde.',
-        );
-        _scheduleRetryAfter(SyncQueueService.retryLadder.first);
-        return;
-      }
-
-      await _publish(SyncPhase.syncing);
-      var processed = 0;
-      while (processed < _maxOperationsPerCycle) {
-        final claimed = await gateway.queue.claimNext(scope: scope);
-        if (claimed == null) break;
-        final entry = await gateway.queue.resolveReferences(
-          claimed,
-          scope: scope,
-        );
-        final delivered = await _deliver(entry, scope: scope);
-        if (!delivered) break;
-        processed += 1;
-      }
-
-      summary = await gateway.queue.summary(scope: scope);
-      if (summary.failed > 0) {
-        await _publish(SyncPhase.blocked, error: 'Há operações para revisar.');
-      } else if (summary.pending > 0) {
-        schedulePush(delay: const Duration(seconds: 1));
-      } else {
-        await _publish(SyncPhase.idle);
-      }
+      do {
+        _pushAgain = false;
+        await _pushOnce();
+      } while (_pushAgain && !_disposed);
     } finally {
-      _pushing = false;
+      _pushCycle = null;
+    }
+  }
+
+  Future<void> _pushOnce() async {
+    final scope = gateway.scope;
+    if (_disposed || scope == null) return;
+    var summary = await gateway.queue.summary(scope: scope);
+    if (!summary.hasWork) {
+      await _publish(summary.failed > 0 ? SyncPhase.blocked : SyncPhase.idle);
+      return;
+    }
+
+    // Confirma que o servidor responde antes de gastar tentativas: sem
+    // isso, um ciclo com a rede caída levaria o backoff de cada operação ao
+    // teto sem nenhuma chance real de entrega.
+    if (!_snapshot.hasConnection && !await transport.ping()) {
+      await _publish(
+        SyncPhase.offline,
+        error: 'O servidor não respondeu à verificação de saúde.',
+      );
+      _scheduleRetryAfter(SyncQueueService.retryLadder.first);
+      return;
+    }
+
+    await _publish(SyncPhase.syncing);
+    var processed = 0;
+    while (processed < _maxOperationsPerCycle) {
+      final claimed = await gateway.queue.claimNext(scope: scope);
+      if (claimed == null) break;
+      final entry = await gateway.queue.resolveReferences(
+        claimed,
+        scope: scope,
+      );
+      final delivered = await _deliver(entry, scope: scope);
+      if (!delivered) break;
+      processed += 1;
+    }
+
+    summary = await gateway.queue.summary(scope: scope);
+    if (summary.failed > 0) {
+      await _publish(SyncPhase.blocked, error: 'Há operações para revisar.');
+    } else if (summary.pending > 0) {
+      schedulePush(delay: const Duration(seconds: 1));
+    } else {
+      await _publish(SyncPhase.idle);
     }
   }
 
@@ -391,7 +436,11 @@ class SyncService {
           },
         );
       } on TransientSyncFailure catch (error) {
-        await gateway.recordSync(descriptor.type, at: null, error: error.message);
+        await gateway.recordSync(
+          descriptor.type,
+          at: null,
+          error: error.message,
+        );
         await _publish(SyncPhase.offline, error: error.message);
         return applied;
       } on ApiException catch (error) {

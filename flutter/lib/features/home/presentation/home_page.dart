@@ -4171,37 +4171,46 @@ class _HomePageState extends State<HomePage> {
         // garante que uma queda no meio do caminho nao perca o documento.
         // Mas esperar o ciclo de 30 segundos para o cupom fiscal sair
         // deixaria o cliente parado no balcao: com conexao, entrega a nota
-        // agora e imprime em seguida, no mesmo gesto do recibo.
-        if (issues.isEmpty) {
-          final settled = await api.flushFiscalForOrder('${order['id']}');
-          if (!mounted) return;
-          if (settled != null) {
-            final summary =
-                'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
-            if (settled['printable'] == true) {
-              await _printDanfe(
-                invoiceId: '${settled['id']}',
-                summary: summary,
-                automatic: true,
-              );
-            } else {
-              _showFiscalStateToast(settled, silent: silentIfUnconfigured);
-              _watchFiscalAuthorization(settled, summary: summary);
-            }
-            return;
+        // agora e imprime em seguida, no mesmo gesto do recibo. Algumas
+        // insistencias curtas cobrem uma entrega que estava só um instante
+        // atrás da nossa (outro ciclo de sincronização em voo, um ping que
+        // falhou uma vez) sem prender o caixa por muito tempo.
+        final settled = issues.isEmpty
+            ? await _flushFiscalWithRetries('${order['id']}')
+            : null;
+        if (!mounted) return;
+        if (settled != null) {
+          final summary =
+              'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
+          if (settled['printable'] == true) {
+            await _printDanfe(
+              invoiceId: '${settled['id']}',
+              summary: summary,
+              automatic: true,
+            );
+          } else {
+            _showFiscalStateToast(settled, silent: silentIfUnconfigured);
+            _watchFiscalAuthorization(settled, summary: summary);
           }
+          return;
         }
-        if (!silentIfUnconfigured || issues.isNotEmpty) {
-          showAppToast(
-            context,
-            issues.isEmpty
-                ? 'Venda concluída. A NFC-e ficou pendente e será emitida '
-                      'assim que a conexão com o provedor fiscal voltar.'
-                : 'Venda concluída, mas o cadastro fiscal está incompleto e a '
-                      'NFC-e não vai passar assim: ${issues.first}',
-            severity: AppErrorSeverity.warning,
-          );
-        }
+        // Continua pendente mesmo depois de insistir: a nota fica na fila
+        // fiscal local e sai pelo ciclo automático (30s) ou pela próxima
+        // ação do operador — mas NINGUÉM fica vigiando essa autorização
+        // para imprimir sozinho a partir daqui. O aviso não é opcional: era
+        // aqui que a venda terminava só com o recibo, sem explicação
+        // nenhuma, porque este toast ficava escondido atrás da mesma
+        // bandeira que esconde "este restaurante não emite NFC-e".
+        showAppToast(
+          context,
+          issues.isEmpty
+              ? 'Venda concluída. A NFC-e ainda não foi confirmada com o '
+                    'provedor fiscal e será emitida assim que possível — '
+                    'acompanhe pelo histórico do pedido.'
+              : 'Venda concluída, mas o cadastro fiscal está incompleto e a '
+                    'NFC-e não vai passar assim: ${issues.first}',
+          severity: AppErrorSeverity.warning,
+        );
         return;
       }
 
@@ -4340,6 +4349,30 @@ class _HomePageState extends State<HomePage> {
         return;
       }
     }
+  }
+
+  /// Insiste em entregar a nota antes de desistir e avisar o operador.
+  ///
+  /// `flushFiscalForOrder` pode voltar `null` por um instante sem conexão, ou
+  /// porque outro ciclo de sincronização já estava em voo — nenhum dos dois
+  /// significa "sem rede para sempre". Poucas tentativas curtas cobrem isso
+  /// sem prender o caixa: se depois delas ainda não resolveu, a nota segue
+  /// pela fila e o operador é avisado.
+  Future<Map<String, dynamic>?> _flushFiscalWithRetries(String orderId) async {
+    const waits = [
+      Duration.zero,
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+    ];
+    for (final wait in waits) {
+      if (wait > Duration.zero) await Future<void>.delayed(wait);
+      if (!mounted) return null;
+      final settled = await api.flushFiscalForOrder(orderId);
+      if (settled != null) return settled;
+    }
+    return null;
   }
 
   /// Explica ao operador por que o cupom fiscal ainda nao saiu.

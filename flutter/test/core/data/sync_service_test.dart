@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/data/entity_catalog.dart';
 import 'package:starchef_pdv/core/data/entity_record.dart';
@@ -27,6 +29,66 @@ void main() {
     await sync.dispose();
     await stack.dispose();
   });
+
+  test(
+    'push() concorrente não devolve antes de entregar o que já estava na fila',
+    () async {
+      // O caso real: um ciclo periódico (do debounce de 450ms de uma escrita
+      // anterior) já está conversando com o servidor quando o gesto de
+      // concluir o pedido chama `flushSalesQueue` esperando a GARANTIA de que
+      // o recebimento chegou — antes de disparar a emissão fiscal. Se a
+      // segunda chamada desistisse por já haver uma em voo, quem chamou
+      // seguiria em frente achando a fila vazia sem ela estar.
+      final release = Completer<void>();
+      transport.gate = release.future;
+      final delivered = <String>[];
+      transport.handlers['POST /orders/'] = (request) {
+        delivered.add('${request.body?['client_order_id']}');
+        return {
+          'id': 'pedido-real-${delivered.length}',
+          'sequence': delivered.length,
+          'status': 'open',
+          'items': const [],
+        };
+      };
+
+      final orderA = await stack.gateway.write(
+        'POST',
+        '/orders/',
+        body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+      );
+      final localA = '${orderA.payload['id']}';
+
+      final periodicPush = sync.push();
+      // Dá a volta no loop de eventos para o ciclo periódico reservar o
+      // slot (`_pushCycle`) antes do segundo pedido nascer.
+      await Future<void>.delayed(Duration.zero);
+
+      final orderB = await stack.gateway.write(
+        'POST',
+        '/orders/',
+        body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+      );
+      final localB = '${orderB.payload['id']}';
+
+      final guaranteedPush = sync.push();
+      var guaranteedResolved = false;
+      unawaited(guaranteedPush.then((_) => guaranteedResolved = true));
+
+      // Ainda travado na rede: nada foi entregue, e a chamada que promete
+      // entrega não pode ter terminado — senão a garantia seria falsa.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(guaranteedResolved, isFalse);
+      expect(delivered, isEmpty);
+
+      release.complete();
+      await periodicPush;
+      await guaranteedPush;
+
+      expect(delivered, containsAll([localA, localB]));
+      expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+    },
+  );
 
   test('entrega a fila e reconcilia o ID temporário com o real (§7)', () async {
     final created = await stack.gateway.write(

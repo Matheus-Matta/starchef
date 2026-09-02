@@ -96,6 +96,11 @@ class FakeSyncTransport implements SyncTransport {
   /// Resposta padrão quando nenhum handler casa.
   Object Function(RecordedRequest)? fallback;
 
+  /// Trava opcional que atrasa a entrega — para testar dois `push()`
+  /// concorrentes: o primeiro fica "conversando com o servidor" até o teste
+  /// mandar continuar, e só então os dois terminam.
+  Future<void>? gate;
+
   @override
   Future<bool> ping() async => online;
 
@@ -118,6 +123,7 @@ class FakeSyncTransport implements SyncTransport {
       origin: origin,
     );
     requests.add(request);
+    if (gate != null) await gate;
     if (!online) {
       throw const TransientSyncFailure('Sem conexão com o servidor.');
     }
