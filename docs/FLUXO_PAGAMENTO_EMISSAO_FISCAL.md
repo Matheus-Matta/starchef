@@ -181,6 +181,34 @@ Quando o total é quitado:
 O recibo comum do pedido é um comprovante operacional e contém a indicação de
 que não é documento fiscal. Ele não substitui DANFE, NF-e ou NFC-e.
 
+### 3.1 No PDV desktop, o recebimento é montado antes de ser enviado
+
+A tela de pagamento **não envia nada** enquanto o operador escolhe formas e
+valores. Cada "Adicionar pagamento" monta uma linha na tela
+(`OrderPresenter.stagedPayment`), e o `POST /pay/` de todas elas acontece de
+uma vez no clique de **Concluir pedido** (`_commitStagedPayments`).
+
+Isso resolve três coisas que vinham juntas:
+
+1. o pedido virava **pago** no instante em que o operador escolhia a forma de
+   pagamento — antes de conferir troco, referência, ou de decidir dividir a
+   conta;
+2. excluir esse recebimento devolvia **HTTP 409** ("este recebimento já está
+   subindo para o servidor"), porque a operação já estava na fila. O caixa
+   ficava com um recebimento que não conseguia tirar. Uma linha ainda não
+   enviada agora some da tela e pronto — ela não existe em lugar nenhum;
+3. recibo e DANFE dependiam de o operador lembrar de voltar à tela para
+   concluir. Agora a venda passa a paga e o papel sai no mesmo gesto.
+
+Sair da tela com recebimentos montados pede confirmação: eles são descartados
+e o pedido continua em aberto.
+
+Antes de emitir a nota, o gesto **drena a fila de vendas**
+(`ApiClient.flushSalesQueue`). A emissão fiscal parte do servidor, e uma nota
+que chegasse lá antes dos recebimentos sairia com o DANFE sem as formas de
+pagamento — justamente o que o cliente confere. Sem conexão isso não faz nada:
+a venda segue pela fila e quem imprime é o próprio terminal.
+
 ## 4. Quem dispara a emissão
 
 ### 4.1 Retaguarda web
@@ -198,11 +226,12 @@ Ao clicar nesse botão, a retaguarda:
 
 ### 4.2 PDV Flutter
 
-A impressão é do gesto de **Concluir pedido**, não do pagamento. Quando o
-operador clica, `_completePaidOrder` imprime o recibo da venda e chama
-`_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois documentos,
-na impressora master do terminal. Um pedido pago reaberto também exibe
-**Emitir NFC-e / Imprimir DANFE**.
+A impressão é do gesto de **Concluir pedido**, não do pagamento — e, desde a
+mudança da §3.1, o pagamento também é desse gesto. Quando o operador clica,
+`_completePaidOrder` envia os recebimentos montados, imprime o recibo da venda
+e chama `_emitFiscalInvoice`, que imprime o DANFE — dois trabalhos, dois
+documentos, na impressora master do terminal. Um pedido pago reaberto também
+exibe **Emitir NFC-e / Imprimir DANFE**.
 
 O recibo sai **com ou sem internet**. `/orders/{id}/print/` exige servidor,
 então `_printSaleReceipt` monta o cupom no próprio terminal
@@ -546,6 +575,14 @@ ideal desejado.
    DANFE para o papel com `printable: true`; enquanto a SEFAZ processa, as
    duas consultam `refresh-status` em segundo plano e imprimem quando a
    autorização chega. Uma recusa interrompe a espera e avisa o operador.
+
+   Quem consulta esperando o papel manda `manual_print: true`, e o cupom
+   criado por essa consulta nasce `manual_only` — fora do laço automático do
+   agente local. Sem isso saíam **dois DANFEs** da mesma venda: o que o agente
+   pegava da fila e o que o terminal mandava em seguida. Webhook e
+   reprocessamento periódico continuam criando trabalho automático: ali não há
+   ninguém na frente do cliente, e uma autorização que chega horas depois não
+   sairia em impressora nenhuma.
 6. **Produto sem perfil não é barrado por padrão.** Com
    `strict_fiscal_profile` desligado, o fallback NCM `00000000` ainda segue
    até a Focus (e tende a causar rejeição) — mas o que foi suprido fica

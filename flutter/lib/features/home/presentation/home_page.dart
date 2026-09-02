@@ -200,6 +200,9 @@ class _HomePageState extends State<HomePage> {
   /// O principal respondeu ao último teste de conexão.
   bool get principalReachable => topology.isClientReady;
   int offlinePendingCount = 0;
+
+  /// Numerador dos recebimentos encenados, para dar um id local a cada linha.
+  int stagedPaymentSequence = 0;
   bool sidebarExpanded = true;
 
   List<Map<String, dynamic>> get visibleProducts => products.where((product) {
@@ -1648,6 +1651,13 @@ class _HomePageState extends State<HomePage> {
 
   void _goBack() {
     if (flowStep == 'payment' && activeOrder != null) {
+      // Recebimento montado não existe fora desta tela: voltar o descarta. O
+      // operador precisa saber disso ANTES, senão sairia achando que o
+      // pagamento ficou guardado em algum lugar.
+      if (stagedPayments.isNotEmpty) {
+        unawaited(_confirmLeavingPayment());
+        return;
+      }
       setState(() => flowStep = 'order');
     } else if (flowStep == 'table_details') {
       setState(() => flowStep = 'context');
@@ -1924,6 +1934,42 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Confirma o descarte dos recebimentos que ainda não subiram.
+  Future<void> _confirmLeavingPayment() async {
+    final count = stagedPayments.length;
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: const Text('Descartar os recebimentos desta tela?'),
+        content: Text(
+          count == 1
+              ? 'Há 1 recebimento montado que ainda não foi enviado. Voltar '
+                    'agora o descarta — o pedido continua em aberto.'
+              : 'Há $count recebimentos montados que ainda não foram '
+                    'enviados. Voltar agora os descarta — o pedido continua '
+                    'em aberto.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar recebendo'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Descartar e voltar'),
+          ),
+        ],
+      ),
+    );
+    if (discard != true || !mounted) return;
+    setState(() {
+      registeredPayments = registeredPayments
+          .where((payment) => payment['_staged'] != true)
+          .toList();
+      flowStep = 'order';
+    });
+  }
+
   /// Sair do pedido com itens ainda não enviados exige confirmação.
   ///
   /// F3 e Ctrl + N ficam ao lado de teclas usadas o tempo todo, e um toque
@@ -2132,7 +2178,7 @@ class _HomePageState extends State<HomePage> {
     // Falta valor: só registra o recebimento digitado, e só se ele existir e
     // houver forma de pagamento escolhida.
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
-    await _addSplitPayment();
+    _addSplitPayment();
   }
 
   /// Leva o cursor para a busca da tela atual.
@@ -4241,7 +4287,11 @@ class _HomePageState extends State<HomePage> {
       try {
         current = await api.post(
           '/invoices/$invoiceId/refresh-status/',
-          body: const {},
+          // "Estou esperando esta autorizacao para imprimir." Sem avisar, o
+          // cupom que esta consulta cria entra no laco automatico do agente
+          // local e o cliente recebe DOIS DANFEs: o do agente e o que este
+          // terminal manda em seguida.
+          body: const {'manual_print': true},
           accessToken: token,
         );
       } catch (_) {
@@ -4457,13 +4507,26 @@ class _HomePageState extends State<HomePage> {
     return 'credit';
   }
 
-  Future<void> _addSplitPayment() async {
+  /// Monta o recebimento NA TELA. Nada sai daqui para o servidor.
+  ///
+  /// O envio acontece no clique de **Concluir pedido**, com todos juntos.
+  /// Antes, cada forma de pagamento adicionada já era um `POST /pay/`: o
+  /// pedido virava "pago" no instante em que o operador escolhia o método —
+  /// antes de conferir troco, referência ou de decidir dividir a conta — e
+  /// desfazer virava problema do servidor. Com a operação já na fila, excluir
+  /// devolvia HTTP 409 ("este recebimento já está subindo"), e o caixa ficava
+  /// com um recebimento que não conseguia tirar.
+  ///
+  /// Encenar aqui também é o que faz recibo e DANFE saírem no mesmo gesto: a
+  /// venda passa a paga e o papel sai em seguida, sem uma janela entre as duas
+  /// coisas em que o operador pudesse sair da tela.
+  void _addSplitPayment() {
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
-    if (method['method_type'] != 'cash' &&
-        paymentValue > remainingTotal + .009) {
+    final isCash = method['method_type'] == 'cash';
+    if (!isCash && paymentValue > remainingTotal + .009) {
       _error(
         const ApiException(
           'Somente dinheiro pode ter valor recebido maior que o restante.',
@@ -4471,41 +4534,99 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
-    final result = await _work(
-      () => api.post(
-        '/orders/${activeOrder!['id']}/pay/',
-        body: {
-          'payment_method': selectedPaymentMethod,
-          'amount': paymentValue.toStringAsFixed(2),
-          if (method['method_type'] == 'cash' && cashSession?['id'] != null)
-            'cash_register': cashSession!['id'],
-          'idempotency_key':
-              'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
-          'metadata': {
-            'card_subtype': method['method_type'] == 'card'
-                ? _cardSubtypeFor(method)
-                : '',
-            'reference': paymentReference.text.trim(),
-            'source': 'flutter_pdv',
-          },
-        },
-        accessToken: token,
-        // O tipo da forma de pagamento decide se há troco; só a tela sabe
-        // qual foi escolhida.
-        localContext: {'payment_method': method},
+    stagedPaymentSequence += 1;
+    final staged = <String, dynamic>{
+      // Id local: é o que dá o botão de excluir à linha. Ele nunca vai ao
+      // servidor — o corpo enviado depois é o `_staged_body`.
+      ...OrderPresenter.stagedPayment(
+        localId: 'staged-$stagedPaymentSequence',
+        method: method,
+        received: paymentValue,
+        remaining: remainingTotal,
       ),
-    );
-    if (result == null) return;
+      '_staged_body': <String, dynamic>{
+        'payment_method': selectedPaymentMethod,
+        'amount': paymentValue.toStringAsFixed(2),
+        if (isCash && cashSession?['id'] != null)
+          'cash_register': cashSession!['id'],
+        // A chave é gerada AGORA e viaja com a operação: um reenvio depois de
+        // um erro de rede é reconhecido como repetição, não como um segundo
+        // recebimento.
+        'idempotency_key':
+            'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
+        'metadata': {
+          'card_subtype': method['method_type'] == 'card'
+              ? _cardSubtypeFor(method)
+              : '',
+          'reference': paymentReference.text.trim(),
+          'source': 'flutter_pdv',
+        },
+      },
+    };
+    setState(() {
+      registeredPayments = [...registeredPayments, staged];
+      paymentDigits = (remainingTotal * 100).round().toString();
+      _syncPaymentAmount();
+      paymentReference.clear();
+    });
+  }
+
+  /// Recebimentos que ainda não foram enviados ao servidor.
+  List<Map<String, dynamic>> get stagedPayments => registeredPayments
+      .where((payment) => payment['_staged'] == true)
+      .toList(growable: false);
+
+  /// Envia, em ordem, os recebimentos encenados na tela.
+  ///
+  /// Devolve `false` quando algum não subiu. O que já subiu continua valendo
+  /// (o servidor é a verdade) e o que faltou permanece na tela para o operador
+  /// decidir. Parar no primeiro erro é deliberado: insistir nos seguintes só
+  /// empilharia recusas do mesmo motivo.
+  Future<bool> _commitStagedPayments() async {
+    final staged = stagedPayments;
+    if (staged.isEmpty) return true;
+    final pending = <Map<String, dynamic>>[];
+    var touchedCash = false;
+    var stop = false;
+    for (final payment in staged) {
+      if (stop) {
+        pending.add(payment);
+        continue;
+      }
+      final result = await _work(
+        () => api.post(
+          '/orders/${activeOrder!['id']}/pay/',
+          body: payment['_staged_body'] as Map<String, dynamic>,
+          accessToken: token,
+          // O tipo da forma de pagamento decide se há troco; só a tela sabe
+          // qual foi escolhida.
+          localContext: {
+            'payment_method': payment['_staged_method'] as Map<String, dynamic>,
+          },
+        ),
+      );
+      if (result == null) {
+        pending.add(payment);
+        stop = true;
+        continue;
+      }
+      touchedCash = touchedCash || _isCashPayment(payment);
+    }
+    // Os recebimentos são gravados local-first e sobem pela fila. Empurrar
+    // agora, antes de qualquer outra coisa, é o que garante que a emissão
+    // fiscal — que parte do servidor — encontre o pedido já quitado lá: uma
+    // nota emitida antes dos recebimentos sai com o DANFE sem as formas de
+    // pagamento. Sem conexão isto não faz nada e a venda segue pela fila.
+    await api.flushSalesQueue();
     // O recebimento (valor aplicado, troco, situação de pagamento) é
-    // registrado pelo `OrderRepository` na mesma transação da fila; aqui só
-    // se relê o que ficou gravado.
+    // registrado pelo `OrderRepository` na mesma transação da fila; aqui só se
+    // relê o que ficou gravado, e o que não subiu volta para o fim da lista.
     await _refreshOrder();
-    registeredPayments = await _loadRegisteredPayments();
-    if (method['method_type'] == 'cash') await _refreshCashSession();
-    paymentDigits = (remainingTotal * 100).round().toString();
-    _syncPaymentAmount();
-    paymentReference.clear();
-    setState(() {});
+    final confirmed = await _loadRegisteredPayments();
+    registeredPayments = [...confirmed, ...pending];
+    if (touchedCash) await _refreshCashSession();
+    if (mounted) setState(() {});
+    return pending.isEmpty;
   }
 
   /// O recebimento saiu da gaveta?
@@ -4549,6 +4670,19 @@ class _HomePageState extends State<HomePage> {
   Future<void> _removePayment(Map<String, dynamic> payment) async {
     final id = payment['id'];
     if (id == null || removingPaymentId != null) return;
+    // Encenado: some da tela e pronto. Não existe em lugar nenhum além daqui,
+    // então não há o que o servidor desfazer — e era justamente por pedir isso
+    // a ele que excluir devolvia 409 antes de a venda sequer ter subido.
+    if (payment['_staged'] == true) {
+      setState(() {
+        registeredPayments = registeredPayments
+            .where((item) => !identical(item, payment))
+            .toList();
+        paymentDigits = (remainingTotal * 100).round().toString();
+        _syncPaymentAmount();
+      });
+      return;
+    }
     setState(() => removingPaymentId = '$id');
     try {
       await api.delete(
@@ -4572,6 +4706,23 @@ class _HomePageState extends State<HomePage> {
   Future<void> _completePaidOrder() async {
     if (remainingTotal > .009) {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
+      return;
+    }
+    // Os recebimentos sobem AGORA, todos juntos, e só então a venda vira paga.
+    // É o que mantém recibo e DANFE no mesmo gesto: sem isto, o pedido já
+    // estava pago desde que o operador escolheu a forma de pagamento, e o
+    // papel dependia de ele lembrar de voltar aqui.
+    if (!await _commitStagedPayments()) return;
+    if (!mounted) return;
+    if (remainingTotal > .009) {
+      // O servidor cobrou diferente do que a tela somava (preço mudou, taxa
+      // entrou). Melhor parar aqui do que concluir uma venda em aberto.
+      _error(
+        const ApiException(
+          'O servidor registrou um valor diferente do somado na tela. '
+          'Confira os recebimentos antes de concluir.',
+        ),
+      );
       return;
     }
     final awaitingSync =
@@ -6908,10 +7059,24 @@ class _HomePageState extends State<HomePage> {
                           strong: true,
                         ),
                         const SizedBox(height: 22),
-                        const Text(
-                          'Pagamentos registrados',
-                          style: TextStyle(fontWeight: FontWeight.w800),
+                        Text(
+                          stagedPayments.isEmpty
+                              ? 'Pagamentos registrados'
+                              : 'Pagamentos deste recebimento',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
+                        if (stagedPayments.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Serão enviados ao concluir o pedido.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 10),
                         Expanded(
                           child: registeredPayments.isEmpty
@@ -6923,21 +7088,33 @@ class _HomePageState extends State<HomePage> {
                                   separatorBuilder: (_, _) => const Divider(),
                                   itemBuilder: (_, index) {
                                     final payment = registeredPayments[index];
+                                    final staged = payment['_staged'] == true;
+                                    final change = _number(
+                                      payment['change_amount'],
+                                    );
+                                    final detail = [
+                                      if (change > .009)
+                                        'Recebido: ${_money(_number(payment['amount']) + change)} · Troco: ${_money(change)}',
+                                      // O selo é o que separa "montado aqui"
+                                      // de "já está no servidor" — e é o que
+                                      // diz por que um deles pode ser
+                                      // excluído sem pedir nada a ninguém.
+                                      if (staged) 'Ainda não enviado',
+                                    ].join(' · ');
                                     return ListTile(
                                       contentPadding: EdgeInsets.zero,
-                                      leading: const CircleAvatar(
-                                        child: Icon(Icons.check, size: 18),
+                                      leading: CircleAvatar(
+                                        child: Icon(
+                                          staged ? Icons.schedule : Icons.check,
+                                          size: 18,
+                                        ),
                                       ),
                                       title: Text(
                                         '${payment['payment_method_name'] ?? 'Pagamento'}',
                                       ),
-                                      subtitle:
-                                          _number(payment['change_amount']) >
-                                              .009
-                                          ? Text(
-                                              'Recebido: ${_money(_number(payment['amount']) + _number(payment['change_amount']))} · Troco: ${_money(payment['change_amount'])}',
-                                            )
-                                          : null,
+                                      subtitle: detail.isEmpty
+                                          ? null
+                                          : Text(detail),
                                       trailing: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
@@ -6985,9 +7162,11 @@ class _HomePageState extends State<HomePage> {
                                 ? _completePaidOrder
                                 : null,
                             icon: const Icon(Icons.check_circle),
-                            label: const Text(
-                              'Concluir pedido',
-                              style: TextStyle(fontSize: 16),
+                            label: Text(
+                              stagedPayments.isEmpty
+                                  ? 'Concluir pedido'
+                                  : 'Concluir pedido e receber',
+                              style: const TextStyle(fontSize: 16),
                             ),
                           ),
                         ),

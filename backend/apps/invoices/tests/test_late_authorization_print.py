@@ -173,6 +173,55 @@ def test_refresh_status_endpoint_enqueues_the_danfe(
     assert response.data["printable"] is True
 
 
+def test_terminal_que_espera_o_cupom_marca_o_trabalho_como_manual(
+    account, pending_invoice, printer, api_client
+):
+    """O PDV avisa que vai imprimir, e o agente local nao pega o mesmo cupom.
+
+    A consulta pode ser o instante em que a nota autoriza. O cupom criado ali
+    ia para o laco automatico do agente, que imprimia a via ANTES de o terminal
+    pedir a dele — o cliente recebia dois DANFEs da mesma venda.
+    """
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    pending_invoice.provider = _AuthorizesOnRetryProvider.name
+    pending_invoice.fiscal_payload = {**pending_invoice.fiscal_payload, "awaiting": "authorization"}
+    pending_invoice.save(update_fields=["provider", "fiscal_payload", "updated_at"])
+
+    response = api_client.post(
+        f"/api/v1/invoices/{pending_invoice.id}/refresh-status/",
+        {"manual_print": True},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    job = _fiscal_jobs(pending_invoice.order).get()
+    assert job.payload["manual_only"] is True
+
+
+def test_autorizacao_sem_ninguem_esperando_continua_automatica(
+    account, pending_invoice, printer, api_client
+):
+    """Webhook e reprocessamento nao tem terminal na frente do cliente.
+
+    Marcar o trabalho como manual ali deixaria a autorizacao que chega horas
+    depois sem sair em impressora nenhuma.
+    """
+    account.enabled_modules = ["financeiro"]
+    account.save(update_fields=["enabled_modules"])
+    pending_invoice.provider = _AuthorizesOnRetryProvider.name
+    pending_invoice.fiscal_payload = {**pending_invoice.fiscal_payload, "awaiting": "authorization"}
+    pending_invoice.save(update_fields=["provider", "fiscal_payload", "updated_at"])
+
+    response = api_client.post(
+        f"/api/v1/invoices/{pending_invoice.id}/refresh-status/", {}, format="json"
+    )
+
+    assert response.status_code == 200, response.data
+    job = _fiscal_jobs(pending_invoice.order).get()
+    assert job.payload["manual_only"] is False
+
+
 def test_the_danfe_is_never_printed_twice(pending_invoice, printer, manager_user):
     """Varios caminhos chamam o mesmo enfileiramento; o cupom sai uma vez so."""
     reprocess_pending_fiscal_invoices()

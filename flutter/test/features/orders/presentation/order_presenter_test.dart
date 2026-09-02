@@ -263,6 +263,51 @@ void main() {
     });
   });
 
+  group('stagedPayment', () {
+    const cash = {'id': 'm-1', 'name': 'Dinheiro', 'method_type': 'cash'};
+    const card = {'id': 'm-2', 'name': 'Cartão', 'method_type': 'card'};
+
+    test('dinheiro acima do restante vira troco, não abatimento', () {
+      final staged = OrderPresenter.stagedPayment(
+        localId: 'staged-1',
+        method: cash,
+        received: 50,
+        remaining: 21,
+      );
+
+      // Se o excedente abatesse o pedido, o "Concluir" liberaria com o
+      // servidor ainda achando que falta receber.
+      expect(staged['amount'], 21);
+      expect(staged['change_amount'], 29);
+      expect(staged['_staged'], isTrue);
+      expect(staged['payment_method_name'], 'Dinheiro');
+    });
+
+    test('valor exato não gera troco', () {
+      final staged = OrderPresenter.stagedPayment(
+        localId: 'staged-2',
+        method: card,
+        received: 21,
+        remaining: 21,
+      );
+
+      expect(staged['amount'], 21);
+      expect(staged['change_amount'], 0);
+    });
+
+    test('pagamento parcial abate só o que foi recebido', () {
+      final staged = OrderPresenter.stagedPayment(
+        localId: 'staged-3',
+        method: card,
+        received: 10,
+        remaining: 21,
+      );
+
+      expect(staged['amount'], 10);
+      expect(staged['change_amount'], 0);
+    });
+  });
+
   test('generateBatchSerial gera um UUID v4 novo a cada chamada', () {
     final first = OrderPresenter.generateBatchSerial();
     final second = OrderPresenter.generateBatchSerial();

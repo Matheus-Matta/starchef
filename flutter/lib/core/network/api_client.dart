@@ -1620,6 +1620,21 @@ class ApiClient {
     await _syncService?.syncNow();
   }
 
+  /// Entrega AGORA o que está na fila de vendas, sem esperar o ciclo.
+  ///
+  /// O recebimento é gravado local-first e sobe pela fila (§4). No gesto de
+  /// concluir a venda isso não pode ficar para depois: a emissão fiscal parte
+  /// do SERVIDOR, e uma nota que chegasse lá antes dos recebimentos sairia com
+  /// o DANFE sem as formas de pagamento — justamente o que o cliente confere.
+  ///
+  /// Diferente de [syncPendingNow], não puxa dados nem mexe na fila fiscal:
+  /// aqui só interessa empurrar o que já está gravado. Sem conexão não faz
+  /// nada — a venda segue pela fila, como sempre, e quem imprime é o terminal.
+  Future<void> flushSalesQueue() async {
+    if (!syncStatus.hasConnection) return;
+    await _syncService?.push();
+  }
+
   /// Entrega AGORA a nota fiscal deste pedido e devolve o que o servidor
   /// respondeu.
   ///

@@ -1076,6 +1076,11 @@ def print_fiscal_invoice(invoice, *, user=None, printer=None, manual_only=False)
                 "number": invoice.number,
                 "text_content": _danfe_nfce_text(invoice, config),
                 "qr_data": invoice.qr_code_data,
+                # A marca precisa estar no trabalho NOVO tambem, nao so no que
+                # o terminal assume: o agente local decide por ela se pega o
+                # cupom no laco automatico. Sem isto, um DANFE pedido pelo
+                # terminal saia duas vezes — a via do agente e a do terminal.
+                "manual_only": manual_only,
             },
             html_content=html,
             printed_by=user,
@@ -1155,7 +1160,7 @@ def apply_focus_webhook(invoice, document):
         return invoice
 
 
-def refresh_fiscal_invoice_status(invoice, *, user=None):
+def refresh_fiscal_invoice_status(invoice, *, user=None, manual_print=False):
     """Consulta o provedor e persiste a situacao real da nota.
 
     Antes isto vivia na view e chamava `get_provider(invoice.provider)`. O campo
@@ -1166,6 +1171,13 @@ def refresh_fiscal_invoice_status(invoice, *, user=None):
 
     Agora o provedor sai da configuracao quando o campo esta vazio, e quem nao
     transmite recusa a consulta com o motivo em vez de fingir que consultou.
+
+    `manual_print` e o terminal dizendo "eu estou esperando esta autorizacao
+    para imprimir". A consulta pode ser o instante em que a nota autoriza, e o
+    cupom criado aqui iria para o laco automatico do agente local — que
+    imprimiria a via ANTES de o terminal pedir a dele. O cliente recebia dois
+    DANFEs da mesma venda. Com a marca, o trabalho existe (o terminal o assume)
+    mas o agente nao o pega.
     """
     with transaction.atomic():
         locked = Invoice.all_objects.select_for_update().get(pk=invoice.pk)
@@ -1203,7 +1215,7 @@ def refresh_fiscal_invoice_status(invoice, *, user=None):
             locked.updated_by = user
             locked.save()
             # A consulta pode ter sido o momento em que a nota virou autorizada.
-            ensure_fiscal_print_job(locked, user=user)
+            ensure_fiscal_print_job(locked, user=user, manual_only=manual_print)
             record_audit(
                 action=AuditLog.ACTION_UPDATED,
                 instance=locked,
@@ -1213,7 +1225,7 @@ def refresh_fiscal_invoice_status(invoice, *, user=None):
             return locked
 
 
-def ensure_fiscal_print_job(invoice, *, user=None):
+def ensure_fiscal_print_job(invoice, *, user=None, manual_only=False):
     """Enfileira o DANFE de uma nota que foi autorizada DEPOIS do pagamento.
 
     Sem isto, a venda offline terminava sem cupom fiscal nenhum: o DANFE nao
@@ -1226,6 +1238,11 @@ def ensure_fiscal_print_job(invoice, *, user=None):
     venda, entao chamar isto em todo caminho que autoriza uma nota e seguro.
     Nunca levanta — impressora fora do ar nao pode desfazer uma autorizacao que
     ja aconteceu, nem derrubar o lote de reprocessamento.
+
+    `manual_only` marca o trabalho como "o terminal imprime". So quem esta na
+    frente do cliente esperando o papel pede isso; o webhook e o
+    reprocessamento periodico continuam criando trabalho automatico, senao uma
+    autorizacao que chega horas depois nao sairia em impressora nenhuma.
     """
     from apps.printers.models import PrintJob
     from apps.printers.services import resolve_printer_for
@@ -1239,7 +1256,9 @@ def ensure_fiscal_print_job(invoice, *, user=None):
             if _already_printed(order, PrintJob.TYPE_FISCAL):
                 return None
             printer = resolve_printer_for(order, PrintJob.TYPE_FISCAL)
-            return print_fiscal_invoice(invoice, user=user, printer=printer)
+            return print_fiscal_invoice(
+                invoice, user=user, printer=printer, manual_only=manual_only
+            )
     except (ValidationError, RuntimeError) as exc:
         logger.warning(
             "Nota %s autorizada, mas o DANFE nao foi enfileirado: %s", invoice.id, exc

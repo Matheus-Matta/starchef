@@ -373,7 +373,14 @@ class InvoiceViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="refresh-status")
     def refresh_status(self, request, pk=None):
         try:
-            invoice = refresh_fiscal_invoice_status(self.get_object(), user=request.user)
+            invoice = refresh_fiscal_invoice_status(
+                self.get_object(),
+                user=request.user,
+                # O PDV consulta em laco logo apos a venda esperando para
+                # imprimir. Sem isto, o cupom criado por esta consulta ia para
+                # o laco automatico do agente e o cliente recebia dois DANFEs.
+                manual_print=bool(request.data.get("manual_print", False)),
+            )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return self._serialize(invoice)

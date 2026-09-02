@@ -78,6 +78,35 @@ class KitchenTicketPlan {
 /// Mantém cálculos e preenchimento de defaults fora dos widgets. A API segue
 /// como fonte final; estes valores permitem operar até a sincronização.
 abstract final class OrderPresenter {
+  /// Monta um recebimento que ainda NÃO foi enviado ao servidor.
+  ///
+  /// Fica aqui, e não na tela, porque é a conta que decide quando o botão de
+  /// concluir libera: só o valor APLICADO abate o pedido, e o excedente em
+  /// dinheiro é troco. É a mesma conta que o servidor refaz ao receber — se as
+  /// duas divergirem, o caixa fecha uma venda que o servidor considera em
+  /// aberto (ou o contrário).
+  ///
+  /// Cartão e outros meios não podem passar do restante: quem valida isso é a
+  /// tela, porque ela é quem tem como avisar o operador.
+  static JsonMap stagedPayment({
+    required String localId,
+    required JsonMap method,
+    required double received,
+    required double remaining,
+  }) {
+    final isCash = method['method_type'] == 'cash';
+    final applied = isCash && received > remaining ? remaining : received;
+    return {
+      '_staged': true,
+      'id': localId,
+      'payment_method_name': '${method['name'] ?? 'Pagamento'}',
+      'method_type': method['method_type'],
+      'amount': applied,
+      'change_amount': received - applied,
+      '_staged_method': method,
+    };
+  }
+
   static bool isOffline(JsonMap? value) =>
       value?['_offline_pending'] == true ||
       '${value?['id'] ?? ''}'.startsWith('offline-');
@@ -394,8 +423,12 @@ abstract final class OrderPresenter {
     lines.add(separator);
 
     final orderType = '${order?['order_type'] ?? ''}';
-    if (orderType.isNotEmpty && orderType != 'table' && orderType != 'command') {
-      lines.add(clip(_kitchenOrderTypeLabels[orderType] ?? orderType.toUpperCase()));
+    if (orderType.isNotEmpty &&
+        orderType != 'table' &&
+        orderType != 'command') {
+      lines.add(
+        clip(_kitchenOrderTypeLabels[orderType] ?? orderType.toUpperCase()),
+      );
     }
     if (table != null) lines.add(clip('MESA: ${table['number']}'));
     if (command != null) lines.add(clip('COMANDA: ${command['code']}'));
@@ -421,7 +454,9 @@ abstract final class OrderPresenter {
       if (note.isNotEmpty) lines.add(clip('  OBS: $note'));
       lines.add(separator);
     }
-    lines.add(_twoColumns('TOTAL DE ITENS', _formatQuantity(totalItems), width));
+    lines.add(
+      _twoColumns('TOTAL DE ITENS', _formatQuantity(totalItems), width),
+    );
     lines.addAll(['REF: $batchSerial', '']);
     return lines.join('\n');
   }
