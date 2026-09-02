@@ -437,6 +437,92 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('contador do cartão soma e subtrai item aguardando envio', (
+      tester,
+    ) async {
+      final deltas = <int>[];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 7, 'order_type': 'counter', 'total': 21},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Coca Cola 350ml',
+              'quantity': 3,
+              'unit_price': 7,
+              'total_price': 21,
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, delta) => deltas.add(delta),
+        ),
+      );
+
+      // A quantidade fica embaixo do nome, no próprio cartão: é o que dispensa
+      // o modal de confirmação para um produto sem variação.
+      expect(find.text('3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Uma unidade a mais'));
+      await tester.tap(find.byTooltip('Uma unidade a menos'));
+
+      expect(deltas, [1, -1]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('item em produção e produto por peso não mostram contador', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 8, 'order_type': 'counter', 'total': 30},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 10,
+              'total_price': 10,
+              // Já saiu para a cozinha: mudar a quantidade aqui não desfaz o
+              // que a produção já recebeu.
+              'status': 'sent',
+            },
+            {
+              'id': 'item-2',
+              'product_name': 'Buffet',
+              'quantity': 0.5,
+              'unit_price': 40,
+              'total_price': 20,
+              'pricing_unit': 'kg',
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, _) {},
+        ),
+      );
+
+      // Por peso a quantidade vem da balança: um `+1` ali seria um quilo.
+      expect(find.byTooltip('Uma unidade a mais'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('item em produção pode ser cancelado e mantém o selo', (
       tester,
     ) async {

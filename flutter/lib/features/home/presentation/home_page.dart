@@ -570,7 +570,9 @@ class _HomePageState extends State<HomePage> {
     final nodeId = _terminalInstallationId;
     if (nodeId.isEmpty) return '';
     final suffix = nodeId.length <= 6 ? nodeId : nodeId.substring(0, 6);
-    return isSecondaryStation ? 'Caixa Secundário $suffix' : 'Caixa Principal $suffix';
+    return isSecondaryStation
+        ? 'Caixa Secundário $suffix'
+        : 'Caixa Principal $suffix';
   }
 
   /// Campos de identidade enviados em toda operação de caixa.
@@ -1837,34 +1839,20 @@ class _HomePageState extends State<HomePage> {
     final product = resolution.product;
     if (product == null) return;
 
-    // Já lançado e sem configuração possível: a segunda leitura é só mais uma
-    // unidade. Com variação ou adicional, a escolha é ambígua e o modal volta.
-    if (!_productHasChoices(product) && _pendingItemFor(product) != null) {
-      await _addOneMoreOf(product);
-      return;
-    }
+    // Quem decide entre somar uma unidade e abrir o modal é
+    // `_configureProduct`: produto sem escolha soma direto, com variação ou
+    // adicional a pergunta continua. Duplicar a regra aqui deixava a leitura
+    // do EAN pular as recusas que ela faz (pedido fechado, caixa fechado,
+    // produto por peso).
     await _configureProduct(product);
   }
 
   bool _productHasChoices(Map<String, dynamic> product) {
-    bool active(List? list) => (list ?? const [])
-        .whereType<Map>()
-        .any((item) => item['is_active'] != false);
+    bool active(List? list) => (list ?? const []).whereType<Map>().any(
+      (item) => item['is_active'] != false,
+    );
     return active(product['variations'] as List?) ||
         active(product['addons'] as List?);
-  }
-
-  /// O item pendente deste produto, sem variação, adicional nem observação.
-  Map<String, dynamic>? _pendingItemFor(Map<String, dynamic> product) {
-    for (final item in orderItems) {
-      if ('${item['status'] ?? ''}' != 'pending') continue;
-      if ('${item['product'] ?? ''}' != '${product['id']}') continue;
-      if ((item['variations'] as List? ?? const []).isNotEmpty) continue;
-      if ((item['addons'] as List? ?? const []).isNotEmpty) continue;
-      if ('${item['customer_note'] ?? ''}'.trim().isNotEmpty) continue;
-      return item;
-    }
-    return null;
   }
 
   /// Soma uma unidade ao item pendente. O servidor agrupa itens pendentes
@@ -2041,7 +2029,15 @@ class _HomePageState extends State<HomePage> {
   /// motivo e deixa registro, em vez de apagar em silêncio.
   Future<void> _changeSelectedQuantity(int delta) async {
     final item = _selectedOrderItem;
-    if (item == null || busy || activeOrder == null) return;
+    if (item == null) return;
+    await _changeItemQuantity(item, delta);
+  }
+
+  /// Soma [delta] unidades a um item. Serve às teclas `+`/`-` e ao contador
+  /// que fica no próprio cartão da lista — o mesmo caminho, com as mesmas
+  /// recusas, para os dois gestos não divergirem.
+  Future<void> _changeItemQuantity(Map<String, dynamic> item, int delta) async {
+    if (busy || activeOrder == null) return;
     if ('${item['status'] ?? ''}' != 'pending') {
       _error(
         const ApiException(
@@ -2061,7 +2057,11 @@ class _HomePageState extends State<HomePage> {
     }
     final quantity = ValueFormatters.number(item['quantity']) + delta;
     if (quantity <= 0) {
-      await _removeSelectedItem();
+      // Zero é cancelamento, e cancelamento pede motivo e deixa registro.
+      await _voidItem(item);
+      if (mounted && '${item['id']}' == selectedOrderItemId) {
+        setState(() => selectedOrderItemId = null);
+      }
       return;
     }
     await _work(() async {
@@ -2531,10 +2531,7 @@ class _HomePageState extends State<HomePage> {
               accessToken: token,
               // Mesa e comanda só existem na tela; o repositório precisa
               // delas para montar o pedido local completo.
-              localContext: {
-                'command': command,
-                'table': ?selectedTable,
-              },
+              localContext: {'command': command, 'table': ?selectedTable},
             );
       activeOrder = _completeOfflineOrder(
         order,
@@ -3014,6 +3011,15 @@ class _HomePageState extends State<HomePage> {
       await _weighProduct(product);
       return;
     }
+    // Produto sem variação e sem adicional não tem NADA a perguntar: clicar
+    // nele na lista (ou bipar o EAN) soma uma unidade direto, e o ajuste fino
+    // fica no contador do próprio cartão, na lista do pedido. O modal existia
+    // para escolher, e abrir uma janela de confirmação para um refrigerante
+    // custava dois gestos por unidade num balcão com fila.
+    if (!_productHasChoices(product)) {
+      await _addOneMoreOf(product);
+      return;
+    }
     // Enquanto este modal estiver aberto, ler o MESMO produto de novo soma
     // quantidade aqui dentro em vez de abrir um segundo modal por cima.
     //
@@ -3082,200 +3088,226 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, update) => AppDialog(
-          title: Row(
-            children: [
-              const Icon(Icons.scale_outlined),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '${product['name']} · ${_money(product['current_price'])}/kg',
-                ),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String?>(
-                  initialValue: scaleId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Balança',
-                    helperText:
-                        'Selecione o equipamento que realizará a pesagem.',
-                  ),
-                  items: scales
-                      .map(
-                        (scale) => DropdownMenuItem(
-                          value: '${scale['id']}',
-                          child: Text(
-                            '${scale['name']} · ${scale['port'] ?? scale['protocol'] ?? ''}',
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => update(() {
-                    scaleId = value;
-                    reading = null;
-                    weight = 0;
-                    readingMessage =
-                        'Clique em “Ler balança” para buscar o peso.';
-                  }),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 22),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainer,
-                    borderRadius: AppTheme.radius,
-                    border: Border.all(
-                      color: weight > 0
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).dividerColor,
+        builder: (context, update) => CallbackShortcuts(
+          bindings: {
+            // Enter lança o item pesado, a mesma condição do botão. O atalho
+            // precisa do nó de foco abaixo dele: senão o foco fica no escopo
+            // da rota e a tecla passa por cima sem tocar em nada.
+            for (final key in const [
+              LogicalKeyboardKey.enter,
+              LogicalKeyboardKey.numpadEnter,
+            ])
+              SingleActivator(key): () {
+                if (weight > 0) Navigator.pop(context, true);
+              },
+          },
+          child: Focus(
+            autofocus: true,
+            child: AppDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.scale_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${product['name']} · ${_money(product['current_price'])}/kg',
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      Text(
-                        weight.toStringAsFixed(3),
-                        style: TextStyle(
-                          fontSize: 42,
-                          fontWeight: FontWeight.w900,
+                ],
+              ),
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      initialValue: scaleId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Balança',
+                        helperText:
+                            'Selecione o equipamento que realizará a pesagem.',
+                      ),
+                      items: scales
+                          .map(
+                            (scale) => DropdownMenuItem(
+                              value: '${scale['id']}',
+                              child: Text(
+                                '${scale['name']} · ${scale['port'] ?? scale['protocol'] ?? ''}',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => update(() {
+                        scaleId = value;
+                        reading = null;
+                        weight = 0;
+                        readingMessage =
+                            'Clique em “Ler balança” para buscar o peso.';
+                      }),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 22),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainer,
+                        borderRadius: AppTheme.radius,
+                        border: Border.all(
                           color: weight > 0
                               ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                              : Theme.of(context).dividerColor,
                         ),
                       ),
-                      const Text(
-                        'kg',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  readingMessage,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: scaleId == null || readingScale
-                            ? null
-                            : () async {
-                                update(() => readingScale = true);
-                                try {
-                                  final result = await api.get(
-                                    '/scales/$scaleId/latest-reading/',
-                                    accessToken: token,
-                                  );
-                                  final value = _number(
-                                    result['net_weight_kg'] ??
-                                        result['weight_kg'],
-                                  );
-                                  update(() {
-                                    reading = result;
-                                    weight = value;
-                                    manualWeight.clear();
-                                    readingMessage =
-                                        result['is_stable'] == false
-                                        ? 'Leitura recebida, mas ainda instável.'
-                                        : 'Leitura estável recebida da balança.';
-                                  });
-                                } on ApiException catch (error) {
-                                  update(() => readingMessage = error.message);
-                                  if (mounted) {
-                                    showAppError(this.context, error);
-                                  }
-                                } finally {
-                                  update(() => readingScale = false);
-                                }
-                              },
-                        icon: readingScale
-                            ? const SizedBox(
-                                width: 17,
-                                height: 17,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.refresh),
-                        label: Text(readingScale ? 'Lendo...' : 'Ler balança'),
+                      child: Column(
+                        children: [
+                          Text(
+                            weight.toStringAsFixed(3),
+                            style: TextStyle(
+                              fontSize: 42,
+                              fontWeight: FontWeight.w900,
+                              color: weight > 0
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const Text(
+                            'kg',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: manualWeight,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Peso manual',
-                          suffixText: 'kg',
-                        ),
-                        onChanged: (value) => update(() {
-                          reading = null;
-                          weight =
-                              double.tryParse(value.replaceAll(',', '.')) ?? 0;
-                          readingMessage = weight > 0
-                              ? 'Peso informado manualmente.'
-                              : 'Leia a balança ou informe o peso.';
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: note,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Observação',
-                    hintText: 'Ex.: retirar excesso de gordura',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Total estimado',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
+                    const SizedBox(height: 8),
                     Text(
-                      _money(weight * _number(product['current_price'])),
-                      style: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w900,
+                      readingMessage,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: scaleId == null || readingScale
+                                ? null
+                                : () async {
+                                    update(() => readingScale = true);
+                                    try {
+                                      final result = await api.get(
+                                        '/scales/$scaleId/latest-reading/',
+                                        accessToken: token,
+                                      );
+                                      final value = _number(
+                                        result['net_weight_kg'] ??
+                                            result['weight_kg'],
+                                      );
+                                      update(() {
+                                        reading = result;
+                                        weight = value;
+                                        manualWeight.clear();
+                                        readingMessage =
+                                            result['is_stable'] == false
+                                            ? 'Leitura recebida, mas ainda instável.'
+                                            : 'Leitura estável recebida da balança.';
+                                      });
+                                    } on ApiException catch (error) {
+                                      update(
+                                        () => readingMessage = error.message,
+                                      );
+                                      if (mounted) {
+                                        showAppError(this.context, error);
+                                      }
+                                    } finally {
+                                      update(() => readingScale = false);
+                                    }
+                                  },
+                            icon: readingScale
+                                ? const SizedBox(
+                                    width: 17,
+                                    height: 17,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.refresh),
+                            label: Text(
+                              readingScale ? 'Lendo...' : 'Ler balança',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: manualWeight,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Peso manual',
+                              suffixText: 'kg',
+                            ),
+                            onChanged: (value) => update(() {
+                              reading = null;
+                              weight =
+                                  double.tryParse(value.replaceAll(',', '.')) ??
+                                  0;
+                              readingMessage = weight > 0
+                                  ? 'Peso informado manualmente.'
+                                  : 'Leia a balança ou informe o peso.';
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: note,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Observação',
+                        hintText: 'Ex.: retirar excesso de gordura',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total estimado',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          _money(weight * _number(product['current_price'])),
+                          style: const TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: weight > 0
+                      ? () => Navigator.pop(context, true)
+                      : null,
+                  child: const Text('Adicionar ao pedido (Enter)'),
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: weight > 0 ? () => Navigator.pop(context, true) : null,
-              child: const Text('Adicionar ao pedido'),
-            ),
-          ],
         ),
       ),
     );
@@ -3567,7 +3599,10 @@ class _HomePageState extends State<HomePage> {
     if (await _serverPrintsInstead(operationId)) {
       AppLogger.instance.info(
         'comanda_impressao_do_servidor',
-        data: {'motivo': 'a operacao subiu dentro da janela', 'operacao': operationId},
+        data: {
+          'motivo': 'a operacao subiu dentro da janela',
+          'operacao': operationId,
+        },
       );
       return response;
     }
@@ -3875,8 +3910,7 @@ class _HomePageState extends State<HomePage> {
           },
           accessToken: token,
         );
-        final printer =
-            printJob['printer'] as Map<String, dynamic>? ?? chosen;
+        final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
         if (printer == null) {
           _error(
             const ApiException('A impressora selecionada não foi encontrada.'),
@@ -3964,7 +3998,9 @@ class _HomePageState extends State<HomePage> {
     final cashAuth = widget.controller.repository.cashAuth;
     final restaurant = restaurantId;
 
-    if (api.syncStatus.hasConnection || cashAuth == null || restaurant == null) {
+    if (api.syncStatus.hasConnection ||
+        cashAuth == null ||
+        restaurant == null) {
       return api.post(
         '/cash-register/$sessionId/approve/',
         body: {'reason': reason, 'cash_password': password},
@@ -3995,9 +4031,7 @@ class _HomePageState extends State<HomePage> {
         'proof_nonce': nonce,
       },
       accessToken: token,
-      localContext: {
-        'approver_name': widget.controller.session?.user.name,
-      },
+      localContext: {'approver_name': widget.controller.session?.user.name},
     );
   }
 
@@ -4243,22 +4277,22 @@ class _HomePageState extends State<HomePage> {
     showAppToast(
       context,
       switch (state) {
-            'rejected' =>
-              'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
-                  'Não haverá reenvio automático.',
-            'configuration_error' =>
-              'NFC-e não emitida: a configuração fiscal está inválida '
-                  '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
-            'reconciliation_required' =>
-              'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
-                  'consultada antes de qualquer reenvio — não emita de novo.',
-            'processing' =>
-              'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
-                  'fiscal sai quando a autorização chegar.',
-            _ =>
-              'Venda concluída. A NFC-e ainda não foi transmitida e será '
-                  'enviada assim que a conexão voltar.',
-          },
+        'rejected' =>
+          'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
+              'Não haverá reenvio automático.',
+        'configuration_error' =>
+          'NFC-e não emitida: a configuração fiscal está inválida '
+              '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
+        'reconciliation_required' =>
+          'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
+              'consultada antes de qualquer reenvio — não emita de novo.',
+        'processing' =>
+          'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
+              'fiscal sai quando a autorização chegar.',
+        _ =>
+          'Venda concluída. A NFC-e ainda não foi transmitida e será '
+              'enviada assim que a conexão voltar.',
+      },
       severity: blocking ? AppErrorSeverity.failure : AppErrorSeverity.warning,
     );
   }
@@ -4291,11 +4325,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final printers = await _list(
       '/printers/',
-      query: {
-        'restaurant': restaurantId,
-        'is_active': true,
-        'page_size': 100,
-      },
+      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
     );
     if (!mounted || printers.isEmpty) return;
     // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
@@ -7158,6 +7188,7 @@ class _HomePageState extends State<HomePage> {
   Widget _cart() => OrderCartPanel(
     selectedItemId: selectedOrderItemId,
     onSelectItem: _selectOrderItem,
+    onChangeQuantity: _changeItemQuantity,
     order: activeOrder,
     table: selectedTable,
     command: selectedCommand,
@@ -7171,11 +7202,13 @@ class _HomePageState extends State<HomePage> {
         ? _cancelOrder
         : null,
     onEmitInvoice:
-        activeOrder == null || !widget.controller.session!.user.canProcessPayments
+        activeOrder == null ||
+            !widget.controller.session!.user.canProcessPayments
         ? null
         : () => _emitFiscalInvoice(activeOrder!),
     onPrintInvoice:
-        activeOrder == null || !widget.controller.session!.user.canProcessPayments
+        activeOrder == null ||
+            !widget.controller.session!.user.canProcessPayments
         ? null
         : () => _reprintDanfe(activeOrder!),
     printing: printingReceipt,

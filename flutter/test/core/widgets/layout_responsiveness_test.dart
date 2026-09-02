@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -279,6 +280,43 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('Enter confirma o modal do produto com variação', (
+      tester,
+    ) async {
+      ProductConfigResult? result;
+      await _openDialog(
+        tester,
+        size: const Size(700, 620),
+        textScaleFactor: 1,
+        open: (context) async {
+          result = await showProductConfigDialog(context, {
+            'id': 'product-1',
+            'name': 'Pizza',
+            'requires_variation': true,
+            'variations': [
+              {'id': 'variation-1', 'name': 'Grande', 'price_delta': 5},
+            ],
+            'addons': <Map<String, dynamic>>[],
+          });
+        },
+      );
+
+      // Sem variação escolhida o Enter não pode lançar o item: é a mesma
+      // recusa do botão, senão o teclado teria um caminho mais curto.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Pizza'), findsOneWidget);
+
+      await tester.tap(find.text('Grande  + R\$ 5,00'));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(result?.variationId, 'variation-1');
+      expect(result?.quantity, 1);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('produto por quilo solicita peso em vez de quantidade', (
       tester,
     ) async {
@@ -304,7 +342,7 @@ void main() {
       expect(
         tester
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Adicionar'),
+              find.widgetWithText(FilledButton, 'Adicionar (Enter)'),
             )
             .onPressed,
         isNull,
@@ -312,7 +350,7 @@ void main() {
 
       await tester.enterText(find.byKey(const Key('product-weight')), '0,375');
       await tester.pump();
-      await tester.tap(find.widgetWithText(FilledButton, 'Adicionar'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Adicionar (Enter)'));
       await tester.pumpAndSettle();
 
       expect(result?.quantity, closeTo(.375, .0001));

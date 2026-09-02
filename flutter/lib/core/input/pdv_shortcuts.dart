@@ -281,8 +281,10 @@ abstract final class PdvShortcuts {
       label: 'Confirmar a ação principal',
       description:
           'Confirma o que a tela está oferecendo: fechar o pedido, abrir a '
-          'comanda filtrada, registrar o recebimento. Dentro de um campo ou '
-          'de um diálogo, o Enter continua sendo deles.',
+          'comanda filtrada, registrar o recebimento. Dentro de um campo, o '
+          'Enter continua sendo dele. Nos diálogos de configuração do produto '
+          'e de pesagem, o Enter é o próprio "Adicionar" — só quando a escolha '
+          'obrigatória já foi feita.',
       trigger: ShortcutTrigger(LogicalKeyboardKey.enter, label: 'Enter'),
       screens: {PdvScreen.order, PdvScreen.context, PdvScreen.payment},
       // A tecla mais fácil de segurar sem perceber — e aqui ela fecha pedido

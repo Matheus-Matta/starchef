@@ -589,6 +589,31 @@ catálogo, carrinho, pagamento, caixa e navegação. É reconhecidamente grande;
 qualquer trabalho novo ali deve extrair para painéis, como já foi feito com
 `product_catalog_panel.dart` e `order_cart_panel.dart`.
 
+**Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
+não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
+unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam
+itens pendentes iguais). O modal de configuração
+(`product_config_dialog.dart`) só abre para produto com **variação ou
+adicional**, e para produto por peso, que precisa da balança. Antes ele abria
+sempre, e confirmar um refrigerante custava dois gestos por unidade num balcão
+com fila.
+
+O ajuste fino saiu do modal e foi para o **cartão do item** na lista do pedido:
+enquanto o item está em *Aguardando envio*, ele mostra `− quantidade +` embaixo
+do nome (`_CartItem._quantityStepper`). Item já em produção não tem contador — o
+que a cozinha recebeu não se desfaz assim, e o caminho continua sendo o
+cancelamento, com motivo e registro. Produto por peso também não: a quantidade
+vem da balança. Chegando a zero, o `−` vira o mesmo cancelamento do `×`.
+Teclado e cartão passam pela mesma rotina (`_changeItemQuantity`), para os dois
+gestos não divergirem nas recusas.
+
+**Enter confirma os modais que sobraram.** O de configuração do produto e o de
+pesagem aceitam Enter com a mesma condição do botão (variação obrigatória
+escolhida, peso maior que zero). O atalho vive num `CallbackShortcuts` com um
+`Focus` logo abaixo: sem esse nó, o foco fica no escopo da rota do diálogo — um
+ancestral — e a tecla passa por cima sem tocar em nada. O campo de observação é
+multilinha e trata o próprio Enter (quebra de linha), então continua imune.
+
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao
 início ou abrir uma mesa devolvia o PDV a um fundo em branco no meio do

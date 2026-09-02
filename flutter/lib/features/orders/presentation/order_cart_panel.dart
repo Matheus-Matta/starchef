@@ -27,6 +27,7 @@ class OrderCartPanel extends StatelessWidget {
     this.emittingInvoice = false,
     this.selectedItemId,
     this.onSelectItem,
+    this.onChangeQuantity,
   });
 
   final Map<String, dynamic>? order;
@@ -53,6 +54,16 @@ class OrderCartPanel extends StatelessWidget {
   /// pode adivinhar.
   final String? selectedItemId;
   final ValueChanged<Map<String, dynamic>>? onSelectItem;
+
+  /// Soma ou subtrai unidades de um item que ainda não foi para a produção.
+  ///
+  /// O contador fica NO CARTÃO, embaixo do nome. Antes, mudar a quantidade
+  /// exigia selecionar a linha e usar `+`/`-` no teclado, ou refazer o
+  /// lançamento pelo modal — e era por isso que o modal aparecia até para um
+  /// refrigerante, que não tem nada a perguntar. Chegando a zero, quem trata
+  /// é o cancelamento normal (com motivo e registro), não um apagar em
+  /// silêncio.
+  final void Function(Map<String, dynamic> item, int delta)? onChangeQuantity;
 
   bool get _readOnly =>
       const {'paid', 'cancelled', 'refunded'}.contains('${order?['status']}');
@@ -493,6 +504,14 @@ class OrderCartPanel extends StatelessWidget {
                 onRemove: () => onVoidItem(item),
                 selected: '${item['id']}' == selectedItemId,
                 onTap: onSelectItem == null ? null : () => onSelectItem!(item),
+                // Produto por peso não tem contador: a quantidade vem da
+                // balança, e um `+1` ali seria um quilo a mais.
+                onQuantityDelta:
+                    _readOnly ||
+                        onChangeQuantity == null ||
+                        '${item['pricing_unit'] ?? 'unit'}' == 'kg'
+                    ? null
+                    : (delta) => onChangeQuantity!(item, delta),
               ),
             ),
         ],
@@ -578,6 +597,7 @@ class _CartItem extends StatelessWidget {
     required this.onRemove,
     this.selected = false,
     this.onTap,
+    this.onQuantityDelta,
   });
 
   final Map<String, dynamic> item;
@@ -586,6 +606,10 @@ class _CartItem extends StatelessWidget {
   final VoidCallback onRemove;
   final bool selected;
   final VoidCallback? onTap;
+
+  /// Contador de unidades. `null` esconde os botões — item já em produção,
+  /// pedido fechado ou produto vendido por peso.
+  final ValueChanged<int>? onQuantityDelta;
 
   @override
   Widget build(BuildContext context) {
@@ -656,6 +680,9 @@ class _CartItem extends StatelessWidget {
                 if ('${item['status']}' != 'pending') ...[
                   const SizedBox(height: 5),
                   _statusChip(context),
+                ] else if (onQuantityDelta != null) ...[
+                  const SizedBox(height: 6),
+                  _quantityStepper(context),
                 ],
               ],
             ),
@@ -706,6 +733,74 @@ class _CartItem extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: card,
+    );
+  }
+
+  /// `‹ 3 ›` embaixo do nome, para o item ainda não enviado.
+  Widget _quantityStepper(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final quantity = OrderCartPanel._number(item['quantity']);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _stepperButton(
+          context,
+          icon: Icons.remove_rounded,
+          // Um a menos que 1 é zero, e zero é cancelar — o mesmo caminho do
+          // "×", com motivo e registro. O botão não some nessa hora: sumir
+          // faria o operador procurar outro jeito de tirar o item.
+          tooltip: quantity <= 1 ? 'Cancelar item' : 'Uma unidade a menos',
+          onPressed: () => onQuantityDelta!(-1),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            quantity.toStringAsFixed(0),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+          ),
+        ),
+        _stepperButton(
+          context,
+          icon: Icons.add_rounded,
+          tooltip: 'Uma unidade a mais',
+          onPressed: () => onQuantityDelta!(1),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          'un',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stepperButton(
+    BuildContext context, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        onTap: onPressed,
+        radius: 17,
+        child: Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, size: 15, color: scheme.onSurface),
+        ),
+      ),
     );
   }
 
