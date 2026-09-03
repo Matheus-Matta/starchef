@@ -3999,10 +3999,10 @@ class _HomePageState extends State<HomePage> {
           );
           return;
         }
-        await _work(() async {
-          await deviceAgent.printJobManually(printJob, printer);
-          return true;
-        });
+        await _printingStep(
+          () => deviceAgent.printJobManually(printJob, printer),
+          title: 'O recibo não saiu na impressora',
+        );
       } on ApiException catch (error) {
         // Sem `PrintJob` do servidor o cliente continua com a mão estendida
         // esperando o comprovante. Qualquer recusa serve de gatilho — falta
@@ -4187,6 +4187,10 @@ class _HomePageState extends State<HomePage> {
           accessToken: token,
         );
       } catch (error) {
+        AppLogger.instance.warning(
+          'fiscal_emit_recusado',
+          data: {'pedido': '${order['id']}', 'causa': '$error'},
+        );
         if (!mounted) return;
         // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
         // numa emissão automática — o resto o operador precisa ver.
@@ -4197,6 +4201,17 @@ class _HomePageState extends State<HomePage> {
         return;
       }
       if (!mounted) return;
+
+      AppLogger.instance.info(
+        'fiscal_emit_resposta',
+        data: {
+          'pedido': '${order['id']}',
+          'fiscal_pending': invoice['_fiscal_pending'],
+          'emitted': invoice['emitted'],
+          'printable': invoice['printable'],
+          'fiscal_state': invoice['fiscal_state'],
+        },
+      );
 
       // Emissão adiada (§16): a venda já está concluída e o documento entrou
       // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
@@ -4217,6 +4232,16 @@ class _HomePageState extends State<HomePage> {
             ? await _flushFiscalWithRetries('${order['id']}')
             : null;
         if (!mounted) return;
+        AppLogger.instance.info(
+          'fiscal_flush_resultado',
+          data: {
+            'pedido': '${order['id']}',
+            'entregue': settled != null,
+            'issues': issues.length,
+            'printable': settled?['printable'],
+            'fiscal_state': settled?['fiscal_state'],
+          },
+        );
         if (settled != null) {
           final summary =
               'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
@@ -4374,6 +4399,14 @@ class _HomePageState extends State<HomePage> {
         continue;
       }
       if (!mounted) return;
+      AppLogger.instance.info(
+        'fiscal_consulta_autorizacao',
+        data: {
+          'nota': invoiceId,
+          'printable': current['printable'],
+          'fiscal_state': current['fiscal_state'],
+        },
+      );
       if (current['printable'] == true) {
         await _printDanfe(
           invoiceId: invoiceId,
@@ -4497,7 +4530,13 @@ class _HomePageState extends State<HomePage> {
       '/printers/',
       query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
     );
-    if (!mounted || printers.isEmpty) return;
+    if (!mounted || printers.isEmpty) {
+      AppLogger.instance.warning(
+        'danfe_sem_impressora_cadastrada',
+        data: {'nota': invoiceId, 'montado': mounted},
+      );
+      return;
+    }
     // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
     // para ele como "o sistema ignorou a master".
     final master = widget.preferences.masterPrinterId;
@@ -4514,7 +4553,21 @@ class _HomePageState extends State<HomePage> {
                   'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
             ),
           );
-    if (printerId == null) return;
+    if (printerId == null) {
+      AppLogger.instance.warning(
+        'danfe_sem_impressora_escolhida',
+        data: {'nota': invoiceId, 'master': master},
+      );
+      return;
+    }
+    AppLogger.instance.info(
+      'danfe_impressao_pedida',
+      data: {
+        'nota': invoiceId,
+        'impressora': printerId,
+        'automatico': automatic,
+      },
+    );
     final Map<String, dynamic> printJob;
     try {
       printJob = await api.post(
@@ -4534,10 +4587,19 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
-    await _printingStep(
+    final ok = await _printingStep(
       () =>
           deviceAgent.printJobManually(printJob, printer, automatic: automatic),
       title: 'O DANFE não saiu na impressora',
+    );
+    AppLogger.instance.info(
+      'danfe_impressao_resultado',
+      data: {
+        'nota': invoiceId,
+        'job': '${printJob['print_job_id'] ?? ''}',
+        'impressora': '${printer['name'] ?? ''}',
+        'ok': ok,
+      },
     );
   }
 
