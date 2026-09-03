@@ -602,9 +602,25 @@ lançado, e ali não há nenhum. Um pedido COM item continua exigindo
 autorização e motivo.
 
 O descarte roda em **segundo plano**: voltar ao início é gesto de navegação e
-não pode esperar a rede. Sem conexão a rota não existe (ela exige servidor) e
-o pedido vazio permanece — a comanda fica ocupada até alguém cancelá-lo pela
-tela de Pedidos.
+não pode esperar a rede.
+
+**E sem rede ele também acontece**, quando o pedido nunca chegou a subir. Um
+id temporário não existe no servidor — mandar o cancelamento para lá só
+renderia 404 —, então o gateway reconhece a rota
+(`OfflineFirstGateway.discardableOrderId`) e resolve no terminal: apaga da
+fila TUDO o que pertence àquele pedido e remove a linha local. A ordem
+importa — as operações saem da fila antes do registro, senão a criação
+subiria depois e recriaria no servidor exatamente o pedido vazio que se quis
+descartar. A comanda não precisa ser liberada: enquanto o pedido não subiu, o
+servidor nunca soube que ela estava ocupada.
+
+Operação já em entrega (`PROCESSING`) recusa o descarte com HTTP 409: o
+servidor pode estar gravando a venda neste instante, e apagar a fila deixaria
+os dois lados discordando em silêncio — mesma prudência da exclusão de um
+recebimento enfileirado.
+
+Sobra um caso: pedido que o servidor **já conhece** com o terminal offline. Aí
+a comanda fica ocupada até alguém cancelá-lo pela tela de Pedidos.
 
 **O id antigo continua respondendo.** Todo registro nasce com um id
 temporário (`offline-<uuid>`) e, quando a criação sobe, passa a viver sob o id

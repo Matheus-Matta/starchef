@@ -103,11 +103,7 @@ class SyncQueueService {
   Future<void> updateOrigin(int id, RelayOrigin origin) async {
     await database.execute(
       'UPDATE sync_queue SET origin_json = ?, updated_at = ? WHERE id = ?',
-      [
-        encodeOrigin(origin),
-        DateTime.now().toUtc().toIso8601String(),
-        id,
-      ],
+      [encodeOrigin(origin), DateTime.now().toUtc().toIso8601String(), id],
     );
   }
 
@@ -347,7 +343,10 @@ class SyncQueueService {
       );
       if (row == null || '${row['status']}' != 'FAILED') return false;
       final entityId = '${row['entity_id']}';
-      await tx.execute("DELETE FROM sync_queue WHERE id = ? AND status = 'FAILED'", [id]);
+      await tx.execute(
+        "DELETE FROM sync_queue WHERE id = ? AND status = 'FAILED'",
+        [id],
+      );
       if (LocalId.isTemporary(entityId)) {
         // Sem isto, as operações seguintes ficariam para sempre tentando
         // alterar um pedido que nunca existirá no servidor.
@@ -359,15 +358,51 @@ class SyncQueueService {
             instr(COALESCE(payload, ''), ?) > 0
           )
           ''',
-          [
-            '${row['scope']}',
-            id,
-            entityId,
-            entityId,
-            entityId,
-          ],
+          ['${row['scope']}', id, entityId, entityId, entityId],
         );
       }
+      return true;
+    });
+  }
+
+  /// Apaga da fila TUDO o que pertence a um registro que nunca subiu.
+  ///
+  /// É o descarte de um pedido que só existe aqui: a criação e o que veio
+  /// depois dela saem juntos, e nada é enviado. Só vale para id temporário —
+  /// um registro que o servidor já conhece precisa ser cancelado por lá, com
+  /// as regras de lá.
+  ///
+  /// Devolve `false` quando alguma dessas operações já está em entrega
+  /// (`PROCESSING`): nesse instante o servidor pode estar gravando a venda, e
+  /// apagar a fila deixaria os dois lados discordando em silêncio. Mesma
+  /// prudência de [discardPendingChild].
+  Future<bool> discardPendingEntity({
+    required String scope,
+    required String entityId,
+  }) async {
+    if (!LocalId.isTemporary(entityId)) return false;
+    return database.write((tx) async {
+      final rows = await tx.getAll(
+        '''
+        SELECT id, status FROM sync_queue
+        WHERE scope = ? AND (
+          entity_id = ? OR instr(path, ?) > 0 OR
+          instr(COALESCE(payload, ''), ?) > 0
+        )
+        ''',
+        [scope, entityId, entityId, entityId],
+      );
+      if (rows.any((row) => '${row['status']}' == 'PROCESSING')) return false;
+      await tx.execute(
+        '''
+        DELETE FROM sync_queue
+        WHERE scope = ? AND (
+          entity_id = ? OR instr(path, ?) > 0 OR
+          instr(COALESCE(payload, ''), ?) > 0
+        )
+        ''',
+        [scope, entityId, entityId, entityId],
+      );
       return true;
     });
   }

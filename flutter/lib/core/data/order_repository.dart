@@ -27,8 +27,9 @@ class OrderRepository extends EntityRepository {
     super.cipher,
   }) : super(descriptor: _descriptor);
 
-  static final EntityDescriptor _descriptor =
-      EntityCatalog.byType(EntityCatalog.order)!;
+  static final EntityDescriptor _descriptor = EntityCatalog.byType(
+    EntityCatalog.order,
+  )!;
 
   /// Catálogo local, usado para resolver nome e preço do item sem rede.
   final EntityRepository products;
@@ -44,12 +45,15 @@ class OrderRepository extends EntityRepository {
     Map<String, dynamic>? command,
   }) async {
     final orderId = LocalId.temporary();
-    final type = '${body['order_type'] ?? (command != null ? 'command' : 'counter')}';
-    final draft = OrderPresenter.completeOfflineOrder({
-      'id': orderId,
-      '_offline_pending': true,
-      ...body,
-    }, restaurantId: restaurantId, type: type, table: table, command: command);
+    final type =
+        '${body['order_type'] ?? (command != null ? 'command' : 'counter')}';
+    final draft = OrderPresenter.completeOfflineOrder(
+      {'id': orderId, '_offline_pending': true, ...body},
+      restaurantId: restaurantId,
+      type: type,
+      table: table,
+      command: command,
+    );
 
     final now = DateTime.now().toUtc().toIso8601String();
     var payload = <String, dynamic>{
@@ -119,7 +123,8 @@ class OrderRepository extends EntityRepository {
       return OrderPresenter.withItems(order, [...items, item]);
     }
     final existing = items[existingIndex];
-    final merged = ValueFormatters.number(existing['quantity']) +
+    final merged =
+        ValueFormatters.number(existing['quantity']) +
         ValueFormatters.number(item['quantity']);
     final unitPrice = ValueFormatters.number(existing['unit_price']);
     items[existingIndex] = {
@@ -136,7 +141,10 @@ class OrderRepository extends EntityRepository {
   /// a produção recebeu, e mexer na quantidade dele mudaria o passado. Produto
   /// vendido por peso também fica de fora — cada pesagem é uma leitura própria,
   /// e somá-las apagaria o registro de duas balanças diferentes.
-  static bool _groupsWith(Map<String, dynamic> existing, Map<String, dynamic> item) {
+  static bool _groupsWith(
+    Map<String, dynamic> existing,
+    Map<String, dynamic> item,
+  ) {
     if ('${existing['status'] ?? ''}' != 'pending') return false;
     if ('${existing['product'] ?? ''}' != '${item['product'] ?? ''}') {
       return false;
@@ -151,15 +159,16 @@ class OrderRepository extends EntityRepository {
   }
 
   static String _idsOf(Object? value) {
-    final ids = (value as List? ?? const [])
-        .map(
-          (entry) => entry is Map
-              ? '${entry['addon'] ?? entry['variation'] ?? entry['id'] ?? ''}'
-              : '$entry',
-        )
-        .where((id) => id.isNotEmpty)
-        .toList()
-      ..sort();
+    final ids =
+        (value as List? ?? const [])
+            .map(
+              (entry) => entry is Map
+                  ? '${entry['addon'] ?? entry['variation'] ?? entry['id'] ?? ''}'
+                  : '$entry',
+            )
+            .where((id) => id.isNotEmpty)
+            .toList()
+          ..sort();
     return ids.join(',');
   }
 
@@ -186,7 +195,8 @@ class OrderRepository extends EntityRepository {
     final order = existingId.isEmpty ? null : await read(existingId);
     final orderId = order?.id ?? LocalId.temporary();
 
-    var payload = order?.payload ??
+    var payload =
+        order?.payload ??
         OrderPresenter.completeOfflineOrder(
           {'id': orderId, '_offline_pending': true},
           restaurantId: restaurantId,
@@ -196,18 +206,14 @@ class OrderRepository extends EntityRepository {
     payload = {
       ...payload,
       'id': orderId,
-      'created_at': payload['created_at'] ??
-          DateTime.now().toUtc().toIso8601String(),
+      'created_at':
+          payload['created_at'] ?? DateTime.now().toUtc().toIso8601String(),
     };
 
-    payload = await _withNewItem(
-      payload,
-      {
-        'product': '${weighedProduct['id']}',
-        'weight_kg': weightKg.toStringAsFixed(3),
-      },
-      knownProduct: weighedProduct,
-    );
+    payload = await _withNewItem(payload, {
+      'product': '${weighedProduct['id']}',
+      'weight_kg': weightKg.toStringAsFixed(3),
+    }, knownProduct: weighedProduct);
     for (final extra in extras) {
       payload = await _withNewItem(payload, extra);
     }
@@ -243,11 +249,7 @@ class OrderRepository extends EntityRepository {
       throw StateError('Pedido $orderId não existe no armazenamento local.');
     }
     final itemId = LocalId.temporary();
-    final updated = await _withNewItem(
-      order.payload,
-      body,
-      itemId: itemId,
-    );
+    final updated = await _withNewItem(order.payload, body, itemId: itemId);
     // Com agrupamento, o item afetado pode ser um que já existia — devolver o
     // último da lista mostraria a linha errada na tela.
     final item = _itemsOf(updated).firstWhere(
@@ -283,7 +285,9 @@ class OrderRepository extends EntityRepository {
       throw StateError('Pedido $orderId não existe no armazenamento local.');
     }
     if (quantity <= 0) {
-      throw ArgumentError('Para remover o item, cancele-o informando o motivo.');
+      throw ArgumentError(
+        'Para remover o item, cancele-o informando o motivo.',
+      );
     }
     final items = _itemsOf(order.payload);
     final index = items.indexWhere((item) => '${item['id']}' == itemId);
@@ -342,11 +346,7 @@ class OrderRepository extends EntityRepository {
     final items = _itemsOf(order.payload)
         .map(
           (item) => '${item['id']}' == itemId
-              ? {
-                  ...item,
-                  'status': 'voided',
-                  'void_reason': body['reason'],
-                }
+              ? {...item, 'status': 'voided', 'void_reason': body['reason']}
               : item,
         )
         .toList();
@@ -397,7 +397,10 @@ class OrderRepository extends EntityRepository {
       throw StateError('Pedido $orderId não existe no armazenamento local.');
     }
     final closed = OrderPresenter.closeOfflineOrder(
-      {...order.payload, 'discount': body['discount'] ?? order.payload['discount']},
+      {
+        ...order.payload,
+        'discount': body['discount'] ?? order.payload['discount'],
+      },
       serviceFeeEnabled: body['service_fee_enabled'] != false,
       serviceFeePercent: serviceFeePercent,
     );
@@ -434,13 +437,11 @@ class OrderRepository extends EntityRepository {
     // ainda estão na fila. Olhando só a fila, uma venda paga metade online e
     // metade offline calculava o troco sobre o valor cheio e devolvia dinheiro
     // a mais ao cliente.
-    final alreadyPaid = [
-      ..._serverPaymentsOf(order.payload),
-      ...payments,
-    ].fold<double>(
-      0,
-      (sum, payment) => sum + ValueFormatters.number(payment['amount']),
-    );
+    final alreadyPaid = [..._serverPaymentsOf(order.payload), ...payments]
+        .fold<double>(
+          0,
+          (sum, payment) => sum + ValueFormatters.number(payment['amount']),
+        );
     final remainingBefore = (total - alreadyPaid).clamp(0, double.infinity);
     final isCash = '${method?['method_type'] ?? ''}' == 'cash';
     final change = isCash
@@ -502,10 +503,11 @@ class OrderRepository extends EntityRepository {
     ).where((payment) => '${payment['id']}' != paymentId).toList();
 
     final total = ValueFormatters.number(order.payload['total']);
-    final paid = [..._serverPaymentsOf(order.payload), ...remaining].fold<double>(
-      0,
-      (sum, payment) => sum + ValueFormatters.number(payment['amount']),
-    );
+    final paid = [..._serverPaymentsOf(order.payload), ...remaining]
+        .fold<double>(
+          0,
+          (sum, payment) => sum + ValueFormatters.number(payment['amount']),
+        );
     final record = await saveLocalEffect({
       ...order.payload,
       'offline_payments': remaining,
@@ -535,6 +537,23 @@ class OrderRepository extends EntityRepository {
       byId['${payment['id']}'] = payment;
     }
     return byId.values.toList();
+  }
+
+  /// Apaga o pedido que só existe neste terminal.
+  ///
+  /// Diferente de `markRemoteDeleted`, que registra uma exclusão vinda do
+  /// servidor: aqui o pedido nunca chegou lá, então não há exclusão a
+  /// espelhar — a linha simplesmente deixa de existir, como se a comanda
+  /// nunca tivesse sido aberta.
+  Future<void> discardLocal(String orderId) async {
+    if (!LocalId.isTemporary(orderId)) return;
+    await database.execute(
+      '''
+      DELETE FROM entities
+      WHERE scope = ? AND entity_type = ? AND entity_id = ?
+      ''',
+      [scope, type, orderId],
+    );
   }
 
   /// Grava a versão do servidor preservando o que ainda não subiu.
@@ -587,14 +606,14 @@ class OrderRepository extends EntityRepository {
 
     var merged = Map<String, dynamic>.from(payload);
     if (pendingItems.isNotEmpty) {
-      final remoteIds = _itemsOf(payload).map((item) => '${item['id']}').toSet();
+      final remoteIds = _itemsOf(
+        payload,
+      ).map((item) => '${item['id']}').toSet();
       merged = OrderPresenter.withItems(merged, [
         ..._itemsOf(payload),
         // Um item já reconciliado (id real) chega pelos dois lados; manter os
         // dois somaria o mesmo item duas vezes na conta.
-        ...pendingItems.where(
-          (item) => !remoteIds.contains('${item['id']}'),
-        ),
+        ...pendingItems.where((item) => !remoteIds.contains('${item['id']}')),
       ]);
     }
     if (pendingPayments.isNotEmpty) {
@@ -615,11 +634,10 @@ class OrderRepository extends EntityRepository {
 
   static List<Map<String, dynamic>> _serverPaymentsOf(
     Map<String, dynamic> order,
-  ) =>
-      (order['payments'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
+  ) => (order['payments'] as List? ?? const [])
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
 
   static List<Map<String, dynamic>> _paymentsOf(Map<String, dynamic> order) =>
       (order['offline_payments'] as List? ?? const [])

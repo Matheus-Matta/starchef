@@ -134,6 +134,63 @@ void main() {
     expect((read['items'] as List), hasLength(1));
   });
 
+  test('pedido que nunca subiu e descartado sem virar requisição', () async {
+    // Abrir uma comanda cria o pedido na hora. Sem rede, sair sem lançar nada
+    // deixava esse pedido vazio na fila — ele subiria depois e ocuparia a
+    // comanda no servidor, exatamente o que se quis evitar.
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/',
+      body: {'restaurant': 'rest-1', 'order_type': 'command'},
+    );
+    final orderId = '${created.payload['id']}';
+    expect(LocalId.isTemporary(orderId), isTrue);
+    expect(await stack.queue.entries(scope: TestPdvStack.scope), hasLength(1));
+
+    final path = '/orders/$orderId/cancel/';
+    // A rota não sai do terminal: o servidor não conhece este pedido.
+    expect(stack.gateway.handlesWrite('POST', path, const {}), isTrue);
+
+    final result = await stack.gateway.write('POST', path);
+
+    expect(result.payload['_discarded'], isTrue);
+    // Nada na fila: a criação sai junto, senão o pedido voltaria na próxima
+    // sincronização.
+    expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+    // E nada no armazenamento: a comanda volta a ficar livre aqui.
+    expect(await stack.gateway.orders.read(orderId), isNull);
+  });
+
+  test('pedido com id do servidor continua sendo cancelado por ele', () async {
+    // Cancelar o que o servidor conhece envolve senha, motivo, liberação de
+    // mesa e estorno — nada disso se resolve aqui.
+    const path = '/orders/3f1a2b4c-0000-4000-8000-0000000000bb/cancel/';
+
+    expect(stack.gateway.handlesWrite('POST', path, const {}), isFalse);
+  });
+
+  test('pedido em entrega não é descartado por baixo do pano', () async {
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/',
+      body: {'restaurant': 'rest-1', 'order_type': 'command'},
+    );
+    final orderId = '${created.payload['id']}';
+    // A fila já reservou a operação: o servidor pode estar gravando a venda
+    // neste instante.
+    await stack.database.execute(
+      "UPDATE sync_queue SET status = 'PROCESSING' WHERE entity_id = ?",
+      [orderId],
+    );
+
+    expect(
+      () => stack.gateway.write('POST', '/orders/$orderId/cancel/'),
+      throwsA(
+        isA<ApiException>().having((error) => error.statusCode, 'status', 409),
+      ),
+    );
+  });
+
   test('cancelar item recalcula o total sem apagar a linha', () async {
     final created = await stack.gateway.write(
       'POST',

@@ -260,6 +260,21 @@ class OfflineFirstGateway {
     );
   }
 
+  /// A rota descarta um pedido que **nunca saiu deste terminal**?
+  ///
+  /// Cancelar um pedido que o servidor conhece é decisão dele — envolve senha
+  /// de supervisor, motivo, liberação de mesa e estorno. Um pedido com id
+  /// temporário não existe lá: mandar o cancelamento só renderia 404. Descartar
+  /// é apagar a fila e a linha local, e é a única forma de a comanda aberta por
+  /// engano sem rede não ficar presa até alguém lembrar dela.
+  static String? discardableOrderId(String path) {
+    final match = _orderCancel.firstMatch(path.split('?').first);
+    final id = match?.group(1) ?? '';
+    return LocalId.isTemporary(id) ? id : null;
+  }
+
+  static final _orderCancel = RegExp(r'^/orders/([^/]+)/cancel/$');
+
   /// A rota é a EMISSÃO de uma nota (a única `/invoices/` que vai para a fila
   /// fiscal)? As outras — consultar autorização, reenviar, cancelar — falam
   /// com o servidor e com a SEFAZ; enfileirá-las criava documento fantasma.
@@ -312,6 +327,8 @@ class OfflineFirstGateway {
     if (_isScaleCheckout(path)) {
       return relayOnly || !(connectivity?.call() ?? false);
     }
+    // Pedido que nunca subiu: o descarte é aqui, e não vira requisição.
+    if (discardableOrderId(path) != null) return true;
     // A autorização do supervisor continua sendo do servidor: online ela
     // aceita o login de um gerente, algo que só ele sabe validar.
     if (path.endsWith('/approve/')) {
@@ -447,6 +464,11 @@ class OfflineFirstGateway {
         await _writeScaleCheckout(path, payload, context),
         queued: true,
       );
+    }
+
+    final discardable = discardableOrderId(path);
+    if (discardable != null) {
+      return LocalResult(await _discardLocalOrder(discardable), queued: false);
     }
 
     if (isFiscalEmission(path)) {
@@ -606,6 +628,36 @@ class OfflineFirstGateway {
       amount: ValueFormatters.number(payment['amount']),
       reason: 'Recebimento do pedido',
     );
+  }
+
+  /// Apaga um pedido que só existe aqui: a fila dele e o registro local.
+  ///
+  /// A ordem importa. As operações saem da fila ANTES do registro: se elas
+  /// ficassem, subiriam depois criando no servidor exatamente o pedido vazio
+  /// que se quis descartar — e ele voltaria pela sincronização seguinte.
+  ///
+  /// A comanda não precisa ser liberada: enquanto o pedido não subiu, o
+  /// servidor nunca soube que ela estava ocupada.
+  Future<Map<String, dynamic>> _discardLocalOrder(String orderId) async {
+    final scope = _requireScope();
+    final discarded = await queue.discardPendingEntity(
+      scope: scope,
+      entityId: orderId,
+    );
+    if (!discarded) {
+      throw ApiException(
+        'Este pedido já está subindo para o servidor. Aguarde a '
+        'sincronização para cancelá-lo.',
+        statusCode: 409,
+      );
+    }
+    await orders.discardLocal(orderId);
+    return {
+      'id': orderId,
+      'status': 'cancelled',
+      '_local': true,
+      '_discarded': true,
+    };
   }
 
   /// Desfaz um recebimento que ainda não saiu deste terminal.

@@ -1404,9 +1404,11 @@ class _HomePageState extends State<HomePage> {
         data: {'pedido': '${order['id']}', 'comanda': selectedCommand?['code']},
       );
     } catch (error) {
-      // Sem rede (a rota exige servidor) ou recusa: seguir em frente. A
-      // comanda continua ocupada até alguém cancelar o pedido pela tela de
-      // Pedidos — chato, mas não impede nada do que o operador está fazendo.
+      // Um pedido que nunca subiu é descartado aqui mesmo, sem rede (o
+      // gateway reconhece o id temporário). Sobra o caso do pedido que o
+      // servidor já conhece e o terminal está offline: aí a comanda continua
+      // ocupada até alguém cancelá-lo pela tela de Pedidos — chato, mas não
+      // impede nada do que o operador está fazendo agora.
       AppLogger.instance.warning(
         'pedido_vazio_nao_descartado',
         data: {'pedido': '${order['id']}', 'causa': '$error'},
