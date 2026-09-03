@@ -28,6 +28,11 @@ export const api = axios.create({
 let refreshPromise = null;
 
 api.interceptors.request.use((config) => {
+  // Se for FormData, remove o Content-Type padrão (application/json) para
+  // que o browser e o Axios definam multipart/form-data com o boundary correto.
+  if (config.data instanceof FormData) {
+    delete config.headers["Content-Type"];
+  }
   // O access token vai automaticamente pelo cookie httpOnly. Só mexemos no
   // Authorization quando o chamador o define explicitamente (sessão temporária).
   applyRestaurantScope(config);
@@ -65,18 +70,25 @@ function isAuthRefreshRequest(url = "") {
 }
 
 function applyRestaurantScope(config) {
-  if (config.skipRestaurantScope || String(config.method || "get").toLowerCase() !== "get") {
+  if (config.skipRestaurantScope || isAuthRequest(config.url)) {
     return;
   }
 
   const restaurantId = localStorage.getItem("starchef-restaurant-scope");
-  if (!restaurantId || isAuthRequest(config.url)) {
+  if (!restaurantId) {
     return;
   }
 
-  config.params = { ...(config.params || {}) };
-  if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
-    config.params.restaurant = restaurantId;
+  config.headers = config.headers || {};
+  if (!config.headers["X-Restaurant-ID"]) {
+    config.headers["X-Restaurant-ID"] = restaurantId;
+  }
+
+  if (String(config.method || "get").toLowerCase() === "get") {
+    config.params = { ...(config.params || {}) };
+    if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
+      config.params.restaurant = restaurantId;
+    }
   }
 }
 

@@ -44,6 +44,12 @@ import {
   UNIT_OPTIONS,
   VEHICLE_OPTIONS,
   VEHICLE_TYPE_LABELS,
+  INBOUND_NFE_STATUS_LABELS,
+  ASSET_STATUS_LABELS,
+  INVENTORY_LOT_STATUS_LABELS,
+  GOODS_RECEIPT_STATUS_LABELS,
+  ITEM_TYPE_OPTIONS,
+  TRACKING_MODE_OPTIONS,
 } from "./enums";
 
 export const resources = [
@@ -639,6 +645,102 @@ export const resources = [
       { name: "is_account_admin", label: "Administrador da Conta", type: "boolean", default: false, section: "Perfil", hint: "Dá acesso irrestrito a todos os restaurantes e configurações globais da conta." },
       // Permissões de negócio vinculadas ao perfil (M2M).
       { name: "permissions", label: "Permissões", type: "remote-multiselect", endpoint: "/permissions/", optionLabel: "name", optionValue: "id", grouped: true, full: true, section: "Permissões", hint: "Agrupadas por área. Itens com \"meu/meus\" restringem ao próprio operador (ex.: ver meus pedidos, gerenciar somente meu caixa)." },
+    ],
+  },
+  {
+    name: "inbound-nfe",
+    title: "Notas Fiscais de Entrada",
+    endpoint: "/inbound-nfe/",
+    module: "logistica",
+    pro: {
+      pageSize: 20,
+      dateField: { param: "issue_date", label: "Emissão" },
+      description: "O StarChef conecta-se aos webservices oficiais da SEFAZ (NFeDistribuicaoDFe) utilizando o Certificado Digital A1. As notas destinadas ao seu CNPJ são obtidas sequencialmente por NSU. Para proteger seu CNPJ contra bloqueios por Consumo Indevido (Rejeição 656), as consultas respeitam uma janela de segurança mínima entre requisições. A rotina automática roda a cada 1 hora em segundo plano.",
+      headerActions: [
+        { key: "upload-xml", label: "Importar XMLs", icon: "pi pi-upload", type: "upload-xml" },
+        { key: "sync", label: "Sincronizar SEFAZ", icon: "pi pi-sync", type: "sync-sefaz" },
+      ],
+    },
+    columns: [
+      { key: "nsu", label: "NSU", align: "center" },
+      { key: "number", label: "Número" },
+      { key: "supplier_name", label: "Fornecedor" },
+      { key: "access_key", label: "Chave de Acesso" },
+      { key: "issue_date", label: "Emissão", type: "date" },
+      { key: "total_invoice", label: "Valor", type: "money", align: "right" },
+      { key: "status", label: "Status", type: "status", map: INBOUND_NFE_STATUS_LABELS }
+    ],
+  },
+  {
+    name: "patrimonio",
+    title: "Patrimônio e Equipamentos",
+    endpoint: "/assets/",
+    module: "logistica",
+    pro: {
+      pageSize: 15,
+      description: "Controle patrimonial de equipamentos e maquinários com número de série, localização física atual, QR code e histórico de manutenções e garantias.",
+    },
+    columns: [
+      { key: "asset_code", label: "Código", align: "center" },
+      { key: "name", label: "Equipamento / Ativo" },
+      { key: "location_name", label: "Localização Atual" },
+      { key: "serial_number", label: "Nº de Série" },
+      { key: "purchase_price", label: "Valor de Compra", type: "money", align: "right" },
+      { key: "warranty_end_date", label: "Garantia até", type: "date" },
+      { key: "status", label: "Status", type: "status", map: ASSET_STATUS_LABELS },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do equipamento", type: "text", required: true, full: true, section: "Identificação" },
+      { name: "product", label: "Produto / Modelo mestre", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", section: "Identificação" },
+      { name: "location", label: "Local de alocação", type: "remote-dropdown", endpoint: "/stock/locations/", optionLabel: "name", optionValue: "id", required: true, section: "Identificação" },
+      { name: "serial_number", label: "Número de série", type: "text", section: "Identificação" },
+      { name: "patrimony_tag", label: "Plaqueta física", type: "text", section: "Identificação" },
+      { name: "purchase_price", label: "Preço de aquisição (R$)", type: "decimal", section: "Aquisição e Garantia" },
+      { name: "purchase_date", label: "Data de compra", type: "text", placeholder: "AAAA-MM-DD", section: "Aquisição e Garantia" },
+      { name: "warranty_end_date", label: "Término da garantia", type: "text", placeholder: "AAAA-MM-DD", section: "Aquisição e Garantia" },
+      { name: "status", label: "Status operacional", type: "dropdown", options: [
+        { label: "Em Uso", value: "in_use" },
+        { label: "Em Manutenção", value: "in_maintenance" },
+        { label: "Disponível / Reserva", value: "idle" },
+        { label: "Baixado", value: "disposed" },
+      ], default: "in_use", section: "Status" },
+    ],
+  },
+  {
+    name: "lotes-estoque",
+    title: "Lotes e Validades (FEFO)",
+    endpoint: "/stock/lots/",
+    module: "logistica",
+    pro: {
+      pageSize: 15,
+      description: "Rastreabilidade de insumos perecíveis por lote e data de validade com consumo automático prioritário pelo método FEFO (First Expired, First Out).",
+    },
+    columns: [
+      { key: "product_name", label: "Produto / Insumo" },
+      { key: "lot_number", label: "Nº do Lote" },
+      { key: "location_name", label: "Local" },
+      { key: "available_quantity", label: "Qtd. Disponível", align: "right" },
+      { key: "unit_cost", label: "Custo Unit.", type: "money", align: "right" },
+      { key: "expiration_date", label: "Validade", type: "date" },
+      { key: "status", label: "Status", type: "status", map: INVENTORY_LOT_STATUS_LABELS },
+    ],
+  },
+  {
+    name: "recebimentos",
+    title: "Conferências de Recebimento",
+    endpoint: "/stock/receipts/",
+    module: "logistica",
+    pro: {
+      pageSize: 15,
+      description: "Histórico de recebimento físico e conferência de notas fiscais com registro de divergências de quantidade e itens rejeitados.",
+    },
+    columns: [
+      { key: "receipt_number", label: "Conferência", align: "center" },
+      { key: "invoice_number", label: "NF-e" },
+      { key: "supplier_name", label: "Fornecedor" },
+      { key: "location_name", label: "Local de Entrada" },
+      { key: "received_at", label: "Data de Recebimento", type: "date" },
+      { key: "status", label: "Status", type: "status", map: GOODS_RECEIPT_STATUS_LABELS },
     ],
   },
 ];

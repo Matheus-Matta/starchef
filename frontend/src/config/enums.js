@@ -266,3 +266,53 @@ export const SECTOR_FILTER_OPTIONS = [
   { label: "Bar", value: "bar" },
   { label: "Sobremesa", value: "dessert" },
 ];
+
+export const INBOUND_NFE_STATUS_LABELS = {
+  pending_mapping: { label: "Pendente de Vínculo", tone: "warning" },
+  pending_receipt: { label: "Pronta p/ Entrada", tone: "info" },
+  received: { label: "Entrada Concluída", tone: "success" },
+  summary: { label: "Resumo SEFAZ", tone: "neutral" },
+  xml_available: { label: "XML Completo", tone: "info" },
+  cancelled: { label: "Cancelada", tone: "danger" },
+  // Compatibilidade
+  PENDING: { label: "Pendente de Vínculo", tone: "warning" },
+  MANIFESTED: { label: "Manifestada", tone: "info" },
+  STOCKED: { label: "Entrada Concluída", tone: "success" },
+  CANCELED: { label: "Cancelada", tone: "danger" },
+};
+
+export const ASSET_STATUS_LABELS = {
+  in_use: { label: "Em Uso", tone: "success" },
+  in_maintenance: { label: "Em Manutenção", tone: "warning" },
+  idle: { label: "Disponível", tone: "info" },
+  disposed: { label: "Baixado", tone: "danger" },
+};
+
+export const INVENTORY_LOT_STATUS_LABELS = {
+  active: { label: "Ativo", tone: "success" },
+  depleted: { label: "Esgotado", tone: "neutral" },
+  expired: { label: "Vencido", tone: "danger" },
+  quarantine: { label: "Quarentena", tone: "warning" },
+};
+
+export const GOODS_RECEIPT_STATUS_LABELS = {
+  draft: { label: "Rascunho", tone: "neutral" },
+  received: { label: "Conforme", tone: "success" },
+  divergent: { label: "Com Divergência", tone: "warning" },
+  rejected: { label: "Rejeitado", tone: "danger" },
+};
+
+export const ITEM_TYPE_OPTIONS = [
+  { label: "Mercadoria para Revenda", value: "MERCHANDISE_FOR_SALE" },
+  { label: "Insumo / Matéria-Prima", value: "RAW_MATERIAL_INGREDIENT" },
+  { label: "Material de Consumo", value: "CONSUMPTION_MATERIAL" },
+  { label: "Material Reutilizável (Utensílios)", value: "REUSABLE_MATERIAL" },
+  { label: "Equipamento / Ativo Imobilizado", value: "EQUIPMENT" },
+  { label: "Serviço", value: "SERVICE" },
+];
+
+export const TRACKING_MODE_OPTIONS = [
+  { label: "Apenas Quantidade / Saldo", value: "QUANTITY" },
+  { label: "Lote e Validade (FEFO)", value: "LOT_EXPIRATION" },
+  { label: "Serializado / Patrimônio Individual", value: "SERIALIZED" },
+];

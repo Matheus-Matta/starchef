@@ -102,6 +102,132 @@
           </Column>
         </DataTable>
       </section>
+
+      <!-- ── Itens da NF-e de Entrada (Conferência, Mapeamento e Entrada no Estoque) ── -->
+      <section v-if="isInboundNFe && record?.items?.length" class="detail-section detail-section--inbound">
+        <div class="detail-section__header-flex">
+          <div class="detail-section__header-copy">
+            <h3 class="detail-section__title">
+              Produtos da Nota Fiscal
+              <small class="rpro-badge ml-2">{{ record.items.length }} {{ record.items.length === 1 ? 'produto' : 'produtos' }}</small>
+            </h3>
+            <p class="text-sm text-muted">
+              Confira os itens recebidos da SEFAZ, vincule aos ingredientes do estoque e confirme a entrada para atualizar seu saldo físico.
+            </p>
+          </div>
+
+          <div class="detail-section__header-actions">
+            <button
+              v-if="record.status !== 'received' && record.status !== 'cancelled'"
+              type="button"
+              class="rpro-btn rpro-btn--primary"
+              @click="openReceiveModal"
+            >
+              <i class="pi pi-box" /> Dar Entrada no Estoque
+            </button>
+            <div v-else-if="record.status === 'received'" class="rpro__inbound-received-badge">
+              <i class="pi pi-check-circle text-emerald-600 text-lg" />
+              <div>
+                <strong class="text-emerald-700 block text-xs uppercase tracking-wider">Estoque Atualizado</strong>
+                <span class="text-xs text-muted">{{ dateTime(record.stock_applied_at || record.updated_at) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DataTable :value="record.items" data-key="id" class="inbound-items-table" responsive-layout="scroll">
+          <Column header="#" :body-style="{ width: '48px', textAlign: 'center' }">
+            <template #body="{ data }">
+              <span class="font-bold text-muted">{{ data.item_number }}</span>
+            </template>
+          </Column>
+
+          <Column header="Cód. Fornecedor" :body-style="{ width: '130px' }">
+            <template #body="{ data }">
+              <code class="rpro__code-pill">{{ data.supplier_code || '-' }}</code>
+            </template>
+          </Column>
+
+          <Column header="Descrição do Produto">
+            <template #body="{ data }">
+              <div class="inbound-item-cell">
+                <strong class="inbound-item-title">{{ data.description }}</strong>
+                <div class="inbound-item-meta">
+                  <span v-if="data.ean || data.ean_trib" class="inbound-item-meta-tag font-mono">
+                    <i class="pi pi-barcode text-xs" /> {{ data.ean || data.ean_trib }}
+                  </span>
+                  <span v-if="data.ncm" class="inbound-item-meta-tag font-mono">NCM: {{ data.ncm }}</span>
+                  <span v-if="data.cest" class="inbound-item-meta-tag font-mono">CEST: {{ data.cest }}</span>
+                  <span v-if="data.cfop" class="inbound-item-meta-tag font-mono">CFOP: {{ data.cfop }}</span>
+                </div>
+                <!-- Tributos da NF-e -->
+                <div v-if="data.tax_data && Object.keys(data.tax_data).length" class="inbound-item-taxes">
+                  <span v-if="data.tax_data.ICMS" class="inbound-tax-badge">
+                    ICMS {{ data.tax_data.ICMS.tipo || data.tax_data.ICMS.CST }} (R$ {{ data.tax_data.ICMS.vICMS || '0,00' }})
+                  </span>
+                  <span v-if="data.tax_data.PIS" class="inbound-tax-badge">
+                    PIS: {{ data.tax_data.PIS.tipo }}
+                  </span>
+                  <span v-if="data.tax_data.COFINS" class="inbound-tax-badge">
+                    COFINS: {{ data.tax_data.COFINS.tipo }}
+                  </span>
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column header="Qtd Comprada" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }">
+            <template #body="{ data }">
+              <strong>{{ Number(data.commercial_quantity).toLocaleString('pt-BR') }}</strong>
+              <small class="text-muted ml-1 font-bold">{{ data.commercial_unit }}</small>
+            </template>
+          </Column>
+
+          <Column header="Valor Unit." header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '110px' }">
+            <template #body="{ data }">
+              <span class="font-mono">{{ money(data.commercial_unit_value) }}</span>
+            </template>
+          </Column>
+
+          <Column header="Valor Total" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '120px' }">
+            <template #body="{ data }">
+              <strong class="font-mono text-emerald-600">{{ money(data.product_total) }}</strong>
+            </template>
+          </Column>
+
+          <Column header="Vínculo Sistema / Estoque" :body-style="{ width: '280px' }">
+            <template #body="{ data }">
+              <div v-if="data.ingredient_name || data.product_name" class="inbound-mapping-linked">
+                <div class="inbound-mapping-linked-info">
+                  <Tag severity="success" rounded :value="data.ingredient_name ? `Ingrediente: ${data.ingredient_name}` : `Produto: ${data.product_name}`" />
+                  <small v-if="data.conversion_factor && Number(data.conversion_factor) !== 1" class="text-muted block text-xs mt-1 font-mono">
+                    Fator: x{{ Number(data.conversion_factor) }}
+                  </small>
+                </div>
+                <button
+                  v-if="record.status !== 'received'"
+                  type="button"
+                  class="rpro-btn rpro-btn--ghost rpro-btn--xs"
+                  title="Alterar vínculo"
+                  @click="openMapModal(data)"
+                >
+                  <i class="pi pi-pencil" />
+                </button>
+              </div>
+              <div v-else class="inbound-mapping-unlinked">
+                <button
+                  type="button"
+                  class="rpro-btn rpro-btn--ghost rpro-btn--sm w-full"
+                  :disabled="record.status === 'received'"
+                  @click="openMapModal(data)"
+                >
+                  <i class="pi pi-link" /> Vincular Produto
+                </button>
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </section>
     </div>
 
     <!-- ────────── FORM UNIFICADO: criar / editar / ver (campos desabilitados) ────────── -->
@@ -373,6 +499,231 @@
       :branch-id="quickCreateBranchId"
       @saved="onQuickCreateSaved"
     />
+
+    <!-- ── Modal de Mapeamento / Vínculo de Item da NF-e ── -->
+    <Dialog
+      v-model:visible="mapItemDialogVisible"
+      modal
+      :header="mappingItem ? `Vincular Item #${mappingItem.item_number} · ${mappingItem.description}` : 'Vincular Item'"
+      :style="{ width: 'min(560px, 95vw)' }"
+    >
+      <div v-if="mappingItem" class="inbound-modal-form">
+        <div class="inbound-modal-item-summary">
+          <span class="text-xs font-bold uppercase text-muted">Item da NF-e:</span>
+          <strong class="text-base text-strong">{{ mappingItem.description }}</strong>
+          <small class="text-muted">
+            Cód. Forn: {{ mappingItem.supplier_code || '-' }} · EAN: {{ mappingItem.ean || mappingItem.ean_trib || 'Sem GTIN' }} · Qtd: {{ Number(mappingItem.commercial_quantity) }} {{ mappingItem.commercial_unit }}
+          </small>
+        </div>
+
+        <div class="rpage__grid" style="grid-template-columns: 1fr; gap: 14px; margin-top: 14px">
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Tipo de Destino no Sistema</label>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="rpro-btn flex-1"
+                :class="mappingForm.targetType === 'ingredient' ? 'rpro-btn--primary' : 'rpro-btn--ghost'"
+                @click="mappingForm.targetType = 'ingredient'"
+              >
+                <i class="pi pi-database" /> Ingrediente de Estoque
+              </button>
+              <button
+                type="button"
+                class="rpro-btn flex-1"
+                :class="mappingForm.targetType === 'product' ? 'rpro-btn--primary' : 'rpro-btn--ghost'"
+                @click="mappingForm.targetType = 'product'"
+              >
+                <i class="pi pi-shopping-bag" /> Produto de Venda
+              </button>
+            </div>
+          </div>
+
+          <!-- Seleção de Ingrediente -->
+          <div v-if="mappingForm.targetType === 'ingredient'" class="rpage__field rpage__field--full">
+            <label class="rpage__label">Ingrediente de Estoque</label>
+            <Dropdown
+              v-model="mappingForm.ingredient_id"
+              :options="mappingIngredients"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o ingrediente correspondente..."
+              filter
+              :loading="mappingLoading"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Seleção de Produto -->
+          <div v-else class="rpage__field rpage__field--full">
+            <label class="rpage__label">Produto do Cardápio</label>
+            <Dropdown
+              v-model="mappingForm.product_id"
+              :options="mappingProducts"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o produto correspondente..."
+              filter
+              :loading="mappingLoading"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Fator de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">
+              Fator de Conversão de Quantidade
+              <i class="pi pi-question-circle text-xs text-muted" title="Exemplo: Se a nota veio em Caixa (CX) com 12 unidades e o seu estoque controla em UN, informe 12. Se a nota já está na mesma unidade, deixe 1." />
+            </label>
+            <InputNumber
+              v-model="mappingForm.conversion_factor"
+              :min-fraction-digits="1"
+              :max-fraction-digits="6"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Lembrar Vínculo -->
+          <div class="rpage__field rpage__field--full">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <Checkbox v-model="mappingForm.save_supplier_mapping" :binary="true" />
+              <span class="text-sm">Lembrar este vínculo automaticamente para as próximas compras deste fornecedor</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="mappingSubmitting" @click="mapItemDialogVisible = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="mappingSubmitting || (mappingForm.targetType === 'ingredient' ? !mappingForm.ingredient_id : !mappingForm.product_id)"
+          @click="submitItemMapping"
+        >
+          <i :class="mappingSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Salvar Vínculo
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Modal de Confirmação de Entrada no Estoque / Recebimento Físico ── -->
+    <Dialog
+      v-model:visible="receiveDialogVisible"
+      modal
+      header="Conferência Física e Entrada no Estoque"
+      :style="{ width: 'min(1050px, 96vw)' }"
+    >
+      <div class="inbound-receive-form">
+        <p class="text-sm text-muted mb-4">
+          Realize a conferência física dos volumes, lotes, validades e números de série. Ao confirmar, o sistema gerará o registro imutável da <strong>Conferência de Recebimento</strong>, atualizará os saldos e lotes FEFO e criará os bens patrimoniais serializados.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="rpage__label">Local de Estoque de Destino *</label>
+            <Dropdown
+              v-model="receiveForm.location_id"
+              :options="receiveStockLocations"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o local de estoque..."
+              :loading="receiveLocationsLoading"
+              class="w-full"
+            />
+          </div>
+          <div>
+            <label class="rpage__label">Observações da Conferência (Opcional)</label>
+            <InputText
+              v-model="receiveForm.notes"
+              placeholder="Ex: Carga entregue lacrada, sem avarias..."
+              class="w-full"
+            />
+          </div>
+        </div>
+
+        <div class="inbound-receive-table-wrapper">
+          <table class="rpro__inbound-table">
+            <thead>
+              <tr>
+                <th style="min-width: 200px">Item NF-e / Vínculo</th>
+                <th style="width: 100px; text-align: right">Qtd NF-e</th>
+                <th style="width: 120px; text-align: right">Qtd Recebida</th>
+                <th style="min-width: 260px">Rastreabilidade (Lote / Validade / Seriais)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="it in receiveForm.items" :key="it.item_id">
+                <td>
+                  <strong>{{ it.description }}</strong>
+                  <div class="text-xs text-muted">Cód: {{ it.supplier_code || '-' }}</div>
+                  <div class="mt-1">
+                    <span v-if="it.target_name !== 'Não vinculado'" class="text-emerald-700 font-bold text-xs">
+                      <i class="pi pi-check text-xs" /> {{ it.target_name }}
+                    </span>
+                    <span v-else class="text-amber-600 font-bold text-xs">
+                      <i class="pi pi-exclamation-triangle text-xs" /> Não vinculado
+                    </span>
+                  </div>
+                </td>
+                <td style="text-align: right">
+                  <strong>{{ Number(it.commercial_quantity) }}</strong>
+                  <small class="text-muted ml-1">{{ it.commercial_unit }}</small>
+                </td>
+                <td style="text-align: right">
+                  <InputNumber
+                    v-model="it.received_quantity"
+                    :min-fraction-digits="0"
+                    :max-fraction-digits="3"
+                    input-class="text-right w-24 p-1 text-sm font-bold"
+                  />
+                  <div v-if="Number(it.received_quantity) !== Number(it.commercial_quantity)" class="text-xs text-amber-600 font-bold mt-1">
+                    Divergência: {{ (Number(it.received_quantity) - Number(it.commercial_quantity)).toFixed(2) }}
+                  </div>
+                </td>
+                <td>
+                  <!-- Controle de Lote e Validade (Perecíveis) -->
+                  <div v-if="it.requires_lot || it.tracking_mode === 'LOT_EXPIRATION'" class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-xs text-muted block mb-0.5">Lote</label>
+                      <InputText v-model="it.lot_number" placeholder="Nº Lote" class="w-full text-xs p-1" />
+                    </div>
+                    <div>
+                      <label class="text-xs text-muted block mb-0.5">Validade</label>
+                      <InputText v-model="it.expiration_date" placeholder="AAAA-MM-DD" class="w-full text-xs p-1" />
+                    </div>
+                  </div>
+                  <!-- Controle Serializado (Patrimônio / Equipamentos) -->
+                  <div v-else-if="it.requires_serial || it.tracking_mode === 'SERIALIZED'">
+                    <label class="text-xs text-muted block mb-0.5">Números de Série (1 por item ou separados por vírgula)</label>
+                    <InputText v-model="it.serials_text" placeholder="Ex: SER-001, SER-002" class="w-full text-xs p-1 font-mono" />
+                  </div>
+                  <!-- Padrão / Quantitativo -->
+                  <div v-else class="text-xs text-muted italic">
+                    Controle por saldo e custo médio
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="receiveSubmitting" @click="receiveDialogVisible = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="receiveSubmitting || !receiveForm.location_id"
+          @click="submitReceiveInvoice"
+        >
+          <i :class="receiveSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-box'" /> Confirmar Recebimento e Estoque
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -383,10 +734,15 @@
  * modo "ver" vem de `config/detailMeta`. Aqui ficam so o template, a navegacao
  * e a montagem dos dados de exibicao.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
+import Checkbox from "primevue/checkbox";
+import Column from "primevue/column";
+import DataTable from "primevue/datatable";
+import Dialog from "primevue/dialog";
 import Dropdown from "primevue/dropdown";
+import InputNumber from "primevue/inputnumber";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
 import MultiSelect from "primevue/multiselect";
@@ -394,8 +750,6 @@ import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
 
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
@@ -565,9 +919,176 @@ const isProduct = computed(() => resolveDetailType(props.endpoint) === "product"
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
+const isInboundNFe = computed(() => resolveDetailType(props.endpoint) === "inboundNFe" || props.endpoint === "/inbound-nfe/");
 const printing = ref(false);
 const emittingInvoice = ref(false);
 const toast = useToast();
+
+// ── Inbound NF-e Item Mapping & Stock Receipt ────────────────────────
+const mapItemDialogVisible = ref(false);
+const mappingItem = ref(null);
+const mappingForm = reactive({
+  targetType: "ingredient", // "ingredient" | "product"
+  ingredient_id: null,
+  product_id: null,
+  conversion_factor: 1,
+  save_supplier_mapping: true,
+});
+const mappingIngredients = ref([]);
+const mappingProducts = ref([]);
+const mappingLoading = ref(false);
+const mappingSubmitting = ref(false);
+
+async function loadMappingOptions() {
+  if (mappingIngredients.value.length) return;
+  mappingLoading.value = true;
+  try {
+    const [ingRes, prodRes] = await Promise.all([
+      api.get("/menu/ingredients/", { params: { page_size: 200 } }),
+      api.get("/menu/products/", { params: { page_size: 200 } }),
+    ]);
+    mappingIngredients.value = ingRes.data.results || ingRes.data || [];
+    mappingProducts.value = prodRes.data.results || prodRes.data || [];
+  } catch (err) {
+    console.error("Erro ao carregar opções de mapeamento:", err);
+  } finally {
+    mappingLoading.value = false;
+  }
+}
+
+async function openMapModal(item) {
+  mappingItem.value = item;
+  mappingForm.targetType = item.product ? "product" : "ingredient";
+  mappingForm.ingredient_id = item.ingredient || null;
+  mappingForm.product_id = item.product || null;
+  mappingForm.conversion_factor = Number(item.conversion_factor) || 1;
+  mappingForm.save_supplier_mapping = true;
+  mapItemDialogVisible.value = true;
+  await loadMappingOptions();
+}
+
+async function submitItemMapping() {
+  if (!mappingItem.value?.id) return;
+  if (mappingForm.targetType === "ingredient" && !mappingForm.ingredient_id) {
+    toast.add({ severity: "warn", summary: "Selecione o Ingrediente", detail: "Escolha um ingrediente para vincular.", life: 3000 });
+    return;
+  }
+  if (mappingForm.targetType === "product" && !mappingForm.product_id) {
+    toast.add({ severity: "warn", summary: "Selecione o Produto", detail: "Escolha um produto para vincular.", life: 3000 });
+    return;
+  }
+  mappingSubmitting.value = true;
+  try {
+    await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
+      ingredient_id: mappingForm.targetType === "ingredient" ? mappingForm.ingredient_id : null,
+      product_id: mappingForm.targetType === "product" ? mappingForm.product_id : null,
+      conversion_factor: mappingForm.conversion_factor,
+      save_supplier_mapping: mappingForm.save_supplier_mapping,
+    });
+    toast.add({ severity: "success", summary: "Vínculo salvo", detail: "Item vinculado com sucesso ao estoque.", life: 3000 });
+    mapItemDialogVisible.value = false;
+    await reload();
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao salvar vínculo", detail: normalizeApiError(err).message, life: 5000 });
+  } finally {
+    mappingSubmitting.value = false;
+  }
+}
+
+// ── Recebimento / Entrada de Estoque da NF-e ─────────────────────────
+const receiveDialogVisible = ref(false);
+const receiveStockLocations = ref([]);
+const receiveLocationsLoading = ref(false);
+const receiveSubmitting = ref(false);
+const receiveForm = reactive({
+  location_id: null,
+  notes: "",
+  items: [],
+});
+
+async function openReceiveModal() {
+  const unmapped = (record.value?.items || []).filter((it) => !it.ingredient && !it.product);
+  if (unmapped.length > 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Itens sem vínculo",
+      detail: `Existem ${unmapped.length} item(ns) sem produto/ingrediente vinculado. Vincule todos antes de aplicar a entrada.`,
+      life: 6000,
+    });
+  }
+
+  receiveForm.notes = "";
+  receiveForm.items = (record.value?.items || []).map((it) => ({
+    item_id: it.id,
+    description: it.description,
+    supplier_code: it.supplier_code,
+    target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
+    tracking_mode: it.product_tracking_mode || "QUANTITY",
+    requires_lot: it.product_requires_lot_control || false,
+    requires_serial: it.product_requires_serial_number || false,
+    commercial_quantity: it.commercial_quantity,
+    commercial_unit: it.commercial_unit,
+    conversion_factor: it.conversion_factor,
+    received_quantity: Number(it.commercial_quantity),
+    accepted_quantity: Number(it.commercial_quantity),
+    rejected_quantity: 0,
+    lot_number: "",
+    expiration_date: "",
+    serials_text: "",
+  }));
+
+  receiveDialogVisible.value = true;
+  receiveLocationsLoading.value = true;
+  try {
+    const { data } = await api.get("/stock/locations/", { params: { page_size: 100 } });
+    receiveStockLocations.value = data.results || data || [];
+    if (receiveStockLocations.value.length && !receiveForm.location_id) {
+      receiveForm.location_id = receiveStockLocations.value[0].id;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar locais de estoque:", err);
+  } finally {
+    receiveLocationsLoading.value = false;
+  }
+}
+
+async function submitReceiveInvoice() {
+  if (!receiveForm.location_id) {
+    toast.add({ severity: "warn", summary: "Selecione o local de estoque", detail: "Informe onde os produtos serão armazenados.", life: 4000 });
+    return;
+  }
+  receiveSubmitting.value = true;
+  try {
+    const payload = {
+      location_id: receiveForm.location_id,
+      notes: receiveForm.notes || "",
+      items: receiveForm.items.map((it) => ({
+        item_id: it.item_id,
+        received_quantity: it.received_quantity,
+        accepted_quantity: it.received_quantity,
+        rejected_quantity: 0,
+        lot_number: it.lot_number || "",
+        expiration_date: it.expiration_date || null,
+        serials: it.serials_text
+          ? it.serials_text.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+          : [],
+      })),
+    };
+    const { data } = await api.post(`/inbound-nfe/${recordId.value}/receive/`, payload);
+    toast.add({
+      severity: "success",
+      summary: "Entrada Concluída!",
+      detail: `Conferência ${data.receipt_number || ""} gerada e estoque atualizado com sucesso.`,
+      life: 5000,
+    });
+    receiveDialogVisible.value = false;
+    await reload();
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao dar entrada no estoque", detail: normalizeApiError(err).message, life: 6000 });
+  } finally {
+    receiveSubmitting.value = false;
+  }
+}
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
    formulário de produto) — o mesmo diálogo usado na seção fiscal do
@@ -1157,6 +1678,130 @@ watch(() => [recordId.value, props.mode], async () => {
 :deep(.p-tag) { border: 1px solid transparent; font: var(--weight-extra) 11px/1 var(--font-sans); }
 :deep(.p-tag.p-tag-success) { background: #047857; border-color: #065f46; color: #fff; }
 :deep(.p-tag.p-tag-danger) { background: #b91c1c; border-color: #991b1b; color: #fff; }
+
+/* ── Estilos da Seção de NF-e de Entrada ──────────────────────────── */
+.detail-section--inbound {
+  padding: 24px;
+}
+
+.detail-section__header-flex {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.detail-section__header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rpro__inbound-received-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, #059669 10%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, #059669 25%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.inbound-items-table :deep(.p-datatable-thead > tr > th) {
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inbound-items-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.inbound-item-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inbound-item-title {
+  font-size: 13.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.inbound-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inbound-item-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.inbound-item-taxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.inbound-tax-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
+  border-radius: 3px;
+  font-size: 10.5px;
+  color: var(--brand);
+}
+
+.inbound-mapping-linked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inbound-mapping-linked-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.inbound-modal-item-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.inbound-receive-table-wrapper {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 760px) {

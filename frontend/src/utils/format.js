@@ -39,5 +39,9 @@ export function formatPercent(value) {
 /** Traduz um valor bruto usando um mapa { valor: rotulo }; "-" quando vazio. */
 export function mapLabel(value, map) {
   if (value == null || value === "") return "-";
-  return map?.[value] ?? value;
+  const mapped = map?.[value] ?? value;
+  if (typeof mapped === "object" && mapped !== null && "label" in mapped) {
+    return mapped.label;
+  }
+  return mapped;
 }

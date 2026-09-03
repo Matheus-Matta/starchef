@@ -12,6 +12,7 @@
  */
 import {
   CASH_STATUS_LABELS,
+  INBOUND_NFE_STATUS_LABELS,
   ORDER_STATUS_LABELS,
   ORDER_TYPE_LABELS,
   PROFILE_TYPE_LABELS,
@@ -37,7 +38,7 @@ export function resolveDetailType(endpoint) {
     ["/delivery/zones", "zone"],
     ["/delivery/deliverymen", "deliveryman"],
     ["/payments/methods", "paymentMethod"],
-    ["/payments", "payment"],
+    ["/inbound-nfe", "inboundNFe"],
     ["/invoices", "invoice"],
     ["/printers", "printer"],
     ["/scales", "scale"],
@@ -51,6 +52,20 @@ export function resolveDetailType(endpoint) {
 }
 
 export const DETAIL_META = {
+  inboundNFe: {
+    icon: "pi-file-import",
+    accent: "indigo",
+    eyebrow: "Nota Fiscal de Entrada (NF-e)",
+    title: (r) => (r.number ? `NF-e #${r.number} · Série ${r.series || "0"}` : "NF-e de Entrada"),
+    subtitle: (r) => r.supplier_name || r.access_key || "-",
+    badge: (r) => INBOUND_NFE_STATUS_LABELS[r.status] || r.status,
+    badgeKey: "status",
+    metrics: [
+      { label: "Valor Total", key: "total_invoice", type: "money" },
+      { label: "Total Produtos", key: "total_products", type: "money" },
+      { label: "Emissão", key: "issue_date", type: "date" },
+    ],
+  },
   product: {
     icon: "pi-shopping-bag", accent: "violet", eyebrow: "Produto",
     title: (r) => r.name || "Produto",

@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.modules import MODULE_FINANCEIRO
@@ -25,6 +26,7 @@ class FiscalConfigViewSet(BaseTenantViewSet):
 
     required_module = MODULE_FINANCEIRO
     serializer_class = FiscalConfigSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     queryset = FiscalConfig.objects.select_related("restaurant", "branch", "default_profile").all()
     filterset_fields = ["is_active", "document_model"]
 

@@ -46,8 +46,20 @@
 
     <nav class="sidebar__nav">
       <div v-for="group in groups" :key="group.label" class="sidebar__group">
-        <div v-if="!collapsed" class="sidebar__group-label">{{ group.label }}</div>
-        <div class="sidebar__items">
+        <button
+          v-if="!collapsed"
+          type="button"
+          class="sidebar__group-header"
+          :class="{ 'sidebar__group-header--collapsed': isGroupCollapsed(group.label) }"
+          :aria-expanded="!isGroupCollapsed(group.label)"
+          @click="toggleGroup(group.label)"
+        >
+          <span class="sidebar__group-label">{{ group.label }}</span>
+          <span class="sidebar__group-chevron">
+            <AppIcon :name="isGroupCollapsed(group.label) ? 'chevron-right' : 'chevron-down'" :size="12" />
+          </span>
+        </button>
+        <div v-show="!isGroupCollapsed(group.label)" class="sidebar__items">
           <template v-for="item in group.items" :key="item.id">
             <button
               type="button"
@@ -133,9 +145,60 @@ const props = defineProps({
 const emit = defineEmits(["navigate", "scope-change", "close", "toggle-theme", "logout"]);
 const scopeOpen = ref(false);
 const reportsOpen = ref(String(props.active).startsWith("relatorio"));
-watch(() => props.active, (value) => {
-  if (String(value).startsWith("relatorio")) reportsOpen.value = true;
-});
+
+function loadCollapsedGroups() {
+  try {
+    const saved = localStorage.getItem("starchef_collapsed_sidebar_groups");
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+const collapsedGroups = ref(loadCollapsedGroups());
+
+function saveCollapsedGroups() {
+  try {
+    localStorage.setItem("starchef_collapsed_sidebar_groups", JSON.stringify(collapsedGroups.value));
+  } catch {
+    // ignore
+  }
+}
+
+function isGroupCollapsed(groupLabel) {
+  if (props.collapsed) return false;
+  return Boolean(collapsedGroups.value[groupLabel]);
+}
+
+function toggleGroup(groupLabel) {
+  if (props.collapsed) return;
+  collapsedGroups.value = {
+    ...collapsedGroups.value,
+    [groupLabel]: !collapsedGroups.value[groupLabel],
+  };
+  saveCollapsedGroups();
+}
+
+watch(
+  () => props.active,
+  (value) => {
+    if (String(value).startsWith("relatorio")) reportsOpen.value = true;
+    // Se o item ativo estiver dentro de um grupo recolhido, expande-o automaticamente
+    if (value && groups.value?.length) {
+      const activeGroup = groups.value.find((g) =>
+        g.items.some((item) => item.id === value || item.children?.some((c) => c.id === value))
+      );
+      if (activeGroup && collapsedGroups.value[activeGroup.label]) {
+        collapsedGroups.value = {
+          ...collapsedGroups.value,
+          [activeGroup.label]: false,
+        };
+        saveCollapsedGroups();
+      }
+    }
+  },
+  { immediate: true }
+);
 
 const canSeeAllRestaurants = computed(() => Boolean(props.user?.is_superuser || props.user?.profile_type === "admin" || props.user?.profile_type === "owner"));
 const canManage = computed(() => ["admin", "owner", "manager"].includes(props.user?.profile_type) || props.user?.is_superuser);
@@ -206,10 +269,14 @@ const groups = computed(() =>
       ].filter(Boolean),
     },
     {
-      label: "Logistica",
+      label: "Logística",
       module: "logistica",
       items: [
-        canManage.value ? { id: "estoque", label: "Estoque", icon: "package" } : null,
+        canManage.value ? { id: "inbound-nfe", label: "Notas fiscais (Entrada)", icon: "shield-check" } : null,
+        canManage.value ? { id: "recebimentos", label: "Conferências", icon: "file-text" } : null,
+        canManage.value ? { id: "estoque", label: "Movimentações", icon: "package" } : null,
+        canManage.value ? { id: "lotes-estoque", label: "Lotes & Validades (FEFO)", icon: "layers" } : null,
+        canManage.value ? { id: "patrimonio", label: "Patrimônio & Ativos", icon: "cpu" } : null,
         canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
       ].filter(Boolean),
     },
@@ -443,7 +510,27 @@ function selectScope(restaurantId) {
 }
 
 .sidebar__group {
-  margin-top: 14px;
+  margin-top: 10px;
+}
+
+.sidebar__group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 10px;
+  margin-bottom: 3px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+  transition: background var(--dur-fast) ease;
+}
+
+.sidebar__group-header:hover {
+  background: var(--nav-item-hover);
 }
 
 .sidebar__group-label {
@@ -451,7 +538,29 @@ function selectScope(restaurantId) {
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--text-subtle);
-  padding: 6px 10px 10px;
+  transition: color var(--dur-fast) ease;
+}
+
+.sidebar__group-header:hover .sidebar__group-label {
+  color: var(--text-strong);
+}
+
+.sidebar__group-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-subtle);
+  opacity: 0.5;
+  transition: all var(--dur-fast) ease;
+}
+
+.sidebar__group-header:hover .sidebar__group-chevron {
+  opacity: 1;
+  color: var(--text-strong);
+}
+
+.sidebar__group-header--collapsed .sidebar__group-label {
+  color: var(--text-muted);
 }
 
 .sidebar__items {

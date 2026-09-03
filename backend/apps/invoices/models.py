@@ -87,12 +87,38 @@ class FiscalConfig(TenantModel):
     uf = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=9, blank=True)
 
-    # Integracao NFC-e / certificado — EM BRANCO ate configurar.
+    # Integracao NFC-e / certificado
     csc_id = models.CharField(max_length=6, blank=True, help_text="ID do CSC (idToken).")
     csc_token = models.CharField(max_length=64, blank=True, help_text="CSC (segredo) da NFC-e.")
     qr_base_url = models.URLField(blank=True, help_text="URL de consulta da NFC-e da UF.")
     portal_url = models.URLField(blank=True, help_text="URL do portal para consulta por chave.")
     certificate_ref = models.CharField(max_length=255, blank=True, help_text="Referencia ao certificado A1.")
+    certificate_file = models.FileField(
+        upload_to="certificates/",
+        blank=True,
+        null=True,
+        help_text="Arquivo .pfx ou .p12 do certificado A1."
+    )
+    certificate_password = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Senha do certificado A1."
+    )
+    certificate_valid_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Validade do certificado A1."
+    )
+    certificate_cnpj = models.CharField(
+        max_length=18,
+        blank=True,
+        help_text="CNPJ extraído do certificado A1."
+    )
+    certificate_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Titular extraído do certificado A1."
+    )
     provider_token = models.CharField(
         max_length=255, blank=True, help_text="Credencial/token do integrador fiscal (ex.: Focus NFe)."
     )
@@ -113,7 +139,7 @@ class FiscalConfig(TenantModel):
     @property
     def is_ready(self):
         """True quando o minimo para emissao real esta preenchido (senao, scaffold)."""
-        return bool(self.cnpj and self.uf and self.csc_token and self.certificate_ref)
+        return bool(self.cnpj and self.uf and self.csc_token and (self.certificate_file or self.certificate_ref))
 
 
 class Invoice(TenantModel):

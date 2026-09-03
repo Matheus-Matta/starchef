@@ -24,6 +24,7 @@ from apps.accounts.views import (
 )
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
+from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
@@ -34,6 +35,7 @@ from apps.menu.views import (
     MenuViewSet,
     ProductAddonViewSet,
     ProductCategoryViewSet,
+    ProductUnitConversionViewSet,
     ProductVariationViewSet,
     ProductViewSet,
     PublicMenuView,
@@ -62,7 +64,13 @@ from apps.restaurants.views import (
     TableSectorViewSet,
     TableViewSet,
 )
-from apps.stock.views import StockAlertView, StockLocationViewSet, StockMovementViewSet
+from apps.stock.views import (
+    GoodsReceiptViewSet,
+    InventoryLotViewSet,
+    StockAlertView,
+    StockLocationViewSet,
+    StockMovementViewSet,
+)
 from apps.data_exchange.views import CsvExportView, CsvParseView
 
 
@@ -100,6 +108,7 @@ router.register("customers/addresses", CustomerAddressViewSet, basename="custome
 router.register("customers", CustomerViewSet, basename="customers")
 router.register("menu/categories", ProductCategoryViewSet, basename="product-categories")
 router.register("menu/products", ProductViewSet, basename="products")
+router.register("menu/unit-conversions", ProductUnitConversionViewSet, basename="product-unit-conversions")
 router.register("menu/addons", ProductAddonViewSet, basename="product-addons")
 router.register("menu/variations", ProductVariationViewSet, basename="product-variations")
 router.register("menu/ingredients", IngredientViewSet, basename="ingredients")
@@ -126,7 +135,11 @@ router.register("print-jobs", PrintJobViewSet, basename="print-jobs")
 router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings")
 router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
+router.register("stock/receipts", GoodsReceiptViewSet, basename="goods-receipts")
+router.register("stock/lots", InventoryLotViewSet, basename="inventory-lots")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
+router.register("assets/location-history", AssetLocationHistoryViewSet, basename="asset-location-history")
+router.register("assets", AssetViewSet, basename="assets")
 router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
@@ -159,6 +172,7 @@ urlpatterns = [
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
+    path("api/v1/", include("apps.inbound_nfe.urls")),
     path("api/v1/", include(router.urls)),
 ]
 

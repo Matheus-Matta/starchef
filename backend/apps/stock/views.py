@@ -7,28 +7,87 @@ from rest_framework.views import APIView
 from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_LOGISTICA
 from apps.core.viewsets import BaseTenantViewSet
-from apps.stock.models import StockLocation, StockMovement
-from apps.stock.serializers import StockLocationSerializer, StockMovementSerializer
+from apps.stock.models import (
+    GoodsReceipt,
+    GoodsReceiptItem,
+    InventoryLot,
+    StockLocation,
+    StockMovement,
+)
+from apps.stock.serializers import (
+    GoodsReceiptSerializer,
+    InventoryLotSerializer,
+    StockLocationSerializer,
+    StockMovementSerializer,
+)
 
 
 class StockLocationViewSet(BaseTenantViewSet):
     required_module = MODULE_LOGISTICA
     serializer_class = StockLocationSerializer
-    queryset = StockLocation.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["is_active"]
-    search_fields = ["name"]
+    queryset = StockLocation.objects.select_related("restaurant", "branch", "parent_location").all()
+    filterset_fields = ["is_active", "location_type"]
+    search_fields = ["name", "description"]
+
+
+class GoodsReceiptViewSet(BaseTenantViewSet):
+    required_module = MODULE_LOGISTICA
+    serializer_class = GoodsReceiptSerializer
+    queryset = (
+        GoodsReceipt.objects
+        .select_related("restaurant", "branch", "invoice", "received_by")
+        .prefetch_related("items__product")
+        .all()
+    )
+    filterset_fields = ["status", "invoice"]
+    search_fields = ["receipt_number", "invoice__number", "invoice__supplier_name", "notes"]
+    ordering_fields = ["received_at"]
+    ordering = ["-received_at"]
+
+
+class InventoryLotViewSet(BaseTenantViewSet):
+    required_module = MODULE_LOGISTICA
+    serializer_class = InventoryLotSerializer
+    queryset = (
+        InventoryLot.objects
+        .select_related("restaurant", "branch", "product", "location", "nfe", "receipt")
+        .all()
+    )
+    filterset_fields = ["product", "location", "status"]
+    search_fields = ["lot_number", "product__name", "supplier_name", "supplier_cnpj"]
+    ordering_fields = ["expiration_date", "received_at", "available_quantity"]
+    ordering = ["expiration_date", "received_at"]
 
 
 class StockMovementViewSet(BaseTenantViewSet):
     required_module = MODULE_LOGISTICA
     serializer_class = StockMovementSerializer
-    queryset = StockMovement.objects.select_related("restaurant", "branch", "ingredient", "location", "operator").all()
-    filterset_fields = ["ingredient", "location", "movement_type"]
+    queryset = (
+        StockMovement.objects
+        .select_related(
+            "restaurant",
+            "branch",
+            "product",
+            "ingredient",
+            "location",
+            "operator",
+            "inventory_lot",
+            "nfe",
+        )
+        .all()
+    )
+    filterset_fields = ["product", "ingredient", "location", "movement_type"]
+    search_fields = ["product__name", "ingredient__name", "reason", "inventory_lot__lot_number"]
     ordering_fields = ["created_at", "quantity", "total_cost"]
+    ordering = ["-created_at"]
 
     def perform_create(self, serializer):
         instance = serializer.save()
-        if instance.movement_type == StockMovement.TYPE_IN and instance.unit_cost > 0:
+        # Atualização de custo médio para produto
+        if instance.product and instance.quantity > 0 and instance.unit_cost > 0:
+            from apps.inbound_nfe.services.receiving import update_product_average_cost
+            update_product_average_cost(instance.product, instance.quantity, instance.unit_cost)
+        elif instance.ingredient and instance.quantity > 0 and instance.unit_cost > 0:
             from apps.menu.services import update_ingredient_average_cost
             update_ingredient_average_cost(instance.ingredient, instance.quantity, instance.unit_cost)
 

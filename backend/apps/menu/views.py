@@ -10,7 +10,18 @@ from rest_framework.views import APIView
 from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_ECOMMERCE
 from apps.core.viewsets import BaseTenantViewSet
-from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
+from apps.menu.models import (
+    Ingredient,
+    Menu,
+    MenuItem,
+    Product,
+    ProductAddon,
+    ProductCategory,
+    ProductUnitConversion,
+    ProductVariation,
+    Recipe,
+    RecipeItem,
+)
 from apps.menu.serializers import (
     IngredientSerializer,
     MenuItemSerializer,
@@ -18,6 +29,7 @@ from apps.menu.serializers import (
     ProductAddonSerializer,
     ProductCategorySerializer,
     ProductSerializer,
+    ProductUnitConversionSerializer,
     ProductVariationSerializer,
     PublicMenuSerializer,
     RecipeItemSerializer,
@@ -34,19 +46,30 @@ class ProductCategoryViewSet(BaseTenantViewSet):
     ordering = ["display_order", "name"]
 
 
+class ProductUnitConversionViewSet(BaseTenantViewSet):
+    serializer_class = ProductUnitConversionSerializer
+    queryset = ProductUnitConversion.objects.select_related("product").all()
+    filterset_fields = ["product", "source_unit", "target_unit"]
+    search_fields = ["product__name", "source_unit", "target_unit", "supplier_cnpj", "supplier_product_code"]
+    ordering_fields = ["created_at"]
+
+
 class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
     queryset = Product.objects.select_related("restaurant", "branch", "category", "sector").prefetch_related("variations", "restaurants").all()
     filterset_fields = [
         "category",
         "product_type",
+        "item_type",
+        "tracking_mode",
+        "controls_stock",
         "production_sector", "sector",
         "is_active",
         "available_for_table",
         "available_for_counter",
         "available_for_delivery",
     ]
-    search_fields = ["name", "internal_code", "description"]
+    search_fields = ["name", "internal_code", "gtin", "brand", "model", "description"]
     ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
     ordering = ["name"]
 

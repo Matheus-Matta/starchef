@@ -38,3 +38,8 @@ infra/simuladores/impressoes/
 infra/simuladores/logs/
 
 logs/
+
+teste_nfe_sefaz.py
+backend/celerybeat-schedule*
+*.sqlite3-journal
+docker-compose.override.yml

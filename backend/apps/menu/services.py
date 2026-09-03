@@ -47,9 +47,13 @@ def update_ingredient_average_cost(ingredient, incoming_quantity, incoming_unit_
     incoming_unit_cost = Decimal(str(incoming_unit_cost))
     current_cost = ingredient.average_cost
 
-    if current_stock > Decimal("0") and incoming_quantity > Decimal("0"):
-        new_avg = (current_stock * current_cost + incoming_quantity * incoming_unit_cost) / (
-            current_stock + incoming_quantity
+    # O movimento recém-criado já consta no balance do aggregate.
+    # Subtraímos para obter o saldo anterior real.
+    previous_stock = current_stock - incoming_quantity
+
+    if previous_stock > Decimal("0") and incoming_quantity > Decimal("0"):
+        new_avg = (previous_stock * current_cost + incoming_quantity * incoming_unit_cost) / (
+            previous_stock + incoming_quantity
         )
     elif incoming_quantity > Decimal("0"):
         new_avg = incoming_unit_cost

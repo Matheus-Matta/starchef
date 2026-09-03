@@ -30,8 +30,8 @@ def serialize_notification(notification):
         "object_id": notification.object_id,
         "metadata": notification.metadata,
         "is_read": notification.is_read,
-        "read_at": notification.read_at,
-        "created_at": notification.created_at,
+        "read_at": notification.read_at.isoformat() if notification.read_at else None,
+        "created_at": notification.created_at.isoformat() if notification.created_at else None,
     }
 
 

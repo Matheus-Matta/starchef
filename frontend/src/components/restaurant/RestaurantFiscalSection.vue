@@ -53,8 +53,124 @@
       </div>
 
       <div class="fs__section">
-        <h3 class="fs__title">Integração</h3>
+        <h3 class="fs__title">Integração e Certificado Digital</h3>
         <div class="fs__grid">
+          <!-- Card de Certificado Digital A1 -->
+          <div class="fs__field fs__field--full">
+            <div class="fs__cert-box">
+              <div class="fs__cert-header">
+                <div class="fs__cert-badge-row">
+                  <span class="fs__cert-label">Certificado Digital A1 (.pfx / .p12)</span>
+                  <Tag v-if="form.has_certificate && isCertExpired" value="Vencido" severity="danger" rounded />
+                  <Tag v-else-if="form.has_certificate" value="Certificado ativo" severity="success" rounded />
+                  <Tag v-else value="Não configurado" severity="warning" rounded />
+                </div>
+                <div v-if="form.has_certificate" class="fs__cert-details">
+                  <div v-if="form.certificate_name" class="fs__cert-item">
+                    <span class="fs__cert-key">Titular:</span>
+                    <strong class="fs__cert-val">{{ form.certificate_name }}</strong>
+                  </div>
+                  <div v-if="form.certificate_cnpj" class="fs__cert-item">
+                    <span class="fs__cert-key">CNPJ:</span>
+                    <span class="fs__cert-val">{{ form.certificate_cnpj }}</span>
+                  </div>
+                  <div v-if="form.certificate_valid_until" class="fs__cert-item">
+                    <span class="fs__cert-key">Validade:</span>
+                    <span :class="['fs__cert-val', { 'fs__cert-val--danger': isCertExpired }]">
+                      <i class="pi pi-calendar" /> {{ formatCertDate(form.certificate_valid_until) }}
+                    </span>
+                  </div>
+                </div>
+                <p v-else class="fs__cert-hint">
+                  Envie o arquivo do certificado A1 (.pfx ou .p12) e a senha para sincronizar as notas de compras diretamente com a SEFAZ e assinar cupons fiscais.
+                </p>
+              </div>
+
+              <div v-if="!readonly" class="fs__cert-inputs-row">
+                <div class="fs__cert-input-col">
+                  <label class="fs__label" for="fs-cert-file">
+                    {{ form.has_certificate ? 'Substituir arquivo (.pfx / .p12)' : 'Arquivo do certificado (.pfx / .p12)' }}
+                  </label>
+                  <div class="fs__file-upload-wrapper">
+                    <input
+                      id="fs-cert-file"
+                      ref="fileInputRef"
+                      type="file"
+                      accept=".pfx,.p12,application/x-pkcs12"
+                      class="fs__hidden-file"
+                      @change="onFileSelected"
+                    />
+                    <Button
+                      type="button"
+                      :icon="selectedCertificateFile ? 'pi pi-file' : 'pi pi-upload'"
+                      :label="selectedCertificateFile ? selectedCertificateFile.name : (form.has_certificate ? 'Selecionar novo .pfx' : 'Selecionar arquivo .pfx')"
+                      :severity="selectedCertificateFile ? 'primary' : 'secondary'"
+                      outlined
+                      class="fs__file-btn"
+                      @click="triggerFileInput"
+                    />
+                    <Button
+                      v-if="selectedCertificateFile"
+                      type="button"
+                      icon="pi pi-times"
+                      text
+                      rounded
+                      severity="danger"
+                      aria-label="Cancelar seleção"
+                      @click="clearSelectedFile"
+                    />
+                  </div>
+                </div>
+
+                <div class="fs__cert-input-col">
+                  <label for="fs-certificate_password" class="fs__label">
+                    Senha do certificado
+                    <i v-tooltip.top="'A senha é validada junto com o arquivo para garantir a abertura correta.'" class="pi pi-question-circle fs__help-icon" aria-hidden="true" />
+                  </label>
+                  <Password
+                    id="fs-certificate_password"
+                    v-model="form.certificate_password"
+                    :placeholder="form.has_certificate ? 'Deixe em branco para não alterar' : 'Senha do certificado'"
+                    :feedback="false"
+                    toggle-mask
+                    class="fs__password"
+                    input-class="fs__input"
+                    :disabled="readonly"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card de Último NSU (DF-e) -->
+          <div class="fs__field fs__field--full">
+            <div class="fs__nsu-box">
+              <div class="fs__nsu-header">
+                <div>
+                  <label for="fs-dfe_ult_nsu" class="fs__label">
+                    Último NSU Consultado (DF-e / Notas de Compra)
+                    <i v-tooltip.top="'Número Sequencial Único da última nota consultada na SEFAZ. Se você já fez consultas por scripts externos para este CNPJ, informe o último NSU conhecido (ex: 82) para evitar rejeição 656 por Consumo Indevido.'" class="pi pi-question-circle fs__help-icon" aria-hidden="true" />
+                  </label>
+                  <p class="fs__nsu-desc">
+                    A SEFAZ entrega as notas fiscais emitidas contra o CNPJ de forma sequencial. Se já consultou externamente, informe o último NSU para evitar bloqueios de Consumo Indevido.
+                  </p>
+                </div>
+              </div>
+              <div class="fs__nsu-input-row">
+                <InputText
+                  id="fs-dfe_ult_nsu"
+                  v-model="form.dfe_ult_nsu"
+                  placeholder="Ex: 000000000000082"
+                  class="fs__input fs__input--mono"
+                  :disabled="readonly"
+                />
+                <small class="fs__nsu-hint">
+                  <i class="pi pi-shield" /> Dica: Se consultou externamente até o NSU 82, informe <strong>82</strong> ou <strong>000000000000082</strong>.
+                </small>
+              </div>
+            </div>
+          </div>
+
           <div class="fs__field">
             <label for="fs-provider" class="fs__label">
               Provedor de emissão
@@ -73,10 +189,6 @@
           <div class="fs__field">
             <label for="fs-csc_token" class="fs__label">CSC (segredo da NFC-e)</label>
             <Password id="fs-csc_token" v-model="form.csc_token" placeholder="Deixe em branco para não alterar" :feedback="false" toggle-mask class="fs__password" input-class="fs__input" :disabled="readonly" />
-          </div>
-          <div class="fs__field">
-            <label for="fs-certificate_ref" class="fs__label">Referência do certificado A1</label>
-            <InputText id="fs-certificate_ref" v-model="form.certificate_ref" class="fs__input" :disabled="readonly" />
           </div>
           <div class="fs__field fs__field--full">
             <label for="fs-qr_base_url" class="fs__label">URL de consulta do QR Code (da UF)</label>
@@ -140,7 +252,7 @@
  * campos, sem card/fundo próprio) — só o botão de salvar é independente,
  * porque são dois modelos/endpoints diferentes.
  */
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
 import InputText from "primevue/inputtext";
@@ -153,6 +265,7 @@ import FiscalProfileDialog from "./FiscalProfileDialog.vue";
 import { ResourceService } from "../../services/ResourceService";
 import { normalizeApiError } from "../../utils/apiError";
 import { resolveBranchIdForRestaurant } from "../../utils/fiscalBranch";
+import { formatDateTime } from "../../utils/format";
 import {
   FISCAL_CRT_OPTIONS,
   FISCAL_DOCUMENT_MODEL_OPTIONS,
@@ -179,9 +292,10 @@ const formError = ref("");
 const profiles = ref([]);
 const profileDialogOpen = ref(false);
 const editingProfile = ref(null);
-// Guardado só pra ler razão social/CNPJ/endereço na hora de salvar — o
-// restaurante é a única fonte desses dados, o form fiscal não os repete.
 const restaurant = ref(null);
+
+const selectedCertificateFile = ref(null);
+const fileInputRef = ref(null);
 
 function emptyForm() {
   return {
@@ -196,20 +310,62 @@ function emptyForm() {
     csc_id: "",
     csc_token: "",
     certificate_ref: "",
+    certificate_password: "",
+    certificate_valid_until: null,
+    certificate_cnpj: "",
+    certificate_name: "",
+    has_certificate: false,
+    has_certificate_password: false,
     qr_base_url: "",
     portal_url: "",
+    dfe_ult_nsu: "000000000000000",
   };
 }
 
 const form = reactive(emptyForm());
+
+const isCertExpired = computed(() => {
+  if (!form.certificate_valid_until) return false;
+  return new Date(form.certificate_valid_until) < new Date();
+});
+
+function formatCertDate(val) {
+  if (!val) return "-";
+  return formatDateTime(val, { withYear: true });
+}
+
+function onFileSelected(event) {
+  const file = event.target.files?.[0];
+  if (file) {
+    selectedCertificateFile.value = file;
+  }
+}
+
+function clearSelectedFile() {
+  selectedCertificateFile.value = null;
+  if (fileInputRef.value) {
+    fileInputRef.value.value = "";
+  }
+}
+
+function triggerFileInput() {
+  fileInputRef.value?.click();
+}
 
 async function loadProfiles() {
   const list = await profileService.list({ page_size: 200 });
   profiles.value = (list.results || []).filter((p) => p.branch === branchId.value);
 }
 
-onMounted(async () => {
+async function loadData() {
+  if (!props.restaurantId) return;
   loading.value = true;
+  formError.value = "";
+  // Reset completo do formulário para o novo restaurante
+  Object.assign(form, emptyForm());
+  configId.value = null;
+  selectedCertificateFile.value = null;
+
   try {
     const [fetchedRestaurant, resolvedBranchId] = await Promise.all([
       restaurantService.retrieve(props.restaurantId),
@@ -223,7 +379,7 @@ onMounted(async () => {
     const existing = (configs.results || []).find((c) => c.restaurant === props.restaurantId);
     if (existing) {
       configId.value = existing.id;
-      Object.assign(form, existing, { provider_token: "", csc_token: "" });
+      Object.assign(form, existing, { provider_token: "", csc_token: "", certificate_password: "" });
     }
 
     await loadProfiles();
@@ -232,7 +388,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+}
+
+watch(() => props.restaurantId, loadData, { immediate: true });
 
 function openCreateProfile() {
   editingProfile.value = null;
@@ -275,8 +433,6 @@ function buildPayload() {
     restaurant: props.restaurantId,
     branch: branchId.value,
     series: Number(form.series) || 1,
-    // Razão social/CNPJ/endereço: sempre os dados atuais do restaurante, nunca
-    // uma cópia digitada à parte — um só campo pra preencher isso no sistema.
     corporate_name: restaurant.value?.legal_name || restaurant.value?.trade_name || "",
     trade_name: restaurant.value?.trade_name || "",
     cnpj: restaurant.value?.cnpj || "",
@@ -285,18 +441,26 @@ function buildPayload() {
     uf: restaurant.value?.state || "",
     zip_code: restaurant.value?.zip_code || "",
   };
-  // Segredos: só manda se o usuário digitou algo novo — em branco significa
-  // "não alterar" (mesmo padrão de cash_action_password no cadastro do restaurante).
+  // Segredos: só manda se o usuário digitou algo novo — em branco significa "não alterar"
   if (!payload.provider_token) delete payload.provider_token;
   if (!payload.csc_token) delete payload.csc_token;
+  if (!payload.certificate_password) delete payload.certificate_password;
+  payload.dfe_ult_nsu = form.dfe_ult_nsu;
+  delete payload.has_certificate;
+  delete payload.has_certificate_password;
+  delete payload.certificate_valid_until;
+  delete payload.certificate_cnpj;
+  delete payload.certificate_name;
+  delete payload.certificate_file;
+  delete payload.certificate_ref;
+  delete payload.id;
+  delete payload.created_at;
+  delete payload.updated_at;
   return payload;
 }
 
 /**
- * Chamado pelo botão único do formulário do restaurante (ver
- * ResourceFormView.vue) — não tem botão próprio. Sem filial resolvida ainda
- * não há o que salvar aqui; devolve sucesso pra não travar o salvamento do
- * restaurante. Devolve `false` só quando há mesmo um erro pra corrigir.
+ * Chamado pelo botão único do formulário do restaurante (ver ResourceFormView.vue).
  */
 async function save() {
   if (!branchId.value) return true;
@@ -304,11 +468,32 @@ async function save() {
   formError.value = "";
   try {
     const payload = buildPayload();
-    const saved = configId.value
-      ? await configService.update(configId.value, payload)
-      : await configService.create(payload);
+    let saved;
+
+    if (selectedCertificateFile.value) {
+      const formData = new FormData();
+      Object.entries(payload).forEach(([k, v]) => {
+        if (v !== null && v !== undefined && v !== "") {
+          formData.append(k, v);
+        }
+      });
+      formData.append("certificate_file", selectedCertificateFile.value);
+      if (form.certificate_password) {
+        formData.append("certificate_password", form.certificate_password);
+      }
+      saved = configId.value
+        ? await configService.update(configId.value, formData, { headers: { "Content-Type": "multipart/form-data" } })
+        : await configService.create(formData, { headers: { "Content-Type": "multipart/form-data" } });
+    } else {
+      saved = configId.value
+        ? await configService.update(configId.value, payload)
+        : await configService.create(payload);
+    }
+
     configId.value = saved.id;
-    Object.assign(form, saved, { provider_token: "", csc_token: "" });
+    selectedCertificateFile.value = null;
+    if (fileInputRef.value) fileInputRef.value.value = "";
+    Object.assign(form, saved, { provider_token: "", csc_token: "", certificate_password: "" });
     return true;
   } catch (err) {
     formError.value = normalizeApiError(err).message;
@@ -376,7 +561,155 @@ defineExpose({ save });
   color: var(--text-strong);
   font: var(--weight-medium) var(--control-font)/1 var(--font-sans);
 }
+.fs__input--mono {
+  font-family: var(--font-mono, monospace);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.05em;
+}
 .fs__select, .fs__password { width: 100%; }
+
+/* Card de Certificado Digital A1 */
+.fs__cert-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+
+.fs__cert-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fs__cert-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fs__cert-label {
+  color: var(--text-strong);
+  font: var(--weight-bold) 13.5px/1.2 var(--font-sans);
+}
+
+.fs__cert-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  font: var(--weight-medium) 12.5px/1.4 var(--font-sans);
+}
+
+.fs__cert-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fs__cert-key {
+  color: var(--text-muted);
+}
+
+.fs__cert-val {
+  color: var(--text-strong);
+}
+
+.fs__cert-val--danger {
+  color: #ef4444;
+  font-weight: var(--weight-bold);
+}
+
+.fs__cert-hint {
+  color: var(--text-muted);
+  font: var(--weight-medium) 12.5px/1.4 var(--font-sans);
+  line-height: 1.4;
+}
+
+.fs__cert-inputs-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--field-gap-y) var(--field-gap-x);
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+@media (max-width: 760px) {
+  .fs__cert-inputs-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fs__cert-input-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--field-label-gap);
+}
+
+/* Card de Último NSU (DF-e) */
+.fs__nsu-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+
+.fs__nsu-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fs__nsu-desc {
+  margin: 4px 0 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.fs__nsu-input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fs__nsu-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fs__nsu-hint i {
+  color: var(--brand);
+}
+
+.fs__file-upload-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fs__hidden-file {
+  display: none;
+}
+
+.fs__file-btn {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 
 .fs__alert {
   display: flex;

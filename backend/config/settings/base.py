@@ -53,6 +53,8 @@ INSTALLED_APPS = [
     "apps.sla",
     "apps.notifications",
     "apps.realtime",
+    "apps.inbound_nfe",
+    "apps.assets",
 ]
 
 MIDDLEWARE = [
@@ -204,6 +206,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "orders.dispatch_due_kitchen_batches",
         "schedule": 5.0,
     },
+    "sync-inbound-nfe-sefaz": {
+        "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",
+        "schedule": 3 * 3600.0,  # Consulta automática na SEFAZ a cada 3 horas
+    },
 }
 
 REST_FRAMEWORK = {
@@ -292,12 +298,8 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
-# A sessão do Django existe SÓ para o /admin (o app usa JWT em cookie próprio).
-# Restringir o path faz o navegador nem enviar o `sessionid` para /api/**: logar
-# no /admin no mesmo navegador não pode influenciar a identidade da API. O
-# TenantMiddleware também ignora a sessão (autentica sempre pelo JWT) — isto
-# aqui é a mesma garantia um nível antes, no navegador.
-SESSION_COOKIE_PATH = "/admin/"
+SESSION_COOKIE_NAME = "starchef_admin_session"
+SESSION_COOKIE_PATH = "/"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -437,18 +439,28 @@ UNFOLD = {
                 "items": [
                     {"title": "Movimentacoes de estoque", "icon": "inventory_2", "link": "/admin/stock/stockmovement/"},
                     {"title": "Locais de estoque", "icon": "warehouse", "link": "/admin/stock/stocklocation/"},
+                    {"title": "Notas de Entrada (SEFAZ)", "icon": "shield", "link": "/admin/inbound_nfe/inboundnfe/"},
+                    {"title": "Documentos DF-e (docZip)", "icon": "description", "link": "/admin/inbound_nfe/dfedistributiondocument/"},
+                    {"title": "Estado Sync DF-e", "icon": "sync", "link": "/admin/inbound_nfe/dfesyncstate/"},
+                    {"title": "Mapeamento Fornecedor", "icon": "join_inner", "link": "/admin/inbound_nfe/supplieritemmapping/"},
                 ],
             },
         ],
     },
 }
 
+try:
+    import pythonjsonlogger.jsonlogger  # noqa: F401
+    _json_formatter_cls = "pythonjsonlogger.jsonlogger.JsonFormatter"
+except ImportError:
+    _json_formatter_cls = "logging.Formatter"
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
         "json": {
-            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "()": _json_formatter_cls,
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
         }
     },
