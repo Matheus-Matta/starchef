@@ -919,7 +919,17 @@ def _qr_data_uri(data):
         return ""
 
 
-_DANFE_WIDTH = 48  # mesma largura (fonte A, bobina 80mm) usada pelos outros cupons.
+# A MESMA largura do recibo de venda (`printers.services.LARGURA_CUPOM`), e
+# pelo mesmo motivo: varias termicas genericas de 80mm so cabem 42~47
+# caracteres reais por linha na fonte A, e o excedente NAO TRUNCA — ele quebra
+# para a linha de baixo. Com 48, o ultimo caractere do valor e o ultimo traco
+# do separador caiam sozinhos numa linha nova, e o cupom fiscal saia picotado.
+#
+# O recibo ja tinha aprendido isso e baixado para 42; o DANFE ficou para tras.
+# A constante e repetida aqui em vez de importada porque `invoices.services` e
+# `printers.services` se importam em ciclo (por isso os imports locais dentro
+# das funcoes) — mudar uma sem a outra e o erro que este comentario evita.
+_DANFE_WIDTH = 42
 
 
 def _danfe_decimal(value, places=2):
@@ -984,7 +994,7 @@ def _danfe_nfce_text(invoice, config):
         lines.append("TRANSMITIR QUANDO A CONEXAO VOLTAR".center(_DANFE_WIDTH))
     lines.append("-" * _DANFE_WIDTH)
 
-    lines.append("COD DESCRICAO          QTD UN VL UNIT VL TOTAL")
+    lines.append("COD DESCRICAO   QTD UN VL UNIT VL TOTAL")
     for item in invoice.items.all():
         description = f"{item.code or '-'} {item.description}"
         lines.extend(textwrap.wrap(description, _DANFE_WIDTH) or [description[:_DANFE_WIDTH]])

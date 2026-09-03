@@ -9,7 +9,12 @@ from django.utils import timezone
 from apps.core.tenant import tenant_context
 from apps.invoices.fiscal import format_access_key
 from apps.invoices.models import FiscalConfig, Invoice
-from apps.invoices.services import _danfe_nfce_text, emit_fiscal_invoice, print_fiscal_invoice
+from apps.invoices.services import (
+    _DANFE_WIDTH,
+    _danfe_nfce_text,
+    emit_fiscal_invoice,
+    print_fiscal_invoice,
+)
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
@@ -51,11 +56,15 @@ def test_danfe_text_contains_key_fields(account, restaurant, branch, manager_use
     assert invoice.number in text
     assert "HOMOLOGACAO" in text
     assert "AGUARDANDO AUTORIZACAO" in text
-    # A chave de acesso formatada (blocos de 4 + espaco) passa de 48 colunas de
-    # proposito — igual ao HTML (`word-break: break-all`), o impressora que
+    # A chave de acesso formatada (blocos de 4 + espaco) passa da largura de
+    # proposito — igual ao HTML (`word-break: break-all`), e a impressora que
     # quebra a linha visualmente; nao e uma linha "normal" do cupom.
     assert format_access_key(invoice.access_key).split()[0] in text
-    assert all(len(line) <= 48 for line in text.splitlines())
+    # Pela constante, e nao por um numero solto: uma termica generica de 80mm
+    # nao TRUNCA o excedente, ela quebra para a linha de baixo — foi assim que
+    # o ultimo digito do valor e o ultimo traco do separador sairam sozinhos
+    # numa linha nova.
+    assert all(len(line) <= _DANFE_WIDTH for line in text.splitlines())
 
 
 def test_danfe_web_and_text_follow_receipt_layout_with_payment(
