@@ -621,6 +621,17 @@ ideal desejado.
    automático: ali não há ninguém na frente do cliente, e uma autorização que
    chega horas depois não sairia em impressora nenhuma.
 
+   **Cupom sem impressora é um cupom que nunca sai.** O agente local procura
+   `job.printer` na lista de equipamentos dele; com `printer_id` nulo ele não
+   acha nada, pula, e volta a pular a cada ciclo — para sempre. Pior:
+   `_already_printed` passa a enxergar um cupom fiscal para aquele pedido,
+   então `ensure_fiscal_print_job` nunca mais cria um que preste, e o DANFE
+   daquela venda não sai nem automático nem sozinho. Por isso
+   `print_fiscal_invoice` resolve a impressora quando quem chamou não informou
+   — como `register_print_job` (o recibo) já fazia. Quando nem o cadastro tem
+   uma, o trabalho ainda é criado (ele é o registro do documento) mas nasce
+   `manual_only`, fora do laço do agente.
+
    **E há uma última linha de defesa, no terminal.** O agente local guarda o
    que já entregou em `printed_documents`, com chave na NOTA
    (`danfe:<chave de acesso>`) e não no trabalho de impressão. Todo caminho

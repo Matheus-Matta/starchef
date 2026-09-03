@@ -519,6 +519,23 @@ class LocalDeviceAgent {
           continue;
         }
         final jobId = '${job['id']}';
+        final payload = job['payload'] as Map<String, dynamic>? ?? const {};
+        // A marca de "quem pediu imprime" vem ANTES de procurar o equipamento:
+        // um trabalho manual não é assunto deste laço, tenha ele impressora ou
+        // não. Na ordem antiga, um cupom manual sem impressora (a retaguarda
+        // web pede o DANFE sem indicar equipamento — ela imprime pelo
+        // navegador) caía no aviso de "impressora indisponível" e repetia esse
+        // aviso a cada ciclo, para sempre.
+        if (payload['manual_only'] == true) {
+          // Sem este registro, um trabalho marcado como manual sumia sem
+          // deixar rastro: "não imprimiu e não deu erro" ficava impossível de
+          // diagnosticar sem acesso ao banco.
+          AppLogger.instance.info(
+            'print_job_skipped_manual_only',
+            data: {'job_id': jobId, 'printer_id': job['printer']},
+          );
+          continue;
+        }
         final printer = availablePrinters['${job['printer']}'];
         if (printer == null) {
           AppLogger.instance.warning(
@@ -527,7 +544,6 @@ class LocalDeviceAgent {
           );
           continue;
         }
-        final payload = job['payload'] as Map<String, dynamic>? ?? const {};
         // O MESMO DOCUMENTO já saiu daqui. Não é o mesmo trabalho (o índice do
         // banco já cuida disso): é outro trabalho para a mesma nota, criado
         // pelo servidor quando a autorização chegou, depois de o terminal já
@@ -543,16 +559,6 @@ class LocalDeviceAgent {
           AppLogger.instance.info(
             'print_job_skipped_documento_ja_impresso',
             data: {'job_id': jobId, 'documento': dedupeKey},
-          );
-          continue;
-        }
-        if (payload['manual_only'] == true) {
-          // Sem este registro, um trabalho marcado como manual sumia sem
-          // deixar rastro: "não imprimiu e não deu erro" ficava impossível de
-          // diagnosticar sem acesso ao banco.
-          AppLogger.instance.info(
-            'print_job_skipped_manual_only',
-            data: {'job_id': jobId, 'printer_id': job['printer']},
           );
           continue;
         }

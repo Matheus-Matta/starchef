@@ -25,6 +25,7 @@ from apps.invoices.services import (
     emit_fiscal_invoice,
     ensure_fiscal_print_job,
     mark_terminal_prints,
+    print_fiscal_invoice,
     print_sale_documents,
     refresh_fiscal_invoice_status,
     reprocess_pending_fiscal_invoices,
@@ -251,6 +252,27 @@ def test_venda_sem_terminal_continua_saindo_sozinha(pending_invoice, printer):
 
     assert job is not None
     assert job.payload["manual_only"] is False
+
+
+def test_danfe_nunca_nasce_sem_impressora(pending_invoice, printer, manager_user):
+    """Trabalho sem impressora e um cupom que NUNCA sai.
+
+    O agente local procura `job.printer` na lista de equipamentos dele; com
+    `printer_id` nulo ele nao acha nada, pula, e volta a pular a cada ciclo —
+    para sempre. E `_already_printed` passa a enxergar um cupom fiscal para
+    aquele pedido, entao `ensure_fiscal_print_job` nunca mais cria um que
+    preste: o DANFE daquela venda nao sai nem automatico nem sozinho.
+
+    A retaguarda web chama `/invoices/{id}/print/` com corpo vazio (ela
+    imprime pelo navegador), e era dali que vinham esses trabalhos orfaos.
+    """
+    pending_invoice.status = Invoice.STATUS_ISSUED
+    pending_invoice.save(update_fields=["status", "updated_at"])
+
+    job = print_fiscal_invoice(pending_invoice, user=manager_user, manual_only=True)
+
+    assert job.printer_id is not None
+    assert job.printer_id == printer.id
 
 
 def test_the_danfe_is_never_printed_twice(pending_invoice, printer, manager_user):

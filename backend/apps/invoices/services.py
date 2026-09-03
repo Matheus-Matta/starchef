@@ -1061,7 +1061,7 @@ def print_fiscal_invoice(invoice, *, user=None, printer=None, manual_only=False)
     em vez de duplicado — a nota do cliente sai uma vez so.
     """
     from apps.printers.models import PrintJob
-    from apps.printers.services import claim_pending_job
+    from apps.printers.services import claim_pending_job, resolve_printer_for
 
     if not is_fiscally_printable(invoice):
         raise ValidationError(
@@ -1071,6 +1071,29 @@ def print_fiscal_invoice(invoice, *, user=None, printer=None, manual_only=False)
         )
 
     with tenant_context(invoice.account):
+        # SEM IMPRESSORA O TRABALHO NASCE IMPOSSIVEL. O agente local procura
+        # `job.printer` na lista de equipamentos dele; com `printer_id` nulo
+        # ele nao acha nada, pula, e volta a pular a cada ciclo — para sempre
+        # (`print_job_skipped_printer_unavailable`, de dois em dois minutos).
+        # Pior: `_already_printed` passa a enxergar um cupom fiscal para o
+        # pedido, entao `ensure_fiscal_print_job` nunca mais cria um que
+        # preste. O DANFE daquela venda simplesmente nunca sai.
+        #
+        # `register_print_job` (o recibo) ja resolvia a impressora quando quem
+        # chamou nao informou; o DANFE tinha ficado sem essa rede. A rota
+        # `/invoices/{id}/print/` da retaguarda web, por exemplo, manda corpo
+        # vazio: ela imprime pelo navegador e nao tem impressora local nenhuma
+        # para indicar.
+        if printer is None and invoice.order_id:
+            try:
+                printer = resolve_printer_for(invoice.order, PrintJob.TYPE_FISCAL)
+            except (ValidationError, RuntimeError):
+                # Nem o cadastro tem uma. O trabalho ainda e criado (ele e o
+                # registro do documento), mas marcado como manual para nao
+                # entrar no laco do agente e ficar avisando eternamente sobre
+                # um cupom que ninguem consegue imprimir.
+                printer = None
+                manual_only = True
         if manual_only and invoice.order_id:
             claimed = claim_pending_job(
                 order=invoice.order, job_type=PrintJob.TYPE_FISCAL, printer=printer, user=user
