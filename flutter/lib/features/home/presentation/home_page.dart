@@ -204,6 +204,13 @@ class _HomePageState extends State<HomePage> {
   /// Numerador dos recebimentos encenados, para dar um id local a cada linha.
   int stagedPaymentSequence = 0;
 
+  /// O valor no teclado foi DIGITADO pelo operador?
+  ///
+  /// Enquanto for `false`, ele é apenas a sugestão "receba o restante" e
+  /// acompanha o pedido. Assim que alguém digita, o valor é dele e nada mais
+  /// o reescreve — receber R$ 20,00 de uma conta de R$ 12,43 é uma decisão.
+  bool paymentAmountTyped = false;
+
   /// Conclusão em curso. Sem isto, um duplo clique em "Concluir pedido"
   /// percorria o gesto inteiro duas vezes — dois recibos e dois DANFEs.
   bool completingOrder = false;
@@ -3037,6 +3044,9 @@ class _HomePageState extends State<HomePage> {
         .cast<Map<String, dynamic>>()
         .where((item) => item['status'] != 'voided')
         .toList();
+    // O total pode ter mudado aqui — a taxa de serviço do fechamento chega
+    // pela sincronização, e é depois desta leitura que ela aparece.
+    if (flowStep == 'payment') _refreshSuggestedPaymentAmount();
     if (mounted) setState(() {});
   }
 
@@ -4660,6 +4670,7 @@ class _HomePageState extends State<HomePage> {
     selectedPaymentMethod = paymentMethods.isEmpty
         ? null
         : '${paymentMethods.first['id']}';
+    paymentAmountTyped = false;
     paymentDigits = (remainingTotal * 100).round().toString();
     _syncPaymentAmount();
     paymentReference.clear();
@@ -4668,6 +4679,7 @@ class _HomePageState extends State<HomePage> {
 
   void _pressPaymentKey(String key) {
     setState(() {
+      paymentAmountTyped = true;
       if (key == 'clear') {
         paymentDigits = '0';
       } else if (key == 'back') {
@@ -4682,6 +4694,23 @@ class _HomePageState extends State<HomePage> {
       }
       _syncPaymentAmount();
     });
+  }
+
+  /// Reapresenta o restante no teclado enquanto ninguém digitou nada.
+  ///
+  /// O valor era fixado UMA vez, ao abrir a tela, e não acompanhava mais nada.
+  /// Só que o total do pedido ainda muda depois disso: a taxa de serviço
+  /// aplicada no fechamento chega pela sincronização, um recebimento sai da
+  /// lista, o servidor devolve um total diferente do calculado aqui. O resumo
+  /// à esquerda se atualizava e o teclado ficava para trás — o operador via
+  /// "Restante R$ 12,43" e o teclado oferecendo R$ 11,00, que é o subtotal sem
+  /// a taxa. Cobrar a menos é um erro que só aparece no fechamento do caixa.
+  void _refreshSuggestedPaymentAmount() {
+    if (paymentAmountTyped) return;
+    final suggested = (remainingTotal * 100).round().toString();
+    if (suggested == paymentDigits) return;
+    paymentDigits = suggested;
+    _syncPaymentAmount();
   }
 
   void _syncPaymentAmount() {
@@ -4759,6 +4788,7 @@ class _HomePageState extends State<HomePage> {
     };
     setState(() {
       registeredPayments = [...registeredPayments, staged];
+      paymentAmountTyped = false;
       paymentDigits = (remainingTotal * 100).round().toString();
       _syncPaymentAmount();
       paymentReference.clear();
@@ -4872,6 +4902,7 @@ class _HomePageState extends State<HomePage> {
         registeredPayments = registeredPayments
             .where((item) => !identical(item, payment))
             .toList();
+        paymentAmountTyped = false;
         paymentDigits = (remainingTotal * 100).round().toString();
         _syncPaymentAmount();
       });
