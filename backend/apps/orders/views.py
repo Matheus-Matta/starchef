@@ -101,7 +101,14 @@ class OrderViewSet(BaseTenantViewSet):
         Order.objects.select_related(
             "restaurant", "branch", "table", "command", "customer", "delivery_address", "invoice"
         )
-        .prefetch_related("items__product", "items__addons", "items__batch")
+        .prefetch_related(
+            "items__product",
+            "items__addons",
+            "items__batch",
+            # `payments` entrou no serializer; sem o prefetch a listagem faria
+            # uma consulta por pedido.
+            "payments__payment_method",
+        )
         .all()
     )
     filterset_class = OrderFilterSet

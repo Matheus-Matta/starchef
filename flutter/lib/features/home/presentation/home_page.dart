@@ -4228,9 +4228,16 @@ class _HomePageState extends State<HomePage> {
         // insistencias curtas cobrem uma entrega que estava só um instante
         // atrás da nossa (outro ciclo de sincronização em voo, um ping que
         // falhou uma vez) sem prender o caixa por muito tempo.
-        final settled = issues.isEmpty
-            ? await _flushFiscalWithRetries('${order['id']}')
-            : null;
+        //
+        // PENDÊNCIA NO RETRATO LOCAL AVISA, MAS NÃO VETA. Quem decide se a
+        // nota passa é o servidor, que enxerga a venda inteira; aqui só existe
+        // o que este terminal guardou. O veto matou uma NFC-e cujo recebimento
+        // EXISTIA — ele tinha acabado de subir, e a versão do pedido que voltou
+        // do servidor não trazia os pagamentos de volta, então o retrato local
+        // reclamou de "venda sem recebimento" de uma venda paga. O backend já
+        // trata cadastro incompleto do jeito certo: monta a nota, grava a falha
+        // nela e deixa o operador corrigir e reenviar.
+        final settled = await _flushFiscalWithRetries('${order['id']}');
         if (!mounted) return;
         AppLogger.instance.info(
           'fiscal_flush_resultado',

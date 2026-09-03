@@ -67,7 +67,37 @@ class OrderBatchSerializer(TenantModelSerializer):
 
 class OrderSerializer(TenantModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    # OS RECEBIMENTOS VIAJAM COM O PEDIDO.
+    #
+    # `payments` e uma relacao reversa: `fields = "__all__"` nao a inclui. O
+    # PDV grava o recebimento local-first e, quando a fila entrega, aplica por
+    # cima a versao do servidor — que vinha SEM pagamento nenhum. O pedido
+    # ficava sem recebimento no armazenamento local no instante seguinte a
+    # sincronizacao, e era desse retrato que a emissao fiscal era montada: o
+    # PDV recusava a propria venda com "A venda nao tem recebimento
+    # registrado" e a NFC-e nunca era emitida.
+    #
+    # Tambem e o que faz um pedido pago reaberto mostrar como foi pago: a tela
+    # de pagamento le a lista pelo mesmo caminho.
+    payments = serializers.SerializerMethodField()
     fiscal = serializers.SerializerMethodField()
+
+    def get_payments(self, obj):
+        """Recebimentos aprovados do pedido, na ordem em que entraram.
+
+        So os aprovados: um recebimento cancelado nao compoe o valor pago nem
+        entra na NFC-e.
+        """
+        from apps.payments.serializers import PaymentSerializer
+
+        payments = [
+            payment
+            for payment in obj.payments.all()
+            if payment.status == "approved"
+        ]
+        payments.sort(key=lambda payment: payment.created_at)
+        return PaymentSerializer(payments, many=True, context=self.context).data
+
     table_number = serializers.CharField(source="table.number", read_only=True, default=None)
     command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
     command_code = serializers.CharField(source="command.code", read_only=True, default=None)

@@ -281,6 +281,27 @@ fantasma na fila fiscal — sem pedido, porque o corpo dessas rotas não tem
 `order` — que depois tentava emitir sozinho
 (`OfflineFirstGateway.isFiscalEmission`).
 
+### O pedido carrega os recebimentos
+
+`payments` é uma relação reversa: `fields = "__all__"` não a incluía no
+`OrderSerializer`. O PDV grava o recebimento local-first e, quando a fila
+entrega, aplica por cima a versão do servidor — que vinha **sem pagamento
+nenhum**. No instante seguinte à sincronização o pedido guardado no terminal
+ficava sem recebimento, e é desse retrato que a emissão fiscal é montada
+(`FiscalSnapshotBuilder`): o PDV recusava a própria venda com "A venda não tem
+recebimento registrado" e a **NFC-e nunca era emitida**.
+
+Só os recebimentos **aprovados** entram, na ordem em que foram feitos: um
+recebimento cancelado não compõe o valor pago nem a nota. A listagem faz
+`prefetch_related("payments__payment_method")` para não virar uma consulta por
+pedido.
+
+**E pendência no retrato local avisa, mas não veta.** Quem decide se a nota
+passa é o servidor, que enxerga a venda inteira; no terminal só existe o que
+ele guardou. O veto local matou uma NFC-e cujo recebimento existia — ele tinha
+acabado de subir. O backend já trata cadastro incompleto do jeito certo: monta
+a nota, grava a falha nela, e deixa o operador corrigir e reenviar.
+
 ### Com internet, o cupom fiscal sai no mesmo gesto
 
 A chamada inicial devolve `_fiscal_pending: true`, mas o PDV não espera o
