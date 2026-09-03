@@ -871,7 +871,31 @@ def close_order(
 
 
 @transaction.atomic
+def order_is_empty(order):
+    """O pedido nao tem nada que valha guardar?
+
+    Sem item que conte e sem recebimento aprovado, ele e so uma comanda
+    ocupada: nao ha o que auditar, nao ha o que estornar, e a mesa/comanda
+    fica presa para o proximo cliente. Cortesia e item ja cancelado nao
+    contam — eles nao deixam a venda "com conteudo".
+    """
+    with tenant_context(order.account):
+        has_items = (
+            order.items.exclude(
+                status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]
+            )
+            .exists()
+        )
+        has_payments = order.payments.filter(status="approved").exists()
+        return not has_items and not has_payments
+
+
 def cancel_order(order, user, reason):
+    # Pedido vazio dispensa motivo: nao e um cancelamento comercial, e o
+    # descarte de uma comanda que foi aberta e nao virou venda. Exigir uma
+    # justificativa ali so ensina o operador a escrever qualquer coisa.
+    if not reason and order_is_empty(order):
+        reason = "Pedido vazio descartado"
     if not reason:
         raise ValidationError("O motivo do cancelamento é obrigatório.")
     with tenant_context(order.account):

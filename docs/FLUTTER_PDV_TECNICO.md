@@ -589,6 +589,23 @@ catálogo, carrinho, pagamento, caixa e navegação. É reconhecidamente grande;
 qualquer trabalho novo ali deve extrair para painéis, como já foi feito com
 `product_catalog_panel.dart` e `order_cart_panel.dart`.
 
+**Comanda aberta que não virou venda é descartada.** Abrir uma comanda cria o
+pedido na hora — é ele que ocupa a comanda. Sair sem lançar item nenhum
+deixava esse pedido vazio segurando a comanda, e o próximo cliente que
+pegasse a mesma não conseguia usá-la. `_goHome` descarta o pedido vazio (sem
+item que conte e sem recebimento) chamando `/orders/{id}/cancel/`.
+
+Não é um cancelamento comercial: não há consumo a estornar nem motivo a
+registrar, então o backend dispensa a autorização do supervisor quando
+`order_is_empty` — a senha existe para impedir que alguém apague consumo já
+lançado, e ali não há nenhum. Um pedido COM item continua exigindo
+autorização e motivo.
+
+O descarte roda em **segundo plano**: voltar ao início é gesto de navegação e
+não pode esperar a rede. Sem conexão a rota não existe (ela exige servidor) e
+o pedido vazio permanece — a comanda fica ocupada até alguém cancelá-lo pela
+tela de Pedidos.
+
 **O id antigo continua respondendo.** Todo registro nasce com um id
 temporário (`offline-<uuid>`) e, quando a criação sobe, passa a viver sob o id
 do SERVIDOR — `EntityRepository.replaceId` reescreve a linha e guarda o

@@ -1358,7 +1358,69 @@ class _HomePageState extends State<HomePage> {
   /// A volta é imediata: o cardápio e as mesas já estão em memória e mudam
   /// pouco. A atualização segue por baixo, sem prender o operador entre um
   /// pedido e o próximo.
+  /// O pedido aberto nao tem nada dentro?
+  ///
+  /// Item cancelado nao conta: uma comanda em que tudo foi cancelado continua
+  /// sem conteudo, e prende a mesa do mesmo jeito.
+  bool get _activeOrderIsEmpty {
+    if (activeOrder == null) return false;
+    if (const {
+      'paid',
+      'cancelled',
+      'refunded',
+    }.contains('${activeOrder?['status']}')) {
+      return false;
+    }
+    final hasItems = orderItems.any(
+      (item) => !const {
+        'cancelled',
+        'comped',
+        'voided',
+      }.contains('${item['status'] ?? ''}'),
+    );
+    return !hasItems && registeredPayments.isEmpty;
+  }
+
+  /// Descarta o pedido que foi aberto e não virou nada.
+  ///
+  /// Abrir uma comanda cria o pedido na hora — é ele que ocupa a comanda. Se o
+  /// operador sai sem lançar item nenhum, esse pedido vazio fica no sistema
+  /// segurando a comanda, e o próximo cliente que pegar a mesma não consegue
+  /// usá-la. Não é um cancelamento comercial (não há consumo a estornar nem
+  /// motivo a registrar), então não pede senha nem justificativa.
+  ///
+  /// É melhor-esforço de propósito: se o descarte não subir, a venda vazia é o
+  /// menor dos problemas e nada disso pode atrapalhar o operador que só quis
+  /// voltar para a tela inicial.
+  Future<void> _discardEmptyOrder(Map<String, dynamic> order) async {
+    try {
+      await api.post(
+        '/orders/${order['id']}/cancel/',
+        body: const {},
+        accessToken: token,
+      );
+      AppLogger.instance.info(
+        'pedido_vazio_descartado',
+        data: {'pedido': '${order['id']}', 'comanda': selectedCommand?['code']},
+      );
+    } catch (error) {
+      // Sem rede (a rota exige servidor) ou recusa: seguir em frente. A
+      // comanda continua ocupada até alguém cancelar o pedido pela tela de
+      // Pedidos — chato, mas não impede nada do que o operador está fazendo.
+      AppLogger.instance.warning(
+        'pedido_vazio_nao_descartado',
+        data: {'pedido': '${order['id']}', 'causa': '$error'},
+      );
+    }
+  }
+
   Future<void> _goHome() async {
+    // O pedido é capturado ANTES do `setState` (depois dele não há mais o que
+    // descartar) e o descarte segue em segundo plano: voltar para o início é
+    // um gesto de navegação e não pode esperar a rede — sem conexão, a espera
+    // seria o tempo inteiro do timeout com a tela parada.
+    final discardable = _activeOrderIsEmpty ? activeOrder : null;
+    if (discardable != null) unawaited(_discardEmptyOrder(discardable));
     setState(() {
       activeOrder = null;
       selectedTable = null;

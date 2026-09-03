@@ -1,20 +1,42 @@
+import uuid
+from decimal import Decimal
+
 import pytest
 from django.contrib.auth.hashers import make_password
 
 from apps.accounts.models import Permission
+from apps.menu.models import Product
 from apps.orders.models import Order
-from apps.orders.services import create_order
+from apps.orders.services import add_order_item, create_order
 
 pytestmark = pytest.mark.django_db
 
 
 def _order(restaurant, branch, manager_user):
-    return create_order(
+    """Pedido COM consumo lancado.
+
+    A autorizacao existe para impedir que alguem apague consumo ja lancado —
+    e por isso ela so vale para um pedido que TEM alguma coisa. Um pedido
+    vazio (comanda aberta que nao virou venda) e descartavel sem senha e sem
+    motivo; quem cobre esse caso e `test_empty_order_discard.py`.
+    """
+    order = create_order(
         restaurant=restaurant,
         branch=branch,
         order_type=Order.TYPE_COUNTER,
         user=manager_user,
     )
+    product = Product.objects.create(
+        account=restaurant.account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Coxinha",
+        internal_code=f"P{uuid.uuid4().hex[:6]}",
+        sale_price=Decimal("6.00"),
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order.refresh_from_db()
+    return order
 
 
 def test_cancelamento_exige_autorizacao_e_motivo(

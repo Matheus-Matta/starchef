@@ -523,8 +523,16 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
+        from apps.orders.services import order_is_empty
+
         order = self.get_object()
-        if not _can_authorize_order_cancellation(request, order):
+        # DESCARTAR UM PEDIDO VAZIO NAO E CANCELAR UMA VENDA.
+        #
+        # Sem item e sem recebimento nao ha nada para proteger: a autorizacao
+        # do supervisor existe para impedir que alguem apague consumo ja
+        # lancado. Exigi-la aqui deixava a comanda ocupada por um pedido que
+        # nunca virou nada — e travava o proximo cliente que fosse usa-la.
+        if not order_is_empty(order) and not _can_authorize_order_cancellation(request, order):
             return Response(
                 {
                     "detail": (
