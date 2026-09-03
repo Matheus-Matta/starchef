@@ -26,6 +26,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   showIcon: { type: Boolean, default: true },
   maxDate: { type: Date, default: null },
+  defaultCurrentMonth: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(["update:modelValue", "change"]);
@@ -37,7 +38,7 @@ function updateValue(value) {
 }
 
 onMounted(() => {
-  if (!props.modelValue?.[0] || !props.modelValue?.[1]) {
+  if (props.defaultCurrentMonth && (!props.modelValue?.[0] || !props.modelValue?.[1])) {
     updateValue(currentMonthRange());
   }
 });

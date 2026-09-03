@@ -181,13 +181,28 @@
       <div class="rpro__toolbar-left">
         <IconField icon-position="left" class="rpro__search">
           <InputIcon class="pi pi-search" />
-          <InputText v-model="search" :placeholder="`Buscar em ${title.toLowerCase()}...`" @keyup.enter="loadRows" />
+          <InputText
+            v-model="search"
+            :placeholder="props.endpoint === '/inbound-nfe/' ? 'Buscar por número, fornecedor, chave, CNPJ, produto...' : `Buscar em ${title.toLowerCase()}...`"
+            @keyup.enter="onSearchSubmit"
+            @input="onSearchInput"
+          />
+          <button
+            v-if="search"
+            class="rpro__search-clear"
+            type="button"
+            title="Limpar busca"
+            @click="clearSearch"
+          >
+            <i class="pi pi-times" />
+          </button>
         </IconField>
         <AppDateRange
           v-if="dateField"
           v-model="dateRange"
           class="rpro__daterange"
           :placeholder="dateField.label || 'Período'"
+          :default-current-month="props.endpoint === '/inbound-nfe/' ? false : (dateField.defaultCurrentMonth ?? true)"
           @change="onDateRange"
         />
       </div>
@@ -244,6 +259,13 @@
         >
           <i :class="opt.icon" />
           <span>{{ opt.label }}</span>
+          <span
+            v-if="inboundStatusCounts[opt.value] != null"
+            class="rpro__inbound-filter-count"
+            :class="{ 'rpro__inbound-filter-count--active': inboundStatusFilter === opt.value }"
+          >
+            {{ inboundStatusCounts[opt.value] }}
+          </span>
         </button>
       </div>
 
@@ -1605,7 +1627,17 @@ const primaryAction = computed(() => {
 const visibleColumns = computed(() => props.columns.filter((column) => auth.hasModule(column.module)));
 
 // ── Estado local dos filtros "pro" ──────────────────────────────────
-const dateRange = ref(null);
+function initialDateRangeForEndpoint(endpoint) {
+  if (endpoint === "/inbound-nfe/") {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    return [start, end];
+  }
+  return null;
+}
+
+const dateRange = ref(initialDateRangeForEndpoint(props.endpoint));
 const selection = ref([]);
 const mobileFiltersOpen = ref(false);
 const advancedFiltersVisible = ref(false);
@@ -1632,6 +1664,8 @@ function dateParams() {
 }
 
 const inboundStatusFilter = ref("all");
+const inboundStatusCounts = ref({});
+
 const INBOUND_FILTER_OPTIONS = [
   { value: "all", label: "Todas as Notas", icon: "pi pi-list" },
   { value: "unmapped", label: "Pendente de Vínculo", icon: "pi pi-exclamation-triangle", tone: "warning" },
@@ -1640,10 +1674,26 @@ const INBOUND_FILTER_OPTIONS = [
   { value: "summary", label: "Resumo SEFAZ", icon: "pi pi-file", tone: "neutral" },
 ];
 
+async function fetchInboundStatusCounts() {
+  if (props.endpoint !== "/inbound-nfe/") return;
+  try {
+    const params = {
+      ...dateParams(),
+    };
+    const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope");
+    if (scopedRestaurant) params.restaurant = scopedRestaurant;
+    const { data } = await api.get("/inbound-nfe/status-counts/", { params });
+    inboundStatusCounts.value = data || {};
+  } catch (err) {
+    console.warn("Falha ao buscar contagens de status:", err);
+  }
+}
+
 function setInboundFilter(val) {
   inboundStatusFilter.value = val;
   selection.value = [];
   reload();
+  fetchInboundStatusCounts();
 }
 
 /** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
@@ -1673,7 +1723,39 @@ const {
   buildParams: buildProParams,
   pageSize: proCfg.value.pageSize || 20,
 });
-const loadRows = reload;
+
+let searchDebounceTimer = null;
+
+function onSearchInput() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    selection.value = [];
+    reload();
+    if (props.endpoint === "/inbound-nfe/") fetchInboundStatusCounts();
+  }, 350);
+}
+
+function onSearchSubmit() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  selection.value = [];
+  reload();
+  if (props.endpoint === "/inbound-nfe/") fetchInboundStatusCounts();
+}
+
+function clearSearch() {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  search.value = "";
+  selection.value = [];
+  reload();
+  if (props.endpoint === "/inbound-nfe/") fetchInboundStatusCounts();
+}
+
+const loadRows = async () => {
+  await reload();
+  if (props.endpoint === "/inbound-nfe/") {
+    fetchInboundStatusCounts();
+  }
+};
 if (props.endpoint === "/orders/") ordering.value = "-updated_at";
 if (props.endpoint === "/inbound-nfe/") ordering.value = "-issue_date";
 const realtimeModelByEndpoint = {
@@ -1736,6 +1818,7 @@ function onDateRange(value) {
   if (Array.isArray(value) && value[0] && !value[1]) return;
   selection.value = [];
   reload();
+  if (props.endpoint === "/inbound-nfe/") fetchInboundStatusCounts();
 }
 
 function applyMobileFilters() {
@@ -3281,6 +3364,7 @@ onMounted(() => {
   loadRows();
   if (props.endpoint === "/inbound-nfe/") {
     loadDfeSyncInfo();
+    fetchInboundStatusCounts();
   }
 });
 </script>
@@ -3363,8 +3447,30 @@ onMounted(() => {
 .rpro__mobile-drawer-head,
 .rpro__mobile-file-actions,
 .rpro__mobile-drawer-footer { display: none; }
-.rpro__search { flex: 1 1 220px; min-width: 0; }
-.rpro__search :deep(.p-inputtext) { width: 100%; height: var(--control-h); border-radius: 4px; }
+.rpro__search { position: relative; flex: 1 1 240px; min-width: 0; }
+.rpro__search :deep(.p-inputtext) { width: 100%; height: var(--control-h); border-radius: 4px; padding-right: 2.2rem; }
+.rpro__search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  transition: all 0.15s ease;
+  z-index: 2;
+}
+.rpro__search-clear:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
 .rpro__daterange { flex: 0 0 auto; width: 232px; }
 .rpro__daterange :deep(.p-inputtext) { height: var(--control-h); border-radius: 4px; }
 
@@ -4400,6 +4506,26 @@ onMounted(() => {
   background: rgba(16, 185, 129, 0.15);
   border-color: #10b981;
   color: #34d399;
+}
+
+.rpro__inbound-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--surface-hover, rgba(0, 0, 0, 0.08));
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: var(--weight-bold);
+  min-width: 18px;
+  line-height: 1;
+}
+
+.rpro__inbound-filter-pill--active .rpro__inbound-filter-count {
+  background: rgba(255, 255, 255, 0.22);
+  color: inherit;
 }
 
 .rpro-nfe-status-cell {

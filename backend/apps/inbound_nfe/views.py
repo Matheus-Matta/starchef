@@ -19,14 +19,71 @@ from apps.inbound_nfe.serializers import (
 )
 from apps.inbound_nfe.services.receiving import receive_invoice
 from apps.inbound_nfe.services.manifestation import manifest_nfe
+import django_filters
 from apps.stock.models import StockLocation
 from apps.menu.models import Ingredient, Product
+
+
+class InboundNFeFilterSet(django_filters.FilterSet):
+    issue_date_after = django_filters.DateFilter(field_name="issue_date", lookup_expr="date__gte")
+    issue_date_before = django_filters.DateFilter(field_name="issue_date", lookup_expr="date__lte")
+    issue_date = django_filters.DateFilter(field_name="issue_date", lookup_expr="date")
+
+    number = django_filters.CharFilter(field_name="number", lookup_expr="icontains")
+    series = django_filters.CharFilter(field_name="series", lookup_expr="exact")
+    access_key = django_filters.CharFilter(field_name="access_key", lookup_expr="icontains")
+    supplier_name = django_filters.CharFilter(field_name="supplier_name", lookup_expr="icontains")
+    supplier_cnpj = django_filters.CharFilter(field_name="supplier_cnpj", lookup_expr="icontains")
+    status = django_filters.CharFilter(field_name="status", lookup_expr="exact")
+    nsu = django_filters.CharFilter(field_name="nsu", lookup_expr="exact")
+    restaurant = django_filters.UUIDFilter(field_name="restaurant", lookup_expr="exact")
+    mapping_filter = django_filters.CharFilter(method="filter_by_mapping")
+
+    class Meta:
+        model = InboundNFe
+        fields = [
+            "status",
+            "supplier_cnpj",
+            "supplier_name",
+            "number",
+            "series",
+            "access_key",
+            "nsu",
+            "issue_date",
+            "issue_date_after",
+            "issue_date_before",
+            "restaurant",
+            "mapping_filter",
+        ]
+
+    def filter_by_mapping(self, queryset, name, value):
+        if value == "unmapped":
+            return queryset.filter(status=InboundNFe.STATUS_PENDING_MAPPING)
+        elif value == "ready":
+            return queryset.filter(status=InboundNFe.STATUS_PENDING_RECEIPT)
+        elif value in ("received", "finalized"):
+            return queryset.filter(status=InboundNFe.STATUS_RECEIVED)
+        elif value == "summary":
+            return queryset.filter(status=InboundNFe.STATUS_SUMMARY)
+        return queryset
+
 
 class InboundNFeViewSet(BaseTenantViewSet):
     queryset = InboundNFe.objects.all()
     serializer_class = InboundNFeSerializer
-    filterset_fields = ["status", "supplier_cnpj", "issue_date"]
-    ordering_fields = ["issue_date", "created_at", "total_invoice", "number", "supplier_name", "status"]
+    filterset_class = InboundNFeFilterSet
+    search_fields = [
+        "number",
+        "series",
+        "access_key",
+        "supplier_name",
+        "supplier_cnpj",
+        "nsu",
+        "items__description",
+        "items__supplier_code",
+        "items__ean",
+    ]
+    ordering_fields = ["issue_date", "created_at", "total_invoice", "number", "supplier_name", "status", "nsu"]
     ordering = ["-issue_date", "-created_at"]
 
     def get_queryset(self):
@@ -44,7 +101,35 @@ class InboundNFeViewSet(BaseTenantViewSet):
             qs = qs.filter(status=InboundNFe.STATUS_RECEIVED)
         elif mapping_filter == "summary":
             qs = qs.filter(status=InboundNFe.STATUS_SUMMARY)
-        return qs
+        return qs.distinct()
+
+    @action(detail=False, methods=["get"], url_path="status-counts")
+    def status_counts(self, request, *args, **kwargs):
+        """Retorna a contagem de notas por status para alimentar os filtros."""
+        from django.db.models import Count
+        base_qs = super().get_queryset()
+        restaurant_id = request.query_params.get("restaurant")
+        if restaurant_id:
+            base_qs = base_qs.filter(restaurant_id=restaurant_id)
+
+        issue_after = request.query_params.get("issue_date_after")
+        issue_before = request.query_params.get("issue_date_before")
+        if issue_after:
+            base_qs = base_qs.filter(issue_date__date__gte=issue_after)
+        if issue_before:
+            base_qs = base_qs.filter(issue_date__date__lte=issue_before)
+
+        counts = dict(
+            base_qs.values("status").annotate(total=Count("id")).values_list("status", "total")
+        )
+        total_all = sum(counts.values())
+        return Response({
+            "all": total_all,
+            "unmapped": counts.get(InboundNFe.STATUS_PENDING_MAPPING, 0),
+            "ready": counts.get(InboundNFe.STATUS_PENDING_RECEIPT, 0),
+            "received": counts.get(InboundNFe.STATUS_RECEIVED, 0),
+            "summary": counts.get(InboundNFe.STATUS_SUMMARY, 0),
+        })
 
     @action(detail=False, methods=["post", "get"])
     def sync(self, request, *args, **kwargs):

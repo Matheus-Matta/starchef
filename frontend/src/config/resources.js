@@ -670,6 +670,14 @@ export const resources = [
       { key: "total_invoice", label: "Valor", type: "money", align: "right" },
       { key: "status", label: "Status", type: "status", map: INBOUND_NFE_STATUS_LABELS }
     ],
+    formFields: [
+      { name: "supplier_name", label: "Fornecedor", type: "text" },
+      { name: "supplier_cnpj", label: "CNPJ do Fornecedor", type: "text" },
+      { name: "number", label: "Número da NF", type: "text" },
+      { name: "series", label: "Série", type: "text" },
+      { name: "access_key", label: "Chave de Acesso", type: "text" },
+      { name: "nsu", label: "NSU", type: "text" },
+    ],
   },
   {
     name: "patrimonio",
