@@ -742,8 +742,13 @@ independente.
 
 **Um lint aparece nesse desenho.** Um membro definido num mixin e consumido
 por outro através da declaração abstrata é marcado como `unused_element`: o
-analisador não liga as duas pontas entre mixins. Onde isso acontece há um
-`// ignore: unused_element` com a explicação em cima da definição.
+analisador não liga as duas pontas entre mixins. Como praticamente todo método
+dessas seções é consumido assim, cada arquivo de seção abre com um
+`ignore_for_file: unused_element` e a explicação do porquê.
+
+O custo está assumido no comentário: código realmente morto naqueles arquivos
+também deixa de ser apontado. Foi escolhido em vez de dezenas de `ignore`
+espalhados, que escondem exatamente a mesma coisa um a um e sem explicar.
 
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao

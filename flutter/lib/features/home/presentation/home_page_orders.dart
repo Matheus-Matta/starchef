@@ -1,3 +1,12 @@
+// Nesta biblioteca cada seção da tela é um mixin, e um membro definido aqui é
+// consumido por outra seção através da declaração abstrata dela. O analisador
+// não liga as duas pontas entre mixins e marca tudo como `unused_element`.
+//
+// O custo assumido: código realmente morto NESTE arquivo também deixa de ser
+// apontado. É menos ruim do que dezenas de `ignore` espalhados escondendo
+// exatamente a mesma coisa, um a um, sem explicar por quê.
+// ignore_for_file: unused_element, unused_element_parameter
+
 part of 'home_page.dart';
 
 /// Histórico de pedidos: consulta, filtros, cache local e a página.

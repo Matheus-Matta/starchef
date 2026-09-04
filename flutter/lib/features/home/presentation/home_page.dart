@@ -54,10 +54,15 @@ import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 
 part 'home_page_cash.dart';
+part 'home_page_cash_ops.dart';
 part 'home_page_commands.dart';
+part 'home_page_customer.dart';
+part 'home_page_kitchen.dart';
 part 'home_page_order.dart';
+part 'home_page_product.dart';
 part 'home_page_orders.dart';
 part 'home_page_payment.dart';
+part 'home_page_payment_view.dart';
 part 'home_page_receipt.dart';
 part 'home_page_shared.dart';
 part 'home_page_fiscal.dart';
@@ -91,12 +96,17 @@ class _HomePageState extends State<HomePage>
     with
         _HomePageShared,
         _CashSection,
+        _CashOpsSection,
         _CommandSection,
         _FiscalSection,
         _InputSection,
+        _CustomerSection,
+        _KitchenSection,
         _OrderSection,
+        _ProductSection,
         _OrdersSection,
         _PaymentSection,
+        _PaymentView,
         _ReceiptSection {
   @override
   ApiClient get api => widget.controller.repository.apiClient;
@@ -1384,6 +1394,8 @@ class _HomePageState extends State<HomePage>
   /// fila. Sem isto, um caixa que fechasse com diferença ficava travado até a
   /// internet voltar, com o operador impedido de encerrar o turno.
   @override
+  // Consumido pelas seções de caixa via declaração abstrata.
+  // ignore: unused_element
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String reason,
     required String password,

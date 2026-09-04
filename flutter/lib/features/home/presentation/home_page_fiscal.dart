@@ -1,3 +1,12 @@
+// Nesta biblioteca cada seção da tela é um mixin, e um membro definido aqui é
+// consumido por outra seção através da declaração abstrata dela. O analisador
+// não liga as duas pontas entre mixins e marca tudo como `unused_element`.
+//
+// O custo assumido: código realmente morto NESTE arquivo também deixa de ser
+// apontado. É menos ruim do que dezenas de `ignore` espalhados escondendo
+// exatamente a mesma coisa, um a um, sem explicar por quê.
+// ignore_for_file: unused_element, unused_element_parameter
+
 part of 'home_page.dart';
 
 /// Emissão da NFC-e e impressão do DANFE.
@@ -34,9 +43,6 @@ mixin _FiscalSection on _HomePageShared {
   /// após cada pagamento, isso spammaria caixas que nem usam NFC-e ainda.
   /// Qualquer outra falha (SEFAZ fora do ar, certificado vencido) continua
   /// visível, porque nesse caso o DANFE realmente não saiu para o cliente.
-  // Chamado por `_PaymentSection` no gesto de concluir a venda; o analisador
-  // não enxerga a ligação a partir da declaração abstrata de lá.
-  // ignore: unused_element
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured = false,

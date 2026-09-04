@@ -1,3 +1,12 @@
+// Nesta biblioteca cada seção da tela é um mixin, e um membro definido aqui é
+// consumido por outra seção através da declaração abstrata dela. O analisador
+// não liga as duas pontas entre mixins e marca tudo como `unused_element`.
+//
+// O custo assumido: código realmente morto NESTE arquivo também deixa de ser
+// apontado. É menos ruim do que dezenas de `ignore` espalhados escondendo
+// exatamente a mesma coisa, um a um, sem explicar por quê.
+// ignore_for_file: unused_element, unused_element_parameter
+
 part of 'home_page.dart';
 
 /// Entrada: teclado, leitor de código, área de transferência e atalhos.
@@ -55,7 +64,6 @@ mixin _InputSection on _HomePageShared {
   Future<void> _configureProduct(Map<String, dynamic> product);
   Future<void> _openCashCenter();
   Future<void> _preparePaymentPage();
-  // ignore: unused_element_parameter
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
   Future<void> _finishOrder();
   Future<void> _completePaidOrder();
@@ -227,9 +235,6 @@ mixin _InputSection on _HomePageShared {
     await _configureProduct(product);
   }
 
-  // Consumido por outra seção via declaração abstrata; o analisador não
-  // enxerga a ligação entre mixins.
-  // ignore: unused_element
   bool _productHasChoices(Map<String, dynamic> product) {
     bool active(List? list) => (list ?? const []).whereType<Map>().any(
       (item) => item['is_active'] != false,
@@ -240,9 +245,6 @@ mixin _InputSection on _HomePageShared {
 
   /// Soma uma unidade ao item pendente. O servidor agrupa itens pendentes
   /// iguais, e o armazenamento local passou a agrupar na mesma hora.
-  // Consumido por outra seção via declaração abstrata; o analisador não
-  // enxerga a ligação entre mixins.
-  // ignore: unused_element
   Future<void> _addOneMoreOf(Map<String, dynamic> product) async {
     await _work(() async {
       await api.post(
