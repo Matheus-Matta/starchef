@@ -16,6 +16,8 @@ mixin _HomePageShared on State<HomePage> {
 
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   ApiClient get api;
+  bool get busy;
+  set busy(bool value);
   String get token;
   String? get restaurantId;
 

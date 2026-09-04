@@ -731,9 +731,10 @@ declarar o mesmo membro em dois mixins faz o Dart recusar a classe.
 `_money` e `_number` deixaram de ser `static` por causa disso — um membro
 estático não pode coexistir com um herdado de mesmo nome.
 
-Seções já extraídas: caixa, fiscal, pedidos e recibo. O trabalho continua
-(pagamento, comandas/mesas, entrada por teclado e os painéis de `build`), e o
-alvo é nenhum arquivo passar de ~200 linhas.
+Seções já extraídas: caixa, comandas/mesas, fiscal, pedidos, pagamento e
+recibo. O trabalho continua (entrada por teclado, produto/pedido e os painéis
+de `build`), e o alvo é nenhum arquivo passar de ~200 linhas — o que significa
+quebrar também as seções grandes em pedaços menores, por diálogo e por painel.
 
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao

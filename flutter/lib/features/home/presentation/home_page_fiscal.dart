@@ -34,6 +34,9 @@ mixin _FiscalSection on _HomePageShared {
   /// após cada pagamento, isso spammaria caixas que nem usam NFC-e ainda.
   /// Qualquer outra falha (SEFAZ fora do ar, certificado vencido) continua
   /// visível, porque nesse caso o DANFE realmente não saiu para o cliente.
+  // Chamado por `_PaymentSection` no gesto de concluir a venda; o analisador
+  // não enxerga a ligação a partir da declaração abstrata de lá.
+  // ignore: unused_element
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured = false,

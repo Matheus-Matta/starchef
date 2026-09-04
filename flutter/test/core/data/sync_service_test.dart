@@ -282,19 +282,32 @@ void main() {
   test('carga interrompida no teto de páginas não avança a marca de tempo', () async {
     // Gravar a marca aqui faria a próxima carga pedir `updated_after` a partir
     // de agora e pular para sempre tudo o que ficou para trás.
+    // Uma página CHEIA continua sendo uma página cheia com `pageSize: 1` — e o
+    // teto de páginas é alcançado do mesmo jeito, gravando 50 produtos em vez
+    // de mil. Com mil, este teste estourava o tempo quando a suíte inteira
+    // disputava a máquina: falhava por lentidão, não por regressão.
+    //
+    // A página precisa vir CHEIA: uma página menor que o `pageSize` é a
+    // última, a carga termina normalmente e a marca de tempo é gravada — que é
+    // exatamente o contrário do que se quer provar aqui.
+    final lento = SyncService(
+      gateway: stack.gateway,
+      transport: transport,
+      pageSize: 1,
+    );
+    addTearDown(lento.dispose);
     transport.handlers['GET /menu/products/'] = (request) {
       final page = int.parse('${request.query!['page']}');
       return paginated(
         [
-          for (var i = 0; i < 20; i++)
-            {'id': 'p-$page-$i', 'name': 'Produto $i'},
+          {'id': 'p-$page', 'name': 'Produto $page'},
         ],
         count: 100000,
         next: 'http://api/next',
       );
     };
 
-    await sync.pull(EntityCatalog.byType(EntityCatalog.product)!);
+    await lento.pull(EntityCatalog.byType(EntityCatalog.product)!);
 
     expect(await stack.gateway.lastSyncAt(EntityCatalog.product), isNull);
   });
