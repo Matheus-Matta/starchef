@@ -960,7 +960,16 @@
               />
             </div>
             <div class="inbound-map__field">
-              <label class="inbound-map__label">Categoria (Opcional)</label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="inbound-map__label mb-0">Categoria (Opcional)</label>
+                <button
+                  type="button"
+                  class="text-xs text-brand hover:underline font-bold flex items-center gap-1 cursor-pointer bg-transparent border-0 p-0 text-emerald-400"
+                  @click="openInlineCategoryModal"
+                >
+                  <i class="pi pi-plus text-xs" /> Nova Categoria
+                </button>
+              </div>
               <Dropdown
                 v-model="quickCreateForm.category"
                 :options="mappingCategories"
@@ -1127,44 +1136,98 @@
             <span>Conversão de Unidade e Entrada no Estoque</span>
           </div>
 
+          <!-- Seletor de Modo de Conversão -->
+          <div class="mb-3">
+            <label class="inbound-map__label mb-1.5 block">Como esta mercadoria é convertida para o estoque?</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-2 flex items-center justify-center gap-1.5 cursor-pointer"
+                :class="mappingForm.conversion_mode === 'multiply' ? 'rpro-btn--primary font-bold shadow' : 'rpro-btn--ghost text-muted border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'multiply'"
+              >
+                <i class="pi pi-times text-xs" /> Multiplicador
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-2 flex items-center justify-center gap-1.5 cursor-pointer"
+                :class="mappingForm.conversion_mode === 'divide' ? 'rpro-btn--primary font-bold shadow' : 'rpro-btn--ghost text-muted border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'divide'"
+              >
+                <i class="pi pi-percentage text-xs" /> Divisor / Fração
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-2 flex items-center justify-center gap-1.5 cursor-pointer"
+                :class="mappingForm.conversion_mode === 'direct' ? 'rpro-btn--primary font-bold shadow' : 'rpro-btn--ghost text-muted border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'direct'"
+              >
+                <i class="pi pi-arrows-h text-xs" /> Direto (1 : 1)
+              </button>
+            </div>
+          </div>
+
           <div class="inbound-map__grid-2">
-            <!-- Unidade de Estoque -->
+            <!-- Unidade de Estoque (SEMPRE EDITÁVEL) -->
             <div class="inbound-map__field">
               <label class="inbound-map__label">
                 Unidade no seu Estoque *
-                <small class="inbound-map__sublabel">Como você quer controlar (ex: Gramas, Kg, Unidades)</small>
+                <small class="inbound-map__sublabel">Escolha ou digite (ex: UN, KG, G, L, ML, CX, PCT)</small>
               </label>
               <Dropdown
-                v-if="mappingMode === 'create'"
-                v-model="quickCreateForm.stock_unit"
-                :options="['UN', 'KG', 'G', 'L', 'ML', 'CX', 'PCT', 'DZ', 'FD', 'LT']"
+                v-model="mappingForm.stock_unit"
+                :options="['UN', 'KG', 'G', 'L', 'ML', 'CX', 'PCT', 'DZ', 'FD', 'LT', 'BD', 'GL']"
                 editable
-                placeholder="UN"
+                placeholder="Ex: UN, KG, G..."
                 class="inbound-map__dropdown"
               />
-              <div v-else class="inbound-map__readonly-unit">
-                <strong>{{ selectedTargetProduct?.stock_unit || 'UN' }}</strong>
-                <small>Definido no cadastro do item selecionado</small>
-              </div>
             </div>
 
-            <!-- Fator de Conversão -->
+            <!-- Fator de Conversão de acordo com o modo -->
             <div class="inbound-map__field">
               <label class="inbound-map__label">
-                Fator de Conversão Multiplicador *
-                <small class="inbound-map__sublabel">Quantos {{ currentStockUnit }} vêm em cada 1 {{ mappingItem.commercial_unit || 'UN' }} da NF-e?</small>
+                <span v-if="mappingForm.conversion_mode === 'multiply'">Fator Multiplicador *</span>
+                <span v-else-if="mappingForm.conversion_mode === 'divide'">Quantidade da Nota p/ 1 Unidade Estoque *</span>
+                <span v-else>Mesma Unidade</span>
+                <small class="inbound-map__sublabel">
+                  <span v-if="mappingForm.conversion_mode === 'multiply'">Quantos {{ currentStockUnit }} vêm em cada 1 {{ mappingItem.commercial_unit || 'UN' }} da NF-e?</span>
+                  <span v-else-if="mappingForm.conversion_mode === 'divide'">Quantos {{ mappingItem.commercial_unit || 'UN' }} formam 1 {{ currentStockUnit }} no estoque?</span>
+                  <span v-else>1 {{ mappingItem.commercial_unit || 'UN' }} da nota equivale a 1 {{ currentStockUnit }} no estoque</span>
+                </small>
               </label>
-              <div class="inbound-map__factor-wrapper">
+
+              <!-- Modo Multiplicador -->
+              <div v-if="mappingForm.conversion_mode === 'multiply'" class="inbound-map__factor-wrapper">
                 <span class="inbound-map__factor-prefix">1 {{ mappingItem.commercial_unit || 'UN' }} =</span>
                 <InputNumber
                   v-model="mappingForm.conversion_factor"
-                  :min="0.0001"
+                  :min="0.000001"
                   :min-fraction-digits="0"
-                  :max-fraction-digits="4"
+                  :max-fraction-digits="6"
                   class="inbound-map__factor-input"
                   input-class="inbound-map__factor-inner"
                 />
                 <span class="inbound-map__factor-suffix">{{ currentStockUnit }}</span>
+              </div>
+
+              <!-- Modo Divisor / Fração -->
+              <div v-else-if="mappingForm.conversion_mode === 'divide'" class="inbound-map__factor-wrapper">
+                <span class="inbound-map__factor-prefix">São necessários</span>
+                <InputNumber
+                  v-model="mappingForm.conversion_divisor"
+                  :min="0.000001"
+                  :min-fraction-digits="0"
+                  :max-fraction-digits="6"
+                  class="inbound-map__factor-input"
+                  input-class="inbound-map__factor-inner"
+                />
+                <span class="inbound-map__factor-suffix">{{ mappingItem.commercial_unit || 'UN' }} p/ 1 {{ currentStockUnit }} (x{{ Number(effectiveConversionFactor.toFixed(4)) }})</span>
+              </div>
+
+              <!-- Modo Direto 1:1 -->
+              <div v-else class="inbound-map__factor-wrapper bg-neutral-900 border border-neutral-800 rounded p-2 flex items-center justify-between">
+                <span class="text-xs text-muted font-mono">1 {{ mappingItem.commercial_unit || 'UN' }} = 1 {{ currentStockUnit }}</span>
+                <span class="rpro-badge bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs">Fator 1.0 (Sem conversão)</span>
               </div>
             </div>
           </div>
@@ -1275,8 +1338,9 @@
             <thead>
               <tr>
                 <th style="min-width: 200px">Item NF-e / Vínculo</th>
-                <th style="width: 100px; text-align: right">Qtd NF-e</th>
-                <th style="width: 120px; text-align: right">Qtd Recebida</th>
+                <th style="width: 90px; text-align: right">Qtd NF-e</th>
+                <th style="width: 110px; text-align: center">Fator Conversão</th>
+                <th style="width: 130px; text-align: right">Entrada Estoque</th>
                 <th style="min-width: 260px">Rastreabilidade (Lote / Validade / Seriais)</th>
               </tr>
             </thead>
@@ -1296,7 +1360,19 @@
                 </td>
                 <td style="text-align: right">
                   <strong>{{ Number(it.commercial_quantity) }}</strong>
-                  <small class="text-muted ml-1">{{ it.commercial_unit }}</small>
+                  <small class="text-muted ml-1 font-bold">{{ it.commercial_unit }}</small>
+                </td>
+                <td style="text-align: center">
+                  <div class="flex items-center justify-center gap-1">
+                    <span class="text-xs text-muted font-bold">x</span>
+                    <InputNumber
+                      v-model="it.conversion_factor"
+                      :min="0.0001"
+                      :max-fraction-digits="4"
+                      input-class="text-center w-16 p-1 text-xs font-mono font-bold"
+                      @update:model-value="it.received_quantity = Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))"
+                    />
+                  </div>
                 </td>
                 <td style="text-align: right">
                   <InputNumber
@@ -1305,8 +1381,11 @@
                     :max-fraction-digits="3"
                     input-class="text-right w-24 p-1 text-sm font-bold"
                   />
-                  <div v-if="Number(it.received_quantity) !== Number(it.commercial_quantity)" class="text-xs text-amber-600 font-bold mt-1">
-                    Divergência: {{ (Number(it.received_quantity) - Number(it.commercial_quantity)).toFixed(2) }}
+                  <div class="text-xs text-muted font-bold mt-0.5">
+                    {{ it.stock_unit || 'UN' }}
+                  </div>
+                  <div v-if="Number(it.received_quantity) !== Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))" class="text-xs text-amber-600 font-bold mt-1">
+                    Divergência: {{ (Number(it.received_quantity) - (Number(it.commercial_quantity) * Number(it.conversion_factor || 1))).toFixed(2) }}
                   </div>
                 </td>
                 <td>
@@ -1348,6 +1427,41 @@
           @click="submitReceiveInvoiceFromDetail"
         >
           <i :class="receiveSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-box'" /> Confirmar Recebimento e Estoque
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Diálogo Criação Rápida de Categoria ── -->
+    <Dialog
+      v-model:visible="inlineCategoryDialogVisible"
+      modal
+      header="Nova Categoria de Produto / Cardápio"
+      :style="{ width: '420px' }"
+    >
+      <div class="py-2">
+        <label class="rpage__label mb-1 block font-bold">Nome da Categoria *</label>
+        <InputText
+          v-model="inlineCategoryName"
+          placeholder="Ex: Carnes Nobres, Bebidas, Laticínios..."
+          class="w-full"
+          @keyup.enter="submitInlineCategory"
+        />
+        <small class="text-xs text-muted block mt-1">
+          A nova categoria ficará disponível para todo o cardápio e estoque.
+        </small>
+      </div>
+
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="inlineCategoryLoading" @click="inlineCategoryDialogVisible = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="inlineCategoryLoading || !inlineCategoryName.trim()"
+          @click="submitInlineCategory"
+        >
+          <i :class="inlineCategoryLoading ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Salvar Categoria
         </button>
       </template>
     </Dialog>
@@ -2015,13 +2129,25 @@ const mappingForm = reactive({
   targetType: "product", // "ingredient" | "product"
   ingredient_id: null,
   product_id: null,
+  stock_unit: "UN",
+  conversion_mode: "multiply", // "multiply" | "divide" | "direct"
   conversion_factor: 1,
+  conversion_divisor: 1,
   save_supplier_mapping: true,
+});
+
+const effectiveConversionFactor = computed(() => {
+  if (mappingForm.conversion_mode === "direct") return 1;
+  if (mappingForm.conversion_mode === "divide") {
+    const div = Number(mappingForm.conversion_divisor) || 1;
+    return div > 0 ? 1 / div : 1;
+  }
+  return Number(mappingForm.conversion_factor) || 1;
 });
 
 const quickCreateForm = reactive({
   name: "",
-  item_type: "RAW_MATERIAL_INGREDIENT",
+  item_type: "INGREDIENT",
   category: null,
   stock_unit: "UN",
   estimated_cost: 0,
@@ -2029,6 +2155,36 @@ const quickCreateForm = reactive({
   requires_lot_control: false,
   requires_serial_number: false,
 });
+
+const inlineCategoryDialogVisible = ref(false);
+const inlineCategoryName = ref("");
+const inlineCategoryLoading = ref(false);
+
+function openInlineCategoryModal() {
+  inlineCategoryName.value = "";
+  inlineCategoryDialogVisible.value = true;
+}
+
+async function submitInlineCategory() {
+  const name = inlineCategoryName.value.trim();
+  if (!name) return;
+  inlineCategoryLoading.value = true;
+  try {
+    const { data } = await api.post("/menu/categories/", {
+      name,
+      display_order: mappingCategories.value.length + 1,
+      is_active: true,
+    });
+    mappingCategories.value.push(data);
+    quickCreateForm.category = data.id;
+    inlineCategoryDialogVisible.value = false;
+    toast.add({ severity: "success", summary: "Categoria Criada", detail: `Categoria '${name}' criada com sucesso.`, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao criar categoria", detail: normalizeApiError(err).message, life: 5000 });
+  } finally {
+    inlineCategoryLoading.value = false;
+  }
+}
 
 const ASSET_TYPE_OPTIONS = [
   { label: "🔌 Equipamento Operacional (Fornos, Freezers, Balanças, PDVs)", value: "EQUIPMENT" },
@@ -2054,9 +2210,10 @@ const mappingLoading = ref(false);
 const mappingSubmitting = ref(false);
 
 const ITEM_TYPE_OPTIONS_ALL = [
-  { label: "🥗 Insumo / Matéria-Prima (Perecíveis & Ingredientes)", value: "RAW_MATERIAL_INGREDIENT" },
-  { label: "🛒 Mercadoria p/ Venda / Cardápio", value: "MERCHANDISE_FOR_SALE" },
-  { label: "🧻 Material de Consumo (Embalagens & Limpeza)", value: "CONSUMABLE" },
+  { label: "🥗 Insumo / Matéria-Prima (Perecíveis & Ingredientes)", value: "INGREDIENT" },
+  { label: "🛒 Mercadoria p/ Venda / Cardápio", value: "RESALE_PRODUCT" },
+  { label: "🧻 Material de Consumo (Limpeza, Descartáveis)", value: "CONSUMABLE" },
+  { label: "📦 Embalagens", value: "PACKAGING" },
   { label: "🍽️ Material Reutilizável (Pratos, Copos, Talheres)", value: "REUSABLE_MATERIAL" },
   { label: "🔌 Equipamento / Ativo Imobilizado (Maquinários & POS)", value: "EQUIPMENT" },
 ];
@@ -2064,17 +2221,20 @@ const ITEM_TYPE_OPTIONS_ALL = [
 const mappingTypeFilters = [
   { label: "Todos os Itens", value: "ALL" },
   { label: "🏢 Patrimônio & Ativos", value: "ASSET_ALL" },
-  { label: "🥗 Insumos", value: "RAW_MATERIAL_INGREDIENT" },
-  { label: "🛒 Venda / Cardápio", value: "MERCHANDISE_FOR_SALE" },
+  { label: "🥗 Insumos", value: "INGREDIENT" },
+  { label: "🛒 Venda / Cardápio", value: "RESALE_PRODUCT" },
   { label: "🧻 Consumo", value: "CONSUMABLE" },
   { label: "🍽️ Utensílios", value: "REUSABLE_MATERIAL" },
 ];
 
 function getItemTypeLabel(type) {
   const map = {
+    INGREDIENT: "Insumo",
     RAW_MATERIAL_INGREDIENT: "Insumo",
+    RESALE_PRODUCT: "Venda",
     MERCHANDISE_FOR_SALE: "Venda",
     CONSUMABLE: "Consumo",
+    PACKAGING: "Embalagem",
     REUSABLE_MATERIAL: "Utensílio",
     EQUIPMENT: "Equipamento",
     FIXED_ASSET: "Patrimônio",
@@ -2084,9 +2244,12 @@ function getItemTypeLabel(type) {
 
 function getItemTypeBadgeClass(type) {
   const map = {
+    INGREDIENT: "bg-emerald-950 text-emerald-300 border border-emerald-800",
     RAW_MATERIAL_INGREDIENT: "bg-emerald-950 text-emerald-300 border border-emerald-800",
+    RESALE_PRODUCT: "bg-blue-950 text-blue-300 border border-blue-800",
     MERCHANDISE_FOR_SALE: "bg-blue-950 text-blue-300 border border-blue-800",
     CONSUMABLE: "bg-amber-950 text-amber-300 border border-amber-800",
+    PACKAGING: "bg-orange-950 text-orange-300 border border-orange-800",
     REUSABLE_MATERIAL: "bg-purple-950 text-purple-300 border border-purple-800",
     EQUIPMENT: "bg-cyan-950 text-cyan-300 border border-cyan-800",
     FIXED_ASSET: "bg-cyan-950 text-cyan-300 border border-cyan-800",
@@ -2101,7 +2264,7 @@ const allNormalizedItems = computed(() => {
       id: p.id,
       name: p.name,
       type: "product",
-      item_type: p.item_type || "MERCHANDISE_FOR_SALE",
+      item_type: p.item_type || "RESALE_PRODUCT",
       category_name: p.category_name,
       stock_unit: p.stock_unit || "UN",
       internal_code: p.internal_code,
@@ -2114,9 +2277,9 @@ const allNormalizedItems = computed(() => {
       id: ing.id,
       name: ing.name,
       type: "ingredient",
-      item_type: "RAW_MATERIAL_INGREDIENT",
+      item_type: "INGREDIENT",
       category_name: "Ingredientes",
-      stock_unit: ing.unit || "UN",
+      stock_unit: (ing.unit || "UN").toUpperCase(),
       internal_code: ing.internal_code || "-",
       gtin: "",
       sale_price: ing.cost_per_unit || 0,
@@ -2146,6 +2309,9 @@ const filteredMappingProducts = computed(() => {
 });
 
 const currentStockUnit = computed(() => {
+  if (mappingForm.stock_unit) {
+    return mappingForm.stock_unit.toUpperCase();
+  }
   if (mappingMode.value === "create") {
     return (quickCreateForm.stock_unit || "UN").toUpperCase();
   }
@@ -2158,8 +2324,7 @@ const currentStockUnit = computed(() => {
 const calculatedStockQty = computed(() => {
   if (!mappingItem.value) return 0;
   const commQty = Number(mappingItem.value.commercial_quantity) || 0;
-  const factor = Number(mappingForm.conversion_factor) || 1;
-  return commQty * factor;
+  return commQty * effectiveConversionFactor.value;
 });
 
 const calculatedUnitCostInStock = computed(() => {
@@ -2193,6 +2358,9 @@ function selectTargetProduct(prod) {
   mappingForm.targetType = prod.type;
   mappingForm.product_id = prod.type === "product" ? prod.id : null;
   mappingForm.ingredient_id = prod.type === "ingredient" ? prod.id : null;
+  if (prod.stock_unit) {
+    mappingForm.stock_unit = prod.stock_unit.toUpperCase();
+  }
 }
 
 function onQuickCreateItemTypeChange(ev) {
@@ -2200,9 +2368,6 @@ function onQuickCreateItemTypeChange(ev) {
   if (val === "EQUIPMENT") {
     quickCreateForm.requires_serial_number = true;
     quickCreateForm.requires_lot_control = false;
-  } else if (val === "RAW_MATERIAL_INGREDIENT") {
-    quickCreateForm.requires_lot_control = false;
-    quickCreateForm.requires_serial_number = false;
   } else {
     quickCreateForm.requires_lot_control = false;
     quickCreateForm.requires_serial_number = false;
@@ -2212,7 +2377,7 @@ function onQuickCreateItemTypeChange(ev) {
 function switchToQuickCreate() {
   mappingMode.value = "create";
   quickCreateForm.name = (mappingSearch.value || mappingItem.value?.description || "").trim();
-  quickCreateForm.item_type = "RAW_MATERIAL_INGREDIENT";
+  quickCreateForm.item_type = "INGREDIENT";
   quickCreateForm.category = null;
   quickCreateForm.stock_unit = (mappingItem.value?.commercial_unit || "UN").toUpperCase().slice(0, 8);
   quickCreateForm.estimated_cost = Number(mappingItem.value?.commercial_unit_value) || 0;
@@ -2244,8 +2409,32 @@ async function openMapModal(item) {
   mappingForm.targetType = item.product ? "product" : (item.ingredient ? "ingredient" : "product");
   mappingForm.ingredient_id = item.ingredient || null;
   mappingForm.product_id = item.product || null;
-  mappingForm.conversion_factor = Number(item.conversion_factor) || 1;
+  mappingForm.stock_unit = (item.product_stock_unit || item.ingredient_unit || item.commercial_unit || "UN").toUpperCase();
+
+  const factor = Number(item.conversion_factor) || 1;
+  if (factor === 1) {
+    mappingForm.conversion_mode = "direct";
+    mappingForm.conversion_factor = 1;
+    mappingForm.conversion_divisor = 1;
+  } else if (factor < 1 && factor > 0) {
+    mappingForm.conversion_mode = "divide";
+    mappingForm.conversion_divisor = Math.round((1 / factor) * 10000) / 10000;
+    mappingForm.conversion_factor = factor;
+  } else {
+    mappingForm.conversion_mode = "multiply";
+    mappingForm.conversion_factor = factor;
+    mappingForm.conversion_divisor = factor;
+  }
   mappingForm.save_supplier_mapping = true;
+
+  quickCreateForm.name = (item.description || "").trim();
+  quickCreateForm.item_type = "INGREDIENT";
+  quickCreateForm.category = null;
+  quickCreateForm.stock_unit = (item.commercial_unit || "UN").toUpperCase().slice(0, 8);
+  quickCreateForm.estimated_cost = Number(item.commercial_unit_value) || 0;
+  quickCreateForm.sale_price = Number(item.commercial_unit_value) || 0;
+  quickCreateForm.requires_lot_control = false;
+  quickCreateForm.requires_serial_number = false;
 
   mapItemDialogVisible.value = true;
   await loadMappingOptions();
@@ -2256,7 +2445,10 @@ async function openMapModal(item) {
       (it) => (item.product && it.type === "product" && it.id === item.product) ||
               (item.ingredient && it.type === "ingredient" && it.id === item.ingredient)
     );
-    if (existing) selectTargetProduct(existing);
+    if (existing) {
+      selectTargetProduct(existing);
+      mappingForm.stock_unit = (existing.stock_unit || mappingForm.stock_unit).toUpperCase();
+    }
   }
 }
 
@@ -2268,10 +2460,25 @@ async function submitItemMapping() {
   }
   mappingSubmitting.value = true;
   try {
+    const chosenUnit = (mappingForm.stock_unit || "UN").toUpperCase();
+    // Atualiza a unidade de estoque do produto/insumo caso o usuário tenha ajustado
+    if (chosenUnit && chosenUnit !== selectedTargetProduct.value.stock_unit) {
+      try {
+        if (selectedTargetProduct.value.type === "product") {
+          await api.patch(`/menu/products/${selectedTargetProduct.value.id}/`, { stock_unit: chosenUnit });
+        } else if (selectedTargetProduct.value.type === "ingredient") {
+          await api.patch(`/menu/ingredients/${selectedTargetProduct.value.id}/`, { unit: chosenUnit.toLowerCase() });
+        }
+        selectedTargetProduct.value.stock_unit = chosenUnit;
+      } catch (patchErr) {
+        console.warn("Não foi possível atualizar unidade padrão do produto:", patchErr);
+      }
+    }
+
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
       ingredient_id: mappingForm.targetType === "ingredient" ? mappingForm.ingredient_id : null,
       product_id: mappingForm.targetType === "product" ? mappingForm.product_id : null,
-      conversion_factor: mappingForm.conversion_factor,
+      conversion_factor: effectiveConversionFactor.value,
       save_supplier_mapping: mappingForm.save_supplier_mapping,
     });
     toast.add({ severity: "success", summary: "Vínculo salvo!", detail: `Item vinculado com sucesso a '${selectedTargetProduct.value.name}'.`, life: 3500 });
@@ -2299,12 +2506,15 @@ async function submitQuickCreateAndMap() {
     else if (quickCreateForm.requires_lot_control) tracking_mode = "LOT";
 
     const gtinVal = (mappingItem.value?.ean && mappingItem.value.ean !== "Sem GTIN") ? mappingItem.value.ean.trim() : "";
+    const targetRestaurant = inboundDetailData.value?.restaurant || localStorage.getItem("starchef-restaurant-scope");
+    const stockUnit = (mappingForm.stock_unit || quickCreateForm.stock_unit || "UN").toUpperCase();
+
     const productPayload = {
       name: quickCreateForm.name.trim(),
-      item_type: quickCreateForm.item_type,
+      item_type: quickCreateForm.item_type || "INGREDIENT",
       category: quickCreateForm.category || null,
       gtin: gtinVal,
-      stock_unit: (quickCreateForm.stock_unit || "UN").toUpperCase(),
+      stock_unit: stockUnit,
       estimated_cost: quickCreateForm.estimated_cost || 0,
       sale_price: quickCreateForm.sale_price || 0,
       tracking_mode,
@@ -2314,14 +2524,40 @@ async function submitQuickCreateAndMap() {
       controls_stock: true,
       is_active: true,
     };
+    if (targetRestaurant) {
+      productPayload.restaurant = targetRestaurant;
+      productPayload.restaurants = [targetRestaurant];
+    }
 
-    const { data: newProd } = await api.post("/menu/products/", productPayload);
+    let newProd;
+    try {
+      const resp = await api.post("/menu/products/", productPayload);
+      newProd = resp.data;
+    } catch (createErr) {
+      // Se já existe produto com o mesmo GTIN, localiza o existente para vincular
+      if (gtinVal) {
+        const existing = allNormalizedItems.value.find((it) => it.gtin === gtinVal);
+        if (existing) {
+          toast.add({
+            severity: "info",
+            summary: "Produto Existente Localizado",
+            detail: `O produto '${existing.name}' já possui este código de barras e foi vinculado.`,
+            life: 5000,
+          });
+          newProd = existing;
+        } else {
+          throw createErr;
+        }
+      } else {
+        throw createErr;
+      }
+    }
 
-    // Imediatamente vincula o novo produto ao item da NF-e
+    // Imediatamente vincula o produto ao item da NF-e com o fator de conversão efetivo
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
       product_id: newProd.id,
       ingredient_id: null,
-      conversion_factor: mappingForm.conversion_factor || 1,
+      conversion_factor: effectiveConversionFactor.value,
       save_supplier_mapping: mappingForm.save_supplier_mapping,
     });
 
@@ -2358,12 +2594,13 @@ async function submitQuickAssetAndMap() {
   mappingSubmitting.value = true;
   try {
     const gtinVal = (mappingItem.value?.ean && mappingItem.value.ean !== "Sem GTIN") ? mappingItem.value.ean.trim() : "";
+    const targetRestaurant = inboundDetailData.value?.restaurant || localStorage.getItem("starchef-restaurant-scope");
     const payload = {
       name: quickAssetForm.name.trim(),
       item_type: quickAssetForm.item_type,
       brand: (quickAssetForm.brand || "").trim(),
       model: (quickAssetForm.model || "").trim(),
-      stock_unit: (quickAssetForm.stock_unit || "UN").toUpperCase(),
+      stock_unit: (mappingForm.stock_unit || quickAssetForm.stock_unit || "UN").toUpperCase(),
       estimated_cost: quickAssetForm.purchase_price || 0,
       sale_price: 0,
       pricing_unit: "unit",
@@ -2377,13 +2614,17 @@ async function submitQuickAssetAndMap() {
       controls_stock: true,
       is_active: true,
     };
+    if (targetRestaurant) {
+      payload.restaurant = targetRestaurant;
+      payload.restaurants = [targetRestaurant];
+    }
 
     const { data: newProd } = await api.post("/menu/products/", payload);
 
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
       product_id: newProd.id,
       ingredient_id: null,
-      conversion_factor: mappingForm.conversion_factor || 1,
+      conversion_factor: effectiveConversionFactor.value,
       save_supplier_mapping: mappingForm.save_supplier_mapping,
     });
 
@@ -2436,24 +2677,29 @@ async function openReceiveModalFromDetail() {
   }
 
   receiveForm.notes = "";
-  receiveForm.items = items.map((it) => ({
-    item_id: it.id,
-    description: it.description,
-    supplier_code: it.supplier_code,
-    target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
-    tracking_mode: it.product_tracking_mode || "QUANTITY",
-    requires_lot: it.product_requires_lot_control || false,
-    requires_serial: it.product_requires_serial_number || false,
-    commercial_quantity: it.commercial_quantity,
-    commercial_unit: it.commercial_unit,
-    conversion_factor: it.conversion_factor,
-    received_quantity: Number(it.commercial_quantity),
-    accepted_quantity: Number(it.commercial_quantity),
-    rejected_quantity: 0,
-    lot_number: "",
-    expiration_date: "",
-    serials_text: "",
-  }));
+  receiveForm.items = items.map((it) => {
+    const factor = Number(it.conversion_factor) || 1;
+    const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
+    return {
+      item_id: it.id,
+      description: it.description,
+      supplier_code: it.supplier_code,
+      target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
+      tracking_mode: it.product_tracking_mode || "QUANTITY",
+      requires_lot: it.product_requires_lot_control || false,
+      requires_serial: it.product_requires_serial_number || false,
+      commercial_quantity: it.commercial_quantity,
+      commercial_unit: it.commercial_unit,
+      stock_unit: it.product_stock_unit || it.ingredient_unit || it.commercial_unit || "UN",
+      conversion_factor: factor,
+      received_quantity: stockQty,
+      accepted_quantity: stockQty,
+      rejected_quantity: 0,
+      lot_number: "",
+      expiration_date: "",
+      serials_text: "",
+    };
+  });
 
   receiveDialogVisible.value = true;
   receiveLocationsLoading.value = true;
@@ -2482,6 +2728,7 @@ async function submitReceiveInvoiceFromDetail() {
       notes: receiveForm.notes || "",
       items: receiveForm.items.map((it) => ({
         item_id: it.item_id,
+        conversion_factor: it.conversion_factor || 1,
         received_quantity: it.received_quantity,
         accepted_quantity: it.received_quantity,
         rejected_quantity: 0,

@@ -174,6 +174,18 @@ class ProductSerializer(TenantModelSerializer):
             import uuid
             attrs["internal_code"] = f"PRD-{uuid.uuid4().hex[:6].upper()}"
 
+        gtin = (attrs.get("gtin") or getattr(self.instance, "gtin", "") or "").strip()
+        branch = attrs.get("branch") or getattr(self.instance, "branch", None)
+        if gtin and branch:
+            existing_product = Product.all_objects.filter(branch=branch, gtin=gtin)
+            if self.instance:
+                existing_product = existing_product.exclude(pk=self.instance.pk)
+            if existing_product.exists():
+                prod = existing_product.first()
+                raise serializers.ValidationError({
+                    "gtin": f"Já existe um produto com este código de barras/EAN ({prod.name})."
+                })
+
         return attrs
 
 

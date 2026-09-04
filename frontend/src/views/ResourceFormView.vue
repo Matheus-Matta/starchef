@@ -569,18 +569,95 @@
             />
           </div>
 
+          <!-- Unidade de Estoque e Regra de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Unidade no Estoque</label>
+            <Dropdown
+              v-model="mappingForm.stock_unit"
+              :options="['UN', 'KG', 'G', 'L', 'ML', 'CX', 'PCT', 'DZ', 'FD', 'LT', 'BD', 'GL']"
+              editable
+              placeholder="Ex: UN, KG, G..."
+              class="w-full"
+            />
+          </div>
+
+          <!-- Modos de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Modo de Conversão</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'multiply' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'multiply'"
+              >
+                <i class="pi pi-times text-xs" /> Multiplicador
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'divide' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'divide'"
+              >
+                <i class="pi pi-percentage text-xs" /> Divisor
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'direct' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'direct'"
+              >
+                <i class="pi pi-arrows-h text-xs" /> 1 : 1
+              </button>
+            </div>
+          </div>
+
           <!-- Fator de Conversão -->
           <div class="rpage__field rpage__field--full">
             <label class="rpage__label">
-              Fator de Conversão de Quantidade
-              <i class="pi pi-question-circle text-xs text-muted" title="Exemplo: Se a nota veio em Caixa (CX) com 12 unidades e o seu estoque controla em UN, informe 12. Se a nota já está na mesma unidade, deixe 1." />
+              <span v-if="mappingForm.conversion_mode === 'multiply'">Fator Multiplicador (1 {{ mappingItem.commercial_unit || 'UN' }} = X {{ currentStockUnit }})</span>
+              <span v-else-if="mappingForm.conversion_mode === 'divide'">Quantidade da Nota p/ 1 {{ currentStockUnit }}</span>
+              <span v-else>Mesma Unidade</span>
             </label>
-            <InputNumber
-              v-model="mappingForm.conversion_factor"
-              :min-fraction-digits="1"
-              :max-fraction-digits="6"
-              class="w-full"
-            />
+
+            <div v-if="mappingForm.conversion_mode === 'multiply'" class="inbound-map__factor-wrapper flex items-center gap-2">
+              <span class="text-xs text-muted">1 {{ mappingItem.commercial_unit || 'UN' }} =</span>
+              <InputNumber
+                v-model="mappingForm.conversion_factor"
+                :min="0.000001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="6"
+                class="flex-1"
+              />
+              <span class="text-xs font-bold">{{ currentStockUnit }}</span>
+            </div>
+
+            <div v-else-if="mappingForm.conversion_mode === 'divide'" class="inbound-map__factor-wrapper flex items-center gap-2">
+              <span class="text-xs text-muted">São necessários</span>
+              <InputNumber
+                v-model="mappingForm.conversion_divisor"
+                :min="0.000001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="6"
+                class="flex-1"
+              />
+              <span class="text-xs">{{ mappingItem.commercial_unit || 'UN' }} p/ 1 {{ currentStockUnit }}</span>
+            </div>
+
+            <div v-else class="bg-neutral-900 p-2.5 rounded border border-neutral-800 text-xs text-muted">
+              1 {{ mappingItem.commercial_unit || 'UN' }} equivale a 1 {{ currentStockUnit }} no estoque (Sem fator).
+            </div>
+          </div>
+
+          <!-- Preview da Simulação -->
+          <div class="rpage__field rpage__field--full bg-neutral-900/60 p-3 rounded border border-neutral-800">
+            <div class="text-xs font-bold text-emerald-400 mb-1 flex items-center gap-1">
+              <i class="pi pi-calculator text-xs" /> Simulação de Entrada no Estoque:
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span>Entrada: <strong class="text-emerald-400">{{ Number(calculatedStockQty.toFixed(4)) }} {{ currentStockUnit }}</strong></span>
+              <span>Custo: <strong class="text-strong">{{ money(calculatedUnitCostInStock) }} / {{ currentStockUnit }}</strong></span>
+            </div>
           </div>
 
           <!-- Lembrar Vínculo -->
@@ -648,8 +725,9 @@
             <thead>
               <tr>
                 <th style="min-width: 200px">Item NF-e / Vínculo</th>
-                <th style="width: 100px; text-align: right">Qtd NF-e</th>
-                <th style="width: 120px; text-align: right">Qtd Recebida</th>
+                <th style="width: 90px; text-align: right">Qtd NF-e</th>
+                <th style="width: 110px; text-align: center">Fator Conversão</th>
+                <th style="width: 130px; text-align: right">Entrada Estoque</th>
                 <th style="min-width: 260px">Rastreabilidade (Lote / Validade / Seriais)</th>
               </tr>
             </thead>
@@ -669,7 +747,19 @@
                 </td>
                 <td style="text-align: right">
                   <strong>{{ Number(it.commercial_quantity) }}</strong>
-                  <small class="text-muted ml-1">{{ it.commercial_unit }}</small>
+                  <small class="text-muted ml-1 font-bold">{{ it.commercial_unit }}</small>
+                </td>
+                <td style="text-align: center">
+                  <div class="flex items-center justify-center gap-1">
+                    <span class="text-xs text-muted font-bold">x</span>
+                    <InputNumber
+                      v-model="it.conversion_factor"
+                      :min="0.0001"
+                      :max-fraction-digits="4"
+                      input-class="text-center w-16 p-1 text-xs font-mono font-bold"
+                      @update:model-value="it.received_quantity = Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))"
+                    />
+                  </div>
                 </td>
                 <td style="text-align: right">
                   <InputNumber
@@ -678,8 +768,11 @@
                     :max-fraction-digits="3"
                     input-class="text-right w-24 p-1 text-sm font-bold"
                   />
-                  <div v-if="Number(it.received_quantity) !== Number(it.commercial_quantity)" class="text-xs text-amber-600 font-bold mt-1">
-                    Divergência: {{ (Number(it.received_quantity) - Number(it.commercial_quantity)).toFixed(2) }}
+                  <div class="text-xs text-muted font-bold mt-0.5">
+                    {{ it.stock_unit || 'UN' }}
+                  </div>
+                  <div v-if="Number(it.received_quantity) !== Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))" class="text-xs text-amber-600 font-bold mt-1">
+                    Divergência: {{ (Number(it.received_quantity) - (Number(it.commercial_quantity) * Number(it.conversion_factor || 1))).toFixed(2) }}
                   </div>
                 </td>
                 <td>
@@ -928,12 +1021,43 @@ const toast = useToast();
 const mapItemDialogVisible = ref(false);
 const mappingItem = ref(null);
 const mappingForm = reactive({
-  targetType: "ingredient", // "ingredient" | "product"
+  targetType: "product", // "ingredient" | "product"
   ingredient_id: null,
   product_id: null,
+  stock_unit: "UN",
+  conversion_mode: "multiply", // "multiply" | "divide" | "direct"
   conversion_factor: 1,
+  conversion_divisor: 1,
   save_supplier_mapping: true,
 });
+
+const effectiveConversionFactor = computed(() => {
+  if (mappingForm.conversion_mode === "direct") return 1;
+  if (mappingForm.conversion_mode === "divide") {
+    const div = Number(mappingForm.conversion_divisor) || 1;
+    return div > 0 ? 1 / div : 1;
+  }
+  return Number(mappingForm.conversion_factor) || 1;
+});
+
+const currentStockUnit = computed(() => {
+  return (mappingForm.stock_unit || "UN").toUpperCase();
+});
+
+const calculatedStockQty = computed(() => {
+  if (!mappingItem.value) return 0;
+  const commQty = Number(mappingItem.value.commercial_quantity) || 0;
+  return commQty * effectiveConversionFactor.value;
+});
+
+const calculatedUnitCostInStock = computed(() => {
+  if (!mappingItem.value) return 0;
+  const total = Number(mappingItem.value.product_total) || 0;
+  const finalQty = calculatedStockQty.value;
+  if (!finalQty || finalQty <= 0) return 0;
+  return total / finalQty;
+});
+
 const mappingIngredients = ref([]);
 const mappingProducts = ref([]);
 const mappingLoading = ref(false);
@@ -944,8 +1068,8 @@ async function loadMappingOptions() {
   mappingLoading.value = true;
   try {
     const [ingRes, prodRes] = await Promise.all([
-      api.get("/menu/ingredients/", { params: { page_size: 200 } }),
-      api.get("/menu/products/", { params: { page_size: 200 } }),
+      api.get("/menu/ingredients/", { params: { page_size: 300 } }),
+      api.get("/menu/products/", { params: { page_size: 500 } }),
     ]);
     mappingIngredients.value = ingRes.data.results || ingRes.data || [];
     mappingProducts.value = prodRes.data.results || prodRes.data || [];
@@ -961,7 +1085,22 @@ async function openMapModal(item) {
   mappingForm.targetType = item.product ? "product" : "ingredient";
   mappingForm.ingredient_id = item.ingredient || null;
   mappingForm.product_id = item.product || null;
-  mappingForm.conversion_factor = Number(item.conversion_factor) || 1;
+  mappingForm.stock_unit = (item.product_stock_unit || item.ingredient_unit || item.commercial_unit || "UN").toUpperCase();
+
+  const factor = Number(item.conversion_factor) || 1;
+  if (factor === 1) {
+    mappingForm.conversion_mode = "direct";
+    mappingForm.conversion_factor = 1;
+    mappingForm.conversion_divisor = 1;
+  } else if (factor < 1 && factor > 0) {
+    mappingForm.conversion_mode = "divide";
+    mappingForm.conversion_divisor = Math.round((1 / factor) * 10000) / 10000;
+    mappingForm.conversion_factor = factor;
+  } else {
+    mappingForm.conversion_mode = "multiply";
+    mappingForm.conversion_factor = factor;
+    mappingForm.conversion_divisor = factor;
+  }
   mappingForm.save_supplier_mapping = true;
   mapItemDialogVisible.value = true;
   await loadMappingOptions();
@@ -979,10 +1118,23 @@ async function submitItemMapping() {
   }
   mappingSubmitting.value = true;
   try {
+    const chosenUnit = (mappingForm.stock_unit || "UN").toUpperCase();
+    if (chosenUnit) {
+      try {
+        if (mappingForm.targetType === "product" && mappingForm.product_id) {
+          await api.patch(`/menu/products/${mappingForm.product_id}/`, { stock_unit: chosenUnit });
+        } else if (mappingForm.targetType === "ingredient" && mappingForm.ingredient_id) {
+          await api.patch(`/menu/ingredients/${mappingForm.ingredient_id}/`, { unit: chosenUnit.toLowerCase() });
+        }
+      } catch (patchErr) {
+        console.warn("Não foi possível atualizar unidade:", patchErr);
+      }
+    }
+
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
       ingredient_id: mappingForm.targetType === "ingredient" ? mappingForm.ingredient_id : null,
       product_id: mappingForm.targetType === "product" ? mappingForm.product_id : null,
-      conversion_factor: mappingForm.conversion_factor,
+      conversion_factor: effectiveConversionFactor.value,
       save_supplier_mapping: mappingForm.save_supplier_mapping,
     });
     toast.add({ severity: "success", summary: "Vínculo salvo", detail: "Item vinculado com sucesso ao estoque.", life: 3000 });
@@ -1018,24 +1170,29 @@ async function openReceiveModal() {
   }
 
   receiveForm.notes = "";
-  receiveForm.items = (record.value?.items || []).map((it) => ({
-    item_id: it.id,
-    description: it.description,
-    supplier_code: it.supplier_code,
-    target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
-    tracking_mode: it.product_tracking_mode || "QUANTITY",
-    requires_lot: it.product_requires_lot_control || false,
-    requires_serial: it.product_requires_serial_number || false,
-    commercial_quantity: it.commercial_quantity,
-    commercial_unit: it.commercial_unit,
-    conversion_factor: it.conversion_factor,
-    received_quantity: Number(it.commercial_quantity),
-    accepted_quantity: Number(it.commercial_quantity),
-    rejected_quantity: 0,
-    lot_number: "",
-    expiration_date: "",
-    serials_text: "",
-  }));
+  receiveForm.items = (record.value?.items || []).map((it) => {
+    const factor = Number(it.conversion_factor) || 1;
+    const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
+    return {
+      item_id: it.id,
+      description: it.description,
+      supplier_code: it.supplier_code,
+      target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
+      tracking_mode: it.product_tracking_mode || "QUANTITY",
+      requires_lot: it.product_requires_lot_control || false,
+      requires_serial: it.product_requires_serial_number || false,
+      commercial_quantity: it.commercial_quantity,
+      commercial_unit: it.commercial_unit,
+      stock_unit: it.product_stock_unit || it.ingredient_unit || it.commercial_unit || "UN",
+      conversion_factor: factor,
+      received_quantity: stockQty,
+      accepted_quantity: stockQty,
+      rejected_quantity: 0,
+      lot_number: "",
+      expiration_date: "",
+      serials_text: "",
+    };
+  });
 
   receiveDialogVisible.value = true;
   receiveLocationsLoading.value = true;
@@ -1064,6 +1221,7 @@ async function submitReceiveInvoice() {
       notes: receiveForm.notes || "",
       items: receiveForm.items.map((it) => ({
         item_id: it.item_id,
+        conversion_factor: it.conversion_factor || 1,
         received_quantity: it.received_quantity,
         accepted_quantity: it.received_quantity,
         rejected_quantity: 0,

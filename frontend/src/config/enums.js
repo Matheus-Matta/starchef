@@ -303,16 +303,19 @@ export const GOODS_RECEIPT_STATUS_LABELS = {
 };
 
 export const ITEM_TYPE_OPTIONS = [
-  { label: "Mercadoria para Revenda", value: "MERCHANDISE_FOR_SALE" },
-  { label: "Insumo / Matéria-Prima", value: "RAW_MATERIAL_INGREDIENT" },
-  { label: "Material de Consumo", value: "CONSUMPTION_MATERIAL" },
+  { label: "Mercadoria para Revenda", value: "RESALE_PRODUCT" },
+  { label: "Insumo / Matéria-Prima", value: "INGREDIENT" },
+  { label: "Material de Consumo", value: "CONSUMABLE" },
   { label: "Material Reutilizável (Utensílios)", value: "REUSABLE_MATERIAL" },
-  { label: "Equipamento / Ativo Imobilizado", value: "EQUIPMENT" },
+  { label: "Equipamento Operacional", value: "EQUIPMENT" },
+  { label: "Ativo Fixo / Patrimônio", value: "FIXED_ASSET" },
+  { label: "Embalagem", value: "PACKAGING" },
   { label: "Serviço", value: "SERVICE" },
+  { label: "Outro", value: "OTHER" },
 ];
 
 export const TRACKING_MODE_OPTIONS = [
   { label: "Apenas Quantidade / Saldo", value: "QUANTITY" },
-  { label: "Lote e Validade (FEFO)", value: "LOT_EXPIRATION" },
+  { label: "Lote e Validade (FEFO)", value: "LOT" },
   { label: "Serializado / Patrimônio Individual", value: "SERIALIZED" },
 ];

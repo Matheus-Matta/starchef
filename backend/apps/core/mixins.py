@@ -4,6 +4,7 @@ Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
 Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
 estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
 """
+from django.db import models
 from rest_framework.exceptions import ValidationError
 
 from apps.core.access import is_tenant_admin
@@ -65,19 +66,28 @@ class TenantQuerySetMixin:
         if not profile:
             return queryset.none()
 
+        has_restaurant_field = model_has_field(queryset.model, self.tenant_restaurant_field)
+        is_restaurant_nullable = has_restaurant_field and queryset.model._meta.get_field(self.tenant_restaurant_field).null
+
         model_is_restaurant_scoped = (
             queryset.model._meta.label == "restaurants.Restaurant"
-            or model_has_field(queryset.model, self.tenant_restaurant_field)
+            or has_restaurant_field
         )
-        if model_is_restaurant_scoped and not profile.restaurant_id:
+        if model_is_restaurant_scoped and not profile.restaurant_id and not is_restaurant_nullable:
             return queryset.none()
 
         filters = {}
         if profile.restaurant_id:
             if queryset.model._meta.label == "restaurants.Restaurant":
                 filters["id"] = profile.restaurant_id
-            elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
+            elif has_restaurant_field:
+                if is_restaurant_nullable:
+                    queryset = queryset.filter(
+                        models.Q(**{f"{self.tenant_restaurant_field}__isnull": True})
+                        | models.Q(**{f"{self.tenant_restaurant_field}_id": profile.restaurant_id})
+                    )
+                else:
+                    filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
         return queryset.filter(**filters) if filters else queryset
 
     def get_object(self):
@@ -98,7 +108,14 @@ class TenantQuerySetMixin:
             if queryset.model._meta.label == "restaurants.Restaurant":
                 filters["id"] = restaurant_id
             elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = restaurant_id
+                is_restaurant_nullable = queryset.model._meta.get_field(self.tenant_restaurant_field).null
+                if is_restaurant_nullable:
+                    queryset = queryset.filter(
+                        models.Q(**{f"{self.tenant_restaurant_field}__isnull": True})
+                        | models.Q(**{f"{self.tenant_restaurant_field}_id": restaurant_id})
+                    )
+                else:
+                    filters[f"{self.tenant_restaurant_field}_id"] = restaurant_id
 
         if branch_id:
             if queryset.model._meta.label == "restaurants.Branch":

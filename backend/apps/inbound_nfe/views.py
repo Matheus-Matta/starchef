@@ -800,6 +800,25 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
                         defaults=mapping_defaults,
                     )
 
+            # Grava regra de conversão de unidades do produto se aplicável
+            if product and item.commercial_unit:
+                from apps.menu.models import ProductUnitConversion
+                source_u = (item.commercial_unit or "").strip().upper()[:12]
+                target_u = (product.stock_unit or "UN").strip().upper()[:12]
+                ProductUnitConversion.objects.update_or_create(
+                    account=request.account,
+                    product=product,
+                    source_unit=source_u,
+                    supplier_cnpj=item.invoice.supplier_cnpj or "",
+                    supplier_product_code=item.supplier_code or "",
+                    defaults={
+                        "target_unit": target_u,
+                        "factor": conversion_factor,
+                        "restaurant": item.invoice.restaurant,
+                        "branch": item.invoice.branch,
+                    },
+                )
+
             return Response({"message": "Item mapeado com sucesso."})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
