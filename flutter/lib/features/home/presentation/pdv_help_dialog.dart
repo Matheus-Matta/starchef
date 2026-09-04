@@ -161,7 +161,10 @@ class _PdvHelpDialogState extends State<PdvHelpDialog> {
                 'Bipe ou cole aqui: o PDV diz o que faria, sem fazer. '
                 'É o lugar de descobrir que uma etiqueta está errada antes de '
                 'descobrir com o cliente esperando.',
-                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12.5),
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 12.5,
+                ),
               ),
               const SizedBox(height: 8),
               Row(
@@ -300,11 +303,7 @@ class _ScannerCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          _line(
-            scheme,
-            'Nesta tela',
-            screen.codeBehaviour,
-          ),
+          _line(scheme, 'Nesta tela', screen.codeBehaviour),
           _line(
             scheme,
             'Leitor USB',
@@ -321,7 +320,8 @@ class _ScannerCard extends StatelessWidget {
                 'leitura. Ctrl + V continua colando normalmente. Nada é lido '
                 'em segundo plano: senhas e textos copiados não viram código.',
           ),
-          if (status.detail.isNotEmpty) _line(scheme, 'Leitor serial', status.detail),
+          if (status.detail.isNotEmpty)
+            _line(scheme, 'Leitor serial', status.detail),
           _line(
             scheme,
             'Última leitura',

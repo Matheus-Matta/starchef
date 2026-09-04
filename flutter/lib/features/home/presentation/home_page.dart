@@ -53,6 +53,12 @@ import 'pdv_settings_menu_dialog.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 
+part 'home_page_cash.dart';
+part 'home_page_orders.dart';
+part 'home_page_receipt.dart';
+part 'home_page_shared.dart';
+part 'home_page_fiscal.dart';
+
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
@@ -77,10 +83,20 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with
+        _HomePageShared,
+        _CashSection,
+        _FiscalSection,
+        _OrdersSection,
+        _ReceiptSection {
+  @override
   ApiClient get api => widget.controller.repository.apiClient;
+  @override
   String get token => widget.controller.session!.accessToken;
+  @override
   String? get restaurantId => selectedRestaurantId;
+  @override
   Map<String, dynamic>? get selectedRestaurant =>
       restaurants.cast<Map<String, dynamic>?>().firstWhere(
         (item) => '${item?['id']}' == restaurantId,
@@ -95,18 +111,26 @@ class _HomePageState extends State<HomePage> {
   /// atual continua utilizável.
   bool refreshing = false;
   bool busy = false;
+  @override
   bool printingReceipt = false;
+  @override
   bool emittingInvoice = false;
+  @override
   bool divergenceDialogOpen = false;
+  @override
   bool movementApprovalDialogOpen = false;
+  @override
   String flowStep = 'type';
+  @override
   String? orderType;
   String search = '';
   String? category;
+  @override
   Map<String, dynamic>? cashSession;
 
   /// A sessão de caixa veio do cache local, não de uma leitura ao servidor.
   /// O estado pode ter mudado em outro terminal enquanto este esteve offline.
+  @override
   bool cashSessionFromCache = false;
 
   /// Id da sessão para a qual o saldo foi liberado nesta tela (§conferência
@@ -114,18 +138,27 @@ class _HomePageState extends State<HomePage> {
   /// sozinha quando o turno muda — sem isso, o saldo revelado num fechamento
   /// continuaria visível no caixa seguinte, aberto por outra pessoa.
   String? _cashBalanceRevealedForSessionId;
+  @override
   Map<String, dynamic>? activeOrder;
+  @override
   Map<String, dynamic>? selectedTable;
+  @override
   Map<String, dynamic>? selectedCommand;
   String commandSearch = '';
+  @override
   Map<String, dynamic>? selectedCustomer;
+  @override
   Map<String, dynamic>? pendingCashMovement;
+  @override
   List<Map<String, dynamic>> stations = [];
   List<Map<String, dynamic>> restaurants = [];
   List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> categories = [];
+  @override
   List<Map<String, dynamic>> tables = [];
+  @override
   List<Map<String, dynamic>> commands = [];
+  @override
   List<Map<String, dynamic>> orderItems = [];
 
   /// Item sob o cursor do teclado, na lista do pedido.
@@ -135,23 +168,35 @@ class _HomePageState extends State<HomePage> {
   /// ordem da lista mudou.
   String? selectedOrderItemId;
   List<Map<String, dynamic>> paymentMethods = [];
+  @override
   List<Map<String, dynamic>> registeredPayments = [];
+  @override
   List<Map<String, dynamic>> orders = [];
+  @override
   bool ordersLoading = false;
   String? loadErrorMessage;
+  @override
   String orderStatusFilter = 'pending';
+  @override
   String orderSearch = '';
+  @override
   String? orderTypeFilter;
+  @override
   String orderOrdering = '-updated_at';
+  @override
   DateTimeRange? orderDateRange;
 
   /// A busca não alcançou o servidor e o resultado saiu do que já estava
   /// guardado — pode faltar pedido antigo. A tela avisa em vez de fingir que
   /// achou tudo.
+  @override
   bool ordersPartial = false;
+  @override
   final ordersSearchController = TextEditingController();
+  @override
   final ordersSearchFocus = FocusNode(debugLabel: 'orders-search');
   final commandSearchFocus = FocusNode(debugLabel: 'command-search');
+  @override
   Timer? ordersSearchDebounce;
   String? selectedPaymentMethod;
   String paymentDigits = '0';
@@ -159,6 +204,7 @@ class _HomePageState extends State<HomePage> {
   final paymentReference = TextEditingController();
   final paymentAmount = TextEditingController();
   String? selectedRestaurantId;
+  @override
   late final LocalDeviceAgent deviceAgent;
   PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
   late final PdvRepository repository;
@@ -168,6 +214,7 @@ class _HomePageState extends State<HomePage> {
 
   /// Porta de entrada da tela para os pedidos guardados no banco do Caixa
   /// Principal. Não é mais um banco à parte (ver [LocalOrderStore]).
+  @override
   late final LocalOrderStore orderStore = LocalOrderStore(api: api);
   StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
   StreamSubscription<void>? ordersSignalSubscription;
@@ -195,10 +242,12 @@ class _HomePageState extends State<HomePage> {
   bool offlineMode = false;
 
   /// Este terminal é um Caixa Cliente, que depende do principal para gravar.
+  @override
   bool get isSecondaryStation => topology.isClient;
 
   /// O principal respondeu ao último teste de conexão.
   bool get principalReachable => topology.isClientReady;
+  @override
   int offlinePendingCount = 0;
 
   /// Numerador dos recebimentos encenados, para dar um id local a cada linha.
@@ -217,6 +266,7 @@ class _HomePageState extends State<HomePage> {
 
   /// Notas cuja autorização já está sendo aguardada nesta tela. Dois
   /// vigias sobre a mesma nota mandariam o DANFE para a impressora duas vezes.
+  @override
   final Set<String> watchedFiscalInvoices = {};
   bool sidebarExpanded = true;
 
@@ -286,8 +336,10 @@ class _HomePageState extends State<HomePage> {
       selectedMethodIsCash && paymentValue > remainingTotal
       ? paymentValue - remainingTotal
       : 0;
+  @override
   bool get hasCashDivergence =>
       cashSession?['status'] == 'pending_manager_approval';
+  @override
   double get cashBalance {
     if (cashSession?['current_balance'] != null) {
       return _number(cashSession!['current_balance']);
@@ -305,6 +357,7 @@ class _HomePageState extends State<HomePage> {
   /// ([AuthUser.canViewCashBalanceFreely]); qualquer outro perfil — inclusive
   /// gerente — precisa da senha de ações do caixa, verificada localmente e
   /// sem depender de rede (ver [_toggleCashBalanceVisibility]).
+  @override
   bool get _canSeeCashBalance =>
       widget.controller.session?.user.canViewCashBalanceFreely == true ||
       (_cashBalanceRevealedForSessionId != null &&
@@ -319,6 +372,7 @@ class _HomePageState extends State<HomePage> {
   /// caixa" já usada para autorizar sangria e divergência, conferida OFFLINE
   /// contra o hash sincronizado neste terminal — a menos que o próprio login
   /// já seja de administrador/proprietário.
+  @override
   Future<void> _toggleCashBalanceVisibility() async {
     final sessionId = '${cashSession?['id'] ?? ''}';
     if (_canSeeCashBalance) {
@@ -572,6 +626,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  @override
   Future<List<Map<String, dynamic>>> _list(
     String path, {
     Map<String, dynamic>? query,
@@ -627,6 +682,7 @@ class _HomePageState extends State<HomePage> {
   /// Sem eles o servidor não consegue cumprir "a sessão pertence ao usuário
   /// que abriu E ao terminal onde foi aberta": o backend já tinha o campo, mas
   /// este aplicativo nunca o preenchia.
+  @override
   Map<String, dynamic> get _terminalIdentity {
     final nodeId = _terminalInstallationId;
     if (nodeId.isEmpty) return const {};
@@ -647,6 +703,7 @@ class _HomePageState extends State<HomePage> {
   /// trocados quando chegam e o operador continua na mesma tela, com o mesmo
   /// pedido aberto. Antes, qualquer oscilação de rede — cair e voltar —
   /// devolvia o PDV a uma tela em branco no meio do atendimento.
+  @override
   Future<void> _load() async {
     final firstLoad = restaurants.isEmpty;
     setState(() {
@@ -858,338 +915,6 @@ class _HomePageState extends State<HomePage> {
     final pending = await api.pendingOperations();
     if (!mounted) return;
     setState(() => offlinePendingCount = pending);
-  }
-
-  /// Página de pedidos guardada localmente.
-  ///
-  /// A listagem já vem com os itens de cada pedido, então uma página é a
-  /// cópia completa do que dá para editar offline. 50 é um meio-termo: cobre
-  /// o movimento recente sem transferir centenas de pedidos com todos os
-  /// itens aninhados a cada abertura do PDV.
-  static const _ordersPageSize = 50;
-
-  /// Consulta fixa de aquecimento do cache.
-  ///
-  /// Não leva filtro nenhum de propósito: o cache do `ApiClient` é gravado por
-  /// consulta exata, então esta precisa ser sempre a mesma para que exista uma
-  /// lista guardada quando a rede cair. Os filtros da tela usam
-  /// [_ordersServerQuery], que é outra consulta.
-  Map<String, dynamic> get _ordersQuery => {
-    'page_size': _ordersPageSize,
-    'ordering': '-updated_at',
-    'restaurant': restaurantId,
-  };
-
-  /// Consulta da tela de Pedidos, com os filtros do operador.
-  ///
-  /// Manda para a API o que ela sabe filtrar (busca, tipo, período,
-  /// ordenação), para que a procura alcance o histórico inteiro e não só a
-  /// página que já foi baixada. O agrupamento de situação continua sendo
-  /// refinado na memória por [_matchesStatusFilter] — "pendentes" cruza
-  /// `status` e `payment_status`, o que a API não expressa num parâmetro só.
-  Map<String, dynamic> get _ordersServerQuery {
-    final query = <String, dynamic>{
-      'page_size': _ordersPageSize,
-      'ordering': orderOrdering,
-      'restaurant': restaurantId,
-    };
-    final term = orderSearch.trim();
-    if (term.isNotEmpty) query['search'] = term;
-    if (orderTypeFilter != null) query['order_type'] = orderTypeFilter;
-    if (orderStatusFilter == 'pending') {
-      query['payment_pending'] = true;
-    } else if (orderStatusFilter != 'all') {
-      query['status'] = orderStatusFilter;
-    }
-    final range = orderDateRange;
-    if (range != null) {
-      query['opened_after'] = _isoDate(range.start);
-      query['opened_before'] = _isoDate(range.end);
-    }
-    return query;
-  }
-
-  static String _isoDate(DateTime value) =>
-      '${value.year.toString().padLeft(4, '0')}-'
-      '${value.month.toString().padLeft(2, '0')}-'
-      '${value.day.toString().padLeft(2, '0')}';
-
-  /// Agrupamento de situação escolhido no seletor da tela.
-  bool _matchesStatusFilter(Map<String, dynamic> order) {
-    switch (orderStatusFilter) {
-      case 'all':
-        return true;
-      case 'pending':
-        return order['payment_status'] != 'paid' &&
-            {'open', 'awaiting_payment'}.contains('${order['status']}');
-      default:
-        return '${order['status']}' == orderStatusFilter;
-    }
-  }
-
-  /// Filtro local, usado quando a busca não alcançou o servidor.
-  bool _matchesLocalFilters(Map<String, dynamic> order) {
-    if (!_matchesStatusFilter(order)) return false;
-    if (orderTypeFilter != null &&
-        '${order['order_type']}' != orderTypeFilter) {
-      return false;
-    }
-    final range = orderDateRange;
-    if (range != null) {
-      final openedAt = DateTime.tryParse('${order['opened_at'] ?? ''}');
-      if (openedAt == null) return false;
-      final day = DateTime(openedAt.year, openedAt.month, openedAt.day);
-      final start = DateTime(
-        range.start.year,
-        range.start.month,
-        range.start.day,
-      );
-      final end = DateTime(range.end.year, range.end.month, range.end.day);
-      if (day.isBefore(start) || day.isAfter(end)) return false;
-    }
-    final term = orderSearch.trim().toLowerCase();
-    if (term.isEmpty) return true;
-    final haystack =
-        '${order['sequence'] ?? ''} ${order['customer_name'] ?? ''} '
-                '${order['table_number'] ?? ''} ${order['command_code'] ?? ''}'
-            .toLowerCase();
-    return haystack.contains(term);
-  }
-
-  /// Ordena a lista local pelo mesmo critério pedido ao servidor.
-  List<Map<String, dynamic>> _sortedLocally(List<Map<String, dynamic>> list) {
-    final descending = orderOrdering.startsWith('-');
-    final field = descending ? orderOrdering.substring(1) : orderOrdering;
-    final sorted = [...list];
-    sorted.sort((a, b) {
-      final comparison = switch (field) {
-        'total' => _number(a['total']).compareTo(_number(b['total'])),
-        'sequence' => _number(a['sequence']).compareTo(_number(b['sequence'])),
-        'opened_at' => '${a['opened_at'] ?? ''}'.compareTo(
-          '${b['opened_at'] ?? ''}',
-        ),
-        _ => '${a['updated_at'] ?? ''}'.compareTo('${b['updated_at'] ?? ''}'),
-      };
-      return descending ? -comparison : comparison;
-    });
-    return sorted;
-  }
-
-  /// Baixa e guarda os pedidos recentes sem prender a interface.
-  Future<void> _warmOrdersCache() async {
-    if (restaurantId == null) return;
-    try {
-      await api.get('/orders/', query: _ordersQuery, accessToken: token);
-    } catch (_) {
-      // É só aquecimento de cache: sem rede, o que já estiver guardado serve,
-      // e a tela de Pedidos reporta o problema quando for aberta.
-    }
-  }
-
-  Future<void> _openOrders() async {
-    final scope = api.sessionScope;
-    // Abre já com o que está guardado: a lista aparece na hora e a versão do
-    // servidor entra por cima quando chegar. Só mostra "carregando" quem
-    // ainda não tem nada para ver.
-    final cached = scope == null ? const <Map<String, dynamic>>[] : null;
-    final local = cached ?? await _ordersFromStore(scope!);
-    if (!mounted) return;
-    setState(() {
-      flowStep = 'orders';
-      activeOrder = null;
-      if (local.isNotEmpty) orders = _localResults(local);
-      ordersLoading = orders.isEmpty;
-    });
-    await _reloadOrders();
-  }
-
-  /// Busca a lista com os filtros atuais.
-  ///
-  /// A consulta é servida pelo armazenamento local (§3), que já traz tanto os
-  /// pedidos confirmados quanto os que ainda estão na fila — não há mais o
-  /// vai-e-vem de "buscar no servidor, gravar, reler de cada pedido" que
-  /// existia para não apagar da tela um lançamento offline.
-  Future<void> _reloadOrders() async {
-    final scope = api.sessionScope;
-    try {
-      final loaded = await _list('/orders/', query: _ordersServerQuery);
-      orders = loaded
-          .where((item) => '${item['restaurant']}' == restaurantId)
-          .where(_matchesStatusFilter)
-          .toList();
-      // Sem conexão, um pedido antigo pode simplesmente ainda não ter descido
-      // para este terminal. A lista continua útil — o operador precisa achar o
-      // pedido aberto agora —, mas a tela avisa que pode faltar algo.
-      ordersPartial = !api.syncStatus.hasConnection;
-    } catch (error) {
-      final localCopy = scope == null
-          ? const <Map<String, dynamic>>[]
-          : await _ordersFromStore(scope);
-      if (localCopy.isNotEmpty) {
-        orders = _localResults(localCopy);
-        ordersPartial = true;
-      } else if (mounted) {
-        orders = [];
-        ordersPartial = false;
-        _error(error);
-      }
-    } finally {
-      if (mounted) setState(() => ordersLoading = false);
-    }
-  }
-
-  List<Map<String, dynamic>> _localResults(List<Map<String, dynamic>> source) =>
-      _sortedLocally(source.where(_matchesLocalFilters).toList());
-
-  /// Reaplica os filtros. A busca por texto espera o operador parar de digitar
-  /// para não disparar uma requisição por tecla.
-  void _onOrdersFilterChanged({bool debounce = false}) {
-    ordersSearchDebounce?.cancel();
-    if (!debounce) {
-      setState(() => ordersLoading = orders.isEmpty);
-      unawaited(_reloadOrders());
-      return;
-    }
-    ordersSearchDebounce = Timer(
-      const Duration(milliseconds: 400),
-      () => unawaited(_reloadOrders()),
-    );
-  }
-
-  Future<List<Map<String, dynamic>>> _ordersFromStore(String scope) async {
-    await _reconcileLocalIds(scope);
-    final stored = await orderStore.recent(
-      scope: scope,
-      limit: _ordersPageSize,
-    );
-    return stored
-        .where((item) => '${item['restaurant']}' == restaurantId)
-        .toList();
-  }
-
-  Future<void> _reconcileLocalIds(String scope) async {
-    final mappings = await api.resolvedTemporaryIds();
-    for (final entry in mappings.entries) {
-      await orderStore.replaceId(entry.key, entry.value, scope: scope);
-    }
-  }
-
-  /// Carrega o pedido para edição/pagamento, com o que houver disponível.
-  ///
-  /// A listagem já traz o pedido completo — o serializer aninha os itens —,
-  /// então [fromList] é uma cópia legítima do detalhe, e não um resumo. Sem
-  /// rede, ela é a fonte: antes o operador não conseguia abrir um pedido que
-  /// não tivesse sido feito neste terminal, porque só a rota de detalhe tinha
-  /// sido cacheada e ela nunca fora chamada para aquele pedido.
-  Future<Map<String, dynamic>?> _orderDetail(
-    Map<String, dynamic> fromList,
-  ) async {
-    final id = '${fromList['id'] ?? ''}';
-    final scope = api.sessionScope;
-
-    // Um pedido criado offline só existe localmente; buscá-lo no servidor
-    // devolveria 404.
-    if (id.startsWith('offline-') && scope != null) {
-      final local = await orderStore.read(id, scope: scope);
-      if (local != null) return local;
-    }
-
-    try {
-      final fresh = await api.get('/orders/$id/', accessToken: token);
-      if (scope != null) {
-        // Guardar aqui preserva os itens lançados offline que o servidor
-        // ainda não conhece.
-        return await orderStore.saveFromServer(fresh, scope: scope);
-      }
-      return fresh;
-    } on ApiException catch (error) {
-      if (!error.isConnectivity) {
-        if (mounted) _error(error);
-        return null;
-      }
-      // A cópia local vem antes da entrada da listagem porque é ela que tem
-      // as edições feitas sem rede.
-      final local = scope == null
-          ? null
-          : await orderStore.read(id, scope: scope);
-      final fallback = local ?? (fromList['items'] is List ? fromList : null);
-      if (fallback != null) {
-        if (mounted) _warnLocalOrderData();
-        return fallback;
-      }
-      if (mounted) {
-        _error(
-          error,
-          title: 'Este pedido ainda não está salvo neste terminal',
-          action:
-              'Abra a tela de Pedidos com a rede disponível ao menos uma vez '
-              'para guardar os dados; depois ele funciona offline.',
-        );
-      }
-      return null;
-    } catch (error) {
-      if (mounted) _error(error);
-      return null;
-    }
-  }
-
-  /// Avisa que a edição está usando a cópia local, uma vez por queda de rede.
-  void _warnLocalOrderData() {
-    ErrorCenterScope.read(context).report(
-      AppError(
-        title: 'Editando com os dados salvos localmente',
-        message:
-            'Sem conexão, este pedido é aberto a partir da última cópia '
-            'guardada neste terminal. Se ele foi alterado em outro caixa, '
-            'essas mudanças ainda não aparecem aqui.',
-        origin: AppErrorOrigin.network,
-        severity: AppErrorSeverity.warning,
-        recommendedAction:
-            'As alterações feitas agora entram na fila e sobem quando a rede '
-            'voltar.',
-        dedupeKey: 'order-local-copy',
-      ),
-    );
-  }
-
-  Future<void> _editOrder(Map<String, dynamic> order) async {
-    final detail = await _orderDetail(order);
-    if (detail == null) return;
-    activeOrder = detail;
-    orderType = '${detail['order_type']}';
-    selectedTable = detail['table'] == null
-        ? null
-        : tables.cast<Map<String, dynamic>?>().firstWhere(
-            (item) => '${item?['id']}' == '${detail['table']}',
-            orElse: () => null,
-          );
-    selectedCommand = detail['command'] == null
-        ? null
-        : commands.cast<Map<String, dynamic>?>().firstWhere(
-            (item) => '${item?['id']}' == '${detail['command']}',
-            orElse: () => null,
-          );
-    selectedCustomer = detail['customer'] == null
-        ? null
-        : {
-            'id': detail['customer'],
-            'name': detail['customer_name'] ?? 'Cliente',
-            'document': detail['customer_document'],
-            'phone': '',
-          };
-    await _refreshOrder();
-    if (mounted) setState(() => flowStep = 'order');
-    // Editar um pedido de comanda também é hora de perguntar a mesa: a
-    // comanda pode ter sido aberta avulsa e o cliente já ter sentado.
-    await _ensureCommandTable();
-  }
-
-  Future<void> _payOrder(Map<String, dynamic> order) async {
-    final detail = await _orderDetail(order);
-    if (detail == null) return;
-    activeOrder = detail;
-    orderType = '${detail['order_type']}';
-    await _paymentDialog();
   }
 
   void _openDeviceSettings(DeviceKind kind) {
@@ -1445,6 +1170,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  @override
   Future<void> _goHome() async {
     // O pedido é capturado ANTES do `setState` (depois dele não há mais o que
     // descartar) e o descarte segue em segundo plano: voltar para o início é
@@ -1463,298 +1189,6 @@ class _HomePageState extends State<HomePage> {
       flowStep = 'type';
     });
     unawaited(_load());
-  }
-
-  Future<void> _showCashDivergence() async {
-    if (!mounted || !hasCashDivergence || divergenceDialogOpen) return;
-    divergenceDialogOpen = true;
-    final username = TextEditingController();
-    final password = TextEditingController();
-    final cashPassword = TextEditingController();
-    final reason = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-    var authorizing = false;
-    // Modo de autorização: false = login de gerente (online) / true = senha do
-    // caixa do restaurante (verificável offline).
-    var cashMode = false;
-    try {
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => PopScope(
-          canPop: false,
-          child: StatefulBuilder(
-            builder: (context, update) => AppDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                  SizedBox(width: 10),
-                  Expanded(child: Text('Divergência no caixa')),
-                ],
-              ),
-              content: SizedBox(
-                width: 520,
-                child: Form(
-                  key: formKey,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'O PDV permanecerá bloqueado até que um gerente autorizado resolva o fechamento.',
-                        ),
-                        const SizedBox(height: 18),
-                        _divergenceValue(
-                          'Valor esperado',
-                          _money(cashSession?['expected_amount']),
-                        ),
-                        _divergenceValue(
-                          'Valor contado',
-                          _money(cashSession?['actual_amount']),
-                        ),
-                        _divergenceValue(
-                          'Diferença',
-                          _differenceText(cashSession?['difference_amount']),
-                          emphasized: true,
-                        ),
-                        if ('${cashSession?['notes'] ?? ''}'
-                            .trim()
-                            .isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text('Observação: ${cashSession!['notes']}'),
-                        ],
-                        const Divider(height: 32),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: authorizing
-                                ? null
-                                : () => update(() => cashMode = !cashMode),
-                            icon: Icon(
-                              cashMode
-                                  ? Icons.person_outline
-                                  : Icons.password_outlined,
-                            ),
-                            label: Text(
-                              cashMode
-                                  ? 'Usar login de gerente'
-                                  : 'Usar senha do caixa',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (!cashMode) ...[
-                          TextFormField(
-                            controller: username,
-                            autofocus: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Usuário autorizador',
-                              helperText:
-                                  'Gerente, administrador ou proprietário.',
-                              prefixIcon: Icon(Icons.person_outline),
-                            ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Informe o usuário autorizador.'
-                                : null,
-                          ),
-                          const SizedBox(height: 14),
-                          TextFormField(
-                            controller: password,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Senha',
-                              helperText:
-                                  'A credencial será descartada após a autorização.',
-                              prefixIcon: Icon(Icons.lock_outline),
-                            ),
-                            validator: (value) => value == null || value.isEmpty
-                                ? 'Informe a senha.'
-                                : null,
-                          ),
-                        ] else ...[
-                          TextFormField(
-                            controller: cashPassword,
-                            autofocus: true,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Senha do caixa',
-                              helperText:
-                                  'Senha de ações do caixa definida no restaurante — dispensa login de gerente.',
-                              prefixIcon: Icon(Icons.lock_outline),
-                            ),
-                            validator: (value) => value == null || value.isEmpty
-                                ? 'Informe a senha do caixa.'
-                                : null,
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: reason,
-                          maxLines: 3,
-                          decoration: const InputDecoration(
-                            labelText: 'Justificativa gerencial',
-                            helperText:
-                                'Explique por que a divergência está sendo aprovada.',
-                          ),
-                          validator: (value) =>
-                              value == null || value.trim().isEmpty
-                              ? 'Informe a justificativa.'
-                              : null,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton.icon(
-                  onPressed: authorizing
-                      ? null
-                      : () async {
-                          Navigator.pop(dialogContext);
-                          await widget.controller.logout();
-                        },
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Sair do sistema'),
-                ),
-                FilledButton.icon(
-                  onPressed: authorizing
-                      ? null
-                      : () async {
-                          if (!formKey.currentState!.validate()) return;
-                          update(() => authorizing = true);
-                          // Modo "senha do caixa": o servidor verifica a senha do
-                          // restaurante e aprova — sem precisar de login de gerente.
-                          if (cashMode) {
-                            try {
-                              cashSession = await _approveWithCashPassword(
-                                reason: reason.text.trim(),
-                                password: cashPassword.text,
-                              );
-                              if (dialogContext.mounted) {
-                                Navigator.pop(dialogContext);
-                              }
-                              await _load();
-                            } catch (error) {
-                              if (mounted) _error(error);
-                              update(() => authorizing = false);
-                            } finally {
-                              cashPassword.clear();
-                            }
-                            return;
-                          }
-                          String? temporaryAccess;
-                          String? temporaryRefresh;
-                          try {
-                            final login = await api.post(
-                              '/auth/login/',
-                              body: {
-                                'username': username.text.trim(),
-                                'password': password.text,
-                                // Autorização gerencial temporária: só usa o token
-                                // (Bearer), sem cookies do navegador.
-                                'no_cookie': true,
-                              },
-                            );
-                            temporaryAccess = '${login['access']}';
-                            temporaryRefresh = '${login['refresh']}';
-                            final user = login['user'] as Map<String, dynamic>?;
-                            final allowed =
-                                user?['is_superuser'] == true ||
-                                {
-                                  'admin',
-                                  'owner',
-                                  'manager',
-                                }.contains('${user?['profile_type']}');
-                            if (!allowed) {
-                              throw const ApiException(
-                                'O usuário informado não possui permissão gerencial.',
-                                statusCode: 403,
-                              );
-                            }
-                            cashSession = await api.post(
-                              '/cash-register/${cashSession!['id']}/approve/',
-                              body: {'reason': reason.text.trim()},
-                              accessToken: temporaryAccess,
-                            );
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext);
-                            }
-                            await _load();
-                          } catch (error) {
-                            if (mounted) _error(error);
-                            update(() => authorizing = false);
-                          } finally {
-                            password.clear();
-                            if (temporaryAccess != null &&
-                                temporaryRefresh != null) {
-                              try {
-                                await api.post(
-                                  '/auth/logout/',
-                                  body: {
-                                    'refresh': temporaryRefresh,
-                                    'no_cookie': true,
-                                  },
-                                  accessToken: temporaryAccess,
-                                );
-                              } catch (_) {}
-                            }
-                          }
-                        },
-                  icon: authorizing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.verified_user_outlined),
-                  label: const Text('Aprovar e concluir fechamento'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    } finally {
-      divergenceDialogOpen = false;
-      username.dispose();
-      password.dispose();
-      cashPassword.dispose();
-      reason.dispose();
-    }
-  }
-
-  Widget _divergenceValue(
-    String label,
-    String value, {
-    bool emphasized = false,
-  }) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: emphasized ? 18 : 16,
-            fontWeight: FontWeight.w900,
-            color: emphasized ? Theme.of(context).colorScheme.error : null,
-          ),
-        ),
-      ],
-    ),
-  );
-
-  String _differenceText(dynamic value) {
-    final difference = _number(value);
-    final description = difference < 0
-        ? 'falta'
-        : difference > 0
-        ? 'sobra'
-        : 'sem diferença';
-    return '${_money(difference.abs())} ($description)';
   }
 
   void _goBack() {
@@ -2370,6 +1804,7 @@ class _HomePageState extends State<HomePage> {
   /// A mensagem do backend é repassada literalmente: uma inconsistência de
   /// caixa ("caixa já aberto em outro terminal", "sangria divergente") precisa
   /// chegar ao operador exatamente como o servidor a descreveu.
+  @override
   void _error(Object error, {String? title, String? action}) {
     final center = ErrorCenterScope.read(context);
     if (error is ApiException) {
@@ -2397,12 +1832,14 @@ class _HomePageState extends State<HomePage> {
   /// A operação só é considerada concluída depois da confirmação do servidor;
   /// qualquer recusa vira um alerta que o operador fecha para corrigir os
   /// dados e repetir.
+  @override
   void _cashError(Object error, String operation) => _error(
     error,
     title: 'Não foi possível $operation',
     action: 'Feche este alerta, revise os dados e tente novamente.',
   );
 
+  @override
   Future<T?> _work<T>(
     Future<T> Function() action, {
     String? errorTitle,
@@ -2438,6 +1875,7 @@ class _HomePageState extends State<HomePage> {
   /// cupom fiscal simplesmente não existia: sem erro, sem fila, sem papel.
   ///
   /// Falha continua sendo mostrada — o que não pode é desaparecer.
+  @override
   Future<bool> _printingStep(
     Future<void> Function() action, {
     required String title,
@@ -2738,6 +2176,7 @@ class _HomePageState extends State<HomePage> {
   /// não tinha como saber onde entregar. Continua sendo possível seguir sem
   /// mesa — self-service é um caso legítimo —, mas agora é uma escolha
   /// explícita do operador, não um silêncio.
+  @override
   Future<void> _ensureCommandTable() async {
     final command = selectedCommand;
     if (!mounted ||
@@ -3121,6 +2560,7 @@ class _HomePageState extends State<HomePage> {
   /// `api.get` é offline-first: responde do SQLite na hora e reconcilia com o
   /// servidor em paralelo (§3). Por isso não há mais dois caminhos aqui — o
   /// pedido criado offline e o pedido vindo do servidor moram no mesmo lugar.
+  @override
   Future<void> _refreshOrder() async {
     if (activeOrder == null) return;
     try {
@@ -4026,151 +3466,6 @@ class _HomePageState extends State<HomePage> {
     await _paymentDialog();
   }
 
-  /// Imprime a NOTA COMPLETA DO CLIENTE (receipt: itens + valores + total) do
-  /// pedido atual, a qualquer momento — sem finalizar/enviar à cozinha.
-  Future<void> _printCustomerReceipt([
-    Map<String, dynamic>? selectedOrder,
-  ]) async {
-    final order = selectedOrder ?? activeOrder;
-    if (order == null || printingReceipt) return;
-    setState(() => printingReceipt = true);
-    try {
-      final printers = await _list(
-        '/printers/',
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
-      );
-      if (!mounted) return;
-      if (printers.isEmpty) {
-        _error(
-          const ApiException(
-            'Nenhuma impressora ativa foi cadastrada para este restaurante.',
-          ),
-        );
-        return;
-      }
-      final master = widget.preferences.masterPrinterId;
-      final hasMaster = printers.any((p) => '${p['id']}' == master);
-      final printerId = hasMaster
-          ? master
-          : await showDialog<String>(
-              context: context,
-              builder: (_) => PrinterSelectionDialog(
-                printers: printers,
-                title: 'Imprimir recibo de venda',
-                summary:
-                    'Pedido #${order['sequence']} · ${_money(order['total'])}',
-                description:
-                    'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
-              ),
-            );
-      if (printerId == null) return;
-      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
-        (item) => '${item?['id']}' == printerId,
-        orElse: () => null,
-      );
-      // A impressora é deste terminal, e o cupom sabe ser montado aqui: um
-      // Caixa Secundário não precisa do Principal nem do backend para
-      // entregar um recibo ao cliente. Pedir o cupom renderizado ao servidor
-      // é conveniência (layout de referência e registro do trabalho), não
-      // requisito — e num secundário essa rota nem existe, o que antes fazia
-      // o botão não produzir absolutamente nada.
-      if (chosen != null && isSecondaryStation) {
-        await _printingStep(
-          () => _printReceiptLocally(order, chosen),
-          title: 'O recibo não saiu na impressora',
-        );
-        return;
-      }
-      try {
-        final printJob = await api.post(
-          '/orders/${order['id']}/print/',
-          body: {
-            'job_type': 'receipt',
-            'printer': printerId,
-            'manual_only': true,
-          },
-          accessToken: token,
-        );
-        final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
-        if (printer == null) {
-          _error(
-            const ApiException('A impressora selecionada não foi encontrada.'),
-          );
-          return;
-        }
-        await _printingStep(
-          () => deviceAgent.printJobManually(printJob, printer),
-          title: 'O recibo não saiu na impressora',
-        );
-      } on ApiException catch (error) {
-        // Sem `PrintJob` do servidor o cliente continua com a mão estendida
-        // esperando o comprovante. Qualquer recusa serve de gatilho — falta
-        // de rede, servidor fora, ou uma rota que este terminal não alcança.
-        if (chosen == null) rethrow;
-        AppLogger.instance.info(
-          'recibo_montado_localmente',
-          data: {'motivo': error.message},
-        );
-        await _printingStep(
-          () => _printReceiptLocally(order, chosen),
-          title: 'O recibo não saiu na impressora',
-        );
-      }
-    } catch (error) {
-      // Sem isto o erro virava exceção assíncrona sem dono: o operador
-      // apertava "imprimir recibo" e não acontecia nada, nem papel nem aviso.
-      if (mounted) {
-        _error(
-          error,
-          title: 'O recibo não pôde ser impresso',
-          action: 'Confira a impressora selecionada e tente novamente.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => printingReceipt = false);
-    }
-  }
-
-  /// Monta o recibo neste terminal e manda para a fila local.
-  ///
-  /// Mesmo layout do servidor ([LocalPrintRenderer]), mesma impressora. Pela
-  /// fila: se faltar papel agora, o cupom sai sozinho quando ela voltar em vez
-  /// de se perder.
-  Future<bool> _printReceiptLocally(
-    Map<String, dynamic> order,
-    Map<String, dynamic> printer,
-  ) async {
-    final receiptPrinter = ReceiptPrinter(
-      PrinterDevice.fromJson(printer),
-      runtime: deviceAgent.printing,
-    );
-    final result = await deviceAgent.submit(
-      receiptPrinter,
-      receiptPrinter.compose(
-        content: await _localReceiptText(order),
-        barcode: LocalPrintRenderer.commandBarcode(order, selectedCommand),
-      ),
-    );
-    // Quem pediu o recibo está olhando a impressora: o silêncio faria o
-    // operador achar que o papel vem e mandar o cliente embora.
-    if (!result.printed && mounted) {
-      showAppToast(
-        context,
-        result.accepted
-            ? 'A impressora não respondeu agora. O recibo está na fila e '
-                  'sai assim que ela voltar.'
-            : 'O recibo não pôde ser impresso. Confira a configuração '
-                  'da impressora.',
-        severity: AppErrorSeverity.warning,
-      );
-    }
-    return true;
-  }
-
   /// Autoriza a divergência do caixa com a senha de ações do restaurante.
   ///
   /// Com rede, a senha vai ao servidor como sempre. Sem rede, ela é conferida
@@ -4178,6 +3473,7 @@ class _HomePageState extends State<HomePage> {
   /// este terminal conhece esse hash — a senha em texto nunca é gravada na
   /// fila. Sem isto, um caixa que fechasse com diferença ficava travado até a
   /// internet voltar, com o operador impedido de encerrar o turno.
+  @override
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String reason,
     required String password,
@@ -4228,491 +3524,8 @@ class _HomePageState extends State<HomePage> {
   /// Restaurante, itens e recebimentos vêm do SQLite local, então o cupom sai
   /// completo mesmo com a rede fora — inclusive os pagamentos que ainda estão
   /// na fila.
-  Future<String> _localReceiptText(Map<String, dynamic> order) async {
-    final orderId = '${order['id']}';
-    final store = api.localStore;
-    final payments = store == null
-        ? registeredPayments
-        : await store.orders.payments(orderId);
-    return LocalPrintRenderer.customerReceipt(
-      order: order,
-      restaurant: selectedRestaurant,
-      payments: payments,
-      table: selectedTable,
-      command: selectedCommand,
-      customer: selectedCustomer,
-      operatorName: widget.controller.session?.user.name ?? '',
-    );
-  }
 
-  /// Operação fiscal separada da venda (§16): emite a NFC-e
-  /// (POST /invoices/emit) e, se conseguir, imprime o DANFE
-  /// (POST /invoices/{id}/print).
-  ///
-  /// A venda NÃO depende disto. Sem conexão, a emissão entra na fila fiscal e
-  /// o documento fica `PENDING` enquanto o pedido já está pago — antes, a
-  /// mesma situação devolvia um erro no meio do recebimento, como se a venda
-  /// tivesse falhado.
-  ///
-  /// O DANFE só é impresso para nota AUTORIZADA. Uma nota pendente tem chave
-  /// montada localmente, que a consulta no portal da SEFAZ não encontra:
-  /// imprimi-la entregaria ao cliente um cupom que não corresponde a documento
-  /// fiscal nenhum.
-  ///
-  /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
-  /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
-  /// após cada pagamento, isso spammaria caixas que nem usam NFC-e ainda.
-  /// Qualquer outra falha (SEFAZ fora do ar, certificado vencido) continua
-  /// visível, porque nesse caso o DANFE realmente não saiu para o cliente.
-  Future<void> _emitFiscalInvoice(
-    Map<String, dynamic> order, {
-    bool silentIfUnconfigured = false,
-  }) async {
-    if (emittingInvoice) return;
-    setState(() => emittingInvoice = true);
-    try {
-      // NÃO passa por `_work`: aquela trava serve para o operador não disparar
-      // duas operações de venda ao mesmo tempo, e DESISTE quando já há uma em
-      // curso (`if (busy) return null`). A emissão é efeito de uma venda que
-      // já terminou — engolida pela trava, a nota simplesmente não era pedida:
-      // sem erro, sem fila fiscal, sem cupom.
-      Map<String, dynamic>? invoice;
-      try {
-        invoice = await api.post(
-          '/invoices/emit/',
-          body: {
-            'order': order['id'],
-            if (selectedCustomer?['document'] != null)
-              'cpf': selectedCustomer!['document'],
-            if (selectedCustomer?['name'] != null)
-              'cpf_name': selectedCustomer!['name'],
-          },
-          accessToken: token,
-        );
-      } catch (error) {
-        AppLogger.instance.warning(
-          'fiscal_emit_recusado',
-          data: {'pedido': '${order['id']}', 'causa': '$error'},
-        );
-        if (!mounted) return;
-        // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
-        // numa emissão automática — o resto o operador precisa ver.
-        if (!silentIfUnconfigured ||
-            !'$error'.toLowerCase().contains('configuracao fiscal')) {
-          _error(error, title: 'Não foi possível emitir a NFC-e');
-        }
-        return;
-      }
-      if (!mounted) return;
-
-      AppLogger.instance.info(
-        'fiscal_emit_resposta',
-        data: {
-          'pedido': '${order['id']}',
-          'fiscal_pending': invoice['_fiscal_pending'],
-          'emitted': invoice['emitted'],
-          'printable': invoice['printable'],
-          'fiscal_state': invoice['fiscal_state'],
-        },
-      );
-
-      // Emissão adiada (§16): a venda já está concluída e o documento entrou
-      // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
-      // quando a nota for autorizada.
-      if (invoice['_fiscal_pending'] == true) {
-        final issues = (invoice['_fiscal_issues'] as List? ?? const [])
-            .map((issue) => '$issue')
-            .toList();
-        // Toda emissao passa pela fila (§16), mesmo com internet — e o que
-        // garante que uma queda no meio do caminho nao perca o documento.
-        // Mas esperar o ciclo de 30 segundos para o cupom fiscal sair
-        // deixaria o cliente parado no balcao: com conexao, entrega a nota
-        // agora e imprime em seguida, no mesmo gesto do recibo. Algumas
-        // insistencias curtas cobrem uma entrega que estava só um instante
-        // atrás da nossa (outro ciclo de sincronização em voo, um ping que
-        // falhou uma vez) sem prender o caixa por muito tempo.
-        //
-        // PENDÊNCIA NO RETRATO LOCAL AVISA, MAS NÃO VETA. Quem decide se a
-        // nota passa é o servidor, que enxerga a venda inteira; aqui só existe
-        // o que este terminal guardou. O veto matou uma NFC-e cujo recebimento
-        // EXISTIA — ele tinha acabado de subir, e a versão do pedido que voltou
-        // do servidor não trazia os pagamentos de volta, então o retrato local
-        // reclamou de "venda sem recebimento" de uma venda paga. O backend já
-        // trata cadastro incompleto do jeito certo: monta a nota, grava a falha
-        // nela e deixa o operador corrigir e reenviar.
-        final settled = await _flushFiscalWithRetries('${order['id']}');
-        if (!mounted) return;
-        AppLogger.instance.info(
-          'fiscal_flush_resultado',
-          data: {
-            'pedido': '${order['id']}',
-            'entregue': settled != null,
-            'issues': issues.length,
-            'printable': settled?['printable'],
-            'fiscal_state': settled?['fiscal_state'],
-          },
-        );
-        if (settled != null) {
-          final summary =
-              'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
-          if (settled['printable'] == true) {
-            await _printDanfe(
-              invoiceId: '${settled['id']}',
-              summary: summary,
-              automatic: true,
-            );
-          } else {
-            _showFiscalStateToast(settled, silent: silentIfUnconfigured);
-            _watchFiscalAuthorization(settled, summary: summary);
-          }
-          return;
-        }
-        // Continua pendente mesmo depois de insistir: a nota fica na fila
-        // fiscal local e sai pelo ciclo automático (30s) ou pela próxima
-        // ação do operador — mas NINGUÉM fica vigiando essa autorização
-        // para imprimir sozinho a partir daqui. O aviso não é opcional: era
-        // aqui que a venda terminava só com o recibo, sem explicação
-        // nenhuma, porque este toast ficava escondido atrás da mesma
-        // bandeira que esconde "este restaurante não emite NFC-e".
-        showAppToast(
-          context,
-          issues.isEmpty
-              ? 'Venda concluída. A NFC-e ainda não foi confirmada com o '
-                    'provedor fiscal e será emitida assim que possível — '
-                    'acompanhe pelo histórico do pedido.'
-              : 'Venda concluída, mas o cadastro fiscal está incompleto e a '
-                    'NFC-e não vai passar assim: ${issues.first}',
-          severity: AppErrorSeverity.warning,
-        );
-        return;
-      }
-
-      if (invoice['emitted'] == false) {
-        if (!silentIfUnconfigured) {
-          showAppToast(
-            context,
-            '${invoice['message'] ?? 'Nota fiscal não emitida: o provedor fiscal não está configurado.'}',
-            severity: AppErrorSeverity.warning,
-          );
-        }
-        return;
-      }
-
-      // `fiscal_state` é a situação real do documento; `status` sozinho não
-      // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
-      // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
-      // DANFE só é oferecido quando `printable` vem verdadeiro.
-      if (invoice['printable'] != true) {
-        _showFiscalStateToast(invoice, silent: false);
-        _watchFiscalAuthorization(
-          invoice,
-          summary:
-              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-        );
-        return;
-      }
-
-      if (invoice['emission_type'] == '9') {
-        showAppToast(
-          context,
-          'NFC-e emitida em contingência — será retransmitida quando a conexão com a SEFAZ voltar.',
-          severity: AppErrorSeverity.warning,
-        );
-      }
-
-      await _printDanfe(
-        invoiceId: '${invoice['id']}',
-        summary:
-            'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-        automatic: true,
-      );
-    } finally {
-      if (mounted) setState(() => emittingInvoice = false);
-    }
-  }
-
-  /// Espera a SEFAZ autorizar e manda o DANFE para a impressora sozinho.
-  ///
-  /// Online, a emissão quase nunca volta autorizada: o provedor ACEITA a nota
-  /// e a SEFAZ responde um instante depois. O "Concluir pedido" terminava
-  /// então com um aviso e nenhum cupom fiscal — o operador tinha de voltar no
-  /// pedido e mandar imprimir na mão, para uma nota que já estava autorizada
-  /// havia dois segundos.
-  ///
-  /// Consulta em segundo plano, com espera crescente: o caixa já pode começar
-  /// a próxima venda. Se a autorização não chegar na janela, nada se perde —
-  /// a nota continua na esteira normal (webhook e consulta periódica) e o
-  /// cupom sai pela reimpressão no histórico do pedido.
-  void _watchFiscalAuthorization(
-    Map<String, dynamic> invoice, {
-    required String summary,
-  }) {
-    final invoiceId = '${invoice['id'] ?? ''}';
-    final state = '${invoice['fiscal_state'] ?? ''}';
-    // Só faz sentido esperar por uma nota que está a caminho. Recusa e erro de
-    // configuração pedem correção humana; documento local ainda na fila (id
-    // `offline-…`) nem existe no servidor para ser consultado.
-    const inFlight = {'processing', 'awaiting_transmission'};
-    if (invoiceId.isEmpty ||
-        invoiceId.startsWith('offline-') ||
-        !inFlight.contains(state)) {
-      return;
-    }
-    // Um segundo vigia sobre a mesma nota mandaria o DANFE para a impressora
-    // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
-    // primeira já teria saído.
-    if (!watchedFiscalInvoices.add(invoiceId)) return;
-    unawaited(_pollFiscalAuthorization(invoiceId: invoiceId, summary: summary));
-  }
-
-  Future<void> _pollFiscalAuthorization({
-    required String invoiceId,
-    required String summary,
-  }) async {
-    try {
-      await _pollFiscalAuthorizationNow(invoiceId: invoiceId, summary: summary);
-    } finally {
-      watchedFiscalInvoices.remove(invoiceId);
-    }
-  }
-
-  Future<void> _pollFiscalAuthorizationNow({
-    required String invoiceId,
-    required String summary,
-  }) async {
-    const backoff = [
-      Duration(milliseconds: 1200),
-      Duration(seconds: 2),
-      Duration(seconds: 3),
-      Duration(seconds: 4),
-      Duration(seconds: 5),
-    ];
-    for (final wait in backoff) {
-      await Future<void>.delayed(wait);
-      if (!mounted) return;
-      final Map<String, dynamic> current;
-      try {
-        current = await api.post(
-          '/invoices/$invoiceId/refresh-status/',
-          // "Estou esperando esta autorizacao para imprimir." Sem avisar, o
-          // cupom que esta consulta cria entra no laco automatico do agente
-          // local e o cliente recebe DOIS DANFEs: o do agente e o que este
-          // terminal manda em seguida.
-          body: const {'manual_print': true},
-          accessToken: token,
-        );
-      } catch (_) {
-        // Um tropeço de rede não abandona a nota: a próxima volta tenta de
-        // novo. Desistir aqui era barato quando o servidor criava o cupom
-        // sozinho — não é mais: numa venda de terminal (`terminal_prints`)
-        // ninguém mais imprime este DANFE se esta espera desistir.
-        continue;
-      }
-      if (!mounted) return;
-      AppLogger.instance.info(
-        'fiscal_consulta_autorizacao',
-        data: {
-          'nota': invoiceId,
-          'printable': current['printable'],
-          'fiscal_state': current['fiscal_state'],
-        },
-      );
-      if (current['printable'] == true) {
-        await _printDanfe(
-          invoiceId: invoiceId,
-          summary: summary,
-          automatic: true,
-        );
-        return;
-      }
-      final state = '${current['fiscal_state'] ?? ''}';
-      if (state == 'rejected' || state == 'configuration_error') {
-        // Agora sim interrompe: isto não se resolve esperando.
-        _showFiscalStateToast(current, silent: false);
-        return;
-      }
-    }
-    // A janela acabou e a autorização não chegou. O operador precisa saber:
-    // numa venda de terminal o servidor não cria cupom automático, então este
-    // DANFE só sai se alguém mandar imprimir pelo histórico do pedido.
-    if (!mounted) return;
-    showAppToast(
-      context,
-      'A SEFAZ ainda não autorizou a NFC-e desta venda. Quando autorizar, '
-      'imprima o DANFE pelo pedido em Pedidos.',
-      severity: AppErrorSeverity.warning,
-    );
-  }
-
-  /// Insiste em entregar a nota antes de desistir e avisar o operador.
-  ///
-  /// `flushFiscalForOrder` pode voltar `null` por um instante sem conexão, ou
-  /// porque outro ciclo de sincronização já estava em voo — nenhum dos dois
-  /// significa "sem rede para sempre". Poucas tentativas curtas cobrem isso
-  /// sem prender o caixa: se depois delas ainda não resolveu, a nota segue
-  /// pela fila e o operador é avisado.
-  Future<Map<String, dynamic>?> _flushFiscalWithRetries(String orderId) async {
-    const waits = [
-      Duration.zero,
-      Duration(milliseconds: 500),
-      Duration(seconds: 1),
-      Duration(seconds: 2),
-      Duration(seconds: 3),
-    ];
-    for (final wait in waits) {
-      if (wait > Duration.zero) await Future<void>.delayed(wait);
-      if (!mounted) return null;
-      final settled = await api.flushFiscalForOrder(orderId);
-      if (settled != null) return settled;
-    }
-    return null;
-  }
-
-  /// Explica ao operador por que o cupom fiscal ainda nao saiu.
-  void _showFiscalStateToast(
-    Map<String, dynamic> invoice, {
-    required bool silent,
-  }) {
-    if (!mounted) return;
-    final state = '${invoice['fiscal_state'] ?? ''}';
-    final blocking = state == 'rejected' || state == 'configuration_error';
-    // Numa emissao automatica so o que exige acao humana interrompe o
-    // operador; o resto segue seu curso pela fila.
-    if (silent && !blocking) return;
-    showAppToast(
-      context,
-      switch (state) {
-        'rejected' =>
-          'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
-              'Não haverá reenvio automático.',
-        'configuration_error' =>
-          'NFC-e não emitida: a configuração fiscal está inválida '
-              '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
-        'reconciliation_required' =>
-          'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
-              'consultada antes de qualquer reenvio — não emita de novo.',
-        'processing' =>
-          'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
-              'fiscal sai quando a autorização chegar.',
-        _ =>
-          'Venda concluída. A NFC-e ainda não foi transmitida e será '
-              'enviada assim que a conexão voltar.',
-      },
-      severity: blocking ? AppErrorSeverity.failure : AppErrorSeverity.warning,
-    );
-  }
-
-  /// Reimprime o DANFE de uma nota que ja esta autorizada.
-  ///
-  /// Nao passa pelo `/invoices/emit/`: a nota existe, o que falta e o papel —
-  /// e sem rede aquela rota vira mais uma entrada na fila fiscal para um
-  /// documento que ja foi emitido.
-  Future<void> _reprintDanfe(Map<String, dynamic> order) async {
-    final fiscal = order['fiscal'] as Map<String, dynamic>?;
-    final invoiceId = '${fiscal?['id'] ?? ''}';
-    if (invoiceId.isEmpty || emittingInvoice) return;
-    setState(() => emittingInvoice = true);
-    try {
-      await _printDanfe(
-        invoiceId: invoiceId,
-        summary:
-            'Pedido #${order['sequence']} · NFC-e ${fiscal?['number'] ?? ''}',
-      );
-    } finally {
-      if (mounted) setState(() => emittingInvoice = false);
-    }
-  }
-
-  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
-  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
-  ///
-  /// `automatic` é a impressão que o gesto de concluir dispara sozinho. Ela não
-  /// repete um DANFE que já saiu deste terminal: o servidor pode ter criado um
-  /// cupom automático quando a autorização chegou, e o cliente receberia duas
-  /// vias idênticas. A reimpressão pedida pelo operador ignora isso — quem
-  /// clicou quer outra via.
-  Future<void> _printDanfe({
-    required String invoiceId,
-    required String summary,
-    bool automatic = false,
-  }) async {
-    final printers = await _list(
-      '/printers/',
-      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
-    );
-    if (!mounted || printers.isEmpty) {
-      AppLogger.instance.warning(
-        'danfe_sem_impressora_cadastrada',
-        data: {'nota': invoiceId, 'montado': mounted},
-      );
-      return;
-    }
-    // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
-    // para ele como "o sistema ignorou a master".
-    final master = widget.preferences.masterPrinterId;
-    final hasMaster = printers.any((p) => '${p['id']}' == master);
-    final printerId = hasMaster
-        ? master
-        : await showDialog<String>(
-            context: context,
-            builder: (_) => PrinterSelectionDialog(
-              printers: printers,
-              title: 'Imprimir DANFE NFC-e',
-              summary: summary,
-              description:
-                  'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
-            ),
-          );
-    if (printerId == null) {
-      AppLogger.instance.warning(
-        'danfe_sem_impressora_escolhida',
-        data: {'nota': invoiceId, 'master': master},
-      );
-      return;
-    }
-    AppLogger.instance.info(
-      'danfe_impressao_pedida',
-      data: {
-        'nota': invoiceId,
-        'impressora': printerId,
-        'automatico': automatic,
-      },
-    );
-    final Map<String, dynamic> printJob;
-    try {
-      printJob = await api.post(
-        '/invoices/$invoiceId/print/',
-        body: {'printer': printerId},
-        accessToken: token,
-      );
-    } catch (error) {
-      if (mounted) _error(error, title: 'O DANFE não pôde ser gerado');
-      return;
-    }
-    if (!mounted) return;
-    final printer = printJob['printer'] as Map<String, dynamic>?;
-    if (printer == null) {
-      _error(
-        const ApiException('A impressora selecionada não foi encontrada.'),
-      );
-      return;
-    }
-    final ok = await _printingStep(
-      () =>
-          deviceAgent.printJobManually(printJob, printer, automatic: automatic),
-      title: 'O DANFE não saiu na impressora',
-    );
-    AppLogger.instance.info(
-      'danfe_impressao_resultado',
-      data: {
-        'nota': invoiceId,
-        'job': '${printJob['print_job_id'] ?? ''}',
-        'impressora': '${printer['name'] ?? ''}',
-        'ok': ok,
-      },
-    );
-  }
-
+  @override
   Future<void> _paymentDialog() async {
     try {
       await _preparePaymentPage();
@@ -5186,509 +3999,6 @@ class _HomePageState extends State<HomePage> {
       }
     }
   }
-
-  Future<void> _openCash() async {
-    final userId = widget.controller.session!.user.id;
-    final linked = stations
-        .where(
-          (station) => (station['operators'] as List? ?? [])
-              .map((id) => '$id')
-              .contains(userId),
-        )
-        .toList();
-    if (linked.isEmpty) {
-      _error(
-        const ApiException('Seu usuário não está vinculado a nenhum caixa.'),
-      );
-      return;
-    }
-    var stationId = '${linked.first['id']}';
-    final amount = TextEditingController(text: '0.00');
-    final notes = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AppDialog(
-          title: const Text('Abrir caixa'),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: stationId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Caixa'),
-                  items: linked
-                      .map(
-                        (station) => DropdownMenuItem(
-                          value: '${station['id']}',
-                          child: Text('${station['name']}'),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => update(() => stationId = value!),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: amount,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: 'Valor de abertura',
-                    prefixText: r'R$ ',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: notes,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    labelText: 'Observação',
-                    helperText:
-                        'Registre alguma informação relevante sobre a abertura.',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Abrir caixa'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed == true) {
-      final result = await _work(() async {
-        cashSession = await api.post(
-          '/cash-register/open/',
-          body: {
-            'cash_station': stationId,
-            'opening_amount': amount.text.replaceAll(',', '.'),
-            'notes': notes.text.trim(),
-            ..._terminalIdentity,
-          },
-          accessToken: token,
-          // Abrir caixa passou a funcionar sem internet (§30): o repositório
-          // precisa do nome do caixa e do operador para montar a sessão local
-          // completa enquanto a operação espera na fila.
-          localContext: {
-            'cash_station': stations.cast<Map<String, dynamic>?>().firstWhere(
-              (item) => '${item?['id']}' == stationId,
-              orElse: () => null,
-            ),
-            'operator_name': widget.controller.session?.user.name,
-          },
-        );
-        setState(() {});
-        return cashSession;
-      }, onError: (error) => _cashError(error, 'abrir o caixa'));
-      if (result != null) {
-        await _goHome();
-      }
-    }
-  }
-
-  Future<void> _cashMovement(String type) async {
-    final amount = TextEditingController();
-    final reason = TextEditingController();
-    final destination = TextEditingController();
-    final isWithdrawal = type == 'withdrawal';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AppDialog(
-        title: Text(
-          isWithdrawal ? 'Registrar sangria' : 'Registrar suprimento',
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amount,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Valor',
-                  prefixText: r'R$ ',
-                ),
-              ),
-              if (isWithdrawal) ...[
-                const SizedBox(height: 12),
-                TextField(
-                  controller: destination,
-                  decoration: const InputDecoration(labelText: 'Destino'),
-                ),
-              ],
-              const SizedBox(height: 12),
-              TextField(
-                controller: reason,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'Motivo obrigatório',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirmar'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      final movement = await _work(
-        () async {
-          return api.post(
-            '/cash-register/${cashSession!['id']}/$type/',
-            body: {
-              'amount': amount.text.replaceAll(',', '.'),
-              'reason': reason.text.trim(),
-              'destination': destination.text.trim(),
-              'source': destination.text.trim(),
-              ..._terminalIdentity,
-            },
-            accessToken: token,
-          );
-        },
-        onError: (error) => _cashError(
-          error,
-          isWithdrawal ? 'registrar a sangria' : 'registrar o suprimento',
-        ),
-      );
-      if (movement != null && movement['status'] == 'pending') {
-        setState(() => pendingCashMovement = movement);
-        await _showMovementApproval();
-      }
-    }
-  }
-
-  Future<void> _showMovementApproval() async {
-    final movement = pendingCashMovement;
-    if (!mounted || movement == null || movementApprovalDialogOpen) return;
-    movementApprovalDialogOpen = true;
-    final username = TextEditingController();
-    final password = TextEditingController();
-    final managerReason = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-    var authorizing = false;
-    try {
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: true,
-        builder: (dialogContext) => StatefulBuilder(
-          builder: (context, update) => AppDialog(
-            title: Text(
-              movement['movement_type'] == 'withdrawal'
-                  ? 'Autorizar sangria'
-                  : 'Autorizar suprimento',
-            ),
-            content: SizedBox(
-              width: 480,
-              child: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Movimentação pendente de ${_money(_number(movement['amount']).abs())}.',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text('Motivo: ${movement['reason']}'),
-                      if ('${movement['destination'] ?? ''}'.isNotEmpty)
-                        Text('Destino: ${movement['destination']}'),
-                      const Divider(height: 30),
-                      TextFormField(
-                        controller: username,
-                        autofocus: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Usuário autorizador',
-                          helperText: 'Gerente, administrador ou proprietário.',
-                        ),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Informe o usuário.'
-                            : null,
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller: password,
-                        obscureText: true,
-                        decoration: const InputDecoration(labelText: 'Senha'),
-                        validator: (value) => value == null || value.isEmpty
-                            ? 'Informe a senha.'
-                            : null,
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller: managerReason,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: 'Justificativa gerencial',
-                        ),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Informe a justificativa.'
-                            : null,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            actions: [
-              TextButton.icon(
-                onPressed: authorizing
-                    ? null
-                    : () => Navigator.pop(dialogContext),
-                icon: const Icon(Icons.minimize),
-                label: const Text('Minimizar'),
-              ),
-              FilledButton.icon(
-                onPressed: authorizing
-                    ? null
-                    : () async {
-                        if (!formKey.currentState!.validate()) return;
-                        update(() => authorizing = true);
-                        String? temporaryAccess;
-                        String? temporaryRefresh;
-                        try {
-                          final login = await api.post(
-                            '/auth/login/',
-                            body: {
-                              'username': username.text.trim(),
-                              'password': password.text,
-                            },
-                          );
-                          temporaryAccess = '${login['access']}';
-                          temporaryRefresh = '${login['refresh']}';
-                          final user = login['user'] as Map<String, dynamic>?;
-                          final allowed =
-                              user?['is_superuser'] == true ||
-                              {
-                                'admin',
-                                'owner',
-                                'manager',
-                              }.contains('${user?['profile_type']}');
-                          if (!allowed) {
-                            throw const ApiException(
-                              'O usuário informado não possui permissão gerencial.',
-                              statusCode: 403,
-                            );
-                          }
-                          await api.post(
-                            '/cash-register/${cashSession!['id']}/approve/',
-                            body: {
-                              'movement': movement['id'],
-                              'reason': managerReason.text.trim(),
-                            },
-                            accessToken: temporaryAccess,
-                          );
-                          pendingCashMovement = null;
-                          if (dialogContext.mounted) {
-                            Navigator.pop(dialogContext);
-                          }
-                          await _load();
-                        } catch (error) {
-                          if (mounted) _error(error);
-                          update(() => authorizing = false);
-                        } finally {
-                          password.clear();
-                          if (temporaryAccess != null &&
-                              temporaryRefresh != null) {
-                            try {
-                              await api.post(
-                                '/auth/logout/',
-                                body: {'refresh': temporaryRefresh},
-                                accessToken: temporaryAccess,
-                              );
-                            } catch (_) {}
-                          }
-                        }
-                      },
-                icon: authorizing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.verified_user_outlined),
-                label: const Text('Autorizar movimentação'),
-              ),
-            ],
-          ),
-        ),
-      );
-    } finally {
-      movementApprovalDialogOpen = false;
-      username.dispose();
-      password.dispose();
-      managerReason.dispose();
-    }
-  }
-
-  Future<void> _closeCash() async {
-    // Operação na fila NÃO impede mais o fechamento. O saldo esperado sai dos
-    // movimentos gravados NESTE terminal, e a venda offline já entrou na
-    // gaveta local no momento do recebimento (`registerLocalSale`) — o número
-    // conferido é o mesmo com ou sem rede. Bloquear aqui prendia o operador
-    // no fim do turno esperando uma conexão que podia não voltar hoje.
-    final pending = offlinePendingCount;
-    final pendingNotice = pending == 1
-        ? '1 operação ainda não subiu para o servidor.'
-        : '$pending operações ainda não subiram para o servidor.';
-    final amount = TextEditingController();
-    final notes = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AppDialog(
-        title: const Text('Fechar caixa'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (pending > 0) ...[
-                // O operador precisa saber COM O QUE está conferindo — não
-                // ser impedido de encerrar o turno por causa disso.
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.cloud_off_outlined, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '$pendingNotice O fechamento usa o que está gravado '
-                        'neste terminal; a fila sobe quando a conexão voltar.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-              ],
-              TextField(
-                controller: amount,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Valor contado',
-                  helperText:
-                      'Informe o dinheiro físico contado no fechamento.',
-                  prefixText: r'R$ ',
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: notes,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Observação',
-                  helperText:
-                      'Informe ocorrências ou justificativas do fechamento.',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirmar fechamento'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _work(() async {
-        cashSession = await api.post(
-          '/cash-register/${cashSession!['id']}/close/',
-          body: {
-            'actual_amount': amount.text.replaceAll(',', '.'),
-            'notes': notes.text.trim(),
-            ..._terminalIdentity,
-          },
-          accessToken: token,
-        );
-        setState(() {});
-      }, onError: (error) => _cashError(error, 'fechar o caixa'));
-    }
-  }
-
-  void _onCashMenuSelected(String value) {
-    if (value == 'toggle_balance') {
-      unawaited(_toggleCashBalanceVisibility());
-      return;
-    }
-    if (value == 'supply' || value == 'withdrawal') {
-      _cashMovement(value);
-    }
-    if (value == 'close') _closeCash();
-  }
-
-  List<PopupMenuEntry<String>> _cashMenuItems() => [
-    PopupMenuItem(
-      value: 'toggle_balance',
-      child: ListTile(
-        leading: Icon(
-          _canSeeCashBalance
-              ? Icons.visibility_off_outlined
-              : Icons.visibility_outlined,
-        ),
-        title: Text(_canSeeCashBalance ? 'Ocultar saldo' : 'Ver saldo'),
-      ),
-    ),
-    const PopupMenuDivider(),
-    const PopupMenuItem(
-      value: 'supply',
-      child: ListTile(
-        leading: Icon(Icons.add_circle_outline),
-        title: Text('Suprimento'),
-      ),
-    ),
-    const PopupMenuItem(
-      value: 'withdrawal',
-      child: ListTile(
-        leading: Icon(Icons.remove_circle_outline),
-        title: Text('Sangria'),
-      ),
-    ),
-    const PopupMenuDivider(),
-    const PopupMenuItem(
-      value: 'close',
-      child: ListTile(leading: Icon(Icons.lock), title: Text('Fechar caixa')),
-    ),
-  ];
 
   String _sidebarUserSubtitle() {
     final user = widget.controller.session!.user;
@@ -6292,429 +4602,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// Barra de busca, filtros e ordenação da tela de Pedidos.
-  Widget _ordersFilterBar() {
-    final range = orderDateRange;
-    final dateLabel = range == null
-        ? 'Período'
-        : '${_shortDate(range.start)} – ${_shortDate(range.end)}';
-    final hasFilters =
-        orderSearch.trim().isNotEmpty ||
-        orderTypeFilter != null ||
-        orderDateRange != null ||
-        orderStatusFilter != 'pending' ||
-        orderOrdering != '-updated_at';
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        SizedBox(
-          width: 300,
-          child: TextField(
-            controller: ordersSearchController,
-            focusNode: ordersSearchFocus,
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search_rounded),
-              hintText: 'Nº do pedido, cliente ou mesa...',
-              suffixIcon: orderSearch.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Limpar busca',
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                      onPressed: () {
-                        ordersSearchController.clear();
-                        setState(() => orderSearch = '');
-                        _onOrdersFilterChanged();
-                      },
-                    ),
-            ),
-            onChanged: (value) {
-              setState(() => orderSearch = value);
-              _onOrdersFilterChanged(debounce: true);
-            },
-          ),
-        ),
-        SizedBox(
-          width: 230,
-          child: DropdownButtonFormField<String>(
-            initialValue: orderStatusFilter,
-            // Sem `isExpanded` o rótulo selecionado usa a largura natural do
-            // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
-            // 230 px com o texto ampliado.
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Situação'),
-            items: const [
-              DropdownMenuItem(
-                value: 'pending',
-                child: Text(
-                  'Pendentes de pagamento',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              DropdownMenuItem(value: 'open', child: Text('Em aberto')),
-              DropdownMenuItem(
-                value: 'awaiting_payment',
-                child: Text(
-                  'Aguardando pagamento',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              DropdownMenuItem(value: 'paid', child: Text('Pagos')),
-              DropdownMenuItem(value: 'all', child: Text('Todos')),
-            ],
-            onChanged: (value) {
-              setState(() => orderStatusFilter = value ?? 'pending');
-              _onOrdersFilterChanged();
-            },
-          ),
-        ),
-        SizedBox(
-          width: 180,
-          child: DropdownButtonFormField<String?>(
-            initialValue: orderTypeFilter,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Tipo'),
-            items: const [
-              DropdownMenuItem(value: null, child: Text('Todos os tipos')),
-              DropdownMenuItem(value: 'command', child: Text('Comanda')),
-              DropdownMenuItem(value: 'counter', child: Text('Balcão')),
-              DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
-              DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
-            ],
-            onChanged: (value) {
-              setState(() => orderTypeFilter = value);
-              _onOrdersFilterChanged();
-            },
-          ),
-        ),
-        SizedBox(
-          width: 210,
-          child: DropdownButtonFormField<String>(
-            initialValue: orderOrdering,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Ordenar por'),
-            items: const [
-              DropdownMenuItem(
-                value: '-updated_at',
-                child: Text(
-                  'Última atualização',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              DropdownMenuItem(
-                value: '-opened_at',
-                child: Text(
-                  'Abertos recentemente',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              DropdownMenuItem(
-                value: 'opened_at',
-                child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: '-total',
-                child: Text('Maior valor', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: 'total',
-                child: Text('Menor valor', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: '-sequence',
-                child: Text('Nº decrescente', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: 'sequence',
-                child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
-              ),
-            ],
-            onChanged: (value) {
-              setState(() => orderOrdering = value ?? '-updated_at');
-              _onOrdersFilterChanged();
-            },
-          ),
-        ),
-        _ordersDateRangeMenu(dateLabel),
-        if (hasFilters)
-          TextButton.icon(
-            onPressed: () {
-              ordersSearchController.clear();
-              setState(() {
-                orderSearch = '';
-                orderTypeFilter = null;
-                orderDateRange = null;
-                orderStatusFilter = 'pending';
-                orderOrdering = '-updated_at';
-              });
-              _onOrdersFilterChanged();
-            },
-            icon: const Icon(Icons.filter_alt_off_outlined),
-            label: const Text('Limpar filtros'),
-          ),
-      ],
-    );
-  }
-
-  Widget _ordersPartialWarning() {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: .12),
-        borderRadius: AppTheme.radius,
-        border: Border.all(color: Colors.orange.withValues(alpha: .4)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.cloud_off_rounded, size: 18, color: scheme.onSurface),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              'Sem conexão: a busca vale só para os pedidos já guardados '
-              'neste caixa. Pedidos antigos podem não aparecer.',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String _shortDate(DateTime value) =>
-      '${value.day.toString().padLeft(2, '0')}/'
-      '${value.month.toString().padLeft(2, '0')}';
-
-  /// Menu compacto de período, ancorado no botão — em vez do seletor nativo,
-  /// que abre um diálogo grande e cobre a tela para escolher só duas datas.
-  /// Os atalhos cobrem o uso comum; "Personalizado" ainda cai no seletor
-  /// nativo, só para quem realmente precisa de datas específicas.
-  Widget _ordersDateRangeMenu(String label) {
-    final today = DateTime.now();
-    final startOfToday = DateTime(today.year, today.month, today.day);
-
-    DateTimeRange lastDays(int count) => DateTimeRange(
-      start: startOfToday.subtract(Duration(days: count - 1)),
-      end: startOfToday,
-    );
-
-    void apply(DateTimeRange? range) {
-      setState(() => orderDateRange = range);
-      _onOrdersFilterChanged();
-    }
-
-    return MenuAnchor(
-      builder: (context, controller, child) => OutlinedButton.icon(
-        onPressed: () =>
-            controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.date_range_outlined),
-        label: Text(label),
-      ),
-      menuChildren: [
-        MenuItemButton(
-          onPressed: () =>
-              apply(DateTimeRange(start: startOfToday, end: startOfToday)),
-          child: const Text('Hoje'),
-        ),
-        MenuItemButton(
-          onPressed: () {
-            final yesterday = startOfToday.subtract(const Duration(days: 1));
-            apply(DateTimeRange(start: yesterday, end: yesterday));
-          },
-          child: const Text('Ontem'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(lastDays(7)),
-          child: const Text('Últimos 7 dias'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(lastDays(30)),
-          child: const Text('Últimos 30 dias'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(
-            DateTimeRange(
-              start: DateTime(today.year, today.month, 1),
-              end: startOfToday,
-            ),
-          ),
-          child: const Text('Este mês'),
-        ),
-        const Divider(height: 1),
-        MenuItemButton(
-          onPressed: () => unawaited(_pickCustomDateRange()),
-          child: const Text('Personalizado...'),
-        ),
-        if (orderDateRange != null)
-          MenuItemButton(
-            onPressed: () => apply(null),
-            child: const Text('Limpar período'),
-          ),
-      ],
-    );
-  }
-
-  Future<void> _pickCustomDateRange() async {
-    final now = DateTime.now();
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 1),
-      initialDateRange: orderDateRange,
-      helpText: 'Período de abertura',
-      saveText: 'Aplicar',
-    );
-    if (picked == null || !mounted) return;
-    setState(() => orderDateRange = picked);
-    _onOrdersFilterChanged();
-  }
-
-  Widget _ordersPage() {
-    // A lista já vem filtrada do servidor (ou do cache, offline). Aqui só
-    // sobra a situação, que cruza dois campos e por isso é decidida sempre
-    // localmente — inclusive sobre o resultado do servidor.
-    final filtered = orders.where(_matchesStatusFilter).toList();
-    final openCount = orders
-        .where(
-          (item) =>
-              const {'open', 'awaiting_payment'}.contains('${item['status']}'),
-        )
-        .length;
-    final paidCount = orders
-        .where((item) => '${item['payment_status']}' == 'paid')
-        .length;
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _operationStat(
-                  'RESULTADOS DO FILTRO',
-                  '${filtered.length}',
-                  Icons.filter_alt_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'PEDIDOS EM ABERTO',
-                  '$openCount',
-                  Icons.pending_actions_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'PAGAMENTOS CONCLUÍDOS',
-                  '$paidCount',
-                  Icons.check_circle_outline,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _ordersFilterBar(),
-          if (ordersPartial) ...[
-            const SizedBox(height: 12),
-            _ordersPartialWarning(),
-          ],
-          const SizedBox(height: 18),
-          Expanded(
-            child: ShadCard(
-              radius: AppTheme.radius,
-              shadows: const [],
-              padding: EdgeInsets.zero,
-              columnCrossAxisAlignment: CrossAxisAlignment.stretch,
-              child: ordersLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : filtered.isEmpty
-                  ? const AppEmptyState(
-                      icon: Icons.receipt_long_outlined,
-                      title: 'Nenhum pedido encontrado',
-                      description:
-                          'Altere os filtros ou atualize a lista para tentar novamente.',
-                    )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        // Precisa ser a mesma altura passada em
-                        // dataRowMaxHeight abaixo: a tabela não rola
-                        // internamente, então se a conta de quantas linhas
-                        // cabem usar uma altura menor que a real, a tabela
-                        // fica mais alta que o espaço disponível e estoura.
-                        const rowHeight = 68.0;
-                        final calculatedRows =
-                            ((constraints.maxHeight - 180) / rowHeight).floor();
-                        final rowsPerPage = calculatedRows.clamp(1, 10);
-                        return SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: SizedBox(
-                            width: constraints.maxWidth < 1000
-                                ? 1000
-                                : constraints.maxWidth,
-                            child: PaginatedDataTable(
-                              header: Text('${filtered.length} pedido(s)'),
-                              // Não há seleção múltipla nessa lista; sem isso
-                              // o DataTable mostra uma caixa de marcação por
-                              // linha por padrão, sem nenhuma ação associada.
-                              showCheckboxColumn: false,
-                              // A linha padrão tem 48 px fixos, e a célula de
-                              // ações traz botões que passam disso com o texto
-                              // ampliado que o PDV usa — daí o estouro de
-                              // poucos pixels repetido em toda linha. Dar
-                              // altura suficiente resolve na origem, em vez de
-                              // encolher os alvos de toque do operador.
-                              dataRowMinHeight: 52,
-                              dataRowMaxHeight: rowHeight,
-                              rowsPerPage: rowsPerPage,
-                              availableRowsPerPage: <int>{
-                                rowsPerPage,
-                                5,
-                                10,
-                                20,
-                              }.toList()..sort(),
-                              showFirstLastButtons: true,
-                              columns: const [
-                                DataColumn(label: Text('Pedido')),
-                                DataColumn(label: Text('Tipo')),
-                                DataColumn(label: Text('Comanda/Mesa/Cliente')),
-                                DataColumn(label: Text('Status')),
-                                DataColumn(label: Text('Pagamento')),
-                                DataColumn(label: Text('Total')),
-                                DataColumn(label: Text('Ações')),
-                              ],
-                              source: OrderDataSource(
-                                filtered,
-                                money: _money,
-                                onEdit: _editOrder,
-                                onPay: _payOrder,
-                                onPrint: _printCustomerReceipt,
-                                allowEdit: widget
-                                    .controller
-                                    .session!
-                                    .user
-                                    .canManageOrders,
-                                allowPayment: widget
-                                    .controller
-                                    .session!
-                                    .user
-                                    .canProcessPayments,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _startPanel() {
     final options = [
       (
@@ -6912,6 +4799,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  @override
   Widget _operationStat(String label, String value, IconData icon) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
@@ -7727,7 +5615,4 @@ class _HomePageState extends State<HomePage> {
     printing: printingReceipt,
     emittingInvoice: emittingInvoice,
   );
-
-  static double _number(dynamic value) => ValueFormatters.number(value);
-  static String _money(dynamic value) => ValueFormatters.money(value);
 }

@@ -699,6 +699,42 @@ escolhida, peso maior que zero). O atalho vive num `CallbackShortcuts` com um
 ancestral — e a tecla passa por cima sem tocar em nada. O campo de observação é
 multilinha e trata o próprio Enter (quebra de linha), então continua imune.
 
+**A tela é quebrada em seções por `part` + mixin.** `home_page.dart` concentra
+catálogo, pedido, pagamento, caixa, fiscal, impressão e topologia num único
+`State` com ~100 campos. Dividir isso em ViewModels de verdade mudaria o fluxo;
+o que se faz aqui é MOVER código, sem reescrever uma linha dele:
+
+```dart
+// home_page.dart
+part 'home_page_cash.dart';
+class _HomePageState extends State<HomePage>
+    with _HomePageShared, _CashSection, _FiscalSection, … { … }
+
+// home_page_cash.dart
+part of 'home_page.dart';
+mixin _CashSection on _HomePageShared { … os métodos, iguais … }
+```
+
+Por que `part` e não um arquivo separado: os nomes são privados da biblioteca
+(`_HomePageState`, `_work`, `_error`). Um arquivo à parte não os enxerga; um
+`part` sim. E por que mixin e não outra classe: os métodos usam os campos do
+`State` — num mixin eles continuam sendo os mesmos campos, sem parâmetro novo
+e sem indireção.
+
+**Cada seção declara o que usa de fora.** No topo do mixin ficam os membros
+abstratos que `_HomePageState` fornece. Isso não é burocracia: é o contrato da
+seção, ele aparece na compilação quando alguém mexe num lado só, e serve de
+mapa das dependências reais daquele assunto. O que é comum a todas
+(`api`, `token`, `_work`, `_error`, `_money`) vive em `_HomePageShared`, porque
+declarar o mesmo membro em dois mixins faz o Dart recusar a classe.
+
+`_money` e `_number` deixaram de ser `static` por causa disso — um membro
+estático não pode coexistir com um herdado de mesmo nome.
+
+Seções já extraídas: caixa, fiscal, pedidos e recibo. O trabalho continua
+(pagamento, comandas/mesas, entrada por teclado e os painéis de `build`), e o
+alvo é nenhum arquivo passar de ~200 linhas.
+
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao
 início ou abrir uma mesa devolvia o PDV a um fundo em branco no meio do
