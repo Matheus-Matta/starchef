@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sqlite_async/sqlite_async.dart';
 
 import '../../../core/storage/app_paths.dart';
+import '../../../core/storage/durable_secure_store.dart';
 import '../domain/local_topology_config.dart';
 
 abstract interface class TopologySecretStorage {
@@ -15,25 +16,31 @@ abstract interface class TopologySecretStorage {
 }
 
 class SecureTopologySecretStorage implements TopologySecretStorage {
-  SecureTopologySecretStorage({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+  SecureTopologySecretStorage({
+    FlutterSecureStorage? storage,
+    SecureValueStore? valueStore,
+  }) : _storage =
+           valueStore ??
+           DurableSecureStore(
+             primary: FlutterSecureValueStore(
+               storage ?? const FlutterSecureStorage(),
+             ),
+           );
 
   static const _key = 'starchef_local_topology_pairing_secret';
-  final FlutterSecureStorage _storage;
+  final SecureValueStore _storage;
 
   @override
-  Future<String?> read() => _storage.read(key: _key);
+  Future<String?> read() => _storage.read(_key);
 
   @override
-  Future<void> write(String value) => _storage.write(key: _key, value: value);
+  Future<void> write(String value) => _storage.write(_key, value);
 }
 
 class LocalTopologyStore {
-  LocalTopologyStore({
-    File? file,
-    TopologySecretStorage? secretStorage,
-  }) : _file = file ?? _defaultFile(),
-       _secretStorage = secretStorage ?? SecureTopologySecretStorage() {
+  LocalTopologyStore({File? file, TopologySecretStorage? secretStorage})
+    : _file = file ?? _defaultFile(),
+      _secretStorage = secretStorage ?? SecureTopologySecretStorage() {
     _database = SqliteDatabase(path: _file.path);
     _ready = _initialize();
   }
@@ -173,9 +180,7 @@ class LocalTopologyStore {
       mode: LocalTopologyConfig.modeFrom(row?['mode']?.toString()),
       nodeId: '${row?['node_id'] ?? generateNodeId()}',
       principalHost: '${row?['principal_host'] ?? ''}',
-      port:
-          (row?['port'] as num?)?.toInt() ??
-          LocalTopologyConfig.defaultPort,
+      port: (row?['port'] as num?)?.toInt() ?? LocalTopologyConfig.defaultPort,
       pairingSecret: secret,
       trustedNetworkAcknowledged:
           (row?['trusted_network'] as num?)?.toInt() == 1,
@@ -301,10 +306,9 @@ class LocalTopologyStore {
   }) async {
     await _ready;
     return _database.writeTransaction((tx) async {
-      await tx.execute(
-        'DELETE FROM local_relay_nonces WHERE seen_at < ?',
-        [expiresBefore.toUtc().millisecondsSinceEpoch],
-      );
+      await tx.execute('DELETE FROM local_relay_nonces WHERE seen_at < ?', [
+        expiresBefore.toUtc().millisecondsSinceEpoch,
+      ]);
       final existing = await tx.getOptional(
         '''
         SELECT nonce FROM local_relay_nonces
@@ -318,12 +322,7 @@ class LocalTopologyStore {
         INSERT INTO local_relay_nonces(account_id, node_id, nonce, seen_at)
         VALUES (?, ?, ?, ?)
         ''',
-        [
-          accountId,
-          nodeId,
-          nonce,
-          seenAt.toUtc().millisecondsSinceEpoch,
-        ],
+        [accountId, nodeId, nonce, seenAt.toUtc().millisecondsSinceEpoch],
       );
       return true;
     });
@@ -341,6 +340,5 @@ class LocalRelayReceiptConflict implements Exception {
   const LocalRelayReceiptConflict();
 
   @override
-  String toString() =>
-      'A chave da operação já foi usada com outro conteúdo.';
+  String toString() => 'A chave da operação já foi usada com outro conteúdo.';
 }

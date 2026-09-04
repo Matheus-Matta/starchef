@@ -4,6 +4,9 @@ Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
 Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
 estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
 """
+from django.db.models import Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
 from apps.core.access import is_tenant_admin
@@ -22,6 +25,8 @@ class TenantQuerySetMixin:
 
     Admin/superuser enxerga a conta inteira e pode filtrar por restaurante/filial via
     query params; demais perfis ficam limitados ao proprio restaurante/filial do perfil.
+    Nunca ha escopo global: sem conta no request, um model com campo `account`
+    devolve vazio (ver get_queryset).
     """
 
     tenant_branch_field = "branch"
@@ -30,12 +35,14 @@ class TenantQuerySetMixin:
     def get_queryset(self):
         base_queryset = super().get_queryset()
         model = base_queryset.model
+        include_deleted = self._wants_deleted_records()
         if hasattr(model, "all_objects"):
             queryset = model.all_objects.all()
-            if model_has_field(model, "deleted_at"):
+            if model_has_field(model, "deleted_at") and not include_deleted:
                 queryset = queryset.filter(deleted_at__isnull=True)
         else:
             queryset = base_queryset
+        queryset = self._apply_delta_filter(queryset)
 
         user = self.request.user
         account = getattr(self.request, "account", None)
@@ -44,6 +51,14 @@ class TenantQuerySetMixin:
             set_current_account(account)
             if model_has_field(queryset.model, "account"):
                 queryset = queryset.filter(account=account)
+        elif model_has_field(queryset.model, "account"):
+            # Sem conta no request (superusuário sem perfil e sem X-Account-ID)
+            # a API não serve dados de conta nenhuma — devolver o queryset sem
+            # filtro aqui vazava todas as contas para o frontend. Mesmo
+            # comportamento do TenantManager, que também devolve none() quando
+            # não há conta atual. Ver tudo é papel do /admin, isento do
+            # TenantMiddleware.
+            return queryset.none()
 
         if not user.is_authenticated:
             return queryset.none()
@@ -55,20 +70,101 @@ class TenantQuerySetMixin:
         if not profile:
             return queryset.none()
 
+        is_restaurant_model = queryset.model._meta.label == "restaurants.Restaurant"
         model_is_restaurant_scoped = (
-            queryset.model._meta.label == "restaurants.Restaurant"
-            or model_has_field(queryset.model, self.tenant_restaurant_field)
+            is_restaurant_model or model_has_field(queryset.model, self.tenant_restaurant_field)
         )
-        if model_is_restaurant_scoped and not profile.restaurant_id:
-            return queryset.none()
+        shared = not is_restaurant_model and self._is_shared_across_restaurants(queryset.model)
 
-        filters = {}
-        if profile.restaurant_id:
-            if queryset.model._meta.label == "restaurants.Restaurant":
-                filters["id"] = profile.restaurant_id
-            elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = profile.restaurant_id
-        return queryset.filter(**filters) if filters else queryset
+        if model_is_restaurant_scoped and not profile.restaurant_id:
+            # Sem restaurante no perfil so sobra o que pertence a conta inteira.
+            return queryset.filter(**{f"{self.tenant_restaurant_field}__isnull": True}) if shared else queryset.none()
+
+        if not profile.restaurant_id:
+            return queryset
+        if is_restaurant_model:
+            return queryset.filter(id=profile.restaurant_id)
+        if model_is_restaurant_scoped:
+            return queryset.filter(self._restaurant_scope_q(queryset.model, profile.restaurant_id))
+        return queryset
+
+    def _is_shared_across_restaurants(self, model):
+        """True quando `restaurant` e opcional no model (recurso da conta inteira).
+
+        Categorias, adicionais e perfis fiscais usam `restaurant = NULL` para
+        dizer "vale para todos os restaurantes".
+        """
+        return (
+            model_has_field(model, self.tenant_restaurant_field)
+            and model._meta.get_field(self.tenant_restaurant_field).null
+        )
+
+    def _restaurant_scope_q(self, model, restaurant_id):
+        """Recorte por restaurante que NAO esconde os registros compartilhados.
+
+        Filtrar so pelo id derrubava os registros de `restaurant = NULL` — era o
+        que fazia uma categoria (ou um perfil fiscal) reutilizavel sumir para
+        quem nao e admin, e some do dropdown quando a tela filtra por unidade.
+        """
+        field_name = self.tenant_restaurant_field
+        scope = Q(**{f"{field_name}_id": restaurant_id})
+        if self._is_shared_across_restaurants(model):
+            scope |= Q(**{f"{field_name}__isnull": True})
+        return scope
+
+    def soft_delete_scope(self, queryset):
+        """Aplica (ou nao) o recorte de registros excluidos.
+
+        Exposto para os viewsets que montam o proprio queryset: e o unico jeito
+        de o delta sync enxergar uma exclusao, ja que um registro apagado
+        apenas some da listagem normal.
+        """
+        if not model_has_field(queryset.model, "deleted_at") or self._wants_deleted_records():
+            return queryset
+        return queryset.filter(deleted_at__isnull=True)
+
+    def _wants_deleted_records(self):
+        """O cliente pediu explicitamente os registros excluidos?
+
+        Serve ao delta sync do PDV (`?updated_after=...&include_deleted=1`):
+        sem isso o terminal offline nunca ficaria sabendo que um produto foi
+        removido na retaguarda — ele simplesmente pararia de aparecer na
+        listagem, e o registro antigo continuaria vendavel no caixa. So vale
+        junto de `updated_after`, para nao mudar o comportamento de nenhuma
+        listagem normal da aplicacao.
+        """
+        params = self.request.query_params
+        return bool(params.get("updated_after")) and str(
+            params.get("include_deleted", "")
+        ).lower() in {"1", "true", "yes"}
+
+    def _apply_delta_filter(self, queryset):
+        """Restringe a `updated_at > updated_after`, quando informado.
+
+        E o que permite o Caixa Principal reconciliar depois de horas offline
+        sem baixar a base inteira de novo (sincronizacao incremental). Um valor
+        invalido e ignorado: melhor devolver a listagem completa do que negar
+        os dados ao caixa por causa de um parametro malformado.
+        """
+        raw = self.request.query_params.get("updated_after")
+        if not raw or not model_has_field(queryset.model, "updated_at"):
+            return queryset
+        moment = parse_datetime(raw)
+        if moment is None:
+            return queryset
+        if timezone.is_naive(moment):
+            moment = timezone.make_aware(moment, timezone.get_default_timezone())
+        return queryset.filter(updated_at__gt=moment)
+
+    def filter_queryset(self, queryset):
+        """Aplica o recorte incremental depois dos filtros normais.
+
+        Fica aqui, e nao so em `get_queryset`, porque alguns viewsets montam o
+        proprio queryset sem chamar `super()` — e o delta sync precisa valer
+        para todos, senao o Caixa Principal rebaixaria justamente o cardapio
+        (o maior deles) por inteiro a cada reconexao.
+        """
+        return self._apply_delta_filter(super().filter_queryset(queryset))
 
     def get_object(self):
         obj = super().get_object()
@@ -88,7 +184,10 @@ class TenantQuerySetMixin:
             if queryset.model._meta.label == "restaurants.Restaurant":
                 filters["id"] = restaurant_id
             elif model_has_field(queryset.model, self.tenant_restaurant_field):
-                filters[f"{self.tenant_restaurant_field}_id"] = restaurant_id
+                # Inclui os compartilhados: o formulario de produto filtra por
+                # restaurante ao carregar o dropdown de perfil fiscal, e um
+                # perfil da conta inteira precisa continuar aparecendo la.
+                queryset = queryset.filter(self._restaurant_scope_q(queryset.model, restaurant_id))
 
         if branch_id:
             if queryset.model._meta.label == "restaurants.Branch":
@@ -150,11 +249,25 @@ class AuditCreateUpdateMixin:
             # fica nulo — pertence a conta (a todos os restaurantes).
 
         if "branch" in model_fields and not serializer.validated_data.get("branch"):
-            # A filial pertence a um restaurante: so herda quando ha restaurante.
-            has_restaurant = bool(serializer.validated_data.get("restaurant") or extra.get("restaurant"))
+            # A filial pertence a um restaurante: nunca herda a filial do perfil
+            # quando um admin escolheu outro restaurante no formulário.
+            selected_restaurant = serializer.validated_data.get("restaurant") or extra.get("restaurant")
+            has_restaurant = bool(selected_restaurant)
             inherited_branch = getattr(profile, "branch", None)
-            if has_restaurant and inherited_branch is not None:
-                extra["branch"] = inherited_branch
+            if has_restaurant:
+                if inherited_branch is not None and inherited_branch.restaurant_id == selected_restaurant.id:
+                    extra["branch"] = inherited_branch
+                else:
+                    branch_model = model._meta.get_field("branch").remote_field.model
+                    extra["branch"] = (
+                        branch_model.all_objects.filter(
+                            account=account,
+                            restaurant=selected_restaurant,
+                            deleted_at__isnull=True,
+                        )
+                        .order_by("created_at")
+                        .first()
+                    )
 
         instance = serializer.save(**{k: v for k, v in extra.items() if v is not None})
         record_audit(action=AuditLog.ACTION_CREATED, instance=instance, actor=user, request=self.request)

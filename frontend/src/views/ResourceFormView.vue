@@ -15,7 +15,8 @@
         <template v-if="isView">
           <Button label="Voltar" severity="secondary" outlined icon="pi pi-arrow-left" @click="goToList" />
           <Button v-if="isOrder" label="Imprimir recibo" severity="secondary" outlined icon="pi pi-print" :loading="printing" @click="printOrder" />
-          <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir NFC-e / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
+          <Button v-if="isOrder && record?.payment_status === 'paid'" label="Emitir nota fiscal / DANFE" severity="secondary" outlined icon="pi pi-receipt" :loading="emittingInvoice" @click="emitOrderInvoice" />
+          <Button v-if="canResendInvoice" label="Reenviar nota" severity="secondary" outlined icon="pi pi-send" :loading="resendingInvoice" @click="resendInvoice" />
           <Button v-if="isOrder && ['open', 'awaiting_payment'].includes(record?.status)" label="Editar pedido" icon="pi pi-pencil" @click="editOrder" />
           <Button v-if="formFields" label="Editar" icon="pi pi-pencil" @click="startEdit" />
         </template>
@@ -125,6 +126,12 @@
         </p>
       </div>
 
+      <CosmosFiscalAssist
+        v-if="isFiscalProfile && isCreate"
+        :name="formData.name"
+        @suggestion="applyCosmosSuggestion"
+      />
+
       <div v-for="group in formSections" :key="group.title || '_default'" class="rpage__section">
         <h3 v-if="group.title" class="rpage__section-title">{{ group.title }}</h3>
         <div class="rpage__grid">
@@ -185,7 +192,6 @@
                 text
                 rounded
                 aria-label="Criar novo"
-                :disabled="quickCreateLoading"
                 @click="openQuickCreate(field)"
               />
             </div>
@@ -343,15 +349,17 @@
         <p v-else class="rpage__hint">Salve a receita para poder adicionar ingredientes.</p>
       </div>
 
-      <!-- Configuração fiscal (CNPJ, CSC, integrador) do restaurante -->
-      <div v-else-if="isRestaurant" class="rpage__extra">
-        <RestaurantFiscalSection
-          v-if="recordId"
-          ref="fiscalSectionRef"
-          :key="`fiscal-${recordId}`"
-          :restaurant-id="recordId"
-          :readonly="isView"
-        />
+      <!-- Configuração fiscal: tela própria (emitente, CSC, certificado, Focus
+           NFe). Ficava embutida aqui e disputava o mesmo salvamento; agora este
+           bloco só aponta pra lá. -->
+      <div v-else-if="isRestaurant && hasFinanceiro" class="rpage__extra">
+        <div v-if="recordId" class="rpage__link-card">
+          <div>
+            <h3>Configuração fiscal e Focus NFe</h3>
+            <p>Emitente da nota, CSC da NFC-e, certificado A1 e a empresa na Focus — em uma tela separada.</p>
+          </div>
+          <Button label="Abrir configuração fiscal" icon="pi pi-receipt" severity="secondary" outlined @click="goToFiscalConfig" />
+        </div>
         <p v-else class="rpage__hint">Salve o restaurante para poder configurar os dados fiscais.</p>
       </div>
 
@@ -366,13 +374,7 @@
     </form>
 
     <!-- Criação rápida de perfil fiscal a partir de qualquer remote-dropdown marcado com quickCreate: "fiscal-profile" (ex.: produto) -->
-    <FiscalProfileDialog
-      v-if="quickCreateBranchId"
-      v-model:visible="fiscalProfileDialogOpen"
-      :restaurant-id="quickCreateRestaurantId"
-      :branch-id="quickCreateBranchId"
-      @saved="onQuickCreateSaved"
-    />
+    <FiscalProfileDialog v-model:visible="fiscalProfileDialogOpen" @saved="onQuickCreateSaved" />
   </div>
 </template>
 
@@ -383,7 +385,7 @@
  * modo "ver" vem de `config/detailMeta`. Aqui ficam so o template, a navegacao
  * e a montagem dos dados de exibicao.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
 import Dropdown from "primevue/dropdown";
@@ -400,13 +402,12 @@ import Column from "primevue/column";
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
 import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
-import RestaurantFiscalSection from "../components/restaurant/RestaurantFiscalSection.vue";
 import FiscalProfileDialog from "../components/restaurant/FiscalProfileDialog.vue";
+import CosmosFiscalAssist from "../components/fiscal/CosmosFiscalAssist.vue";
 import PermissionAccordion from "../components/form/PermissionAccordion.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
-import { resolveBranchIdForRestaurant } from "../utils/fiscalBranch";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 import { useToast } from "primevue/usetoast";
@@ -537,17 +538,9 @@ function cancelForm() {
   if (isEdit.value && recordId.value) goToView(recordId.value);
   else goToList();
 }
-const fiscalSectionRef = ref(null);
-
 async function submit() {
   const saved = await save();
   if (!saved) return; // erros de validacao ja estao em fieldErrors/saveError
-  // Botão único: ao salvar o restaurante, salva junto a configuração fiscal
-  // embutida na mesma página (dois modelos/endpoints, uma ação só pro usuário).
-  if (isRestaurant.value && fiscalSectionRef.value) {
-    const fiscalOk = await fiscalSectionRef.value.save();
-    if (!fiscalOk) return; // erro já aparece na própria seção fiscal
-  }
   if (props.mode === "view") {
     // edição inline concluída: volta ao modo leitura e recarrega o registro.
     localEdit.value = false;
@@ -561,46 +554,48 @@ async function submit() {
 
 /* ── Modo "ver": monta hero, metricas e campos a partir de config/detailMeta ── */
 const detailMeta = detailMetaFor(props.endpoint); // estatico por rota (a View remonta por :key)
+const isFiscalProfile = computed(() => props.endpoint === "/fiscal/profiles/");
+const cosmosAppliedFields = reactive({});
+
+function applyCosmosSuggestion(suggestion) {
+  for (const [field, value] of Object.entries(suggestion.fields || {})) {
+    if (!(field in formData) || value == null || value === "") continue;
+    const current = formData[field];
+    if (current == null || current === "" || current === cosmosAppliedFields[field]) {
+      formData[field] = value;
+      cosmosAppliedFields[field] = value;
+    }
+  }
+}
 const isProduct = computed(() => resolveDetailType(props.endpoint) === "product");
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
+const hasFinanceiro = computed(() => auth.hasModule("financeiro"));
+function goToFiscalConfig() {
+  router.push({ name: "restaurante-fiscal", params: { id: recordId.value } });
+}
 const isOrder = computed(() => resolveDetailType(props.endpoint) === "order");
+const isInvoice = computed(() => resolveDetailType(props.endpoint) === "invoice");
+const canResendInvoice = computed(() => isInvoice.value && (
+  record.value?.status === "error"
+  || (record.value?.status === "pending" && record.value?.emission_type === "9")
+));
 const printing = ref(false);
 const emittingInvoice = ref(false);
+const resendingInvoice = ref(false);
 const toast = useToast();
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
-   formulário de produto) — o mesmo diálogo usado na seção fiscal do
-   restaurante, disparado por um "+" ao lado do campo (`field.quickCreate`). */
-const quickCreateLoading = ref(false);
+   formulário de produto), disparada por um "+" ao lado do campo
+   (`field.quickCreate`). O perfil fiscal é um cadastro da conta, então não
+   depende de restaurante/filial — abre direto. */
 const quickCreateField = ref(null);
-const quickCreateRestaurantId = ref(null);
-const quickCreateBranchId = ref(null);
 const fiscalProfileDialogOpen = ref(false);
 
-async function openQuickCreate(field) {
+function openQuickCreate(field) {
   if (field.quickCreate !== "fiscal-profile") return;
-  const restaurantId = formData.restaurants?.[0] || formData.restaurant || null;
-  if (!restaurantId) {
-    toast.add({ severity: "warn", summary: "Selecione um restaurante primeiro", life: 3500 });
-    return;
-  }
-  quickCreateLoading.value = true;
-  try {
-    const branchId = await resolveBranchIdForRestaurant(restaurantId);
-    if (!branchId) {
-      toast.add({ severity: "warn", summary: "Não foi possível carregar a configuração fiscal deste restaurante. Tente novamente.", life: 4000 });
-      return;
-    }
-    quickCreateField.value = field;
-    quickCreateRestaurantId.value = restaurantId;
-    quickCreateBranchId.value = branchId;
-    fiscalProfileDialogOpen.value = true;
-  } catch (err) {
-    toast.add({ severity: "error", summary: "Não foi possível preparar a criação", detail: normalizeApiError(err).message, life: 4000 });
-  } finally {
-    quickCreateLoading.value = false;
-  }
+  quickCreateField.value = field;
+  fiscalProfileDialogOpen.value = true;
 }
 
 function onQuickCreateSaved(saved) {
@@ -634,7 +629,80 @@ async function printOrder() {
   }
 }
 
-/** Emite a NFC-e do pedido visualizado e abre o DANFE para impressao. */
+/**
+ * Espera a SEFAZ autorizar, consultando a nota em segundo plano.
+ *
+ * A Focus ACEITA a nota e a autorizacao chega um instante depois: emitir e
+ * imprimir no mesmo gesto pegava quase sempre uma nota `processing`. A espera
+ * e curta (cerca de 15s) porque o operador esta na frente da tela; passando
+ * disso, a nota segue na esteira normal (webhook e consulta periodica) e o
+ * DANFE fica disponivel na proxima abertura do pedido.
+ *
+ * Devolve a nota autorizada, ou `null` quando nao ha o que imprimir.
+ */
+async function waitForAuthorization(invoice) {
+  const inFlight = ["processing", "awaiting_transmission"];
+  if (!inFlight.includes(invoice.fiscal_state)) {
+    toast.add({
+      severity: invoice.fiscal_state === "rejected" || invoice.fiscal_state === "configuration_error" ? "error" : "warn",
+      summary: "Ainda não há DANFE para imprimir",
+      detail: fiscalStateDetail(invoice),
+      life: 6000,
+    });
+    return null;
+  }
+  for (const wait of [1200, 2000, 3000, 4000, 5000]) {
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    let current;
+    try {
+      ({ data: current } = await api.post(`/invoices/${invoice.id}/refresh-status/`, {}));
+    } catch {
+      return null; // A esteira periodica assume daqui.
+    }
+    if (current.printable === true) return current;
+    if (current.fiscal_state === "rejected" || current.fiscal_state === "configuration_error") {
+      toast.add({ severity: "error", summary: "NFC-e não autorizada", detail: fiscalStateDetail(current), life: 6000 });
+      return null;
+    }
+  }
+  toast.add({
+    severity: "warn",
+    summary: "Aguardando autorização da SEFAZ",
+    detail: "A nota foi transmitida. O DANFE fica disponível assim que a autorização chegar.",
+    life: 6000,
+  });
+  return null;
+}
+
+function fiscalStateDetail(invoice) {
+  switch (invoice.fiscal_state) {
+    case "rejected":
+      return `${invoice.error_message || "Verifique o cadastro fiscal do pedido"}. Não haverá reenvio automático.`;
+    case "configuration_error":
+      return `Configuração fiscal inválida (${invoice.error_message || "certificado, token ou CSC"}).`;
+    case "reconciliation_required":
+      return "A nota pode ter sido emitida e a resposta se perdeu. Ela será consultada antes de qualquer reenvio.";
+    default:
+      return "A nota ainda não foi transmitida e será enviada assim que a conexão com o provedor voltar.";
+  }
+}
+
+/** Abre a janela de impressao do DANFE de uma nota ja autorizada. */
+async function openDanfe(invoiceId) {
+  const { data: printJob } = await api.post(`/invoices/${invoiceId}/print/`, {});
+  const win = window.open("", "_blank", "width=420,height=720");
+  if (!win) {
+    toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir o DANFE.", life: 4000 });
+    return;
+  }
+  win.document.write(printJob.html || "<p>DANFE indisponível.</p>");
+  win.document.close();
+  win.focus();
+  win.print();
+  toast.add({ severity: "success", summary: "Nota fiscal autorizada", detail: "DANFE preparado para impressão.", life: 4000 });
+}
+
+/** Emite a NF-e/NFC-e configurada e abre o DANFE para impressao. */
 async function emitOrderInvoice() {
   if (!recordId.value || emittingInvoice.value) return;
   emittingInvoice.value = true;
@@ -644,21 +712,46 @@ async function emitOrderInvoice() {
       ...(record.value?.customer_document ? { cpf: record.value.customer_document } : {}),
       ...(record.value?.customer_name ? { cpf_name: record.value.customer_name } : {}),
     });
-    const { data: printJob } = await api.post(`/invoices/${invoice.id}/print/`, {});
-    const win = window.open("", "_blank", "width=420,height=720");
-    if (!win) {
-      toast.add({ severity: "warn", summary: "Pop-up bloqueado", detail: "Libere pop-ups para imprimir o DANFE.", life: 4000 });
+    if (invoice.emitted === false) {
+      toast.add({
+        severity: "warn",
+        summary: "Nota fiscal não emitida",
+        detail: invoice.message || "O provedor fiscal selecionado não está configurado.",
+        life: 5000,
+      });
       return;
     }
-    win.document.write(printJob.html || "<p>DANFE indisponível.</p>");
-    win.document.close();
-    win.focus();
-    win.print();
-    toast.add({ severity: "success", summary: "NFC-e emitida", detail: "DANFE preparado para impressão.", life: 4000 });
+    // So um documento AUTORIZADO tem chave que a SEFAZ reconhece. Imprimir
+    // logo depois do 201 mandava para o papel uma nota que ainda estava
+    // processando — ou recusada — como se fosse cupom fiscal valido.
+    const authorized = invoice.printable === true ? invoice : await waitForAuthorization(invoice);
+    if (!authorized) return;
+    await openDanfe(authorized.id);
   } catch (err) {
-    toast.add({ severity: "error", summary: "Não foi possível emitir a NFC-e", detail: normalizeApiError(err).message, life: 5000 });
+    toast.add({ severity: "error", summary: "Não foi possível emitir a nota fiscal", detail: normalizeApiError(err).message, life: 5000 });
   } finally {
     emittingInvoice.value = false;
+  }
+}
+
+/** Retransmite apenas esta nota quando ela esta em contingencia ou erro. */
+async function resendInvoice() {
+  if (!recordId.value || resendingInvoice.value) return;
+  resendingInvoice.value = true;
+  try {
+    const { data } = await api.post(`/invoices/${recordId.value}/resend/`, {});
+    await reload();
+    toast.add({
+      severity: data.status === "issued" ? "success" : "info",
+      summary: data.status === "issued" ? "Nota autorizada" : "Nota reenviada",
+      detail: data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus.",
+      life: 4500,
+    });
+  } catch (err) {
+    await reload();
+    toast.add({ severity: "error", summary: "Não foi possível reenviar a nota", detail: normalizeApiError(err).message, life: 7000 });
+  } finally {
+    resendingInvoice.value = false;
   }
 }
 
@@ -728,6 +821,9 @@ const dateTime = (value) => formatDateTime(value, { withYear: true });
  */
 function fieldPlaceholder(field, fallback) {
   if (isView.value) return "—";
+  if (field.type === "password" && field.configuredField && formData[field.configuredField]) {
+    return "••••••••";
+  }
   return field.placeholder || fallback;
 }
 
@@ -1030,6 +1126,20 @@ watch(() => [recordId.value, props.mode], async () => {
   color: var(--text-muted);
   font: var(--weight-medium) 13px/1.4 var(--font-sans);
 }
+/* Ponte para um cadastro vizinho que tem tela própria (ex.: config fiscal). */
+.rpage__link-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.rpage__link-card h3 { margin: 0 0 4px; color: var(--text-strong); font: var(--weight-extra) 14.5px/1.2 var(--font-sans); }
+.rpage__link-card p { margin: 0; max-width: 62ch; color: var(--text-muted); font: var(--weight-medium) 12.5px/1.45 var(--font-sans); }
 
 .detail-section {
   border: 1px solid var(--border);

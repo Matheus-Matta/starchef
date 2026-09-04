@@ -1,57 +1,43 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import 'package:flutter/foundation.dart';
+
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/realtime_client.dart';
+import '../../../core/data/print_queue_service.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../domain/printer_endpoint.dart';
+import '../printing/print_document.dart';
+import '../printing/printer.dart';
+import '../printing/printer_device.dart';
+import '../printing/printer_transport.dart';
 import 'print_template_cache.dart';
 
-class PrinterCommunicationException implements Exception {
-  const PrinterCommunicationException({
-    required this.message,
-    required this.recommendedAction,
-  });
-
-  final String message;
-  final String recommendedAction;
-
-  @override
-  String toString() => message;
-}
-
-enum PrinterAvailabilityPhase {
-  checking,
-  available,
-  unavailable,
-  notConfigured,
-}
-
-class PrinterAvailability {
-  const PrinterAvailability(this.phase, this.message);
-
-  final PrinterAvailabilityPhase phase;
-  final String message;
-
-  bool get isAvailable => phase == PrinterAvailabilityPhase.available;
-}
+export '../printing/print_document.dart';
+export '../printing/printer.dart';
+export '../printing/printer_device.dart';
+export '../printing/printer_transport.dart'
+    show PrinterCommunicationException, PrintTiming;
 
 /// Agente local de impressão do processo principal.
 ///
-/// Ele processa a fila de trabalhos de impressão do restaurante e mantém os
-/// modelos em cache. A leitura da balança **não** passa mais por aqui: quem lê
-/// o equipamento é a própria janela que vai usá-lo, abrindo a porta serial
-/// diretamente ([SerialScaleReader]). Isso eliminou o lease remoto
-/// (`claim-agent`), a consulta periódica de peso pela API e a disputa entre
-/// este agente e a janela pela mesma COM.
+/// Ele cuida do **fluxo** de impressão: trazer trabalhos do servidor, guardá-los
+/// na fila local, girar essa fila e confirmar o que já saiu no papel. Falar com
+/// o equipamento não é mais tarefa dele — quem faz isso é [Printer] e suas
+/// subclasses (`../printing/`), usadas por igual aqui, no cadastro de
+/// impressoras, na Balança Rápida e no relay. Antes esta classe acumulava as
+/// duas coisas, e mexer no corte do papel exigia entender o WebSocket.
 ///
-/// A fila de impressão não é mais varrida por polling: o backend já publica
+/// A leitura da balança **não** passa por aqui: quem lê o equipamento é a
+/// própria janela que vai usá-lo, abrindo a porta serial diretamente
+/// ([SerialScaleReader]). Isso eliminou o lease remoto (`claim-agent`) e a
+/// consulta periódica de peso pela API.
+///
+/// A fila de impressão não é varrida por polling: o backend já publica
 /// `model.updated`/`model.created` para qualquer `PrintJob` da conta em
-/// `/ws/realtime/` (todo `TenantModel` ganha isso de graça — ver
+/// `/ws/pdv/<restaurant_id>/` (todo `TenantModel` ganha isso de graça — ver
 /// `apps/realtime/signals.py`). O agente assina esse evento e só consulta
 /// `/print-jobs/` quando um deles chega, mais uma verificação pontual ao
 /// conectar/reconectar o WS, para cobrir o que foi perdido enquanto a conexão
@@ -63,270 +49,46 @@ class LocalDeviceAgent {
     this.preferences,
     Future<bool> Function(PrinterEndpoint target)? availabilityProbe,
     Future<void> Function(Duration duration)? delay,
-    this.cutDelay = const Duration(milliseconds: 650),
+    Future<void> Function(PrinterEndpoint target, List<int> bytes)?
+    networkWriter,
+    this.cutDelay = const Duration(milliseconds: 350),
+    this.postCutSettleDelay = const Duration(milliseconds: 400),
   }) : _availabilityProbe = availabilityProbe,
+       _networkWriter = networkWriter,
        _delay = delay ?? Future<void>.delayed;
-
-  static const List<int> escPosCutBytes = [0x1d, 0x56, 0x00];
-
-  static String? code128ValueFromPayload(Map<String, dynamic> payload) {
-    final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
-    if (payloadVersion != 2) return null;
-
-    final rawBarcode = payload['barcode'];
-    if (rawBarcode is! Map) return null;
-    final symbology = '${rawBarcode['symbology'] ?? ''}'.trim().toUpperCase();
-    final value = '${rawBarcode['value'] ?? ''}'.trim();
-    if (symbology != 'CODE128' || value.isEmpty) return null;
-    return value;
-  }
-
-  /// Produces an ESC/POS `GS k` Code128 command using code set B.
-  ///
-  /// Code set B is deliberately limited to printable ASCII. Values outside
-  /// that range stay available through the explicit text fallback instead of
-  /// sending a malformed barcode to the printer.
-  static List<int>? escPosCode128Bytes(String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty) return null;
-
-    final data = <int>[0x7b, 0x42]; // `{B`: select Code128 set B.
-    for (final rune in normalized.runes) {
-      if (rune < 0x20 || rune > 0x7e) return null;
-      if (rune == 0x7b) {
-        data.add(0x7b); // A literal `{` is escaped as `{{` in ESC/POS.
-      }
-      data.add(rune);
-    }
-    if (data.length > 255) return null;
-
-    return <int>[
-      0x0a,
-      0x0a,
-      0x1b,
-      0x61,
-      0x01, // ESC a: center.
-      0x1d,
-      0x48,
-      0x02, // GS H: human-readable value below the bars.
-      0x1d,
-      0x68,
-      0x50, // GS h: 80-dot height.
-      0x1d,
-      0x77,
-      0x02, // GS w: module width 2.
-      0x1d,
-      0x6b,
-      0x49,
-      data.length,
-      ...data,
-      0x0a,
-      0x1b,
-      0x61,
-      0x00, // Restore left alignment for following output.
-    ];
-  }
-
-  /// Extracts the NFC-e QR Code payload (fiscal DANFE print jobs only).
-  ///
-  /// Mirrors [code128ValueFromPayload]'s payload_version gate — same contract,
-  /// different key (`qr_data` instead of a nested `barcode` map), because a
-  /// DANFE fiscal job carries a QR Code, not a Code128 barcode.
-  static String? qrValueFromPayload(Map<String, dynamic> payload) {
-    final payloadVersion = int.tryParse('${payload['payload_version'] ?? ''}');
-    if (payloadVersion != 2) return null;
-    final value = '${payload['qr_data'] ?? ''}'.trim();
-    return value.isEmpty ? null : value;
-  }
-
-  /// Produces an ESC/POS `GS ( k` 2D symbol (QR Code) command sequence.
-  ///
-  /// Standard Epson ESC/POS "Function 165" sequence, supported by the large
-  /// majority of ESC/POS-compatible thermal printers (Epson TM series and
-  /// most clones — Bematech, Elgin, Daruma etc. implement the same command
-  /// set). Model 2, module size 6 dots, error correction level M (recovers
-  /// up to ~15% damage) — a reasonable default for a NFC-e DANFE, where the
-  /// QR needs to stay scannable on thermal paper that can fade/crease.
-  static List<int>? escPosQrCodeBytes(String data) {
-    final bytes = utf8.encode(data.trim());
-    if (bytes.isEmpty || bytes.length > 700) return null;
-
-    final storeLength = 3 + bytes.length; // cn + fn + m + data
-    final pL = storeLength & 0xff;
-    final pH = (storeLength >> 8) & 0xff;
-
-    return <int>[
-      0x0a,
-      0x1b, 0x61, 0x01, // ESC a: center.
-      // Select the model: cn=49('1') fn=65('A') n1=model2(50) n2=0.
-      0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
-      // Set module size: cn=49 fn=67('C') n=6.
-      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,
-      // Set error correction level: cn=49 fn=69('E') n=49 (level M).
-      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,
-      // Store the data: cn=49 fn=80('P') m=48('0') + payload.
-      0x1d, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30,
-      ...bytes,
-      // Print the symbol: cn=49 fn=81('Q') m=48('0').
-      0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,
-      0x0a,
-      0x1b, 0x61, 0x00, // Restore left alignment.
-    ];
-  }
-
-  static String textWithBarcodeFallback(String content, String? value) {
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) return content;
-    final alreadyExplicit =
-        content.toUpperCase().contains('CODE128') &&
-        content.contains(normalized);
-    if (alreadyExplicit) return content;
-
-    final separator = content.endsWith('\n') ? '\n' : '\n\n';
-    return '$content${separator}COMANDA - CODE128 (TEXTO)\n$normalized';
-  }
-
-  /// Builds the exact byte stream sent through raw network or serial links.
-  ///
-  /// [qrValue] is exclusive to fiscal DANFE jobs (NFC-e QR Code) — a job never
-  /// carries both a barcode and a QR value, but both parameters are accepted
-  /// independently to keep this a plain byte-stream builder, not a job-type
-  /// switch.
-  static List<int> rawTransportBytes(
-    String content, {
-    required bool isEscPos,
-    String? barcodeValue,
-    String? qrValue,
-  }) {
-    final barcodeBytes = isEscPos && barcodeValue != null
-        ? escPosCode128Bytes(barcodeValue)
-        : null;
-    final qrBytes = isEscPos && qrValue != null
-        ? escPosQrCodeBytes(qrValue)
-        : null;
-    final printableContent = barcodeBytes == null
-        ? textWithBarcodeFallback(content, barcodeValue)
-        : content;
-    final contentBytes = isEscPos
-        ? _readableReceiptBytes(printableContent)
-        : utf8.encode(printableContent);
-    return <int>[
-      ...contentBytes,
-      ...?barcodeBytes,
-      ...?qrBytes,
-      if (isEscPos) ...const [10, 10, 10, ...escPosCutBytes],
-    ];
-  }
-
-  /// Separa o comando de corte para que o transporte possa drenar o conteúdo
-  /// antes de enviá-lo. O retorno mantém os avanços de papel junto ao corpo.
-  static ({List<int> content, List<int> cut}) splitCutCommand(
-    List<int> bytes, {
-    required bool isEscPos,
-  }) {
-    if (!isEscPos || bytes.length < escPosCutBytes.length) {
-      return (content: List<int>.from(bytes), cut: const <int>[]);
-    }
-    final cutStart = bytes.length - escPosCutBytes.length;
-    final hasCut =
-        List<int>.generate(
-          escPosCutBytes.length,
-          (index) => bytes[cutStart + index],
-        ).join(',') ==
-        escPosCutBytes.join(',');
-    if (!hasCut) {
-      return (content: List<int>.from(bytes), cut: const <int>[]);
-    }
-    return (content: bytes.sublist(0, cutStart), cut: bytes.sublist(cutStart));
-  }
-
-  /// Applies conservative ESC/POS typography that remains readable on both
-  /// 58 mm and 80 mm rolls: larger line spacing, emphasized first line and
-  /// double-height totals. Width is kept normal so item values are not cut.
-  static List<int> _readableReceiptBytes(String content) {
-    final result = <int>[
-      0x1b, 0x40, // Initialize.
-      0x1b, 0x74, 0x02, // ESC t 2: pagina PC850 (padrao brasileiro).
-      0x1b, 0x33, 34, // Comfortable line spacing.
-      0x1d, 0x4c, 8, 0, // Small left margin.
-    ];
-    var firstTextLine = true;
-    for (final line in content.split('\n')) {
-      final normalized = line.trim().toUpperCase();
-      final prominent = firstTextLine || normalized.startsWith('TOTAL');
-      result.addAll([0x1b, 0x21, prominent ? 0x10 : 0x00]);
-      result.addAll(_encodeCp850(line));
-      result.add(0x0a);
-      if (normalized.isNotEmpty) firstTextLine = false;
-    }
-    result.addAll([0x1b, 0x21, 0x00]);
-    return result;
-  }
-
-  /// Codifica o texto na pagina PC850 usada pelas termicas vendidas no Brasil.
-  /// Caracteres fora da pagina viram equivalentes seguros, evitando que os
-  /// bytes UTF-8 aparecam impressos como "Ã", "Â" ou trechos de estilo.
-  static List<int> _encodeCp850(String value) {
-    const extended = <int, int>{
-      0x00c7: 0x80,
-      0x00fc: 0x81,
-      0x00e9: 0x82,
-      0x00e2: 0x83,
-      0x00e4: 0x84,
-      0x00e0: 0x85,
-      0x00e7: 0x87,
-      0x00ea: 0x88,
-      0x00eb: 0x89,
-      0x00e8: 0x8a,
-      0x00ef: 0x8b,
-      0x00ee: 0x8c,
-      0x00ec: 0x8d,
-      0x00c4: 0x8e,
-      0x00c9: 0x90,
-      0x00f4: 0x93,
-      0x00f6: 0x94,
-      0x00f2: 0x95,
-      0x00fb: 0x96,
-      0x00f9: 0x97,
-      0x00d6: 0x99,
-      0x00dc: 0x9a,
-      0x00e1: 0xa0,
-      0x00ed: 0xa1,
-      0x00f3: 0xa2,
-      0x00fa: 0xa3,
-      0x00e3: 0xc6,
-      0x00c3: 0xc7,
-      0x00f5: 0xe4,
-      0x00d5: 0xe5,
-    };
-    const replacements = <int, int>{
-      0x2013: 0x2d,
-      0x2014: 0x2d,
-      0x2018: 0x27,
-      0x2019: 0x27,
-      0x201c: 0x22,
-      0x201d: 0x22,
-      0x00b7: 0x2d,
-      0x00d7: 0x78,
-    };
-    return value.runes.map((rune) {
-      if (rune <= 0x7f) return rune;
-      return extended[rune] ?? replacements[rune] ?? 0x3f;
-    }).toList();
-  }
 
   final ApiClient api;
   final LocalPreferences? preferences;
   final Future<bool> Function(PrinterEndpoint target)? _availabilityProbe;
+  final Future<void> Function(PrinterEndpoint target, List<int> bytes)?
+  _networkWriter;
   final Future<void> Function(Duration duration) _delay;
+
+  /// Ver [PrintTiming.cutDelay].
   final Duration cutDelay;
+
+  /// Ver [PrintTiming.postCutSettleDelay].
+  final Duration postCutSettleDelay;
+
   final ValueNotifier<PrinterAvailability> printerAvailability =
-      ValueNotifier<PrinterAvailability>(
-        const PrinterAvailability(
-          PrinterAvailabilityPhase.checking,
-          'Verificando impressora...',
-        ),
-      );
+      ValueNotifier<PrinterAvailability>(PrinterAvailability.checking);
+
+  /// Dependências que toda impressora deste terminal recebe.
+  ///
+  /// Quem for imprimir em qualquer tela constrói a impressora com isto —
+  /// `KitchenPrinter(device, runtime: agent.printing)` — e ganha as mesmas
+  /// pausas físicas e a mesma publicação de status da tela de vendas.
+  late final PrinterRuntime printing = PrinterRuntime(
+    timing: PrintTiming(
+      cutDelay: cutDelay,
+      postCutSettleDelay: postCutSettleDelay,
+      delay: _delay,
+    ),
+    networkWriter: _networkWriter,
+    availabilityProbe: _availabilityProbe,
+    onStatus: (status) => printerAvailability.value = status,
+  );
+
   RealtimeClient? _realtime;
   StreamSubscription<RealtimeEvent>? _eventSubscription;
   StreamSubscription<void>? _connectedSubscription;
@@ -339,55 +101,147 @@ class LocalDeviceAgent {
   Future<void>? _deviceSyncInFlight;
   List<Map<String, dynamic>> _printers = const [];
   Timer? _availabilityTimer;
+  Timer? _scheduledPrintTimer;
 
-  void start({required String token, required String restaurantId}) {
+  Timer? _printJobsPollTimer;
+
+  /// Ritmo próprio da fila local: ela precisa girar mesmo sem rede, senão um
+  /// cupom que falhou por falta de papel só sairia no próximo evento do
+  /// WebSocket — que, offline, nunca chega.
+  Timer? _printQueueTimer;
+
+  /// Momento em que este terminal assumiu o papel de Caixa Principal, quando
+  /// ele não era antes. `null` num terminal que já era o principal.
+  ///
+  /// A fila de impressão do restaurante é do principal, e o agente a serve
+  /// consultando `/print-jobs/` pendentes — **todos** os pendentes da
+  /// unidade, sem nada dizendo quem os montou. Isso está certo para um
+  /// principal que reiniciou: o que ficou pendente enquanto ele estava fora é
+  /// dele mesmo. Está errado no instante em que um terminal troca de papel:
+  /// um Caixa Secundário imprime as próprias notas na hora, na impressora
+  /// dele, e os `PrintJob` correspondentes ficam pendentes no servidor porque
+  /// quem os fecharia é o principal daquele momento. Ao virar principal, esse
+  /// terminal encontrava esse acúmulo inteiro e mandava tudo para a
+  /// impressora de uma vez — todas as notas do expediente saindo de novo.
+  ///
+  /// Enquanto isto estiver marcado, o que já era pendente **antes** da
+  /// virada entra na fila parado (visível na tela da fila, com "tentar
+  /// agora"), e só o que o servidor criar daí em diante imprime sozinho.
+  DateTime? _backlogHeldBefore;
+
+  /// Só um giro da fila por vez.
+  ///
+  /// O timer da fila, o evento do WebSocket e um cupom montado agora na tela
+  /// disparavam três drenagens simultâneas, e as três mandavam papel para a
+  /// mesma impressora ao mesmo tempo. A reserva do equipamento em
+  /// [Printer.send] impede o atropelo físico; esta trava evita a disputa
+  /// antes dela, no processo que já sabe que está imprimindo.
+  Future<void>? _drainInFlight;
+
+  /// O agente está em operação neste terminal?
+  ///
+  /// Quem imprime **automaticamente** é ele: a comanda de cozinha do backend
+  /// chega como `PrintJob` e é ele quem consulta e imprime. Recibo e nota de
+  /// teste saem por outro caminho (direto na impressora escolhida), então um
+  /// agente parado se manifesta exatamente assim: "só a comanda de pedido
+  /// novo não sai, e não aparece erro nenhum".
+  bool get isRunning => _token != null && _restaurantId != null;
+
+  /// Assume a fila de impressão do restaurante.
+  ///
+  /// [takingOver] diz que este terminal **não** era o Caixa Principal até
+  /// agora. Ele muda uma coisa só, e é a que evita o pior estrago desta
+  /// classe: os `PrintJob` que já estavam pendentes no servidor quando ele
+  /// assumiu não são impressos sozinhos — ver [_backlogHeldBefore].
+  void start({
+    required String token,
+    required String restaurantId,
+    bool takingOver = false,
+  }) {
     if (_realtime != null && _token == token && _restaurantId == restaurantId) {
       return;
     }
+    AppLogger.instance.info(
+      'print_agent_start',
+      data: {
+        'restaurante': restaurantId,
+        'reinicio': _realtime != null,
+        'assumindo_papel': takingOver,
+      },
+    );
+    if (takingOver) _backlogHeldBefore = DateTime.now().toUtc();
     _token = token;
     _restaurantId = restaurantId;
     _lastTemplateSync = null;
     _lastDeviceSync = null;
     _backoffUntil = null;
     _availabilityTimer?.cancel();
-    printerAvailability.value = const PrinterAvailability(
-      PrinterAvailabilityPhase.checking,
-      'Verificando impressora...',
-    );
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
+    _printJobsPollTimer?.cancel();
+    printerAvailability.value = PrinterAvailability.checking;
     unawaited(refreshPrinterAvailability());
     _availabilityTimer = Timer.periodic(
       const Duration(seconds: 15),
       (_) => unawaited(refreshPrinterAvailability(useCachedDevices: true)),
     );
+    // Rede de segurança independente do WS: o evento em tempo real que
+    // liberaria a rodada da cozinha pode se perder numa reconexão, e sem
+    // isto a impressão automática ficava sem nenhum outro gatilho até o
+    // operador tocar em alguma tela que reconsultasse `/print-jobs/` por
+    // conta própria.
+    _printJobsPollTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => unawaited(_guarded(_processPrintJobs)),
+    );
+    // A fila local gira sozinha, com ou sem rede. É o que faz um cupom que
+    // falhou por falta de papel sair assim que o papel volta, sem depender de
+    // um evento do servidor que, offline, nunca chega.
+    _printQueueTimer?.cancel();
+    _printQueueTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(drainPrintQueue()),
+    );
     _stopRealtime();
     final realtime = RealtimeClient(
-      urlBuilder: () => api.realtimeSocketUrl(_token!),
+      urlBuilder: () => api.pdvSocketUrl(_restaurantId!),
+      headersBuilder: () => {
+        'Authorization': 'Bearer ${api.currentAccessToken ?? _token!}',
+      },
     );
     _realtime = realtime;
     // Ao (re)conectar, uma verificação pontual cobre o que pode ter mudado
     // enquanto a conexão estava caída — nunca um timer recorrente.
     _connectedSubscription = realtime.onConnected.listen((_) => _onConnected());
-    _eventSubscription = realtime.events
-        .where((event) => isPrintJobEvent(event, _restaurantId))
-        .listen((_) => _onPrintJobEvent());
+    _eventSubscription = realtime.events.listen(_onRealtimeEvent);
     realtime.start();
   }
 
   void stop() {
+    if (_token != null || _restaurantId != null) {
+      AppLogger.instance.info(
+        'print_agent_stop',
+        data: {'restaurante': _restaurantId},
+      );
+    }
     _stopRealtime();
     _availabilityTimer?.cancel();
     _availabilityTimer = null;
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
+    _printJobsPollTimer?.cancel();
+    _printJobsPollTimer = null;
+    _printQueueTimer?.cancel();
+    _printQueueTimer = null;
     _token = null;
     _restaurantId = null;
+    _backlogHeldBefore = null;
     _lastTemplateSync = null;
     _lastDeviceSync = null;
     _backoffUntil = null;
     _deviceSyncInFlight = null;
     _printers = const [];
-    printerAvailability.value = const PrinterAvailability(
-      PrinterAvailabilityPhase.notConfigured,
-      'Impressora desconectada',
-    );
+    printerAvailability.value = PrinterAvailability.notConfigured;
   }
 
   void dispose() {
@@ -411,19 +265,65 @@ class LocalDeviceAgent {
     return eventRestaurantId.isEmpty || eventRestaurantId == restaurantId;
   }
 
-  Future<void> _onConnected() => _guarded(() {
-    // Reconexões instáveis não devem virar rajadas contra o servidor de
-    // modelos: uma janela mínima entre sincronizações basta, já que nada
-    // muda um template com essa frequência.
-    final shouldSyncTemplates =
-        _lastTemplateSync == null ||
-        DateTime.now().difference(_lastTemplateSync!) >
-            const Duration(minutes: 1);
-    return Future.wait([
-      _processPrintJobs(),
-      if (shouldSyncTemplates) _syncTemplates(),
-    ]);
-  });
+  static bool isDeviceConfigurationEvent(
+    RealtimeEvent event,
+    String? restaurantId,
+  ) {
+    final resource = '${event.payload['resource'] ?? ''}';
+    if (resource != 'printers.printer' && resource != 'printers.scale') {
+      return false;
+    }
+    final eventRestaurantId = '${event.payload['restaurant_id'] ?? ''}';
+    return eventRestaurantId.isEmpty || eventRestaurantId == restaurantId;
+  }
+
+  void _onRealtimeEvent(RealtimeEvent event) {
+    final restaurantId = _restaurantId;
+    if (restaurantId == null) return;
+    api.applyRealtimeEvent(event, restaurantId: restaurantId);
+    if (event.payload['resource'] == 'printers.printjob') {
+      // Loga mesmo quando o restaurante não bate: um evento chegando com o
+      // restaurant_id errado (ou vazio, quando não deveria estar) explicaria
+      // a impressão nunca disparar sem nenhum erro visível na tela.
+      AppLogger.instance.info(
+        'realtime_printjob_event',
+        data: {
+          'event_restaurant': event.payload['restaurant_id'],
+          'agent_restaurant': restaurantId,
+          'matched': isPrintJobEvent(event, restaurantId),
+        },
+      );
+    }
+    if (isPrintJobEvent(event, restaurantId)) {
+      unawaited(_onPrintJobEvent());
+    }
+    if (isDeviceConfigurationEvent(event, restaurantId)) {
+      _lastDeviceSync = null;
+      unawaited(
+        _guarded(() async {
+          await _syncDevicesIfNeeded();
+          await refreshPrinterAvailability(useCachedDevices: true);
+        }),
+      );
+    }
+  }
+
+  Future<void> _onConnected() {
+    api.notifyRealtimeConnected();
+    return _guarded(() {
+      // Reconexões instáveis não devem virar rajadas contra o servidor de
+      // modelos: uma janela mínima entre sincronizações basta, já que nada
+      // muda um template com essa frequência.
+      final shouldSyncTemplates =
+          _lastTemplateSync == null ||
+          DateTime.now().difference(_lastTemplateSync!) >
+              const Duration(minutes: 1);
+      return Future.wait([
+        _processPrintJobs(),
+        if (shouldSyncTemplates) _syncTemplates(),
+      ]);
+    });
+  }
 
   Future<void> _onPrintJobEvent() => _guarded(_processPrintJobs);
 
@@ -472,349 +372,704 @@ class LocalDeviceAgent {
     return ((data['results'] ?? const []) as List).cast<Map<String, dynamic>>();
   }
 
+  /// Roda um ciclo de `_processPrintJobs` sem passar por `start()` (que abre
+  /// o WebSocket e os timers reais). Só para teste.
+  @visibleForTesting
+  Future<void> processPendingPrintJobsForTesting({
+    required String token,
+    required String restaurantId,
+    bool takingOver = false,
+  }) {
+    _token = token;
+    _restaurantId = restaurantId;
+    if (takingOver) _backlogHeldBefore = DateTime.now().toUtc();
+    return _processPrintJobs();
+  }
+
+  /// Ciclo completo da impressão: buscar o que o servidor tem, colocar na
+  /// fila **local** e imprimir dela.
+  ///
+  /// A separação é o ponto. Antes, buscar e imprimir eram a mesma coisa, e por
+  /// isso a impressão dependia da rede: com a internet fora não havia o que
+  /// buscar — e nada saía no papel, nem um cupom montado aqui mesmo. Agora a
+  /// busca é opcional e a impressão é local.
   Future<void> _processPrintJobs() async {
+    _scheduledPrintTimer?.cancel();
+    _scheduledPrintTimer = null;
     await _syncDevicesIfNeeded();
+    await _ingestRemotePrintJobs();
+    await drainPrintQueue();
+    await _confirmPrintedJobs();
+  }
+
+  /// Fila local deste terminal, quando o armazenamento operacional já está
+  /// vinculado a uma sessão.
+  ///
+  /// Pública porque a tela da fila lê e opera sobre ela: é o mesmo objeto que
+  /// o agente drena, e não uma segunda visão do mesmo banco.
+  PrintQueueService? get printQueue => api.localStore?.printQueue;
+
+  String? get printScope => api.localStore?.scope;
+
+  PrintQueueService? get _printQueue => printQueue;
+
+  String? get _printScope => printScope;
+
+  /// Este trabalho do servidor é herança do papel anterior deste terminal?
+  ///
+  /// Devolve o motivo a gravar na fila quando ele **não** deve sair sozinho,
+  /// e `null` quando é um trabalho normal. Ver [_backlogHeldBefore].
+  ///
+  /// Um trabalho sem data de criação legível conta como novo: reter um cupom
+  /// que a cozinha está esperando por causa de um campo ausente seria pior do
+  /// que o problema que isto resolve.
+  static const _inheritedBacklogReason =
+      'Este cupom já estava pendente no servidor quando este terminal virou '
+      'Caixa Principal. Ele não sai sozinho porque outro terminal pode já '
+      'tê-lo impresso — use "tentar agora" se ainda faltar o papel.';
+
+  String? _heldReasonFor(Map<String, dynamic> job) {
+    final limit = _backlogHeldBefore;
+    if (limit == null) return null;
+    final createdAt = DateTime.tryParse('${job['created_at'] ?? ''}')?.toUtc();
+    if (createdAt == null || !createdAt.isBefore(limit)) return null;
+    return _inheritedBacklogReason;
+  }
+
+  /// Traz os trabalhos do servidor para a fila local, sem imprimir.
+  ///
+  /// Uma falha aqui significa apenas "não há novidade do servidor": o que já
+  /// está na fila continua saindo normalmente.
+  /// Identidade do DOCUMENTO fiscal, para não sair duas vezes no papel.
+  ///
+  /// O cupom é da NOTA, não do trabalho de impressão que o trouxe. Dois
+  /// trabalhos para a mesma nota — um automático criado pelo servidor quando a
+  /// autorização chega, outro pedido pelo terminal — entregavam dois DANFEs
+  /// idênticos ao cliente. `null` para tudo que não é DANFE: recibo e comanda
+  /// de cozinha podem legitimamente sair mais de uma vez.
+  static String? fiscalDedupeKey(Map<String, dynamic> job) {
+    final rawType = '${job['job_type'] ?? ''}'.trim();
+    if (PrintJobType.parse(rawType) != PrintJobType.fiscalDanfe) return null;
+    final payload = job['payload'] is Map<String, dynamic>
+        ? job['payload'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    // A chave de acesso identifica a nota na SEFAZ; o id serve de reserva para
+    // um payload antigo que não a trazia.
+    final key = '${payload['access_key'] ?? ''}'.trim();
+    final id = '${payload['invoice_id'] ?? ''}'.trim();
+    if (key.isEmpty && id.isEmpty) return null;
+    return 'danfe:${key.isNotEmpty ? key : id}';
+  }
+
+  /// Registra que este DANFE já saiu no papel deste terminal.
+  Future<void> _rememberFiscalPrint(Map<String, dynamic> job) async {
+    final key = fiscalDedupeKey(job);
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (key == null || queue == null || scope == null) return;
+    await queue.markDocumentPrinted(scope: scope, dedupeKey: key);
+  }
+
+  Future<void> _ingestRemotePrintJobs() async {
+    final queue = _printQueue;
+    final scope = _printScope;
     final availablePrinters = <String, Map<String, dynamic>>{
       for (final printer in _printers)
-        if (PrinterEndpoint.fromJson(printer).isAddressable)
+        if (PrinterDevice.fromJson(printer).isAddressable)
           '${printer['id']}': printer,
     };
 
-    for (final status in ['pending', 'rendered']) {
-      final jobs = await _list(
-        '/print-jobs/',
-        query: {
-          'restaurant': _restaurantId,
+    DateTime? nextScheduledAt;
+    var ingested = 0;
+    for (final status in ['scheduled', 'pending', 'rendered']) {
+      final List<Map<String, dynamic>> jobs;
+      try {
+        jobs = await _list(
+          '/print-jobs/',
+          query: {
+            'restaurant': _restaurantId,
+            'status': status,
+            'page_size': 100,
+            'ordering': 'created_at',
+          },
+        );
+      } on ApiException catch (error) {
+        if (!error.isConnectivity) rethrow;
+        return;
+      }
+      AppLogger.instance.info(
+        'print_jobs_poll',
+        data: {
           'status': status,
-          'page_size': 100,
-          'ordering': 'created_at',
+          'found': jobs.length,
+          'restaurant': _restaurantId,
         },
       );
       for (final job in jobs) {
-        final printer = availablePrinters['${job['printer']}'];
-        if (printer == null) continue;
-        final payload = job['payload'] as Map<String, dynamic>? ?? const {};
-        if (payload['manual_only'] == true) continue;
-        final isAutomaticWeighTicket = '${job['job_type']}' == 'weigh_ticket';
-        if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
+        if ('${job['status']}' == 'scheduled') {
+          final availableAt = DateTime.tryParse(
+            '${job['available_at'] ?? ''}',
+          )?.toLocal();
+          if (availableAt != null && availableAt.isAfter(DateTime.now())) {
+            if (nextScheduledAt == null ||
+                availableAt.isBefore(nextScheduledAt)) {
+              nextScheduledAt = availableAt;
+            }
+          }
           continue;
         }
-        try {
-          final readyText = '${payload['text_content'] ?? ''}'.trim();
-          final text = readyText.isNotEmpty
-              ? readyText
-              : _htmlToText('${job['html_content'] ?? ''}');
-          if (text.trim().isEmpty) {
-            throw const FormatException('O trabalho não possui conteúdo.');
-          }
-          await printForPrinter(
-            printer,
-            text,
-            barcodeValue: code128ValueFromPayload(payload),
-            qrValue: qrValueFromPayload(payload),
+        final jobId = '${job['id']}';
+        final payload = job['payload'] as Map<String, dynamic>? ?? const {};
+        // A marca de "quem pediu imprime" vem ANTES de procurar o equipamento:
+        // um trabalho manual não é assunto deste laço, tenha ele impressora ou
+        // não. Na ordem antiga, um cupom manual sem impressora (a retaguarda
+        // web pede o DANFE sem indicar equipamento — ela imprime pelo
+        // navegador) caía no aviso de "impressora indisponível" e repetia esse
+        // aviso a cada ciclo, para sempre.
+        if (payload['manual_only'] == true) {
+          // Sem este registro, um trabalho marcado como manual sumia sem
+          // deixar rastro: "não imprimiu e não deu erro" ficava impossível de
+          // diagnosticar sem acesso ao banco.
+          AppLogger.instance.info(
+            'print_job_skipped_manual_only',
+            data: {'job_id': jobId, 'printer_id': job['printer']},
           );
-          await api.post(
-            '/print-jobs/${job['id']}/mark-printed/',
-            body: const {},
-            accessToken: _token,
+          continue;
+        }
+        final printer = availablePrinters['${job['printer']}'];
+        if (printer == null) {
+          AppLogger.instance.warning(
+            'print_job_skipped_printer_unavailable',
+            data: {'job_id': jobId, 'printer_id': job['printer']},
           );
-        } catch (error) {
-          await api.post(
-            '/print-jobs/${job['id']}/mark-failed/',
-            body: {'error': 'Falha no PDV Desktop: $error'},
-            accessToken: _token,
+          continue;
+        }
+        // O MESMO DOCUMENTO já saiu daqui. Não é o mesmo trabalho (o índice do
+        // banco já cuida disso): é outro trabalho para a mesma nota, criado
+        // pelo servidor quando a autorização chegou, depois de o terminal já
+        // ter entregue o cupom ao cliente. Automático nenhum repete papel.
+        final dedupeKey = fiscalDedupeKey(job);
+        if (dedupeKey != null &&
+            queue != null &&
+            scope != null &&
+            await queue.wasDocumentPrinted(
+              scope: scope,
+              dedupeKey: dedupeKey,
+            )) {
+          AppLogger.instance.info(
+            'print_job_skipped_documento_ja_impresso',
+            data: {'job_id': jobId, 'documento': dedupeKey},
+          );
+          continue;
+        }
+        final document = PrintDocument.fromRemoteJob(job);
+        final isAutomaticWeighTicket =
+            document.type == PrintJobType.weighTicket;
+        if (printer['auto_print'] != true && !isAutomaticWeighTicket) {
+          AppLogger.instance.info(
+            'print_job_skipped_auto_print_off',
+            data: {'job_id': jobId, 'printer_id': printer['id']},
+          );
+          continue;
+        }
+        if (document.isEmpty) {
+          AppLogger.instance.warning(
+            'print_job_sem_conteudo',
+            data: {'job_id': jobId},
+          );
+          continue;
+        }
+        if (queue == null || scope == null) {
+          // Caminho degradado: o banco local não abriu (disco cheio, arquivo
+          // corrompido). O PDV já avisou disso na inicialização; um
+          // restaurante com internet funcionando não pode ficar sem imprimir
+          // também por causa disso.
+          await _printWithoutQueue(
+            jobId: jobId,
+            printer: printer,
+            document: document,
+          );
+          ingested++;
+          continue;
+        }
+        // A marca vale a partir daqui, e não da saída do papel: a fila LOCAL
+        // já se comprometeu a entregar este cupom (se a impressora estiver
+        // fora, ela insiste). Esperar a confirmação deixaria uma janela em que
+        // o terminal ainda mandaria a sua via, que é a segunda.
+        if (dedupeKey != null) {
+          await queue.markDocumentPrinted(scope: scope, dedupeKey: dedupeKey);
+        }
+        // `remoteJobId` é a chave que impede o mesmo cupom de entrar duas
+        // vezes: enquanto o `mark-printed` não é confirmado, o trabalho volta
+        // a aparecer nesta consulta.
+        final held = _heldReasonFor(job);
+        await queue.enqueue(
+          scope: scope,
+          jobId: jobId,
+          remoteJobId: jobId,
+          printer: printer,
+          jobType: document.wireType,
+          content: document.content,
+          barcode: document.barcode,
+          qr: document.qr,
+          heldReason: held,
+        );
+        if (held != null) {
+          AppLogger.instance.warning(
+            'print_job_herdado_retido',
+            data: {
+              'job_id': jobId,
+              'job_type': document.wireType,
+              'criado_em': '${job['created_at'] ?? ''}',
+            },
           );
         }
+        ingested++;
+      }
+    }
+
+    if (nextScheduledAt != null && _token != null) {
+      final wait = nextScheduledAt.difference(DateTime.now());
+      AppLogger.instance.info(
+        'print_jobs_next_scheduled',
+        data: {
+          'available_at': nextScheduledAt.toIso8601String(),
+          'wait_ms': wait.inMilliseconds,
+        },
+      );
+      _scheduledPrintTimer = Timer(
+        wait.isNegative
+            ? const Duration(milliseconds: 100)
+            : wait + const Duration(milliseconds: 150),
+        () => unawaited(_guarded(_processPrintJobs)),
+      );
+    } else if (ingested == 0) {
+      AppLogger.instance.info(
+        'print_jobs_poll_idle',
+        data: {'restaurant': _restaurantId},
+      );
+    }
+  }
+
+  /// Trabalhos já impressos cujo `mark-printed` ainda não foi aceito.
+  ///
+  /// Só do caminho degradado (sem banco local). Com a fila, quem lembra disso
+  /// é o estado `PRINTED` no disco — que sobrevive a fechar o PDV, enquanto
+  /// este conjunto se perde.
+  final Set<String> _confirmingJobIds = {};
+
+  /// Imprime um trabalho do servidor sem passar pela fila local.
+  ///
+  /// Existe só para o caso em que o banco local não abriu. Sem retentativa
+  /// durável: se a impressora recusar, o servidor é avisado e o trabalho volta
+  /// a aparecer no próximo ciclo — o comportamento que existia antes da fila.
+  Future<void> _printWithoutQueue({
+    required String jobId,
+    required Map<String, dynamic> printer,
+    required PrintDocument document,
+  }) async {
+    if (_confirmingJobIds.contains(jobId)) {
+      // O papel já saiu num ciclo anterior; só a confirmação não passou.
+      // Reimprimir aqui seria o mesmo cupom saindo pela segunda vez.
+      try {
+        await api.post(
+          '/print-jobs/$jobId/mark-printed/',
+          body: const {},
+          accessToken: _token,
+        );
+        _confirmingJobIds.remove(jobId);
+      } catch (_) {
+        // Continua pendente; o próximo ciclo tenta de novo.
+      }
+      return;
+    }
+    var printed = false;
+    try {
+      await Printer.forDocument(
+        printer,
+        document,
+        runtime: printing,
+      ).send(document);
+      printed = true;
+      await api.post(
+        '/print-jobs/$jobId/mark-printed/',
+        body: const {},
+        accessToken: _token,
+      );
+      AppLogger.instance.info(
+        'print_job_printed',
+        data: {'job_id': jobId, 'printer_id': printer['id'], 'fila': false},
+      );
+    } catch (error) {
+      if (printed) {
+        _confirmingJobIds.add(jobId);
+        AppLogger.instance.warning(
+          'print_job_printed_but_not_confirmed',
+          data: {'job_id': jobId, 'message': '$error'},
+        );
+        return;
+      }
+      AppLogger.instance.error(
+        'print_job_failed',
+        cause: error,
+        data: {'job_id': jobId, 'printer_id': printer['id']},
+      );
+      try {
+        await api.post(
+          '/print-jobs/$jobId/mark-failed/',
+          body: {'error': 'Falha no PDV Desktop: $error'},
+          accessToken: _token,
+        );
+      } catch (_) {
+        // Sem servidor não há o que avisar agora.
       }
     }
   }
 
+  /// Coloca na fila local um cupom montado por este terminal e tenta
+  /// imprimi-lo agora.
+  ///
+  /// É o caminho de toda impressão nascida no PDV: quem chama escolhe a
+  /// impressora ([KitchenPrinter], [ReceiptPrinter], ...) e entrega o
+  /// documento; a fila cuida da segunda chance.
+  ///
+  /// Devolve duas coisas diferentes de propósito:
+  ///
+  /// - `accepted`: este terminal assumiu a impressão. É o que decide se o
+  ///   backend deve ficar de fora (`offline_printed`). Uma impressora sem
+  ///   papel **não** muda isso: o trabalho está na fila e sai quando ela
+  ///   voltar. Usar "saiu o papel" aqui faria o backend imprimir uma segunda
+  ///   via quando a fila sincronizasse, e a fila local imprimiria a primeira
+  ///   depois — duas comandas para a mesma rodada.
+  /// - `printed`: o papel saiu agora. Interessa a quem está olhando a
+  ///   impressora esperando o cupom, para mostrar o erro na hora.
+  ///
+  /// Sem armazenamento local vinculado (uma janela ainda sem sessão), imprime
+  /// direto: melhor sair sem rede de segurança do que não sair. Aí as duas
+  /// respostas coincidem, porque não há fila para garantir a segunda chance.
+  Future<({bool accepted, bool printed})> submit(
+    Printer printer,
+    PrintDocument document,
+  ) async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null || !printer.queueable) {
+      await printer.send(document);
+      return (accepted: true, printed: true);
+    }
+    final jobId = await queue.enqueue(
+      scope: scope,
+      printer: printer.device.raw,
+      jobType: document.wireType,
+      content: document.content,
+      barcode: document.barcode,
+      qr: document.qr,
+    );
+    AppLogger.instance.info(
+      'print_job_enfileirado',
+      data: {
+        'job_id': jobId,
+        'job_type': document.wireType,
+        'printer': printer.device.label,
+        'setor': printer.device.sector,
+      },
+    );
+    await drainPrintQueue();
+    var status = await queue.statusOf(jobId);
+    if (status == PrintJobStatus.pending) {
+      // Uma drenagem já estava em andamento quando este cupom entrou, e pode
+      // ter passado pela fila antes dele. Sem este segundo giro, quem está
+      // olhando a impressora ouviria "está na fila" com a impressora livre.
+      await drainPrintQueue();
+      status = await queue.statusOf(jobId);
+    }
+    AppLogger.instance.info(
+      'print_job_resultado',
+      data: {
+        'job_id': jobId,
+        'printer': printer.device.label,
+        'estado': status?.name ?? 'desconhecido',
+      },
+    );
+    return (
+      // Recusa definitiva (impressora sem endereço) devolve a impressão ao
+      // backend: nenhuma repetição aqui resolveria.
+      accepted: status != PrintJobStatus.failed,
+      printed: status == PrintJobStatus.printed,
+    );
+  }
+
+  /// Imprime o que está na fila local, um trabalho de cada vez.
+  ///
+  /// Não depende de rede em nenhum ponto. Uma falha de comunicação com a
+  /// impressora — papel, cabo, equipamento desligado — devolve o trabalho para
+  /// a fila com espera crescente; antes ele simplesmente se perdia, e a
+  /// cozinha ficava sem a comanda sem ninguém saber.
+  Future<void> drainPrintQueue({int limit = 20}) {
+    // Uma drenagem por vez neste processo: o timer da fila, o evento do WS e
+    // um cupom recém-montado chegam aqui ao mesmo tempo o tempo todo.
+    final running = _drainInFlight;
+    if (running != null) return running;
+    final drain = _drainPrintQueue(limit: limit);
+    _drainInFlight = drain;
+    return drain.whenComplete(() {
+      if (identical(_drainInFlight, drain)) _drainInFlight = null;
+    });
+  }
+
+  Future<void> _drainPrintQueue({required int limit}) async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null) return;
+    final before = await queue.summary(scope: scope);
+    if (before.pending == 0 && before.failed == 0) return;
+
+    // Impressoras que já falharam nesta rodada. Antes, a primeira falha
+    // encerrava a drenagem inteira — "a impressora é a mesma", o que só vale
+    // quando existe uma. Com um cupom do bar travado numa térmica de rede
+    // fora do ar, a comanda da cozinha ficava esperando atrás dele em toda
+    // rodada, sem erro nenhum na tela: "não imprimiu e não avisou".
+    final unreachable = <String>{};
+    var printed = 0;
+    var retried = 0;
+    var failed = 0;
+    var skipped = 0;
+    var exhausted = 0;
+
+    for (var processed = 0; processed < limit; processed++) {
+      final job = await queue.claimNext(scope: scope);
+      if (job == null) break;
+      final document = PrintDocument.fromQueueEntry(job);
+      final printer = Printer.forDocument(
+        job.printer,
+        document,
+        runtime: printing,
+      );
+      final resource = printer.device.lockResource;
+      if (unreachable.contains(resource)) {
+        // Já sabemos que este equipamento não responde agora: insistir custa
+        // um tempo limite inteiro e atrasa as outras impressoras da fila.
+        skipped++;
+        await queue.markRetry(
+          job.id,
+          attempts: job.attempts + 1,
+          error: 'Equipamento sem resposta nesta rodada.',
+        );
+        continue;
+      }
+      try {
+        await printer.send(document);
+        await queue.markPrinted(job.id);
+        printed++;
+        AppLogger.instance.info(
+          'print_job_printed',
+          data: {
+            'job_id': job.jobId,
+            'job_type': job.jobType,
+            'printer_id': job.printerId,
+            'printer': printer.device.label,
+          },
+        );
+      } on PrinterCommunicationException catch (error) {
+        final attempts = job.attempts + 1;
+        final outcome = await queue.markRetry(
+          job.id,
+          attempts: attempts,
+          error: error.message,
+        );
+        // A próxima tentativa DESTE equipamento só faz sentido depois da
+        // espera; os cupons das outras impressoras seguem na mesma rodada.
+        unreachable.add(resource);
+        if (outcome.exhausted) {
+          exhausted++;
+          AppLogger.instance.error(
+            'print_job_esgotado',
+            data: {
+              'job_id': job.jobId,
+              'job_type': job.jobType,
+              'printer': printer.device.label,
+              'tentativas': attempts,
+              'motivo': error.message,
+            },
+          );
+          // O servidor precisa saber que este cupom não vai sair sozinho:
+          // sem isso o trabalho fica "pendente" lá para sempre.
+          await _reportRemoteFailure(job, error);
+        } else {
+          retried++;
+          AppLogger.instance.warning(
+            'print_job_retry',
+            data: {
+              'job_id': job.jobId,
+              'job_type': job.jobType,
+              'printer': printer.device.label,
+              'tentativa': '$attempts/${PrintQueueService.maximumAttempts}',
+              'proxima_em_s': outcome.nextRetryAt!
+                  .difference(DateTime.now().toUtc())
+                  .inSeconds,
+              'motivo': error.message,
+            },
+          );
+        }
+      } catch (error) {
+        // Erro que nenhuma repetição resolve (conteúdo inválido, configuração
+        // impossível): sai da rotação e fica visível para revisão.
+        await queue.markFailed(job.id, error: '$error');
+        failed++;
+        AppLogger.instance.error(
+          'print_job_failed',
+          cause: error,
+          data: {
+            'job_id': job.jobId,
+            'job_type': job.jobType,
+            'printer': printer.device.label,
+          },
+        );
+        await _reportRemoteFailure(job, error);
+      }
+    }
+    await queue.purgeConfirmed(scope: scope);
+    final after = await queue.summary(scope: scope);
+    AppLogger.instance.info(
+      'print_queue_drain',
+      data: {
+        'na_fila_antes': before.pending,
+        'impressos': printed,
+        'reagendados': retried,
+        'adiados': skipped,
+        'sem_tentativas': exhausted,
+        'recusados': failed,
+        'ainda_na_fila': after.pending,
+        'com_falha': after.failed,
+      },
+    );
+  }
+
+  /// Avisa o servidor sobre os trabalhos que já saíram no papel.
+  ///
+  /// O papel ter saído e o servidor ter sido avisado são coisas diferentes.
+  /// Sem rede a confirmação espera, e o trabalho **não** volta a imprimir —
+  /// quem garante isso é o estado `PRINTED` na fila local, que antes só
+  /// existia na memória do processo e se perdia ao fechar o PDV.
+  Future<void> _confirmPrintedJobs() async {
+    final queue = _printQueue;
+    final scope = _printScope;
+    if (queue == null || scope == null) return;
+    for (final job in await queue.awaitingConfirmation(scope: scope)) {
+      try {
+        await api.post(
+          '/print-jobs/${job.remoteJobId}/mark-printed/',
+          body: const {},
+          accessToken: _token,
+        );
+        await queue.forget(job.id);
+      } on ApiException catch (error) {
+        if (!error.isConnectivity) {
+          // O servidor recusou (o trabalho já foi cancelado lá, por exemplo).
+          // Insistir não muda nada, e a nota já está com o cliente.
+          await queue.forget(job.id);
+          continue;
+        }
+        AppLogger.instance.info(
+          'print_job_confirmacao_adiada',
+          data: {'job_id': job.remoteJobId},
+        );
+        return;
+      }
+    }
+  }
+
+  Future<void> _reportRemoteFailure(PrintQueueEntry job, Object error) async {
+    final remoteId = job.remoteJobId;
+    if (remoteId == null) return;
+    try {
+      await api.post(
+        '/print-jobs/$remoteId/mark-failed/',
+        body: {'error': 'Falha no PDV Desktop: $error'},
+        accessToken: _token,
+      );
+    } on ApiException {
+      // Sem servidor não há o que avisar agora. O trabalho continua marcado
+      // como recusado aqui, que é o que a tela de revisão mostra.
+    }
+  }
+
+  /// Imprime agora um `PrintJob` renderizado pelo servidor, a pedido do
+  /// operador — sem fila, porque quem clicou está olhando a impressora.
+  /// Manda um trabalho para a impressora deste terminal.
+  ///
+  /// `automatic` marca a impressão que o PDV dispara sozinho ao concluir a
+  /// venda — essa NÃO repete um DANFE que já saiu daqui. A reimpressão pedida
+  /// por gente sempre sai: quem clicou quer outra via, e isso é uma decisão,
+  /// não uma duplicação.
   Future<void> printJobManually(
     Map<String, dynamic> job,
-    Map<String, dynamic> printer,
-  ) async {
+    Map<String, dynamic> printer, {
+    bool automatic = false,
+  }) async {
+    if (automatic) {
+      final key = fiscalDedupeKey(job);
+      final queue = _printQueue;
+      final scope = _printScope;
+      if (key != null &&
+          queue != null &&
+          scope != null &&
+          await queue.wasDocumentPrinted(scope: scope, dedupeKey: key)) {
+        AppLogger.instance.info(
+          'print_manual_skipped_documento_ja_impresso',
+          data: {'documento': key},
+        );
+        return;
+      }
+    }
+    // O papel vale mais que o registro: num Caixa Secundário este agente fica
+    // parado de propósito (quem serve a fila da nuvem é o Principal), e exigir
+    // sessão aqui fazia o botão "imprimir" não produzir nada num terminal com
+    // impressora própria e cupom já renderizado na mão.
     final token = _token;
-    if (token == null) {
-      throw StateError('O agente local não está autenticado.');
-    }
     final jobId = '${job['print_job_id'] ?? job['id'] ?? ''}'.trim();
-    if (jobId.isEmpty) {
-      throw StateError('Trabalho de impressão inválido.');
-    }
-    final rawPayload = job['payload'];
-    final payload = rawPayload is Map<String, dynamic>
-        ? rawPayload
-        : const <String, dynamic>{};
-    final readyText = '${payload['text_content'] ?? ''}'.trim();
-    final text = readyText.isNotEmpty
-        ? readyText
-        : _htmlToText('${job['html'] ?? job['html_content'] ?? ''}');
-    if (text.isEmpty) {
+    final document = PrintDocument.fromRemoteJob(job);
+    if (document.isEmpty) {
       throw StateError('O trabalho não possui conteúdo para impressão.');
     }
+    // O papel já ter saído e o servidor não ter sido avisado são coisas
+    // diferentes: tratar as duas como "falha na impressão" mostrava erro numa
+    // nota que o operador tinha na mão e ainda marcava o trabalho como
+    // falho — deixando-o elegível para sair de novo.
+    var printed = false;
     try {
-      await printForPrinter(
+      await Printer.forDocument(
         printer,
-        text,
-        barcodeValue: code128ValueFromPayload(payload),
-        qrValue: qrValueFromPayload(payload),
-      );
+        document,
+        runtime: printing,
+      ).send(document);
+      printed = true;
+      await _rememberFiscalPrint(job);
+      // Sem sessão ou sem id remoto não há o que confirmar: o cupom já está
+      // com o operador, e é isso que ele pediu.
+      if (token == null || jobId.isEmpty) return;
       await api.post(
         '/print-jobs/$jobId/mark-printed/',
         body: const {},
         accessToken: token,
       );
     } catch (error) {
-      await api.post(
-        '/print-jobs/$jobId/mark-failed/',
-        body: {'error': 'Falha na impressão manual: $error'},
-        accessToken: token,
-      );
+      if (printed) {
+        AppLogger.instance.warning(
+          'print_job_printed_but_not_confirmed',
+          data: {'job_id': jobId, 'message': '$error'},
+        );
+        return;
+      }
+      if (token != null && jobId.isNotEmpty) {
+        await api.post(
+          '/print-jobs/$jobId/mark-failed/',
+          body: {'error': 'Falha na impressão manual: $error'},
+          accessToken: token,
+        );
+      }
       rethrow;
     }
-  }
-
-  /// Envia texto para a fila de impressão do sistema operacional.
-  ///
-  /// Esta é a única rota que ainda depende de ferramenta externa, porque não
-  /// existe API de spool portátil: Windows usa `Out-Printer` do PowerShell e
-  /// Linux/macOS usam `lp` do CUPS.
-  Future<void> printText(String printerName, String content) async {
-    final temp = File(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}'
-      'starchef-${DateTime.now().microsecondsSinceEpoch}.txt',
-    );
-    await temp.writeAsString(content, encoding: utf8, flush: true);
-    try {
-      final ProcessResult result;
-      if (Platform.isWindows) {
-        final safePath = temp.path.replaceAll("'", "''");
-        final safePrinter = printerName.replaceAll("'", "''");
-        result = await Process.run('powershell.exe', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          "Get-Content -LiteralPath '$safePath' -Raw | "
-              "Out-Printer -Name '$safePrinter'",
-        ]).timeout(const Duration(seconds: 20));
-      } else {
-        // `--` encerra as opções para que um nome iniciado por `-` não vire
-        // outra flag do `lp`.
-        result = await Process.run('lp', [
-          '-d',
-          printerName,
-          '--',
-          temp.path,
-        ]).timeout(const Duration(seconds: 20));
-      }
-      if (result.exitCode != 0) {
-        throw ProcessException(
-          Platform.isWindows ? 'powershell.exe' : 'lp',
-          const [],
-          '${result.stderr}'.trim().isEmpty
-              ? 'A fila de impressão recusou o trabalho.'
-              : '${result.stderr}',
-          result.exitCode,
-        );
-      }
-    } finally {
-      if (await temp.exists()) await temp.delete();
-    }
-  }
-
-  /// Entrega o conteúdo pela via configurada na impressora.
-  ///
-  /// Rede e serial escrevem os bytes diretamente e funcionam igual em Windows
-  /// e Linux; só a fila do sistema depende do utilitário de cada plataforma.
-  Future<void> printForPrinter(
-    Map<String, dynamic> printer,
-    String content, {
-    String? barcodeValue,
-    String? qrValue,
-  }) async {
-    final target = PrinterEndpoint.fromJson(printer);
-    final missing = target.missingConfiguration;
-    if (missing != null) {
-      printerAvailability.value = const PrinterAvailability(
-        PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
-      );
-      throw PrinterCommunicationException(
-        message: 'Falha ao comunicar com a impressora. $missing',
-        recommendedAction: 'Revise a configuração local da impressora.',
-      );
-    }
-
-    try {
-      if (!await checkPrinterAvailability(printer)) {
-        throw const PrinterCommunicationException(
-          message:
-              'Falha ao comunicar com a impressora: dispositivo não encontrado.',
-          recommendedAction:
-              'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
-        );
-      }
-
-      if (target.connection == PrinterConnection.spool) {
-        // O spool recebe texto puro (Out-Printer/lp não renderizam imagem).
-        await printText(
-          target.endpoint,
-          textWithBarcodeFallback(content, barcodeValue),
-        );
-      } else {
-        final printBytes = rawTransportBytes(
-          content,
-          isEscPos: target.isEscPos,
-          barcodeValue: barcodeValue,
-          qrValue: qrValue,
-        );
-        if (target.connection == PrinterConnection.network) {
-          await _writeToNetworkPrinter(target, printBytes);
-        } else {
-          await _writeToSerialPrinter(target, printBytes);
-        }
-      }
-      printerAvailability.value = const PrinterAvailability(
-        PrinterAvailabilityPhase.available,
-        'Impressora disponível',
-      );
-    } on PrinterCommunicationException {
-      printerAvailability.value = const PrinterAvailability(
-        PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
-      );
-      rethrow;
-    } catch (error) {
-      printerAvailability.value = const PrinterAvailability(
-        PrinterAvailabilityPhase.unavailable,
-        'Impressora desconectada',
-      );
-      throw PrinterCommunicationException(
-        message: 'Falha ao comunicar com a impressora: $error',
-        recommendedAction:
-            'Confira o cabo, a energia e a porta configurada. O PDV continuará funcionando normalmente.',
-      );
-    }
-  }
-
-  Future<void> _writeToNetworkPrinter(
-    PrinterEndpoint target,
-    List<int> bytes,
-  ) async {
-    final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
-    final socket = await Socket.connect(
-      target.host,
-      target.port,
-      timeout: target.timeout,
-    );
-    try {
-      socket.add(payload.content);
-      // `flush` confirma que o buffer de saída do socket foi entregue ao SO.
-      await socket.flush().timeout(target.timeout);
-      if (payload.cut.isNotEmpty) {
-        await _delay(cutDelay); // pausa física antes da guilhotina
-        socket.add(payload.cut);
-        await socket.flush().timeout(target.timeout);
-      }
-    } finally {
-      await socket.close();
-    }
-  }
-
-  /// Escreve na impressora serial pela biblioteca nativa.
-  ///
-  /// Antes isso passava por um `SerialPort` do .NET via PowerShell, o que
-  /// prendia a impressão serial ao Windows e ainda embutia os bytes em uma
-  /// linha de comando. `flutter_libserialport` já é usado pela balança e pelo
-  /// leitor, então a mesma via serve para a impressora nos dois sistemas.
-  Future<void> _writeToSerialPrinter(
-    PrinterEndpoint target,
-    List<int> bytes,
-  ) async {
-    final port = SerialPort(target.endpoint);
-    try {
-      // Alguns drivers COM virtuais do Windows rejeitam um handle aberto
-      // somente para escrita com ERROR_INVALID_HANDLE, embora aceitem o modo
-      // leitura/escrita usado pelas APIs e ferramentas nativas do sistema.
-      if (!port.openReadWrite()) {
-        throw _serialCommunicationError(
-          target,
-          SerialPort.lastError?.message ?? 'porta ocupada ou inexistente',
-        );
-      }
-      port.config = SerialPortConfig()
-        ..baudRate = target.baudRate
-        ..bits = 8
-        ..parity = SerialPortParity.none
-        ..stopBits = 1;
-      final payload = splitCutCommand(bytes, isEscPos: target.isEscPos);
-      _writeAllSerial(port, target, payload.content);
-      // `drain` aguarda a transmissão física e `bytesToWrite` confirma que o
-      // buffer do driver realmente chegou a zero antes da guilhotina.
-      port.drain();
-      if (port.bytesToWrite != 0) {
-        throw _serialCommunicationError(
-          target,
-          '${port.bytesToWrite} bytes ainda estavam no buffer de saída',
-        );
-      }
-      if (payload.cut.isNotEmpty) {
-        await _delay(cutDelay); // pausa física antes da guilhotina
-        _writeAllSerial(port, target, payload.cut);
-        port.drain();
-        if (port.bytesToWrite != 0) {
-          throw _serialCommunicationError(
-            target,
-            '${port.bytesToWrite} bytes do corte ficaram no buffer de saída',
-          );
-        }
-      }
-    } on SerialPortError catch (error) {
-      throw _serialCommunicationError(target, error.message);
-    } finally {
-      if (port.isOpen) port.close();
-      port.dispose();
-    }
-  }
-
-  void _writeAllSerial(
-    SerialPort port,
-    PrinterEndpoint target,
-    List<int> bytes,
-  ) {
-    if (bytes.isEmpty) return;
-    final written = port.write(
-      Uint8List.fromList(bytes),
-      timeout: target.timeout.inMilliseconds,
-    );
-    if (written < bytes.length) {
-      throw _serialCommunicationError(
-        target,
-        'foram enviados apenas $written de ${bytes.length} bytes',
-      );
-    }
-  }
-
-  PrinterCommunicationException _serialCommunicationError(
-    PrinterEndpoint target,
-    String reason,
-  ) {
-    final available = SerialPort.availablePorts;
-    final detected = available.isEmpty ? 'nenhuma' : available.join(', ');
-    return PrinterCommunicationException(
-      message:
-          'Falha ao comunicar pela porta ${target.endpoint} '
-          '(${target.baudRate} baud, 8N1). Motivo: $reason. '
-          'Portas seriais detectadas: $detected.',
-      recommendedAction: Platform.isWindows
-          ? 'Se a impressora funciona no Teste do Windows, escolha o tipo '
-                'Windows / USB e selecione o nome da impressora instalada. '
-                'Use Porta serial somente para acesso direto à COM; nesse '
-                'caso, feche outros programas que possam estar usando '
-                '${target.endpoint} e confirme a velocidade no manual.'
-          : 'Feche outros programas que possam estar usando '
-                '${target.endpoint} e confirme a porta e a velocidade no manual.',
-    );
   }
 
   /// Revalida os equipamentos sem bloquear a tela de vendas.
@@ -822,39 +1077,27 @@ class LocalDeviceAgent {
     bool useCachedDevices = false,
   }) async {
     if (_token == null || _restaurantId == null) {
-      const status = PrinterAvailability(
-        PrinterAvailabilityPhase.notConfigured,
-        'Impressora desconectada',
-      );
+      const status = PrinterAvailability.notConfigured;
       printerAvailability.value = status;
       return status;
     }
-    printerAvailability.value = const PrinterAvailability(
-      PrinterAvailabilityPhase.checking,
-      'Verificando impressora...',
-    );
+    printerAvailability.value = PrinterAvailability.checking;
     try {
       if (!useCachedDevices || _printers.isEmpty) {
         await _syncDevicesIfNeeded();
       }
       final candidates = _printers
-          .where((printer) => PrinterEndpoint.fromJson(printer).isAddressable)
+          .map(PrinterDevice.fromJson)
+          .where((device) => device.isAddressable)
           .toList();
       if (candidates.isEmpty) {
-        const status = PrinterAvailability(
-          PrinterAvailabilityPhase.notConfigured,
-          'Impressora desconectada',
-        );
+        const status = PrinterAvailability.notConfigured;
         printerAvailability.value = status;
         return status;
       }
-      for (final printer in candidates) {
-        final target = PrinterEndpoint.fromJson(printer);
-        if (await _probe(target)) {
-          final status = PrinterAvailability(
-            PrinterAvailabilityPhase.available,
-            'Impressora disponível',
-          );
+      for (final device in candidates) {
+        if (await GenericPrinter(device, runtime: printing).probe()) {
+          const status = PrinterAvailability.available;
           printerAvailability.value = status;
           return status;
         }
@@ -862,10 +1105,7 @@ class LocalDeviceAgent {
     } catch (_) {
       // A indisponibilidade vira estado visual; nunca encerra a tela de venda.
     }
-    const status = PrinterAvailability(
-      PrinterAvailabilityPhase.unavailable,
-      'Impressora desconectada',
-    );
+    const status = PrinterAvailability.disconnected;
     printerAvailability.value = status;
     return status;
   }
@@ -874,61 +1114,50 @@ class LocalDeviceAgent {
     Map<String, dynamic> printer, {
     bool publish = true,
   }) async {
-    final target = PrinterEndpoint.fromJson(printer);
-    final available = target.isAddressable && await _probe(target);
+    final device = PrinterDevice.fromJson(printer);
+    final available =
+        device.isAddressable &&
+        await GenericPrinter(device, runtime: printing).probe();
     if (publish) {
-      printerAvailability.value = PrinterAvailability(
-        available
-            ? PrinterAvailabilityPhase.available
-            : PrinterAvailabilityPhase.unavailable,
-        available ? 'Impressora disponível' : 'Impressora desconectada',
-      );
+      printerAvailability.value = available
+          ? PrinterAvailability.available
+          : PrinterAvailability.disconnected;
     }
     return available;
   }
 
-  Future<bool> _probe(PrinterEndpoint target) async {
-    final custom = _availabilityProbe;
-    if (custom != null) return custom(target);
-    try {
-      switch (target.connection) {
-        case PrinterConnection.serial:
-          final configured = target.endpoint.trim();
-          final detected = SerialPort.availablePorts.any(
-            (port) => Platform.isWindows
-                ? port.toLowerCase() == configured.toLowerCase()
-                : port == configured,
-          );
-          return detected ||
-              (!Platform.isWindows && await File(configured).exists());
-        case PrinterConnection.network:
-          final socket = await Socket.connect(
-            target.host,
-            target.port,
-            timeout: target.timeout,
-          );
-          socket.destroy();
-          return true;
-        case PrinterConnection.spool:
-          if (Platform.isWindows) {
-            final safeName = target.endpoint.replaceAll("'", "''");
-            final result = await Process.run('powershell.exe', [
-              '-NoProfile',
-              '-NonInteractive',
-              '-Command',
-              "Get-Printer -Name '$safeName' -ErrorAction Stop | Out-Null",
-            ]).timeout(target.timeout);
-            return result.exitCode == 0;
-          }
-          final result = await Process.run('lpstat', [
-            '-p',
-            target.endpoint,
-          ]).timeout(target.timeout);
-          return result.exitCode == 0;
+  /// Impressoras que este terminal já conhece.
+  ///
+  /// Vive em memória depois da primeira sincronização, então continua
+  /// disponível com a rede fora — que é exatamente quando a comanda precisa
+  /// ser montada e impressa aqui, sem esperar o backend renderizar o job.
+  /// Depender de uma releitura de `/printers/` nessa hora não funciona: o
+  /// cache de resposta só responde se aquela consulta exata já tiver sido
+  /// feita on-line antes.
+  List<Map<String, dynamic>> get knownPrinters => List.unmodifiable(_printers);
+
+  /// Devolve as impressoras conhecidas, sincronizando se ainda não houver
+  /// nenhuma. Nunca lança: sem rede e sem cache, devolve o que existir.
+  Future<List<Map<String, dynamic>>> ensurePrinters() async {
+    if (_printers.isEmpty) {
+      try {
+        await _syncDevicesIfNeeded();
+      } catch (_) {
+        // Segue com a lista em memória, mesmo vazia — quem chama decide o
+        // que dizer ao operador.
       }
-    } catch (_) {
-      return false;
     }
+    if (_printers.isEmpty) {
+      // Sem impressora conhecida, o roteamento por setor não tem o que
+      // escolher e a comanda simplesmente não existe — sem erro em lugar
+      // nenhum. Quase sempre é o agente parado (terminal secundário, ou
+      // restaurante ainda não definido), e não cadastro faltando.
+      AppLogger.instance.warning(
+        'print_agent_sem_impressoras',
+        data: {'agente_ativo': isRunning, 'restaurante': _restaurantId},
+      );
+    }
+    return knownPrinters;
   }
 
   Future<void> _syncDevicesIfNeeded() async {
@@ -949,13 +1178,8 @@ class LocalDeviceAgent {
             'page_size': 100,
           },
         ).then(
-          (printers) => _printers = printers
-              .map(
-                (printer) =>
-                    preferences?.applySerialPort(printer, kind: 'printer') ??
-                    printer,
-              )
-              .toList(),
+          // Sem override local: a impressora vale como está cadastrada.
+          (printers) => _printers = printers,
         );
     _deviceSyncInFlight = sync;
     try {
@@ -969,24 +1193,4 @@ class LocalDeviceAgent {
       }
     }
   }
-
-  String _htmlToText(String html) => html
-      // CSS/JS nao sao conteudo imprimivel. Sem esta remocao, o fallback de
-      // jobs antigos imprimia regras como "td { padding... }" junto aos itens.
-      .replaceAll(
-        RegExp(r'<(style|script)\b[^>]*>[\s\S]*?</\1>', caseSensitive: false),
-        '',
-      )
-      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(
-        RegExp(r'</(p|div|tr|li|h[1-6])>', caseSensitive: false),
-        '\n',
-      )
-      .replaceAll(RegExp(r'<[^>]+>'), '')
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-      .trim();
 }

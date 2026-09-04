@@ -24,8 +24,11 @@ class LocalPreferences {
   static const _stabilityToleranceKey = 'scale_stability_tolerance_kg';
   static const _audibleAlertsKey = 'scale_audible_alerts';
   static const _autoPrintKey = 'scale_auto_print';
+  static const _showCatalogKey = 'scale_show_catalog';
   static const _apiBaseUrlOverrideKey = 'api_base_url_override';
   static const _serialPortOverridesKey = 'serial_port_overrides';
+  static const _masterPrinterIdKey = 'master_printer_id';
+  static const _servedAsPrincipalKey = 'served_as_principal';
 
   final File _file;
   Map<String, dynamic> _values = const {};
@@ -50,7 +53,7 @@ class LocalPreferences {
     'dark' => ThemeMode.dark,
     'light' => ThemeMode.light,
     'system' => ThemeMode.system,
-    _ => ThemeMode.light,
+    _ => ThemeMode.dark,
   };
 
   Future<void> setThemeMode(ThemeMode mode) => _write(_themeKey, mode.name);
@@ -80,6 +83,15 @@ class LocalPreferences {
 
   Future<void> setAutoPrint(bool value) => _write(_autoPrintKey, value);
 
+  /// Mostra a coluna de cardápio (extras) na Balança Rápida.
+  ///
+  /// Terminais que só pesam e leem a comanda — sem vender extras do balcão —
+  /// preferem esconder essa coluna, que sobra vazia no meio da tela.
+  bool get showScaleCatalog => _values[_showCatalogKey] as bool? ?? true;
+
+  Future<void> setShowScaleCatalog(bool value) =>
+      _write(_showCatalogKey, value);
+
   /// URL da API definida manualmente na tela de login (sobrescreve o que veio
   /// de --dart-define/.env — ver `AppConfig.load`). `null`/vazio significa
   /// "sem override, usa a configuração padrão do build".
@@ -93,14 +105,45 @@ class LocalPreferences {
     (value == null || value.trim().isEmpty) ? null : value.trim(),
   );
 
-  /// Porta serial escolhida especificamente neste terminal.
+  /// Impressora fixada pelo caixa para o recibo de pagamento e o recibo do
+  /// cliente. `null` significa "sem master, pergunta qual impressora usar"
+  /// — o comportamento de hoje.
+  String? get masterPrinterId {
+    final value = _values[_masterPrinterIdKey] as String?;
+    return (value == null || value.trim().isEmpty) ? null : value.trim();
+  }
+
+  Future<void> setMasterPrinterId(String? value) => _write(
+    _masterPrinterIdKey,
+    (value == null || value.trim().isEmpty) ? null : value.trim(),
+  );
+
+  /// Este terminal já servia a fila de impressão como Caixa Principal na
+  /// última vez que operou?
   ///
-  /// O cadastro do equipamento continua sincronizado com a Retaguarda, mas a
-  /// mesma balanca/impressora pode receber nomes diferentes do sistema
-  /// operacional em cada caixa (por exemplo, COM4 no Windows e
-  /// /dev/ttyUSB0 no Linux). O override local evita que um terminal altere o
-  /// caminho usado pelos demais.
-  String? serialPortFor({required String kind, required String deviceId}) {
+  /// Distingue as duas partidas que, do lado do agente, são idênticas: um
+  /// principal que reiniciou (o que estava pendente no servidor é dele, e
+  /// deve sair) e um terminal que acabou de trocar de papel (o que estava
+  /// pendente é do principal anterior, e sair de novo é imprimir duas vezes).
+  /// Precisa sobreviver ao fechamento do PDV, por isso mora aqui e não na
+  /// memória do agente.
+  bool get servedAsPrincipal => _values[_servedAsPrincipalKey] as bool? ?? false;
+
+  Future<void> setServedAsPrincipal(bool value) =>
+      _write(_servedAsPrincipalKey, value);
+
+  /// Porta guardada por versões antigas para este equipamento neste terminal.
+  ///
+  /// O override existiu para o caso de o mesmo equipamento receber caminhos
+  /// diferentes em cada máquina, mas criava um problema pior: a porta salva
+  /// aqui envelhecia em relação ao cadastro e a impressão real abria um
+  /// dispositivo diferente do que a tela mostrava. Hoje quem descreve o
+  /// equipamento — protocolo, IP e porta, caminho serial — é sempre o
+  /// cadastro. Isto sobrevive apenas para limpar o que ficou gravado.
+  String? legacySerialPortOverride({
+    required String kind,
+    required String deviceId,
+  }) {
     final overrides = _values[_serialPortOverridesKey];
     if (overrides is! Map) return null;
     final value = overrides['$kind:$deviceId'];
@@ -108,38 +151,15 @@ class LocalPreferences {
     return normalized.isEmpty ? null : normalized;
   }
 
-  Future<void> setSerialPort({
+  Future<void> clearSerialPortOverride({
     required String kind,
     required String deviceId,
-    required String? value,
   }) {
     final current = _values[_serialPortOverridesKey];
-    final overrides = current is Map
-        ? Map<String, dynamic>.from(current)
-        : <String, dynamic>{};
-    final key = '$kind:$deviceId';
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) {
-      overrides.remove(key);
-    } else {
-      overrides[key] = normalized;
-    }
+    if (current is! Map) return Future.value();
+    final overrides = Map<String, dynamic>.from(current);
+    if (overrides.remove('$kind:$deviceId') == null) return Future.value();
     return _write(_serialPortOverridesKey, overrides);
-  }
-
-  /// Aplica o caminho local sem descartar os demais campos recebidos da API.
-  Map<String, dynamic> applySerialPort(
-    Map<String, dynamic> device, {
-    required String kind,
-  }) {
-    final id = '${device['id'] ?? ''}'.trim();
-    if (id.isEmpty) return device;
-    final local = serialPortFor(kind: kind, deviceId: id);
-    if (local == null) return device;
-    return {
-      ...device,
-      if (kind == 'printer') 'endpoint': local else 'port': local,
-    };
   }
 
   int _int(

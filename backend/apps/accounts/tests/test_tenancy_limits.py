@@ -5,6 +5,7 @@ import pytest
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.accounts.models import UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 
 pytestmark = pytest.mark.django_db
 
@@ -17,7 +18,7 @@ def _admin_client(account, restaurant, branch):
     User = get_user_model()
     user = User.objects.create_user(username=f"adm-{uuid.uuid4().hex[:6]}", password="x")
     UserProfile.objects.create(
-        account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+        account=account, user=user, role=ensure_system_roles(account)["admin"], restaurant=restaurant, branch=branch
     )
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
@@ -73,7 +74,7 @@ def test_user_limit_blocks_creation_with_custom_message(account, restaurant, bra
     payload = {
         "username": f"novo-{uuid.uuid4().hex[:6]}",
         "password": "senha12345",
-        "profile": {"profile_type": UserProfile.PROFILE_WAITER},
+        "profile": {"role": str(ensure_system_roles(account)["waiter"].id)},
     }
     resp = client.post("/api/v1/users/", payload, format="json")
 
@@ -90,7 +91,7 @@ def test_user_limit_unlimited_when_zero(account, restaurant, branch):
     payload = {
         "username": f"novo-{uuid.uuid4().hex[:6]}",
         "password": "senha12345",
-        "profile": {"profile_type": UserProfile.PROFILE_WAITER},
+        "profile": {"role": str(ensure_system_roles(account)["waiter"].id)},
     }
     resp = client.post("/api/v1/users/", payload, format="json")
 

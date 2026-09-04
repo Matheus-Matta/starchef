@@ -58,9 +58,11 @@ class AppError {
 
   /// Some sozinho depois desse tempo, sem exigir o `X` do operador.
   ///
-  /// Reservado para confirmações rápidas (toast: "impresso com sucesso"); uma
-  /// falha de verdade fica `null` aqui e só sai pelo fechar manual — o
-  /// operador precisa notá-la, não perdê-la numa troca de tela.
+  /// `null` aqui não significa "para sempre": o [ErrorCenter] aplica
+  /// `ErrorCenter.defaultAutoDismissAfter` (2s) para qualquer alerta —
+  /// falha, aviso ou confirmação — que não definir o próprio tempo. Só
+  /// preencha isto quando UM alerta específico precisar de um tempo
+  /// diferente do padrão.
   final Duration? autoDismissAfter;
 
   /// Converte uma falha da API preservando a mensagem exata do backend.

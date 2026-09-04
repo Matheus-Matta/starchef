@@ -30,8 +30,11 @@ class OrderDataSource extends DataTableSource {
         allowPayment &&
         status == 'awaiting_payment' &&
         '${order['payment_status']}' != 'paid';
-    final contextLabel = order['table_number'] != null
-        ? 'Mesa ${order['table_number']}'
+    final commandLabel = order['command_number'] ?? order['command_code'];
+    final contextLabel = commandLabel != null
+        ? 'Comanda $commandLabel${order['table_number'] != null ? ' · Mesa ${order['table_number']}' : ''}'
+        : order['table_number'] != null
+        ? 'Mesa ${order['table_number']} (legado)'
         : '${order['customer_name'] ?? 'Balcão'}';
 
     return DataRow.byIndex(
@@ -99,7 +102,8 @@ class OrderDataSource extends DataTableSource {
 
   static String _typeLabel(String value) =>
       const {
-        'table': 'Mesa',
+        'command': 'Comanda',
+        'table': 'Mesa (legado)',
         'counter': 'Balcão',
         'takeaway': 'Retirada',
         'delivery': 'Delivery',

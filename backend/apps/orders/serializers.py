@@ -67,9 +67,66 @@ class OrderBatchSerializer(TenantModelSerializer):
 
 class OrderSerializer(TenantModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    table_number = serializers.CharField(source="table.number", read_only=True)
-    customer_name = serializers.CharField(source="customer.name", read_only=True)
-    customer_document = serializers.CharField(source="customer.document", read_only=True)
+    # OS RECEBIMENTOS VIAJAM COM O PEDIDO.
+    #
+    # `payments` e uma relacao reversa: `fields = "__all__"` nao a inclui. O
+    # PDV grava o recebimento local-first e, quando a fila entrega, aplica por
+    # cima a versao do servidor — que vinha SEM pagamento nenhum. O pedido
+    # ficava sem recebimento no armazenamento local no instante seguinte a
+    # sincronizacao, e era desse retrato que a emissao fiscal era montada: o
+    # PDV recusava a propria venda com "A venda nao tem recebimento
+    # registrado" e a NFC-e nunca era emitida.
+    #
+    # Tambem e o que faz um pedido pago reaberto mostrar como foi pago: a tela
+    # de pagamento le a lista pelo mesmo caminho.
+    payments = serializers.SerializerMethodField()
+    fiscal = serializers.SerializerMethodField()
+
+    def get_payments(self, obj):
+        """Recebimentos aprovados do pedido, na ordem em que entraram.
+
+        So os aprovados: um recebimento cancelado nao compoe o valor pago nem
+        entra na NFC-e.
+        """
+        from apps.payments.serializers import PaymentSerializer
+
+        payments = [
+            payment
+            for payment in obj.payments.all()
+            if payment.status == "approved"
+        ]
+        payments.sort(key=lambda payment: payment.created_at)
+        return PaymentSerializer(payments, many=True, context=self.context).data
+
+    table_number = serializers.CharField(source="table.number", read_only=True, default=None)
+    command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
+    command_code = serializers.CharField(source="command.code", read_only=True, default=None)
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
+    customer_document = serializers.CharField(source="customer.document", read_only=True, default=None)
+
+    def get_fiscal(self, obj):
+        """Situacao da NFC-e deste pedido, ou `None` quando ainda nao ha nota.
+
+        E o que permite a tela oferecer a acao certa — emitir quando nao ha
+        documento, imprimir quando ja existe um autorizado — em vez de um
+        botao unico que so revela o que faz depois do clique.
+
+        `Order.invoice` e OneToOne; o queryset da view usa `select_related`
+        para isto nao virar uma consulta por linha na listagem.
+        """
+        from apps.invoices.services import fiscal_state_of, is_fiscally_printable
+
+        invoice = getattr(obj, "invoice", None)
+        if invoice is None:
+            return None
+        return {
+            "id": str(invoice.id),
+            "status": invoice.status,
+            "fiscal_state": fiscal_state_of(invoice),
+            "printable": is_fiscally_printable(invoice),
+            "number": invoice.number,
+            "error_message": invoice.error_message,
+        }
 
     class Meta:
         model = Order
@@ -91,3 +148,10 @@ class OrderSerializer(TenantModelSerializer):
             "production_status",
             "change_history",
         ]
+
+    def validate_order_type(self, value):
+        if value == Order.TYPE_TABLE:
+            raise serializers.ValidationError(
+                "Pedidos de salão devem ser abertos por uma comanda e depois vinculados à mesa."
+            )
+        return value

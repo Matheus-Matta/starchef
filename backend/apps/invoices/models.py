@@ -6,11 +6,26 @@ from apps.core.models import TenantModel
 class FiscalProfile(TenantModel):
     """Grupo tributario reutilizavel por produtos (CFOP/CSOSN/NCM + aliquotas).
 
-    Os valores default sao "em branco"/zero de proposito: cada restaurante
-    configura conforme seu enquadramento. Simples Nacional costuma usar CSOSN
-    (ex.: 102) e aliquotas zeradas no cupom.
+    E um cadastro DA CONTA, nao do restaurante: o mesmo "Bebida" ou "Prato
+    padrao" vale para todas as unidades, do mesmo jeito que as categorias do
+    cardapio. Quem escolhe o perfil e o PRODUTO (``menu.Product.fiscal_profile``),
+    numa relacao 1:N — um perfil serve N produtos.
+
+    Os valores default sao "em branco"/zero de proposito: cada conta configura
+    conforme seu enquadramento. Simples Nacional costuma usar CSOSN (ex.: 102) e
+    aliquotas zeradas no cupom.
     """
 
+    # Compartilhado entre restaurantes (reutilizavel): o vinculo de restaurante
+    # e opcional. Sobrescreve o FK obrigatorio do TenantModel — mesmo padrao de
+    # `menu.ProductCategory` / `menu.ProductAddon`.
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="%(class)s_set",
+        on_delete=models.PROTECT,
+    )
     name = models.CharField(max_length=120)
     ncm = models.CharField(max_length=8, blank=True, help_text="Codigo NCM do produto.")
     cest = models.CharField(max_length=7, blank=True)
@@ -26,12 +41,15 @@ class FiscalProfile(TenantModel):
     approx_tax_rate = models.DecimalField(
         max_digits=6, decimal_places=2, default=0, help_text="Tributos aprox. (Lei 12.741) em %."
     )
-    is_default = models.BooleanField(default=False, help_text="Perfil padrao da filial.")
+    is_default = models.BooleanField(default=False, help_text="Marca o perfil sugerido no cadastro de produtos.")
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        ordering = ["name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_fiscal_profile_by_branch"),
+            # Nome unico por CONTA (e nao mais por filial): o perfil e um
+            # cadastro reutilizavel, entao "Bebida" e um so em toda a conta.
+            models.UniqueConstraint(fields=["account", "name"], name="unique_fiscal_profile_by_account"),
         ]
 
     def __str__(self):
@@ -46,6 +64,22 @@ class FiscalConfig(TenantModel):
     """
 
     PROVIDER_MANUAL = "manual"  # sem transmissao SEFAZ (scaffold/contingencia)
+    PROVIDER_FOCUS_NFE = "focus_nfe"
+    PROVIDER_CHOICES = [
+        (PROVIDER_MANUAL, "Manual (sem transmissao)"),
+        (PROVIDER_FOCUS_NFE, "Focus NFe"),
+    ]
+
+    FOCUS_SYNC_NOT_CONFIGURED = "not_configured"
+    FOCUS_SYNC_PENDING = "pending"
+    FOCUS_SYNC_SYNCED = "synced"
+    FOCUS_SYNC_ERROR = "error"
+    FOCUS_SYNC_CHOICES = [
+        (FOCUS_SYNC_NOT_CONFIGURED, "Nao configurado"),
+        (FOCUS_SYNC_PENDING, "Aguardando sincronizacao"),
+        (FOCUS_SYNC_SYNCED, "Sincronizado"),
+        (FOCUS_SYNC_ERROR, "Erro de sincronizacao"),
+    ]
 
     MODEL_NFCE = "65"
     MODEL_NFE = "55"
@@ -69,7 +103,12 @@ class FiscalConfig(TenantModel):
         (CRT_NORMAL, "Regime Normal"),
     ]
 
-    provider = models.CharField(max_length=40, default=PROVIDER_MANUAL, help_text="Provedor de emissao.")
+    provider = models.CharField(
+        max_length=40,
+        choices=PROVIDER_CHOICES,
+        default=PROVIDER_MANUAL,
+        help_text="Provedor de emissao.",
+    )
     document_model = models.CharField(max_length=2, choices=MODEL_CHOICES, default=MODEL_NFCE)
     environment = models.CharField(max_length=1, choices=ENV_CHOICES, default=ENV_HOMOLOGATION)
     crt = models.CharField(max_length=1, choices=CRT_CHOICES, default=CRT_SIMPLES)
@@ -82,6 +121,8 @@ class FiscalConfig(TenantModel):
     corporate_name = models.CharField(max_length=180, blank=True, help_text="Razao social.")
     trade_name = models.CharField(max_length=180, blank=True, help_text="Nome fantasia.")
     address_line = models.CharField(max_length=255, blank=True)
+    address_number = models.CharField(max_length=20, blank=True, help_text="Numero do endereco do emitente.")
+    district = models.CharField(max_length=120, blank=True, help_text="Bairro do endereco do emitente.")
     city = models.CharField(max_length=120, blank=True)
     city_ibge = models.CharField(max_length=7, blank=True, help_text="Codigo IBGE do municipio.")
     uf = models.CharField(max_length=2, blank=True)
@@ -96,9 +137,29 @@ class FiscalConfig(TenantModel):
     provider_token = models.CharField(
         max_length=255, blank=True, help_text="Credencial/token do integrador fiscal (ex.: Focus NFe)."
     )
+    focus_company_id = models.CharField(max_length=80, blank=True, db_index=True)
+    focus_token_production = models.CharField(max_length=255, blank=True)
+    focus_token_homologation = models.CharField(max_length=255, blank=True)
+    focus_certificate_base64 = models.TextField(blank=True)
+    focus_certificate_password = models.CharField(max_length=255, blank=True)
+    focus_sync_status = models.CharField(
+        max_length=24,
+        choices=FOCUS_SYNC_CHOICES,
+        default=FOCUS_SYNC_NOT_CONFIGURED,
+    )
+    focus_sync_error = models.TextField(blank=True)
+    focus_synced_at = models.DateTimeField(null=True, blank=True)
+    focus_remote_data = models.JSONField(default=dict, blank=True)
 
     default_profile = models.ForeignKey(
         FiscalProfile, null=True, blank=True, related_name="+", on_delete=models.SET_NULL
+    )
+    strict_fiscal_profile = models.BooleanField(
+        default=False,
+        help_text=(
+            "Recusar a emissao quando o perfil fiscal de algum item estiver incompleto, "
+            "em vez de completar com valores padrao."
+        ),
     )
     is_active = models.BooleanField(default=True)
 
@@ -113,6 +174,13 @@ class FiscalConfig(TenantModel):
     @property
     def is_ready(self):
         """True quando o minimo para emissao real esta preenchido (senao, scaffold)."""
+        if self.provider == self.PROVIDER_FOCUS_NFE:
+            token = (
+                self.focus_token_production
+                if self.environment == self.ENV_PRODUCTION
+                else self.focus_token_homologation
+            )
+            return bool(self.cnpj and self.uf and token)
         return bool(self.cnpj and self.uf and self.csc_token and self.certificate_ref)
 
 
@@ -137,6 +205,7 @@ class Invoice(TenantModel):
     phase = models.CharField(max_length=20, default=PHASE_RECEIPT)
     status = models.CharField(max_length=20, default=STATUS_DRAFT, db_index=True)
     provider = models.CharField(max_length=80, blank=True)
+    provider_reference = models.CharField(max_length=120, blank=True, db_index=True)
 
     # Identificacao do documento
     document_model = models.CharField(max_length=2, blank=True)
@@ -197,6 +266,7 @@ class InvoiceItem(TenantModel):
     code = models.CharField(max_length=60, blank=True)
     description = models.CharField(max_length=180)
     ncm = models.CharField(max_length=8, blank=True)
+    cest = models.CharField(max_length=7, blank=True)
     cfop = models.CharField(max_length=4, blank=True)
     csosn = models.CharField(max_length=3, blank=True)
     cst_icms = models.CharField(max_length=2, blank=True)
@@ -210,7 +280,11 @@ class InvoiceItem(TenantModel):
     icms_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     icms_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     icms_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    pis_cst = models.CharField(max_length=2, default="49")
+    pis_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     pis_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cofins_cst = models.CharField(max_length=2, default="49")
+    cofins_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     cofins_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     approx_tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 

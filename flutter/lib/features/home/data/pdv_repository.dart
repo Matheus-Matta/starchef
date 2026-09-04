@@ -39,10 +39,20 @@ class PdvRepository {
       list('/menu/products/', query: {...query, 'is_active': true}),
       list('/menu/categories/', query: {'page_size': 100, 'is_active': true}),
       list('/tables/', query: query),
-      // Comandas entram no carregamento inicial junto com as mesas: as duas
-      // são o contexto de abertura de pedido e precisam estar em cache para
-      // o PDV abrir um atendimento sem rede.
+      // Mesas entram no cache para o vínculo opcional da comanda; comandas são
+      // o contexto de abertura do pedido. Ambos precisam funcionar sem rede.
       list('/commands/', query: {...query, 'is_active': true}),
+      // Usa exatamente a mesma consulta da tela de recebimento. O ApiClient
+      // persiste essa resposta no SQLite, portanto as formas continuam
+      // disponíveis quando o terminal perder a conexão depois da carga.
+      list(
+        '/payments/methods/',
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
+      ),
     ]);
     return PdvCatalog(
       cashStations: responses[0],
@@ -50,6 +60,7 @@ class PdvRepository {
       categories: responses[2],
       tables: responses[3],
       commands: responses[4],
+      paymentMethods: responses[5],
     );
   }
 }
@@ -61,6 +72,7 @@ class PdvCatalog {
     required this.categories,
     required this.tables,
     required this.commands,
+    required this.paymentMethods,
   });
 
   final List<JsonMap> cashStations;
@@ -68,4 +80,5 @@ class PdvCatalog {
   final List<JsonMap> categories;
   final List<JsonMap> tables;
   final List<JsonMap> commands;
+  final List<JsonMap> paymentMethods;
 }

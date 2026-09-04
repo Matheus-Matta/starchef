@@ -21,7 +21,7 @@ void main() {
     final preferences = LocalPreferences(file: file);
     await preferences.load();
 
-    expect(preferences.themeMode, ThemeMode.light);
+    expect(preferences.themeMode, ThemeMode.dark);
     expect(preferences.commandTimeout, const Duration(seconds: 45));
     expect(preferences.stabilityToleranceKg, 0.002);
     expect(preferences.audibleAlerts, isTrue);
@@ -58,7 +58,7 @@ void main() {
     final preferences = LocalPreferences(file: file);
     await preferences.load();
 
-    expect(preferences.themeMode, ThemeMode.light);
+    expect(preferences.themeMode, ThemeMode.dark);
   });
 
   test('timeout e tolerância ficam dentro dos limites seguros', () async {
@@ -91,40 +91,40 @@ void main() {
     expect(reloaded.commandTimeout, const Duration(seconds: 90));
   });
 
-  test(
-    'porta serial livre persiste e sobrepõe o caminho deste terminal',
-    () async {
-      final preferences = LocalPreferences(file: file);
-      await preferences.load();
-      await preferences.setSerialPort(
+  test('override de porta de versões antigas é removido do terminal', () async {
+    // Nada mais lê esse valor: quem descreve o equipamento é o cadastro. O
+    // que resta é conseguir apagar o que ficou gravado, para o arquivo não
+    // carregar para sempre uma porta que já não vale.
+    await file.writeAsString(
+      '{"serial_port_overrides":'
+      '{"printer:printer-1":"/dev/porta-antiga","scale:scale-1":"COM17"}}',
+    );
+    final preferences = LocalPreferences(file: file);
+    await preferences.load();
+    expect(
+      preferences.legacySerialPortOverride(
         kind: 'printer',
         deviceId: 'printer-1',
-        value: '/dev/ttyUSB0',
-      );
-      await preferences.setSerialPort(
-        kind: 'scale',
-        deviceId: 'scale-1',
-        value: 'COM17',
-      );
+      ),
+      '/dev/porta-antiga',
+    );
 
-      final reloaded = LocalPreferences(file: file);
-      await reloaded.load();
+    await preferences.clearSerialPortOverride(
+      kind: 'printer',
+      deviceId: 'printer-1',
+    );
 
-      expect(
-        reloaded.applySerialPort({
-          'id': 'printer-1',
-          'endpoint': 'COM1',
-          'connection_type': 'serial',
-        }, kind: 'printer')['endpoint'],
-        '/dev/ttyUSB0',
-      );
-      expect(
-        reloaded.applySerialPort({
-          'id': 'scale-1',
-          'port': 'COM2',
-        }, kind: 'scale')['port'],
-        'COM17',
-      );
-    },
-  );
+    final reloaded = LocalPreferences(file: file);
+    await reloaded.load();
+    expect(
+      reloaded.legacySerialPortOverride(kind: 'printer', deviceId: 'printer-1'),
+      isNull,
+    );
+    // Limpar uma impressora não pode levar junto o registro de outro
+    // equipamento.
+    expect(
+      reloaded.legacySerialPortOverride(kind: 'scale', deviceId: 'scale-1'),
+      'COM17',
+    );
+  });
 }

@@ -6,8 +6,125 @@ import 'package:http/testing.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
 import 'package:starchef_pdv/core/network/api_exception.dart';
 import 'package:starchef_pdv/core/network/offline_store.dart';
+import 'package:starchef_pdv/core/network/relay_origin.dart';
+import 'package:starchef_pdv/core/network/realtime_client.dart';
 
 void main() {
+  test('nome de terminal acentuado não quebra a requisição', () async {
+    // O cabeçalho HTTP só aceita ASCII: `dart:io` recusa qualquer byte acima
+    // de 127 com `FormatException`. Como o rótulo padrão do secundário é
+    // "Caixa Secundário", bastava um logout — que deixa o rótulo na memória —
+    // para o LOGIN seguinte estourar antes de sair da máquina, acusando o
+    // endereço do servidor por um problema que era nosso.
+    late http.BaseRequest sent;
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"ok": true}', 200);
+      }),
+    );
+
+    await client.syncTransport.send(
+      'POST',
+      '/payments/cash-registers/open/',
+      body: const {'opening_amount': 0},
+      origin: const RelayOrigin(
+        accessToken: 'token-do-secundario',
+        actorId: 'operador-2',
+        installationId: 'instalacao-2',
+        terminalName: 'Caixa Secundário ab12cd',
+      ),
+    );
+
+    final label = sent.headers['X-Terminal-Name']!;
+    expect(
+      label.codeUnits.every((unit) => unit <= 127),
+      isTrue,
+      reason: 'o valor precisa atravessar o cliente HTTP real',
+    );
+    // E o servidor recupera o nome inteiro: nada de acento perdido no caminho.
+    expect(Uri.decodeComponent(label), 'Caixa Secundário ab12cd');
+
+    await client.dispose();
+  });
+
+  test('nome de terminal em ASCII viaja sem escapes', () async {
+    late http.BaseRequest sent;
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('{"ok": true}', 200);
+      }),
+    );
+
+    await client.syncTransport.send(
+      'GET',
+      '/payments/cash-registers/',
+      origin: const RelayOrigin(
+        accessToken: 'token',
+        actorId: 'operador-1',
+        installationId: 'instalacao-1',
+        terminalName: 'Caixa Principal ab12cd',
+      ),
+    );
+
+    expect(sent.headers['X-Terminal-Name'], 'Caixa Principal ab12cd');
+    await client.dispose();
+  });
+
+  test('troca a API em memória sem reiniciar o aplicativo', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef-api-switch-',
+    );
+    final client = ApiClient(
+      baseUrl: 'https://old.starchef.test/api/v1',
+      offlineStore: OfflineStore(
+        file: File('${directory.path}/offline.sqlite'),
+      ),
+    );
+
+    await client.updateBaseUrl('https://api.starchef.com.br/api/v1');
+
+    expect(client.baseUrl, 'https://api.starchef.com.br/api/v1');
+    expect(client.healthEndpoint, 'https://api.starchef.com.br/health/');
+    expect(
+      client.pdvSocketUrl('restaurant-1'),
+      'wss://api.starchef.com.br/ws/pdv/restaurant-1/',
+    );
+    await client.dispose();
+    await directory.delete(recursive: true);
+  });
+
+  test('evento WS da unidade vira atualização local em tempo real', () async {
+    final client = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+    final received = <String>[];
+    final subscription = client.signals.changes.listen(received.add);
+
+    client.applyRealtimeEvent(
+      const RealtimeEvent('model.updated', {
+        'resource': 'orders.orderitem',
+        'restaurant_id': 'restaurant-1',
+      }),
+      restaurantId: 'restaurant-1',
+    );
+    client.applyRealtimeEvent(
+      const RealtimeEvent('model.updated', {
+        'resource': 'menu.product',
+        'restaurant_id': 'restaurant-2',
+      }),
+      restaurantId: 'restaurant-1',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(received, containsAll({'realtime:orders', 'orders'}));
+    expect(received, isNot(contains('realtime:menu')));
+
+    await subscription.cancel();
+    await client.dispose();
+  });
+
   test('converte resposta de erro da API em ApiException', () async {
     final client = ApiClient(
       baseUrl: 'http://starchef.test/api/v1',
@@ -82,6 +199,52 @@ void main() {
     await client.dispose();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'persiste formas de pagamento por restaurante para uso offline',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef-payment-methods-cache-',
+      );
+      var online = true;
+      final client = ApiClient(
+        baseUrl: 'http://starchef.test/api/v1',
+        offlineStore: OfflineStore(
+          file: File('${directory.path}/offline.sqlite'),
+        ),
+        client: MockClient((request) async {
+          if (!online) throw const SocketException('offline');
+          expect(request.url.path, endsWith('/payments/methods/'));
+          return http.Response(
+            '{"results":[{"id":"pix-1","name":"PIX","method_type":"pix"}]}',
+            200,
+          );
+        }),
+      );
+      const query = {
+        'restaurant': 'restaurant-1',
+        'is_active': true,
+        'page_size': 100,
+      };
+
+      await client.get(
+        '/payments/methods/',
+        query: query,
+        accessToken: 'token',
+      );
+      online = false;
+      final cached = await client.get(
+        '/payments/methods/',
+        query: query,
+        accessToken: 'token',
+      );
+
+      expect(cached['_offline_cache'], isTrue);
+      expect((cached['results'] as List).single['name'], 'PIX');
+      await client.dispose();
+      await directory.delete(recursive: true);
+    },
+  );
 
   test(
     'enfileira alteração offline e sincroniza quando a rede volta',
@@ -245,4 +408,115 @@ void main() {
     await client.dispose();
     await directory.delete(recursive: true);
   });
+
+  // O status da resposta precisa ser lido ANTES do corpo. Decodificar primeiro
+  // fazia uma página HTML de erro — 502 do proxy, 500 do Django — estourar
+  // `FormatException` e virar um `ApiException` sem `statusCode`. A fila trata
+  // isso como recusa de negócio e tira a operação de rotação para sempre: uma
+  // oscilação de gateway matava permanentemente um fechamento de caixa
+  // enfileirado, e nada no servidor ficava pendente de aprovação.
+  test('erro 502 em HTML é indisponibilidade, não recusa definitiva', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html><head><title>502 Bad Gateway</title></head>'
+          '<body><h1>502 Bad Gateway</h1></body></html>',
+          502,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    // `isConnectivity` é o que a fila lê: o transporte o converte em
+    // `TransientSyncFailure` (reagenda) em vez de recusa definitiva.
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.isConnectivity, 'isConnectivity', isTrue)
+            .having((error) => error.message, 'message', contains('502')),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('erro 4xx sem JSON preserva o status e um trecho do corpo', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html><body>Request Entity Too Large</body></html>',
+          413,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 413)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('Request Entity Too Large'),
+            ),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('corpo escalar num erro não derruba a chamada por outro motivo', () async {
+    // `raw as Map<String, dynamic>` estourava `TypeError` num corpo assim.
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '"falha"',
+          400,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>().having((error) => error.statusCode, 'statusCode', 400),
+      ),
+    );
+
+    await client.dispose();
+  });
+
+  test('sucesso com corpo não-JSON continua sendo resposta inválida', () async {
+    final client = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient(
+        (_) async => http.Response(
+          '<html>ok</html>',
+          200,
+          headers: {'content-type': 'text/html'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.post('/cash-register/abc/close/', body: const {}),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('resposta inválida'),
+        ),
+      ),
+    );
+
+    await client.dispose();
+  });
+
 }

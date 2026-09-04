@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 import '../data/cash_auth_repository.dart';
 
 /// Abre um diálogo que pede a **senha de ações do caixa** (definida no cadastro
@@ -98,7 +100,7 @@ class _CashAuthDialogState extends State<_CashAuthDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AppDialog(
       title: Row(
         children: [
           const Icon(Icons.lock_outline),

@@ -10,7 +10,6 @@ from django.db import connection
 from django.db.migrations.exceptions import InconsistentMigrationHistory
 from django.utils import timezone
 
-from apps.accounts.models import UserProfile
 from apps.core.management.commands._demo_seed import (
     DEFAULT_ACCOUNT_NAME,
     DEFAULT_ACCOUNT_SLUG,
@@ -105,7 +104,6 @@ class Command(BaseCommand):
             password=options["password"],
             first_name="Admin",
             last_name="StarChef",
-            profile_type=UserProfile.PROFILE_ADMIN,
             restaurant=r1,
             branch=b1,
             role=roles["admin"],
@@ -119,7 +117,6 @@ class Command(BaseCommand):
             password=DEFAULT_PASSWORD,
             first_name="João",
             last_name="Ferreira",
-            profile_type=UserProfile.PROFILE_WAITER,
             restaurant=r1,
             branch=b1,
             role=roles["waiter"],
@@ -132,7 +129,6 @@ class Command(BaseCommand):
             password=DEFAULT_PASSWORD,
             first_name="Maria",
             last_name="Santos",
-            profile_type=UserProfile.PROFILE_CASHIER,
             restaurant=r1,
             branch=b1,
             role=roles["cashier"],
@@ -145,7 +141,6 @@ class Command(BaseCommand):
             password=DEFAULT_PASSWORD,
             first_name="Carlos",
             last_name="Alves",
-            profile_type=UserProfile.PROFILE_KITCHEN,
             restaurant=r1,
             branch=b1,
             role=roles["kitchen"],
@@ -171,7 +166,6 @@ class Command(BaseCommand):
             password=DEFAULT_PASSWORD,
             first_name="Roberta",
             last_name="Lima",
-            profile_type=UserProfile.PROFILE_MANAGER,
             restaurant=r2,
             branch=b2,
             role=roles["manager"],
@@ -209,7 +203,6 @@ class Command(BaseCommand):
                 password="trattoria123",
                 first_name="Marco",
                 last_name="Rossi",
-                profile_type=UserProfile.PROFILE_OWNER,
                 restaurant=r3,
                 branch=b3,
                 role=roles2["owner"],
@@ -294,9 +287,10 @@ class Command(BaseCommand):
 
     def _seed_fiscal_burger(self, account, restaurant, branch, user):
         # Perfil tributario padrao (Simples Nacional, aliquotas zeradas — configure depois).
+        # E um cadastro DA CONTA (sem restaurante/filial): vale para todas as unidades.
         profile = self._upsert(
             FiscalProfile,
-            {"account": account, "restaurant": restaurant, "branch": branch, "name": "Alimentacao - Simples Nacional"},
+            {"account": account, "name": "Alimentacao - Simples Nacional"},
             {
                 "ncm": "21069090", "cfop": "5102", "origem": "0", "csosn": "102",
                 "icms_rate": Decimal("0"), "pis_rate": Decimal("0"), "cofins_rate": Decimal("0"),

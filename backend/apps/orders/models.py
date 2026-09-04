@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -14,7 +16,6 @@ class Order(TenantModel):
     TYPE_INTERNAL = "internal"
 
     TYPE_CHOICES = [
-        (TYPE_TABLE, "Table"),
         (TYPE_COMMAND, "Command"),
         (TYPE_COUNTER, "Counter"),
         (TYPE_DELIVERY, "Delivery"),
@@ -187,18 +188,24 @@ class Order(TenantModel):
 class OrderBatch(TenantModel):
     """Production round — group of items sent to kitchen at once within a single order."""
 
+    STATUS_SCHEDULED = "scheduled"
     STATUS_SENT = "sent"
     STATUS_DONE = "done"
+    STATUS_CANCELLED = "cancelled"
 
     STATUS_CHOICES = [
+        (STATUS_SCHEDULED, "Scheduled"),
         (STATUS_SENT, "Sent"),
         (STATUS_DONE, "Done"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     order = models.ForeignKey(Order, related_name="batches", on_delete=models.CASCADE)
+    serial = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     batch_number = models.PositiveIntegerField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SENT)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SCHEDULED)
     sent_at = models.DateTimeField()
+    dispatch_at = models.DateTimeField(null=True, blank=True, db_index=True)
     sent_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -220,6 +227,7 @@ class OrderBatch(TenantModel):
 
 class OrderItem(TenantModel):
     STATUS_PENDING = "pending"
+    STATUS_QUEUED = "queued"
     STATUS_SENT = "sent"
     STATUS_PREPARING = "preparing"
     STATUS_READY = "ready"
@@ -229,6 +237,7 @@ class OrderItem(TenantModel):
 
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
+        (STATUS_QUEUED, "Queued during grace period"),
         (STATUS_SENT, "Sent"),
         (STATUS_PREPARING, "Preparing"),
         (STATUS_READY, "Ready"),
@@ -286,6 +295,24 @@ class OrderItem(TenantModel):
 
     def __str__(self):
         return f"{self.quantity} x {self.product}"
+
+    @property
+    def variation_suffix(self):
+        """Sufixo ' - Variacao A, Variacao B' para colar no nome do produto.
+
+        A variacao descreve QUAL produto e (sabor, tamanho, ponto da carne),
+        entao sai na mesma linha dele em toda nota impressa; quem vai para
+        uma linha propria abaixo e o adicional. Fica no modelo, e nao no
+        modulo de impressao, porque os templates HTML precisam do mesmo
+        texto — duplicar a regra la ja tinha feito o cupom e o HTML da mesma
+        nota divergirem.
+        """
+        nomes = []
+        for variation in self.variations or []:
+            nome = variation.get("name") if isinstance(variation, dict) else variation
+            if nome:
+                nomes.append(str(nome))
+        return f" - {', '.join(nomes)}" if nomes else ""
 
 
 class OrderItemAddon(TenantModel):

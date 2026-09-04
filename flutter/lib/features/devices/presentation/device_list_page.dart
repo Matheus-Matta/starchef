@@ -1,13 +1,18 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/copyable_error.dart';
+import '../../../core/widgets/shadcn_layout.dart';
+import '../domain/local_print_renderer.dart';
 import '../domain/printer_endpoint.dart';
-import '../services/local_device_agent.dart';
+import '../printing/printer.dart';
+import '../printing/printer_device.dart';
+import '../printing/printer_transport.dart';
 
 enum DeviceKind { printer, scale }
 
@@ -65,15 +70,11 @@ class _DeviceListPageState extends State<DeviceListPage> {
         query: {'restaurant': widget.restaurantId, 'page_size': 300},
         accessToken: widget.token,
       );
+      // A lista mostra o cadastro como ele está: é ele que vale na hora de
+      // abrir a porta, então a tela não pode exibir outra coisa.
       rows = ((data['results'] ?? const []) as List)
           .cast<Map<String, dynamic>>()
           .where((item) => '${item['restaurant']}' == widget.restaurantId)
-          .map(
-            (item) => widget.preferences.applySerialPort(
-              item,
-              kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
-            ),
-          )
           .toList();
     } on ApiException catch (error) {
       loadError = error.message;
@@ -110,136 +111,94 @@ class _DeviceListPageState extends State<DeviceListPage> {
               .toLowerCase()
               .contains(term);
     }).toList();
-    return Scaffold(
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: Text(title),
-        actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Configuração de $title',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Cadastre e mantenha os equipamentos deste restaurante.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  width: 280,
-                  child: TextField(
-                    onChanged: (value) => setState(() => search = value),
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: 'Filtrar...',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: () => _edit(),
-                  icon: const Icon(Icons.add),
-                  label: Text(
-                    widget.kind == DeviceKind.printer
-                        ? 'Nova impressora'
-                        : 'Nova balança',
-                  ),
-                ),
-              ],
+    return AppPageScaffold(
+      title: 'Configuração de $title',
+      description: 'Cadastre e mantenha os equipamentos deste restaurante.',
+      leading: const BackButton(),
+      actions: [
+        SizedBox(
+          width: 260,
+          child: TextField(
+            onChanged: (value) => setState(() => search = value),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Filtrar equipamentos...',
             ),
-            const SizedBox(height: 22),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : loadError != null
-                    ? _LoadFailure(message: loadError!, onRetry: _load)
-                    : filtered.isEmpty
-                    ? _EmptyDevices(kind: widget.kind, onCreate: () => _edit())
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final calculatedRows =
-                              ((constraints.maxHeight - 180) / 48).floor();
-                          final rowsPerPage = calculatedRows.clamp(1, 10);
-                          final tableWidth = constraints.maxWidth < 900
-                              ? 900.0
-                              : constraints.maxWidth;
-                          final pageOptions = <int>{
-                            rowsPerPage,
-                            5,
-                            10,
-                            20,
-                            50,
-                          }.toList()..sort();
-                          return SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: SizedBox(
-                              width: tableWidth,
-                              child: PaginatedDataTable(
-                                header: Text('$title cadastradas'),
-                                showCheckboxColumn: false,
-                                rowsPerPage: rowsPerPage,
-                                availableRowsPerPage: pageOptions,
-                                showFirstLastButtons: true,
-                                columnSpacing: 42,
-                                horizontalMargin: 24,
-                                dataRowMinHeight: 44,
-                                dataRowMaxHeight: 48,
-                                columns: [
-                                  const DataColumn(label: Text('Nome')),
-                                  DataColumn(
-                                    label: Text(
-                                      widget.kind == DeviceKind.printer
-                                          ? 'Driver'
-                                          : 'Protocolo',
-                                    ),
-                                  ),
-                                  DataColumn(
-                                    label: Text(
-                                      widget.kind == DeviceKind.printer
-                                          ? 'Conexão'
-                                          : 'Porta',
-                                    ),
-                                  ),
-                                  const DataColumn(label: Text('Setor')),
-                                  const DataColumn(label: Text('Status')),
-                                  const DataColumn(label: Text('Ações')),
-                                ],
-                                source: _DeviceSource(
-                                  filtered,
-                                  widget.kind,
-                                  _edit,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ),
-          ],
+          ),
         ),
+        IconButton.outlined(
+          tooltip: 'Atualizar',
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+        ),
+        FilledButton.icon(
+          onPressed: () => _edit(),
+          icon: const Icon(Icons.add),
+          label: Text(
+            widget.kind == DeviceKind.printer
+                ? 'Nova impressora'
+                : 'Nova balança',
+          ),
+        ),
+      ],
+      body: AppSection(
+        padding: EdgeInsets.zero,
+        child: loading
+            ? const Center(child: CircularProgressIndicator())
+            : loadError != null
+            ? _LoadFailure(message: loadError!, onRetry: _load)
+            : filtered.isEmpty
+            ? _EmptyDevices(kind: widget.kind, onCreate: () => _edit())
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final calculatedRows = ((constraints.maxHeight - 180) / 48)
+                      .floor();
+                  final rowsPerPage = calculatedRows.clamp(1, 10);
+                  final tableWidth = constraints.maxWidth < 900
+                      ? 900.0
+                      : constraints.maxWidth;
+                  final pageOptions = <int>{rowsPerPage, 5, 10, 20, 50}.toList()
+                    ..sort();
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: tableWidth,
+                      child: PaginatedDataTable(
+                        header: Text('$title cadastradas'),
+                        showCheckboxColumn: false,
+                        rowsPerPage: rowsPerPage,
+                        availableRowsPerPage: pageOptions,
+                        showFirstLastButtons: true,
+                        columnSpacing: 42,
+                        horizontalMargin: 24,
+                        dataRowMinHeight: 44,
+                        dataRowMaxHeight: 48,
+                        columns: [
+                          const DataColumn(label: Text('Nome')),
+                          DataColumn(
+                            label: Text(
+                              widget.kind == DeviceKind.printer
+                                  ? 'Driver'
+                                  : 'Protocolo',
+                            ),
+                          ),
+                          DataColumn(
+                            label: Text(
+                              widget.kind == DeviceKind.printer
+                                  ? 'Conexão'
+                                  : 'Porta',
+                            ),
+                          ),
+                          const DataColumn(label: Text('Setor')),
+                          const DataColumn(label: Text('Status')),
+                          const DataColumn(label: Text('Ações')),
+                        ],
+                        source: _DeviceSource(filtered, widget.kind, _edit),
+                      ),
+                    ),
+                  );
+                },
+              ),
       ),
     );
   }
@@ -252,43 +211,26 @@ class _LoadFailure extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.error_outline,
-            size: 48,
-            color: Theme.of(context).colorScheme.error,
-          ),
-          const SizedBox(height: 14),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => copyError(context, message),
-                icon: const Icon(Icons.copy_outlined),
-                label: const Text('Copiar erro'),
-              ),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Tentar novamente'),
-              ),
-            ],
-          ),
-        ],
-      ),
+  Widget build(BuildContext context) => AppEmptyState(
+    icon: Icons.error_outline,
+    title: 'Não foi possível carregar os equipamentos',
+    description: message,
+    action: Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      alignment: WrapAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          onPressed: () => copyError(context, message),
+          icon: const Icon(Icons.copy_outlined),
+          label: const Text('Copiar erro'),
+        ),
+        FilledButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Tentar novamente'),
+        ),
+      ],
     ),
   );
 }
@@ -302,41 +244,17 @@ class _EmptyDevices extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final printer = kind == DeviceKind.printer;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              printer ? Icons.print_outlined : Icons.scale_outlined,
-              size: 52,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              printer
-                  ? 'Nenhuma impressora neste restaurante'
-                  : 'Nenhuma balança neste restaurante',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Cadastre o primeiro equipamento para ele aparecer nesta lista.',
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: onCreate,
-              icon: const Icon(Icons.add),
-              label: Text(
-                printer ? 'Cadastrar impressora' : 'Cadastrar balança',
-              ),
-            ),
-          ],
-        ),
+    return AppEmptyState(
+      icon: printer ? Icons.print_outlined : Icons.scale_outlined,
+      title: printer
+          ? 'Nenhuma impressora neste restaurante'
+          : 'Nenhuma balança neste restaurante',
+      description:
+          'Cadastre o primeiro equipamento para ele aparecer nesta lista.',
+      action: FilledButton.icon(
+        onPressed: onCreate,
+        icon: const Icon(Icons.add),
+        label: Text(printer ? 'Cadastrar impressora' : 'Cadastrar balança'),
       ),
     );
   }
@@ -370,7 +288,15 @@ class _DeviceSource extends DataTableSource {
         ),
         DataCell(Text('${item['sector_name'] ?? 'Sem setor'}')),
         DataCell(
-          Chip(label: Text(item['is_active'] == true ? 'Ativo' : 'Inativo')),
+          AppStatusBadge(
+            label: item['is_active'] == true ? 'Ativo' : 'Inativo',
+            foreground: item['is_active'] == true
+                ? const Color(0xFF167A3E)
+                : const Color(0xFF71717A),
+            background: item['is_active'] == true
+                ? const Color(0xFFE8F7EE)
+                : const Color(0xFFF4F4F5),
+          ),
         ),
         DataCell(
           IconButton(
@@ -403,6 +329,12 @@ class DeviceEditPage extends StatefulWidget {
     required this.restaurantId,
     required this.preferences,
     this.item,
+    this.windowsPrinterLoader,
+    this.windowsSerialPortLoader,
+    this.initialSectors,
+    this.initialPrinters,
+    this.initialProducts,
+    this.initialSerialPorts,
   });
   final DeviceKind kind;
   final ApiClient api;
@@ -410,6 +342,12 @@ class DeviceEditPage extends StatefulWidget {
   final String restaurantId;
   final LocalPreferences preferences;
   final Map<String, dynamic>? item;
+  final Future<List<String>> Function()? windowsPrinterLoader;
+  final Future<List<String>> Function()? windowsSerialPortLoader;
+  final List<Map<String, dynamic>>? initialSectors;
+  final List<Map<String, dynamic>>? initialPrinters;
+  final List<Map<String, dynamic>>? initialProducts;
+  final List<String>? initialSerialPorts;
 
   @override
   State<DeviceEditPage> createState() => _DeviceEditPageState();
@@ -466,7 +404,18 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   @override
   void initState() {
     super.initState();
-    _loadChoices();
+    if (widget.initialSectors != null ||
+        widget.initialPrinters != null ||
+        widget.initialProducts != null ||
+        widget.initialSerialPorts != null) {
+      sectors = widget.initialSectors ?? const [];
+      printers = widget.initialPrinters ?? const [];
+      products = widget.initialProducts ?? const [];
+      localSerialPorts = widget.initialSerialPorts ?? const [];
+      loadingChoices = false;
+    } else {
+      _loadChoices();
+    }
   }
 
   Future<List<Map<String, dynamic>>> _list(String path) async {
@@ -490,9 +439,13 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         printers = result[1];
         products = result[2];
       } else {
-        localPrinters = await _loadWindowsPrinters();
+        localPrinters =
+            await (widget.windowsPrinterLoader?.call() ??
+                _loadWindowsPrinters());
       }
-      localSerialPorts = await _loadWindowsSerialPorts();
+      localSerialPorts =
+          await (widget.windowsSerialPortLoader?.call() ??
+              _loadWindowsSerialPorts());
     } on ApiException catch (error) {
       if (mounted) {
         showAppError(context, error);
@@ -527,7 +480,16 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   }
 
   Future<List<String>> _loadWindowsSerialPorts() async {
-    if (!Platform.isWindows) return const [];
+    if (!Platform.isWindows) {
+      // No Linux/macOS o nome já vem estável do SO (/dev/ttyACM0 etc.) — a
+      // mesma biblioteca que a balança e o leitor usam para detectar porta
+      // serve aqui, sem depender de PowerShell.
+      try {
+        return SerialPort.availablePorts;
+      } catch (_) {
+        return const [];
+      }
+    }
     try {
       final result = await Process.run('powershell.exe', const [
         '-NoProfile',
@@ -630,13 +592,13 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       }
       final savedId = '${saved['id'] ?? widget.item?['id'] ?? ''}'.trim();
       if (savedId.isNotEmpty) {
-        final usesSerial =
-            widget.kind == DeviceKind.scale ||
-            (widget.kind == DeviceKind.printer && connectionType == 'serial');
-        await widget.preferences.setSerialPort(
+        // Limpa qualquer porta que versões anteriores tenham guardado neste
+        // terminal: quem descreve o equipamento é o cadastro, e uma cópia
+        // local esquecida aqui foi o que fez a impressão real abrir um
+        // dispositivo diferente do que a tela mostrava.
+        await widget.preferences.clearSerialPortOverride(
           kind: widget.kind == DeviceKind.printer ? 'printer' : 'scale',
           deviceId: savedId,
-          value: usesSerial ? connection.text : null,
         );
       }
       if (mounted) Navigator.pop(context, true);
@@ -655,14 +617,26 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
     setState(() => testing = true);
     Map<String, dynamic>? job;
     try {
-      job = await widget.api.post(
-        '/printers/${item['id']}/test-connection/',
-        body: const {},
-        accessToken: widget.token,
-      );
+      try {
+        job = await widget.api.post(
+          '/printers/${item['id']}/test-connection/',
+          body: const {},
+          accessToken: widget.token,
+        );
+      } on ApiException catch (error) {
+        // O teste de impressora existe justamente para diagnosticar o
+        // equipamento — depender do backend para gerar a nota tornava
+        // impossível conferir uma impressora sem internet, que é quando o
+        // problema costuma aparecer. Vale para QUALQUER recusa, não só falta
+        // de rede: num Caixa Secundário esta rota nem chega ao servidor, e
+        // exigir a nota renderizada de lá deixava o botão de teste sem efeito
+        // nenhum num terminal que tem a impressora fisicamente ligada nele.
+        debugPrint('teste de impressora sem nota do servidor: ${error.message}');
+      }
       final apiPrinter =
-          job['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+          job?['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};
       final printer = <String, dynamic>{
+        ...item,
         ...apiPrinter,
         'connection_type': connectionType,
         'endpoint': connection.text.trim(),
@@ -679,18 +653,23 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
           'baudrate': int.tryParse(baudRate.text) ?? 9600,
         },
       };
-      final payload = job['payload'] as Map<String, dynamic>? ?? const {};
-      final text = '${payload['text_content'] ?? ''}'.trim();
-      await LocalDeviceAgent(api: widget.api).printForPrinter(printer, text);
-      await widget.api.post(
-        '/print-jobs/${job['print_job_id']}/mark-printed/',
-        body: const {},
-        accessToken: widget.token,
-      );
-      if (mounted) {
-        showAppToast(
-          context,
-          'Conexão confirmada. A nota de teste foi impressa.',
+      final payload = job?['payload'] as Map<String, dynamic>? ?? const {};
+      final rendered = '${payload['text_content'] ?? ''}'.trim();
+      final text = rendered.isNotEmpty
+          ? rendered
+          : LocalPrintRenderer.printerTest(printer: printer);
+      // A nota de teste usa a mesma classe de impressora do resto do PDV: se
+      // ela sai aqui, sai igual na venda. Antes este botão montava um agente
+      // de impressão inteiro — com WebSocket e fila — só para escrever numa
+      // porta.
+      final tester = TestPrinter(PrinterDevice.fromJson(printer));
+      await tester.send(tester.compose(content: text));
+      final jobId = job?['print_job_id'];
+      if (jobId != null) {
+        await widget.api.post(
+          '/print-jobs/$jobId/mark-printed/',
+          body: const {},
+          accessToken: widget.token,
         );
       }
     } catch (error) {
@@ -738,73 +717,289 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
             ('filizola', 'Filizola'),
             ('urano', 'Urano'),
           ];
-    return Scaffold(
-      appBar: AppBar(
-        leading: const BackButton(),
-        title: Text(
+    return AppPageScaffold(
+      title:
           '${widget.item == null ? 'Cadastrar' : 'Editar'} ${printer ? 'impressora' : 'balança'}',
-        ),
-      ),
+      description:
+          'Configure identificação, conexão e comportamento do equipamento.',
+      leading: const BackButton(),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(28),
+          padding: const EdgeInsets.all(12),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Dados do equipamento',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
+            constraints: const BoxConstraints(maxWidth: 820),
+            child: AppSection(
+              title: 'Dados do equipamento',
+              description:
+                  'A configuração fica salva no backend e o PDV Desktop executa o equipamento localmente.',
+              padding: const EdgeInsets.all(28),
+              child: Form(
+                key: formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextFormField(
+                      controller: name,
+                      decoration: const InputDecoration(
+                        labelText: 'Nome',
+                        helperText:
+                            'Nome usado para identificar o equipamento.',
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'A configuração fica salva no backend e o PDV Desktop executa o equipamento localmente.',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Informe o nome.'
+                          : null,
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String?>(
+                      isExpanded: true,
+                      key: ValueKey(
+                        'sector-$sectorId-${_uniqueById(sectors).map((item) => item['id']).join('|')}',
                       ),
-                      const SizedBox(height: 24),
-                      TextFormField(
-                        controller: name,
+                      initialValue:
+                          _uniqueById(
+                            sectors,
+                          ).any((item) => '${item['id']}' == sectorId)
+                          ? sectorId
+                          : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Setor',
+                        helperText: 'Setor atendido por este equipamento.',
+                      ),
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text('Todos os setores'),
+                        ),
+                        ..._uniqueById(sectors).map(
+                          (item) => DropdownMenuItem(
+                            value: '${item['id']}',
+                            child: Text('${item['name']}'),
+                          ),
+                        ),
+                      ],
+                      onChanged: loadingChoices
+                          ? null
+                          : (value) => setState(() => sectorId = value),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: type,
+                      decoration: InputDecoration(
+                        labelText: printer ? 'Driver' : 'Protocolo',
+                      ),
+                      items: options
+                          .map(
+                            (option) => DropdownMenuItem(
+                              value: option.$1,
+                              child: Text(option.$2),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => setState(() => type = value!),
+                    ),
+                    const SizedBox(height: 16),
+                    if (printer) ...[
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: connectionType,
                         decoration: const InputDecoration(
-                          labelText: 'Nome',
+                          labelText: 'Tipo de conexão',
                           helperText:
-                              'Nome usado para identificar o equipamento.',
+                              'Escolha como este computador acessa a impressora.',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'windows',
+                            child: Text('Windows / USB'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'network',
+                            child: Text('Rede TCP/IP'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'serial',
+                            child: Text('Porta serial'),
+                          ),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => connectionType = value!),
+                      ),
+                      const SizedBox(height: 16),
+                      if (connectionType == 'windows' &&
+                          localPrinters.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          key: ValueKey(localPrinters.join('|')),
+                          initialValue: connection.text.isEmpty
+                              ? null
+                              : connection.text,
+                          decoration: const InputDecoration(
+                            labelText: 'Impressora instalada no Windows',
+                            helperText:
+                                'Inclui impressoras USB instaladas no Windows.',
+                          ),
+                          items:
+                              {
+                                    if (connection.text.isNotEmpty)
+                                      connection.text,
+                                    ...localPrinters,
+                                  }
+                                  .map(
+                                    (item) => DropdownMenuItem(
+                                      value: item,
+                                      child: Text(item),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged: loadingChoices
+                              ? null
+                              : (value) => connection.text = value ?? '',
+                          validator: (value) =>
+                              connectionType == 'windows' &&
+                                  (value == null || value.trim().isEmpty)
+                              ? 'Selecione a impressora do Windows.'
+                              : null,
+                        )
+                      else if (connectionType == 'windows')
+                        TextFormField(
+                          controller: connection,
+                          decoration: const InputDecoration(
+                            labelText: 'Impressora do Windows',
+                            helperText:
+                                'Informe o nome exato da impressora instalada.',
+                          ),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                              ? 'Informe a impressora do Windows.'
+                              : null,
+                        )
+                      else if (connectionType == 'network')
+                        AppResponsiveFields(
+                          flex: const [2, 1],
+                          children: [
+                            TextFormField(
+                              controller: host,
+                              decoration: const InputDecoration(
+                                labelText: 'Endereço IP',
+                                helperText: 'Ex.: 192.168.1.50',
+                              ),
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                  ? 'Informe o endereço IP.'
+                                  : null,
+                            ),
+                            TextFormField(
+                              controller: networkPort,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Porta',
+                                helperText: 'Normalmente 9100',
+                              ),
+                              validator: (value) {
+                                final port = int.tryParse(value ?? '');
+                                return port == null || port < 1 || port > 65535
+                                    ? 'Porta inválida.'
+                                    : null;
+                              },
+                            ),
+                          ],
+                        )
+                      else
+                        AppResponsiveFields(
+                          children: [
+                            TextFormField(
+                              controller: connection,
+                              decoration: InputDecoration(
+                                labelText: 'Porta serial',
+                                hintText: 'COM4 ou /dev/ttyUSB0',
+                                helperText: localSerialPorts.isEmpty
+                                    ? 'Digite o nome ou caminho completo da porta.'
+                                    : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
+                              ),
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                  ? 'Informe a porta serial.'
+                                  : null,
+                            ),
+                            TextFormField(
+                              controller: baudRate,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Velocidade',
+                                suffixText: 'baud',
+                              ),
+                            ),
+                          ],
+                        ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: timeout,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Timeout da conexão',
+                          suffixText: 'segundos',
+                          helperText:
+                              'Tempo máximo para conectar ou enviar a impressão.',
+                        ),
+                        validator: (value) {
+                          final seconds = int.tryParse(value ?? '');
+                          return seconds == null || seconds < 1 || seconds > 120
+                              ? 'Use um valor entre 1 e 120.'
+                              : null;
+                        },
+                      ),
+                    ] else
+                      TextFormField(
+                        controller: connection,
+                        decoration: InputDecoration(
+                          labelText: 'Porta da balança',
+                          hintText: 'COM4 ou /dev/ttyUSB0',
+                          helperText: localSerialPorts.isEmpty
+                              ? 'Digite o nome ou caminho completo da porta.'
+                              : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
                         ),
                         validator: (value) =>
                             value == null || value.trim().isEmpty
-                            ? 'Informe o nome.'
+                            ? 'Informe a porta da balança.'
                             : null,
+                      ),
+                    if (!printer) ...[
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: baudRate,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Velocidade da porta',
+                          helperText:
+                              'Baud rate configurado na balança. Normalmente 9600.',
+                          suffixText: 'baud',
+                        ),
                       ),
                       const SizedBox(height: 16),
                       DropdownButtonFormField<String?>(
+                        isExpanded: true,
                         key: ValueKey(
-                          'sector-$sectorId-${_uniqueById(sectors).map((item) => item['id']).join('|')}',
+                          'product-$productId-${_uniqueById(products).map((item) => item['id']).join('|')}',
                         ),
                         initialValue:
                             _uniqueById(
-                              sectors,
-                            ).any((item) => '${item['id']}' == sectorId)
-                            ? sectorId
+                              products,
+                            ).any((item) => '${item['id']}' == productId)
+                            ? productId
                             : null,
                         decoration: const InputDecoration(
-                          labelText: 'Setor',
-                          helperText: 'Setor atendido por este equipamento.',
+                          labelText: 'Produto por quilo',
+                          helperText:
+                              'Produto usado para calcular o valor da pesagem.',
                         ),
                         items: [
                           const DropdownMenuItem(
                             value: null,
-                            child: Text('Todos os setores'),
+                            child: Text('Nenhum produto'),
                           ),
-                          ..._uniqueById(sectors).map(
+                          ..._uniqueById(products).map(
                             (item) => DropdownMenuItem(
                               value: '${item['id']}',
                               child: Text('${item['name']}'),
@@ -813,352 +1008,89 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                         ],
                         onChanged: loadingChoices
                             ? null
-                            : (value) => setState(() => sectorId = value),
+                            : (value) => setState(() => productId = value),
                       ),
                       const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
-                        initialValue: type,
-                        decoration: InputDecoration(
-                          labelText: printer ? 'Driver' : 'Protocolo',
+                      DropdownButtonFormField<String?>(
+                        isExpanded: true,
+                        key: ValueKey(
+                          'printer-$printerId-${_uniqueById(printers).map((item) => item['id']).join('|')}',
                         ),
-                        items: options
-                            .map(
-                              (option) => DropdownMenuItem(
-                                value: option.$1,
-                                child: Text(option.$2),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) => setState(() => type = value!),
-                      ),
-                      const SizedBox(height: 16),
-                      if (printer) ...[
-                        DropdownButtonFormField<String>(
-                          initialValue: connectionType,
-                          decoration: const InputDecoration(
-                            labelText: 'Tipo de conexão',
-                            helperText:
-                                'Escolha como este computador acessa a impressora.',
+                        initialValue:
+                            _uniqueById(
+                              printers,
+                            ).any((item) => '${item['id']}' == printerId)
+                            ? printerId
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Impressora da pesagem',
+                          helperText:
+                              'Impressora que receberá a nota gerada pela balança.',
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('Nenhuma impressora'),
                           ),
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'windows',
-                              child: Text('Windows / USB'),
+                          ..._uniqueById(printers).map(
+                            (item) => DropdownMenuItem(
+                              value: '${item['id']}',
+                              child: Text('${item['name']}'),
                             ),
-                            DropdownMenuItem(
-                              value: 'network',
-                              child: Text('Rede TCP/IP'),
-                            ),
-                            DropdownMenuItem(
-                              value: 'serial',
-                              child: Text('Porta serial'),
-                            ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => connectionType = value!),
-                        ),
-                        const SizedBox(height: 16),
-                        if (connectionType == 'windows' &&
-                            localPrinters.isNotEmpty)
-                          DropdownButtonFormField<String>(
-                            key: ValueKey(localPrinters.join('|')),
-                            initialValue: connection.text.isEmpty
-                                ? null
-                                : connection.text,
-                            decoration: const InputDecoration(
-                              labelText: 'Impressora instalada no Windows',
-                              helperText:
-                                  'Inclui impressoras USB instaladas no Windows.',
-                            ),
-                            items:
-                                {
-                                      if (connection.text.isNotEmpty)
-                                        connection.text,
-                                      ...localPrinters,
-                                    }
-                                    .map(
-                                      (item) => DropdownMenuItem(
-                                        value: item,
-                                        child: Text(item),
-                                      ),
-                                    )
-                                    .toList(),
-                            onChanged: loadingChoices
-                                ? null
-                                : (value) => connection.text = value ?? '',
-                            validator: (value) =>
-                                connectionType == 'windows' &&
-                                    (value == null || value.trim().isEmpty)
-                                ? 'Selecione a impressora do Windows.'
-                                : null,
-                          )
-                        else if (connectionType == 'windows')
+                          ),
+                        ],
+                        onChanged: loadingChoices
+                            ? null
+                            : (value) => setState(() => printerId = value),
+                      ),
+                      const SizedBox(height: 16),
+                      AppResponsiveFields(
+                        children: [
                           TextFormField(
-                            controller: connection,
+                            controller: maxAge,
+                            keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
-                              labelText: 'Impressora do Windows',
-                              helperText:
-                                  'Informe o nome exato da impressora instalada.',
+                              labelText: 'Validade da leitura',
+                              suffixText: 'segundos',
                             ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Informe a impressora do Windows.'
-                                : null,
-                          )
-                        else if (connectionType == 'network')
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 2,
-                                child: TextFormField(
-                                  controller: host,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Endereço IP',
-                                    helperText: 'Ex.: 192.168.1.50',
-                                  ),
-                                  validator: (value) =>
-                                      value == null || value.trim().isEmpty
-                                      ? 'Informe o endereço IP.'
-                                      : null,
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: networkPort,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Porta',
-                                    helperText: 'Normalmente 9100',
-                                  ),
-                                  validator: (value) {
-                                    final port = int.tryParse(value ?? '');
-                                    return port == null ||
-                                            port < 1 ||
-                                            port > 65535
-                                        ? 'Porta inválida.'
-                                        : null;
-                                  },
-                                ),
-                              ),
-                            ],
-                          )
-                        else
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: connection,
-                                  decoration: InputDecoration(
-                                    labelText: 'Porta serial',
-                                    hintText: 'COM4 ou /dev/ttyUSB0',
-                                    helperText: localSerialPorts.isEmpty
-                                        ? 'Digite o nome ou caminho completo da porta.'
-                                        : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
-                                  ),
-                                  validator: (value) =>
-                                      value == null || value.trim().isEmpty
-                                      ? 'Informe a porta serial.'
-                                      : null,
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: baudRate,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Velocidade',
-                                    suffixText: 'baud',
-                                  ),
-                                ),
-                              ),
-                            ],
                           ),
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: timeout,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Timeout da conexão',
-                            suffixText: 'segundos',
-                            helperText:
-                                'Tempo máximo para conectar ou enviar a impressão.',
-                          ),
-                          validator: (value) {
-                            final seconds = int.tryParse(value ?? '');
-                            return seconds == null ||
-                                    seconds < 1 ||
-                                    seconds > 120
-                                ? 'Use um valor entre 1 e 120.'
-                                : null;
-                          },
-                        ),
-                      ] else
-                        TextFormField(
-                          controller: connection,
-                          decoration: InputDecoration(
-                            labelText: 'Porta da balança',
-                            hintText: 'COM4 ou /dev/ttyUSB0',
-                            helperText: localSerialPorts.isEmpty
-                                ? 'Digite o nome ou caminho completo da porta.'
-                                : 'Detectadas: ${localSerialPorts.join(', ')}. Você também pode digitar outra.',
-                          ),
-                          validator: (value) =>
-                              value == null || value.trim().isEmpty
-                              ? 'Informe a porta da balança.'
-                              : null,
-                        ),
-                      if (!printer) ...[
-                        const SizedBox(height: 16),
-                        TextFormField(
-                          controller: baudRate,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Velocidade da porta',
-                            helperText:
-                                'Baud rate configurado na balança. Normalmente 9600.',
-                            suffixText: 'baud',
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        DropdownButtonFormField<String?>(
-                          key: ValueKey(
-                            'product-$productId-${_uniqueById(products).map((item) => item['id']).join('|')}',
-                          ),
-                          initialValue:
-                              _uniqueById(
-                                products,
-                              ).any((item) => '${item['id']}' == productId)
-                              ? productId
-                              : null,
-                          decoration: const InputDecoration(
-                            labelText: 'Produto por quilo',
-                            helperText:
-                                'Produto usado para calcular o valor da pesagem.',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Nenhum produto'),
+                          TextFormField(
+                            controller: delay,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Espera para impressão',
+                              suffixText: 'segundos',
                             ),
-                            ..._uniqueById(products).map(
-                              (item) => DropdownMenuItem(
-                                value: '${item['id']}',
-                                child: Text('${item['name']}'),
-                              ),
-                            ),
-                          ],
-                          onChanged: loadingChoices
-                              ? null
-                              : (value) => setState(() => productId = value),
-                        ),
-                        const SizedBox(height: 16),
-                        DropdownButtonFormField<String?>(
-                          key: ValueKey(
-                            'printer-$printerId-${_uniqueById(printers).map((item) => item['id']).join('|')}',
                           ),
-                          initialValue:
-                              _uniqueById(
-                                printers,
-                              ).any((item) => '${item['id']}' == printerId)
-                              ? printerId
-                              : null,
-                          decoration: const InputDecoration(
-                            labelText: 'Impressora da pesagem',
-                            helperText:
-                                'Impressora que receberá a nota gerada pela balança.',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Nenhuma impressora'),
-                            ),
-                            ..._uniqueById(printers).map(
-                              (item) => DropdownMenuItem(
-                                value: '${item['id']}',
-                                child: Text('${item['name']}'),
-                              ),
-                            ),
-                          ],
-                          onChanged: loadingChoices
-                              ? null
-                              : (value) => setState(() => printerId = value),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: maxAge,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Validade da leitura',
-                                  suffixText: 'segundos',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: TextFormField(
-                                controller: delay,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: 'Espera para impressão',
-                                  suffixText: 'segundos',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Impressão automática'),
-                        subtitle: Text(
-                          printer
-                              ? 'O PDV Desktop imprime automaticamente os trabalhos recebidos.'
-                              : 'O PDV Desktop envia a leitura quando o peso estabilizar.',
-                        ),
-                        value: autoPrint,
-                        onChanged: (value) => setState(() => autoPrint = value),
+                        ],
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Equipamento ativo'),
-                        value: active,
-                        onChanged: (value) => setState(() => active = value),
+                    ],
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Impressão automática'),
+                      subtitle: Text(
+                        printer
+                            ? 'O PDV Desktop imprime automaticamente os trabalhos recebidos.'
+                            : 'O PDV Desktop envia a leitura quando o peso estabilizar.',
                       ),
-                      const SizedBox(height: 22),
-                      if (printer && widget.item != null) ...[
-                        SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: OutlinedButton.icon(
-                            onPressed: saving || testing ? null : _testPrinter,
-                            icon: testing
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.print_outlined),
-                            label: const Text('Testar conexão e imprimir nota'),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
+                      value: autoPrint,
+                      onChanged: (value) => setState(() => autoPrint = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Equipamento ativo'),
+                      value: active,
+                      onChanged: (value) => setState(() => active = value),
+                    ),
+                    const SizedBox(height: 22),
+                    if (printer && widget.item != null) ...[
                       SizedBox(
                         width: double.infinity,
                         height: 50,
-                        child: FilledButton.icon(
-                          onPressed: saving ? null : _save,
-                          icon: saving
+                        child: OutlinedButton.icon(
+                          onPressed: saving || testing ? null : _testPrinter,
+                          icon: testing
                               ? const SizedBox(
                                   width: 18,
                                   height: 18,
@@ -1166,12 +1098,30 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : const Icon(Icons.save_outlined),
-                          label: const Text('Salvar equipamento'),
+                              : const Icon(Icons.print_outlined),
+                          label: const Text('Testar conexão e imprimir nota'),
                         ),
                       ),
+                      const SizedBox(height: 12),
                     ],
-                  ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: FilledButton.icon(
+                        onPressed: saving ? null : _save,
+                        icon: saving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save_outlined),
+                        label: const Text('Salvar equipamento'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

@@ -71,13 +71,15 @@
   <section class="items">
     {% for ticket_item in items %}
       <article class="item">
-        <p class="item__name">{{ ticket_item.product.name }}</p>
+        <p class="value-row item__name"><span>{{ ticket_item.product.name }}{{ ticket_item.variation_suffix }}</span><span>R$ {{ ticket_item.total_price }}</span></p>
         {% if ticket_item.product.is_weighed %}
           <p>{{ ticket_item.quantity|floatformat:3 }} kg x R$ {{ ticket_item.unit_price }}/kg</p>
         {% else %}
           <p>{{ ticket_item.quantity|floatformat:"-3" }} un x R$ {{ ticket_item.unit_price }}</p>
         {% endif %}
-        <p class="value-row"><span>VALOR</span><span>R$ {{ ticket_item.total_price }}</span></p>
+        {% for item_addon in ticket_item.addons.all %}
+          <p class="value-row"><span>&nbsp;&nbsp;{{ item_addon.addon.name }}</span><span>R$ {{ item_addon.total_price }}</span></p>
+        {% endfor %}
       </article>
       <div class="rule"></div>
     {% endfor %}

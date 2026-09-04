@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
+import '../../../core/widgets/shadcn_layout.dart';
+import '../../cash/domain/cash_restaurant_selector.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../home/data/pdv_repository.dart';
 import 'scale_workstation_page.dart';
@@ -10,15 +13,13 @@ class ScaleWindowPage extends StatefulWidget {
     super.key,
     required this.controller,
     required this.preferences,
-    required this.isFullScreen,
-    required this.onToggleFullScreen,
+    required this.onClose,
     this.preferredRestaurantId,
   });
 
   final AuthController controller;
   final LocalPreferences preferences;
-  final bool isFullScreen;
-  final VoidCallback onToggleFullScreen;
+  final VoidCallback onClose;
   final String? preferredRestaurantId;
 
   @override
@@ -31,6 +32,7 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
   String? restaurantId;
   String? errorMessage;
   bool loading = true;
+  bool stationRunning = false;
 
   PdvRepository get repository => PdvRepository(
     api: widget.controller.repository.apiClient,
@@ -59,13 +61,33 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
       final available = loadedRestaurants
           .map((item) => '${item['id']}')
           .toSet();
+      String? linkedRestaurantId;
+      if (restaurantId == null) {
+        try {
+          final cashStations = await repository.list(
+            '/cash-stations/',
+            query: {'page_size': 300, 'is_active': true},
+          );
+          linkedRestaurantId = cashLinkedRestaurantId(
+            cashStations: cashStations,
+            userId: widget.controller.session!.user.id,
+            availableRestaurantIds: available,
+          );
+        } on ApiException {
+          // A balança continua usando a seleção anterior quando o vínculo do
+          // caixa não pode ser consultado, inclusive no modo offline.
+        }
+      }
       final preferred =
           restaurantId ??
+          linkedRestaurantId ??
           widget.preferredRestaurantId ??
           widget.controller.session!.user.restaurantId;
       final selected = preferred != null && available.contains(preferred)
           ? preferred
           : '${loadedRestaurants.first['id']}';
+      widget.controller.setActiveRestaurant(selected);
+      await widget.controller.refreshSupervisorPassword(restaurantId: selected);
       final loadedProducts = await repository.list(
         '/menu/products/',
         query: {'page_size': 300, 'restaurant': selected, 'is_active': true},
@@ -94,49 +116,65 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
     await _load();
   }
 
+  List<Widget> _windowActions(BuildContext context) => [
+    IconButton.outlined(
+      tooltip: loading ? 'Recarregando dados...' : 'Recarregar dados',
+      onPressed: loading ? null : _load,
+      icon: loading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh),
+    ),
+    IconButton.outlined(
+      tooltip: 'Encerrar sessão',
+      onPressed: widget.controller.logout,
+      icon: const Icon(Icons.logout),
+    ),
+    IconButton.outlined(
+      tooltip: 'Fechar Balança Rápida',
+      onPressed: widget.onClose,
+      style: IconButton.styleFrom(
+        foregroundColor: Theme.of(context).colorScheme.error,
+      ),
+      icon: const Icon(Icons.power_settings_new),
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return AppPageScaffold(
+        title: 'Estação de balança',
+        description: 'Preparando equipamentos e cardápio da unidade.',
+        actions: _windowActions(context),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
     if (errorMessage != null || restaurantId == null) {
-      return Scaffold(
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.scale_outlined,
-                    size: 54,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    errorMessage ?? 'Estação indisponível.',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  FilledButton.icon(
-                    onPressed: _load,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Tentar novamente'),
-                  ),
-                ],
-              ),
-            ),
+      return AppPageScaffold(
+        title: 'Estação de balança',
+        description: 'Operação dedicada para pesagem e comandas.',
+        actions: _windowActions(context),
+        body: AppEmptyState(
+          icon: Icons.scale_outlined,
+          title: 'Estação indisponível',
+          description: errorMessage ?? 'Não foi possível preparar a balança.',
+          action: FilledButton.icon(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Tentar novamente'),
           ),
         ),
       );
     }
-    return Scaffold(
+    return AppPageScaffold(
+      title: 'Estação de balança',
+      description: 'Pesagem, adicionais e leitura de comandas em uma só tela.',
+      actions: _windowActions(context),
+      showHeader: !stationRunning,
+      padding: stationRunning ? EdgeInsets.zero : const EdgeInsets.all(16),
       body: ScaleWorkstationPage(
         api: widget.controller.repository.apiClient,
         accessToken: widget.controller.session!.accessToken,
@@ -145,8 +183,11 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
         products: products,
         onRestaurantChanged: _changeRestaurant,
         preferences: widget.preferences,
-        isFullScreen: widget.isFullScreen,
-        onToggleFullScreen: widget.onToggleFullScreen,
+        onRunningChanged: (running) {
+          if (mounted && stationRunning != running) {
+            setState(() => stationRunning = running);
+          }
+        },
       ),
     );
   }

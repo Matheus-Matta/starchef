@@ -103,7 +103,12 @@ export const useAuthStore = defineStore("auth", {
       // pro painel — clareando antes, a navegação para /login nunca corre risco.
       this.clearLocal();
       try {
-        await api.post("/auth/logout/", {});
+        // Quem chama PRECISA esperar esta promessa antes de navegar: é este POST
+        // que revoga o refresh e apaga os cookies httpOnly (o JS não alcança
+        // eles). Um `location.href` disparado antes aborta a requisição e o
+        // token continua válido no servidor. Timeout curto para o clique em
+        // "Sair" não ficar preso nos 15s padrão do cliente.
+        await api.post("/auth/logout/", {}, { timeout: 5_000 });
       } catch {
         // Sessão já foi limpa localmente — falha aqui não deve impedir o logout.
       }

@@ -106,6 +106,102 @@ void main() {
     expect(remaining.map((item) => item['queue_id']), ['unrelated-order']);
   });
 
+  group('uma operação travada não segura a fila inteira', () {
+    test('operação bloqueada é pulada por uma independente atrás', () async {
+      final createdAt = DateTime.now().toUtc();
+      await enqueue('bloqueada', createdAt: createdAt);
+      await enqueue(
+        'independente',
+        createdAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      await store.markBlocked('bloqueada', error: 'Comanda não encontrada.');
+
+      final claimed = await store.claimNext(
+        scope: 'terminal',
+        leaseOwner: 'terminal-1',
+      );
+
+      // Antes, a bloqueada na frente parava tudo até alguém resolver na mão.
+      expect(claimed?['queue_id'], 'independente');
+    });
+
+    test('operação esperando backoff não segura a de trás', () async {
+      final createdAt = DateTime.now().toUtc();
+      await enqueue('em-retry', createdAt: createdAt);
+      await enqueue(
+        'independente',
+        createdAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      await store.markRetry(
+        'em-retry',
+        attemptCount: 2,
+        nextAttemptAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
+        error: 'Servidor indisponível.',
+      );
+
+      final claimed = await store.claimNext(
+        scope: 'terminal',
+        leaseOwner: 'terminal-1',
+      );
+
+      expect(claimed?['queue_id'], 'independente');
+    });
+
+    test('quem depende de um ID temporário continua esperando', () async {
+      final createdAt = DateTime.now().toUtc();
+      const localOrderId = 'offline-order-1';
+      await enqueue(
+        'create-order',
+        temporaryId: localOrderId,
+        createdAt: createdAt,
+      );
+      await enqueue(
+        'add-item',
+        path: '/orders/$localOrderId/items/',
+        body: const {'product': 'p1'},
+        createdAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      await store.markBlocked('create-order', error: 'Pedido recusado.');
+
+      final claimed = await store.claimNext(
+        scope: 'terminal',
+        leaseOwner: 'terminal-1',
+      );
+
+      // Pular aqui mandaria o item para um pedido que não existe no servidor.
+      expect(claimed, isNull);
+    });
+
+    test('o dependente é liberado assim que o ID vira real', () async {
+      final createdAt = DateTime.now().toUtc();
+      const localOrderId = 'offline-order-1';
+      await enqueue(
+        'create-order',
+        temporaryId: localOrderId,
+        createdAt: createdAt,
+      );
+      await enqueue(
+        'add-item',
+        path: '/orders/$localOrderId/items/',
+        body: const {'product': 'p1'},
+        createdAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      await store.markBlocked('create-order', error: 'Pedido recusado.');
+      await store.replaceTemporaryId(
+        localOrderId,
+        'server-order-1',
+        scope: 'terminal',
+      );
+
+      final claimed = await store.claimNext(
+        scope: 'terminal',
+        leaseOwner: 'terminal-1',
+      );
+
+      expect(claimed?['queue_id'], 'add-item');
+    });
+  });
+
   test('uma operação em retry também é protegida do descarte', () async {
     await enqueue('op-4');
     await store.markRetry(

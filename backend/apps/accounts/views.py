@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
@@ -14,9 +15,11 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from apps.core.cookies import clear_auth_cookies, set_auth_cookies
 
 from apps.accounts.limits import assert_can_create_user
-from apps.accounts.models import Account, GlobalSystemConfig, Permission, Plan, Role, Subscription
+from apps.accounts.models import Account, CosmosConfig, FocusNfeConfig, GlobalSystemConfig, Permission, Plan, Role, Subscription
 from apps.accounts.serializers import (
     AccountSerializer,
+    CosmosConfigSerializer,
+    FocusNfeConfigSerializer,
     GlobalSystemConfigSerializer,
     PermissionSerializer,
     PlanSerializer,
@@ -27,9 +30,67 @@ from apps.accounts.serializers import (
     resolve_enabled_modules,
 )
 from apps.core.access import is_tenant_admin
-from apps.core.viewsets import BaseTenantViewSet
+from apps.core.viewsets import ReadOnlyTenantViewSet
 
 User = get_user_model()
+
+
+class FocusNfeConfigView(APIView):
+    """Consulta e edita a configuracao Focus da conta autenticada."""
+
+    required_module = "financeiro"
+
+    def _account_config(self, request):
+        account = getattr(request, "account", None)
+        if account is None:
+            raise PermissionDenied("Conta nao identificada.")
+        config, _ = FocusNfeConfig.objects.get_or_create(account=account)
+        return config
+
+    def _assert_admin(self, request):
+        if not is_tenant_admin(request.user):
+            raise PermissionDenied("Apenas administradores da conta podem configurar a Focus NFe.")
+
+    def get(self, request):
+        self._assert_admin(request)
+        return Response(FocusNfeConfigSerializer(self._account_config(request)).data)
+
+    def patch(self, request):
+        self._assert_admin(request)
+        config = self._account_config(request)
+        serializer = FocusNfeConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class CosmosConfigView(APIView):
+    """Consulta e edita a credencial Cosmos da conta autenticada."""
+
+    required_module = "financeiro"
+
+    def _account_config(self, request):
+        account = getattr(request, "account", None)
+        if account is None:
+            raise PermissionDenied("Conta nao identificada.")
+        config, _ = CosmosConfig.objects.get_or_create(account=account)
+        return config
+
+    def _assert_admin(self, request):
+        if not is_tenant_admin(request.user):
+            raise PermissionDenied("Apenas administradores da conta podem configurar a Cosmos.")
+
+    def get(self, request):
+        self._assert_admin(request)
+        return Response(CosmosConfigSerializer(self._account_config(request)).data)
+
+    def patch(self, request):
+        self._assert_admin(request)
+        config = self._account_config(request)
+        serializer = CosmosConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class LoginView(TokenObtainPairView):
@@ -102,7 +163,7 @@ class MeView(APIView):
                 "email": request.user.email,
                 "name": request.user.get_full_name(),
                 "is_superuser": request.user.is_superuser,
-                "profile_type": profile.profile_type if profile else None,
+                "profile_type": profile.role.code if profile and profile.role_id else None,
                 "account_id": str(account.id) if account else None,
                 "account_name": account.name if account else None,
                 "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,
@@ -113,6 +174,75 @@ class MeView(APIView):
                 "permissions": sorted(effective_permission_codes(request.user)),
             }
         )
+
+
+class AdminAuthorizationView(APIView):
+    """Confirma credenciais autorizadas sem trocar a sessão do operador.
+
+    Sem ``permission`` preserva o fluxo de fechamento do aplicativo, exclusivo
+    para administradores. Para uma operação conhecida, também aceita um usuário
+    da mesma conta que possua explicitamente a permissão solicitada.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "cash_approval"
+
+    def post(self, request):
+        login = str(request.data.get("username") or "").strip()
+        password = str(request.data.get("password") or "")
+        required_permission = str(request.data.get("permission") or "").strip()
+        if required_permission not in {"", "orders.cancel"}:
+            return Response(
+                {"detail": "Operação de autorização inválida."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not login or not password:
+            return Response(
+                {"detail": "Informe o usuário e a senha do administrador."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        username = login
+        if "@" in login:
+            matched = User.objects.filter(email__iexact=login).only("username").first()
+            if matched is not None:
+                username = matched.get_username()
+        administrator = authenticate(request=request, username=username, password=password)
+        if administrator is None:
+            return Response(
+                {"detail": "Credenciais de administrador inválidas."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        profile = getattr(administrator, "profile", None)
+        request_account = getattr(request, "account", None)
+        same_account = bool(
+            request_account is not None
+            and profile is not None
+            and profile.account_id == request_account.id
+        )
+        permission_codes = effective_permission_codes(administrator)
+        has_required_permission = (
+            not required_permission
+            and is_tenant_admin(administrator)
+        ) or (
+            bool(required_permission)
+            and (
+                is_tenant_admin(administrator)
+                or "*" in permission_codes
+                or required_permission in permission_codes
+            )
+        )
+        if not same_account or not profile.is_active or not has_required_permission:
+            # Uma resposta única evita revelar se o usuário existe em outra
+            # conta ou apenas não possui perfil administrativo.
+            return Response(
+                {"detail": "Credenciais sem permissão para esta operação na conta."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response({"authorized": True, "user_id": str(administrator.id)})
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -130,7 +260,14 @@ class UserViewSet(viewsets.ModelViewSet):
         )
         user = self.request.user
         if user.is_superuser:
-            return self._filter_users_by_selected_scope(queryset)
+            # Superusuário também é escopado por conta na API: a conta vem do
+            # header X-Account-ID ou do próprio perfil (TenantMiddleware).
+            # Sem conta resolvida não há listagem — ver todas as contas de uma
+            # vez é papel do /admin.
+            account = getattr(self.request, "account", None)
+            if account is None:
+                return queryset.none()
+            return self._filter_users_by_selected_scope(queryset.filter(profile__account_id=account.id))
         profile = getattr(user, "profile", None)
         if not profile or not profile.account_id:
             return queryset.none()
@@ -140,7 +277,7 @@ class UserViewSet(viewsets.ModelViewSet):
         if not profile.restaurant_id:
             return queryset.none()
         queryset = queryset.filter(profile__restaurant_id=profile.restaurant_id)
-        if profile.branch_id and profile.profile_type not in {"admin", "owner"}:
+        if profile.branch_id:
             queryset = queryset.filter(profile__branch_id=profile.branch_id)
         return queryset
 
@@ -160,7 +297,14 @@ class UserViewSet(viewsets.ModelViewSet):
         super().perform_create(serializer)
 
 
-class RoleViewSet(BaseTenantViewSet):
+class RoleViewSet(ReadOnlyTenantViewSet):
+    """Perfis de Acesso agora sao fixos (ver apps.accounts.role_catalog).
+
+    Somente leitura: nao ha mais criacao, edicao ou remocao de perfis pela API
+    — os 4 perfis (Garcom, Caixa, Gerente, Administrador) sao provisionados
+    por conta via signal (contas novas) e migration (contas existentes).
+    """
+
     serializer_class = RoleSerializer
     queryset = Role.all_objects.prefetch_related("permissions").all()
     search_fields = ["code", "name"]

@@ -10,13 +10,15 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import pytest
+from rest_framework.test import APIClient
 
 from apps.invoices.models import FiscalConfig, Invoice
 from apps.invoices.providers import FocusNfeProvider
-from apps.invoices.services import emit_fiscal_invoice
+from apps.invoices.services import emit_fiscal_invoice, reprocess_pending_fiscal_invoices
 from apps.menu.models import Product
 from apps.orders.models import Order
 from apps.orders.services import add_order_item, create_order
+from apps.payments.models import Payment, PaymentMethod
 
 pytestmark = pytest.mark.django_db
 
@@ -29,9 +31,13 @@ def _make_product(account, restaurant, branch):
 
 
 def _make_fiscal_config(account, restaurant, branch):
+    account_config = account.focus_nfe_config
+    account_config.homologation_url = "https://homologacao.focusnfe.com.br"
+    account_config.production_url = "https://api.focusnfe.com.br"
+    account_config.save(update_fields=["homologation_url", "production_url", "updated_at"])
     return FiscalConfig.objects.create(
         account=account, restaurant=restaurant, branch=branch,
-        provider=FocusNfeProvider.name, provider_token="fake-token",
+        provider=FocusNfeProvider.name, focus_token_homologation="fake-token",
         cnpj="11222333000181", uf="SP",
         environment=FiscalConfig.ENV_HOMOLOGATION, series=1, next_number=1,
     )
@@ -56,7 +62,7 @@ def _fake_response(status_code, payload):
 def test_authorized_response_marks_issued(mock_post, account, restaurant, branch, manager_user):
     mock_post.return_value = _fake_response(200, {
         "status": "autorizado",
-        "chave_nfe": "35" + "0" * 42,
+        "chave_nfe": "NFe35" + "0" * 42,
         "protocolo": "135250000000001",
         "caminho_xml_nota_fiscal": "https://focusnfe.com.br/xml/abc",
         "caminho_danfe": "https://focusnfe.com.br/danfe/abc",
@@ -69,12 +75,118 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
 
     assert invoice.status == Invoice.STATUS_ISSUED
     assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.access_key == "35" + "0" * 42
     assert invoice.authorization_protocol == "135250000000001"
     assert mock_post.call_count == 1
     sent_payload = mock_post.call_args.kwargs["json"]
     assert sent_payload["cnpj_emitente"] == "11222333000181"
+    assert sent_payload["data_emissao"]
+    assert sent_payload["indicador_inscricao_estadual_destinatario"] == "9"
+    assert sent_payload["local_destino"] == "1"
+    assert sent_payload["consumidor_final"] == "1"
+    assert sent_payload["finalidade_emissao"] == "1"
+    assert sent_payload["presenca_comprador"] == "1"
+    assert sent_payload["formas_pagamento"] == [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
     assert len(sent_payload["items"]) == 1
     assert sent_payload["items"][0]["descricao"] == "X-Burger"
+
+
+@patch("requests.get")
+@patch("requests.post")
+def test_already_processed_reconciles_authorized_invoice(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    mock_post.return_value = _fake_response(
+        422,
+        {"codigo": "already_processed", "mensagem": "A nota fiscal ja foi autorizada"},
+    )
+    mock_get.return_value = _fake_response(
+        200,
+        {
+            "status": "autorizado",
+            "chave_nfe": "NFe35" + "2" * 42,
+            "protocolo": "135250000000003",
+            "caminho_danfe": "https://focusnfe.com.br/danfe/existing",
+        },
+    )
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.error_message == ""
+    assert invoice.access_key == "35" + "2" * 42
+    assert invoice.authorization_protocol == "135250000000003"
+    assert invoice.danfe_url == "https://focusnfe.com.br/danfe/existing"
+    mock_get.assert_called_once_with(
+        f"https://homologacao.focusnfe.com.br/v2/nfce/{invoice.provider_reference}",
+        auth=("fake-token", ""),
+        timeout=30,
+    )
+
+
+@patch("requests.post")
+def test_payload_maps_approved_payments_and_cash_change(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "35" + "0" * 42,
+        "protocolo": "135250000000001",
+    })
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    cash = PaymentMethod.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="Dinheiro", method_type="cash"
+    )
+    pix = PaymentMethod.objects.create(
+        account=account, restaurant=restaurant, branch=branch, name="PIX", method_type="pix"
+    )
+    Payment.objects.create(
+        account=account, restaurant=restaurant, branch=branch, order=order,
+        payment_method=cash, amount=Decimal("20.00"), change_amount=Decimal("5.00"),
+    )
+    Payment.objects.create(
+        account=account, restaurant=restaurant, branch=branch, order=order,
+        payment_method=pix, amount=Decimal("5.00"),
+    )
+
+    emit_fiscal_invoice(order, user=manager_user)
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["formas_pagamento"] == [
+        {"forma_pagamento": "01", "valor_pagamento": "25.00"},
+        {"forma_pagamento": "17", "valor_pagamento": "5.00"},
+    ]
+    assert sent_payload["valor_troco"] == "5.00"
+
+
+@patch("requests.post")
+def test_payload_maps_order_fees_to_other_expenses(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "35" + "0" * 42,
+        "protocolo": "135250000000001",
+    })
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    order.service_fee = Decimal("2.50")
+    order.delivery_fee = Decimal("1.50")
+    order.discount = Decimal("1.00")
+    order.total = Decimal("28.00")
+    order.save(update_fields=["service_fee", "delivery_fee", "discount", "total", "updated_at"])
+
+    emit_fiscal_invoice(order, user=manager_user)
+
+    sent_payload = mock_post.call_args.kwargs["json"]
+    assert sent_payload["valor_produtos"] == "25.00"
+    assert sent_payload["valor_desconto"] == "1.00"
+    assert sent_payload["valor_outras_despesas"] == "4.00"
+    assert sent_payload["valor_total"] == "28.00"
+    assert sent_payload["items"][0]["valor_desconto"] == "1.00"
+    assert sent_payload["items"][0]["valor_outras_despesas"] == "4.00"
 
 
 @patch("requests.post")
@@ -92,10 +204,17 @@ def test_processing_response_stays_pending_without_contingency(mock_post, accoun
 
 
 @patch("requests.post")
-def test_rejected_response_falls_back_to_contingency(mock_post, account, restaurant, branch, manager_user):
+def test_rejected_response_becomes_an_error_without_contingency(
+    mock_post, account, restaurant, branch, manager_user
+):
+    """Rejeicao tributaria nao e indisponibilidade.
+
+    Antes qualquer excecao do provider virava tpEmis=9, e a nota recusada em
+    definitivo entrava no laco de retransmissao para tomar a mesma recusa.
+    """
     mock_post.return_value = _fake_response(200, {
         "status": "erro_autorizacao",
-        "mensagem_sefaz": "Rejeicao: CNPJ do emitente invalido",
+        "mensagem_sefaz": "Rejeicao 539: duplicidade de NF-e",
     })
     product = _make_product(account, restaurant, branch)
     _make_fiscal_config(account, restaurant, branch)
@@ -103,13 +222,16 @@ def test_rejected_response_falls_back_to_contingency(mock_post, account, restaur
 
     invoice = emit_fiscal_invoice(order, user=manager_user)
 
-    assert invoice.emission_type == Invoice.EMISSION_CONTINGENCY
-    assert invoice.status == Invoice.STATUS_PENDING
-    assert "CNPJ do emitente invalido" in invoice.error_message
+    assert invoice.status == Invoice.STATUS_ERROR
+    assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.fiscal_payload["failure"] == "rejection"
+    assert "Rejeicao 539" in invoice.error_message
 
 
 @patch("requests.post")
-def test_network_error_falls_back_to_contingency(mock_post, account, restaurant, branch, manager_user):
+def test_network_error_keeps_the_note_awaiting_transmission(
+    mock_post, account, restaurant, branch, manager_user
+):
     import requests
 
     mock_post.side_effect = requests.ConnectionError("timeout")
@@ -119,5 +241,149 @@ def test_network_error_falls_back_to_contingency(mock_post, account, restaurant,
 
     invoice = emit_fiscal_invoice(order, user=manager_user)
 
-    assert invoice.emission_type == Invoice.EMISSION_CONTINGENCY
     assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.emission_type == Invoice.EMISSION_NORMAL
+    assert invoice.fiscal_payload["awaiting"] == "transmission"
+
+
+@patch("requests.post")
+def test_nfe_model_uses_nfe_endpoint_and_synced_environment_token(
+    mock_post, account, restaurant, branch, manager_user
+):
+    mock_post.return_value = _fake_response(202, {"status": "processando_autorizacao"})
+    product = _make_product(account, restaurant, branch)
+    config = _make_fiscal_config(account, restaurant, branch)
+    config.document_model = FiscalConfig.MODEL_NFE
+    config.provider_token = ""
+    config.focus_token_homologation = "empresa-homologacao"
+    config.save(update_fields=["document_model", "provider_token", "focus_token_homologation", "updated_at"])
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.provider_reference == f"starchef-{invoice.id}"
+    assert "/v2/nfe?ref=starchef-" in mock_post.call_args.args[0]
+    assert mock_post.call_args.kwargs["auth"] == ("empresa-homologacao", "")
+
+
+@patch("requests.post")
+def test_focus_webhook_updates_async_invoice(mock_post, account, restaurant, branch, manager_user):
+    account_config = account.focus_nfe_config
+    account_config.webhook_authorization = "webhook-secret"
+    account_config.webhook_authorization_header = "X-Focus-Auth"
+    account_config.save(update_fields=["webhook_authorization", "webhook_authorization_header", "updated_at"])
+    mock_post.return_value = _fake_response(202, {"status": "processando_autorizacao"})
+    product = _make_product(account, restaurant, branch)
+    config = _make_fiscal_config(account, restaurant, branch)
+    config.document_model = FiscalConfig.MODEL_NFE
+    config.save(update_fields=["document_model", "updated_at"])
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    response = APIClient().post(
+        "/api/v1/integrations/focus-nfe/webhook/",
+        {
+            "ref": invoice.provider_reference,
+            "status": "autorizado",
+            "chave_nfe": "NFe35" + "1" * 42,
+            "protocolo": "135250000000002",
+            "numero": "99",
+            "serie": "2",
+        },
+        format="json",
+        HTTP_X_FOCUS_AUTH="webhook-secret",
+    )
+
+    assert response.status_code == 200, response.data
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.STATUS_ISSUED
+    assert invoice.access_key == "35" + "1" * 42
+    assert invoice.number == "99"
+    assert invoice.series == 2
+    assert invoice.authorization_protocol == "135250000000002"
+
+
+def test_authorized_response_rejects_malformed_access_key():
+    original_key = "35" + "0" * 42
+    invoice = Invoice(access_key=original_key)
+
+    with pytest.raises(RuntimeError, match="esperados 44 digitos, recebidos 3"):
+        FocusNfeProvider().apply_response(
+            invoice,
+            {"status": "autorizado", "chave_nfe": "NFe123"},
+        )
+
+    assert invoice.access_key == original_key
+
+
+@patch("requests.post")
+def test_unauthorized_response_is_a_configuration_error(mock_post, account, restaurant, branch, manager_user):
+    mock_post.return_value = _fake_response(401, {"codigo": "permissao_negada"})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_ERROR
+    assert invoice.fiscal_payload["failure"] == "configuration"
+
+
+@patch("requests.get")
+@patch("requests.post")
+def test_lost_response_after_post_requires_reconciliation(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    """A Focus ja tem o documento e a consulta nao respondeu.
+
+    Reenviar as cegas duplicaria a nota, entao ela fica marcada para
+    reconciliacao — e o reprocessamento consulta em vez de transmitir.
+    """
+    mock_post.return_value = _fake_response(422, {"codigo": "already_processed"})
+    mock_get.return_value = _fake_response(500, {})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    assert invoice.status == Invoice.STATUS_PENDING
+    assert invoice.fiscal_payload["awaiting"] == "reconciliation"
+
+    mock_get.return_value = _fake_response(200, {
+        "status": "autorizado",
+        "chave_nfe": "NFe35" + "7" * 42,
+        "protocolo": "135250000000009",
+    })
+    retried, issued = reprocess_pending_fiscal_invoices()
+    invoice.refresh_from_db()
+
+    assert (retried, issued) == (1, 1)
+    assert invoice.status == Invoice.STATUS_ISSUED
+    # O segundo POST nunca aconteceu: a reconciliacao so consulta.
+    assert mock_post.call_count == 1
+
+
+@patch("requests.get")
+@patch("requests.post")
+def test_status_404_is_not_found_not_a_rejection(
+    mock_post, mock_get, account, restaurant, branch, manager_user
+):
+    """Consultar uma referencia que a Focus nao conhece devolve 404.
+
+    Pelo classificador geral isso viraria `FiscalRejection` e marcaria como
+    recusada uma nota que apenas nunca chegou la.
+    """
+    from apps.invoices.providers import FiscalNotFound
+
+    mock_post.side_effect = __import__("requests").ConnectionError("sem rede")
+    mock_get.return_value = _fake_response(404, {"codigo": "nao_encontrado"})
+    product = _make_product(account, restaurant, branch)
+    _make_fiscal_config(account, restaurant, branch)
+    order = _order_with_item(restaurant, branch, product, manager_user)
+    invoice = emit_fiscal_invoice(order, user=manager_user)
+
+    from apps.core.tenant import tenant_context
+
+    with tenant_context(account), pytest.raises(FiscalNotFound):
+        FocusNfeProvider().status(invoice)

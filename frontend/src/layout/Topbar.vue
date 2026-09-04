@@ -38,6 +38,15 @@
         <div class="topbar__profile-scope">
           <span>{{ restaurantName }}</span>
         </div>
+        <RouterLink
+          class="topbar__help"
+          :to="{ name: 'docs' }"
+          role="menuitem"
+          @click="profileOpen = false"
+        >
+          <AppIcon name="book-open" :size="16" />
+          Central de ajuda
+        </RouterLink>
         <a
           class="topbar__help"
           href="https://wa.me/5521966621486?text=Ol%C3%A1%2C%20preciso%20de%20ajuda%20com%20o%20StarChef."
@@ -60,7 +69,7 @@
 
 <script setup>
 import { computed, ref } from "vue";
-import { useRouter } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 
 import AppIcon from "../components/AppIcon.vue";
 import GlobalSearch from "../components/GlobalSearch.vue";

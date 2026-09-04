@@ -203,7 +203,6 @@ def ensure_tenant_user(
     password,
     first_name="Demo",
     last_name="User",
-    profile_type=UserProfile.PROFILE_OWNER,
     restaurant=None,
     branch=None,
     role=None,
@@ -228,7 +227,6 @@ def ensure_tenant_user(
             user=user,
             defaults={
                 "account": account,
-                "profile_type": profile_type,
                 "restaurant": restaurant,
                 "branch": branch,
                 "role": role,
@@ -237,7 +235,6 @@ def ensure_tenant_user(
             },
         )
         profile.account = account
-        profile.profile_type = profile_type
         profile.restaurant = restaurant
         profile.branch = branch
         profile.role = role

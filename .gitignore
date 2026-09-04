@@ -1,4 +1,8 @@
 .env
+# Exceção: o .env do app do garçom guarda só o endereço do backend (nenhum
+# segredo — a senha do Caixa Principal é digitada no login) e é embarcado
+# como asset, então precisa existir no clone para o build funcionar.
+!flutter_garcom/.env
 .venv/
 venv/
 __pycache__/

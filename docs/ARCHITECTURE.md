@@ -30,6 +30,14 @@
 - impressoes geram `PrintJob` e `AuditLog`;
 - fiscal real fica fora do MVP, com contrato futuro em `integrations.providers.FiscalProvider`.
 
+## WebSocket do Caixa Principal
+
+- rota: `/ws/pdv/<restaurant_id>/`;
+- autenticação: access JWT no header `Authorization: Bearer`, com validação de conta e restaurante no handshake;
+- eventos: criação, alteração e exclusão dos recursos do tenant usados pelo PDV, com payload de metadados e isolamento por restaurante;
+- cliente: heartbeat e reconexão com backoff; cada evento invalida somente os caches relacionados e provoca uma releitura REST autenticada;
+- após uma reconexão há uma reconciliação pontual para cobrir eventos perdidos, sem polling periódico.
+
 ## WebSocket KDS
 
 - rota: `/ws/kitchen/<branch_id>/<sector>/?token=<jwt>`;

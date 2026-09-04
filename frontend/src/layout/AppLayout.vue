@@ -217,12 +217,14 @@ function setRestaurantScope(restaurantId) {
   loadDashboardSummary();
 }
 
-function logout() {
+async function logout() {
   notifications.reset();
-  // Não espera o POST pro backend: `auth.logout()` já limpa a sessão local de
-  // forma síncrona antes de chamar a API, então a navegação pode acontecer na
-  // hora — sem travar o clique em "Sair" esperando a rede.
-  auth.logout();
+  // Espera o POST: é ele que revoga o refresh e limpa os cookies httpOnly.
+  // Navegar antes (location.href) aborta a requisição e a sessão continua viva
+  // no servidor — o usuário "sai" na tela mas o token segue valendo.
+  // `auth.logout()` limpa o estado local de forma síncrona antes da chamada e
+  // nunca rejeita, então a navegação abaixo acontece mesmo se a API falhar.
+  await auth.logout();
   window.location.href = "/login";
 }
 

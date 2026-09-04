@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../core/security/cash_password.dart';
+import '../../../core/storage/durable_secure_store.dart';
 import '../domain/auth_session.dart';
 
 abstract interface class OfflineLoginStore {
@@ -27,11 +28,18 @@ abstract interface class OfflineLoginStore {
 class SecureOfflineLoginStore implements OfflineLoginStore {
   SecureOfflineLoginStore({
     FlutterSecureStorage? storage,
+    SecureValueStore? valueStore,
     this.passwordIterations = 210000,
-  }) : _storage = storage ?? const FlutterSecureStorage();
+  }) : _storage =
+           valueStore ??
+           DurableSecureStore(
+             primary: FlutterSecureValueStore(
+               storage ?? const FlutterSecureStorage(),
+             ),
+           );
 
   static const _prefix = 'starchef_offline_login_v1_';
-  final FlutterSecureStorage _storage;
+  final SecureValueStore _storage;
   final int passwordIterations;
 
   static String _normalizedUsername(String value) => value.trim().toLowerCase();
@@ -54,8 +62,8 @@ class SecureOfflineLoginStore implements OfflineLoginStore {
       iterations: passwordIterations,
     );
     await _storage.write(
-      key: _key(normalized),
-      value: jsonEncode({
+      _key(normalized),
+      jsonEncode({
         'username': normalized,
         'password_hash': passwordHash,
         'session': session.toJson(),
@@ -72,7 +80,7 @@ class SecureOfflineLoginStore implements OfflineLoginStore {
     final normalized = _normalizedUsername(username);
     if (normalized.isEmpty || password.isEmpty) return null;
     try {
-      final raw = await _storage.read(key: _key(normalized));
+      final raw = await _storage.read(_key(normalized));
       if (raw == null) return null;
       final cached = jsonDecode(raw) as Map<String, dynamic>;
       if ('${cached['username'] ?? ''}' != normalized) return null;

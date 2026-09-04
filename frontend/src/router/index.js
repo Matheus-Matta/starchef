@@ -7,6 +7,7 @@ const AppLayout = () => import("../layout/AppLayout.vue");
 const DashboardView = () => import("../views/DashboardView.vue");
 const HomeView = () => import("../views/HomeView.vue");
 const KdsView = () => import("../views/KdsView.vue");
+const HelpCenterView = () => import("../views/HelpCenterView.vue");
 const LoginScreen = () => import("../views/LoginScreen.vue");
 const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
 const PdvView = () => import("../views/PdvView.vue");
@@ -14,8 +15,17 @@ const OrderEditView = () => import("../views/OrderEditView.vue");
 const CashRegisterView = () => import("../views/CashRegisterView.vue");
 const ReportsView = () => import("../views/ReportsView.vue");
 const KdsStationsView = () => import("../views/KdsStationsView.vue");
+const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
+const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
+const RestaurantFiscalConfigView = () => import("../views/RestaurantFiscalConfigView.vue");
 const ResourceFormView = () => import("../views/ResourceFormView.vue");
 const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
+const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
+const StockExitFormView = () => import("../views/StockExitFormView.vue");
+const StockPositionView = () => import("../views/StockPositionView.vue");
+const StockExitPickingView = () => import("../views/StockExitPickingView.vue");
+const StockSettingsView = () => import("../views/StockSettingsView.vue");
+const IngredientBulkFormView = () => import("../views/IngredientBulkFormView.vue");
 
 /**
  * Gera as rotas de um recurso a partir do seu schema (config/resources.js):
@@ -60,6 +70,8 @@ function buildResourceRoutes(resource) {
     });
   }
 
+  if (resource.documentView) return routes;
+
   routes.push(
     {
       path: `${resource.name}/:id`,
@@ -87,6 +99,12 @@ const resourceRoutes = resources.filter((resource) => !CUSTOM_RESOURCES.has(reso
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: "/docs",
+      name: "docs",
+      component: HelpCenterView,
+      meta: { public: true, allowAuthenticated: true, title: "Central de ajuda" },
+    },
     { path: "/login", name: "login", component: LoginScreen, meta: { public: true, title: "Login" } },
     { path: "/esqueci-senha", name: "forgot-password", component: PasswordRecoveryView, meta: { public: true, title: "Esqueci minha senha" } },
     { path: "/redefinir-senha", name: "reset-password", component: PasswordRecoveryView, meta: { public: true, title: "Redefinir senha" } },
@@ -103,6 +121,20 @@ export const router = createRouter({
         { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
         { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds", fullWidth: true } },
         { path: "kds-estacoes", name: "kds-estacoes", component: KdsStationsView, meta: { requiresAuth: true, title: "Estações KDS", nav: "kds-estacoes" } },
+        { path: "configuracao-cosmos", name: "configuracao-cosmos", component: CosmosConfigView, meta: { requiresAuth: true, title: "Configuração Cosmos", nav: "configuracao-cosmos", module: "financeiro" } },
+        { path: "configuracao-focus", name: "configuracao-focus", component: FocusNfeConfigView, meta: { requiresAuth: true, title: "Configuração Focus NFe", nav: "configuracao-focus", module: "financeiro" } },
+        // Configuração fiscal de UM restaurante (emitente, CSC, certificado,
+        // empresa na Focus). Fica fora de `buildResourceRoutes` porque não é
+        // uma das telas do CRUD genérico — chega pelo menu de ações da lista.
+        { path: "restaurantes/:id/fiscal", name: "restaurante-fiscal", component: RestaurantFiscalConfigView, props: true, meta: { requiresAuth: true, title: "Configuração fiscal do restaurante", nav: "restaurantes", module: "financeiro" } },
+        { path: "ingredientes/lote", name: "ingredientes-lote", component: IngredientBulkFormView, meta: { requiresAuth: true, title: "Cadastro de insumos em lote", nav: "ingredientes" } },
+        { path: "estoque-posicao", name: "estoque-posicao", component: StockPositionView, meta: { requiresAuth: true, title: "Posição de estoque", nav: "estoque-posicao", module: "logistica" } },
+        { path: "estoque-entradas/nova", name: "estoque-entrada-nova", component: StockEntryFormView, meta: { requiresAuth: true, title: "Nova entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
+        { path: "estoque-entradas/:id", name: "estoque-entrada-documento", component: StockEntryFormView, props: true, meta: { requiresAuth: true, title: "Entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
+        { path: "estoque-saidas/nova", name: "estoque-saida-nova", component: StockExitFormView, meta: { requiresAuth: true, title: "Nova saída de estoque", nav: "estoque-saidas", module: "logistica" } },
+        { path: "estoque-saidas/:id/conferencia", name: "estoque-saida-conferencia", component: StockExitPickingView, props: true, meta: { requiresAuth: true, title: "Conferência de saída", nav: "estoque-saidas", module: "logistica" } },
+        { path: "estoque-saidas/:id", name: "estoque-saida-documento", component: StockExitFormView, props: true, meta: { requiresAuth: true, title: "Saída de estoque", nav: "estoque-saidas", module: "logistica" } },
+        { path: "configuracao-estoque", name: "configuracao-estoque", component: StockSettingsView, meta: { requiresAuth: true, title: "Configuração do estoque", nav: "configuracao-estoque", module: "logistica" } },
         { path: "relatorios", name: "relatorios", redirect: { name: "relatorio-vendas" } },
         { path: "relatorios/vendas", name: "relatorio-vendas", component: ReportsView, props: { section: "sales" }, meta: { requiresAuth: true, title: "Relatório de vendas", nav: "relatorio-vendas" } },
         { path: "relatorios/pedidos", name: "relatorio-pedidos", component: ReportsView, props: { section: "orders" }, meta: { requiresAuth: true, title: "Relatório de pedidos", nav: "relatorio-pedidos" } },
@@ -123,7 +155,9 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
   if (to.meta.public) {
-    if (auth.isAuthenticated && (await auth.validateSession())) {
+    // A central de ajuda e publica para visitantes e tambem deve continuar
+    // acessivel pelo menu de perfil de quem ja esta autenticado.
+    if (!to.meta.allowAuthenticated && auth.isAuthenticated && (await auth.validateSession())) {
       return { name: "painel" };
     }
     return true;

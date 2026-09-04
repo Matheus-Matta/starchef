@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 
 /// Painel visual do pedido atual.
 ///
@@ -16,9 +20,14 @@ class OrderCartPanel extends StatelessWidget {
     required this.onVoidItem,
     required this.onFinish,
     required this.onPrint,
+    this.onCancel,
     this.onEmitInvoice,
+    this.onPrintInvoice,
     required this.printing,
     this.emittingInvoice = false,
+    this.selectedItemId,
+    this.onSelectItem,
+    this.onChangeQuantity,
   });
 
   final Map<String, dynamic>? order;
@@ -30,29 +39,61 @@ class OrderCartPanel extends StatelessWidget {
   final ValueChanged<Map<String, dynamic>> onVoidItem;
   final VoidCallback onFinish;
   final VoidCallback onPrint;
+  final VoidCallback? onCancel;
   final VoidCallback? onEmitInvoice;
+
+  /// Imprime o DANFE de uma nota que JA existe e esta autorizada.
+  final VoidCallback? onPrintInvoice;
   final bool printing;
   final bool emittingInvoice;
+
+  /// Item sob o cursor do teclado.
+  ///
+  /// As teclas `+`, `-` e Delete agem sobre ELE. Sem uma seleção visível,
+  /// essas teclas teriam de adivinhar um alvo — e uma tecla que apaga não
+  /// pode adivinhar.
+  final String? selectedItemId;
+  final ValueChanged<Map<String, dynamic>>? onSelectItem;
+
+  /// Soma ou subtrai unidades de um item que ainda não foi para a produção.
+  ///
+  /// O contador fica NO CARTÃO, embaixo do nome. Antes, mudar a quantidade
+  /// exigia selecionar a linha e usar `+`/`-` no teclado, ou refazer o
+  /// lançamento pelo modal — e era por isso que o modal aparecia até para um
+  /// refrigerante, que não tem nada a perguntar. Chegando a zero, quem trata
+  /// é o cancelamento normal (com motivo e registro), não um apagar em
+  /// silêncio.
+  final void Function(Map<String, dynamic> item, int delta)? onChangeQuantity;
 
   bool get _readOnly =>
       const {'paid', 'cancelled', 'refunded'}.contains('${order?['status']}');
 
+  /// Item que já saiu da conta e não aceita mais cancelamento — o backend
+  /// recusa com "Este item já foi cancelado ou retirado da conta."
+  static bool _settled(Map<String, dynamic> item) =>
+      const {'cancelled', 'comped'}.contains('${item['status']}');
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(left: BorderSide(color: scheme.outlineVariant)),
-      ),
-      child: Column(
-        children: [
-          _header(context),
-          Divider(height: 1, color: scheme.outlineVariant),
-          Expanded(child: items.isEmpty ? _empty(context) : _items(context)),
-          Divider(height: 1, color: scheme.outlineVariant),
-          _footer(context),
-        ],
+    return ClipRRect(
+      borderRadius: AppTheme.radius,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border.all(color: scheme.outlineVariant),
+          borderRadius: AppTheme.radius,
+        ),
+        child: Column(
+          children: [
+            Container(height: 3, color: scheme.primary),
+            _header(context),
+            Divider(height: 1, color: scheme.outlineVariant),
+            Expanded(child: items.isEmpty ? _empty(context) : _items(context)),
+            Divider(height: 1, color: scheme.outlineVariant),
+            _footer(context),
+          ],
+        ),
       ),
     );
   }
@@ -61,67 +102,138 @@ class OrderCartPanel extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final pendingOffline = order?['_offline_pending'] == true;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(17, 15, 13, 14),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(16, 13, 13, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(
-              Icons.receipt_long_outlined,
-              color: scheme.primary,
-              size: 21,
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  order == null
-                      ? 'Novo pedido'
-                      : 'Pedido #${order!['sequence']}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _contextLabel(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (pendingOffline)
-            Tooltip(
-              message: 'Pedido salvo localmente e aguardando sincronização.',
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: scheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'LOCAL',
-                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900),
+          Row(
+            children: [
+              Text(
+                'RESUMO DO PEDIDO',
+                style: TextStyle(
+                  color: scheme.onSurfaceVariant,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .9,
                 ),
               ),
-            ),
+              const Spacer(),
+              ShadBadge.outline(
+                shape: const RoundedRectangleBorder(
+                  borderRadius: AppTheme.radius,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                child: Text(
+                  _typeLabel('${order?['order_type'] ?? ''}').toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 11),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: AppTheme.radius,
+                  border: Border.all(color: scheme.outlineVariant),
+                ),
+                child: Icon(
+                  Icons.receipt_long_outlined,
+                  color: scheme.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      order == null
+                          ? 'Novo pedido'
+                          : 'Pedido #${order!['sequence']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _contextLabel(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (pendingOffline)
+                Tooltip(
+                  message:
+                      'Pedido salvo localmente e aguardando sincronização.',
+                  child: ShadBadge.secondary(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    backgroundColor: scheme.tertiaryContainer,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: AppTheme.radius,
+                    ),
+                    child: const Text(
+                      'LOCAL',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              if (order != null && !_readOnly && onCancel != null) ...[
+                const SizedBox(width: 4),
+                PopupMenuButton<String>(
+                  tooltip: 'Mais ações do pedido',
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (_) => onCancel?.call(),
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'cancel',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.cancel_outlined,
+                            size: 18,
+                            color: scheme.error,
+                          ),
+                          const SizedBox(width: 9),
+                          Text(
+                            'Cancelar pedido',
+                            style: TextStyle(
+                              color: scheme.error,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
@@ -209,27 +321,57 @@ class OrderCartPanel extends StatelessWidget {
           ),
           if ('${order?['payment_status']}' == 'paid') ...[
             const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: OutlinedButton.icon(
-                onPressed: !emittingInvoice ? onEmitInvoice : null,
-                icon: emittingInvoice
-                    ? const SizedBox(
-                        width: 17,
-                        height: 17,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.receipt_long_outlined, size: 19),
-                label: Text(
-                  emittingInvoice
-                      ? 'Emitindo NFC-e...'
-                      : 'Emitir NFC-e / Imprimir DANFE',
-                ),
-              ),
-            ),
+            _invoiceAction(),
           ],
         ],
+      ),
+    );
+  }
+
+  /// A acao fiscal do pedido, conforme a situacao da nota.
+  ///
+  /// Nota autorizada nao se emite de novo: o que falta e o papel. Deixar o
+  /// mesmo botao para os dois casos escondia isso do operador — e mandava a
+  /// impressao passar pelo `/invoices/emit/`, que sem rede vira mais uma
+  /// entrada na fila fiscal para uma nota que ja existe.
+  Widget _invoiceAction() {
+    final fiscal = order?['fiscal'] as Map<String, dynamic>?;
+    final printable = fiscal?['printable'] == true;
+    final state = '${fiscal?['fiscal_state'] ?? ''}';
+    final busy = emittingInvoice;
+
+    final label = switch (true) {
+      _ when busy && printable => 'Imprimindo DANFE...',
+      _ when busy => 'Emitindo NFC-e...',
+      _ when printable => 'Imprimir DANFE',
+      _ when state == 'rejected' || state == 'configuration_error' =>
+        'Reenviar NFC-e',
+      _ when state == 'processing' || state == 'reconciliation_required' =>
+        'NFC-e aguardando a SEFAZ',
+      _ when state == 'awaiting_transmission' => 'Transmitir NFC-e',
+      _ => 'Emitir NFC-e',
+    };
+    // Enquanto a SEFAZ nao responde nao ha o que emitir nem o que imprimir:
+    // insistir aqui so duplicaria consulta.
+    final waiting = state == 'processing' || state == 'reconciliation_required';
+    final action = printable ? onPrintInvoice : onEmitInvoice;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: busy || waiting ? null : action,
+        icon: busy
+            ? const SizedBox(
+                width: 17,
+                height: 17,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                printable ? Icons.print_outlined : Icons.receipt_long_outlined,
+                size: 19,
+              ),
+        label: Text(label),
       ),
     );
   }
@@ -269,12 +411,16 @@ class OrderCartPanel extends StatelessWidget {
 
   String _contextLabel() {
     final type = '${order?['order_type'] ?? ''}';
-    if (table != null) return 'Mesa ${table!['number']} · Salão';
     if (command != null) {
       final name = '${command!['customer_name'] ?? ''}'.trim();
       final label = 'Comanda ${command!['number']}';
-      return name.isEmpty ? '$label · Self-service' : '$label · $name';
+      final tableLabel = table == null ? '' : ' · Mesa ${table!['number']}';
+      final customerLabel = name.isEmpty
+          ? (table == null ? ' · Self-service' : '')
+          : ' · $name';
+      return '$label$tableLabel$customerLabel';
     }
+    if (table != null) return 'Mesa ${table!['number']} · Histórico';
     if (customer != null) {
       final phone = '${customer!['phone'] ?? ''}'.trim();
       return phone.isEmpty
@@ -289,44 +435,10 @@ class OrderCartPanel extends StatelessWidget {
   }
 
   Widget _empty(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final type = '${order?['order_type'] ?? ''}';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 62,
-              height: 62,
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainer,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.shopping_basket_outlined,
-                color: scheme.onSurfaceVariant,
-                size: 29,
-              ),
-            ),
-            const SizedBox(height: 13),
-            const Text(
-              'O pedido está vazio',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              type == 'table'
-                  ? 'Toque em um produto para adicioná-lo à mesa.'
-                  : 'Toque em um produto do cardápio para começar.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
+    return AppEmptyState(
+      icon: Icons.shopping_basket_outlined,
+      title: 'O pedido está vazio',
+      description: 'Toque em um produto do cardápio para começar.',
     );
   }
 
@@ -336,6 +448,7 @@ class OrderCartPanel extends StatelessWidget {
   /// informação que o operador precisa antes de fechar: só a segunda parte
   /// ainda pode ser removida.
   Widget _items(BuildContext context) {
+    _pruneItemKeys();
     final sent = items
         .where((item) => item['status'] != 'pending')
         .toList(growable: false);
@@ -354,12 +467,22 @@ class OrderCartPanel extends StatelessWidget {
           ),
           for (final item in sent)
             Padding(
+              key: _keyFor(item),
               padding: const EdgeInsets.only(bottom: 8),
               child: _CartItem(
                 item: item,
                 money: money,
-                canRemove: false,
-                onRemove: () {},
+                selected: '${item['id']}' == selectedItemId,
+                onTap: onSelectItem == null ? null : () => onSelectItem!(item),
+                // Item já em produção também pode ser cancelado: o backend
+                // aceita (`void_order_item`) e emite o cupom de cancelamento
+                // para a mesma impressora que recebeu a comanda original
+                // (`register_kitchen_item_cancellation_jobs`). Antes o botão
+                // simplesmente não existia aqui e o caixa tinha que ligar
+                // para a cozinha por fora do sistema. Cortesia e item já
+                // cancelado ficam de fora — o backend recusa os dois.
+                canRemove: !_readOnly && !_settled(item),
+                onRemove: () => onVoidItem(item),
               ),
             ),
         ],
@@ -372,18 +495,50 @@ class OrderCartPanel extends StatelessWidget {
           ),
           for (final item in pending)
             Padding(
+              key: _keyFor(item),
               padding: const EdgeInsets.only(bottom: 8),
               child: _CartItem(
                 item: item,
                 money: money,
                 canRemove: !_readOnly,
                 onRemove: () => onVoidItem(item),
+                selected: '${item['id']}' == selectedItemId,
+                onTap: onSelectItem == null ? null : () => onSelectItem!(item),
+                // Produto por peso não tem contador: a quantidade vem da
+                // balança, e um `+1` ali seria um quilo a mais.
+                onQuantityDelta:
+                    _readOnly ||
+                        onChangeQuantity == null ||
+                        '${item['pricing_unit'] ?? 'unit'}' == 'kg'
+                    ? null
+                    : (delta) => onChangeQuantity!(item, delta),
               ),
             ),
         ],
       ],
     );
   }
+
+  /// Chave estável por item, para a navegação por setas conseguir rolar até
+  /// a linha selecionada quando ela sai da área visível.
+  static Key _keyFor(Map<String, dynamic> item) =>
+      _itemKeys.putIfAbsent('${item['id']}', GlobalKey.new);
+
+  /// Onde a linha deste item está desenhada agora, se estiver.
+  static BuildContext? contextOfItem(String itemId) =>
+      _itemKeys[itemId]?.currentContext;
+
+  /// Descarta as chaves de itens que saíram da tela.
+  ///
+  /// Sem isto o mapa guardaria uma `GlobalKey` por item de TODO pedido já
+  /// aberto no turno — um vazamento lento que só apareceria depois de horas
+  /// de operação, que é exatamente quando ninguém está olhando.
+  void _pruneItemKeys() {
+    final alive = items.map((item) => '${item['id']}').toSet();
+    _itemKeys.removeWhere((id, _) => !alive.contains(id));
+  }
+
+  static final Map<String, GlobalKey> _itemKeys = {};
 
   Widget _sectionLabel(
     BuildContext context, {
@@ -414,7 +569,8 @@ class OrderCartPanel extends StatelessWidget {
   }
 
   static String _typeLabel(String type) => switch (type) {
-    'table' => 'Salão',
+    'command' => 'Comanda',
+    'table' => 'Mesa (legado)',
     'delivery' => 'Delivery',
     'takeaway' => 'Retirada',
     'counter' => 'Balcão',
@@ -439,12 +595,21 @@ class _CartItem extends StatelessWidget {
     required this.canRemove,
     required this.money,
     required this.onRemove,
+    this.selected = false,
+    this.onTap,
+    this.onQuantityDelta,
   });
 
   final Map<String, dynamic> item;
   final bool canRemove;
   final String Function(dynamic) money;
   final VoidCallback onRemove;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  /// Contador de unidades. `null` esconde os botões — item já em produção,
+  /// pedido fechado ou produto vendido por peso.
+  final ValueChanged<int>? onQuantityDelta;
 
   @override
   Widget build(BuildContext context) {
@@ -453,13 +618,19 @@ class _CartItem extends StatelessWidget {
     final extras = _extras();
     final comped = item['status'] == 'comped';
 
-    return Container(
+    final card = ShadCard(
       padding: const EdgeInsets.fromLTRB(11, 9, 7, 9),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
+      // A seleção precisa ser inconfundível: é ela que diz sobre qual linha
+      // o Delete vai agir.
+      backgroundColor: selected
+          ? scheme.primaryContainer.withValues(alpha: .38)
+          : scheme.surface,
+      border: selected
+          ? ShadBorder.all(color: scheme.primary, width: 1.6)
+          : null,
+      radius: AppTheme.radius,
+      shadows: const [],
+      columnCrossAxisAlignment: CrossAxisAlignment.stretch,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -503,9 +674,15 @@ class _CartItem extends StatelessWidget {
                     ),
                   ),
                 ],
-                if (!canRemove) ...[
+                // A rodada e o estado na cozinha dependem do item ter saído
+                // para produção, não de ele poder ser removido: agora um item
+                // em produção mostra os dois (o selo E o botão de cancelar).
+                if ('${item['status']}' != 'pending') ...[
                   const SizedBox(height: 5),
                   _statusChip(context),
+                ] else if (onQuantityDelta != null) ...[
+                  const SizedBox(height: 6),
+                  _quantityStepper(context),
                 ],
               ],
             ),
@@ -551,6 +728,80 @@ class _CartItem extends StatelessWidget {
         ],
       ),
     );
+    if (onTap == null) return card;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: card,
+    );
+  }
+
+  /// `‹ 3 ›` embaixo do nome, para o item ainda não enviado.
+  Widget _quantityStepper(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final quantity = OrderCartPanel._number(item['quantity']);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _stepperButton(
+          context,
+          icon: Icons.remove_rounded,
+          // Um a menos que 1 é zero, e zero é cancelar — o mesmo caminho do
+          // "×", com motivo e registro. O botão não some nessa hora: sumir
+          // faria o operador procurar outro jeito de tirar o item.
+          tooltip: quantity <= 1 ? 'Cancelar item' : 'Uma unidade a menos',
+          onPressed: () => onQuantityDelta!(-1),
+        ),
+        SizedBox(
+          width: 34,
+          child: Text(
+            quantity.toStringAsFixed(0),
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+          ),
+        ),
+        _stepperButton(
+          context,
+          icon: Icons.add_rounded,
+          tooltip: 'Uma unidade a mais',
+          onPressed: () => onQuantityDelta!(1),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          'un',
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stepperButton(
+    BuildContext context, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        onTap: onPressed,
+        radius: 17,
+        child: Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, size: 15, color: scheme.onSurface),
+        ),
+      ),
+    );
   }
 
   Widget _statusChip(BuildContext context) {
@@ -572,12 +823,12 @@ class _CartItem extends StatelessWidget {
   }
 
   Widget _chip(BuildContext context, String label, Color background) =>
-      Container(
+      ShadBadge.raw(
+        variant: ShadBadgeVariant.secondary,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(5),
-        ),
+        backgroundColor: background,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
         child: Text(
           label,
           style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800),

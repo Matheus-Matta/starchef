@@ -1,5 +1,6 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/storage/durable_secure_store.dart';
 import '../../../core/storage/session_store.dart';
 import '../../cash/data/cash_auth_repository.dart';
 import '../domain/auth_session.dart';
@@ -18,14 +19,42 @@ class AuthRepository {
     required this.sessionStore,
     this.cashAuth,
     OfflineLoginStore? offlineLoginStore,
-  }) : offlineLoginStore = offlineLoginStore ?? SecureOfflineLoginStore();
+    SecureValueStore? credentials,
+  }) : offlineLoginStore = offlineLoginStore ?? SecureOfflineLoginStore(),
+       credentials = credentials ?? DurableSecureStore();
 
   final ApiClient apiClient;
   final SessionStore sessionStore;
   final OfflineLoginStore offlineLoginStore;
 
+  /// Camadas duráveis onde as credenciais deste terminal ficam.
+  ///
+  /// Exposto para quem guarda outro segredo com a mesma exigência — a chave de
+  /// pareamento do Caixa Principal —, para que todas usem o mesmo conjunto de
+  /// camadas em vez de cada uma montar o seu.
+  final SecureValueStore credentials;
+
   // Sincroniza/guarda o hash da senha de ações do caixa para uso offline.
   final CashAuthRepository? cashAuth;
+
+  /// Valida no servidor um administrador da mesma conta sem substituir a
+  /// sessão atual do operador e sem guardar as credenciais informadas.
+  Future<void> authorizeAdministrator({
+    required AuthSession currentSession,
+    required String username,
+    required String password,
+    String? requiredPermission,
+  }) async {
+    await apiClient.post(
+      '/auth/authorize-admin/',
+      accessToken: currentSession.accessToken,
+      body: {
+        'username': username.trim(),
+        'password': password,
+        'permission': ?requiredPermission,
+      },
+    );
+  }
 
   /// Compatibilidade para consumidores que só precisam da sessão.
   Future<AuthSession> login({

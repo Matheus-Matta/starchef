@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.core.admin_mixins import TenantModelAdmin, TenantTabularInline
-from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+from apps.payments.models import CashMovement, CashRegister, CashStation, PdvTerminal, Payment, PaymentMethod
 
 
 @admin.register(CashStation)
@@ -29,9 +29,22 @@ class CashMovementInline(TenantTabularInline):
     extra = 0
 
 
+@admin.register(PdvTerminal)
+class PdvTerminalAdmin(TenantModelAdmin):
+    list_display = ("name", "installation_id", "device_type", "role", "restaurant", "last_seen_at", "is_active")
+    list_filter = ("account", "restaurant", "device_type", "role", "is_active")
+    search_fields = ("name", "installation_id")
+    # A identidade vem do próprio terminal, no primeiro contato: reescrevê-la
+    # aqui permitiria "virar" outro terminal e herdar a sessão de caixa dele.
+    readonly_fields = ("installation_id", "last_seen_at")
+
+
 @admin.register(CashRegister)
 class CashRegisterAdmin(TenantModelAdmin):
-    list_display = ("cash_station", "restaurant", "status", "opened_by", "opened_at", "expected_amount", "actual_amount")
+    list_display = (
+        "cash_station", "restaurant", "status", "opened_by", "opened_terminal_label",
+        "opened_at", "expected_amount", "actual_amount",
+    )
     list_filter = ("account", "restaurant", "branch", "status")
     inlines = [CashMovementInline]
 

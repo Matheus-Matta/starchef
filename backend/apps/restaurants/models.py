@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.contrib.auth.hashers import PBKDF2PasswordHasher, identify_hasher
 from django.db import models
 
 from apps.core.models import TenantBaseModel, TenantModel
@@ -7,7 +8,10 @@ from apps.core.models import TenantBaseModel, TenantModel
 class Restaurant(TenantBaseModel):
     STOCK_DEDUCTION_PAYMENT = "payment"
     STOCK_DEDUCTION_KITCHEN = "kitchen"
-    STOCK_DEDUCTION_CHOICES = [(STOCK_DEDUCTION_PAYMENT, "No pagamento"), (STOCK_DEDUCTION_KITCHEN, "No envio à cozinha")]
+    STOCK_DEDUCTION_CHOICES = [
+        (STOCK_DEDUCTION_PAYMENT, "No pagamento"),
+        (STOCK_DEDUCTION_KITCHEN, "No envio à cozinha"),
+    ]
     legal_name = models.CharField(max_length=180)
     trade_name = models.CharField(max_length=180, db_index=True)
     # CNPJ opcional: nulos não conflitam no índice único (vários restaurantes
@@ -17,6 +21,7 @@ class Restaurant(TenantBaseModel):
     phone = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)
     address = models.CharField(max_length=255, blank=True)
+    district = models.CharField(max_length=120, blank=True)
     city = models.CharField(max_length=120, blank=True)
     state = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=16, blank=True)
@@ -24,10 +29,12 @@ class Restaurant(TenantBaseModel):
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     require_open_cash_register = models.BooleanField(default=True)
     # Senha de autorização de ações do caixa (ex.: aprovar sangria/divergência).
-    # Armazenada como HASH (make_password) — nunca em texto puro nem exposta na API.
-    # Será usada pelo app (Flutter) para autorização offline no futuro.
+    # Armazenada como PBKDF2-SHA256 — nunca em texto puro nem exposta na API.
+    # O app Flutter sincroniza essa hash para autorização offline.
     cash_action_password = models.CharField(max_length=255, blank=True, default="")
-    stock_deduction_timing = models.CharField(max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT)
+    stock_deduction_timing = models.CharField(
+        max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT
+    )
     operational_settings = models.JSONField(default=dict, blank=True)
     fiscal_settings = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)
@@ -38,6 +45,44 @@ class Restaurant(TenantBaseModel):
 
     def __str__(self):
         return self.trade_name
+
+    def set_cash_action_password(self, raw_password):
+        """Recebe a senha escolhida pelo operador e guarda somente seu hash."""
+        if not raw_password:
+            self.cash_action_password = ""
+            return
+        hasher = PBKDF2PasswordHasher()
+        self.cash_action_password = hasher.encode(str(raw_password), hasher.salt())
+
+    @staticmethod
+    def _cash_action_password_is_encoded(value):
+        # PBKDF2 precisa ser reconhecido mesmo quando settings de teste usam
+        # apenas MD5 para acelerar senhas de usuários. Outros hashes Django
+        # existentes são preservados para não transformar uma hash em senha.
+        try:
+            decoded = PBKDF2PasswordHasher().decode(value)
+            return bool(decoded["salt"] and decoded["hash"] and decoded["iterations"] > 0)
+        except (AssertionError, TypeError, ValueError):
+            try:
+                identify_hasher(value)
+                return True
+            except ValueError:
+                return False
+
+    def save(self, *args, **kwargs):
+        # O serializer da API já transforma a senha, mas o Admin, imports e
+        # scripts também podem atribuir o campo diretamente. Centralizar esta
+        # proteção no modelo impede que "123" seja persistido como se já fosse
+        # uma hash Django — situação em que toda validação recusaria a senha.
+        update_fields = kwargs.get("update_fields")
+        writes_password = self._state.adding or update_fields is None or "cash_action_password" in update_fields
+        if (
+            writes_password
+            and self.cash_action_password
+            and not self._cash_action_password_is_encoded(self.cash_action_password)
+        ):
+            self.set_cash_action_password(self.cash_action_password)
+        super().save(*args, **kwargs)
 
 
 class Branch(TenantBaseModel):
@@ -56,6 +101,7 @@ class Branch(TenantBaseModel):
     phone = models.CharField(max_length=32, blank=True)
     email = models.EmailField(blank=True)
     address = models.CharField(max_length=255, blank=True)
+    district = models.CharField(max_length=120, blank=True)
     city = models.CharField(max_length=120, blank=True)
     state = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=16, blank=True)
@@ -120,7 +166,9 @@ class Table(TenantModel):
     capacity = models.PositiveIntegerField(default=4)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_FREE, db_index=True)
     current_order_id = models.UUIDField(null=True, blank=True, db_index=True)
-    joined_to = models.ForeignKey("self", null=True, blank=True, related_name="joined_tables", on_delete=models.SET_NULL)
+    joined_to = models.ForeignKey(
+        "self", null=True, blank=True, related_name="joined_tables", on_delete=models.SET_NULL
+    )
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:
@@ -224,26 +272,18 @@ class CommandMovementLog(TenantModel):
 
     command = models.ForeignKey(Command, on_delete=models.CASCADE, related_name="movement_logs")
     table = models.ForeignKey(
-        "restaurants.Table",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="command_movement_logs"
+        "restaurants.Table", null=True, blank=True, on_delete=models.SET_NULL, related_name="command_movement_logs"
     )
     waiter = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name="command_movements_made"
+        related_name="command_movements_made",
     )
     action = models.CharField(max_length=20, choices=ACTION_CHOICES, db_index=True)
     from_table = models.ForeignKey(
-        "restaurants.Table",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="+"
+        "restaurants.Table", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 

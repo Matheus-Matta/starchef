@@ -97,6 +97,10 @@
           </span>
         </div>
         <div class="sidebar__mobile-profile-actions">
+          <RouterLink :to="{ name: 'docs' }" @click="$emit('close')">
+            <AppIcon name="book-open" :size="17" />
+            Ajuda
+          </RouterLink>
           <button type="button" @click="$emit('toggle-theme')">
             <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="17" />
             {{ theme === "dark" ? "Tema claro" : "Tema escuro" }}
@@ -113,6 +117,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 
 import AppIcon from "../components/AppIcon.vue";
 
@@ -187,7 +192,7 @@ const groups = computed(() =>
         { id: "cardapio", label: "Produtos", icon: "book-open" },
         { id: "categorias", label: "Categorias", icon: "tag" },
         { id: "adicionais", label: "Adicionais", icon: "plus" },
-        canManage.value ? { id: "ingredientes", label: "Ingredientes", icon: "flask" } : null,
+        canManage.value ? { id: "ingredientes", label: "Insumos", icon: "flask" } : null,
         canManage.value ? { id: "receitas", label: "Receitas", icon: "salad" } : null,
       ].filter(Boolean),
     },
@@ -209,8 +214,15 @@ const groups = computed(() =>
       label: "Logistica",
       module: "logistica",
       items: [
-        canManage.value ? { id: "estoque", label: "Estoque", icon: "package" } : null,
-        canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "fornecedores", label: "Fornecedores", icon: "store" } : null,
+        canManage.value ? { id: "estoque-posicao", label: "Posição de estoque", icon: "layers" } : null,
+        canManage.value ? { id: "estoque-entradas", label: "Entradas", icon: "package" } : null,
+        canManage.value ? { id: "estoque-saidas", label: "Saidas", icon: "truck" } : null,
+        canManage.value ? { id: "estoque-lotes", label: "Lotes e validades", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "estoque", label: "Movimentacoes", icon: "clipboard-list" } : null,
+        canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "map-pin" } : null,
+        canManage.value ? { id: "etiquetas-estoque", label: "Modelos de etiqueta", icon: "tag" } : null,
+        canManage.value ? { id: "configuracao-estoque", label: "Configuração do estoque", icon: "settings" } : null,
       ].filter(Boolean),
     },
     {
@@ -219,6 +231,9 @@ const groups = computed(() =>
       items: [
         canManage.value ? { id: "pagamentos", label: "Hist. pagamentos", icon: "dollar-sign" } : null,
         canManage.value ? { id: "notas-fiscais", label: "Notas fiscais", icon: "shield-check" } : null,
+        canManage.value ? { id: "perfis-fiscais", label: "Perfis fiscais", icon: "percentage" } : null,
+        canSeeAllRestaurants.value ? { id: "configuracao-cosmos", label: "Configuração Cosmos", icon: "search" } : null,
+        canSeeAllRestaurants.value ? { id: "configuracao-focus", label: "Configuração Focus", icon: "settings" } : null,
       ].filter(Boolean),
     },
     {
@@ -242,6 +257,7 @@ const groups = computed(() =>
         canManage.value ? { id: "setores", label: "Setores", icon: "armchair" } : null,
         canManage.value ? { id: "usuarios", label: "Usuarios", icon: "user-cog" } : null,
         canManage.value ? { id: "perfis", label: "Perfis de acesso", icon: "shield-check" } : null,
+        canSeeAllRestaurants.value ? { id: "terminais", label: "Terminais do PDV", icon: "monitor" } : null,
         canSeeAllRestaurants.value ? { id: "impressoras", label: "Impressoras", icon: "zap" } : null,
         canSeeAllRestaurants.value ? { id: "balancas", label: "Balancas", icon: "scale" } : null,
       ].filter(Boolean),
@@ -614,12 +630,13 @@ function selectScope(restaurantId) {
   .sidebar__mobile-user-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .sidebar__mobile-user-copy strong { color: var(--text-strong); font-size: 13px; }
   .sidebar__mobile-user-copy small { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .sidebar__mobile-profile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .sidebar__mobile-profile-actions button {
+  .sidebar__mobile-profile-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .sidebar__mobile-profile-actions button,
+  .sidebar__mobile-profile-actions a {
     height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
     border: 1px solid var(--border); border-radius: var(--radius-md);
     background: var(--surface-card); color: var(--text-body);
-    font: var(--weight-bold) 12px/1 var(--font-sans);
+    font: var(--weight-bold) 12px/1 var(--font-sans); text-decoration: none;
   }
   .sidebar__mobile-profile-actions .sidebar__mobile-logout { color: var(--danger-text); background: var(--danger-subtle); }
 }

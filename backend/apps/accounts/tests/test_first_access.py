@@ -1,7 +1,7 @@
 import pytest
 from django.contrib.auth import get_user_model
 
-from apps.accounts.models import Account, FirstAccessState, UserProfile
+from apps.accounts.models import Account, FirstAccessState, Role, UserProfile
 
 User = get_user_model()
 
@@ -9,6 +9,9 @@ User = get_user_model()
 @pytest.fixture
 def empty_installation(db, account):
     User.objects.all().delete()
+    # A conta nasce com os 4 Perfis de Acesso fixos (signal); sem apagá-los
+    # primeiro, `Account.account` é protegido (PROTECT) e a conta não some.
+    Role.all_objects.all().delete()
     Account.objects.all().delete()
     FirstAccessState.objects.all().delete()
 

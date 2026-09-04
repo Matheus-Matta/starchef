@@ -4,6 +4,12 @@ from django.db.models import Q
 
 from apps.core.models import TenantBaseModel, TenantModel
 
+# Estados TERMINAIS de uma sessao de caixa: acabou, e o caixa esta livre para
+# uma nova abertura. Fica em nivel de modulo porque o corpo de `class Meta` nao
+# enxerga os atributos da classe que o contem — e a `UniqueConstraint` parcial
+# da exclusividade precisa exatamente desta lista.
+CASH_REGISTER_FINAL_STATUSES = ("closed", "closed_with_difference", "cancelled")
+
 
 class CashStation(TenantBaseModel):
     restaurant = models.ForeignKey("restaurants.Restaurant", related_name="cash_stations", on_delete=models.PROTECT)
@@ -20,6 +26,81 @@ class CashStation(TenantBaseModel):
 
     def __str__(self):
         return f"{self.restaurant} - {self.name}"
+
+
+class PdvTerminal(TenantBaseModel):
+    """O terminal fisico/instalacao de onde uma sessao de caixa foi aberta.
+
+    O `device_identifier` antigo era texto livre — a web mandava
+    `navigator.userAgent`, que identifica o navegador e nao a maquina (a
+    propria MDN desaconselha usa-lo como identidade), e o Flutter nao mandava
+    nada. Sem saber DE ONDE a sessao foi aberta nao da para cumprir a regra de
+    exclusividade: "o mesmo usuario em outra maquina tambem sera bloqueado".
+
+    A identidade e o UUID da INSTALACAO, gerado e guardado pelo cliente:
+    - Flutter reusa o `nodeId` que a topologia local ja persiste;
+    - Web gera com `crypto.randomUUID()` e guarda no perfil do navegador.
+
+    Nao usamos MAC, IP nem hostname: nenhum e estavel, e todos sao dados do
+    equipamento que nao precisamos guardar. Limpar o navegador cria uma
+    instalacao nova — o que nao abre um segundo caixa, porque a exclusividade
+    e garantida no servidor (e no Caixa Principal), nao no cliente.
+    """
+
+    TYPE_DESKTOP = "desktop"
+    TYPE_WEB = "web"
+    TYPE_MOBILE = "mobile"
+    TYPE_CHOICES = [
+        (TYPE_DESKTOP, "Desktop"),
+        (TYPE_WEB, "Navegador"),
+        (TYPE_MOBILE, "Aplicativo"),
+    ]
+
+    ROLE_PRINCIPAL = "principal"
+    ROLE_SECONDARY = "secondary"
+    ROLE_WEB = "web"
+    ROLE_CHOICES = [
+        (ROLE_PRINCIPAL, "Caixa Principal"),
+        (ROLE_SECONDARY, "Caixa Secundario"),
+        (ROLE_WEB, "Navegador"),
+    ]
+
+    restaurant = models.ForeignKey(
+        "restaurants.Restaurant",
+        null=True,
+        blank=True,
+        related_name="pdv_terminals",
+        on_delete=models.PROTECT,
+    )
+    installation_id = models.CharField(
+        max_length=120,
+        db_index=True,
+        help_text="UUID da instalacao, gerado e persistido pelo proprio terminal.",
+    )
+    name = models.CharField(max_length=120, blank=True, help_text='Nome amigavel, ex.: "Balcao 01".')
+    device_type = models.CharField(max_length=16, choices=TYPE_CHOICES, default=TYPE_DESKTOP)
+    role = models.CharField(max_length=16, choices=ROLE_CHOICES, default=ROLE_SECONDARY)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name", "installation_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "installation_id"],
+                name="unique_pdv_terminal_installation_by_account",
+            ),
+        ]
+
+    def __str__(self):
+        return self.label
+
+    @property
+    def label(self):
+        """Como o terminal aparece nas mensagens de bloqueio."""
+        return self.name or f"terminal {self.installation_id[:8]}"
 
 
 class PaymentMethod(TenantModel):
@@ -121,6 +202,22 @@ class CashRegister(TenantModel):
         (STATUS_CANCELLED, "Cancelado"),
     ]
 
+    # Estados TERMINAIS: a sessão acabou e o caixa está livre para uma nova
+    # abertura. Ponto único de verdade — a lista vivia repetida em views,
+    # serializers, services e no Flutter, e uma cópia divergente
+    # (`closed_difference` em vez de `closed_with_difference`) fazia um caixa
+    # já fechado continuar parecendo aberto no terminal offline.
+    FINAL_STATUSES = CASH_REGISTER_FINAL_STATUSES
+
+    @classmethod
+    def active_sessions(cls, queryset=None):
+        """Sessões ainda não finalizadas — as que ocupam um caixa."""
+        return (queryset if queryset is not None else cls.objects).exclude(status__in=cls.FINAL_STATUSES)
+
+    @property
+    def is_finished(self):
+        return self.status in self.FINAL_STATUSES
+
     opened_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="cash_registers_opened",
@@ -143,6 +240,25 @@ class CashRegister(TenantModel):
     difference_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     station = models.CharField(max_length=120, default="PDV principal", db_index=True)
     device_identifier = models.CharField(max_length=255, blank=True)
+    # Terminal que abriu e terminal que fechou. Os `*_terminal_label` são um
+    # retrato do nome no momento da operação: renomear "Balcão 01" depois não
+    # pode reescrever a auditoria de quem abriu o caixa naquele dia.
+    opened_terminal = models.ForeignKey(
+        PdvTerminal,
+        null=True,
+        blank=True,
+        related_name="cash_registers_opened",
+        on_delete=models.SET_NULL,
+    )
+    closed_terminal = models.ForeignKey(
+        PdvTerminal,
+        null=True,
+        blank=True,
+        related_name="cash_registers_closed",
+        on_delete=models.SET_NULL,
+    )
+    opened_terminal_label = models.CharField(max_length=160, blank=True)
+    closed_terminal_label = models.CharField(max_length=160, blank=True)
     opening_is_initial = models.BooleanField(default=False)
     pending_operation = models.CharField(max_length=24, blank=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, related_name="cash_registers_approved", on_delete=models.SET_NULL)
@@ -153,6 +269,18 @@ class CashRegister(TenantModel):
     class Meta:
         indexes = [
             models.Index(fields=["branch", "status", "opened_at"]),
+        ]
+        constraints = [
+            # A trava real da exclusividade. A checagem no serviço ("consulta e
+            # depois cria") não resiste a duas aberturas simultâneas: as duas
+            # transações leem "livre" antes de qualquer uma gravar. Só o banco
+            # decide isso sem corrida — e um índice parcial é exatamente a
+            # ferramenta para "no máximo uma linha ativa por caixa".
+            models.UniqueConstraint(
+                fields=["cash_station"],
+                condition=Q(deleted_at__isnull=True) & ~Q(status__in=CASH_REGISTER_FINAL_STATUSES),
+                name="unique_active_session_per_cash_station",
+            ),
         ]
 
     def __str__(self):

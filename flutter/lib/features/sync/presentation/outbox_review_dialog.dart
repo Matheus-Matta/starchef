@@ -2,6 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/shadcn_layout.dart';
+
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/widgets/copyable_error.dart';
@@ -96,7 +99,7 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
   Future<bool?> _confirmDiscard(Map<String, dynamic> operation) =>
       showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => AppDialog(
           title: const Text('Descartar esta operação?'),
           content: SizedBox(
             width: 440,
@@ -142,17 +145,12 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
     final blocked = operations
         .where((item) => item['state'] == 'blocked')
         .length;
-    return AlertDialog(
+    return AppDialog(
       title: Row(
         children: [
           const Icon(Icons.sync_problem_outlined),
           const SizedBox(width: 10),
           const Expanded(child: Text('Operações aguardando o servidor')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(
@@ -161,7 +159,12 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
         child: loading
             ? const Center(child: CircularProgressIndicator())
             : operations.isEmpty
-            ? _empty(scheme)
+            ? const AppEmptyState(
+                icon: Icons.cloud_done_outlined,
+                title: 'Nenhuma operação pendente',
+                description:
+                    'Tudo que foi registrado neste terminal já está no servidor.',
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -207,25 +210,6 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
       ],
     );
   }
-
-  Widget _empty(ColorScheme scheme) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.cloud_done_outlined, size: 54, color: scheme.primary),
-        const SizedBox(height: 12),
-        const Text(
-          'Nenhuma operação pendente',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Tudo que foi registrado neste terminal já está no servidor.',
-          style: TextStyle(color: scheme.onSurfaceVariant),
-        ),
-      ],
-    ),
-  );
 
   Widget _tile(Map<String, dynamic> operation, ColorScheme scheme) {
     final state = '${operation['state']}';
@@ -314,15 +298,10 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
     });
     showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AppDialog(
         title: Row(
           children: [
             const Expanded(child: Text('Dados da operação')),
-            IconButton(
-              tooltip: 'Fechar',
-              onPressed: () => Navigator.pop(dialogContext),
-              icon: const Icon(Icons.close),
-            ),
           ],
         ),
         content: SizedBox(
@@ -370,7 +349,6 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
       return 'Alteração de cliente';
     }
     if (path == '/orders/' && method == 'POST') return 'Novo pedido';
-    if (path == '/orders/open-table/') return 'Abertura de pedido na mesa';
     if (path == '/orders/open-command/') return 'Abertura de pedido na comanda';
     if (RegExp(r'^/orders/[^/]+/items/$').hasMatch(path)) {
       final body = operation['body'];

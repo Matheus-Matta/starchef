@@ -1,0 +1,21 @@
+gradle-wrapper.jar
+/.gradle
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks
+
+# Assinatura do release: nunca versionar (quem tem o arquivo publica atualização
+# se passando pelo app). Guarde uma cópia em local seguro — sem ela não dá para
+# atualizar um app já instalado, só reinstalar.
+key.properties
+*.jks
+*.keystore

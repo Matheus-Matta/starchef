@@ -36,10 +36,11 @@ def test_shared_ingredient_without_restaurant(db, account):
     # Ingredientes são compartilhados: criáveis sem restaurante (nível de conta).
     from django.contrib.auth import get_user_model
     from apps.accounts.models import UserProfile
+    from apps.accounts.role_catalog import ensure_system_roles
     from conftest import _authenticated_client
 
     user = get_user_model().objects.create_user(username="admin-ing", password="x", is_superuser=True, is_staff=True)
-    UserProfile.objects.create(account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN)
+    UserProfile.objects.create(account=account, user=user, role=ensure_system_roles(account)["admin"])
     client = _authenticated_client(user)
 
     resp = client.post("/api/v1/menu/ingredients/", {"name": "Farinha Comum", "unit": "kg"}, format="json")

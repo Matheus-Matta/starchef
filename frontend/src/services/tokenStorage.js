@@ -15,5 +15,16 @@ export function hasSession() {
 
 /** Remove a flag de sessão localmente (os cookies httpOnly o backend limpa no logout). */
 export function clearSession() {
-  document.cookie = `${SESSION_FLAG}=; Max-Age=0; path=/`;
+  const expire = "; Max-Age=0; path=/";
+  document.cookie = `${SESSION_FLAG}=${expire}`;
+  // O backend pode gravar o cookie com Domain (DJANGO_AUTH_COOKIE_DOMAIN, usado
+  // quando a API vive num subdomínio). Sem repetir o mesmo Domain o delete não
+  // casa com o cookie existente e a flag sobrevive ao logout — então varremos
+  // também os domínios-pai do host atual.
+  const parts = window.location.hostname.split(".");
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const domain = parts.slice(i).join(".");
+    document.cookie = `${SESSION_FLAG}=${expire}; domain=${domain}`;
+    document.cookie = `${SESSION_FLAG}=${expire}; domain=.${domain}`;
+  }
 }

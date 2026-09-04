@@ -15,7 +15,9 @@ from .models import KdsColumn, KdsStation
 from .serializers import KdsColumnSerializer, KdsStationSerializer
 from .station_templates import STATION_TEMPLATES, TEMPLATES_BY_KEY
 
-# Orders active in the kitchen — exclude definitively closed/cancelled
+# Pedidos sem producao possivel: saem do KDS. PAGO nao entra aqui de proposito
+# — o caixa cobra assim que manda os itens para a cozinha, entao tirar o pago do
+# quadro esconderia comida que ainda esta sendo preparada.
 _INACTIVE_ORDER_STATUSES = [Order.STATUS_CANCELLED, Order.STATUS_REFUNDED]
 _ACTIVE_PRODUCTION_STATUSES = [
     Order.PROD_SENT,
@@ -37,6 +39,14 @@ class KitchenOrderViewSet(ReadOnlyTenantViewSet):
     )
     filterset_fields = ["status", "production_status", "order_type", "items__production_sector"]
     ordering_fields = ["opened_at", "sequence"]
+
+    def list(self, request, *args, **kwargs):
+        from apps.orders.services import dispatch_due_kitchen_batches
+
+        account = getattr(request, "account", None)
+        if account is not None:
+            dispatch_due_kitchen_batches(account_id=account.id)
+        return super().list(request, *args, **kwargs)
 
 
 class KitchenItemFilter(django_filters.FilterSet):
@@ -60,8 +70,25 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
     filterset_class = KitchenItemFilter
     ordering_fields = ["launched_at", "ready_at", "sent_to_kitchen_at"]
 
+    def list(self, request, *args, **kwargs):
+        from apps.orders.services import dispatch_due_kitchen_batches
+
+        account = getattr(request, "account", None)
+        if account is not None:
+            dispatch_due_kitchen_batches(account_id=account.id)
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
-        return super().get_queryset().filter(status__in=_ACTIVE_ITEM_STATUSES)
+        # Fora o item em si, o PEDIDO precisa continuar vivo: um pedido
+        # cancelado/estornado nao tem mais producao, e o card so ficava parado
+        # no quadro recusando qualquer movimento. Pedido PAGO continua no
+        # quadro de proposito — o caixa cobra antes de a cozinha terminar.
+        return (
+            super()
+            .get_queryset()
+            .filter(status__in=_ACTIVE_ITEM_STATUSES)
+            .exclude(order__status__in=_INACTIVE_ORDER_STATUSES)
+        )
 
     @action(detail=True, methods=["post"], url_path="status")
     def set_status(self, request, pk=None):

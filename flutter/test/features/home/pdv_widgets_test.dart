@@ -1,13 +1,77 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
-import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
+import 'package:starchef_pdv/core/theme/app_theme.dart';
+import 'package:starchef_pdv/core/update/pdv_update_service.dart';
 import 'package:starchef_pdv/features/home/presentation/pdv_navigation_shell.dart';
 import 'package:starchef_pdv/features/home/presentation/product_catalog_panel.dart';
 import 'package:starchef_pdv/features/orders/presentation/order_cart_panel.dart';
 
 void main() {
   group('PdvSidebar', () {
+    testWidgets(
+      'mostra somente a tag atual e ícone vermelho quando desatualizado',
+      (tester) async {
+        await _pumpAtSize(
+          tester,
+          size: const Size(800, 640),
+          child: PdvSidebar(
+            expanded: true,
+            selected: PdvDestination.menu,
+            onToggle: () {},
+            onSelected: (_) {},
+            userName: 'Operador',
+            userSubtitle: '@operador',
+            onLogout: () {},
+            versionStatus: const PdvUpdateStatus(
+              phase: PdvUpdatePhase.updateAvailable,
+              installed: PdvInstalledVersion(
+                version: '1.0.33',
+                buildNumber: '31',
+              ),
+              latestVersion: '1.0.34',
+            ),
+          ),
+        );
+
+        expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+        expect(find.textContaining('+31'), findsNothing);
+        expect(find.textContaining('Nova v1.0.34'), findsNothing);
+        final icon = tester.widget<Icon>(find.byIcon(Icons.cancel));
+        expect(icon.color, const Color(0xFFDC2626));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('usa ícone verde quando a versão está atualizada', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(800, 640),
+        child: PdvSidebar(
+          expanded: true,
+          selected: PdvDestination.menu,
+          onToggle: () {},
+          onSelected: (_) {},
+          userName: 'Operador',
+          userSubtitle: '@operador',
+          onLogout: () {},
+          versionStatus: const PdvUpdateStatus(
+            phase: PdvUpdatePhase.upToDate,
+            installed: PdvInstalledVersion(version: '1.0.33'),
+            latestVersion: '1.0.33',
+          ),
+        ),
+      );
+
+      expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+      final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+      expect(icon.color, const Color(0xFF16A34A));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('expõe destinos e encaminha ações', (tester) async {
       PdvDestination? selected;
       var toggles = 0;
@@ -22,7 +86,7 @@ void main() {
           onToggle: () => toggles++,
           onSelected: (destination) => selected = destination,
           userName: 'Ana Souza',
-          restaurantName: 'StarChef Centro',
+          userSubtitle: '@ana · Operadora',
           onLogout: () => logouts++,
         ),
       );
@@ -33,6 +97,8 @@ void main() {
       expect(find.text('Balança rápida'), findsOneWidget);
       expect(find.text('AS'), findsOneWidget);
       expect(find.text('Ana Souza'), findsOneWidget);
+      expect(find.text('@ana · Operadora'), findsOneWidget);
+      expect(find.text('StarChef Centro'), findsNothing);
 
       // Delivery deixou de ser um módulo da barra lateral; ele existe apenas
       // como tipo de pedido dentro do fluxo de Pedidos.
@@ -62,7 +128,7 @@ void main() {
           onToggle: () {},
           onSelected: (destination) => selected = destination,
           userName: 'Operador',
-          restaurantName: 'Unidade',
+          userSubtitle: '@operador',
           onLogout: () {},
           showOrders: false,
           showScale: false,
@@ -137,10 +203,8 @@ void main() {
       expect(find.text('Hambúrguer artesanal'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField), 'suco');
-      // As categorias agora ficam em um select, como no frontend web.
-      await tester.tap(find.byType(DropdownButtonFormField<String?>));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Bebidas · 1').last);
+      // A faixa de categorias permanece visível para seleção rápida no PDV.
+      await tester.tap(find.text('Bebidas · 1'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Suco de laranja'));
 
@@ -310,6 +374,7 @@ void main() {
       Map<String, dynamic>? voidedItem;
       var finishes = 0;
       var prints = 0;
+      var cancellations = 0;
       final item = <String, dynamic>{
         'id': 'item-1',
         'product': 'product-1',
@@ -341,12 +406,13 @@ void main() {
           onVoidItem: (value) => voidedItem = value,
           onFinish: () => finishes++,
           onPrint: () => prints++,
+          onCancel: () => cancellations++,
           printing: false,
         ),
       );
 
       expect(find.text('Pedido #42'), findsOneWidget);
-      expect(find.text('Mesa 7 · Salão'), findsOneWidget);
+      expect(find.text('Mesa 7 · Histórico'), findsOneWidget);
       expect(find.text('LOCAL'), findsOneWidget);
       expect(find.text('Prato executivo'), findsOneWidget);
       expect(find.text('Sem cebola'), findsOneWidget);
@@ -359,10 +425,157 @@ void main() {
       await tester.tap(
         find.widgetWithText(OutlinedButton, 'Imprimir recibo de venda'),
       );
+      await tester.tap(find.byTooltip('Mais ações do pedido'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancelar pedido'));
+      await tester.pumpAndSettle();
 
       expect(voidedItem?['id'], 'item-1');
       expect(finishes, 1);
       expect(prints, 1);
+      expect(cancellations, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('contador do cartão soma e subtrai item aguardando envio', (
+      tester,
+    ) async {
+      final deltas = <int>[];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 7, 'order_type': 'counter', 'total': 21},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Coca Cola 350ml',
+              'quantity': 3,
+              'unit_price': 7,
+              'total_price': 21,
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, delta) => deltas.add(delta),
+        ),
+      );
+
+      // A quantidade fica embaixo do nome, no próprio cartão: é o que dispensa
+      // o modal de confirmação para um produto sem variação.
+      expect(find.text('3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Uma unidade a mais'));
+      await tester.tap(find.byTooltip('Uma unidade a menos'));
+
+      expect(deltas, [1, -1]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('item em produção e produto por peso não mostram contador', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 8, 'order_type': 'counter', 'total': 30},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 10,
+              'total_price': 10,
+              // Já saiu para a cozinha: mudar a quantidade aqui não desfaz o
+              // que a produção já recebeu.
+              'status': 'sent',
+            },
+            {
+              'id': 'item-2',
+              'product_name': 'Buffet',
+              'quantity': 0.5,
+              'unit_price': 40,
+              'total_price': 20,
+              'pricing_unit': 'kg',
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, _) {},
+        ),
+      );
+
+      // Por peso a quantidade vem da balança: um `+1` ali seria um quilo.
+      expect(find.byTooltip('Uma unidade a mais'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('item em produção pode ser cancelado e mantém o selo', (
+      tester,
+    ) async {
+      Map<String, dynamic>? voidedItem;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 61, 'order_type': 'command', 'total': 20},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-sent',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 20,
+              'total_price': 20,
+              'status': 'sent',
+              'batch_number': 3,
+            },
+            // Cortesia já saiu da conta: o backend recusa cancelar de novo,
+            // então nem deve oferecer o botão.
+            {
+              'id': 'item-comped',
+              'product_name': 'Sobremesa',
+              'quantity': 1,
+              'unit_price': 0,
+              'total_price': 0,
+              'status': 'comped',
+              'batch_number': 3,
+            },
+          ],
+          money: _money,
+          onVoidItem: (value) => voidedItem = value,
+          onFinish: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      expect(find.text('EM PRODUÇÃO (2)'), findsOneWidget);
+      // O selo de rodada/estado continua visível mesmo com o botão presente:
+      // era ele que sumia quando a exibição dependia de "não pode remover".
+      expect(find.text('Rodada 3'), findsNWidgets(2));
+      expect(find.text('Cozinha'), findsOneWidget);
+      expect(find.text('Cortesia'), findsOneWidget);
+
+      // Só o item em produção oferece cancelar; a cortesia não.
+      expect(find.byTooltip('Cancelar item'), findsOneWidget);
+      await tester.tap(find.byTooltip('Cancelar item'));
+      expect(voidedItem?['id'], 'item-sent');
       expect(tester.takeException(), isNull);
     });
 
@@ -415,6 +628,81 @@ void main() {
       expect(find.text('Comanda 3 · Self-service'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  testWidgets('PdvConnectionBadge não pisca com oscilação curta de fase', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+    expect(find.text('Online'), findsOneWidget);
+
+    // Uma venda entra na fila e sai em 300ms: o operador não deve ver o
+    // indicador trocar de estado por causa disso.
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.syncing, pending: 1),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Online'), findsOneWidget);
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Online'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge assume a fase que se mantém', (tester) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.offline),
+      ),
+    );
+    // Ficar offline importa demais para ser escondido: some depois da
+    // carência, não some para sempre.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Offline'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge online usa verde escuro com alto contraste', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkSyncStatus(phase: NetworkSyncPhase.online),
+      ),
+    );
+
+    final badge = tester.widget<ShadBadge>(find.byType(ShadBadge));
+    expect(badge.backgroundColor, const Color(0xFF166534));
+    expect(badge.hoverBackgroundColor, const Color(0xFF14532D));
+    expect(badge.foregroundColor, Colors.white);
+    expect(find.text('Online'), findsOneWidget);
   });
 
   group('PdvPrincipalBadge', () {
@@ -482,44 +770,6 @@ void main() {
       expect(find.byIcon(Icons.lan_outlined), findsOneWidget);
     });
   });
-
-  group('PdvPrinterBadge', () {
-    testWidgets('mostra impressora disponível', (tester) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(360, 120),
-        child: const PdvPrinterBadge(
-          status: PrinterAvailability(
-            PrinterAvailabilityPhase.available,
-            'Impressora disponível',
-          ),
-        ),
-      );
-
-      expect(find.text('Impressora disponível'), findsOneWidget);
-      expect(find.byIcon(Icons.print_rounded), findsOneWidget);
-    });
-
-    testWidgets('mostra impressora desconectada sem estourar no compacto', (
-      tester,
-    ) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(120, 90),
-        child: const PdvPrinterBadge(
-          compact: true,
-          status: PrinterAvailability(
-            PrinterAvailabilityPhase.unavailable,
-            'Impressora desconectada',
-          ),
-        ),
-      );
-
-      expect(find.text('Impressora desconectada'), findsNothing);
-      expect(find.byIcon(Icons.print_disabled_outlined), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-  });
 }
 
 Future<void> _pumpAtSize(
@@ -540,7 +790,10 @@ Future<void> _pumpAtSize(
         useMaterial3: true,
         colorSchemeSeed: const Color(0xFFF57C00),
       ),
-      home: Scaffold(body: child),
+      home: ShadTheme(
+        data: AppTheme.shadLight(),
+        child: Scaffold(body: child),
+      ),
     ),
   );
   await tester.pump();

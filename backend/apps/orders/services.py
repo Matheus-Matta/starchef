@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -6,6 +7,7 @@ from django.db import transaction
 from django.db.models import Max, Sum
 from django.utils import timezone
 
+from apps.core.access import has_role_at_least
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
@@ -25,10 +27,20 @@ def next_order_sequence(restaurant):
 
 
 @transaction.atomic
-def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
+def create_order(*, restaurant, order_type, user, branch=None, responsible_user=None, **kwargs):
+    """Abre um pedido.
+
+    [user] e quem gravou (auditoria); [responsible_user] e quem esta atendendo,
+    quando os dois nao sao a mesma pessoa. E o caso do app do garcom: quem
+    executa a operacao e o Caixa Principal, com as credenciais dele, mas quem
+    atende a mesa e o garcom — e e o nome dele que a cozinha precisa ler na
+    comanda.
+    """
     account = restaurant.account
 
     with tenant_context(account):
+        # Compatibilidade interna para importar histórico e gerar bases demo.
+        # A API e as interfaces não expõem mais este tipo de abertura.
         if order_type == Order.TYPE_TABLE and kwargs.get("table"):
             table = Table.objects.select_for_update().get(pk=kwargs["table"].pk)
             if table.status == Table.STATUS_OCCUPIED and not table.current_order_id:
@@ -42,6 +54,9 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
             if command.status == Command.STATUS_OCCUPIED:
                 raise ValidationError("A comanda já está em uso.")
             kwargs["command"] = command
+            # A mesa é um vínculo da comanda. O pedido guarda apenas o snapshot
+            # para histórico, relatórios e impressão após o pagamento.
+            kwargs["table"] = command.current_table
 
         order = Order.objects.create(
             account=account,
@@ -49,7 +64,7 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
             branch=None,
             sequence=next_order_sequence(restaurant),
             order_type=order_type,
-            responsible_user=user,
+            responsible_user=responsible_user or user,
             created_by=user,
             updated_by=user,
             **kwargs,
@@ -57,7 +72,7 @@ def create_order(*, restaurant, order_type, user, branch=None, **kwargs):
 
         if order.table_id:
             order.table.status = Table.STATUS_OCCUPIED
-            order.table.current_order_id = order.id
+            order.table.current_order_id = order.id if order.order_type == Order.TYPE_TABLE else None
             order.table.save(update_fields=["status", "current_order_id", "updated_at"])
 
         if order.command_id:
@@ -98,100 +113,32 @@ def free_command_for_order(order):
             branch=command.branch,
             command=command,
             action=CommandMovementLog.ACTION_UNLINKED,
+            from_table_id=old_table_id,
             waiter=order.updated_by,
         )
-        
-        # Libera a mesa se ela não tiver mais comandas nem pedidos diretos
+
+        # A ocupação da mesa é determinada exclusivamente pelas comandas
+        # vinculadas. O pedido mantém `table` apenas como histórico.
         table = Table.objects.select_for_update().get(pk=old_table_id)
         active_commands = table.active_commands.exists()
-        from apps.orders.models import Order
-        active_orders = table.orders.filter(status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]).exists()
-        
-        if not active_commands and not active_orders:
+
+        if not active_commands:
             table.status = Table.STATUS_FREE
             table.current_order_id = None
             table.save(update_fields=["status", "current_order_id", "updated_at"])
 
 
 def free_table_if_empty(table):
-    """Verifica se a mesa ainda possui pedidos em andamento (abertos ou aguardando pagamento).
-    Se não possuir pedidos nem comandas vinculadas, libera a mesa definindo status como FREE."""
+    """Libera a mesa quando nenhuma comanda está vinculada a ela."""
     if not table:
         return
     table = Table.objects.select_for_update().get(pk=table.pk)
-    active_orders = table.orders.filter(
-        status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-    ).count()
     active_commands = table.active_commands.exists()
-    
-    if active_orders == 0 and not active_commands:
+
+    if not active_commands:
         table.status = Table.STATUS_FREE
         table.current_order_id = None
         table.save(update_fields=["status", "current_order_id", "updated_at"])
-
-
-@transaction.atomic
-def link_order_to_table(order, table, user):
-    """Vincula uma comanda a uma mesa. Valida a capacidade."""
-    with tenant_context(order.account):
-        order = Order.objects.select_for_update().get(pk=order.pk)
-        if order.order_type != Order.TYPE_COMMAND:
-            raise ValidationError("Apenas comandas podem ser vinculadas a uma mesa.")
-        if order.status not in {Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT}:
-            raise ValidationError("O pedido já está encerrado.")
-            
-        # Não permite mesas em limpeza (Cleaning)
-        if table.status == Table.STATUS_CLEANING:
-            raise ValidationError("A mesa selecionada aguarda limpeza.")
-
-        # Evita recálculo se for a mesma mesa
-        if order.table_id == table.id:
-            return order
-
-        old_table = order.table
-
-        order.table = table
-        order.updated_by = user
-        order.save(update_fields=["table", "updated_by", "updated_at"])
-
-        # Ocupa a nova mesa
-        if table.status == Table.STATUS_FREE:
-            table.status = Table.STATUS_OCCUPIED
-            table.save(update_fields=["status", "updated_at"])
-            
-        if old_table:
-            free_table_if_empty(old_table)
-            
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Vinculada a mesa {table.number}", metadata={"event": "link_table"})
-        return order
-
-
-@transaction.atomic
-def transfer_table_orders(source_table, target_table, user):
-    """Transfere todas as comandas/pedidos de uma mesa para outra."""
-    with tenant_context(source_table.account):
-        if target_table.status == Table.STATUS_CLEANING:
-            raise ValidationError("A mesa destino aguarda limpeza.")
-            
-        orders_to_transfer = source_table.orders.filter(
-            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-        )
-        
-        count = 0
-        for order in orders_to_transfer:
-            order.table = target_table
-            order.updated_by = user
-            order.save(update_fields=["table", "updated_by", "updated_at"])
-            record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, reason=f"Transferida da mesa {source_table.number} para {target_table.number}", metadata={"event": "transfer_table"})
-            count += 1
-            
-        if count > 0:
-            if target_table.status == Table.STATUS_FREE:
-                target_table.status = Table.STATUS_OCCUPIED
-                target_table.save(update_fields=["status", "updated_at"])
-            free_table_if_empty(source_table)
-            
-        return count
 
 
 def _resolve_weighed_quantity(*, order, product, scale_reading=None, weight_kg=None, user=None):
@@ -298,9 +245,7 @@ def add_order_item(
         extras_price += sum((a.price for a in selected_addons), Decimal("0.00"))
         unit_price = product.current_price + extras_price
         if expected_unit_price not in (None, ""):
-            expected = Decimal(str(expected_unit_price)).quantize(
-                TWO_PLACES, rounding=ROUND_HALF_UP
-            )
+            expected = Decimal(str(expected_unit_price)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             actual = unit_price.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             if expected != actual:
                 raise ValidationError(
@@ -310,14 +255,26 @@ def add_order_item(
 
         existing = None
         if not product.is_weighed:
-            candidates = OrderItem.objects.select_for_update().filter(
-                order=order, product=product, status=OrderItem.STATUS_PENDING,
-                customer_note=customer_note, variations=variation_snapshot,
-            ).prefetch_related("addons")
+            candidates = (
+                OrderItem.objects.select_for_update()
+                .filter(
+                    order=order,
+                    product=product,
+                    status=OrderItem.STATUS_PENDING,
+                    customer_note=customer_note,
+                    variations=variation_snapshot,
+                )
+                .prefetch_related("addons")
+            )
             selected_addon_ids = {str(a.id) for a in selected_addons}
-            existing = next((candidate for candidate in candidates if {
-                str(a.addon_id) for a in candidate.addons.all()
-            } == selected_addon_ids), None)
+            existing = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if {str(a.addon_id) for a in candidate.addons.all()} == selected_addon_ids
+                ),
+                None,
+            )
         if existing is not None:
             existing.quantity += quantity
             existing.unit_price = unit_price
@@ -325,7 +282,9 @@ def add_order_item(
             existing.updated_by = user
             existing.save(update_fields=["quantity", "unit_price", "total_price", "updated_by", "updated_at"])
             for item_addon in existing.addons.all():
-                item_addon.total_price = (item_addon.unit_price * existing.quantity).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+                item_addon.total_price = (item_addon.unit_price * existing.quantity).quantize(
+                    TWO_PLACES, rounding=ROUND_HALF_UP
+                )
                 item_addon.updated_by = user
                 item_addon.save(update_fields=["total_price", "updated_by", "updated_at"])
             recalculate_order(order)
@@ -349,9 +308,16 @@ def add_order_item(
         )
         for addon in selected_addons:
             OrderItemAddon.objects.create(
-                account=order.account, restaurant=order.restaurant, branch=order.branch,
-                item=item, addon=addon, quantity=1, unit_price=addon.price,
-                total_price=addon.price * quantity, created_by=user, updated_by=user,
+                account=order.account,
+                restaurant=order.restaurant,
+                branch=order.branch,
+                item=item,
+                addon=addon,
+                quantity=1,
+                unit_price=addon.price,
+                total_price=addon.price * quantity,
+                created_by=user,
+                updated_by=user,
             )
         if reading_to_link is not None:
             reading_to_link.order_item = item
@@ -376,7 +342,14 @@ def recalculate_order(order):
 
 
 @transaction.atomic
-def send_order_to_kitchen(order, user):
+def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_printed=False):
+    """Send pending items to production and release printing immediately.
+
+    ``client_batch_serial``/``offline_printed`` existem para o PDV que já
+    imprimiu a comanda localmente porque a rede estava fora: o serial garante
+    que o `REF:` do ticket impresso offline bate com este lote, e a flag evita
+    que o backend gere um segundo `PrintJob` de verdade para o mesmo pedido.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().prefetch_related("items__product").get(pk=order.pk)
         if order.is_locked:
@@ -387,6 +360,14 @@ def send_order_to_kitchen(order, user):
             raise ValidationError("Não há itens pendentes para enviar à cozinha.")
 
         now = timezone.now()
+        dispatch_at = now
+
+        batch_serial = None
+        if client_batch_serial:
+            try:
+                batch_serial = uuid.UUID(str(client_batch_serial))
+            except (ValueError, AttributeError, TypeError):
+                batch_serial = None
 
         # Each send creates a new production round
         last_batch_number = order.batches.aggregate(value=Max("batch_number"))["value"] or 0
@@ -396,61 +377,309 @@ def send_order_to_kitchen(order, user):
             branch=order.branch,
             order=order,
             batch_number=last_batch_number + 1,
-            status=OrderBatch.STATUS_SENT,
+            status=OrderBatch.STATUS_SCHEDULED,
             sent_at=now,
+            dispatch_at=dispatch_at,
             sent_by=user,
             created_by=user,
             updated_by=user,
+            **({"serial": batch_serial} if batch_serial else {}),
         )
 
         for item in items:
-            item.status = OrderItem.STATUS_SENT
+            item.status = OrderItem.STATUS_QUEUED
             item.batch = batch
-            item.sent_to_kitchen_at = now
+            item.sent_to_kitchen_at = None
             item.updated_by = user
             item.save(update_fields=["status", "batch", "sent_to_kitchen_at", "updated_by", "updated_at"])
-            broadcast_kitchen_event(
-                order.account_id,
-                order.branch_id,
-                item.production_sector,
-                "order_item.sent",
-                serialize_kitchen_item(item),
-            )
 
-        order.production_status = Order.PROD_SENT
         order.updated_by = user
-        order.save(update_fields=["production_status", "updated_by", "updated_at"])
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "send_to_kitchen", "batch": batch.batch_number})
+        order.save(update_fields=["updated_by", "updated_at"])
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=order,
+            actor=user,
+            metadata={
+                "event": "kitchen_dispatch_requested",
+                "batch": batch.batch_number,
+                "batch_serial": str(batch.serial),
+                "dispatch_at": dispatch_at.isoformat(),
+                "immediate": True,
+            },
+        )
 
         from apps.printers.services import register_kitchen_batch_print_jobs
 
-        register_kitchen_batch_print_jobs(batch=batch, user=user)
+        register_kitchen_batch_print_jobs(batch=batch, user=user, offline_printed=offline_printed)
 
-        if order.restaurant.stock_deduction_timing == "kitchen":
-            from apps.stock.services import deduct_order_stock
-
-            deduct_order_stock(order=order, user=user)
+        dispatch_kitchen_batch(batch, now=now)
+        order.refresh_from_db()
 
         return order
 
 
 @transaction.atomic
-def void_order_item(item, user, reason=""):
-    """Cancel a pending item before it is sent to kitchen."""
-    if not reason.strip():
-        raise ValidationError("Informe o motivo do cancelamento do item.")
+def create_order_with_item(
+    *,
+    restaurant,
+    order_type,
+    product,
+    user,
+    command=None,
+    table=None,
+    item_data=None,
+    responsible_user=None,
+):
+    """Atomically creates a real order only when its first item is valid."""
+    item_data = dict(item_data or {})
+    with tenant_context(restaurant.account):
+        if command is not None and table is not None:
+            command = Command.objects.select_for_update().get(pk=command.pk)
+            table = Table.objects.select_for_update().get(pk=table.pk)
+            if table.restaurant_id != restaurant.id or table.status == Table.STATUS_CLEANING:
+                raise ValidationError("A mesa selecionada não está disponível neste restaurante.")
+            old_table_id = command.current_table_id
+            command.current_table = table
+            command.branch = table.branch
+            command.updated_by = user
+            command.save(update_fields=["current_table", "branch", "updated_by", "updated_at"])
+            table.status = Table.STATUS_OCCUPIED
+            table.current_order_id = None
+            table.save(update_fields=["status", "current_order_id", "updated_at"])
+
+            from apps.restaurants.models import CommandMovementLog
+
+            CommandMovementLog.objects.create(
+                account=command.account,
+                restaurant=command.restaurant,
+                branch=command.branch,
+                command=command,
+                action=CommandMovementLog.ACTION_LINKED,
+                table=table,
+                from_table_id=old_table_id,
+                waiter=user,
+            )
+            if old_table_id and old_table_id != table.id:
+                free_table_if_empty(Table.objects.get(pk=old_table_id))
+
+        order = create_order(
+            restaurant=restaurant,
+            order_type=order_type,
+            command=command,
+            user=user,
+            responsible_user=responsible_user,
+        )
+        add_order_item(order=order, product=product, user=user, **item_data)
+        return Order.objects.prefetch_related("items__product", "items__addons", "items__batch").get(pk=order.pk)
+
+
+@transaction.atomic
+def dispatch_kitchen_batch(batch, *, now=None):
+    """Release a scheduled round to KDS/printers after the grace period."""
+    now = now or timezone.now()
+    with tenant_context(batch.account):
+        batch = (
+            OrderBatch.objects.select_related("order__restaurant", "sent_by")
+            # `sent_by` is nullable. PostgreSQL rejects FOR UPDATE on the
+            # nullable side of the LEFT JOIN unless the locked table is scoped.
+            .select_for_update(of=("self",))
+            .get(pk=batch.pk)
+        )
+        if batch.status != OrderBatch.STATUS_SCHEDULED:
+            return batch
+        if batch.dispatch_at and batch.dispatch_at > now:
+            return batch
+
+        items = list(
+            batch.items.select_related("order", "product")
+            .select_for_update(of=("self",))
+            .filter(status=OrderItem.STATUS_QUEUED)
+        )
+        if not items:
+            batch.status = OrderBatch.STATUS_CANCELLED
+            batch.save(update_fields=["status", "updated_at"])
+            from apps.printers.models import PrintJob
+
+            PrintJob.objects.filter(
+                payload__batch_id=str(batch.id),
+                status=PrintJob.STATUS_SCHEDULED,
+            ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
+            return batch
+
+        for item in items:
+            item.status = OrderItem.STATUS_SENT
+            item.sent_to_kitchen_at = now
+            item.save(update_fields=["status", "sent_to_kitchen_at", "updated_at"])
+            transaction.on_commit(
+                lambda current=item: broadcast_kitchen_event(
+                    current.account_id,
+                    current.branch_id,
+                    current.production_sector,
+                    "order_item.sent",
+                    serialize_kitchen_item(current),
+                )
+            )
+
+        batch.status = OrderBatch.STATUS_SENT
+        batch.sent_at = now
+        batch.save(update_fields=["status", "sent_at", "updated_at"])
+
+        order = batch.order
+        order.production_status = Order.PROD_SENT
+        order.updated_by = batch.sent_by
+        order.save(update_fields=["production_status", "updated_by", "updated_at"])
+
+        from apps.printers.models import PrintJob
+
+        PrintJob.objects.filter(
+            payload__batch_id=str(batch.id),
+            status=PrintJob.STATUS_SCHEDULED,
+        ).update(status=PrintJob.STATUS_RENDERED, available_at=now, updated_at=now)
+
+        if order.restaurant.stock_deduction_timing == "kitchen":
+            from apps.stock.services import deduct_order_stock
+
+            deduct_order_stock(order=order, user=batch.sent_by)
+
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=order,
+            actor=batch.sent_by,
+            metadata={
+                "event": "kitchen_dispatch_released",
+                "batch": batch.batch_number,
+                "batch_serial": str(batch.serial),
+            },
+        )
+        return batch
+
+
+def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=None):
+    """Release all due rounds; safe for Celery and read-time fallback."""
+    now = now or timezone.now()
+    due = OrderBatch.all_objects.filter(
+        status=OrderBatch.STATUS_SCHEDULED,
+        dispatch_at__lte=now,
+        deleted_at__isnull=True,
+    )
+    if account_id:
+        due = due.filter(account_id=account_id)
+    if restaurant_id:
+        due = due.filter(restaurant_id=restaurant_id)
+    batch_ids = list(due.values_list("id", flat=True)[:500])
+    for batch_id in batch_ids:
+        batch = OrderBatch.all_objects.select_related("account").get(pk=batch_id)
+        dispatch_kitchen_batch(batch, now=now)
+    return len(batch_ids)
+
+
+@transaction.atomic
+def set_order_item_quantity(item, user, quantity):
+    """Ajusta a quantidade de um item que ainda NAO foi para a producao.
+
+    Existe para o `+` e o `-` do teclado do PDV. So item pendente entra aqui:
+    um item ja despachado descreve o que a cozinha recebeu, e mudar a
+    quantidade dele reescreveria o passado sem que ninguem na producao ficasse
+    sabendo — para esse caso existem o cancelamento e a cortesia, que avisam.
+
+    Quantidade zero seria um item invisivel com preco; quem quer remover usa
+    `void_order_item`, que exige motivo e deixa registro.
+    """
+    quantity = Decimal(str(quantity))
+    if quantity <= 0:
+        raise ValidationError("Para remover o item, cancele-o informando o motivo.")
+
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        item = (
+            OrderItem.objects.select_related("order", "product")
+            .select_for_update(of=("self",))
+            .get(pk=item.pk)
+        )
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if item.status != OrderItem.STATUS_PENDING:
-            raise ValidationError("Somente itens pendentes podem ser cancelados. Para itens já enviados, use cortesia.")
+            raise ValidationError(
+                "Só um item que ainda não foi para a produção pode ter a quantidade alterada."
+            )
+        if item.product_id and item.product.is_weighed:
+            raise ValidationError(
+                "Produto vendido por peso: a quantidade vem da balança, não do teclado."
+            )
+
+        item.quantity = quantity
+        item.total_price = (item.unit_price * quantity).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        item.updated_by = user
+        item.save(update_fields=["quantity", "total_price", "updated_by", "updated_at"])
+        for item_addon in item.addons.all():
+            item_addon.total_price = (item_addon.unit_price * quantity).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP
+            )
+            item_addon.updated_by = user
+            item_addon.save(update_fields=["total_price", "updated_by", "updated_at"])
+        recalculate_order(item.order)
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=item,
+            actor=user,
+            metadata={"event": "item_quantity_changed", "quantity": str(quantity)},
+        )
+        return item
+
+
+def void_order_item(item, user, reason="", offline_printed=False):
+    """Cancela um item, com cupom de cancelamento so depois de despachado.
+
+    ``offline_printed=True`` vem do PDV que ja imprimiu o cupom na impressora
+    do setor porque a operacao ficou na fila local. O job continua sendo
+    criado para a auditoria, mas ja nasce impresso — senao o agente local
+    imprimiria o mesmo cancelamento de novo ao sincronizar.
+    """
+    if not reason.strip():
+        raise ValidationError("Informe o motivo do cancelamento do item.")
+    with tenant_context(item.account):
+        item = (
+            OrderItem.objects.select_related("order", "batch")
+            .select_for_update(of=("self",))
+            .get(pk=item.pk)
+        )
+        if item.order.is_locked:
+            raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
+        if item.status in {OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
+            raise ValidationError("Este item já foi cancelado ou retirado da conta.")
+
+        within_grace = item.status == OrderItem.STATUS_QUEUED
+        if within_grace and item.batch and item.batch.dispatch_at and item.batch.dispatch_at <= timezone.now():
+            dispatch_kitchen_batch(item.batch)
+            item.refresh_from_db()
+            within_grace = item.status == OrderItem.STATUS_QUEUED
+
+        was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
         item.status = OrderItem.STATUS_CANCELLED
         item.void_reason = reason
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
         recalculate_order(item.order)
-        record_audit(action=AuditLog.ACTION_CANCELLED, instance=item, actor=user, reason=reason)
+        if within_grace and item.batch_id:
+            from apps.printers.services import refresh_scheduled_kitchen_batch_jobs
+
+            refresh_scheduled_kitchen_batch_jobs(batch=item.batch, user=user)
+        elif was_dispatched:
+            from apps.printers.services import register_kitchen_item_cancellation_jobs
+
+            register_kitchen_item_cancellation_jobs(
+                item=item, user=user, reason=reason, offline_printed=offline_printed
+            )
+        record_audit(
+            action=AuditLog.ACTION_CANCELLED,
+            instance=item,
+            actor=user,
+            reason=reason,
+            metadata={
+                "event": "order_item_cancelled",
+                "within_print_grace_period": within_grace,
+                "cancellation_ticket_required": was_dispatched,
+            },
+        )
         return item
 
 
@@ -458,14 +687,15 @@ def void_order_item(item, user, reason=""):
 def comp_order_item(item, user, reason=""):
     """Mark a sent/in-production item as comped (courtesy) — does not deduct from bill."""
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
+        item = OrderItem.objects.select_related("order").select_for_update(of=("self",)).get(pk=item.pk)
         if item.order.is_locked:
             raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
         if item.status in {OrderItem.STATUS_PENDING, OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}:
-            raise ValidationError("A cortesia só pode ser aplicada a itens já enviados à cozinha. Cancele itens que ainda estão pendentes.")
+            raise ValidationError(
+                "A cortesia só pode ser aplicada a itens já enviados à cozinha. Cancele itens que ainda estão pendentes."
+            )
 
-        profile = getattr(user, "profile", None)
-        if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+        if not has_role_at_least(user, "manager"):
             raise ValidationError("Aplicar cortesia exige permissão de gerente.")
 
         item.status = OrderItem.STATUS_COMPED
@@ -473,26 +703,48 @@ def comp_order_item(item, user, reason=""):
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
         recalculate_order(item.order)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"}
+        )
         return item
+
+
+# Avancos de PRODUCAO (o que o KDS faz). Nao mudam composicao nem valor do
+# pedido, entao continuam liberados depois do pagamento.
+_KITCHEN_STATUSES = frozenset(
+    {OrderItem.STATUS_PREPARING, OrderItem.STATUS_READY, OrderItem.STATUS_DELIVERED}
+)
 
 
 @transaction.atomic
 def update_order_item_status(item, new_status, user, reason=""):
     with tenant_context(item.account):
-        item = OrderItem.objects.select_for_update().select_related("order").get(pk=item.pk)
-        if item.order.is_locked:
-            raise ValidationError("Itens de pedidos pagos, cancelados ou estornados não podem ser alterados.")
+        item = OrderItem.objects.select_related("order").select_for_update(of=("self",)).get(pk=item.pk)
+        # Cancelado/estornado e ponto final: nao ha producao a fazer.
+        if item.order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
+            raise ValidationError("Itens de pedidos cancelados ou estornados não podem ser alterados.")
+        # Pago NAO trava a cozinha: o caixa cobra assim que manda os itens para a
+        # producao, entao "pago com comida na chapa" e o estado normal de um card
+        # no KDS. O bloqueio existe para o que mexe na composicao/valor do pedido
+        # (cancelar item, cortesia), nao para o cozinheiro avancar a ficha —
+        # producao e um ciclo independente do financeiro (Order.production_status).
+        if item.order.status == Order.STATUS_PAID and new_status not in _KITCHEN_STATUSES:
+            raise ValidationError(
+                "Pedido já pago: a cozinha pode avançar a produção, mas o item não pode mais ser alterado."
+            )
 
         # Guard special transitions through dedicated functions
         if new_status == OrderItem.STATUS_CANCELLED:
             return void_order_item(item, user, reason)
         if new_status == OrderItem.STATUS_COMPED:
             return comp_order_item(item, user, reason)
+        if item.status == OrderItem.STATUS_QUEUED:
+            raise ValidationError(
+                "O item ainda está sendo liberado para produção. Atualize e tente novamente."
+            )
 
         if item.status == OrderItem.STATUS_READY and new_status != OrderItem.STATUS_DELIVERED:
-            profile = getattr(user, "profile", None)
-            if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+            if not has_role_at_least(user, "manager"):
                 raise ValidationError("Alterar itens prontos exige permissão de gerente.")
 
         now = timezone.now()
@@ -508,7 +760,9 @@ def update_order_item_status(item, new_status, user, reason=""):
         item.save()
         recalculate_order(item.order)
         sync_production_status(item.order)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": new_status})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"status": new_status}
+        )
         broadcast_kitchen_event(
             item.account_id,
             item.branch_id,
@@ -537,8 +791,7 @@ def close_order(
         # para Decimal antes de comparar/gravar.
         discount = Decimal(str(discount or 0))
         if discount > Decimal("0.00"):
-            profile = getattr(user, "profile", None)
-            if not profile or profile.profile_type not in {"admin", "owner", "manager"}:
+            if not has_role_at_least(user, "manager"):
                 raise ValidationError("Aplicar desconto exige permissão de gerente.")
 
         order.discount = discount
@@ -549,19 +802,33 @@ def close_order(
         if not order.service_fee_enabled:
             order.service_fee = Decimal("0.00")
         elif service_fee is not None:
-            order.service_fee = Decimal(str(service_fee))
+            order.service_fee = Decimal(str(service_fee)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         elif order.restaurant.default_service_fee_percent:
-            order.service_fee = (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
+            # Arredonda aqui, e não deixa para o campo do banco: SQLite não trunca
+            # DecimalField como o Postgres, então o total recalculado a seguir
+            # divergia do total previsto pelo cliente (que já soma a taxa
+            # arredondada), derrubando o fechamento por "total mudou offline".
+            order.service_fee = (
+                (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
+            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         order.status = Order.STATUS_AWAITING_PAYMENT
         order.closed_by = user
         order.updated_by = user
         order.closed_at = timezone.now()
-        order.save(update_fields=["discount", "service_fee", "service_fee_enabled", "status", "closed_by", "closed_at", "updated_by"])
+        order.save(
+            update_fields=[
+                "discount",
+                "service_fee",
+                "service_fee_enabled",
+                "status",
+                "closed_by",
+                "closed_at",
+                "updated_by",
+            ]
+        )
         order = recalculate_order(order)
         if expected_total not in (None, ""):
-            expected = Decimal(str(expected_total)).quantize(
-                TWO_PLACES, rounding=ROUND_HALF_UP
-            )
+            expected = Decimal(str(expected_total)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             if expected != order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP):
                 raise ValidationError(
                     "O total do pedido mudou durante o período offline. "
@@ -574,12 +841,9 @@ def close_order(
         # parcial no servidor.
         from apps.payments.models import Payment
 
-        paid_total = (
-            order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(
-                value=Sum("amount")
-            )["value"]
-            or Decimal("0.00")
-        )
+        paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
+            "value"
+        ] or Decimal("0.00")
         if paid_total > order.total:
             raise ValidationError(
                 "A alteração deixaria o valor já pago maior que o total do pedido. "
@@ -607,7 +871,31 @@ def close_order(
 
 
 @transaction.atomic
+def order_is_empty(order):
+    """O pedido nao tem nada que valha guardar?
+
+    Sem item que conte e sem recebimento aprovado, ele e so uma comanda
+    ocupada: nao ha o que auditar, nao ha o que estornar, e a mesa/comanda
+    fica presa para o proximo cliente. Cortesia e item ja cancelado nao
+    contam — eles nao deixam a venda "com conteudo".
+    """
+    with tenant_context(order.account):
+        has_items = (
+            order.items.exclude(
+                status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]
+            )
+            .exists()
+        )
+        has_payments = order.payments.filter(status="approved").exists()
+        return not has_items and not has_payments
+
+
 def cancel_order(order, user, reason):
+    # Pedido vazio dispensa motivo: nao e um cancelamento comercial, e o
+    # descarte de uma comanda que foi aberta e nao virou venda. Exigir uma
+    # justificativa ali so ensina o operador a escrever qualquer coisa.
+    if not reason and order_is_empty(order):
+        reason = "Pedido vazio descartado"
     if not reason:
         raise ValidationError("O motivo do cancelamento é obrigatório.")
     with tenant_context(order.account):
@@ -633,7 +921,9 @@ def sync_production_status(order):
     with tenant_context(order.account):
         order = Order.objects.get(pk=order.pk)
         active_statuses = list(
-            order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list("status", flat=True)
+            order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).values_list(
+                "status", flat=True
+            )
         )
         if not active_statuses:
             return order
@@ -672,5 +962,7 @@ def serialize_kitchen_item(item):
         "production_sector": item.production_sector,
         "batch_number": item.batch.batch_number if item.batch_id else None,
         "sent_to_kitchen_at": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else None,
-        "elapsed_from": item.sent_to_kitchen_at.isoformat() if item.sent_to_kitchen_at else item.launched_at.isoformat(),
+        "elapsed_from": item.sent_to_kitchen_at.isoformat()
+        if item.sent_to_kitchen_at
+        else item.launched_at.isoformat(),
     }

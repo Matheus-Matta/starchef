@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 import '../../../core/storage/local_preferences.dart';
 
 /// Permite digitar manualmente a URL da API a partir da tela de login —
@@ -9,19 +11,29 @@ import '../../../core/storage/local_preferences.dart';
 /// `AppConfig.load`), então vale mesmo quando o instalador já veio com uma
 /// URL embutida.
 ///
-/// A mudança só é lida no próximo boot (`AppConfig.load` roda uma vez antes
-/// de `runApp`), então salvar aqui não reconecta a sessão atual — só avisa
-/// que é preciso reabrir o app.
 class ApiUrlSettingsDialog extends StatefulWidget {
-  const ApiUrlSettingsDialog({super.key, required this.preferences});
+  const ApiUrlSettingsDialog({
+    super.key,
+    required this.preferences,
+    required this.currentApiBaseUrl,
+  });
 
   final LocalPreferences preferences;
+  final String currentApiBaseUrl;
 
-  static Future<void> show(BuildContext context, LocalPreferences preferences) =>
-      showDialog<void>(
+  static Future<bool> show(
+    BuildContext context,
+    LocalPreferences preferences,
+    String currentApiBaseUrl,
+  ) async =>
+      await showDialog<bool>(
         context: context,
-        builder: (_) => ApiUrlSettingsDialog(preferences: preferences),
-      );
+        builder: (_) => ApiUrlSettingsDialog(
+          preferences: preferences,
+          currentApiBaseUrl: currentApiBaseUrl,
+        ),
+      ) ??
+      false;
 
   @override
   State<ApiUrlSettingsDialog> createState() => _ApiUrlSettingsDialogState();
@@ -29,7 +41,7 @@ class ApiUrlSettingsDialog extends StatefulWidget {
 
 class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
   late final _urlController = TextEditingController(
-    text: widget.preferences.apiBaseUrlOverride ?? '',
+    text: widget.preferences.apiBaseUrlOverride ?? widget.currentApiBaseUrl,
   );
   final _formKey = GlobalKey<FormState>();
   bool _saving = false;
@@ -44,10 +56,13 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
     final text = value?.trim() ?? '';
     if (text.isEmpty) return null; // vazio = remove o override, é válido.
     final uri = Uri.tryParse(text);
-    final valid = uri != null &&
+    final valid =
+        uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https') &&
         uri.host.isNotEmpty;
-    return valid ? null : 'Informe uma URL completa (ex.: https://api.seu-dominio.com/api/v1).';
+    return valid
+        ? null
+        : 'Informe uma URL completa (ex.: https://api.seu-dominio.com/api/v1).';
   }
 
   Future<void> _save() async {
@@ -56,33 +71,20 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
     final text = _urlController.text.trim();
     await widget.preferences.setApiBaseUrlOverride(text.isEmpty ? null : text);
     if (!mounted) return;
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          text.isEmpty
-              ? 'Override removido. Feche e abra o PDV novamente para voltar ao padrão.'
-              : 'URL salva. Feche e abra o PDV novamente para conectar nela.',
-        ),
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    Navigator.pop(context, true);
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return AppDialog(
+      scrollable: true,
+      maxWidth: 528,
       title: Row(
         children: [
           const Icon(Icons.settings_outlined),
           const SizedBox(width: 10),
           const Expanded(child: Text('URL da API')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(
@@ -94,10 +96,12 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Normalmente essa URL já vem configurada no instalador. Use '
-                'isso só se o terminal não tiver sido configurado, ou pra '
-                'apontar temporariamente pra outro ambiente.',
-                style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+                'A alteração é aplicada imediatamente ao próximo login. Se '
+                'você informar apenas o domínio, o app acrescenta /api/v1.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(height: 16),
               TextFormField(
@@ -106,7 +110,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(
                   labelText: 'URL da API',
-                  hintText: 'https://api.seu-dominio.com/api/v1',
+                  hintText: 'https://api.starchef.com.br/api/v1',
                   border: OutlineInputBorder(),
                 ),
                 validator: _validateUrl,
@@ -114,7 +118,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Deixe em branco e salve pra voltar a usar a configuração padrão.',
+                'Deixe em branco e salve para voltar à API oficial do StarChef.',
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ],

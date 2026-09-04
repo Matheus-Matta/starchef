@@ -9,7 +9,6 @@
 
 /* ── Mapas de rotulo (valor do backend -> texto) ─────────────────────── */
 export const ORDER_TYPE_LABELS = {
-  table: "Mesa",
   command: "Comanda",
   counter: "Balcao",
   delivery: "Delivery",
@@ -69,20 +68,6 @@ export const COMMAND_STATUS_LABELS = {
   occupied: "Em uso",
 };
 
-export const PROFILE_TYPE_LABELS = {
-  admin: "Admin",
-  owner: "Proprietario",
-  manager: "Gerente",
-  waiter: "Garcom",
-  kitchen: "Cozinha",
-  cashier: "Caixa",
-  driver: "Entregador",
-};
-
-export const PROFILE_TYPE_OPTIONS = Object.entries(PROFILE_TYPE_LABELS).map(
-  ([value, label]) => ({ value, label }),
-);
-
 export const MOVEMENT_TYPE_LABELS = {
   in: "Entrada",
   out: "Saida",
@@ -139,6 +124,55 @@ export const FISCAL_CRT_OPTIONS = [
 export const FISCAL_PROVIDER_OPTIONS = [
   { label: "Manual (sem transmissao a SEFAZ)", value: "manual" },
   { label: "Focus NFe", value: "focus_nfe" },
+];
+
+// ── Perfil fiscal (grupo tributario reutilizado pelos produtos) ─────────────
+// Tabelas oficiais da NF-e/NFC-e; os codigos vao literalmente para a Focus NFe.
+// Origem da mercadoria (campo `orig` do ICMS).
+export const FISCAL_ORIGEM_OPTIONS = [
+  { label: "0 - Nacional", value: "0" },
+  { label: "1 - Estrangeira (importacao direta)", value: "1" },
+  { label: "2 - Estrangeira (mercado interno)", value: "2" },
+  { label: "3 - Nacional com importacao > 40%", value: "3" },
+  { label: "4 - Nacional (processos produtivos basicos)", value: "4" },
+  { label: "5 - Nacional com importacao <= 40%", value: "5" },
+  { label: "6 - Estrangeira (importacao direta, sem similar)", value: "6" },
+  { label: "7 - Estrangeira (mercado interno, sem similar)", value: "7" },
+  { label: "8 - Nacional com importacao > 70%", value: "8" },
+];
+// CSOSN — usado por quem e do Simples Nacional (CRT 1 ou 2).
+export const FISCAL_CSOSN_OPTIONS = [
+  { label: "101 - Tributada com permissao de credito", value: "101" },
+  { label: "102 - Tributada sem permissao de credito", value: "102" },
+  { label: "103 - Isencao do ICMS para faixa de receita", value: "103" },
+  { label: "300 - Imune", value: "300" },
+  { label: "400 - Nao tributada", value: "400" },
+  { label: "500 - ICMS cobrado por substituicao tributaria", value: "500" },
+  { label: "900 - Outros", value: "900" },
+];
+// CST do ICMS — usado por quem e do Regime Normal (CRT 3).
+export const FISCAL_CST_ICMS_OPTIONS = [
+  { label: "00 - Tributada integralmente", value: "00" },
+  { label: "10 - Tributada com cobranca por ST", value: "10" },
+  { label: "20 - Com reducao de base de calculo", value: "20" },
+  { label: "40 - Isenta", value: "40" },
+  { label: "41 - Nao tributada", value: "41" },
+  { label: "50 - Suspensao", value: "50" },
+  { label: "51 - Diferimento", value: "51" },
+  { label: "60 - ICMS cobrado anteriormente por ST", value: "60" },
+  { label: "90 - Outras", value: "90" },
+];
+// CST de PIS/COFINS — a mesma tabela vale para os dois tributos.
+export const FISCAL_CST_PIS_COFINS_OPTIONS = [
+  { label: "01 - Operacao tributavel (aliquota basica)", value: "01" },
+  { label: "02 - Operacao tributavel (aliquota diferenciada)", value: "02" },
+  { label: "04 - Monofasica (aliquota zero)", value: "04" },
+  { label: "06 - Aliquota zero", value: "06" },
+  { label: "07 - Operacao isenta", value: "07" },
+  { label: "08 - Operacao sem incidencia", value: "08" },
+  { label: "09 - Operacao com suspensao", value: "09" },
+  { label: "49 - Outras operacoes de saida", value: "49" },
+  { label: "99 - Outras operacoes", value: "99" },
 ];
 
 export const STOCK_TIMING_LABELS = { payment: "No pagamento", kitchen: "Na cozinha" };
@@ -267,3 +301,69 @@ export const SECTOR_FILTER_OPTIONS = [
   { label: "Bar", value: "bar" },
   { label: "Sobremesa", value: "dessert" },
 ];
+
+// ── Terminais do PDV ────────────────────────────────────────────────────────
+// A instalação é identificada por um UUID; estes rótulos existem para a tela
+// não mostrar o UUID cru quando disser quem está com um caixa.
+export const TERMINAL_TYPE_OPTIONS = [
+  { label: "Desktop", value: "desktop" },
+  { label: "Navegador", value: "web" },
+  { label: "Aplicativo", value: "mobile" },
+];
+export const TERMINAL_TYPE_LABELS = Object.fromEntries(
+  TERMINAL_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+);
+export const TERMINAL_ROLE_OPTIONS = [
+  { label: "Caixa Principal", value: "principal" },
+  { label: "Caixa Secundario", value: "secondary" },
+  { label: "Navegador", value: "web" },
+];
+export const TERMINAL_ROLE_LABELS = Object.fromEntries(
+  TERMINAL_ROLE_OPTIONS.map((option) => [option.value, option.label]),
+);
+
+// ── Estoque por lote (Fases 1-3 do plano de estoque) ──────────────────
+export const STOCK_DOC_STATUS_LABELS = {
+  draft: "Rascunho",
+  posted: "Confirmado",
+  cancelled: "Cancelado",
+};
+
+export const STOCK_LOT_STATUS_LABELS = {
+  available: "Disponivel",
+  depleted: "Esgotado",
+  blocked: "Bloqueado",
+  expired: "Vencido",
+  discarded: "Descartado",
+};
+
+export const STOCK_EXIT_TYPE_LABELS = {
+  consumption: "Consumo manual",
+  loss: "Perda",
+  discard: "Descarte",
+  transfer: "Transferencia",
+  internal: "Uso interno",
+  other: "Outro",
+};
+
+export const STOCK_EXIT_TYPE_OPTIONS = Object.entries(STOCK_EXIT_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+export const STOCK_PICKING_LABELS = {
+  fifo: "FIFO — primeiro a entrar, primeiro a sair",
+  fefo: "FEFO — primeiro a vencer, primeiro a sair",
+};
+
+export const STOCK_PICKING_OPTIONS = Object.entries(STOCK_PICKING_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
+export const LABEL_CODE_TYPE_LABELS = {
+  qr: "QR Code",
+  code128: "Codigo de barras (Code 128)",
+};
+
+export const LABEL_CODE_TYPE_OPTIONS = Object.entries(LABEL_CODE_TYPE_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);

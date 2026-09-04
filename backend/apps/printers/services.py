@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.template.loader import render_to_string
 from django.utils import timezone
 
@@ -16,6 +17,7 @@ from apps.printers.models import Printer, PrintJob
 _TEMPLATE_BY_TYPE = {
     PrintJob.TYPE_KITCHEN: "printers/kitchen_ticket.html",
     PrintJob.TYPE_BAR: "printers/kitchen_ticket.html",
+    PrintJob.TYPE_KITCHEN_CANCEL: "printers/kitchen_ticket.html",
     PrintJob.TYPE_WEIGH: "printers/weigh_ticket.html",
     PrintJob.TYPE_RECEIPT: "printers/receipt.html",
     PrintJob.TYPE_TABLE_BILL: "printers/receipt.html",
@@ -23,11 +25,28 @@ _TEMPLATE_BY_TYPE = {
 }
 _WITH_PAYMENTS = {PrintJob.TYPE_RECEIPT}
 
-# 48 colunas: padrao de fonte A em bobina de 80mm (a largura mais comum de
-# impressora termica no Brasil). 32 colunas era pensado pra bobina de 58mm e
-# deixava sobrando quase metade da largura em branco numa impressora de 80mm.
-LARGURA_CUPOM = 48
+# 42 colunas: largura de Fonte A mais compativel entre as impressoras
+# termicas genericas de 80mm vendidas no Brasil. 48 colunas parecia certo no
+# papel, mas varias dessas impressoras so cabem 42~47 caracteres reais por
+# linha nessa fonte — o excedente nao trunca, ele QUEBRA pra linha de baixo,
+# entao um cupom de 48 colunas cortava o ultimo digito do valor pra uma linha
+# vazia só com "0". 42 fica seguro mesmo nas mais estreitas, ao custo de
+# alguma margem em branco nas impressoras que realmente tem 48 colunas.
+LARGURA_CUPOM = 42
 _COLUNA_VALOR = 14
+# A comanda de producao usa 32 colunas: ela sai em fonte expandida na cozinha,
+# entao cabe menos texto por linha do que no cupom do cliente.
+LARGURA_COMANDA = 32
+
+# `Order.TYPE_CHOICES` guarda rotulos em ingles (e nem lista `table`), entao
+# `get_order_type_display()` imprimiria "TABLE" na comanda da cozinha.
+TIPO_ATENDIMENTO_COMANDA = {
+    "table": "MESA",
+    "command": "COMANDA",
+    "counter": "BALCAO",
+    "delivery": "DELIVERY",
+    "takeaway": "RETIRADA",
+}
 
 
 def _linha_valor(rotulo, valor):
@@ -35,7 +54,9 @@ def _linha_valor(rotulo, valor):
     LARGURA_CUPOM colunas — o mesmo formato usado em toda linha de item,
     subtotal, total e pagamento do cupom."""
     quantia = f"R$ {valor}"
-    return f"{rotulo:<{LARGURA_CUPOM - _COLUNA_VALOR}}{quantia:>{_COLUNA_VALOR}}"
+    largura_rotulo = LARGURA_CUPOM - _COLUNA_VALOR
+    rotulo = str(rotulo)[:largura_rotulo]
+    return f"{rotulo:<{largura_rotulo}}{quantia:>{_COLUNA_VALOR}}"
 
 
 def _establishment_info(order):
@@ -105,44 +126,107 @@ def _establishment_lines(info, width=LARGURA_CUPOM):
     return lines
 
 
+def _order_context_lines(order, width=LARGURA_CUPOM):
+    """Linhas que identificam o pedido, especificas por tipo.
+
+    Mesa/comanda so fazem sentido pra atendimento no salao; balcao, retirada
+    e delivery mostravam sempre "Mesa: - Comanda: -", que nao diz nada sobre
+    o pedido de verdade e ainda escondia pra quem era a entrega.
+    """
+    if order.order_type == "delivery":
+        lines = ["DELIVERY"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+            if order.customer.phone:
+                lines.append(f"Telefone: {order.customer.phone}"[:width])
+        if order.delivery_address_id:
+            address = order.delivery_address
+            street_line = f"{address.street}, {address.number}".strip(", ")
+            if address.complement:
+                street_line += f" - {address.complement}"
+            lines.append(street_line[:width])
+            district_line = f"{address.district} - {address.city}/{address.state}".strip(" -")
+            lines.append(district_line[:width])
+            if address.reference:
+                lines.append(f"Ref: {address.reference}"[:width])
+        return lines
+    if order.order_type == "takeaway":
+        lines = ["RETIRADA"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+            if order.customer.phone:
+                lines.append(f"Telefone: {order.customer.phone}"[:width])
+        return lines
+    if order.order_type == "counter":
+        lines = ["BALCAO"]
+        if order.customer_id:
+            lines.append(f"Cliente: {order.customer.name}"[:width])
+        return lines
+    table_part = f"Mesa: {order.table.number}" if order.table_id else None
+    command_part = f"Comanda: {order.command.code}" if order.command_id else None
+    if table_part and command_part:
+        return [f"{table_part} - {command_part}"[:width]]
+    if table_part:
+        return [table_part]
+    if command_part:
+        return [command_part]
+    return ["Mesa: - Comanda: -"]
+
+
 def _customer_receipt_text(order):
+    """Converte o recibo web para o equivalente monoespaçado de 80 mm.
+
+    A ordem e o conteúdo seguem ``receipt.html``. Somente recursos exclusivos
+    do navegador (CSS, imagem e tags) são substituídos por alinhamento em texto
+    e pelo comando ESC/POS de código de barras enviado pelo agente local.
+    """
     info = _establishment_info(order)
-    lines = _establishment_lines(info)
+    lines = [
+        info["trade_name"].upper().center(LARGURA_CUPOM),
+        "RECIBO DE VENDA - NAO E DOCUMENTO FISCAL".center(LARGURA_CUPOM),
+    ]
+    document_line = f"CNPJ: {info['cnpj'] or '-'}"
+    if info["state_registration"]:
+        document_line += f" - IE: {info['state_registration']}"
+    lines.append(document_line[:LARGURA_CUPOM])
+    address_line = f"{info['address']} {info['city']}".strip()
+    if info["state"]:
+        address_line += f"/{info['state']}"
+    if info["zip_code"]:
+        address_line += f" - CEP {info['zip_code']}"
+    if address_line:
+        lines.append(address_line[:LARGURA_CUPOM])
+    if info["phone"]:
+        lines.append(f"Telefone: {info['phone']}"[:LARGURA_CUPOM])
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
-            f"PEDIDO #{order.sequence}",
-            f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}",
+            f"Pedido nº {order.sequence}",
+            *_order_context_lines(order),
         ]
     )
-    if order.table_id:
-        lines.append(f"Mesa: {order.table.number}")
-    if order.command_id:
-        lines.append(f"Comanda: {order.command.code}")
-    if order.customer_id:
-        lines.append(f"Cliente: {order.customer.name}"[:LARGURA_CUPOM])
-        if order.customer.phone:
-            lines.append(f"Telefone: {order.customer.phone}"[:LARGURA_CUPOM])
     if order.responsible_user_id:
         operator = order.responsible_user.get_full_name() or order.responsible_user.username
         lines.append(f"Operador: {operator}"[:LARGURA_CUPOM])
+    lines.append(f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}")
     lines.append("-" * LARGURA_CUPOM)
     for item in order.items.select_related("product").prefetch_related("addons__addon"):
         if item.status == item.STATUS_CANCELLED:
             continue
-        lines.append(f"{item.quantity:g}x {item.product.name}"[:LARGURA_CUPOM])
+        # Produto por peso resolve tudo em uma linha só: repetir a quantidade
+        # numa segunda linha ("0,024 kg x ...") mostrava o mesmo peso duas
+        # vezes no cupom.
         if item.product.is_weighed:
-            lines.append(
-                f"  {item.quantity:.3f} kg x R$ {item.unit_price}/kg"[:LARGURA_CUPOM]
-            )
-        for variation in item.variations or []:
-            name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:LARGURA_CUPOM])
+            descricao = f"{item.quantity:g} x {item.product.name}{item.variation_suffix} {item.unit_price}/kg"
+        else:
+            descricao = f"{item.quantity:g} x {item.product.name}{item.variation_suffix}"
+        lines.append(_linha_valor(descricao, item.total_price))
+        # O adicional e uma composicao da linha acima, nao outro item: entra
+        # indentado, sem repetir a quantidade (ja e a do produto) e com o
+        # quanto ele acrescentou. O valor do item acima ja soma os adicionais,
+        # entao aqui e detalhamento, nao uma nova cobranca.
         for addon in item.addons.all():
-            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:LARGURA_CUPOM])
-        if item.customer_note:
-            lines.append(f"  OBS: {item.customer_note}"[:LARGURA_CUPOM])
-        lines.append(_linha_valor("", item.total_price))
+            lines.append(_linha_valor(f"  {addon.addon.name}", addon.total_price))
     lines.extend(
         [
             "-" * LARGURA_CUPOM,
@@ -155,15 +239,11 @@ def _customer_receipt_text(order):
     )
     payments = order.payments.select_related("payment_method").order_by("created_at")
     if payments.exists():
-        lines.extend(["-" * LARGURA_CUPOM, "PAGAMENTOS"])
+        lines.extend(["-" * LARGURA_CUPOM, "FORMA(S) DE PAGAMENTO"])
         for payment in payments:
             lines.append(_linha_valor(payment.payment_method.name, payment.amount))
             if payment.change_amount:
-                received = payment.metadata.get("received_amount", payment.amount)
-                lines.append(_linha_valor("Recebido", received))
                 lines.append(_linha_valor("Troco", payment.change_amount))
-    if order.general_notes:
-        lines.extend(["-" * LARGURA_CUPOM, f"OBS: {order.general_notes}"[:LARGURA_CUPOM]])
     barcode_value = _order_command_barcode(order)["value"]
     if barcode_value:
         # So o valor: o agente local (LocalDeviceAgent) reconhece este mesmo
@@ -173,13 +253,11 @@ def _customer_receipt_text(order):
         lines.extend(
             [
                 "-" * LARGURA_CUPOM,
-                "COMANDA".center(LARGURA_CUPOM),
+                "COMANDA - CODE128".center(LARGURA_CUPOM),
                 barcode_value.center(LARGURA_CUPOM),
             ]
         )
-    lines.extend(
-        ["-" * LARGURA_CUPOM, "Obrigado pela preferência!".center(LARGURA_CUPOM), ""]
-    )
+    lines.extend(["-" * LARGURA_CUPOM, "Obrigado pela preferência!".center(LARGURA_CUPOM), ""])
     return "\n".join(lines)
 
 
@@ -190,6 +268,109 @@ def render_print_html(order, job_type, **extra):
     if job_type in _WITH_PAYMENTS:
         context["payments"] = order.payments.select_related("payment_method").order_by("created_at")
     return render_to_string(template, context)
+
+
+def active_printers_for(order):
+    """Impressoras ativas que atendem este pedido (restaurante + filial)."""
+    active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
+    if order.branch_id:
+        active = active.filter(Q(branch_id=order.branch_id) | Q(branch__isnull=True))
+    return active
+
+
+def resolve_printer_for(order, job_type=PrintJob.TYPE_RECEIPT):
+    """A impressora de destino de um trabalho, quando ninguem escolheu uma.
+
+    Extraido de `register_print_job` porque o cupom fiscal precisa da MESMA
+    escolha: um DANFE criado sem impressora fica parado — o agente local pula
+    o trabalho que nao aponta para nenhuma ("printer unavailable") e a nota
+    simplesmente nunca sai.
+    """
+    active = active_printers_for(order)
+    if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
+        sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
+        printer = (
+            active.filter(sector_id__in=sector_ids).order_by("name").first()
+            or active.filter(sector=None).order_by("name").first()
+            or active.order_by("name").first()
+        )
+    else:
+        # Recibo/conta/fechamento preferem uma impressora sem setor,
+        # evitando enviar o pedido inteiro a uma cozinha por engano.
+        printer = active.filter(sector=None).order_by("name").first()
+        if printer is None:
+            # Restaurantes pequenos frequentemente usam uma única
+            # impressora física no caixa e na cozinha. Se só há uma
+            # opção compatível com a filial, a escolha é inequívoca
+            # mesmo que ela esteja vinculada a um setor.
+            candidates = list(active.order_by("name")[:2])
+            if len(candidates) == 1:
+                printer = candidates[0]
+
+    if printer is not None:
+        return printer
+    if active.exists():
+        raise ValidationError(
+            "Há mais de uma impressora setorizada ativa. Cadastre uma "
+            "impressora sem setor para ser o destino automático dos recibos."
+        )
+    raise ValidationError("Nenhuma impressora ativa foi encontrada para este restaurante e filial.")
+
+
+def printer_payload(printer):
+    """Os dados que o agente local precisa para falar com a impressora.
+
+    O terminal e quem manda o cupom para o hardware; o `id` sozinho nao
+    diz por onde. Compartilhado entre a rota do recibo e a do DANFE para
+    as duas nao divergirem — foi assim que a do DANFE ficou sem devolver
+    impressora nenhuma.
+    """
+    if printer is None:
+        return None
+    return {
+        "id": str(printer.id),
+        "name": printer.name,
+        "endpoint": printer.endpoint,
+        "connection_type": printer.connection_type,
+        "host": printer.host,
+        "port": printer.port,
+        "timeout_seconds": printer.timeout_seconds,
+        "driver_type": printer.driver_type,
+        "settings": printer.settings,
+        "auto_print": printer.auto_print,
+        "is_active": printer.is_active,
+    }
+
+
+def claim_pending_job(*, order, job_type, printer, user):
+    """O terminal assume um cupom que ja existe, em vez de criar um segundo.
+
+    A emissao automatica do pagamento ja cria o recibo e o DANFE; quando o PDV
+    pede para imprimir em seguida, e o MESMO documento. Criar outro faria sair
+    duas vias da mesma venda em quem tem `auto_print` ligado na impressora do
+    caixa. Marcar `manual_only` tira o trabalho do laco do agente: quem imprime
+    passa a ser o terminal que esta na frente do cliente.
+
+    So vale para o que ainda nao saiu — uma reimpressao de um cupom ja impresso
+    continua sendo um trabalho novo.
+    """
+    claimed = (
+        PrintJob.objects.filter(
+            order=order,
+            job_type=job_type,
+            status__in=[PrintJob.STATUS_PENDING, PrintJob.STATUS_RENDERED],
+        )
+        .order_by("created_at")
+        .first()
+    )
+    if claimed is None:
+        return None
+    claimed.payload = {**(claimed.payload or {}), "manual_only": True}
+    if printer is not None:
+        claimed.printer = printer
+    claimed.updated_by = user
+    claimed.save(update_fields=["payload", "printer", "updated_by", "updated_at"])
+    return claimed
 
 
 def register_print_job(
@@ -207,11 +388,12 @@ def register_print_job(
         if printer and printer.account_id != order.account_id:
             raise ValueError("Printer does not belong to the order account.")
         if printer is None:
-            active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
-            if job_type in {PrintJob.TYPE_KITCHEN, PrintJob.TYPE_BAR}:
-                sector_ids = order.items.exclude(product__sector=None).values_list("product__sector_id", flat=True)
-                printer = active.filter(sector_id__in=sector_ids).order_by("name").first()
-            printer = printer or active.filter(sector=None).order_by("name").first() or active.order_by("name").first()
+            printer = resolve_printer_for(order, job_type)
+
+        if manual_only:
+            claimed = claim_pending_job(order=order, job_type=job_type, printer=printer, user=user)
+            if claimed is not None:
+                return claimed
 
         barcode = _order_command_barcode(order)
         html = render_print_html(
@@ -240,9 +422,7 @@ def register_print_job(
                 "payload_version": 2,
                 "barcode": {"symbology": barcode["symbology"], "value": barcode["value"]},
                 "text_content": (
-                    _customer_receipt_text(order)
-                    if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL}
-                    else ""
+                    _customer_receipt_text(order) if job_type in _WITH_PAYMENTS | {PrintJob.TYPE_TABLE_BILL} else ""
                 ),
             },
             html_content=html,
@@ -254,55 +434,95 @@ def register_print_job(
         return job
 
 
+def _kitchen_quantity(value):
+    return format(Decimal(value).normalize(), "f")
+
+
+def _kitchen_two_columns(left, right, width=LARGURA_COMANDA):
+    """Rotulo a esquerda e valor a direita na mesma linha da comanda."""
+    left, right = str(left), str(right)
+    espaco = width - len(left) - len(right)
+    if espaco < 1:
+        return f"{left} {right}"[:width]
+    return f"{left}{' ' * espaco}{right}"
+
+
 def _kitchen_ticket_text(*, order, batch, sector, items):
-    where = (
-        f"Mesa {order.table.number}"
-        if order.table_id
-        else (
-            f"Comanda {order.command.code}"
-            if order.command_id
-            else order.get_order_type_display()
-        )
-    )
+    """Comanda de producao: o que a cozinha precisa pra montar o pedido.
+
+    Alem dos itens, identifica de qual pedido/rodada a comanda veio, a que
+    horas foi lancada, o tipo de atendimento (salao, balcao, entrega...),
+    mesa/comanda, cliente e quem lancou. Sem isso a cozinha recebia uma lista
+    solta de produtos, sem saber a origem nem se era pra entrega.
+    """
+    total_itens = sum((Decimal(item.quantity) for item in items), Decimal("0"))
+    enviado_em = batch.sent_at or timezone.now()
     lines = [
-        str(sector.name).upper().center(32),
-        f"PEDIDO #{order.sequence}".center(32),
-        f"RODADA #{batch.batch_number}".center(32),
-        "-" * 32,
-        where,
-        timezone.localtime(batch.sent_at).strftime("%d/%m/%Y %H:%M:%S"),
-        "-" * 32,
+        "NOVO PEDIDO".center(LARGURA_COMANDA),
+        str(sector.name).upper().center(LARGURA_COMANDA)[:LARGURA_COMANDA],
+        "-" * LARGURA_COMANDA,
+        _kitchen_two_columns(
+            f"PEDIDO #{order.sequence}",
+            f"RODADA {batch.batch_number}",
+        ),
+        timezone.localtime(enviado_em).strftime("%d/%m/%Y %H:%M:%S"),
+        "-" * LARGURA_COMANDA,
     ]
+    # Balcao/entrega/retirada nao tem mesa nem comanda: sem esta linha a
+    # cozinha nao sabe que o pedido nao e do salao. No salao, as linhas de
+    # mesa/comanda abaixo ja dizem o tipo, entao repetir seria ruido.
+    if order.order_type not in {"table", "command"}:
+        lines.append(
+            TIPO_ATENDIMENTO_COMANDA.get(order.order_type, str(order.order_type).upper())[:LARGURA_COMANDA]
+        )
+    if order.table_id:
+        lines.append(f"MESA: {order.table.number}"[:LARGURA_COMANDA])
+    if order.command_id:
+        lines.append(f"COMANDA: {order.command.code}"[:LARGURA_COMANDA])
+    if order.customer_id:
+        lines.append(f"CLIENTE: {order.customer.name}"[:LARGURA_COMANDA])
+    if order.responsible_user_id:
+        atendente = order.responsible_user.get_full_name() or order.responsible_user.username
+        lines.append(f"ATENDENTE: {atendente}"[:LARGURA_COMANDA])
+    lines.append("-" * LARGURA_COMANDA)
     for item in items:
-        lines.append(f"{item.quantity:g}x {item.product.name}"[:32])
-        for variation in item.variations or []:
-            name = variation.get("name", variation) if isinstance(variation, dict) else variation
-            lines.append(f"  VAR: {name}"[:32])
+        produto = f"{_kitchen_quantity(item.quantity)}x {item.product.name}{item.variation_suffix}"
+        lines.append(produto[:LARGURA_COMANDA])
         for addon in item.addons.all():
-            lines.append(f"  + {addon.quantity:g}x {addon.addon.name}"[:32])
+            lines.append(f"  {addon.addon.name}"[:LARGURA_COMANDA])
         if item.customer_note:
-            lines.append(f"  OBS: {item.customer_note}"[:32])
-        lines.append("-" * 32)
-    lines.extend(["", "FIM DA RODADA".center(32), ""])
+            lines.append(f"  OBS: {item.customer_note}"[:LARGURA_COMANDA])
+        lines.append("-" * LARGURA_COMANDA)
+    lines.append(_kitchen_two_columns("TOTAL DE ITENS", _kitchen_quantity(total_itens)))
+    # Mantém uma referência curta no rodapé para que um eventual cancelamento
+    # posterior possa ser ligado exatamente a esta impressão.
+    lines.extend([f"REF: {batch.serial}", ""])
     return "\n".join(lines)
 
 
-def register_kitchen_batch_print_jobs(*, batch, user):
-    """Cria um ticket por impressora/setor contendo apenas os itens da rodada."""
+def register_kitchen_batch_print_jobs(*, batch, user, offline_printed=False):
+    """Cria um ticket por impressora/setor contendo apenas os itens da rodada.
+
+    ``offline_printed=True`` significa que o PDV já imprimiu essa comanda
+    localmente (rede fora quando o pedido foi mandado à cozinha): os
+    `PrintJob` continuam sendo criados — a auditoria e o cancelamento
+    (`register_kitchen_item_cancellation_jobs`) dependem deles — mas já
+    nascem `STATUS_PRINTED`, para o `LocalDeviceAgent` (que só faz polling de
+    `scheduled|pending|rendered`) nunca mandar os bytes de novo.
+    """
     order = batch.order
     with tenant_context(order.account):
         items = list(
             batch.items.select_related("product__sector")
             .prefetch_related("addons__addon")
+            .filter(status="queued")
             .order_by("launched_at")
         )
         by_sector = {}
         for item in items:
             sector = item.product.sector
             if sector is not None:
-                by_sector.setdefault(sector.id, {"sector": sector, "items": []})[
-                    "items"
-                ].append(item)
+                by_sector.setdefault(sector.id, {"sector": sector, "items": []})["items"].append(item)
 
         jobs = []
         for group in by_sector.values():
@@ -327,6 +547,12 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                     sector=sector,
                     items=sector_items,
                 )
+                if offline_printed:
+                    job_status = PrintJob.STATUS_PRINTED
+                elif batch.status == batch.STATUS_SCHEDULED:
+                    job_status = PrintJob.STATUS_SCHEDULED
+                else:
+                    job_status = PrintJob.STATUS_RENDERED
                 job = PrintJob.objects.create(
                     account=order.account,
                     restaurant=order.restaurant,
@@ -334,17 +560,21 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                     printer=printer,
                     order=order,
                     job_type=PrintJob.TYPE_KITCHEN,
-                    status=PrintJob.STATUS_RENDERED,
+                    status=job_status,
+                    printed_at=timezone.now() if offline_printed else None,
+                    available_at=batch.dispatch_at,
                     payload={
                         "account_id": str(order.account_id),
                         "order_id": str(order.id),
                         "sequence": order.sequence,
                         "batch_id": str(batch.id),
                         "batch_number": batch.batch_number,
+                        "batch_serial": str(batch.serial),
                         "sector_id": str(sector.id),
                         "sector_name": sector.name,
                         "item_ids": [str(item.id) for item in sector_items],
                         "text_content": text,
+                        "offline_printed": offline_printed,
                     },
                     html_content=html,
                     printed_by=user,
@@ -360,6 +590,146 @@ def register_kitchen_batch_print_jobs(*, batch, user):
                         "job_type": PrintJob.TYPE_KITCHEN,
                         "batch": batch.batch_number,
                         "sector": str(sector.id),
+                    },
+                )
+        return jobs
+
+
+def refresh_scheduled_kitchen_batch_jobs(*, batch, user):
+    """Rebuild a not-yet-released ticket after an item is cancelled.
+
+    The previous immutable jobs remain as cancelled audit evidence and are
+    never exposed to the printer agent.
+    """
+    with tenant_context(batch.account):
+        now = timezone.now()
+        PrintJob.objects.filter(
+            payload__batch_id=str(batch.id),
+            status=PrintJob.STATUS_SCHEDULED,
+        ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
+        if not batch.items.filter(status="queued").exists():
+            batch.status = batch.STATUS_CANCELLED
+            batch.save(update_fields=["status", "updated_at"])
+            return []
+        jobs = register_kitchen_batch_print_jobs(batch=batch, user=user)
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=batch,
+            actor=user,
+            metadata={
+                "event": "scheduled_kitchen_ticket_rebuilt",
+                "batch_serial": str(batch.serial),
+                "printed_cancellation": False,
+            },
+        )
+        return jobs
+
+
+def _kitchen_cancellation_text(*, item, original_job, reason, user=None):
+    """Cupom de cancelamento: o que a cozinha precisa pra tirar o item da fila.
+
+    Alem do item e do motivo, identifica o TIPO de atendimento (comanda,
+    balcao, entrega...) e quem pediu o cancelamento. Sem o tipo, um pedido de
+    balcao aparecia sem nenhuma origem; sem o solicitante, a cozinha nao
+    tinha a quem recorrer para confirmar um cancelamento duvidoso.
+    """
+    order = item.order
+    batch = item.batch
+    tipo = TIPO_ATENDIMENTO_COMANDA.get(order.order_type, str(order.order_type).upper())
+    lines = [
+        "CANCELAMENTO".center(LARGURA_COMANDA),
+        f"PEDIDO #{order.sequence}".center(LARGURA_COMANDA),
+        f"ORIGINAL {original_job.serial}".center(LARGURA_COMANDA),
+        f"RODADA {batch.serial if batch else '-'}".center(LARGURA_COMANDA),
+        "-" * LARGURA_COMANDA,
+        f"TIPO: {tipo}"[:LARGURA_COMANDA],
+    ]
+    if order.table_id:
+        lines.append(f"MESA: {order.table.number}"[:LARGURA_COMANDA])
+    if order.command_id:
+        lines.append(f"COMANDA: {order.command.code}"[:LARGURA_COMANDA])
+    produto = f"{_kitchen_quantity(item.quantity)}x {item.product.name}{item.variation_suffix}"
+    lines.append(f"CANCELAR {produto}"[:LARGURA_COMANDA])
+    for addon in item.addons.all():
+        lines.append(f"  {addon.addon.name}"[:LARGURA_COMANDA])
+    lines.append(f"MOTIVO: {reason}"[:LARGURA_COMANDA])
+    if user is not None:
+        solicitante = user.get_full_name() or user.username
+        lines.append(f"SOLICITADO POR: {solicitante}"[:LARGURA_COMANDA])
+    lines.extend(
+        [
+            timezone.localtime().strftime("%d/%m/%Y %H:%M:%S"),
+            "-" * LARGURA_COMANDA,
+            "FIM DO CANCELAMENTO".center(LARGURA_COMANDA),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def register_kitchen_item_cancellation_jobs(*, item, user, reason, offline_printed=False):
+    """Cria um cancelamento imediato e idempotente por comanda original.
+
+    ``offline_printed=True`` significa que o PDV ja imprimiu esse cupom na
+    impressora do setor porque a operacao ficou na fila local — o mesmo
+    contrato de ``register_kitchen_batch_print_jobs``. O job continua sendo
+    criado (a auditoria depende dele), mas ja nasce impresso: sem isso, o
+    agente local imprimiria o mesmo cancelamento uma segunda vez assim que a
+    fila sincronizasse.
+    """
+    with tenant_context(item.account):
+        originals = PrintJob.objects.filter(
+            order=item.order,
+            job_type=PrintJob.TYPE_KITCHEN,
+        ).exclude(status=PrintJob.STATUS_CANCELLED)
+        originals = [
+            job
+            for job in originals
+            if str(job.payload.get("batch_id", "")) == str(item.batch_id)
+            and str(item.id) in {str(value) for value in job.payload.get("item_ids", [])}
+        ]
+        jobs = []
+        for original in originals:
+            text = _kitchen_cancellation_text(item=item, original_job=original, reason=reason, user=user)
+            job, created = PrintJob.objects.get_or_create(
+                original_job=original,
+                cancelled_item=item,
+                defaults={
+                    "account": item.account,
+                    "restaurant": item.restaurant,
+                    "branch": item.branch,
+                    "printer": original.printer,
+                    "order": item.order,
+                    "job_type": PrintJob.TYPE_KITCHEN_CANCEL,
+                    "status": PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_RENDERED,
+                    "printed_at": timezone.now() if offline_printed else None,
+                    "available_at": timezone.now(),
+                    "payload": {
+                        "account_id": str(item.account_id),
+                        "order_id": str(item.order_id),
+                        "original_print_serial": str(original.serial),
+                        "batch_serial": str(item.batch.serial) if item.batch_id else "",
+                        "cancelled_item_id": str(item.id),
+                        "reason": reason,
+                        "offline_printed": offline_printed,
+                        "text_content": text,
+                    },
+                    "printed_by": user,
+                    "created_by": user,
+                    "updated_by": user,
+                },
+            )
+            jobs.append(job)
+            if created:
+                record_audit(
+                    action=AuditLog.ACTION_PRINTED,
+                    instance=job,
+                    actor=user,
+                    reason=reason,
+                    metadata={
+                        "event": "kitchen_cancellation_scheduled",
+                        "original_print_serial": str(original.serial),
+                        "cancelled_item_id": str(item.id),
                     },
                 )
         return jobs
@@ -413,7 +783,12 @@ def register_printer_test_job(*, printer, user):
             printer=printer,
             job_type="printer_test",
             status=PrintJob.STATUS_RENDERED,
-            payload={"text_content": text, "diagnostic": True},
+            # O docstring desta função promete "sem disparar automaticamente":
+            # sem `manual_only`, o job ficava com status pollável (RENDERED)
+            # e o `LocalDeviceAgent` do PDV principal — que também escuta o
+            # evento de tempo real desta MESMA criação — imprimia sozinho ao
+            # mesmo tempo que a tela de teste, e o operador via duas notas.
+            payload={"text_content": text, "diagnostic": True, "manual_only": True},
             html_content=html,
             printed_by=user,
             created_by=user,
@@ -442,16 +817,10 @@ def _resolve_weigh_printer(*, order, scale):
         restaurant=order.restaurant,
         is_active=True,
     ).first()
-    same_branch = not (
-        printer
-        and scale.branch_id
-        and printer.branch_id
-        and printer.branch_id != scale.branch_id
-    )
+    same_branch = not (printer and scale.branch_id and printer.branch_id and printer.branch_id != scale.branch_id)
     if printer is None or not same_branch:
         raise ValidationError(
-            "A impressora configurada na balanca esta inativa ou fora do mesmo "
-            "restaurante/filial."
+            "A impressora configurada na balanca esta inativa ou fora do mesmo " "restaurante/filial."
         )
     return printer
 
@@ -460,6 +829,7 @@ def _weigh_ticket_items(order):
     excluded = {"cancelled", "comped"}
     return list(
         order.items.select_related("product")
+        .prefetch_related("addons__addon")
         .exclude(status__in=excluded)
         .order_by("launched_at", "id")
     )
@@ -528,11 +898,7 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     where = (
         f"Mesa {order.table.number}"
         if order.table_id
-        else (
-            f"Comanda {order.command.code}"
-            if order.command_id
-            else "Balcao"
-        )
+        else (f"Comanda {order.command.code}" if order.command_id else "Balcao")
     )
     lines = _establishment_lines(_establishment_info(order))
     lines.extend(
@@ -545,17 +911,14 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
         ]
     )
     for ticket_item in items:
-        lines.append(ticket_item.product.name[:LARGURA_CUPOM])
+        nome = f"{ticket_item.product.name}{ticket_item.variation_suffix}"
+        lines.append(_linha_valor(nome, ticket_item.total_price))
         if ticket_item.product.is_weighed:
-            lines.append(
-                f"{Decimal(ticket_item.quantity):.3f} kg x "
-                f"R$ {ticket_item.unit_price}/kg"
-            )
+            lines.append(f"{Decimal(ticket_item.quantity):.3f} kg x " f"R$ {ticket_item.unit_price}/kg")
         else:
-            lines.append(
-                f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}"
-            )
-        lines.append(_linha_valor("VALOR", ticket_item.total_price))
+            lines.append(f"{ticket_item.quantity:g} un x R$ {ticket_item.unit_price}")
+        for addon in ticket_item.addons.all():
+            lines.append(_linha_valor(f"  {addon.addon.name}", addon.total_price))
         lines.append("-" * LARGURA_CUPOM)
     lines.append(_linha_valor("TOTAL DO PEDIDO", order.total))
     if barcode["value"]:
@@ -570,12 +933,19 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     return "\n".join(lines)
 
 
-def register_weigh_print(*, order, item, scale, user=None):
-    """Gera a nota de pesagem (HTML + texto) como PrintJob PENDENTE na impressora da balanca.
+def register_weigh_print(*, order, item, scale, user=None, offline_printed=False):
+    """Gera a nota de pesagem (HTML + texto) como PrintJob na impressora da balanca.
 
     Fica pendente ate o agente local imprimir e chamar mark-printed. Como o modelo
     nao identifica uma impressora padrao, exige uma impressora ativa configurada
     explicitamente na balanca.
+
+    ``offline_printed=True`` significa que a estacao ja imprimiu essa nota
+    porque a pesagem foi fechada sem servidor — o mesmo contrato de
+    ``register_kitchen_batch_print_jobs``. O job continua sendo criado (a
+    auditoria depende dele), mas ja nasce impresso: sem isso, o agente local
+    imprimiria a mesma nota uma segunda vez quando a fila sincronizasse, e o
+    cliente levaria dois papeis do mesmo prato para o caixa.
     """
     with tenant_context(order.account):
         printer = _resolve_weigh_printer(order=order, scale=scale)
@@ -618,14 +988,17 @@ def register_weigh_print(*, order, item, scale, user=None):
             printer=printer,
             order=order,
             job_type=PrintJob.TYPE_WEIGH,
-            status=PrintJob.STATUS_PENDING,
+            status=PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_PENDING,
+            printed_at=timezone.now() if offline_printed else None,
             payload=payload,
             html_content=html,
             printed_by=user,
             created_by=user,
             updated_by=user,
         )
-        record_audit(action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": PrintJob.TYPE_WEIGH})
+        record_audit(
+            action=AuditLog.ACTION_PRINTED, instance=job, actor=user, metadata={"job_type": PrintJob.TYPE_WEIGH}
+        )
         return job
 
 

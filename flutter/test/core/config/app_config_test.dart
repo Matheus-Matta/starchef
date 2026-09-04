@@ -50,25 +50,42 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
     },
   );
 
-  test(
-    'sem --dart-define e sem .env, cai no fallback e sinaliza isso',
-    () async {
-      final originalDirectory = Directory.current;
-      final directory = await Directory.systemTemp.createTemp(
-        'starchef_config_no_env_',
-      );
-      addTearDown(() {
-        Directory.current = originalDirectory;
-        return directory.delete(recursive: true);
-      });
-      Directory.current = directory;
+  test('usa API_URL compartilhada pelo projeto', () async {
+    final originalDirectory = Directory.current;
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef_config_api_url_',
+    );
+    addTearDown(() {
+      Directory.current = originalDirectory;
+      return directory.delete(recursive: true);
+    });
+    await File(
+      '${directory.path}${Platform.pathSeparator}.env',
+    ).writeAsString('API_URL=https://api.starchef.com.br/api/v1\n');
+    Directory.current = directory;
 
-      final config = await AppConfig.load();
+    final config = await AppConfig.load();
 
-      expect(config.apiBaseUrl, 'http://localhost:8000/api/v1');
-      expect(config.usedFallbackApiUrl, isTrue);
-    },
-  );
+    expect(config.apiBaseUrl, 'https://api.starchef.com.br/api/v1');
+    expect(config.usedFallbackApiUrl, isFalse);
+  });
+
+  test('sem configuração usa a API oficial de produção', () async {
+    final originalDirectory = Directory.current;
+    final directory = await Directory.systemTemp.createTemp(
+      'starchef_config_no_env_',
+    );
+    addTearDown(() {
+      Directory.current = originalDirectory;
+      return directory.delete(recursive: true);
+    });
+    Directory.current = directory;
+
+    final config = await AppConfig.load();
+
+    expect(config.apiBaseUrl, 'https://api.starchef.com.br/api/v1');
+    expect(config.usedFallbackApiUrl, isFalse);
+  });
 
   test(
     'override manual (engrenagem do login) tem prioridade e não conta como fallback',
@@ -83,7 +100,9 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
       });
       await File(
         '${directory.path}${Platform.pathSeparator}.env',
-      ).writeAsString('API_BASE_URL=https://backend-do-env.starchef.test/api/v1\n');
+      ).writeAsString(
+        'API_BASE_URL=https://backend-do-env.starchef.test/api/v1\n',
+      );
       Directory.current = directory;
 
       final config = await AppConfig.load(
@@ -95,7 +114,7 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
     },
   );
 
-  test('override manual inválido é ignorado, cai pro resto da cadeia', () async {
+  test('override manual inválido é ignorado e usa produção', () async {
     final originalDirectory = Directory.current;
     final directory = await Directory.systemTemp.createTemp(
       'starchef_config_bad_override_',
@@ -108,7 +127,18 @@ VITE_BACKEND_TARGET=https://backend.starchef.test
 
     final config = await AppConfig.load(manualOverrideUrl: 'nao-e-uma-url');
 
-    expect(config.apiBaseUrl, 'http://localhost:8000/api/v1');
-    expect(config.usedFallbackApiUrl, isTrue);
+    expect(config.apiBaseUrl, 'https://api.starchef.com.br/api/v1');
+    expect(config.usedFallbackApiUrl, isFalse);
+  });
+
+  test('acrescenta api/v1 quando a configuração traz só o domínio', () {
+    expect(
+      AppConfig.normalizeApiBaseUrl('https://api.starchef.com.br'),
+      'https://api.starchef.com.br/api/v1',
+    );
+    expect(
+      AppConfig.normalizeApiBaseUrl('https://api.starchef.com.br/api/v1/'),
+      'https://api.starchef.com.br/api/v1',
+    );
   });
 }

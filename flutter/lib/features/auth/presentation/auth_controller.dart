@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/security/app_close_password.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_session.dart';
 
@@ -25,6 +26,15 @@ class AuthController extends ChangeNotifier {
 
   bool get isAuthenticated => session != null;
   AuthRepository get repository => _repository;
+  String get apiBaseUrl => _repository.apiClient.baseUrl;
+
+  Future<void> updateApiBaseUrl(String value) =>
+      _repository.apiClient.updateBaseUrl(value);
+
+  /// Usada somente antes do login, quando ainda não há restaurante nem
+  /// credenciais administrativas disponíveis para autorizar o fechamento.
+  Future<bool> verifyLoginClosePassword(String password) =>
+      AppClosePassword.verify(password);
 
   Future<void> initialize() async {
     // A restauração renova o token por conta própria quando necessário, então
@@ -143,6 +153,74 @@ class AuthController extends ChangeNotifier {
       }
     }
     return password == '12345678';
+  }
+
+  /// Rebaixa o hash mais recente da senha do restaurante para a memória e para
+  /// o cofre criptografado do sistema. Retorna false quando não há rede.
+  Future<bool> refreshSupervisorPassword({String? restaurantId}) async {
+    final current = session;
+    final cashAuth = _repository.cashAuth;
+    restaurantId ??= activeRestaurantId ?? current?.user.restaurantId;
+    if (current == null ||
+        cashAuth == null ||
+        restaurantId == null ||
+        restaurantId.isEmpty) {
+      return false;
+    }
+    return cashAuth.trySync(current, restaurantId: restaurantId);
+  }
+
+  /// Valida online credenciais administrativas da mesma conta. `null`
+  /// significa autorização aprovada; qualquer texto é seguro para a UI.
+  Future<String?> verifyAdministratorCloseCredentials(
+    String username,
+    String password,
+  ) async {
+    final current = session;
+    if (current == null) return 'A sessão atual não está disponível.';
+    try {
+      await _repository.authorizeAdministrator(
+        currentSession: current,
+        username: username,
+        password: password,
+      );
+      return null;
+    } on ApiException catch (error) {
+      if (error.isConnectivity) {
+        return 'A validação do administrador exige conexão com a Retaguarda. '
+            'Use a senha do restaurante para autorizar offline.';
+      }
+      return error.message;
+    } catch (_) {
+      return 'Não foi possível validar o administrador.';
+    }
+  }
+
+  /// Autoriza o cancelamento com um administrador ou um usuário da mesma
+  /// conta que possua explicitamente `orders.cancel`.
+  Future<String?> verifyOrderCancellationCredentials(
+    String username,
+    String password,
+  ) async {
+    final current = session;
+    if (current == null) return 'A sessão atual não está disponível.';
+    try {
+      await _repository.authorizeAdministrator(
+        currentSession: current,
+        username: username,
+        password: password,
+        requiredPermission: 'orders.cancel',
+      );
+      return null;
+    } on ApiException catch (error) {
+      if (error.isConnectivity) {
+        return 'A validação por login exige conexão com a Retaguarda. '
+            'Use a senha de operação do restaurante.';
+      }
+      return error.message;
+    } catch (_) {
+      return 'Não foi possível validar o usuário autorizado.';
+    }
   }
 
   void _safeNotify() {

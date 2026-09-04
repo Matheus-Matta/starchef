@@ -10,7 +10,10 @@ from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.accounts.views import (
     AccountViewSet,
+    AdminAuthorizationView,
     CookieTokenRefreshView,
+    CosmosConfigView,
+    FocusNfeConfigView,
     GlobalSystemConfigViewSet,
     LoginView,
     LogoutView,
@@ -24,7 +27,7 @@ from apps.accounts.views import (
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
-from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
+from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, FocusNfeWebhookView, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
 from apps.sla.views import ServiceLevelAgreementViewSet
 from apps.menu.views import (
@@ -41,7 +44,13 @@ from apps.menu.views import (
 )
 from apps.notifications.views import NotificationViewSet
 from apps.orders.views import OrderItemViewSet, OrderViewSet
-from apps.payments.views import CashRegisterViewSet, CashStationViewSet, PaymentMethodViewSet, PaymentViewSet
+from apps.payments.views import (
+    CashRegisterViewSet,
+    CashStationViewSet,
+    PaymentMethodViewSet,
+    PaymentViewSet,
+    PdvTerminalViewSet,
+)
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.views import (
     DashboardReportView,
@@ -61,7 +70,19 @@ from apps.restaurants.views import (
     TableSectorViewSet,
     TableViewSet,
 )
-from apps.stock.views import StockAlertView, StockLocationViewSet, StockMovementViewSet
+from apps.stock.views import (
+    StockAlertView,
+    StockEntryViewSet,
+    StockExitViewSet,
+    StockExpiryReportView,
+    StockLabelTemplateViewSet,
+    StockLocationViewSet,
+    StockLotViewSet,
+    StockMovementViewSet,
+    StockPositionView,
+    StockSettingsViewSet,
+    SupplierViewSet,
+)
 from apps.data_exchange.views import CsvExportView, CsvParseView
 
 
@@ -117,6 +138,7 @@ router.register("payments/methods", PaymentMethodViewSet, basename="payment-meth
 router.register("payments", PaymentViewSet, basename="payments")
 router.register("cash-register", CashRegisterViewSet, basename="cash-register")
 router.register("cash-stations", CashStationViewSet, basename="cash-stations")
+router.register("pdv-terminals", PdvTerminalViewSet, basename="pdv-terminals")
 router.register("fiscal/config", FiscalConfigViewSet, basename="fiscal-config")
 router.register("fiscal/profiles", FiscalProfileViewSet, basename="fiscal-profiles")
 router.register("invoices", InvoiceViewSet, basename="invoices")
@@ -125,6 +147,12 @@ router.register("print-jobs", PrintJobViewSet, basename="print-jobs")
 router.register("scales/readings", ScaleReadingViewSet, basename="scale-readings")
 router.register("scales", ScaleViewSet, basename="scales")
 router.register("stock/locations", StockLocationViewSet, basename="stock-locations")
+router.register("stock/suppliers", SupplierViewSet, basename="stock-suppliers")
+router.register("stock/settings", StockSettingsViewSet, basename="stock-settings")
+router.register("stock/label-templates", StockLabelTemplateViewSet, basename="stock-label-templates")
+router.register("stock/lots", StockLotViewSet, basename="stock-lots")
+router.register("stock/entries", StockEntryViewSet, basename="stock-entries")
+router.register("stock/exits", StockExitViewSet, basename="stock-exits")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
 router.register("notifications", NotificationViewSet, basename="notifications")
 
@@ -139,6 +167,11 @@ urlpatterns = [
     path("api/v1/auth/refresh/", CookieTokenRefreshView.as_view(), name="token_refresh"),
     path("api/v1/auth/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("api/v1/auth/me/", MeView.as_view(), name="auth_me"),
+    path(
+        "api/v1/auth/authorize-admin/",
+        AdminAuthorizationView.as_view(),
+        name="authorize_admin",
+    ),
     path("api/v1/auth/logout/", LogoutView.as_view(), name="logout"),
     path("api/v1/auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
     path("api/v1/auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
@@ -152,7 +185,12 @@ urlpatterns = [
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
+    path("api/v1/stock/positions/", StockPositionView.as_view(), name="stock-positions"),
+    path("api/v1/stock/reports/expiry/", StockExpiryReportView.as_view(), name="stock-expiry-report"),
     path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
+    path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
+    path("api/v1/integrations/cosmos/config/", CosmosConfigView.as_view(), name="cosmos-config"),
+    path("api/v1/integrations/focus-nfe/webhook/", FocusNfeWebhookView.as_view(), name="focus-nfe-webhook"),
     path("api/v1/", include(router.urls)),
 ]
 

@@ -17,7 +17,7 @@ o código é a verdade — abra um PR corrigindo o documento.
 | UI | Flutter Desktop (Windows e Linux) | requisito do produto |
 | Estado | `ChangeNotifier` + `setState`, sem pacote de DI | o app já nasceu assim; trocar por BLoC seria reescrita sem ganho funcional |
 | Banco local | `sqlite_async` | mantém I/O fora do isolate de UI, habilita WAL e coordena múltiplos processos no mesmo arquivo |
-| Segredos | `flutter_secure_storage` | cofre do sistema operacional; nada de token em texto puro |
+| Segredos | cofre do SO + fallback Linux `0700`/`0600` | mantém o cofre nativo e sobrevive a Secret Service ausente/bloqueado no Ubuntu |
 | Serial | `flutter_libserialport` | mesma biblioteca para balança, leitor e impressora serial, nos dois sistemas |
 | Janelas | processo por janela (`Process.start`) | isolamento real de foco, hardware e falha |
 | HTTP | `http` + camada própria de fila | não há dependência de framework de sync |
@@ -91,8 +91,12 @@ Ordem de inicialização e o motivo de cada passo:
    exigência de "nenhuma perda silenciosa" vale também para bugs de UI.
 6. `runApp` com `StarChefApp` ou `ScaleWindowApp`.
 
-O token **nunca** vai na linha de comando: a janela de balança restaura a sessão
-do cofre do sistema. O único argumento além do modo é `--restaurant=<uuid>`.
+O token **nunca** vai na linha de comando. A janela de balança restaura a sessão
+do cofre do sistema e, no Linux, recebe também uma transferência efêmera em
+arquivo `0600`, porque uma segunda instância pode não reler o GNOME Keyring a
+tempo. O argumento `--session-handoff=<nome-aleatório>` revela somente o nome;
+o arquivo é consumido e apagado no boot. O restaurante continua em
+`--restaurant=<uuid>`.
 
 ---
 
@@ -130,6 +134,21 @@ por token vencido, a segunda chamada é reconhecida como repetição.
 Rotas sob `/auth/` nunca entram nesse caminho: um 401 ali significa credencial
 inválida, e insistir criaria laço.
 
+**Cabeçalho de identidade e ASCII.** Toda requisição leva `X-Terminal-Id` (o
+`nodeId` da topologia) e `X-Terminal-Name`. Cabeçalho HTTP **não carrega
+UTF-8**: `dart:io` recusa qualquer byte acima de 127 com `FormatException`, e o
+rótulo padrão do secundário — "Caixa Secundário …" — tem acento. O estouro
+acontecia antes de a requisição sair da máquina e caía no `catch` genérico,
+virando uma mensagem que acusava o endereço do servidor.
+
+Como o rótulo só é preenchido depois do login (`_onTopologyChanged`) e
+`clearSession()` não limpa a identidade da INSTALAÇÃO — ela é da máquina, não
+da sessão —, o sintoma aparecia como "logout, e o login seguinte falha
+dizendo que a API não pode ser montada"; reiniciar o app "resolvia" só porque
+zerava o campo em memória. `_headerSafe` percent-encoda o valor quando ele tem
+acento e o backend desfaz (`terminal_name_from_request`), então o nome chega
+inteiro ao cadastro do terminal. Texto já ASCII atravessa igual.
+
 **Contrato de status para credenciais.** O `TenantMiddleware` do backend roda
 antes do DRF e decide:
 
@@ -143,6 +162,11 @@ Essa distinção é o que faz a renovação automática funcionar. Enquanto o
 middleware devolvia 403 para token expirado, a renovação — que dispara em 401 —
 nunca acontecia, e o operador via "Permissão insuficiente: solicite a permissão
 ao responsável" quando na verdade sua sessão apenas tinha vencido.
+
+**Emissão fiscal não configurada.** `POST /invoices/emit/` pode responder HTTP
+200 com `{"emitted": false, "message": "..."}` quando o provedor da conta não
+está pronto. O PDV não tenta imprimir nesse caso; no acionamento manual mostra a
+mensagem e, na tentativa automática após o pagamento, permanece silencioso.
 
 **Escopo.** Cache e outbox são namespaced por
 `autoridade-da-URL | account_id|user_id|sub do JWT`. Isso impede que a sessão de
@@ -180,9 +204,13 @@ empilhava um cartão e enterrava a tela.
    antes de tocar na fila. Sem esse gate, um ciclo com a rede caída gastaria o
    `attempt_count` de cada operação e levaria o backoff ao teto sem chance real
    de entrega.
-2. Reivindica uma operação por vez com lease (`claimNext`), preservando ordem
-   causal — pular um item bloqueado enviaria um dependente antes de o ID
-   temporário do pai ser mapeado.
+2. Reivindica uma operação por vez com lease (`claimNext`). A varredura respeita
+   a ordem de criação, mas **pula** o que não pode rodar agora (bloqueado, em
+   backoff ou com lease de outra janela): antes, uma única operação travada na
+   frente segurava a fila inteira, inclusive operações sem nenhuma relação com
+   ela. A ordem causal continua garantida pelo dado, não pela posição — quem
+   ainda cita um ID temporário (`offline-…`) não mapeado espera a sua vez, para
+   não enviar um item antes de o pedido que o contém existir no servidor.
 3. Envia no máximo 20 por ciclo, uma requisição por vez.
 4. Sucesso: mapeia ID temporário → real e remove da fila.
 5. Falha temporária (408/425/429/5xx, socket, timeout): `retry` com backoff
@@ -481,8 +509,21 @@ O sistema libera a trava sozinho quando o processo morre — uma janela encerrad
   + rename) e serializada. Uma queda de energia no meio da escrita não deixa
   JSON truncado impedindo o próximo boot. O valor novo vale em memória
   imediatamente; o disco alcança depois.
-- `session_store.dart` — `flutter_secure_storage` para access, refresh e o
-  usuário serializado.
+- `durable_secure_store.dart` — abstrai os segredos usados por sessão, login
+  offline, senha de caixa e topologia. No Windows usa apenas o cofre nativo. No
+  Linux lê primeiro a cópia durável em `<dados>/StarChef/secure`, protegida por
+  diretório `0700` e arquivos `0600`, e tenta espelhá-la no Secret Service. Se
+  só existir o valor antigo no keyring, a primeira leitura o migra para o
+  fallback. Isso impede que um keyring bloqueado seja confundido com “primeira
+  instalação” e gere outra chave do Caixa Principal.
+- `session_store.dart` — usa o armazenamento resiliente para access, refresh e
+  usuário serializado; a primeira leitura da janela filha prioriza a sessão
+  efêmera recebida do processo pai e depois volta ao armazenamento persistente.
+
+O fallback Linux não é uma solicitação de permissão: aplicações desktop comuns
+têm acesso ao diretório do próprio usuário. A proteção depende de executar o
+PDV sempre como o mesmo usuário, sem `sudo`. Criptografia integral de disco
+continua recomendada para proteger contra acesso físico à máquina desligada.
 
 ### 4.7 `core/logging/app_logger.dart`
 
@@ -547,6 +588,97 @@ módulos.
 catálogo, carrinho, pagamento, caixa e navegação. É reconhecidamente grande;
 qualquer trabalho novo ali deve extrair para painéis, como já foi feito com
 `product_catalog_panel.dart` e `order_cart_panel.dart`.
+
+**Comanda aberta que não virou venda é descartada.** Abrir uma comanda cria o
+pedido na hora — é ele que ocupa a comanda. Sair sem lançar item nenhum
+deixava esse pedido vazio segurando a comanda, e o próximo cliente que
+pegasse a mesma não conseguia usá-la. `_goHome` descarta o pedido vazio (sem
+item que conte e sem recebimento) chamando `/orders/{id}/cancel/`.
+
+Não é um cancelamento comercial: não há consumo a estornar nem motivo a
+registrar, então o backend dispensa a autorização do supervisor quando
+`order_is_empty` — a senha existe para impedir que alguém apague consumo já
+lançado, e ali não há nenhum. Um pedido COM item continua exigindo
+autorização e motivo.
+
+O descarte roda em **segundo plano**: voltar ao início é gesto de navegação e
+não pode esperar a rede.
+
+**E sem rede ele também acontece**, quando o pedido nunca chegou a subir. Um
+id temporário não existe no servidor — mandar o cancelamento para lá só
+renderia 404 —, então o gateway reconhece a rota
+(`OfflineFirstGateway.discardableOrderId`) e resolve no terminal: apaga da
+fila TUDO o que pertence àquele pedido e remove a linha local. A ordem
+importa — as operações saem da fila antes do registro, senão a criação
+subiria depois e recriaria no servidor exatamente o pedido vazio que se quis
+descartar. A comanda não precisa ser liberada: enquanto o pedido não subiu, o
+servidor nunca soube que ela estava ocupada.
+
+Operação já em entrega (`PROCESSING`) recusa o descarte com HTTP 409: o
+servidor pode estar gravando a venda neste instante, e apagar a fila deixaria
+os dois lados discordando em silêncio — mesma prudência da exclusão de um
+recebimento enfileirado.
+
+Sobra um caso: pedido que o servidor **já conhece** com o terminal offline. Aí
+a comanda fica ocupada até alguém cancelá-lo pela tela de Pedidos.
+
+**O id antigo continua respondendo.** Todo registro nasce com um id
+temporário (`offline-<uuid>`) e, quando a criação sobe, passa a viver sob o id
+do SERVIDOR — `EntityRepository.replaceId` reescreve a linha e guarda o
+`local → remoto` no `id_map`. A tela, porém, pegou o id no momento em que o
+pedido nasceu e continua com ele em mãos.
+
+Por isso `OfflineFirstGateway.read`/`write` traduzem caminho, filtros e corpo
+antes de resolver a rota (`_promoted`). Sem essa tradução, um pedido aberto
+pela comanda recusava o PRIMEIRO item com "Pedido offline-… não existe no
+armazenamento local", e só voltava a funcionar quando o operador saía e
+entrava de novo — porque aí a tela relia o pedido e ficava com o id novo. A
+consulta ao `id_map` só acontece quando existe mesmo um `offline-` à vista.
+
+Rotas que exigem servidor (`/orders/{id}/print/`, por exemplo) não passam por
+aqui: elas dependem de a tela já ter relido o pedido, o que `_refreshOrder`
+faz em todo gesto que muda a venda.
+
+**Papel de venda concluída não obedece à trava de operação.** `_work` existe
+para o operador não disparar duas operações de venda ao mesmo tempo, e por
+isso ele **desiste** quando já há uma em curso (`if (busy) return null`).
+Impressão e emissão fiscal de uma venda que JÁ terminou não podem obedecer a
+essa trava:
+
+- o DANFE sai por uma espera em segundo plano (a autorização da SEFAZ chega
+  segundos depois do clique) e, nesse intervalo, o operador já começou a
+  próxima venda — `busy` verdadeiro, `_work` devolvendo `null`, e o cupom
+  fiscal simplesmente não existia: sem erro, sem fila, sem papel;
+- o recibo montado localmente e a própria chamada de emissão tinham o mesmo
+  buraco.
+
+Os três passam agora por `_printingStep` (ou try/catch direto), fora da trava.
+Falha continua sendo mostrada ao operador — o que não pode é desaparecer.
+
+**Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
+não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
+unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam
+itens pendentes iguais). O modal de configuração
+(`product_config_dialog.dart`) só abre para produto com **variação ou
+adicional**, e para produto por peso, que precisa da balança. Antes ele abria
+sempre, e confirmar um refrigerante custava dois gestos por unidade num balcão
+com fila.
+
+O ajuste fino saiu do modal e foi para o **cartão do item** na lista do pedido:
+enquanto o item está em *Aguardando envio*, ele mostra `− quantidade +` embaixo
+do nome (`_CartItem._quantityStepper`). Item já em produção não tem contador — o
+que a cozinha recebeu não se desfaz assim, e o caminho continua sendo o
+cancelamento, com motivo e registro. Produto por peso também não: a quantidade
+vem da balança. Chegando a zero, o `−` vira o mesmo cancelamento do `×`.
+Teclado e cartão passam pela mesma rotina (`_changeItemQuantity`), para os dois
+gestos não divergirem nas recusas.
+
+**Enter confirma os modais que sobraram.** O de configuração do produto e o de
+pesagem aceitam Enter com a mesma condição do botão (variação obrigatória
+escolhida, peso maior que zero). O atalho vive num `CallbackShortcuts` com um
+`Focus` logo abaixo: sem esse nó, o foco fica no escopo da rota do diálogo — um
+ancestral — e a tecla passa por cima sem tocar em nada. O campo de observação é
+multilinha e trata o próprio Enter (quebra de linha), então continua imune.
 
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao
@@ -663,8 +795,17 @@ foi persistido: se o equipamento na COM mudou, exige novo vínculo. O
 **`data/scanner_binding_store.dart`** — SQLite com `port_name` único, impedindo
 que dois slots reservem a mesma porta deliberadamente.
 
+**`core/input/`** — o controlador central de entrada do PDV. Teclado, leitor
+USB que simula teclado, leitor serial e área de transferência produzem o mesmo
+evento interno (`ScannedCode`), e o `PdvInputRouter` decide o destino pela tela
+atual, nesta ordem: campo/modal em foco, captura do leitor (que consome o
+Enter final), atalhos da página, atalhos globais. `PdvShortcuts` é o registro
+único — é dele que saem tanto a tecla que o roteador escuta quanto a linha que
+a página de ajuda (F1) mostra.
+
 **`services/scale_window_launcher.dart`** — abre a estação como processo
-independente.
+independente. No Linux, prepara a transferência de sessão com diretório `0700`,
+arquivo `0600`, validade de um minuto e remoção após a primeira leitura.
 
 ### 5.4 `devices`
 
@@ -746,6 +887,7 @@ regressão (larguras compactas, botão de fechar do alerta).
 | `core/errors/error_center_test.dart` | mensagem literal do backend, botão `X`, stack trace oculto |
 | `core/storage/local_preferences_test.dart` | persistência, JSON corrompido, limites |
 | `core/storage/app_paths_test.dart` | destino estável, nunca o temporário |
+| `core/storage/durable_secure_store_test.dart` | migração do keyring e persistência de sessão quando o Secret Service falha |
 | `features/devices/domain/printer_endpoint_test.dart` | resolução de transporte nos dois níveis |
 | `core/widgets/touch_keypad_test.dart` | acumulação, backspace, casas decimais |
 | `features/home/pdv_widgets_test.dart` | sidebar sem Delivery, larguras compactas |
@@ -840,8 +982,12 @@ hardware, está em `PDV_OFFLINE_SCALE_ARCHITECTURE.md`.
 3. **A fila do sistema de impressão não é portátil.** Rede e serial funcionam
    nos dois sistemas; o spool depende de `Out-Printer` ou `lp` estarem
    presentes.
-4. **O scanner cobre só serial/USB-CDC.** Captura exclusiva de HID por VID/PID
-   exigiria código nativo por plataforma.
+4. **O leitor HID é capturado por cadência, não por dispositivo.**
+   `core/input/scanner_keyboard_capture.dart` reconhece o leitor USB que
+   simula teclado pelo ritmo das teclas e pelo Enter/Tab final. Isolar um HID
+   específico por VID/PID continua exigindo código nativo por plataforma — o
+   que significa que um teclado usado muito rápido pode, em tese, ser lido
+   como código.
 5. **A trava de periférico é por máquina.** Duas máquinas ligadas fisicamente
    ao mesmo equipamento continuam sendo um problema de instalação.
 6. **O cache não tem TTL.** Offline, ele entrega a última resposta conhecida

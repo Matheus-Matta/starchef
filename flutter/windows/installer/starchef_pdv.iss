@@ -35,15 +35,24 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar um atalho na Área de Trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
+; Sem esta regra o Windows bloqueia a porta do Caixa Principal e os outros
+; aparelhos (caixas secundários e app do garçom) não conectam. Pede elevação
+; só neste passo — o instalador em si continua sem exigir administrador.
+Name: "firewall"; Description: "Liberar o Caixa Principal no Firewall do Windows (recomendado)"; GroupDescription: "Rede local:"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Vai junto mesmo quando a tarefa é desmarcada: quem pular na instalação (ou
+; mudar a porta depois) precisa conseguir rodar o script sozinho.
+Source: "liberar_firewall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{group}\Liberar Caixa Principal no Firewall"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\liberar_firewall.ps1"""; Comment: "Reabre a porta do Caixa Principal no Firewall do Windows"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\liberar_firewall.ps1"" -NoPause"; StatusMsg: "Liberando o Caixa Principal no firewall..."; Flags: runhidden waituntilterminated; Tasks: firewall
 Filename: "{app}\{#AppExeName}"; Description: "Abrir {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]

@@ -18,16 +18,17 @@ from apps.stock.models import StockMovement
 
 class TenantReportMixin:
     def tenant_manager(self, model):
-        account = getattr(self.request, "account", None)
-        if self.request.user.is_superuser and account is None and hasattr(model, "all_objects"):
-            return model.all_objects
+        """Manager dos relatórios. `objects` é o TenantManager: já filtra pela
+        conta atual (contextvar) e ignora soft-deletes. Nunca use `all_objects`
+        aqui — era o que deixava o superusuário somar todas as contas."""
         return model.objects
 
     def tenant_filter(self):
+        """Filtros de escopo do relatório. Sem conta no request não há relatório
+        — nem para superusuário: consolidar todas as contas é papel do /admin,
+        não da API que alimenta o frontend."""
         user = self.request.user
         account = getattr(self.request, "account", None)
-        if user.is_superuser and account is None:
-            return {}
         if account:
             filters = {"account_id": account.id}
         else:

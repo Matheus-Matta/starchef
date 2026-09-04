@@ -1,16 +1,27 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/errors/app_error.dart';
+import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/copyable_error.dart';
+import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/shadcn_layout.dart';
+import '../../../core/widgets/supervisor_close_dialog.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../devices/domain/local_print_renderer.dart';
 import '../../devices/presentation/device_list_page.dart';
+import '../../devices/presentation/print_queue_dialog.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../../orders/data/local_order_store.dart';
@@ -23,12 +34,22 @@ import '../../scale/presentation/scale_workstation_page.dart';
 import '../../settings/presentation/terminal_preferences_dialog.dart';
 import '../../sync/presentation/outbox_review_dialog.dart';
 import '../../scale/services/scale_window_launcher.dart';
+import '../../topology/data/local_topology_store.dart';
 import '../../topology/domain/local_topology_config.dart';
 import '../../topology/presentation/local_topology_dialog.dart';
 import '../../topology/services/local_topology_service.dart';
+import '../../topology/services/terminal_topology.dart';
+import '../../../core/input/code_lookup_service.dart';
+import '../../../core/input/pdv_input_router.dart';
+import '../../../core/input/pdv_screen.dart';
+import '../../../core/input/pdv_shortcuts.dart';
+import 'pdv_help_dialog.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
+import '../../cash/presentation/cash_auth_dialog.dart';
+import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
+import 'pdv_settings_menu_dialog.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 
@@ -40,6 +61,7 @@ class HomePage extends StatefulWidget {
     required this.onToggleTheme,
     required this.isFullScreen,
     required this.onToggleFullScreen,
+    required this.onClose,
     required this.preferences,
   });
 
@@ -48,6 +70,7 @@ class HomePage extends StatefulWidget {
   final VoidCallback onToggleTheme;
   final bool isFullScreen;
   final VoidCallback onToggleFullScreen;
+  final VoidCallback onClose;
   final LocalPreferences preferences;
 
   @override
@@ -85,6 +108,12 @@ class _HomePageState extends State<HomePage> {
   /// A sessão de caixa veio do cache local, não de uma leitura ao servidor.
   /// O estado pode ter mudado em outro terminal enquanto este esteve offline.
   bool cashSessionFromCache = false;
+
+  /// Id da sessão para a qual o saldo foi liberado nesta tela (§conferência
+  /// às cegas). Guardar o id, e não um `bool`, faz a liberação esquecer
+  /// sozinha quando o turno muda — sem isso, o saldo revelado num fechamento
+  /// continuaria visível no caixa seguinte, aberto por outra pessoa.
+  String? _cashBalanceRevealedForSessionId;
   Map<String, dynamic>? activeOrder;
   Map<String, dynamic>? selectedTable;
   Map<String, dynamic>? selectedCommand;
@@ -98,6 +127,13 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> tables = [];
   List<Map<String, dynamic>> commands = [];
   List<Map<String, dynamic>> orderItems = [];
+
+  /// Item sob o cursor do teclado, na lista do pedido.
+  ///
+  /// `+`, `-` e Delete agem sobre ELE. Guardar o id (e não o índice) é o que
+  /// mantém a seleção no mesmo item depois de um recarregamento em que a
+  /// ordem da lista mudou.
+  String? selectedOrderItemId;
   List<Map<String, dynamic>> paymentMethods = [];
   List<Map<String, dynamic>> registeredPayments = [];
   List<Map<String, dynamic>> orders = [];
@@ -114,6 +150,8 @@ class _HomePageState extends State<HomePage> {
   /// achou tudo.
   bool ordersPartial = false;
   final ordersSearchController = TextEditingController();
+  final ordersSearchFocus = FocusNode(debugLabel: 'orders-search');
+  final commandSearchFocus = FocusNode(debugLabel: 'command-search');
   Timer? ordersSearchDebounce;
   String? selectedPaymentMethod;
   String paymentDigits = '0';
@@ -125,25 +163,61 @@ class _HomePageState extends State<HomePage> {
   PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
+  late final PdvUpdateService updateService;
+  PdvUpdateStatus versionStatus = const PdvUpdateStatus.checking();
 
-  /// Cópia local dos pedidos, com as edições offline já aplicadas.
-  final LocalOrderStore orderStore = LocalOrderStore();
+  /// Porta de entrada da tela para os pedidos guardados no banco do Caixa
+  /// Principal. Não é mais um banco à parte (ver [LocalOrderStore]).
+  late final LocalOrderStore orderStore = LocalOrderStore(api: api);
   StreamSubscription<NetworkSyncStatus>? syncStatusSubscription;
   StreamSubscription<void>? ordersSignalSubscription;
-  LocalTopologyService? topologyService;
+  StreamSubscription<String>? realtimeSignalSubscription;
+  Timer? realtimeRefreshDebounce;
+  final Set<String> pendingRealtimeTopics = {};
+  bool realtimeRefreshRunning = false;
+  bool realtimeRefreshQueued = false;
+  late final TerminalTopology topology;
+
+  /// O controlador central de entrada: teclado, leitor USB, leitor serial e
+  /// área de transferência entram por aqui e saem como o MESMO evento.
+  late final PdvInputRouter inputRouter;
+  CodeLookupService? codeLookup;
+  StreamSubscription<ScannedCode>? codeSubscription;
+  StreamSubscription<PdvShortcut>? shortcutSubscription;
+
+  /// Enquanto o modal de configuração de produto está aberto, uma nova leitura
+  /// do MESMO produto soma quantidade lá dentro em vez de abrir outro modal.
+  StreamController<void>? productScanRepeats;
+  String? scanningProductId;
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
   );
   bool offlineMode = false;
 
   /// Este terminal é um Caixa Cliente, que depende do principal para gravar.
-  bool get isSecondaryStation =>
-      topologyService?.config?.mode == LocalTopologyMode.client;
+  bool get isSecondaryStation => topology.isClient;
 
   /// O principal respondeu ao último teste de conexão.
-  bool get principalReachable =>
-      topologyService?.status.phase == LocalTopologyPhase.clientReady;
+  bool get principalReachable => topology.isClientReady;
   int offlinePendingCount = 0;
+
+  /// Numerador dos recebimentos encenados, para dar um id local a cada linha.
+  int stagedPaymentSequence = 0;
+
+  /// O valor no teclado foi DIGITADO pelo operador?
+  ///
+  /// Enquanto for `false`, ele é apenas a sugestão "receba o restante" e
+  /// acompanha o pedido. Assim que alguém digita, o valor é dele e nada mais
+  /// o reescreve — receber R$ 20,00 de uma conta de R$ 12,43 é uma decisão.
+  bool paymentAmountTyped = false;
+
+  /// Conclusão em curso. Sem isto, um duplo clique em "Concluir pedido"
+  /// percorria o gesto inteiro duas vezes — dois recibos e dois DANFEs.
+  bool completingOrder = false;
+
+  /// Notas cuja autorização já está sendo aguardada nesta tela. Dois
+  /// vigias sobre a mesma nota mandariam o DANFE para a impressora duas vezes.
+  final Set<String> watchedFiscalInvoices = {};
   bool sidebarExpanded = true;
 
   List<Map<String, dynamic>> get visibleProducts => products.where((product) {
@@ -195,13 +269,100 @@ class _HomePageState extends State<HomePage> {
         .fold(0, (total, movement) => total + _number(movement['amount']));
   }
 
+  /// O operador pode ver o número de `cashBalance` agora?
+  ///
+  /// Por padrão não: o caixa faz a conferência às cegas, sem saber quanto o
+  /// sistema espera encontrar. Só quem administra a conta vê livremente
+  /// ([AuthUser.canViewCashBalanceFreely]); qualquer outro perfil — inclusive
+  /// gerente — precisa da senha de ações do caixa, verificada localmente e
+  /// sem depender de rede (ver [_toggleCashBalanceVisibility]).
+  bool get _canSeeCashBalance =>
+      widget.controller.session?.user.canViewCashBalanceFreely == true ||
+      (_cashBalanceRevealedForSessionId != null &&
+          _cashBalanceRevealedForSessionId == '${cashSession?['id'] ?? ''}');
+
+  String get _cashBalanceLabel =>
+      _canSeeCashBalance ? _money(cashBalance) : '••••••';
+
+  /// Alterna a visibilidade do saldo no sidebar e no Financeiro do caixa.
+  ///
+  /// Esconder é imediato. Revelar exige senha — a mesma "senha de ações do
+  /// caixa" já usada para autorizar sangria e divergência, conferida OFFLINE
+  /// contra o hash sincronizado neste terminal — a menos que o próprio login
+  /// já seja de administrador/proprietário.
+  Future<void> _toggleCashBalanceVisibility() async {
+    final sessionId = '${cashSession?['id'] ?? ''}';
+    if (_canSeeCashBalance) {
+      // Um admin que "esconde" o próprio acesso livre não trava nada — ele
+      // continua vendo no próximo tap. Isso é intencional: a única coisa que
+      // este botão sempre garante é apagar o que uma senha alheia liberou.
+      setState(() => _cashBalanceRevealedForSessionId = null);
+      return;
+    }
+    if (sessionId.isEmpty) return;
+    final cashAuth = widget.controller.repository.cashAuth;
+    final restaurant = restaurantId;
+    if (cashAuth == null || restaurant == null) return;
+    final authorized = await showCashAuthDialog(
+      context,
+      cashAuth: cashAuth,
+      restaurantId: restaurant,
+      title: 'Ver saldo do caixa',
+      message:
+          'Informe a senha de ações do caixa para ver o valor em dinheiro. '
+          'A conferência deve ser feita às cegas — só libere se for '
+          'realmente necessário.',
+    );
+    if (authorized && mounted) {
+      setState(() => _cashBalanceRevealedForSessionId = sessionId);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     deviceAgent = LocalDeviceAgent(api: api, preferences: widget.preferences);
     deviceAgent.printerAvailability.addListener(_onPrinterStatusChanged);
+    topology = TerminalTopology(
+      api: api,
+      deviceAgent: deviceAgent,
+      preferences: widget.preferences,
+      readIdentity: () {
+        final user = widget.controller.session?.user;
+        return TopologyIdentity(
+          accessToken: widget.controller.session?.accessToken ?? '',
+          // Num Caixa Secundário, estas credenciais viajam com cada operação
+          // encaminhada: é com ELAS que o Caixa Principal entrega ao backend,
+          // para a venda e a sessão de caixa nascerem no nome de quem
+          // realmente atendeu.
+          refreshToken: widget.controller.session?.refreshToken ?? '',
+          accountId: user?.accountId ?? '',
+          actorId: user?.id ?? '',
+          actorName: user?.name ?? user?.username ?? '',
+          terminalName: _terminalName,
+          // A unidade escolhida quando já houver bootstrap; antes dele, a do
+          // vínculo do usuário. Nenhuma das duas depende da nuvem agora.
+          restaurantId: selectedRestaurantId ?? user?.restaurantId ?? '',
+        );
+      },
+      // A chave de pareamento tem a mesma exigência do login: perder ela ao
+      // fechar o PDV desconecta todos os caixas secundários. Guarda nas mesmas
+      // camadas duráveis, incluindo o banco operacional.
+      createStore: () => LocalTopologyStore(
+        secretStorage: SecureTopologySecretStorage(
+          valueStore: widget.controller.repository.credentials,
+        ),
+      ),
+    );
+    topology.addListener(_onTopologyChanged);
+    inputRouter = PdvInputRouter(readContext: _readInputContext);
+    codeSubscription = inputRouter.codes.listen(_onCodeScanned);
+    shortcutSubscription = inputRouter.shortcuts.listen(_onShortcut);
+    HardwareKeyboard.instance.addHandler(inputRouter.handleKeyEvent);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
+    updateService = PdvUpdateService();
+    unawaited(_checkPdvVersion());
     networkStatus = api.syncStatus;
     syncStatusSubscription = api.syncStatusChanges.listen((status) {
       if (!mounted) return;
@@ -232,22 +393,129 @@ class _HomePageState extends State<HomePage> {
     ordersSignalSubscription = api.signals.on('orders').listen((_) {
       if (mounted) unawaited(_refreshFromSignal());
     });
+    realtimeSignalSubscription = api.signals.changes
+        .where((topic) => topic.startsWith('realtime:'))
+        .listen(_scheduleRealtimeRefresh);
     _load();
   }
 
+  Future<void> _checkPdvVersion() async {
+    if (mounted) {
+      setState(
+        () => versionStatus = PdvUpdateStatus.checking(
+          installed: versionStatus.installed,
+        ),
+      );
+    }
+    final result = await updateService.check(
+      onInstalled: (installed) {
+        if (!mounted) return;
+        setState(
+          () => versionStatus = PdvUpdateStatus.checking(installed: installed),
+        );
+      },
+    );
+    if (mounted) setState(() => versionStatus = result);
+  }
+
+  void _scheduleRealtimeRefresh(String signal) {
+    if (!mounted) return;
+    pendingRealtimeTopics.add(signal.substring('realtime:'.length));
+    realtimeRefreshDebounce?.cancel();
+    realtimeRefreshDebounce = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_applyRealtimeRefresh()),
+    );
+  }
+
+  Future<void> _applyRealtimeRefresh() async {
+    if (!mounted) return;
+    if (realtimeRefreshRunning) {
+      realtimeRefreshQueued = true;
+      return;
+    }
+    realtimeRefreshRunning = true;
+    try {
+      do {
+        realtimeRefreshQueued = false;
+        final topics = Set<String>.from(pendingRealtimeTopics);
+        pendingRealtimeTopics.clear();
+        final reloadCatalog = topics.any(
+          const {
+            'tables',
+            'menu',
+            'payments',
+            'cash',
+            'session',
+            'pdv',
+          }.contains,
+        );
+        if (reloadCatalog) await _load();
+
+        if (topics.contains('customers') && restaurantId != null) {
+          await api.get(
+            '/customers/',
+            query: {
+              'restaurant': restaurantId,
+              'is_active': true,
+              'page_size': 200,
+            },
+            accessToken: token,
+          );
+        }
+
+        if (topics.contains('devices') && restaurantId != null) {
+          final query = {
+            'restaurant': restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          };
+          await Future.wait([
+            api.get('/printers/', query: query, accessToken: token),
+            api.get('/scales/', query: query, accessToken: token),
+          ]);
+        }
+
+        if (topics.contains('orders')) {
+          if (flowStep == 'orders') {
+            await _reloadOrders();
+          } else if (activeOrder != null) {
+            await _refreshOrder();
+          } else {
+            await _warmOrdersCache();
+          }
+        }
+      } while (realtimeRefreshQueued || pendingRealtimeTopics.isNotEmpty);
+    } catch (error) {
+      // O WebSocket é aceleração, não um novo ponto de falha: cache,
+      // reconexão e o próximo evento tentam reconciliar novamente.
+      if (mounted && error is ApiException && !error.isConnectivity) {
+        _error(
+          error,
+          title: 'Não foi possível aplicar a atualização em tempo real',
+        );
+      }
+    } finally {
+      realtimeRefreshRunning = false;
+    }
+  }
+
   void _onPrinterStatusChanged() {
-    final next = deviceAgent.printerAvailability.value.phase;
+    final status = deviceAgent.printerAvailability.value;
     final disconnectedAfterUse =
-        next == PrinterAvailabilityPhase.unavailable &&
+        status.phase == PrinterAvailabilityPhase.unavailable &&
         lastPrinterPhase == PrinterAvailabilityPhase.available;
-    lastPrinterPhase = next;
+    lastPrinterPhase = status.phase;
     if (!mounted || !disconnectedAfterUse) return;
+    // O aviso carrega a causa vinda do agente (qual impressora e por quê): o
+    // texto genérico anterior mandava conferir cabo e porta mesmo quando o
+    // problema era outro — impressora do sistema com nome errado, por
+    // exemplo — e não dizia qual das impressoras do terminal falhou.
     showAppToast(
       context,
-      'Falha ao comunicar com a impressora. Confira o cabo e a porta; o PDV continua disponível.',
+      '${status.message} O PDV continua disponível.',
       title: 'Impressora desconectada',
       severity: AppErrorSeverity.warning,
-      autoDismissAfter: const Duration(seconds: 8),
     );
   }
 
@@ -282,51 +550,65 @@ class _HomePageState extends State<HomePage> {
     return repository.list(path, query: query);
   }
 
-  Future<void> _ensureTopology() async {
-    final selected = restaurantId;
-    final accountId = widget.controller.session!.user.accountId;
-    if (selected == null || accountId == null || accountId.trim().isEmpty) {
-      return;
-    }
-    final existing = topologyService;
-    if (existing != null) {
-      existing.updateRestaurant(selected);
-      return;
-    }
-    final service = LocalTopologyService(
-      api: api,
-      accessToken: token,
-      accountId: accountId,
-      actorId: widget.controller.session!.user.id,
-      restaurantId: selected,
-    );
-    try {
-      await service.start();
-      if (!mounted) {
-        await service.shutdown();
-        return;
-      }
-      topologyService = service;
-      service.addListener(_onTopologyChanged);
-      _onTopologyChanged();
-    } catch (_) {
-      await service.shutdown();
-      rethrow;
-    }
-  }
+  /// Liga a rede local deste terminal.
+  ///
+  /// Chamada ANTES do bootstrap de dados e de novo depois dele. A ordem é o
+  /// ponto: num Caixa Secundário é o Caixa Principal quem serve restaurantes e
+  /// cardápio, então ligar o relay só depois da carga era pedir ao secundário
+  /// que carregasse pela nuvem justamente o que ele deveria ler do principal —
+  /// e, sem nuvem, ele nunca chegava a se conectar a ninguém.
+  Future<void> _ensureTopology({String? restaurantId}) =>
+      topology.ensure(restaurantId: restaurantId);
 
   void _onTopologyChanged() {
-    final service = topologyService;
-    if (service == null || !mounted) return;
-    final config = service.config;
-    if (service.status.phase == LocalTopologyPhase.starting ||
-        config == null ||
-        config.mode == LocalTopologyMode.client) {
-      deviceAgent.stop();
-    } else if (restaurantId != null) {
-      deviceAgent.start(token: token, restaurantId: restaurantId!);
-    }
+    if (!mounted) return;
+    // O `nodeId` da topologia é a identidade da INSTALAÇÃO — o mesmo UUID que
+    // já identifica este terminal no relay da rede local. Reusá-lo evita
+    // inventar um segundo identificador para o caixa, e dispensa MAC, IP ou
+    // nome do computador (nenhum estável, nenhum necessário).
+    api.localStore?.installationId = topology.config?.nodeId;
+    api.localStore?.terminalLabel = _terminalName;
     setState(() {});
+  }
+
+  /// Por que este terminal não pode usar o caixa aberto (409/403 do servidor).
+  ///
+  /// Guardado em vez de descartado porque a mensagem já diz quem está com o
+  /// caixa, de onde e desde quando — é o que o operador precisa para decidir
+  /// entre esperar e pedir uma transferência gerencial.
+  String? cashSessionBlockMessage;
+
+  /// UUID da instalação deste terminal, ou vazio antes de a topologia subir.
+  String get _terminalInstallationId => topology.config?.nodeId ?? '';
+
+  /// Nome amigável do terminal. Um padrão pelo papel até a loja renomeá-lo
+  /// (Configurações › Terminais, no backoffice) — melhor do que expor o UUID
+  /// cru numa mensagem de bloqueio.
+  String get _terminalName {
+    final nodeId = _terminalInstallationId;
+    if (nodeId.isEmpty) return '';
+    final suffix = nodeId.length <= 6 ? nodeId : nodeId.substring(0, 6);
+    return isSecondaryStation
+        ? 'Caixa Secundário $suffix'
+        : 'Caixa Principal $suffix';
+  }
+
+  /// Campos de identidade enviados em toda operação de caixa.
+  ///
+  /// Sem eles o servidor não consegue cumprir "a sessão pertence ao usuário
+  /// que abriu E ao terminal onde foi aberta": o backend já tinha o campo, mas
+  /// este aplicativo nunca o preenchia.
+  Map<String, dynamic> get _terminalIdentity {
+    final nodeId = _terminalInstallationId;
+    if (nodeId.isEmpty) return const {};
+    return {
+      'terminal_installation_id': nodeId,
+      'terminal_name': _terminalName,
+      'terminal_type': 'desktop',
+      'terminal_role': isSecondaryStation ? 'secondary' : 'principal',
+      // Mantido para servidores que ainda leem o campo antigo.
+      'device_identifier': nodeId,
+    };
   }
 
   /// Recarrega os dados do PDV.
@@ -344,13 +626,37 @@ class _HomePageState extends State<HomePage> {
       loadErrorMessage = null;
     });
     try {
+      // Primeiro o papel do terminal, só depois os dados. Num Caixa
+      // Secundário é o principal quem responde `/restaurants/` e o cardápio;
+      // ligar o relay depois da carga deixava o secundário tentando a nuvem
+      // para sempre — e sem nuvem, sem PDV.
+      try {
+        await _ensureTopology();
+      } catch (error) {
+        if (mounted) {
+          showAppToast(
+            context,
+            'A rede local não iniciou: $error',
+            title: 'Rede local indisponível',
+            severity: AppErrorSeverity.warning,
+          );
+        }
+      }
       final bootstrap = await presenter.load(
         selectedRestaurantId: selectedRestaurantId,
         userRestaurantId: widget.controller.session!.user.restaurantId,
+        userId: widget.controller.session!.user.id,
       );
       restaurants = bootstrap.restaurants;
       selectedRestaurantId = bootstrap.selectedRestaurantId;
       widget.controller.setActiveRestaurant(selectedRestaurantId);
+      // O banco local precisa saber de qual unidade são os dados que ele
+      // sincroniza, e o fechamento offline precisa da taxa de serviço
+      // cadastrada — sem isso o total calculado aqui não bateria com o do
+      // servidor quando a operação subisse.
+      api.localStore
+        ?..bindRestaurant(selectedRestaurantId)
+        ..serviceFeePercent = defaultServiceFeePercent;
       await widget.controller.repository.cashAuth?.trySync(
         widget.controller.session!,
         restaurantId: selectedRestaurantId,
@@ -361,28 +667,23 @@ class _HomePageState extends State<HomePage> {
       categories = catalog.categories;
       tables = catalog.tables;
       commands = catalog.commands;
-      try {
-        await _ensureTopology();
-      } catch (error) {
-        if (mounted) {
-          showAppToast(
-            context,
-            'A rede local não iniciou: $error',
-            title: 'Rede local indisponível',
-            severity: AppErrorSeverity.warning,
-            autoDismissAfter: const Duration(seconds: 8),
-          );
-        }
-      }
+      paymentMethods = catalog.paymentMethods;
+      // Agora com a unidade resolvida: é ela que assina as requisições ao
+      // principal e que o agente de impressão consulta.
+      await _ensureTopology(restaurantId: selectedRestaurantId);
       try {
         final currentSession = await api.get(
           '/cash-register/current/',
+          query: {
+            if (selectedRestaurantId != null)
+              'restaurant': selectedRestaurantId,
+          },
           accessToken: token,
         );
-        final stationIds = stations.map((item) => '${item['id']}').toSet();
-        cashSession = stationIds.contains('${currentSession['cash_station']}')
-            ? currentSession
-            : null;
+        // A sessão aberta no servidor é a fonte de verdade. Descartá-la por
+        // divergência momentânea do catálogo deixava a tela pedindo abertura,
+        // mas a API recusava porque o caixa já estava aberto.
+        cashSession = currentSession;
         final movements = (cashSession?['movements'] as List? ?? const [])
             .cast<Map<String, dynamic>>();
         pendingCashMovement = movements
@@ -396,16 +697,41 @@ class _HomePageState extends State<HomePage> {
                   }.contains('${item?['movement_type']}'),
               orElse: () => null,
             );
-        cashSessionFromCache = currentSession['_offline_cache'] == true;
+        // A leitura agora vem sempre do banco local (§3); o que interessa
+        // avisar é quando ela não pôde ser confirmada com o servidor.
+        cashSessionFromCache =
+            currentSession['_local_first'] == true &&
+            !api.syncStatus.hasConnection;
       } on ApiException catch (error) {
         // 404 significa "nenhum caixa aberto". Sem rede e sem cache prévio o
         // terminal também não sabe o estado do caixa; em ambos os casos ele
         // segue carregando, porque abrir/fechar já exige servidor e falharia
         // com mensagem própria.
-        if (error.statusCode != null && error.statusCode != 404) rethrow;
+        //
+        // 409/403 são a resposta nova: o caixa está com outra pessoa, ou com
+        // este operador em outra máquina. Não é falha de carga — é informação
+        // que o operador precisa ler, e a tela continua utilizável para o
+        // resto do atendimento.
+        const blocked = {403, 409};
+        if (error.statusCode != null &&
+            error.statusCode != 404 &&
+            !blocked.contains(error.statusCode)) {
+          rethrow;
+        }
+        cashSessionBlockMessage = blocked.contains(error.statusCode)
+            ? error.message
+            : null;
         cashSession = null;
         pendingCashMovement = null;
         cashSessionFromCache = false;
+        if (cashSessionBlockMessage != null && mounted) {
+          showAppToast(
+            context,
+            cashSessionBlockMessage!,
+            title: 'Caixa indisponível neste terminal',
+            severity: AppErrorSeverity.warning,
+          );
+        }
       }
     } catch (error) {
       // Numa recarga de fundo o operador já tem uma tela utilizável: falhar
@@ -429,9 +755,11 @@ class _HomePageState extends State<HomePage> {
         // de rede depois não impeça de reabrir um pedido lançado em outro
         // caixa. Fora do caminho crítico: o operador não espera por isso.
         unawaited(_warmOrdersCache());
-        if (restaurantId != null &&
-            topologyService?.config?.mode != LocalTopologyMode.client) {
-          deviceAgent.start(token: token, restaurantId: restaurantId!);
+        // Carga completa do catálogo operacional em segundo plano (§24): a
+        // tela já está utilizável e não espera por ela.
+        final restaurantForSync = restaurantId;
+        if (restaurantForSync != null) {
+          unawaited(api.syncService?.pullAll(restaurantId: restaurantForSync));
         }
         if (hasCashDivergence) {
           WidgetsBinding.instance.addPostFrameCallback(
@@ -455,6 +783,7 @@ class _HomePageState extends State<HomePage> {
       selectedCommand = null;
       selectedCustomer = null;
       orderItems = [];
+      selectedOrderItemId = null;
       registeredPayments = [];
       paymentMethods = [];
       orderType = null;
@@ -481,15 +810,12 @@ class _HomePageState extends State<HomePage> {
       await widget.controller.repository.sessionStore.save(
         widget.controller.session!,
       );
-      final opened = await ScaleWindowLauncher.open(restaurantId: restaurantId);
+      final opened = await ScaleWindowLauncher.open(
+        restaurantId: restaurantId,
+        session: widget.controller.session!,
+      );
       if (!mounted) return;
-      if (opened) {
-        showAppToast(
-          context,
-          'Balança Rápida aberta em uma janela independente.',
-        );
-        return;
-      }
+      if (opened) return;
     } catch (_) {
       // O fallback embutido mantém a operação disponível em plataformas sem
       // suporte a processos desktop ou quando o cofre local está indisponível.
@@ -648,33 +974,25 @@ class _HomePageState extends State<HomePage> {
     await _reloadOrders();
   }
 
-  /// Busca a lista com os filtros atuais, caindo para o cache quando sem rede.
+  /// Busca a lista com os filtros atuais.
+  ///
+  /// A consulta é servida pelo armazenamento local (§3), que já traz tanto os
+  /// pedidos confirmados quanto os que ainda estão na fila — não há mais o
+  /// vai-e-vem de "buscar no servidor, gravar, reler de cada pedido" que
+  /// existia para não apagar da tela um lançamento offline.
   Future<void> _reloadOrders() async {
     final scope = api.sessionScope;
     try {
       final loaded = await _list('/orders/', query: _ordersServerQuery);
-      final ofRestaurant = loaded
+      orders = loaded
           .where((item) => '${item['restaurant']}' == restaurantId)
+          .where(_matchesStatusFilter)
           .toList();
-      if (scope != null) {
-        await orderStore.saveAllFromServer(ofRestaurant, scope: scope);
-        // A ordem e a seleção vêm do servidor, mas cada pedido é relido do
-        // store para não apagar da tela uma edição feita offline que ainda
-        // não subiu. Reler a lista inteira do store desfaria o filtro.
-        final merged = <Map<String, dynamic>>[];
-        for (final order in ofRestaurant) {
-          final stored = await orderStore.read('${order['id']}', scope: scope);
-          merged.add(stored ?? order);
-        }
-        orders = merged.where(_matchesStatusFilter).toList();
-      } else {
-        orders = ofRestaurant.where(_matchesStatusFilter).toList();
-      }
-      ordersPartial = false;
+      // Sem conexão, um pedido antigo pode simplesmente ainda não ter descido
+      // para este terminal. A lista continua útil — o operador precisa achar o
+      // pedido aberto agora —, mas a tela avisa que pode faltar algo.
+      ordersPartial = !api.syncStatus.hasConnection;
     } catch (error) {
-      // Sem rede a busca vale só para o que já está guardado. A lista continua
-      // útil — o operador precisa achar o pedido aberto agora —, mas a tela
-      // avisa que o resultado pode estar incompleto.
       final localCopy = scope == null
           ? const <Map<String, dynamic>>[]
           : await _ordersFromStore(scope);
@@ -725,13 +1043,6 @@ class _HomePageState extends State<HomePage> {
     for (final entry in mappings.entries) {
       await orderStore.replaceId(entry.key, entry.value, scope: scope);
     }
-  }
-
-  Future<void> _persistOfflineOrder() async {
-    final scope = api.sessionScope;
-    final order = activeOrder;
-    if (scope == null || order == null) return;
-    activeOrder = await orderStore.saveLocal(order, scope: scope);
   }
 
   /// Carrega o pedido para edição/pagamento, com o que houver disponível.
@@ -839,6 +1150,9 @@ class _HomePageState extends State<HomePage> {
           };
     await _refreshOrder();
     if (mounted) setState(() => flowStep = 'order');
+    // Editar um pedido de comanda também é hora de perguntar a mesa: a
+    // comanda pode ter sido aberta avulsa e o cliente já ter sentado.
+    await _ensureCommandTable();
   }
 
   Future<void> _payOrder(Map<String, dynamic> order) async {
@@ -868,7 +1182,8 @@ class _HomePageState extends State<HomePage> {
   PdvDestination get _selectedDestination {
     if (flowStep == 'scale-workstation') return PdvDestination.scale;
     if (flowStep == 'orders') return PdvDestination.orders;
-    if (flowStep == 'context' || orderType == 'table') {
+    if (flowStep == 'table_details' ||
+        (flowStep == 'context' && orderType != 'command')) {
       return PdvDestination.tables;
     }
     return PdvDestination.menu;
@@ -891,7 +1206,7 @@ class _HomePageState extends State<HomePage> {
           selectedCustomer = null;
           orderItems = [];
           registeredPayments = [];
-          orderType = 'table';
+          orderType = 'table_view';
           flowStep = 'context';
         });
         return;
@@ -899,6 +1214,7 @@ class _HomePageState extends State<HomePage> {
         await _openOrders();
         return;
       case PdvDestination.finance:
+        if (!widget.controller.session!.user.canAccessCash) return;
         await _openCashCenter();
         return;
       case PdvDestination.scale:
@@ -911,110 +1227,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openCashCenter() async {
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        final scheme = Theme.of(dialogContext).colorScheme;
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.account_balance_wallet_outlined),
-              SizedBox(width: 10),
-              Text('Financeiro do caixa'),
-            ],
-          ),
-          content: SizedBox(
-            width: 480,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        cashSession == null ? 'Caixa fechado' : 'Caixa aberto',
-                        style: TextStyle(
-                          color: cashSession == null
-                              ? scheme.error
-                              : const Color(0xFF167A3E),
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        cashSession == null
-                            ? 'Abra uma sessão para iniciar as vendas.'
-                            : _money(cashBalance),
-                        style: TextStyle(
-                          fontSize: cashSession == null ? 16 : 30,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      if (cashSession != null)
-                        Text(
-                          '${cashSession!['station'] ?? 'Estação atual'}',
-                          style: TextStyle(color: scheme.onSurfaceVariant),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 18),
-                if (cashSession == null)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: () => Navigator.pop(dialogContext, 'open'),
-                      icon: const Icon(Icons.lock_open),
-                      label: const Text('Abrir caixa'),
-                    ),
-                  )
-                else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () =>
-                              Navigator.pop(dialogContext, 'supply'),
-                          icon: const Icon(Icons.add_circle_outline),
-                          label: const Text('Suprimento'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () =>
-                              Navigator.pop(dialogContext, 'withdrawal'),
-                          icon: const Icon(Icons.remove_circle_outline),
-                          label: const Text('Sangria'),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            if (cashSession != null)
-              TextButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, 'close'),
-                icon: const Icon(Icons.lock_outline),
-                label: const Text('Fechar caixa'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Voltar'),
-            ),
-          ],
-        );
-      },
+    final action = await PdvCashCenterDialog.show(
+      context,
+      cashSession: cashSession,
+      balanceLabel: _cashBalanceLabel,
     );
     if (!mounted || action == null) return;
     if (action == 'open') await _openCash();
@@ -1025,118 +1241,51 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openSettingsCenter() async {
-    final selection = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        scrollable: true,
-        title: const Row(
-          children: [
-            Icon(Icons.settings_outlined),
-            SizedBox(width: 10),
-            Text('Configurações do PDV'),
-          ],
-        ),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.controller.session!.user.canManageDevices) ...[
-                ListTile(
-                  leading: const Icon(Icons.print_outlined),
-                  title: const Text('Impressoras'),
-                  subtitle: const Text('Conexão, driver e testes de impressão'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pop(dialogContext, 'printer'),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.scale_outlined),
-                  title: const Text('Balanças'),
-                  subtitle: const Text(
-                    'Porta, protocolo e impressora vinculada',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.pop(dialogContext, 'scale'),
-                ),
-                const Divider(),
-              ],
-              ListTile(
-                leading: const Icon(Icons.hub_outlined),
-                title: const Text('Rede local de caixas'),
-                subtitle: Text(
-                  topologyService?.status.message ??
-                      'Entre novamente para habilitar a identidade deste caixa.',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'topology'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.tune),
-                title: const Text('Preferências deste terminal'),
-                subtitle: const Text(
-                  'Tempo da comanda, estabilidade, alertas e impressão',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'preferences'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.sync_problem_outlined),
-                title: const Text('Operações pendentes'),
-                subtitle: Text(
-                  offlinePendingCount == 0
-                      ? 'Nada aguardando o servidor'
-                      : '$offlinePendingCount aguardando o servidor',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.pop(dialogContext, 'outbox'),
-              ),
-              const Divider(),
-              SwitchListTile(
-                secondary: Icon(
-                  widget.isDark
-                      ? Icons.dark_mode_outlined
-                      : Icons.light_mode_outlined,
-                ),
-                title: const Text('Tema escuro'),
-                subtitle: const Text('Ajuste visual desta estação'),
-                value: widget.isDark,
-                onChanged: (_) {
-                  Navigator.pop(dialogContext, 'theme');
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  widget.isFullScreen
-                      ? Icons.fullscreen_exit
-                      : Icons.fullscreen,
-                ),
-                title: Text(
-                  widget.isFullScreen
-                      ? 'Sair da tela cheia'
-                      : 'Usar tela cheia',
-                ),
-                subtitle: const Text('Atalho: F11'),
-                onTap: () => Navigator.pop(dialogContext, 'fullscreen'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Fechar'),
-          ),
-        ],
-      ),
+    final scope = deviceAgent.printScope;
+    final printQueue = scope == null
+        ? null
+        : await deviceAgent.printQueue?.summary(scope: scope);
+    if (!mounted) return;
+    final selection = await PdvSettingsMenuDialog.show(
+      context,
+      canManageDevices: widget.controller.session!.user.canManageDevices,
+      topologyStatus: topology.config == null
+          ? 'Entre novamente para habilitar a identidade deste caixa.'
+          : topology.status.message,
+      offlinePendingCount: offlinePendingCount,
+      printQueueCount: printQueue?.total ?? 0,
+      isDark: widget.isDark,
+      isFullScreen: widget.isFullScreen,
     );
     if (!mounted || selection == null) return;
     if (selection == 'printer') _openDeviceSettings(DeviceKind.printer);
     if (selection == 'scale') _openDeviceSettings(DeviceKind.scale);
     if (selection == 'topology') await _openTopologySettings();
     if (selection == 'preferences' && mounted) {
-      await TerminalPreferencesDialog.show(context, widget.preferences);
+      List<Map<String, dynamic>> printersForPreferences = const [];
+      try {
+        printersForPreferences = await _list(
+          '/printers/',
+          query: {
+            'restaurant': restaurantId,
+            'is_active': true,
+            'page_size': 100,
+          },
+        );
+      } catch (_) {
+        // Sem impressoras carregadas, o diálogo só perde a lista da master —
+        // as demais preferências continuam editáveis normalmente.
+      }
+      if (mounted) {
+        await TerminalPreferencesDialog.show(
+          context,
+          widget.preferences,
+          printers: printersForPreferences,
+        );
+      }
+    }
+    if (selection == 'print_queue' && mounted) {
+      await PrintQueueDialog.show(context, deviceAgent);
     }
     if (selection == 'outbox' && mounted) await _openOutboxReview();
     if (selection == 'theme') widget.onToggleTheme();
@@ -1144,16 +1293,20 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openTopologySettings() async {
-    final service = topologyService;
-    final current = service?.config;
-    if (service == null || current == null) {
+    // O diálogo pode ser aberto antes de a carga terminar: garantir a rede
+    // local aqui é o que permite corrigir o endereço do principal justamente
+    // quando ele está errado — que é quando os dados não carregam.
+    await _ensureTopology();
+    if (!mounted) return;
+    final service = topology;
+    final current = service.config;
+    if (current == null) {
       showAppToast(
         context,
         'A sessão restaurada não contém a identidade da conta. '
         'Saia e entre novamente antes de configurar a rede local.',
         title: 'Sessão incompleta',
         severity: AppErrorSeverity.warning,
-        autoDismissAfter: const Duration(seconds: 6),
       );
       return;
     }
@@ -1168,22 +1321,31 @@ class _HomePageState extends State<HomePage> {
     try {
       await service.reconfigure(candidate);
       if (!mounted) return;
-      _onTopologyChanged();
       final degraded =
           candidate.mode == LocalTopologyMode.client && !service.status.ready;
-      showAppToast(
-        context,
-        degraded
-            ? 'Modo Cliente salvo, mas o Caixa Principal está indisponível.'
-            : candidate.mode == LocalTopologyMode.client
-            ? 'Modo Cliente salvo. O agente físico local foi pausado.'
-            : 'Configuração da rede local aplicada.',
-        title: 'Rede local',
-        severity: degraded ? AppErrorSeverity.warning : AppErrorSeverity.info,
-        autoDismissAfter: degraded
-            ? const Duration(seconds: 6)
-            : const Duration(milliseconds: 2200),
-      );
+      // Sem este aviso, uma chave vazia ou a caixa de rede confiável
+      // desmarcada faziam o Caixa Principal salvar "com sucesso" e só nunca
+      // abrir a porta — o operador só descobria reabrindo o diálogo e lendo
+      // o texto pequeno do status, o que parecia "QR Code parou de
+      // funcionar" sem nenhum erro visível.
+      final principalLocalOnly =
+          candidate.mode == LocalTopologyMode.principal &&
+          service.status.phase == LocalTopologyPhase.principalLocalOnly;
+      if (degraded) {
+        showAppToast(
+          context,
+          'Modo Cliente salvo, mas o Caixa Principal está indisponível.',
+          title: 'Rede local',
+          severity: AppErrorSeverity.warning,
+        );
+      } else if (principalLocalOnly) {
+        showAppToast(
+          context,
+          service.status.message,
+          title: 'Rede local não foi ligada',
+          severity: AppErrorSeverity.warning,
+        );
+      }
     } catch (error) {
       if (mounted) _error(error);
     } finally {
@@ -1196,7 +1358,71 @@ class _HomePageState extends State<HomePage> {
   /// A volta é imediata: o cardápio e as mesas já estão em memória e mudam
   /// pouco. A atualização segue por baixo, sem prender o operador entre um
   /// pedido e o próximo.
+  /// O pedido aberto nao tem nada dentro?
+  ///
+  /// Item cancelado nao conta: uma comanda em que tudo foi cancelado continua
+  /// sem conteudo, e prende a mesa do mesmo jeito.
+  bool get _activeOrderIsEmpty {
+    if (activeOrder == null) return false;
+    if (const {
+      'paid',
+      'cancelled',
+      'refunded',
+    }.contains('${activeOrder?['status']}')) {
+      return false;
+    }
+    final hasItems = orderItems.any(
+      (item) => !const {
+        'cancelled',
+        'comped',
+        'voided',
+      }.contains('${item['status'] ?? ''}'),
+    );
+    return !hasItems && registeredPayments.isEmpty;
+  }
+
+  /// Descarta o pedido que foi aberto e não virou nada.
+  ///
+  /// Abrir uma comanda cria o pedido na hora — é ele que ocupa a comanda. Se o
+  /// operador sai sem lançar item nenhum, esse pedido vazio fica no sistema
+  /// segurando a comanda, e o próximo cliente que pegar a mesma não consegue
+  /// usá-la. Não é um cancelamento comercial (não há consumo a estornar nem
+  /// motivo a registrar), então não pede senha nem justificativa.
+  ///
+  /// É melhor-esforço de propósito: se o descarte não subir, a venda vazia é o
+  /// menor dos problemas e nada disso pode atrapalhar o operador que só quis
+  /// voltar para a tela inicial.
+  Future<void> _discardEmptyOrder(Map<String, dynamic> order) async {
+    try {
+      await api.post(
+        '/orders/${order['id']}/cancel/',
+        body: const {},
+        accessToken: token,
+      );
+      AppLogger.instance.info(
+        'pedido_vazio_descartado',
+        data: {'pedido': '${order['id']}', 'comanda': selectedCommand?['code']},
+      );
+    } catch (error) {
+      // Um pedido que nunca subiu é descartado aqui mesmo, sem rede (o
+      // gateway reconhece o id temporário). Sobra o caso do pedido que o
+      // servidor já conhece e o terminal está offline: aí a comanda continua
+      // ocupada até alguém cancelá-lo pela tela de Pedidos — chato, mas não
+      // impede nada do que o operador está fazendo agora.
+      AppLogger.instance.warning(
+        'pedido_vazio_nao_descartado',
+        data: {'pedido': '${order['id']}', 'causa': '$error'},
+      );
+    }
+  }
+
   Future<void> _goHome() async {
+    // O pedido é capturado ANTES do `setState` (depois dele não há mais o que
+    // descartar) e o descarte segue em segundo plano: voltar para o início é
+    // um gesto de navegação e não pode esperar a rede — sem conexão, a espera
+    // seria o tempo inteiro do timeout com a tela parada.
+    final discardable = _activeOrderIsEmpty ? activeOrder : null;
+    if (discardable != null) unawaited(_discardEmptyOrder(discardable));
     setState(() {
       activeOrder = null;
       selectedTable = null;
@@ -1229,7 +1455,7 @@ class _HomePageState extends State<HomePage> {
         builder: (dialogContext) => PopScope(
           canPop: false,
           child: StatefulBuilder(
-            builder: (context, update) => AlertDialog(
+            builder: (context, update) => AppDialog(
               title: const Row(
                 children: [
                   Icon(Icons.warning_amber_rounded, color: Colors.orange),
@@ -1373,13 +1599,9 @@ class _HomePageState extends State<HomePage> {
                           // restaurante e aprova — sem precisar de login de gerente.
                           if (cashMode) {
                             try {
-                              cashSession = await api.post(
-                                '/cash-register/${cashSession!['id']}/approve/',
-                                body: {
-                                  'reason': reason.text.trim(),
-                                  'cash_password': cashPassword.text,
-                                },
-                                accessToken: token,
+                              cashSession = await _approveWithCashPassword(
+                                reason: reason.text.trim(),
+                                password: cashPassword.text,
                               );
                               if (dialogContext.mounted) {
                                 Navigator.pop(dialogContext);
@@ -1508,6 +1730,13 @@ class _HomePageState extends State<HomePage> {
 
   void _goBack() {
     if (flowStep == 'payment' && activeOrder != null) {
+      // Recebimento montado não existe fora desta tela: voltar o descarta. O
+      // operador precisa saber disso ANTES, senão sairia achando que o
+      // pagamento ficou guardado em algum lugar.
+      if (stagedPayments.isNotEmpty) {
+        unawaited(_confirmLeavingPayment());
+        return;
+      }
       setState(() => flowStep = 'order');
     } else if (flowStep == 'table_details') {
       setState(() => flowStep = 'context');
@@ -1524,14 +1753,587 @@ class _HomePageState extends State<HomePage> {
     deviceAgent.dispose();
     unawaited(orderStore.close());
     ordersSignalSubscription?.cancel();
+    realtimeSignalSubscription?.cancel();
+    realtimeRefreshDebounce?.cancel();
+    pendingRealtimeTopics.clear();
     syncStatusSubscription?.cancel();
-    topologyService?.removeListener(_onTopologyChanged);
-    topologyService?.dispose();
+    topology.removeListener(_onTopologyChanged);
+    topology.dispose();
+    HardwareKeyboard.instance.removeHandler(inputRouter.handleKeyEvent);
+    codeSubscription?.cancel();
+    shortcutSubscription?.cancel();
+    productScanRepeats?.close();
+    inputRouter.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
     ordersSearchDebounce?.cancel();
     ordersSearchController.dispose();
+    ordersSearchFocus.dispose();
+    commandSearchFocus.dispose();
+    updateService.dispose();
     super.dispose();
+  }
+
+  // ───────────────────────────────── entrada (teclado, leitor, colar) ──
+
+  /// Em que tela o operador está — é o que decide como um código é lido.
+  PdvScreen get _currentScreen {
+    if (flowStep == 'scale-workstation') return PdvScreen.scale;
+    if (flowStep == 'orders') return PdvScreen.orders;
+    if (flowStep == 'payment') return PdvScreen.payment;
+    if (activeOrder != null) return PdvScreen.order;
+    if (flowStep == 'context' || flowStep == 'table_details') {
+      return PdvScreen.context;
+    }
+    return PdvScreen.home;
+  }
+
+  /// O cursor está dentro de um campo de texto?
+  ///
+  /// Com um campo focado o teclado é dele: o leitor escreve ali como qualquer
+  /// digitação, em vez de a tela interpretar o código por conta própria.
+  bool get _hasTextFocus {
+    final focus = FocusManager.instance.primaryFocus?.context;
+    if (focus == null) return false;
+    return focus.widget is EditableText ||
+        focus.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  /// Há um diálogo aberto por cima desta página?
+  ///
+  /// A rota da página deixa de ser a corrente quando um modal sobe — é o
+  /// sinal mais confiável, e não depende de cada `showDialog` do arquivo
+  /// lembrar de avisar.
+  bool get _hasModalAbove {
+    final route = ModalRoute.of(context);
+    return route != null && !route.isCurrent;
+  }
+
+  PdvInputContext _readInputContext() => PdvInputContext(
+    screen: _currentScreen,
+    hasTextFocus: _hasTextFocus,
+    hasModal: _hasModalAbove,
+    // O único modal que entende código é o de configuração de produto: ler o
+    // mesmo item de novo soma quantidade lá dentro.
+    modalAcceptsScanner: scanningProductId != null,
+    hasOrder: activeOrder != null,
+  );
+
+  /// A consulta de códigos, quando o armazenamento local já está ligado.
+  ///
+  /// Antes do login não há banco local, e ler um código nesse momento não faz
+  /// sentido nenhum — daí o nulo em vez de uma exceção.
+  CodeLookupService? get _codeLookup {
+    final gateway = api.localStore;
+    if (gateway == null) return null;
+    return codeLookup ??= CodeLookupService(gateway);
+  }
+
+  /// Um código chegou — de onde quer que tenha vindo.
+  Future<void> _onCodeScanned(ScannedCode scanned) async {
+    switch (_currentScreen) {
+      case PdvScreen.home:
+        await _openOrderFromCommandCode(scanned.value);
+      case PdvScreen.context:
+        // A busca em memória (por número/código exato da lista já filtrada)
+        // continua servindo a aba Comandas, que tem seu próprio campo de
+        // busca e convive bem com múltiplos resultados. A aba Mesas não tem
+        // campo de busca nenhum, então usa a mesma consulta ao banco local
+        // que a tela inicial usa — robusta mesmo com `commands` desatualizado.
+        if (orderType == 'command') {
+          _onCommandSearchSubmitted(scanned.value);
+        } else {
+          await _openOrderFromCommandCode(scanned.value);
+        }
+      case PdvScreen.order:
+        await _addProductFromCode(scanned.value);
+      case PdvScreen.orders:
+        // Bipar uma comanda abre direto o pedido em aberto dela; qualquer
+        // outro código (produto, número de pedido) só preenche a busca da
+        // lista, como antes.
+        await _openOrderFromCommandCode(
+          scanned.value,
+          onNotFound: () {
+            ordersSearchController.text = scanned.value;
+            setState(() => orderSearch = scanned.value);
+          },
+        );
+      case PdvScreen.payment:
+      case PdvScreen.cash:
+      case PdvScreen.settings:
+      case PdvScreen.scale:
+        break;
+    }
+  }
+
+  /// Acha a comanda pelo código lido e abre o pedido em aberto dela.
+  ///
+  /// Usada pela tela inicial, pela aba Mesas e pela lista de Pedidos — sempre
+  /// que a tela não tem um jeito melhor de tratar um código que não é
+  /// comanda. Sem `onNotFound`, o silêncio é deliberado: um aviso a cada
+  /// leitura sem correspondência transformaria uma pilha de cartões
+  /// conferidos rapidamente em uma sequência de alertas para fechar.
+  ///
+  /// Também não procura produto aqui: um EAN lido por engano não pode
+  /// disparar uma ação inesperada nessas telas.
+  Future<void> _openOrderFromCommandCode(
+    String code, {
+    VoidCallback? onNotFound,
+  }) async {
+    final lookup = _codeLookup;
+    if (lookup == null) {
+      onNotFound?.call();
+      return;
+    }
+    final resolution = await lookup.findCommand(code);
+    final command = resolution.command;
+    if (command == null) {
+      onNotFound?.call();
+      return;
+    }
+    final orderId = '${command['current_order_id'] ?? ''}';
+    if (orderId.isEmpty) {
+      onNotFound?.call();
+      return;
+    }
+    final local = commands.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == '${command['id']}',
+      orElse: () => null,
+    );
+    await _openCommand(local ?? command);
+  }
+
+  /// Edição do pedido: acha o produto e abre a configuração dele.
+  Future<void> _addProductFromCode(String code) async {
+    final lookup = _codeLookup;
+    if (lookup == null) return;
+    // Leitura repetida com o modal aberto: soma lá dentro.
+    if (scanningProductId != null) {
+      final repeated = await lookup.findProduct(
+        code,
+        restaurantId: restaurantId,
+        orderType: orderType,
+      );
+      if ('${repeated.product?['id'] ?? ''}' == scanningProductId) {
+        productScanRepeats?.add(null);
+      }
+      return;
+    }
+
+    final resolution = await lookup.findProduct(
+      code,
+      restaurantId: restaurantId,
+      orderType: orderType,
+    );
+    final product = resolution.product;
+    if (product == null) return;
+
+    // Quem decide entre somar uma unidade e abrir o modal é
+    // `_configureProduct`: produto sem escolha soma direto, com variação ou
+    // adicional a pergunta continua. Duplicar a regra aqui deixava a leitura
+    // do EAN pular as recusas que ela faz (pedido fechado, caixa fechado,
+    // produto por peso).
+    await _configureProduct(product);
+  }
+
+  bool _productHasChoices(Map<String, dynamic> product) {
+    bool active(List? list) => (list ?? const []).whereType<Map>().any(
+      (item) => item['is_active'] != false,
+    );
+    return active(product['variations'] as List?) ||
+        active(product['addons'] as List?);
+  }
+
+  /// Soma uma unidade ao item pendente. O servidor agrupa itens pendentes
+  /// iguais, e o armazenamento local passou a agrupar na mesma hora.
+  Future<void> _addOneMoreOf(Map<String, dynamic> product) async {
+    await _work(() async {
+      await api.post(
+        '/orders/${activeOrder!['id']}/items/',
+        body: {
+          'product': product['id'],
+          'quantity': 1,
+          'variations': const [],
+          'addons': const [],
+          'expected_unit_price': OrderPresenter.expectedUnitPrice(
+            product,
+          ).toStringAsFixed(2),
+          'customer_note': '',
+        },
+        accessToken: token,
+      );
+      await _refreshOrder();
+    });
+  }
+
+  /// Executa a ação de um atalho.
+  Future<void> _onShortcut(PdvShortcut shortcut) async {
+    switch (shortcut.id) {
+      case PdvAction.help:
+        await _openHelp();
+      case PdvAction.readClipboard:
+        await inputRouter.readFromClipboard();
+      case PdvAction.home:
+      case PdvAction.newSale:
+        if (await _confirmLeavingPendingItems()) await _goHome();
+      case PdvAction.orders:
+        await _navigateTo(PdvDestination.orders);
+      case PdvAction.refresh:
+        await _load();
+      case PdvAction.cashCenter:
+        await _openCashCenter();
+      case PdvAction.pickCommand:
+        setState(() {
+          orderType = 'command';
+          commandSearch = '';
+          flowStep = 'context';
+        });
+      case PdvAction.back:
+        _goBack();
+      case PdvAction.focusSearch:
+        _focusPageSearch();
+      case PdvAction.sendToKitchen:
+        await _sendPendingFromShortcut();
+      case PdvAction.payment:
+        await _preparePaymentPage();
+      case PdvAction.printReceipt:
+        await _printCustomerReceipt();
+      case PdvAction.moveSelectionUp:
+        _moveItemSelection(-1);
+      case PdvAction.moveSelectionDown:
+        _moveItemSelection(1);
+      case PdvAction.increaseQuantity:
+        await _changeSelectedQuantity(1);
+      case PdvAction.decreaseQuantity:
+        await _changeSelectedQuantity(-1);
+      case PdvAction.removeItem:
+        await _removeSelectedItem();
+      case PdvAction.confirm:
+        await _confirmPrimaryAction();
+    }
+  }
+
+  /// Confirma o descarte dos recebimentos que ainda não subiram.
+  Future<void> _confirmLeavingPayment() async {
+    final count = stagedPayments.length;
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: const Text('Descartar os recebimentos desta tela?'),
+        content: Text(
+          count == 1
+              ? 'Há 1 recebimento montado que ainda não foi enviado. Voltar '
+                    'agora o descarta — o pedido continua em aberto.'
+              : 'Há $count recebimentos montados que ainda não foram '
+                    'enviados. Voltar agora os descarta — o pedido continua '
+                    'em aberto.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar recebendo'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Descartar e voltar'),
+          ),
+        ],
+      ),
+    );
+    if (discard != true || !mounted) return;
+    setState(() {
+      registeredPayments = registeredPayments
+          .where((payment) => payment['_staged'] != true)
+          .toList();
+      flowStep = 'order';
+    });
+  }
+
+  /// Sair do pedido com itens ainda não enviados exige confirmação.
+  ///
+  /// F3 e Ctrl + N ficam ao lado de teclas usadas o tempo todo, e um toque
+  /// errado apagaria da tela itens que a cozinha nunca recebeu — sem que
+  /// ninguém percebesse até o cliente cobrar.
+  Future<bool> _confirmLeavingPendingItems() async {
+    if (activeOrder == null) return true;
+    final pending = orderItems
+        .where((item) => item['status'] == 'pending')
+        .length;
+    if (pending == 0) return true;
+    final answer = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: const Text('Sair com itens não enviados?'),
+        content: Text(
+          pending == 1
+              ? 'Há 1 item lançado que ainda não foi para a cozinha. '
+                    'Ele continua no pedido, mas você sai da tela dele.'
+              : 'Há $pending itens lançados que ainda não foram para a '
+                    'cozinha. Eles continuam no pedido, mas você sai da tela '
+                    'dele.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar no pedido'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sair mesmo assim'),
+          ),
+        ],
+      ),
+    );
+    return answer == true;
+  }
+
+  // ─────────────────────────────────── seleção de item por teclado ──
+
+  /// A lista de itens na MESMA ordem em que o painel a desenha.
+  ///
+  /// As setas precisam andar na ordem que o operador vê; percorrer a lista
+  /// bruta faria o cursor pular de um bloco para o outro sem motivo aparente.
+  List<Map<String, dynamic>> get _itemsInDisplayOrder => [
+    ...orderItems.where((item) => item['status'] != 'pending'),
+    ...orderItems.where((item) => item['status'] == 'pending'),
+  ];
+
+  Map<String, dynamic>? get _selectedOrderItem {
+    final id = selectedOrderItemId;
+    if (id == null) return null;
+    for (final item in orderItems) {
+      if ('${item['id']}' == id) return item;
+    }
+    return null;
+  }
+
+  /// Move o cursor. Sem seleção, a primeira seta escolhe a ponta certa da
+  /// lista — descer começa no primeiro item, subir no último.
+  void _moveItemSelection(int delta) {
+    final items = _itemsInDisplayOrder;
+    if (items.isEmpty) {
+      setState(() => selectedOrderItemId = null);
+      return;
+    }
+    final current = items.indexWhere(
+      (item) => '${item['id']}' == selectedOrderItemId,
+    );
+    final next = current < 0
+        ? (delta > 0 ? 0 : items.length - 1)
+        : (current + delta).clamp(0, items.length - 1);
+    setState(() => selectedOrderItemId = '${items[next]['id']}');
+    _revealSelectedItem();
+  }
+
+  void _selectOrderItem(Map<String, dynamic> item) {
+    setState(() => selectedOrderItemId = '${item['id']}');
+  }
+
+  /// Rola a lista até a linha selecionada quando ela sai da área visível.
+  void _revealSelectedItem() {
+    final id = selectedOrderItemId;
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = OrderCartPanel.contextOfItem(id);
+      if (target == null) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          target,
+          alignment: .5,
+          duration: const Duration(milliseconds: 140),
+        ),
+      );
+    });
+  }
+
+  /// `+` e `-` sobre o item selecionado.
+  ///
+  /// Só item pendente: um já despachado descreve o que a cozinha recebeu, e
+  /// mudar a quantidade dele reescreveria o passado sem ninguém na produção
+  /// ficar sabendo. Chegando a zero, a tecla vira o cancelamento — que exige
+  /// motivo e deixa registro, em vez de apagar em silêncio.
+  Future<void> _changeSelectedQuantity(int delta) async {
+    final item = _selectedOrderItem;
+    if (item == null) return;
+    await _changeItemQuantity(item, delta);
+  }
+
+  /// Soma [delta] unidades a um item. Serve às teclas `+`/`-` e ao contador
+  /// que fica no próprio cartão da lista — o mesmo caminho, com as mesmas
+  /// recusas, para os dois gestos não divergirem.
+  Future<void> _changeItemQuantity(Map<String, dynamic> item, int delta) async {
+    if (busy || activeOrder == null) return;
+    if ('${item['status'] ?? ''}' != 'pending') {
+      _error(
+        const ApiException(
+          'Este item já foi para a produção. Cancele-o (Delete) se precisar '
+          'tirá-lo da conta.',
+        ),
+      );
+      return;
+    }
+    if ('${item['pricing_unit'] ?? 'unit'}' == 'kg') {
+      _error(
+        const ApiException(
+          'Produto vendido por peso: a quantidade vem da balança.',
+        ),
+      );
+      return;
+    }
+    final quantity = ValueFormatters.number(item['quantity']) + delta;
+    if (quantity <= 0) {
+      // Zero é cancelamento, e cancelamento pede motivo e deixa registro.
+      await _voidItem(item);
+      if (mounted && '${item['id']}' == selectedOrderItemId) {
+        setState(() => selectedOrderItemId = null);
+      }
+      return;
+    }
+    await _work(() async {
+      await api.post(
+        '/orders/${activeOrder!['id']}/items/${item['id']}/quantity/',
+        body: {'quantity': quantity},
+        accessToken: token,
+      );
+      await _refreshOrder();
+      return activeOrder ?? <String, dynamic>{};
+    });
+  }
+
+  /// Delete sobre o item selecionado.
+  ///
+  /// Reusa o cancelamento normal, que já pede motivo e — para item despachado
+  /// — passa pela permissão e pelo cupom de cancelamento na cozinha. Uma tecla
+  /// não pode ter um caminho mais curto do que o botão.
+  Future<void> _removeSelectedItem() async {
+    final item = _selectedOrderItem;
+    if (item == null || busy) return;
+    await _voidItem(item);
+    if (mounted) setState(() => selectedOrderItemId = null);
+  }
+
+  // ────────────────────────────────────────────── ação principal (Enter) ──
+
+  /// O que o Enter confirma nesta tela.
+  ///
+  /// Só chega aqui quando NÃO há modal aberto nem campo focado — nesses dois
+  /// casos o Enter pertence a quem tem o foco, e é assim que ele continua
+  /// funcionando dentro dos diálogos sem nenhum caso especial.
+  Future<void> _confirmPrimaryAction() async {
+    switch (_currentScreen) {
+      case PdvScreen.order:
+        if (activeOrder == null || orderItems.isEmpty) return;
+        await _finishOrder();
+      case PdvScreen.context:
+        // Uma comanda filtrada e só uma: confirmar é abrir. Com várias, o
+        // Enter não escolhe por ninguém.
+        if (orderType != 'command') return;
+        final visible = visibleCommands;
+        if (visible.length == 1) await _openCommand(visible.first);
+      case PdvScreen.payment:
+        await _confirmPaymentFromKeyboard();
+      case PdvScreen.home:
+      case PdvScreen.orders:
+      case PdvScreen.cash:
+      case PdvScreen.settings:
+      case PdvScreen.scale:
+        break;
+    }
+  }
+
+  /// Enter na tela de pagamento.
+  ///
+  /// A regra é a mesma do botão, e de propósito: enquanto faltar dado
+  /// obrigatório, a tecla não conclui nada. Um Enter que cobra sozinho seria
+  /// pior do que um Enter que não faz nada, porque o operador só descobriria
+  /// depois — com o cliente já do outro lado do balcão.
+  Future<void> _confirmPaymentFromKeyboard() async {
+    if (activeOrder == null || busy) return;
+    // Já pago por inteiro: confirmar é concluir.
+    if (remainingTotal <= .009) {
+      await _completePaidOrder();
+      return;
+    }
+    // Falta valor: só registra o recebimento digitado, e só se ele existir e
+    // houver forma de pagamento escolhida.
+    if (selectedPaymentMethod == null || paymentValue <= 0) return;
+    _addSplitPayment();
+  }
+
+  /// Leva o cursor para a busca da tela atual.
+  void _focusPageSearch() {
+    if (_currentScreen == PdvScreen.orders) {
+      ordersSearchFocus.requestFocus();
+      return;
+    }
+    if (_currentScreen == PdvScreen.context) {
+      commandSearchFocus.requestFocus();
+    }
+  }
+
+  /// F9: manda para a produção só o que ainda está pendente.
+  ///
+  /// Sem itens pendentes a tecla não faz nada — e não avisa: apertar F9 duas
+  /// vezes é comum, e a segunda não pode virar um alerta.
+  Future<void> _sendPendingFromShortcut() async {
+    if (activeOrder == null || busy) return;
+    final pending = orderItems
+        .where((item) => item['status'] == 'pending')
+        .toList();
+    if (pending.isEmpty) return;
+    await _work(() async {
+      await _sendPendingItemsToKitchen(pending);
+      return activeOrder ?? <String, dynamic>{};
+    });
+    if (mounted) await _refreshOrder();
+  }
+
+  Future<void> _openHelp() async {
+    final serial = topology.config;
+    await PdvHelpDialog.show(
+      context,
+      screen: _currentScreen,
+      hasOrder: activeOrder != null,
+      scannerStatus: ScannerStatus(
+        connected: false,
+        detail: serial == null
+            ? 'A estação de balança é quem cuida do leitor serial.'
+            : 'Vincule o leitor serial em Balança rápida › Equipamentos.',
+      ),
+      lastCode: inputRouter.lastCode,
+      onTestCode: _describeCode,
+    );
+  }
+
+  /// Diz o que ACONTECERIA com um código, sem executar nada.
+  Future<String> _describeCode(String code) async {
+    final screen = _currentScreen;
+    if (!screen.readsCodes) {
+      return '${screen.label}: códigos são ignorados aqui, de propósito.';
+    }
+    final lookup = _codeLookup;
+    if (lookup == null) {
+      return 'O armazenamento local ainda não está pronto nesta sessão.';
+    }
+    final product = await lookup.findProduct(
+      code,
+      restaurantId: restaurantId,
+      orderType: orderType,
+    );
+    if (product.found) {
+      return 'Produto "${product.product?['name']}" — encontrado pelo '
+          '${product.matchedFieldLabel}.'
+          '${screen == PdvScreen.order ? ' Nesta tela, abriria a configuração do item.' : ' Esta tela não lança produtos.'}';
+    }
+    final command = await lookup.findCommand(code);
+    if (command.found) {
+      final orderId = '${command.command?['current_order_id'] ?? ''}';
+      return 'Comanda ${command.command?['number']} — encontrada pelo '
+          '${command.matchedFieldLabel}. '
+          '${orderId.isEmpty ? 'Sem pedido em aberto.' : 'Abriria o pedido em aberto dela.'}';
+    }
+    return 'Nenhuma comanda e nenhum produto com este código. '
+        'Na operação, uma leitura assim não faz nada e não mostra aviso.';
   }
 
   /// Publica a falha no alerta global, que sempre traz o botão de fechar.
@@ -1595,65 +2397,29 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _chooseTable() async {
-    final table = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Selecionar mesa'),
-        content: SizedBox(
-          width: 620,
-          child: GridView.builder(
-            shrinkWrap: true,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              childAspectRatio: 1.25,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-            ),
-            itemCount: tables.length,
-            itemBuilder: (_, index) {
-              final item = tables[index];
-              final occupied = item['current_order_id'] != null;
-              return InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => Navigator.pop(context, item),
-                child: Ink(
-                  decoration: BoxDecoration(
-                    color: occupied
-                        ? Colors.orange.shade50
-                        : Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: occupied
-                          ? Colors.orange.shade300
-                          : Colors.green.shade300,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        '${item['number']}',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        occupied ? 'Em uso' : 'Livre',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-    if (table == null) return;
-    await _openTable(table);
+  /// Executa uma impressão FORA da trava de operação da tela.
+  ///
+  /// `_work` existe para impedir o operador de disparar duas operações de
+  /// venda ao mesmo tempo, e por isso ele DESISTE (`if (busy) return null`)
+  /// quando já há uma em curso. Papel de venda concluída não pode obedecer a
+  /// essa trava: o DANFE sai por uma espera em segundo plano — a autorização
+  /// da SEFAZ chega segundos depois do clique — e nesse intervalo o operador
+  /// já começou a próxima venda. Com `busy` verdadeiro, `_work` devolvia
+  /// `null`, o `if (printJob == null) return;` seguinte engolia o caso, e o
+  /// cupom fiscal simplesmente não existia: sem erro, sem fila, sem papel.
+  ///
+  /// Falha continua sendo mostrada — o que não pode é desaparecer.
+  Future<bool> _printingStep(
+    Future<void> Function() action, {
+    required String title,
+  }) async {
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      if (mounted) _error(error, title: title);
+      return false;
+    }
   }
 
   Future<void> _openTable(Map<String, dynamic> table) async {
@@ -1663,36 +2429,14 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> _openTableOrder(Map<String, dynamic> table) async {
-    await _work(() async {
-      selectedTable = table;
-      final currentId = table['current_order_id'];
-      final order = currentId != null
-          ? await api.get('/orders/$currentId/', accessToken: token)
-          : await api.post(
-              '/orders/open-table/',
-              body: {'table': table['id']},
-              accessToken: token,
-            );
-      activeOrder = _completeOfflineOrder(order, type: 'table', table: table);
-      if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
-        table['status'] = 'occupied';
-        table['current_order_id'] = activeOrder!['id'];
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
-      }
-      flowStep = 'order';
-    });
-  }
-
+  // Kept temporarily for compatibility with queued mutations from older PDV
+  // builds; no current PDV surface calls these waiter-only actions.
+  // ignore: unused_element
   Future<void> _linkCommandDialog() async {
     final searchController = TextEditingController();
     final action = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AppDialog(
         title: const Text('Vincular Comanda'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1748,7 +2492,7 @@ class _HomePageState extends State<HomePage> {
         if (capacity > 0 && activeCommandsCount >= capacity) {
           final confirm = await showDialog<bool>(
             context: context,
-            builder: (ctx) => AlertDialog(
+            builder: (ctx) => AppDialog(
               title: const Text('Lotação Atingida'),
               content: const Text(
                 'A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?',
@@ -1772,12 +2516,11 @@ class _HomePageState extends State<HomePage> {
         try {
           setState(() => busy = true);
           await api.post(
-            '/commands/${command['id']}/link_table/',
-            body: {'table': selectedTable!['id']},
+            '/commands/${command['id']}/link-table/',
+            body: {'table_id': selectedTable!['id']},
             accessToken: token,
           );
           if (!mounted) return;
-          showAppToast(context, 'Comanda vinculada com sucesso.');
           await _load();
         } catch (e) {
           _error(e);
@@ -1788,16 +2531,16 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _unlinkCommand(Map<String, dynamic> command) async {
     try {
       setState(() => busy = true);
       await api.post(
-        '/commands/${command['id']}/unlink_table/',
+        '/commands/${command['id']}/unlink-table/',
         body: const {},
         accessToken: token,
       );
       if (!mounted) return;
-      showAppToast(context, 'Comanda desvinculada.');
       await _load();
     } catch (e) {
       _error(e);
@@ -1806,13 +2549,14 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _transferCommandDialog(Map<String, dynamic> command) async {
     final tablesList = tables
         .where((t) => t['id'] != selectedTable?['id'])
         .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: const Text('Transferir Comanda'),
         content: SizedBox(
           width: 400,
@@ -1843,12 +2587,11 @@ class _HomePageState extends State<HomePage> {
       try {
         setState(() => busy = true);
         await api.post(
-          '/commands/${command['id']}/link_table/',
-          body: {'table': destTable['id']},
+          '/commands/${command['id']}/link-table/',
+          body: {'table_id': destTable['id']},
           accessToken: token,
         );
         if (!mounted) return;
-        showAppToast(context, 'Comanda transferida.');
         await _load();
       } catch (e) {
         _error(e);
@@ -1858,13 +2601,14 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _transferAllCommandsDialog() async {
     final tablesList = tables
         .where((t) => t['id'] != selectedTable?['id'])
         .toList();
     final destTable = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: const Text('Transferir Todas as Comandas'),
         content: SizedBox(
           width: 400,
@@ -1895,12 +2639,11 @@ class _HomePageState extends State<HomePage> {
       try {
         setState(() => busy = true);
         await api.post(
-          '/tables/${selectedTable!['id']}/transfer_commands/',
-          body: {'destination_table_id': destTable['id']},
+          '/tables/${selectedTable!['id']}/transfer-commands/',
+          body: {'to_table_id': destTable['id']},
           accessToken: token,
         );
         if (!mounted) return;
-        showAppToast(context, 'Comandas transferidas.');
         await _load();
       } catch (e) {
         _error(e);
@@ -1916,8 +2659,19 @@ class _HomePageState extends State<HomePage> {
   /// o que já existe. Quem decide é o servidor (`/orders/open-command/`), para
   /// que dois caixas lendo a mesma comanda não criem dois pedidos.
   Future<void> _openCommand(Map<String, dynamic> command) async {
+    if (busy) return;
+    final linkedTableId = command['current_table'];
+    final table = linkedTableId == null
+        ? null
+        : tables.cast<Map<String, dynamic>?>().firstWhere(
+            (item) => '${item?['id']}' == '$linkedTableId',
+            orElse: () => null,
+          );
+
+    final tableForCommand = table;
     await _work(() async {
       selectedCommand = command;
+      selectedTable = tableForCommand;
       final currentId = command['current_order_id'];
       final order = currentId != null
           ? await api.get('/orders/$currentId/', accessToken: token)
@@ -1925,28 +2679,129 @@ class _HomePageState extends State<HomePage> {
               '/orders/open-command/',
               body: {'command': command['id']},
               accessToken: token,
+              // Mesa e comanda só existem na tela; o repositório precisa
+              // delas para montar o pedido local completo.
+              localContext: {'command': command, 'table': ?selectedTable},
             );
       activeOrder = _completeOfflineOrder(
         order,
         type: 'command',
         command: command,
+        table: selectedTable,
       );
       if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
         command['status'] = 'occupied';
         command['current_order_id'] = activeOrder!['id'];
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
       }
+      await _refreshOrder();
       flowStep = 'order';
     });
+    // Fora do `_work` acima de propósito: ele marca `busy`, e o vínculo da
+    // mesa faz a própria chamada de API.
+    await _ensureCommandTable();
+  }
+
+  /// Pergunta em que mesa a comanda está sentada, quando ela ainda não tem
+  /// vínculo.
+  ///
+  /// Vale tanto ao abrir um pedido novo quanto ao retomar um existente: sem
+  /// isso uma comanda avulsa seguia o atendimento inteiro sem mesa, e o salão
+  /// não tinha como saber onde entregar. Continua sendo possível seguir sem
+  /// mesa — self-service é um caso legítimo —, mas agora é uma escolha
+  /// explícita do operador, não um silêncio.
+  Future<void> _ensureCommandTable() async {
+    final command = selectedCommand;
+    if (!mounted ||
+        command == null ||
+        selectedTable != null ||
+        command['current_table'] != null) {
+      return;
+    }
+    final available = tables
+        .where((table) => '${table['status']}' != 'inactive')
+        .toList(growable: false);
+    if (available.isEmpty) return;
+
+    final chosen = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AppDialog(
+        title: Text('Comanda ${command['code'] ?? command['number'] ?? ''}'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Em qual mesa esta comanda está?'),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: available.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final table = available[index];
+                    final occupied =
+                        (table['active_commands'] as List? ?? const []).length;
+                    final capacity = _number(table['capacity']).round();
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.table_restaurant_outlined),
+                      title: Text('Mesa ${table['number']}'),
+                      subtitle: Text(
+                        [
+                          '${table['sector_name'] ?? ''}'.trim(),
+                          if (capacity > 0) '$occupied/$capacity comandas',
+                        ].where((part) => part.isNotEmpty).join(' · '),
+                      ),
+                      onTap: () => Navigator.pop(dialogContext, table),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Seguir sem mesa'),
+          ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+
+    try {
+      await api.post(
+        '/commands/${command['id']}/link-table/',
+        body: {'table_id': chosen['id']},
+        accessToken: token,
+      );
+      if (!mounted) return;
+      setState(() {
+        selectedTable = chosen;
+        command['current_table'] = chosen['id'];
+        activeOrder = {
+          ...?activeOrder,
+          'table': chosen['id'],
+          'table_number': chosen['number'],
+        };
+      });
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'Não foi possível vincular a comanda à mesa',
+          action: 'O pedido segue aberto; tente vincular de novo pela mesa.',
+        );
+      }
+    }
   }
 
   Future<void> _selectOrderType(String type) async {
     orderType = type;
-    if (type == 'table' || type == 'command') {
+    if (type == 'command') {
       setState(() {
         commandSearch = '';
         flowStep = 'context';
@@ -1993,7 +2848,7 @@ class _HomePageState extends State<HomePage> {
                     .toLowerCase()
                     .contains(term);
           }).toList();
-          return AlertDialog(
+          return AppDialog(
             title: Text(
               type == 'delivery'
                   ? 'Cliente do delivery'
@@ -2086,7 +2941,7 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => AppDialog(
           title: const Text('Cadastrar cliente'),
           content: SizedBox(
             width: 560,
@@ -2215,10 +3070,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startOrder(String type) async {
-    if (type == 'table') {
-      await _chooseTable();
-      return;
-    }
     await _work(() async {
       selectedTable = null;
       activeOrder = await api.post(
@@ -2231,43 +3082,25 @@ class _HomePageState extends State<HomePage> {
         accessToken: token,
       );
       activeOrder = _completeOfflineOrder(activeOrder!, type: type);
-      if (_isOfflinePending(activeOrder)) {
-        orderItems = [];
-        await _persistOfflineOrder();
-        if (mounted) setState(() {});
-      } else {
-        await _refreshOrder();
-      }
+      await _refreshOrder();
       flowStep = 'order';
     });
   }
 
+  /// Relê o pedido da fonte operacional local.
+  ///
+  /// `api.get` é offline-first: responde do SQLite na hora e reconcilia com o
+  /// servidor em paralelo (§3). Por isso não há mais dois caminhos aqui — o
+  /// pedido criado offline e o pedido vindo do servidor moram no mesmo lugar.
   Future<void> _refreshOrder() async {
     if (activeOrder == null) return;
-    if (_isOfflinePending(activeOrder) ||
-        '${activeOrder!['id']}'.startsWith('offline-')) {
-      final items = activeOrder!['items'] as List? ?? orderItems;
-      orderItems = items.cast<Map<String, dynamic>>();
-      if (mounted) setState(() {});
-      return;
-    }
-    final scope = api.sessionScope;
     try {
-      final fresh = await api.get(
+      activeOrder = await api.get(
         '/orders/${activeOrder!['id']}/',
         accessToken: token,
       );
-      activeOrder = scope == null
-          ? fresh
-          : await orderStore.saveFromServer(fresh, scope: scope);
     } on ApiException catch (error) {
-      // Sem rede, a cópia local é a versão boa: ela tem as edições que ainda
-      // não subiram. Esvaziar a tela aqui perderia o trabalho do operador.
       if (!error.isConnectivity) rethrow;
-      final local = scope == null
-          ? null
-          : await orderStore.read('${activeOrder!['id']}', scope: scope);
-      if (local != null) activeOrder = local;
       if (mounted) _warnLocalOrderData();
     }
     final items = activeOrder!['items'] as List? ?? [];
@@ -2275,6 +3108,9 @@ class _HomePageState extends State<HomePage> {
         .cast<Map<String, dynamic>>()
         .where((item) => item['status'] != 'voided')
         .toList();
+    // O total pode ter mudado aqui — a taxa de serviço do fechamento chega
+    // pela sincronização, e é depois desta leitura que ela aparece.
+    if (flowStep == 'payment') _refreshSuggestedPaymentAmount();
     if (mounted) setState(() {});
   }
 
@@ -2294,58 +3130,6 @@ class _HomePageState extends State<HomePage> {
       table: table,
       command: command,
     );
-  }
-
-  /// Registra o item lançado sem rede na memória **e** no disco.
-  ///
-  /// Guardar só em memória fazia a edição sumir ao sair da tela e voltar: a
-  /// releitura pegava a cópia antiga, que não conhecia o item.
-  Future<void> _addOfflineItem(
-    Map<String, dynamic> response,
-    Map<String, dynamic> product, {
-    required double quantity,
-    String customerNote = '',
-  }) async {
-    final item = OrderPresenter.offlineItem(
-      response: response,
-      product: product,
-      quantity: quantity,
-      customerNote: customerNote,
-    );
-    orderItems = [...orderItems, item];
-    activeOrder = OrderPresenter.withItems(activeOrder!, orderItems);
-
-    final scope = api.sessionScope;
-    if (scope != null) {
-      final persisted = await orderStore.addItem(
-        '${activeOrder!['id']}',
-        item,
-        scope: scope,
-      );
-      // O store recalcula os totais; usar o resultado dele mantém a tela e o
-      // disco com exatamente o mesmo valor.
-      if (persisted != null) activeOrder = persisted;
-    }
-    if (mounted) setState(() {});
-  }
-
-  /// Marca o item como cancelado na cópia local.
-  Future<void> _voidOfflineItem(String itemId) async {
-    final scope = api.sessionScope;
-    final order = activeOrder;
-    if (scope == null || order == null) return;
-    final persisted = await orderStore.voidItem(
-      '${order['id']}',
-      itemId,
-      scope: scope,
-    );
-    if (persisted == null) return;
-    activeOrder = persisted;
-    orderItems = (persisted['items'] as List? ?? const [])
-        .cast<Map<String, dynamic>>()
-        .where((item) => item['status'] != 'voided')
-        .toList();
-    if (mounted) setState(() {});
   }
 
   Future<void> _configureProduct(Map<String, dynamic> product) async {
@@ -2368,45 +3152,73 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     if (activeOrder == null) {
-      await _chooseTable();
-      if (activeOrder == null) return;
+      setState(() {
+        orderType = 'command';
+        commandSearch = '';
+        flowStep = 'context';
+      });
+      return;
     }
     if (!mounted) return;
-    if (product['pricing_unit'] == 'kg') {
+    if (isProductSoldByWeight(product)) {
       await _weighProduct(product);
       return;
     }
-    final config = await showProductConfigDialog(context, product);
+    // Produto sem variação e sem adicional não tem NADA a perguntar: clicar
+    // nele na lista (ou bipar o EAN) soma uma unidade direto, e o ajuste fino
+    // fica no contador do próprio cartão, na lista do pedido. O modal existia
+    // para escolher, e abrir uma janela de confirmação para um refrigerante
+    // custava dois gestos por unidade num balcão com fila.
+    if (!_productHasChoices(product)) {
+      await _addOneMoreOf(product);
+      return;
+    }
+    // Enquanto este modal estiver aberto, ler o MESMO produto de novo soma
+    // quantidade aqui dentro em vez de abrir um segundo modal por cima.
+    //
+    // O `finally` não é zelo: se o diálogo falhasse com a marca ligada, toda
+    // leitura seguinte seria interpretada como "repetição do produto X" e
+    // nenhum outro item entraria no pedido.
+    final repeats = StreamController<void>.broadcast();
+    ProductConfigResult? config;
+    try {
+      productScanRepeats = repeats;
+      scanningProductId = '${product['id']}';
+      config = await showProductConfigDialog(
+        context,
+        product,
+        repeatedScans: repeats.stream,
+      );
+    } finally {
+      scanningProductId = null;
+      productScanRepeats = null;
+      await repeats.close();
+    }
     if (config == null) return;
+    // Cópia não-nula: o `finally` acima impede o compilador de promover o tipo.
+    final chosen = config;
     await _work(() async {
-      final response = await api.post(
+      await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
-          'quantity': config.quantity,
-          'variations': config.variationId == null ? [] : [config.variationId],
-          'addons': config.addonIds,
+          'quantity': chosen.quantity.round(),
+          'variations': chosen.variationId == null ? [] : [chosen.variationId],
+          'addons': chosen.addonIds,
           'expected_unit_price': OrderPresenter.expectedUnitPrice(
             product,
-            variationIds: config.variationId == null
+            variationIds: chosen.variationId == null
                 ? const []
-                : [config.variationId!],
-            addonIds: config.addonIds,
+                : [chosen.variationId!],
+            addonIds: chosen.addonIds,
           ).toStringAsFixed(2),
-          'customer_note': config.customerNote,
+          'customer_note': chosen.customerNote,
         },
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        _addOfflineItem(
-          response,
-          product,
-          quantity: config.quantity.toDouble(),
-          customerNote: config.customerNote,
-        );
-      } else {
-        await _refreshOrder();
-      }
+      // O item já foi lançado e os totais recalculados pelo
+      // `OrderRepository`; a tela apenas relê o pedido do banco local.
+      await _refreshOrder();
     });
   }
 
@@ -2429,206 +3241,232 @@ class _HomePageState extends State<HomePage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: Row(
-            children: [
-              const Icon(Icons.scale_outlined),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '${product['name']} · ${_money(product['current_price'])}/kg',
-                ),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 460,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String?>(
-                  initialValue: scaleId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Balança',
-                    helperText:
-                        'Selecione o equipamento que realizará a pesagem.',
-                  ),
-                  items: scales
-                      .map(
-                        (scale) => DropdownMenuItem(
-                          value: '${scale['id']}',
-                          child: Text(
-                            '${scale['name']} · ${scale['port'] ?? scale['protocol'] ?? ''}',
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) => update(() {
-                    scaleId = value;
-                    reading = null;
-                    weight = 0;
-                    readingMessage =
-                        'Clique em “Ler balança” para buscar o peso.';
-                  }),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 22),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainer,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: weight > 0
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).dividerColor,
+        builder: (context, update) => CallbackShortcuts(
+          bindings: {
+            // Enter lança o item pesado, a mesma condição do botão. O atalho
+            // precisa do nó de foco abaixo dele: senão o foco fica no escopo
+            // da rota e a tecla passa por cima sem tocar em nada.
+            for (final key in const [
+              LogicalKeyboardKey.enter,
+              LogicalKeyboardKey.numpadEnter,
+            ])
+              SingleActivator(key): () {
+                if (weight > 0) Navigator.pop(context, true);
+              },
+          },
+          child: Focus(
+            autofocus: true,
+            child: AppDialog(
+              title: Row(
+                children: [
+                  const Icon(Icons.scale_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${product['name']} · ${_money(product['current_price'])}/kg',
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      Text(
-                        weight.toStringAsFixed(3),
-                        style: TextStyle(
-                          fontSize: 42,
-                          fontWeight: FontWeight.w900,
+                ],
+              ),
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      initialValue: scaleId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Balança',
+                        helperText:
+                            'Selecione o equipamento que realizará a pesagem.',
+                      ),
+                      items: scales
+                          .map(
+                            (scale) => DropdownMenuItem(
+                              value: '${scale['id']}',
+                              child: Text(
+                                '${scale['name']} · ${scale['port'] ?? scale['protocol'] ?? ''}',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) => update(() {
+                        scaleId = value;
+                        reading = null;
+                        weight = 0;
+                        readingMessage =
+                            'Clique em “Ler balança” para buscar o peso.';
+                      }),
+                    ),
+                    const SizedBox(height: 18),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 22),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainer,
+                        borderRadius: AppTheme.radius,
+                        border: Border.all(
                           color: weight > 0
                               ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
+                              : Theme.of(context).dividerColor,
                         ),
                       ),
-                      const Text(
-                        'kg',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  readingMessage,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: scaleId == null || readingScale
-                            ? null
-                            : () async {
-                                update(() => readingScale = true);
-                                try {
-                                  final result = await api.get(
-                                    '/scales/$scaleId/latest-reading/',
-                                    accessToken: token,
-                                  );
-                                  final value = _number(
-                                    result['net_weight_kg'] ??
-                                        result['weight_kg'],
-                                  );
-                                  update(() {
-                                    reading = result;
-                                    weight = value;
-                                    manualWeight.clear();
-                                    readingMessage =
-                                        result['is_stable'] == false
-                                        ? 'Leitura recebida, mas ainda instável.'
-                                        : 'Leitura estável recebida da balança.';
-                                  });
-                                } on ApiException catch (error) {
-                                  update(() => readingMessage = error.message);
-                                  if (mounted) {
-                                    showAppError(this.context, error);
-                                  }
-                                } finally {
-                                  update(() => readingScale = false);
-                                }
-                              },
-                        icon: readingScale
-                            ? const SizedBox(
-                                width: 17,
-                                height: 17,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.refresh),
-                        label: Text(readingScale ? 'Lendo...' : 'Ler balança'),
+                      child: Column(
+                        children: [
+                          Text(
+                            weight.toStringAsFixed(3),
+                            style: TextStyle(
+                              fontSize: 42,
+                              fontWeight: FontWeight.w900,
+                              color: weight > 0
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const Text(
+                            'kg',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: manualWeight,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Peso manual',
-                          suffixText: 'kg',
-                        ),
-                        onChanged: (value) => update(() {
-                          reading = null;
-                          weight =
-                              double.tryParse(value.replaceAll(',', '.')) ?? 0;
-                          readingMessage = weight > 0
-                              ? 'Peso informado manualmente.'
-                              : 'Leia a balança ou informe o peso.';
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: note,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    labelText: 'Observação',
-                    hintText: 'Ex.: retirar excesso de gordura',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Total estimado',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
+                    const SizedBox(height: 8),
                     Text(
-                      _money(weight * _number(product['current_price'])),
-                      style: const TextStyle(
-                        fontSize: 21,
-                        fontWeight: FontWeight.w900,
+                      readingMessage,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: scaleId == null || readingScale
+                                ? null
+                                : () async {
+                                    update(() => readingScale = true);
+                                    try {
+                                      final result = await api.get(
+                                        '/scales/$scaleId/latest-reading/',
+                                        accessToken: token,
+                                      );
+                                      final value = _number(
+                                        result['net_weight_kg'] ??
+                                            result['weight_kg'],
+                                      );
+                                      update(() {
+                                        reading = result;
+                                        weight = value;
+                                        manualWeight.clear();
+                                        readingMessage =
+                                            result['is_stable'] == false
+                                            ? 'Leitura recebida, mas ainda instável.'
+                                            : 'Leitura estável recebida da balança.';
+                                      });
+                                    } on ApiException catch (error) {
+                                      update(
+                                        () => readingMessage = error.message,
+                                      );
+                                      if (mounted) {
+                                        showAppError(this.context, error);
+                                      }
+                                    } finally {
+                                      update(() => readingScale = false);
+                                    }
+                                  },
+                            icon: readingScale
+                                ? const SizedBox(
+                                    width: 17,
+                                    height: 17,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.refresh),
+                            label: Text(
+                              readingScale ? 'Lendo...' : 'Ler balança',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: manualWeight,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Peso manual',
+                              suffixText: 'kg',
+                            ),
+                            onChanged: (value) => update(() {
+                              reading = null;
+                              weight =
+                                  double.tryParse(value.replaceAll(',', '.')) ??
+                                  0;
+                              readingMessage = weight > 0
+                                  ? 'Peso informado manualmente.'
+                                  : 'Leia a balança ou informe o peso.';
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: note,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Observação',
+                        hintText: 'Ex.: retirar excesso de gordura',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total estimado',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          _money(weight * _number(product['current_price'])),
+                          style: const TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: weight > 0
+                      ? () => Navigator.pop(context, true)
+                      : null,
+                  child: const Text('Adicionar ao pedido (Enter)'),
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: weight > 0 ? () => Navigator.pop(context, true) : null,
-              child: const Text('Adicionar ao pedido'),
-            ),
-          ],
         ),
       ),
     );
     if (accepted != true) return;
     await _work(() async {
-      final response = await api.post(
+      await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
           'product': product['id'],
@@ -2642,23 +3480,24 @@ class _HomePageState extends State<HomePage> {
         },
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        _addOfflineItem(
-          response,
-          product,
-          quantity: weight,
-          customerNote: note.text.trim(),
-        );
-      } else {
-        await _refreshOrder();
-      }
+      await _refreshOrder();
     });
   }
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
+    // Item já enviado à cozinha: o cancelamento não é só tirar da conta, sai
+    // um cupom na impressora do setor para a produção parar. Avisar antes
+    // evita o caixa descobrir isso pelo barulho da impressora.
+    final inProduction = '${item['status']}' != 'pending';
     final reason = await ItemVoidReasonDialog.show(
       context,
       itemName: '${item['product_name'] ?? 'Item do pedido'}',
+      title: inProduction ? 'Cancelar item em produção' : 'Remover item',
+      confirmLabel: inProduction ? 'Cancelar e avisar cozinha' : 'Remover item',
+      warning: inProduction
+          ? 'Este item já foi enviado para a cozinha. Uma nota de '
+                'cancelamento será impressa no setor que o recebeu.'
+          : null,
     );
     if (reason == null || !mounted) return;
 
@@ -2668,12 +3507,371 @@ class _HomePageState extends State<HomePage> {
         body: {'reason': reason},
         accessToken: token,
       );
-      if (_isOfflinePending(response)) {
-        await _voidOfflineItem('${item['id']}');
-      } else {
-        await _refreshOrder();
+      // Item que já estava na produção precisa de cupom no setor para a
+      // cozinha parar de fazê-lo. Quem imprime segue a mesma regra da comanda:
+      // se a operação subiu, o backend cria o `PrintJob`; se ficou na fila,
+      // quem imprime é este terminal — senão o prato continuaria sendo feito
+      // depois de o cliente desistir.
+      if (inProduction) {
+        await _printCancellationIfQueued(item, reason, response);
       }
+      await _refreshOrder();
     });
+  }
+
+  /// Quem imprime é o servidor (ou o Caixa Principal, pelo relay)?
+  ///
+  /// Só quando a operação chega ao destino dentro da janela: aí o `PrintJob`
+  /// existe lá e sair papel aqui dobraria o cupom.
+  ///
+  /// **Um Caixa Secundário nunca espera essa janela.** A impressora é dele, o
+  /// cupom ele sabe montar, e o cliente está na frente dele — mandar a
+  /// impressão para o Principal faria o papel sair na outra ponta da loja. Ele
+  /// vai direto reivindicar e imprimir; se a operação já tiver subido, a
+  /// reivindicação falha e o backend assume, que é a mesma rede de segurança
+  /// de sempre.
+  Future<bool> _serverPrintsInstead(String operationId) async {
+    if (isSecondaryStation) return false;
+    return api.awaitDelivery(
+      operationId,
+      timeout: api.syncStatus.hasConnection
+          ? const Duration(seconds: 3)
+          : const Duration(milliseconds: 400),
+    );
+  }
+
+  /// Imprime o cupom de cancelamento aqui quando a operação não chegou ao
+  /// servidor.
+  ///
+  /// Reivindica a impressão marcando o corpo AINDA enfileirado antes de mandar
+  /// papel: se a operação subir nesse instante, a marcação falha e quem
+  /// imprime é o backend. É a mesma trava que impede a comanda de cozinha de
+  /// sair duas vezes.
+  Future<void> _printCancellationIfQueued(
+    Map<String, dynamic> item,
+    String reason,
+    Map<String, dynamic> response,
+  ) async {
+    final operationId = '${response['_sync_operation_id'] ?? ''}';
+    if (operationId.isEmpty) return;
+    if (await _serverPrintsInstead(operationId)) return;
+    if (!await api.patchQueuedBody(operationId, {'offline_printed': true})) {
+      return;
+    }
+    final printed = await _printCancellationTicket(item, reason);
+    if (!printed) {
+      await api.patchQueuedBody(operationId, {'offline_printed': false});
+    }
+  }
+
+  /// Monta e imprime o cupom de cancelamento nas impressoras do setor do
+  /// produto. Devolve `true` se pelo menos uma aceitou.
+  Future<bool> _printCancellationTicket(
+    Map<String, dynamic> item,
+    String reason,
+  ) async {
+    final order = activeOrder;
+    if (order == null) return false;
+    final text = LocalPrintRenderer.cancellationTicket(
+      order: order,
+      item: item,
+      reason: reason,
+      table: selectedTable,
+      command: selectedCommand,
+      operatorName: widget.controller.session?.user.name ?? '',
+    );
+    final product = products.cast<Map<String, dynamic>?>().firstWhere(
+      (candidate) => '${candidate?['id']}' == '${item['product']}',
+      orElse: () => null,
+    );
+    final sector = '${product?['sector'] ?? ''}';
+    var printed = false;
+    for (final printer in await _list(
+      '/printers/',
+      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+    )) {
+      // Mesma regra da comanda: o cupom sai no setor que recebeu o item. Um
+      // produto sem setor, ou um setor sem impressora, simplesmente não gera
+      // cupom — sem erro, como no backend.
+      if (sector.isEmpty || '${printer['sector'] ?? ''}' != sector) continue;
+      try {
+        // O cupom entra na fila local: mesmo que esta impressora esteja sem
+        // papel agora, ele sai quando ela voltar.
+        final cancelPrinter = KitchenCancelPrinter(
+          PrinterDevice.fromJson(printer),
+          runtime: deviceAgent.printing,
+        );
+        if ((await deviceAgent.submit(
+          cancelPrinter,
+          cancelPrinter.compose(content: text),
+        )).accepted) {
+          printed = true;
+        }
+      } catch (_) {
+        // Outra impressora do setor ainda pode aceitar.
+      }
+    }
+    return printed;
+  }
+
+  Future<void> _cancelOrder() async {
+    final order = activeOrder;
+    if (order == null ||
+        const {
+          'paid',
+          'cancelled',
+          'refunded',
+        }.contains('${order['status']}')) {
+      return;
+    }
+
+    final reason = await ItemVoidReasonDialog.show(
+      context,
+      itemName: 'Pedido #${order['sequence']}',
+      title: 'Cancelar pedido',
+      confirmLabel: 'Continuar',
+    );
+    if (!mounted || reason == null) return;
+
+    String? cashPassword;
+    String? authorizationUsername;
+    String? authorizationPassword;
+    final authorized = await showSupervisorCloseDialog(
+      context: context,
+      title: 'Autorizar cancelamento',
+      description:
+          'Confirme com a senha de operação do restaurante ou com o login '
+          'de um administrador/usuário que tenha permissão para cancelar pedidos.',
+      confirmLabel: 'Cancelar pedido',
+      cancelLabel: 'Voltar',
+      confirmIcon: Icons.cancel_outlined,
+      credentialRoleLabel: 'usuário autorizado',
+      verifyPassword: (password) async {
+        final valid = await widget.controller.verifySupervisorClosePassword(
+          password,
+        );
+        if (valid) cashPassword = password;
+        return valid;
+      },
+      verifyAdminCredentials: (username, password) async {
+        final failure = await widget.controller
+            .verifyOrderCancellationCredentials(username, password);
+        if (failure == null) {
+          authorizationUsername = username;
+          authorizationPassword = password;
+        }
+        return failure;
+      },
+      onInvalidPassword: () => widget.controller.refreshSupervisorPassword(
+        restaurantId: restaurantId,
+      ),
+    );
+    if (!mounted ||
+        !authorized ||
+        '${activeOrder?['id']}' != '${order['id']}') {
+      return;
+    }
+
+    final cancelled = await _work(
+      () => api.post(
+        '/orders/${order['id']}/cancel/',
+        body: {
+          'reason': reason,
+          'cash_password': ?cashPassword,
+          'authorization_username': ?authorizationUsername,
+          'authorization_password': ?authorizationPassword,
+        },
+        accessToken: token,
+      ),
+      errorTitle: 'Não foi possível cancelar o pedido',
+    );
+    if (!mounted || cancelled == null) return;
+
+    final scope = api.sessionScope;
+    if (scope != null) {
+      await orderStore.saveFromServer(cancelled, scope: scope);
+    }
+    if (!mounted) return;
+    await _goHome();
+  }
+
+  /// Envia os itens pendentes para produção. Quando a rede está fora, imprime
+  /// a comanda direto na impressora do setor em vez de esperar o backend
+  /// renderizar o `PrintJob` — a cozinha não pode esperar a internet voltar
+  /// pra saber que tem pedido novo.
+  ///
+  /// `offline_printed` só acompanha o envio se a comanda tiver saído mesmo:
+  /// essa flag faz o backend registrar os `PrintJob` como já impressos, então
+  /// mandá-la depois de uma impressão que falhou deixaria a cozinha sem
+  /// comanda nenhuma — nem agora, nem quando a fila sincronizasse.
+  ///
+  /// A condição é `phase == offline`, e não "sem conexão": `unknown` (antes da
+  /// primeira resposta) e `degraded` (servidor instável, mas respondendo)
+  /// também contam como "sem conexão" e levavam a imprimir aqui um pedido que
+  /// o backend ia imprimir de novo — duas comandas para a mesma rodada.
+  Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
+    List<Map<String, dynamic>> pendingItems,
+  ) async {
+    final batchSerial = OrderPresenter.generateBatchSerial();
+    final response = await api.post(
+      '/orders/${activeOrder!['id']}/send-to-kitchen/',
+      body: {'client_batch_serial': batchSerial},
+      accessToken: token,
+    );
+    final operationId = '${response['_sync_operation_id'] ?? ''}';
+    AppLogger.instance.info(
+      'comanda_envio',
+      data: {
+        'pedido': '${activeOrder?['id']}',
+        'itens_pendentes': pendingItems.length,
+        'lote': batchSerial,
+        'na_fila': operationId.isNotEmpty,
+        'conexao': api.syncStatus.phase.name,
+      },
+    );
+    // Sem operação na fila, quem executou foi o servidor (ou o Caixa
+    // Principal, num caixa secundário): o `PrintJob` já existe lá.
+    if (operationId.isEmpty) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {'motivo': 'operacao entregue direto, o PrintJob e de la'},
+      );
+      return response;
+    }
+
+    // Quem imprime a comanda não pode ser decidido por um palpite sobre a
+    // conexão. Antes a escolha era feita ANTES do POST, olhando o último
+    // estado conhecido da rede; com o PDV offline-first toda escrita passa
+    // pela fila, e um estado velho levava aos dois piores resultados
+    // possíveis: duas comandas para a mesma rodada, ou nenhuma. Agora a
+    // pergunta é factual — a operação chegou ao servidor?
+    // Com a rede de pé, três segundos são de sobra para a fila entregar. Com
+    // ela reconhecidamente fora, esperar tanto só atrasaria a cozinha — mas a
+    // pergunta continua sendo feita, porque o indicador pode estar um
+    // instante atrás da realidade.
+    if (await _serverPrintsInstead(operationId)) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {
+          'motivo': 'a operacao subiu dentro da janela',
+          'operacao': operationId,
+        },
+      );
+      return response;
+    }
+
+    // Ela continua na fila. Reivindica a impressão marcando o corpo ANTES de
+    // imprimir: se a operação subir neste instante, a marcação falha e quem
+    // imprime é o backend. Sem isso, a janela entre imprimir e marcar deixava
+    // sair a segunda comanda.
+    final claimed = await api.patchQueuedBody(operationId, {
+      'offline_printed': true,
+    });
+    if (!claimed) {
+      AppLogger.instance.info(
+        'comanda_impressao_do_servidor',
+        data: {
+          'motivo': 'a operacao subiu enquanto este terminal reivindicava',
+          'operacao': operationId,
+        },
+      );
+      return response;
+    }
+
+    final printed = await _printKitchenTicketsOffline(
+      pendingItems,
+      batchSerial,
+    );
+    if (!printed) {
+      AppLogger.instance.warning(
+        'comanda_devolvida_ao_backend',
+        data: {
+          'operacao': operationId,
+          'motivo': 'nenhuma impressora aceitou o cupom neste terminal',
+        },
+      );
+      // Não saiu papel aqui. Devolve a impressão ao backend, senão a cozinha
+      // ficaria sem comanda agora e também quando a fila sincronizasse.
+      await api.patchQueuedBody(operationId, {'offline_printed': false});
+    }
+    return response;
+  }
+
+  /// Monta e imprime a comanda localmente. Devolve `true` se pelo menos uma
+  /// impressora aceitou o cupom.
+  Future<bool> _printKitchenTicketsOffline(
+    List<Map<String, dynamic>> pendingItems,
+    String batchSerial,
+  ) async {
+    // As impressoras vêm da lista que o agente mantém em memória: reler
+    // `/printers/` aqui só funcionaria se aquela consulta exata já estivesse
+    // no cache de respostas, o que não se pode assumir com a rede fora.
+    final printersForTickets = await deviceAgent.ensurePrinters();
+    final user = widget.controller.session?.user;
+    final plan = OrderPresenter.buildOfflineKitchenTickets(
+      order: activeOrder,
+      table: selectedTable,
+      command: selectedCommand,
+      pendingItems: pendingItems,
+      products: products,
+      printers: printersForTickets,
+      batchSerial: batchSerial,
+      operatorName: (user?.name ?? '').trim().isNotEmpty
+          ? user!.name
+          : (user?.username ?? ''),
+    );
+    final tickets = plan.tickets;
+    // A escolha da impressora pelo setor do produto é silenciosa por
+    // natureza: item sem setor e setor sem impressora não geram papel nem
+    // erro. Esta linha é o que transforma "não imprimiu e não avisou" em algo
+    // que se lê no terminal.
+    AppLogger.instance.info('comanda_roteamento', data: plan.toLog());
+    var printedAny = false;
+    Object? lastFailure;
+    for (final ticket in tickets) {
+      try {
+        // Pela fila local: uma impressora sem papel agora não perde a
+        // comanda — ela sai assim que o papel voltar, sem depender de um
+        // evento do servidor que, offline, nunca chega.
+        // `accepted`, não `printed`: com o cupom na fila, este terminal já é
+        // o responsável — mesmo que a impressora só aceite daqui a pouco.
+        final kitchenPrinter = KitchenPrinter(
+          PrinterDevice.fromJson(ticket.printer),
+          runtime: deviceAgent.printing,
+        );
+        if ((await deviceAgent.submit(
+          kitchenPrinter,
+          kitchenPrinter.compose(content: ticket.text),
+        )).accepted) {
+          printedAny = true;
+        }
+      } catch (error) {
+        // Uma impressora falhar não pode travar as outras.
+        lastFailure = error;
+      }
+    }
+    if (!mounted || printedAny) return printedAny;
+    // A mensagem precisa dizer o que de fato impediu a impressão: culpar a
+    // internet quando o problema é roteamento de setor manda o caixa
+    // procurar no lugar errado.
+    showAppToast(
+      context,
+      switch ((tickets.isEmpty, lastFailure)) {
+        (true, _) =>
+          'Nenhuma impressora de setor atende os itens deste pedido. '
+              'Confira o setor dos produtos e o setor das impressoras em '
+              'Configurações e avise a cozinha manualmente.',
+        (false, final failure?) =>
+          'A comanda não pôde ser enviada à impressora do setor: $failure. '
+              'Avise a cozinha manualmente.',
+        _ =>
+          'A comanda não pôde ser impressa agora. Avise a cozinha '
+              'manualmente.',
+      },
+      title: 'Comanda não impressa',
+      severity: AppErrorSeverity.warning,
+    );
+    return false;
   }
 
   Future<void> _finishOrder() async {
@@ -2682,7 +3880,7 @@ class _HomePageState extends State<HomePage> {
     final nextStep = await showDialog<String>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDialogState) => AppDialog(
           title: const Text('Revisar pedido'),
           content: SizedBox(
             width: 420,
@@ -2735,97 +3933,67 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.schedule),
               label: const Text('Pagar depois'),
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, 'payment'),
-              child: const Text('Ir para pagamento'),
-            ),
+            // Sem `payments.manage`, o operador só pode mandar para a cozinha
+            // e deixar o recebimento para quem tem a permissão de caixa.
+            if (widget.controller.session!.user.canProcessPayments)
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'payment'),
+                child: const Text('Ir para pagamento'),
+              ),
           ],
         ),
       ),
     );
     if (nextStep == null) return;
+    // "Pagar depois" manda os itens para a produção e devolve o operador ao
+    // pedido: o cliente segue consumindo, então fechar aqui (status
+    // `aguardando pagamento`) travaria o lançamento de novos itens. O
+    // fechamento acontece só no caminho do pagamento.
+    if (nextStep == 'later') {
+      await _work(() async {
+        final pending = orderItems
+            .where((item) => item['status'] == 'pending')
+            .toList();
+        if (pending.isEmpty) return <String, dynamic>{};
+        // O `OrderRepository` já marcou a rodada como enviada e gravou; a
+        // tela relê logo abaixo.
+        await _sendPendingItemsToKitchen(pending);
+        return activeOrder ?? <String, dynamic>{};
+      });
+      if (!mounted) return;
+      await _refreshOrder();
+      if (mounted) setState(() => flowStep = 'order');
+      return;
+    }
     final closed = await _work(() async {
       final hasPendingItems = orderItems.any(
         (item) => item['status'] == 'pending',
       );
       if (hasPendingItems) {
-        final kitchenResponse = await api.post(
-          '/orders/${activeOrder!['id']}/send-to-kitchen/',
-          body: const {},
-          accessToken: token,
+        await _sendPendingItemsToKitchen(
+          orderItems.where((item) => item['status'] == 'pending').toList(),
         );
-        if (_isOfflinePending(kitchenResponse)) {
-          activeOrder = OrderPresenter.sentToKitchen(activeOrder!);
-          orderItems = (activeOrder!['items'] as List)
-              .cast<Map<String, dynamic>>();
-          await _persistOfflineOrder();
-        }
+        await _refreshOrder();
       }
-      final localClosed = OrderPresenter.closeOfflineOrder(
-        activeOrder!,
-        serviceFeeEnabled: chargeService,
-        serviceFeePercent: defaultServiceFeePercent,
-      );
-      final order = await api.post(
+      // O fechamento (taxa de serviço, desconto, total) é aplicado pelo
+      // `OrderRepository` com a MESMA conta usada aqui — `expected_total`
+      // acompanha para o servidor conferir quando a operação subir.
+      activeOrder = await api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
+          'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
-          'expected_total': localClosed['total'],
         },
         accessToken: token,
       );
-      if (_isOfflinePending(order)) {
-        activeOrder = {...localClosed, ...order, 'id': activeOrder!['id']};
-        await _persistOfflineOrder();
-      } else {
-        activeOrder = order;
-      }
+      await _refreshOrder();
       return activeOrder!;
     });
     if (closed == null) return;
-    if (nextStep == 'later') {
-      if (_isOfflinePending(closed)) {
-        if (mounted) {
-          showAppToast(
-            context,
-            'Pedido salvo para sincronização e deixado pendente de pagamento.',
-          );
-        }
-        await _goHome();
-        return;
-      }
-      // O pedido já foi fechado acima. A nota é um efeito colateral: se a
-      // impressora falhar, o operador não pode ficar preso na tela do pedido
-      // com uma venda que, do ponto de vista do caixa, já terminou.
-      var printed = false;
-      try {
-        final printJob = await api.post(
-          '/orders/${closed['id']}/print/',
-          body: const {'job_type': 'receipt'},
-          accessToken: token,
-        );
-        await _handlePrintJob(printJob);
-        printed = true;
-      } catch (error) {
-        if (mounted) {
-          _error(
-            error,
-            title: 'O pedido foi fechado, mas a nota não saiu',
-            action: 'Reimprima pela tela de Pedidos quando quiser.',
-          );
-        }
-      }
-      if (mounted) {
-        showAppToast(
-          context,
-          printed
-              ? 'Pedido deixado pendente de pagamento. Nota gerada.'
-              : 'Pedido deixado pendente de pagamento.',
-        );
-      }
-      await _goHome();
-      return;
-    }
+    // A impressão fica só para depois do pagamento (cupom fiscal) ou para o
+    // fluxo automático setorizado da cozinha — não existe "nota de
+    // conferência" fora desses dois: aqui só falta o caixa seguir para o
+    // teclado de pagamento.
     await _paymentDialog();
   }
 
@@ -2855,19 +4023,41 @@ class _HomePageState extends State<HomePage> {
         );
         return;
       }
-      final printerId = await showDialog<String>(
-        context: context,
-        builder: (_) => PrinterSelectionDialog(
-          printers: printers,
-          title: 'Imprimir recibo de venda',
-          summary: 'Pedido #${order['sequence']} · ${_money(order['total'])}',
-          description:
-              'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
-        ),
-      );
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      final printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir recibo de venda',
+                summary:
+                    'Pedido #${order['sequence']} · ${_money(order['total'])}',
+                description:
+                    'A nota contém restaurante, cliente ou mesa, itens, observações, pagamentos e totais.',
+              ),
+            );
       if (printerId == null) return;
-      final printJob = await _work(
-        () => api.post(
+      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => '${item?['id']}' == printerId,
+        orElse: () => null,
+      );
+      // A impressora é deste terminal, e o cupom sabe ser montado aqui: um
+      // Caixa Secundário não precisa do Principal nem do backend para
+      // entregar um recibo ao cliente. Pedir o cupom renderizado ao servidor
+      // é conveniência (layout de referência e registro do trabalho), não
+      // requisito — e num secundário essa rota nem existe, o que antes fazia
+      // o botão não produzir absolutamente nada.
+      if (chosen != null && isSecondaryStation) {
+        await _printingStep(
+          () => _printReceiptLocally(order, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
+        return;
+      }
+      try {
+        final printJob = await api.post(
           '/orders/${order['id']}/print/',
           body: {
             'job_type': 'receipt',
@@ -2875,39 +4065,191 @@ class _HomePageState extends State<HomePage> {
             'manual_only': true,
           },
           accessToken: token,
-        ),
-      );
-      if (printJob == null) return;
-      final printer = printJob['printer'] as Map<String, dynamic>?;
-      if (printer == null) {
-        _error(
-          const ApiException('A impressora selecionada não foi encontrada.'),
         );
-        return;
+        final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
+        if (printer == null) {
+          _error(
+            const ApiException('A impressora selecionada não foi encontrada.'),
+          );
+          return;
+        }
+        await _printingStep(
+          () => deviceAgent.printJobManually(printJob, printer),
+          title: 'O recibo não saiu na impressora',
+        );
+      } on ApiException catch (error) {
+        // Sem `PrintJob` do servidor o cliente continua com a mão estendida
+        // esperando o comprovante. Qualquer recusa serve de gatilho — falta
+        // de rede, servidor fora, ou uma rota que este terminal não alcança.
+        if (chosen == null) rethrow;
+        AppLogger.instance.info(
+          'recibo_montado_localmente',
+          data: {'motivo': error.message},
+        );
+        await _printingStep(
+          () => _printReceiptLocally(order, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
       }
-      final result = await _work(() async {
-        await deviceAgent.printJobManually(printJob, printer);
-        return true;
-      });
-      if (result == true && mounted) {
-        showAppToast(context, 'Recibo de venda impresso com sucesso.');
+    } catch (error) {
+      // Sem isto o erro virava exceção assíncrona sem dono: o operador
+      // apertava "imprimir recibo" e não acontecia nada, nem papel nem aviso.
+      if (mounted) {
+        _error(
+          error,
+          title: 'O recibo não pôde ser impresso',
+          action: 'Confira a impressora selecionada e tente novamente.',
+        );
       }
     } finally {
       if (mounted) setState(() => printingReceipt = false);
     }
   }
 
-  /// Operação fiscal separada da comanda: emite a NFC-e (POST /invoices/emit)
-  /// e, se conseguir, imprime o DANFE (POST /invoices/{id}/print). Exige
-  /// conexão real com o backend — `ApiClient._requiresOnline` já bloqueia o
-  /// enfileiramento offline dessas rotas, então uma falha aqui chega como
-  /// [ApiException] normal, tratada pelo [_error] de sempre.
-  Future<void> _emitFiscalInvoice(Map<String, dynamic> order) async {
+  /// Monta o recibo neste terminal e manda para a fila local.
+  ///
+  /// Mesmo layout do servidor ([LocalPrintRenderer]), mesma impressora. Pela
+  /// fila: se faltar papel agora, o cupom sai sozinho quando ela voltar em vez
+  /// de se perder.
+  Future<bool> _printReceiptLocally(
+    Map<String, dynamic> order,
+    Map<String, dynamic> printer,
+  ) async {
+    final receiptPrinter = ReceiptPrinter(
+      PrinterDevice.fromJson(printer),
+      runtime: deviceAgent.printing,
+    );
+    final result = await deviceAgent.submit(
+      receiptPrinter,
+      receiptPrinter.compose(
+        content: await _localReceiptText(order),
+        barcode: LocalPrintRenderer.commandBarcode(order, selectedCommand),
+      ),
+    );
+    // Quem pediu o recibo está olhando a impressora: o silêncio faria o
+    // operador achar que o papel vem e mandar o cliente embora.
+    if (!result.printed && mounted) {
+      showAppToast(
+        context,
+        result.accepted
+            ? 'A impressora não respondeu agora. O recibo está na fila e '
+                  'sai assim que ela voltar.'
+            : 'O recibo não pôde ser impresso. Confira a configuração '
+                  'da impressora.',
+        severity: AppErrorSeverity.warning,
+      );
+    }
+    return true;
+  }
+
+  /// Autoriza a divergência do caixa com a senha de ações do restaurante.
+  ///
+  /// Com rede, a senha vai ao servidor como sempre. Sem rede, ela é conferida
+  /// aqui contra o hash já sincronizado e o que sobe é uma **prova** de que
+  /// este terminal conhece esse hash — a senha em texto nunca é gravada na
+  /// fila. Sem isto, um caixa que fechasse com diferença ficava travado até a
+  /// internet voltar, com o operador impedido de encerrar o turno.
+  Future<Map<String, dynamic>> _approveWithCashPassword({
+    required String reason,
+    required String password,
+  }) async {
+    final sessionId = '${cashSession!['id']}';
+    final cashAuth = widget.controller.repository.cashAuth;
+    final restaurant = restaurantId;
+
+    if (api.syncStatus.hasConnection ||
+        cashAuth == null ||
+        restaurant == null) {
+      return api.post(
+        '/cash-register/$sessionId/approve/',
+        body: {'reason': reason, 'cash_password': password},
+        accessToken: token,
+      );
+    }
+
+    if (!await cashAuth.verify(password, restaurantId: restaurant)) {
+      throw const ApiException('Senha de ações do caixa inválida.');
+    }
+    final nonce = LocalId.uuid();
+    final proof = await cashAuth.passwordProof(
+      restaurantId: restaurant,
+      cashRegisterId: sessionId,
+      nonce: nonce,
+    );
+    if (proof == null) {
+      throw const ApiException(
+        'A senha de ações do caixa ainda não foi sincronizada neste '
+        'terminal. Conecte-se uma vez para autorizar sem internet.',
+      );
+    }
+    return api.post(
+      '/cash-register/$sessionId/approve/',
+      body: {
+        'reason': reason,
+        'cash_password_proof': proof,
+        'proof_nonce': nonce,
+      },
+      accessToken: token,
+      localContext: {'approver_name': widget.controller.session?.user.name},
+    );
+  }
+
+  /// Monta o recibo do cliente com os dados que este terminal já tem.
+  ///
+  /// Restaurante, itens e recebimentos vêm do SQLite local, então o cupom sai
+  /// completo mesmo com a rede fora — inclusive os pagamentos que ainda estão
+  /// na fila.
+  Future<String> _localReceiptText(Map<String, dynamic> order) async {
+    final orderId = '${order['id']}';
+    final store = api.localStore;
+    final payments = store == null
+        ? registeredPayments
+        : await store.orders.payments(orderId);
+    return LocalPrintRenderer.customerReceipt(
+      order: order,
+      restaurant: selectedRestaurant,
+      payments: payments,
+      table: selectedTable,
+      command: selectedCommand,
+      customer: selectedCustomer,
+      operatorName: widget.controller.session?.user.name ?? '',
+    );
+  }
+
+  /// Operação fiscal separada da venda (§16): emite a NFC-e
+  /// (POST /invoices/emit) e, se conseguir, imprime o DANFE
+  /// (POST /invoices/{id}/print).
+  ///
+  /// A venda NÃO depende disto. Sem conexão, a emissão entra na fila fiscal e
+  /// o documento fica `PENDING` enquanto o pedido já está pago — antes, a
+  /// mesma situação devolvia um erro no meio do recebimento, como se a venda
+  /// tivesse falhado.
+  ///
+  /// O DANFE só é impresso para nota AUTORIZADA. Uma nota pendente tem chave
+  /// montada localmente, que a consulta no portal da SEFAZ não encontra:
+  /// imprimi-la entregaria ao cliente um cupom que não corresponde a documento
+  /// fiscal nenhum.
+  ///
+  /// [silentIfUnconfigured] evita um alerta em toda venda de restaurantes que
+  /// ainda não configuraram Fiscal > Configuração — chamado automaticamente
+  /// após cada pagamento, isso spammaria caixas que nem usam NFC-e ainda.
+  /// Qualquer outra falha (SEFAZ fora do ar, certificado vencido) continua
+  /// visível, porque nesse caso o DANFE realmente não saiu para o cliente.
+  Future<void> _emitFiscalInvoice(
+    Map<String, dynamic> order, {
+    bool silentIfUnconfigured = false,
+  }) async {
     if (emittingInvoice) return;
     setState(() => emittingInvoice = true);
     try {
-      final invoice = await _work(
-        () => api.post(
+      // NÃO passa por `_work`: aquela trava serve para o operador não disparar
+      // duas operações de venda ao mesmo tempo, e DESISTE quando já há uma em
+      // curso (`if (busy) return null`). A emissão é efeito de uma venda que
+      // já terminou — engolida pela trava, a nota simplesmente não era pedida:
+      // sem erro, sem fila fiscal, sem cupom.
+      Map<String, dynamic>? invoice;
+      try {
+        invoice = await api.post(
           '/invoices/emit/',
           body: {
             'order': order['id'],
@@ -2917,68 +4259,429 @@ class _HomePageState extends State<HomePage> {
               'cpf_name': selectedCustomer!['name'],
           },
           accessToken: token,
-        ),
-        errorTitle: 'Não foi possível emitir a NFC-e',
+        );
+      } catch (error) {
+        AppLogger.instance.warning(
+          'fiscal_emit_recusado',
+          data: {'pedido': '${order['id']}', 'causa': '$error'},
+        );
+        if (!mounted) return;
+        // "Restaurante não emite NFC-e" é a única recusa que pode ser calada
+        // numa emissão automática — o resto o operador precisa ver.
+        if (!silentIfUnconfigured ||
+            !'$error'.toLowerCase().contains('configuracao fiscal')) {
+          _error(error, title: 'Não foi possível emitir a NFC-e');
+        }
+        return;
+      }
+      if (!mounted) return;
+
+      AppLogger.instance.info(
+        'fiscal_emit_resposta',
+        data: {
+          'pedido': '${order['id']}',
+          'fiscal_pending': invoice['_fiscal_pending'],
+          'emitted': invoice['emitted'],
+          'printable': invoice['printable'],
+          'fiscal_state': invoice['fiscal_state'],
+        },
       );
-      if (invoice == null || !mounted) return;
+
+      // Emissão adiada (§16): a venda já está concluída e o documento entrou
+      // na fila fiscal. Não há DANFE para imprimir agora — o cupom fiscal sai
+      // quando a nota for autorizada.
+      if (invoice['_fiscal_pending'] == true) {
+        final issues = (invoice['_fiscal_issues'] as List? ?? const [])
+            .map((issue) => '$issue')
+            .toList();
+        // Toda emissao passa pela fila (§16), mesmo com internet — e o que
+        // garante que uma queda no meio do caminho nao perca o documento.
+        // Mas esperar o ciclo de 30 segundos para o cupom fiscal sair
+        // deixaria o cliente parado no balcao: com conexao, entrega a nota
+        // agora e imprime em seguida, no mesmo gesto do recibo. Algumas
+        // insistencias curtas cobrem uma entrega que estava só um instante
+        // atrás da nossa (outro ciclo de sincronização em voo, um ping que
+        // falhou uma vez) sem prender o caixa por muito tempo.
+        //
+        // PENDÊNCIA NO RETRATO LOCAL AVISA, MAS NÃO VETA. Quem decide se a
+        // nota passa é o servidor, que enxerga a venda inteira; aqui só existe
+        // o que este terminal guardou. O veto matou uma NFC-e cujo recebimento
+        // EXISTIA — ele tinha acabado de subir, e a versão do pedido que voltou
+        // do servidor não trazia os pagamentos de volta, então o retrato local
+        // reclamou de "venda sem recebimento" de uma venda paga. O backend já
+        // trata cadastro incompleto do jeito certo: monta a nota, grava a falha
+        // nela e deixa o operador corrigir e reenviar.
+        final settled = await _flushFiscalWithRetries('${order['id']}');
+        if (!mounted) return;
+        AppLogger.instance.info(
+          'fiscal_flush_resultado',
+          data: {
+            'pedido': '${order['id']}',
+            'entregue': settled != null,
+            'issues': issues.length,
+            'printable': settled?['printable'],
+            'fiscal_state': settled?['fiscal_state'],
+          },
+        );
+        if (settled != null) {
+          final summary =
+              'Pedido #${order['sequence']} · NFC-e ${settled['number'] ?? ''}';
+          if (settled['printable'] == true) {
+            await _printDanfe(
+              invoiceId: '${settled['id']}',
+              summary: summary,
+              automatic: true,
+            );
+          } else {
+            _showFiscalStateToast(settled, silent: silentIfUnconfigured);
+            _watchFiscalAuthorization(settled, summary: summary);
+          }
+          return;
+        }
+        // Continua pendente mesmo depois de insistir: a nota fica na fila
+        // fiscal local e sai pelo ciclo automático (30s) ou pela próxima
+        // ação do operador — mas NINGUÉM fica vigiando essa autorização
+        // para imprimir sozinho a partir daqui. O aviso não é opcional: era
+        // aqui que a venda terminava só com o recibo, sem explicação
+        // nenhuma, porque este toast ficava escondido atrás da mesma
+        // bandeira que esconde "este restaurante não emite NFC-e".
+        showAppToast(
+          context,
+          issues.isEmpty
+              ? 'Venda concluída. A NFC-e ainda não foi confirmada com o '
+                    'provedor fiscal e será emitida assim que possível — '
+                    'acompanhe pelo histórico do pedido.'
+              : 'Venda concluída, mas o cadastro fiscal está incompleto e a '
+                    'NFC-e não vai passar assim: ${issues.first}',
+          severity: AppErrorSeverity.warning,
+        );
+        return;
+      }
+
+      if (invoice['emitted'] == false) {
+        if (!silentIfUnconfigured) {
+          showAppToast(
+            context,
+            '${invoice['message'] ?? 'Nota fiscal não emitida: o provedor fiscal não está configurado.'}',
+            severity: AppErrorSeverity.warning,
+          );
+        }
+        return;
+      }
+
+      // `fiscal_state` é a situação real do documento; `status` sozinho não
+      // separa "ainda não saiu daqui" de "pode ter sido emitida". Só um
+      // documento AUTORIZADO tem chave que a SEFAZ reconhece — por isso o
+      // DANFE só é oferecido quando `printable` vem verdadeiro.
+      if (invoice['printable'] != true) {
+        _showFiscalStateToast(invoice, silent: false);
+        _watchFiscalAuthorization(
+          invoice,
+          summary:
+              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+        );
+        return;
+      }
 
       if (invoice['emission_type'] == '9') {
         showAppToast(
           context,
           'NFC-e emitida em contingência — será retransmitida quando a conexão com a SEFAZ voltar.',
+          severity: AppErrorSeverity.warning,
         );
-      } else if (invoice['status'] == 'issued') {
-        showAppToast(context, 'NFC-e autorizada.');
-      } else {
-        showAppToast(context, 'NFC-e emitida, aguardando autorização.');
       }
 
-      final printers = await _list(
-        '/printers/',
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
+      await _printDanfe(
+        invoiceId: '${invoice['id']}',
+        summary:
+            'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
+        automatic: true,
       );
-      if (!mounted || printers.isEmpty) return;
-      final printerId = await showDialog<String>(
-        context: context,
-        builder: (_) => PrinterSelectionDialog(
-          printers: printers,
-          title: 'Imprimir DANFE NFC-e',
-          summary:
-              'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
-          description:
-              'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
-        ),
-      );
-      if (printerId == null) return;
-      final printJob = await _work(
-        () => api.post(
-          '/invoices/${invoice['id']}/print/',
-          body: {'printer': printerId},
-          accessToken: token,
-        ),
-      );
-      if (printJob == null) return;
-      final printer = printJob['printer'] as Map<String, dynamic>?;
-      if (printer == null) {
-        _error(
-          const ApiException('A impressora selecionada não foi encontrada.'),
-        );
-        return;
-      }
-      final result = await _work(() async {
-        await deviceAgent.printJobManually(printJob, printer);
-        return true;
-      });
-      if (result == true && mounted) {
-        showAppToast(context, 'DANFE impresso com sucesso.');
-      }
     } finally {
       if (mounted) setState(() => emittingInvoice = false);
     }
+  }
+
+  /// Espera a SEFAZ autorizar e manda o DANFE para a impressora sozinho.
+  ///
+  /// Online, a emissão quase nunca volta autorizada: o provedor ACEITA a nota
+  /// e a SEFAZ responde um instante depois. O "Concluir pedido" terminava
+  /// então com um aviso e nenhum cupom fiscal — o operador tinha de voltar no
+  /// pedido e mandar imprimir na mão, para uma nota que já estava autorizada
+  /// havia dois segundos.
+  ///
+  /// Consulta em segundo plano, com espera crescente: o caixa já pode começar
+  /// a próxima venda. Se a autorização não chegar na janela, nada se perde —
+  /// a nota continua na esteira normal (webhook e consulta periódica) e o
+  /// cupom sai pela reimpressão no histórico do pedido.
+  void _watchFiscalAuthorization(
+    Map<String, dynamic> invoice, {
+    required String summary,
+  }) {
+    final invoiceId = '${invoice['id'] ?? ''}';
+    final state = '${invoice['fiscal_state'] ?? ''}';
+    // Só faz sentido esperar por uma nota que está a caminho. Recusa e erro de
+    // configuração pedem correção humana; documento local ainda na fila (id
+    // `offline-…`) nem existe no servidor para ser consultado.
+    const inFlight = {'processing', 'awaiting_transmission'};
+    if (invoiceId.isEmpty ||
+        invoiceId.startsWith('offline-') ||
+        !inFlight.contains(state)) {
+      return;
+    }
+    // Um segundo vigia sobre a mesma nota mandaria o DANFE para a impressora
+    // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
+    // primeira já teria saído.
+    if (!watchedFiscalInvoices.add(invoiceId)) return;
+    unawaited(_pollFiscalAuthorization(invoiceId: invoiceId, summary: summary));
+  }
+
+  Future<void> _pollFiscalAuthorization({
+    required String invoiceId,
+    required String summary,
+  }) async {
+    try {
+      await _pollFiscalAuthorizationNow(invoiceId: invoiceId, summary: summary);
+    } finally {
+      watchedFiscalInvoices.remove(invoiceId);
+    }
+  }
+
+  Future<void> _pollFiscalAuthorizationNow({
+    required String invoiceId,
+    required String summary,
+  }) async {
+    const backoff = [
+      Duration(milliseconds: 1200),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+      Duration(seconds: 4),
+      Duration(seconds: 5),
+    ];
+    for (final wait in backoff) {
+      await Future<void>.delayed(wait);
+      if (!mounted) return;
+      final Map<String, dynamic> current;
+      try {
+        current = await api.post(
+          '/invoices/$invoiceId/refresh-status/',
+          // "Estou esperando esta autorizacao para imprimir." Sem avisar, o
+          // cupom que esta consulta cria entra no laco automatico do agente
+          // local e o cliente recebe DOIS DANFEs: o do agente e o que este
+          // terminal manda em seguida.
+          body: const {'manual_print': true},
+          accessToken: token,
+        );
+      } catch (_) {
+        // Um tropeço de rede não abandona a nota: a próxima volta tenta de
+        // novo. Desistir aqui era barato quando o servidor criava o cupom
+        // sozinho — não é mais: numa venda de terminal (`terminal_prints`)
+        // ninguém mais imprime este DANFE se esta espera desistir.
+        continue;
+      }
+      if (!mounted) return;
+      AppLogger.instance.info(
+        'fiscal_consulta_autorizacao',
+        data: {
+          'nota': invoiceId,
+          'printable': current['printable'],
+          'fiscal_state': current['fiscal_state'],
+        },
+      );
+      if (current['printable'] == true) {
+        await _printDanfe(
+          invoiceId: invoiceId,
+          summary: summary,
+          automatic: true,
+        );
+        return;
+      }
+      final state = '${current['fiscal_state'] ?? ''}';
+      if (state == 'rejected' || state == 'configuration_error') {
+        // Agora sim interrompe: isto não se resolve esperando.
+        _showFiscalStateToast(current, silent: false);
+        return;
+      }
+    }
+    // A janela acabou e a autorização não chegou. O operador precisa saber:
+    // numa venda de terminal o servidor não cria cupom automático, então este
+    // DANFE só sai se alguém mandar imprimir pelo histórico do pedido.
+    if (!mounted) return;
+    showAppToast(
+      context,
+      'A SEFAZ ainda não autorizou a NFC-e desta venda. Quando autorizar, '
+      'imprima o DANFE pelo pedido em Pedidos.',
+      severity: AppErrorSeverity.warning,
+    );
+  }
+
+  /// Insiste em entregar a nota antes de desistir e avisar o operador.
+  ///
+  /// `flushFiscalForOrder` pode voltar `null` por um instante sem conexão, ou
+  /// porque outro ciclo de sincronização já estava em voo — nenhum dos dois
+  /// significa "sem rede para sempre". Poucas tentativas curtas cobrem isso
+  /// sem prender o caixa: se depois delas ainda não resolveu, a nota segue
+  /// pela fila e o operador é avisado.
+  Future<Map<String, dynamic>?> _flushFiscalWithRetries(String orderId) async {
+    const waits = [
+      Duration.zero,
+      Duration(milliseconds: 500),
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 3),
+    ];
+    for (final wait in waits) {
+      if (wait > Duration.zero) await Future<void>.delayed(wait);
+      if (!mounted) return null;
+      final settled = await api.flushFiscalForOrder(orderId);
+      if (settled != null) return settled;
+    }
+    return null;
+  }
+
+  /// Explica ao operador por que o cupom fiscal ainda nao saiu.
+  void _showFiscalStateToast(
+    Map<String, dynamic> invoice, {
+    required bool silent,
+  }) {
+    if (!mounted) return;
+    final state = '${invoice['fiscal_state'] ?? ''}';
+    final blocking = state == 'rejected' || state == 'configuration_error';
+    // Numa emissao automatica so o que exige acao humana interrompe o
+    // operador; o resto segue seu curso pela fila.
+    if (silent && !blocking) return;
+    showAppToast(
+      context,
+      switch (state) {
+        'rejected' =>
+          'NFC-e recusada: ${invoice['error_message'] ?? 'verifique o cadastro fiscal do pedido'}. '
+              'Não haverá reenvio automático.',
+        'configuration_error' =>
+          'NFC-e não emitida: a configuração fiscal está inválida '
+              '(${invoice['error_message'] ?? 'certificado, token ou CSC'}).',
+        'reconciliation_required' =>
+          'A NFC-e pode ter sido emitida e a resposta se perdeu. Ela será '
+              'consultada antes de qualquer reenvio — não emita de novo.',
+        'processing' =>
+          'NFC-e transmitida, aguardando autorização da SEFAZ. O cupom '
+              'fiscal sai quando a autorização chegar.',
+        _ =>
+          'Venda concluída. A NFC-e ainda não foi transmitida e será '
+              'enviada assim que a conexão voltar.',
+      },
+      severity: blocking ? AppErrorSeverity.failure : AppErrorSeverity.warning,
+    );
+  }
+
+  /// Reimprime o DANFE de uma nota que ja esta autorizada.
+  ///
+  /// Nao passa pelo `/invoices/emit/`: a nota existe, o que falta e o papel —
+  /// e sem rede aquela rota vira mais uma entrada na fila fiscal para um
+  /// documento que ja foi emitido.
+  Future<void> _reprintDanfe(Map<String, dynamic> order) async {
+    final fiscal = order['fiscal'] as Map<String, dynamic>?;
+    final invoiceId = '${fiscal?['id'] ?? ''}';
+    if (invoiceId.isEmpty || emittingInvoice) return;
+    setState(() => emittingInvoice = true);
+    try {
+      await _printDanfe(
+        invoiceId: invoiceId,
+        summary:
+            'Pedido #${order['sequence']} · NFC-e ${fiscal?['number'] ?? ''}',
+      );
+    } finally {
+      if (mounted) setState(() => emittingInvoice = false);
+    }
+  }
+
+  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  ///
+  /// `automatic` é a impressão que o gesto de concluir dispara sozinho. Ela não
+  /// repete um DANFE que já saiu deste terminal: o servidor pode ter criado um
+  /// cupom automático quando a autorização chegou, e o cliente receberia duas
+  /// vias idênticas. A reimpressão pedida pelo operador ignora isso — quem
+  /// clicou quer outra via.
+  Future<void> _printDanfe({
+    required String invoiceId,
+    required String summary,
+    bool automatic = false,
+  }) async {
+    final printers = await _list(
+      '/printers/',
+      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
+    );
+    if (!mounted || printers.isEmpty) {
+      AppLogger.instance.warning(
+        'danfe_sem_impressora_cadastrada',
+        data: {'nota': invoiceId, 'montado': mounted},
+      );
+      return;
+    }
+    // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
+    // para ele como "o sistema ignorou a master".
+    final master = widget.preferences.masterPrinterId;
+    final hasMaster = printers.any((p) => '${p['id']}' == master);
+    final printerId = hasMaster
+        ? master
+        : await showDialog<String>(
+            context: context,
+            builder: (_) => PrinterSelectionDialog(
+              printers: printers,
+              title: 'Imprimir DANFE NFC-e',
+              summary: summary,
+              description:
+                  'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+            ),
+          );
+    if (printerId == null) {
+      AppLogger.instance.warning(
+        'danfe_sem_impressora_escolhida',
+        data: {'nota': invoiceId, 'master': master},
+      );
+      return;
+    }
+    AppLogger.instance.info(
+      'danfe_impressao_pedida',
+      data: {
+        'nota': invoiceId,
+        'impressora': printerId,
+        'automatico': automatic,
+      },
+    );
+    final Map<String, dynamic> printJob;
+    try {
+      printJob = await api.post(
+        '/invoices/$invoiceId/print/',
+        body: {'printer': printerId},
+        accessToken: token,
+      );
+    } catch (error) {
+      if (mounted) _error(error, title: 'O DANFE não pôde ser gerado');
+      return;
+    }
+    if (!mounted) return;
+    final printer = printJob['printer'] as Map<String, dynamic>?;
+    if (printer == null) {
+      _error(
+        const ApiException('A impressora selecionada não foi encontrada.'),
+      );
+      return;
+    }
+    final ok = await _printingStep(
+      () =>
+          deviceAgent.printJobManually(printJob, printer, automatic: automatic),
+      title: 'O DANFE não saiu na impressora',
+    );
+    AppLogger.instance.info(
+      'danfe_impressao_resultado',
+      data: {
+        'nota': invoiceId,
+        'job': '${printJob['print_job_id'] ?? ''}',
+        'impressora': '${printer['name'] ?? ''}',
+        'ok': ok,
+      },
+    );
   }
 
   Future<void> _paymentDialog() async {
@@ -2999,18 +4702,10 @@ class _HomePageState extends State<HomePage> {
         '/orders/${activeOrder!['id']}/payments/',
         accessToken: token,
       );
-      final server =
-          ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
-              .cast<Map<String, dynamic>>();
-      if (response['_offline_cache'] != true) return server;
-      final local = (activeOrder?['offline_payments'] as List? ?? const [])
-          .whereType<Map>()
-          .map((value) => Map<String, dynamic>.from(value));
-      final ids = server.map((payment) => '${payment['id']}').toSet();
-      return [
-        ...server,
-        ...local.where((payment) => !ids.contains('${payment['id']}')),
-      ];
+      // A leitura já vem do banco local e traz tanto os recebimentos
+      // confirmados quanto os que ainda estão na fila (§3).
+      return ((response['results'] ?? response['data'] ?? <dynamic>[]) as List)
+          .cast<Map<String, dynamic>>();
     } on ApiException catch (error) {
       if (!error.isConnectivity) rethrow;
       return (activeOrder?['offline_payments'] as List? ?? registeredPayments)
@@ -3021,6 +4716,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _preparePaymentPage() async {
+    // O teclado nasce preenchido com o restante, então o total precisa ser o
+    // que o servidor tem agora — não uma cópia anterior à retirada da taxa de
+    // serviço, que faria o caixa cobrar o valor cheio sem perceber. Uma falha
+    // aqui não pode impedir o recebimento: seguimos com o que já está em mão.
+    try {
+      await _refreshOrder();
+    } catch (_) {}
     paymentMethods = await _list(
       '/payments/methods/',
       query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
@@ -3032,6 +4734,7 @@ class _HomePageState extends State<HomePage> {
     selectedPaymentMethod = paymentMethods.isEmpty
         ? null
         : '${paymentMethods.first['id']}';
+    paymentAmountTyped = false;
     paymentDigits = (remainingTotal * 100).round().toString();
     _syncPaymentAmount();
     paymentReference.clear();
@@ -3040,6 +4743,7 @@ class _HomePageState extends State<HomePage> {
 
   void _pressPaymentKey(String key) {
     setState(() {
+      paymentAmountTyped = true;
       if (key == 'clear') {
         paymentDigits = '0';
       } else if (key == 'back') {
@@ -3054,6 +4758,23 @@ class _HomePageState extends State<HomePage> {
       }
       _syncPaymentAmount();
     });
+  }
+
+  /// Reapresenta o restante no teclado enquanto ninguém digitou nada.
+  ///
+  /// O valor era fixado UMA vez, ao abrir a tela, e não acompanhava mais nada.
+  /// Só que o total do pedido ainda muda depois disso: a taxa de serviço
+  /// aplicada no fechamento chega pela sincronização, um recebimento sai da
+  /// lista, o servidor devolve um total diferente do calculado aqui. O resumo
+  /// à esquerda se atualizava e o teclado ficava para trás — o operador via
+  /// "Restante R$ 12,43" e o teclado oferecendo R$ 11,00, que é o subtotal sem
+  /// a taxa. Cobrar a menos é um erro que só aparece no fechamento do caixa.
+  void _refreshSuggestedPaymentAmount() {
+    if (paymentAmountTyped) return;
+    final suggested = (remainingTotal * 100).round().toString();
+    if (suggested == paymentDigits) return;
+    paymentDigits = suggested;
+    _syncPaymentAmount();
   }
 
   void _syncPaymentAmount() {
@@ -3073,15 +4794,26 @@ class _HomePageState extends State<HomePage> {
     return 'credit';
   }
 
-  Future<void> _addSplitPayment() async {
+  /// Monta o recebimento NA TELA. Nada sai daqui para o servidor.
+  ///
+  /// O envio acontece no clique de **Concluir pedido**, com todos juntos.
+  /// Antes, cada forma de pagamento adicionada já era um `POST /pay/`: o
+  /// pedido virava "pago" no instante em que o operador escolhia o método —
+  /// antes de conferir troco, referência ou de decidir dividir a conta — e
+  /// desfazer virava problema do servidor. Com a operação já na fila, excluir
+  /// devolvia HTTP 409 ("este recebimento já está subindo"), e o caixa ficava
+  /// com um recebimento que não conseguia tirar.
+  ///
+  /// Encenar aqui também é o que faz recibo e DANFE saírem no mesmo gesto: a
+  /// venda passa a paga e o papel sai em seguida, sem uma janela entre as duas
+  /// coisas em que o operador pudesse sair da tela.
+  void _addSplitPayment() {
     if (selectedPaymentMethod == null || paymentValue <= 0) return;
-    final remainingBefore = remainingTotal;
-    final receivedBefore = paymentValue;
     final method = paymentMethods.firstWhere(
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
-    if (method['method_type'] != 'cash' &&
-        paymentValue > remainingTotal + .009) {
+    final isCash = method['method_type'] == 'cash';
+    if (!isCash && paymentValue > remainingTotal + .009) {
       _error(
         const ApiException(
           'Somente dinheiro pode ter valor recebido maior que o restante.',
@@ -3089,89 +4821,166 @@ class _HomePageState extends State<HomePage> {
       );
       return;
     }
-    final result = await _work(
-      () => api.post(
-        '/orders/${activeOrder!['id']}/pay/',
-        body: {
-          'payment_method': selectedPaymentMethod,
-          'amount': paymentValue.toStringAsFixed(2),
-          if (method['method_type'] == 'cash' && cashSession?['id'] != null)
-            'cash_register': cashSession!['id'],
-          'idempotency_key':
-              'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
-          'metadata': {
-            'card_subtype': method['method_type'] == 'card'
-                ? _cardSubtypeFor(method)
-                : '',
-            'reference': paymentReference.text.trim(),
-            'source': 'flutter_pdv',
-          },
-        },
-        accessToken: token,
+    stagedPaymentSequence += 1;
+    final staged = <String, dynamic>{
+      // Id local: é o que dá o botão de excluir à linha. Ele nunca vai ao
+      // servidor — o corpo enviado depois é o `_staged_body`.
+      ...OrderPresenter.stagedPayment(
+        localId: 'staged-$stagedPaymentSequence',
+        method: method,
+        received: paymentValue,
+        remaining: remainingTotal,
       ),
-    );
-    if (result == null) return;
-    if (_isOfflinePending(result)) {
-      final change = method['method_type'] == 'cash'
-          ? (receivedBefore - remainingBefore).clamp(0, double.infinity)
-          : 0.0;
-      final applied = receivedBefore - change;
-      final optimisticPayment = {
-        ...result,
-        'payment_method_name': method['name'],
-        'method_type': method['method_type'],
-        'amount': applied.toStringAsFixed(2),
-        'change_amount': change.toStringAsFixed(2),
-        'received_amount': receivedBefore.toStringAsFixed(2),
-      };
-      registeredPayments = [...registeredPayments, optimisticPayment];
-      final paid = remainingTotal <= .009;
-      final scope = api.sessionScope;
-      if (scope != null && activeOrder != null) {
-        final persisted = await orderStore.patch('${activeOrder!['id']}', {
-          'offline_payments': registeredPayments
-              .where((payment) => payment['_offline_pending'] == true)
-              .toList(),
-          'payment_status': paid ? 'paid' : 'partial',
-          'status': paid ? 'paid' : 'awaiting_payment',
-          '_offline_pending': true,
-        }, scope: scope);
-        if (persisted != null) activeOrder = persisted;
-      }
-    } else {
-      registeredPayments = await _loadRegisteredPayments();
-      if (method['method_type'] == 'cash') {
-        try {
-          cashSession = await api.get(
-            '/cash-register/current/',
-            accessToken: token,
-          );
-        } on ApiException {
-          // O pagamento já foi registrado; a atualização geral tenta de novo.
-        }
-      }
-    }
-    paymentDigits = (remainingTotal * 100).round().toString();
-    _syncPaymentAmount();
-    paymentReference.clear();
-    setState(() {});
+      '_staged_body': <String, dynamic>{
+        'payment_method': selectedPaymentMethod,
+        'amount': paymentValue.toStringAsFixed(2),
+        if (isCash && cashSession?['id'] != null)
+          'cash_register': cashSession!['id'],
+        // A chave é gerada AGORA e viaja com a operação: um reenvio depois de
+        // um erro de rede é reconhecido como repetição, não como um segundo
+        // recebimento.
+        'idempotency_key':
+            'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
+        'metadata': {
+          'card_subtype': method['method_type'] == 'card'
+              ? _cardSubtypeFor(method)
+              : '',
+          'reference': paymentReference.text.trim(),
+          'source': 'flutter_pdv',
+        },
+      },
+    };
+    setState(() {
+      registeredPayments = [...registeredPayments, staged];
+      paymentAmountTyped = false;
+      paymentDigits = (remainingTotal * 100).round().toString();
+      _syncPaymentAmount();
+      paymentReference.clear();
+    });
   }
 
-  /// Remove um pagamento já confirmado, como no frontend web.
+  /// Recebimentos que ainda não foram enviados ao servidor.
+  List<Map<String, dynamic>> get stagedPayments => registeredPayments
+      .where((payment) => payment['_staged'] == true)
+      .toList(growable: false);
+
+  /// Envia, em ordem, os recebimentos encenados na tela.
   ///
-  /// Só se aplica a pagamentos com id real: um pagamento ainda na fila
-  /// offline nunca chegou ao servidor, então não há o que cancelar lá — a
-  /// remoção correta nesse caso é esperar a sincronização.
+  /// Devolve `false` quando algum não subiu. O que já subiu continua valendo
+  /// (o servidor é a verdade) e o que faltou permanece na tela para o operador
+  /// decidir. Parar no primeiro erro é deliberado: insistir nos seguintes só
+  /// empilharia recusas do mesmo motivo.
+  Future<bool> _commitStagedPayments() async {
+    final staged = stagedPayments;
+    if (staged.isEmpty) return true;
+    final pending = <Map<String, dynamic>>[];
+    var touchedCash = false;
+    var stop = false;
+    for (final payment in staged) {
+      if (stop) {
+        pending.add(payment);
+        continue;
+      }
+      final result = await _work(
+        () => api.post(
+          '/orders/${activeOrder!['id']}/pay/',
+          body: payment['_staged_body'] as Map<String, dynamic>,
+          accessToken: token,
+          // O tipo da forma de pagamento decide se há troco; só a tela sabe
+          // qual foi escolhida.
+          localContext: {
+            'payment_method': payment['_staged_method'] as Map<String, dynamic>,
+          },
+        ),
+      );
+      if (result == null) {
+        pending.add(payment);
+        stop = true;
+        continue;
+      }
+      touchedCash = touchedCash || _isCashPayment(payment);
+    }
+    // Os recebimentos são gravados local-first e sobem pela fila. Empurrar
+    // agora, antes de qualquer outra coisa, é o que garante que a emissão
+    // fiscal — que parte do servidor — encontre o pedido já quitado lá: uma
+    // nota emitida antes dos recebimentos sai com o DANFE sem as formas de
+    // pagamento. Sem conexão isto não faz nada e a venda segue pela fila.
+    await api.flushSalesQueue();
+    // O recebimento (valor aplicado, troco, situação de pagamento) é
+    // registrado pelo `OrderRepository` na mesma transação da fila; aqui só se
+    // relê o que ficou gravado, e o que não subiu volta para o fim da lista.
+    await _refreshOrder();
+    final confirmed = await _loadRegisteredPayments();
+    registeredPayments = [...confirmed, ...pending];
+    if (touchedCash) await _refreshCashSession();
+    if (mounted) setState(() {});
+    return pending.isEmpty;
+  }
+
+  /// O recebimento saiu da gaveta?
+  ///
+  /// O lançamento criado aqui guarda `method_type`; o que vem do servidor usa
+  /// `payment_method_type` (ver `PaymentSerializer`). A mesma lista mistura os
+  /// dois, e olhar só um dos nomes deixava o saldo do caixa parado depois de
+  /// remover um recebimento já sincronizado.
+  static bool _isCashPayment(Map<String, dynamic> payment) =>
+      '${payment['method_type'] ?? payment['payment_method_type'] ?? ''}' ==
+      'cash';
+
+  /// Relê o saldo da gaveta depois de mexer em dinheiro.
+  ///
+  /// A leitura é local (o SQLite deste terminal já foi atualizado junto do
+  /// recebimento), então vale também sem rede — antes a atualização só
+  /// acontecia quando havia conexão, e o caixa ficava parado na tela
+  /// exatamente durante a operação offline.
+  Future<void> _refreshCashSession() async {
+    try {
+      cashSession = await api.get(
+        '/cash-register/current/',
+        query: {
+          if (selectedRestaurantId != null) 'restaurant': selectedRestaurantId,
+        },
+        accessToken: token,
+      );
+    } on ApiException {
+      // O recebimento já foi registrado; a atualização geral tenta de novo.
+    }
+  }
+
+  /// Remove um pagamento do pedido, como no frontend web.
+  ///
+  /// Vale para os dois casos, e quem decide é o identificador: o recebimento
+  /// que ainda está na fila é desfeito aqui mesmo (nunca chegou ao servidor,
+  /// e mandar o `offline-…` para lá só devolvia "não é um UUID válido"); o
+  /// que já subiu é cancelado pelo servidor, que é quem sabe reabrir mesa,
+  /// comanda e estorno de estoque. As duas rotas são a mesma chamada — o
+  /// roteador offline-first escolhe o caminho.
   Future<void> _removePayment(Map<String, dynamic> payment) async {
     final id = payment['id'];
     if (id == null || removingPaymentId != null) return;
+    // Encenado: some da tela e pronto. Não existe em lugar nenhum além daqui,
+    // então não há o que o servidor desfazer — e era justamente por pedir isso
+    // a ele que excluir devolvia 409 antes de a venda sequer ter subido.
+    if (payment['_staged'] == true) {
+      setState(() {
+        registeredPayments = registeredPayments
+            .where((item) => !identical(item, payment))
+            .toList();
+        paymentAmountTyped = false;
+        paymentDigits = (remainingTotal * 100).round().toString();
+        _syncPaymentAmount();
+      });
+      return;
+    }
     setState(() => removingPaymentId = '$id');
     try {
       await api.delete(
         '/orders/${activeOrder!['id']}/payments/$id/',
         accessToken: token,
       );
+      await _refreshOrder();
       registeredPayments = await _loadRegisteredPayments();
+      if (_isCashPayment(payment)) await _refreshCashSession();
       paymentDigits = (remainingTotal * 100).round().toString();
       _syncPaymentAmount();
     } catch (error) {
@@ -3184,8 +4993,35 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _completePaidOrder() async {
+    if (completingOrder) return;
     if (remainingTotal > .009) {
       _error(const ApiException('Ainda existe um valor restante para pagar.'));
+      return;
+    }
+    completingOrder = true;
+    try {
+      await _completePaidOrderNow();
+    } finally {
+      if (mounted) setState(() => completingOrder = false);
+    }
+  }
+
+  Future<void> _completePaidOrderNow() async {
+    // Os recebimentos sobem AGORA, todos juntos, e só então a venda vira paga.
+    // É o que mantém recibo e DANFE no mesmo gesto: sem isto, o pedido já
+    // estava pago desde que o operador escolheu a forma de pagamento, e o
+    // papel dependia de ele lembrar de voltar aqui.
+    if (!await _commitStagedPayments()) return;
+    if (!mounted) return;
+    if (remainingTotal > .009) {
+      // O servidor cobrou diferente do que a tela somava (preço mudou, taxa
+      // entrou). Melhor parar aqui do que concluir uma venda em aberto.
+      _error(
+        const ApiException(
+          'O servidor registrou um valor diferente do somado na tela. '
+          'Confira os recebimentos antes de concluir.',
+        ),
+      );
       return;
     }
     final awaitingSync =
@@ -3193,32 +5029,16 @@ class _HomePageState extends State<HomePage> {
         registeredPayments.any(
           (payment) => payment['_offline_pending'] == true,
         );
-    if (awaitingSync) {
-      if (mounted) {
-        showAppToast(
-          context,
-          'Venda salva localmente. O recibo ficará disponível após a sincronização.',
-        );
-      }
-    } else {
-      // O pagamento já foi registrado. O recibo é um efeito colateral: uma
-      // falha de impressão não pode reabrir uma venda concluída.
-      try {
-        final printJob = await api.post(
-          '/orders/${activeOrder!['id']}/print/',
-          body: const {'job_type': 'receipt'},
-          accessToken: token,
-        );
-        await _handlePrintJob(printJob);
-      } catch (error) {
-        if (mounted) {
-          _error(
-            error,
-            title: 'O pagamento foi registrado, mas o recibo não saiu',
-            action: 'Reimprima pela tela de Pedidos quando quiser.',
-          );
-        }
-      }
+
+    // O recibo é um efeito colateral: uma falha de impressão não pode reabrir
+    // uma venda concluída.
+    await _printSaleReceipt(offline: awaitingSync);
+    // Emite a NFC-e assim que o pagamento fecha, em vez de depender do
+    // caixa lembrar de voltar no histórico do pedido para emitir manual.
+    // Sem rede isto grava o retrato fiscal na fila; o DANFE sai quando a
+    // nota for autorizada — documento fiscal não se imprime antes de existir.
+    if (mounted) {
+      await _emitFiscalInvoice(activeOrder!, silentIfUnconfigured: true);
     }
 
     if (!mounted) return;
@@ -3235,53 +5055,106 @@ class _HomePageState extends State<HomePage> {
     unawaited(_load());
   }
 
-  Future<void> _handlePrintJob(Map<String, dynamic> job) async {
-    if (!mounted) return;
-    final printer = job['printer'] as Map<String, dynamic>?;
-    if (printer == null) {
-      _error(
-        const ApiException(
-          'Nenhuma impressora ativa foi encontrada para este restaurante.',
-        ),
+  /// Imprime o recibo da venda no gesto de concluir o pedido.
+  ///
+  /// `offline` decide por qual caminho: sem rede (ou num Caixa Secundário) a
+  /// rota `/orders/{id}/print/` não existe para este terminal, mas o cupom
+  /// sabe ser montado aqui e a impressora é deste caixa. Antes, a venda
+  /// offline terminava com um aviso no lugar do papel — e, desde que o
+  /// backend parou de imprimir por conta própria para terminal identificado,
+  /// nem o replay da fila gerava o cupom depois. O cliente ia embora sem
+  /// comprovante nenhum.
+  Future<void> _printSaleReceipt({required bool offline}) async {
+    try {
+      final printers = await _list(
+        '/printers/',
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
       );
-      return;
-    }
-    if (printer['auto_print'] == true) return;
+      if (!mounted) return;
+      if (printers.isEmpty) {
+        _error(
+          const ApiException(
+            'Nenhuma impressora ativa foi cadastrada para este restaurante.',
+          ),
+          title: 'O pagamento foi registrado, mas o recibo não saiu',
+        );
+        return;
+      }
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      final printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir recibo de venda',
+                summary:
+                    'Pedido #${activeOrder?['sequence']} · ${_money(activeOrder?['total'])}',
+                description:
+                    'O recibo contém itens, pagamentos e totais do pedido.',
+              ),
+            );
+      if (printerId == null || !mounted) return;
+      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => '${item?['id']}' == printerId,
+        orElse: () => null,
+      );
 
-    final shouldPrint = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.print_outlined),
-            SizedBox(width: 10),
-            Expanded(child: Text('Impressão manual')),
-          ],
-        ),
-        content: Text(
-          'A impressão automática está desativada para '
-          '${printer['name']}. Deseja imprimir agora?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Agora não'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.print),
-            label: const Text('Imprimir agora'),
-          ),
-        ],
-      ),
-    );
-    if (shouldPrint != true) return;
-    final result = await _work(() async {
-      await deviceAgent.printJobManually(job, printer);
-      return <String, dynamic>{'printed': true};
-    });
-    if (result != null && mounted) {
-      showAppToast(context, 'Impressão enviada com sucesso.');
+      if ((offline || isSecondaryStation) && chosen != null) {
+        await _printingStep(
+          () => _printReceiptLocally(activeOrder!, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
+        return;
+      }
+
+      try {
+        final printJob = await api.post(
+          '/orders/${activeOrder!['id']}/print/',
+          body: {
+            'job_type': 'receipt',
+            'printer': printerId,
+            'manual_only': true,
+          },
+          accessToken: token,
+        );
+        final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
+        if (printer == null) {
+          // `manual_only` tira este trabalho do laço automático do agente: se
+          // ninguém imprimir aqui, ninguém imprime — e antes isso passava em
+          // silêncio, sem cupom e sem aviso.
+          throw const ApiException(
+            'O trabalho de impressão voltou sem impressora.',
+          );
+        }
+        await deviceAgent.printJobManually(printJob, printer);
+      } on ApiException catch (error) {
+        // Qualquer recusa serve de gatilho — rede que caiu no meio do gesto,
+        // servidor fora, ou uma rota que este terminal não alcança. O cliente
+        // está com a mão estendida esperando o comprovante.
+        if (chosen == null) rethrow;
+        AppLogger.instance.info(
+          'recibo_montado_localmente',
+          data: {'motivo': error.message, 'origem': 'concluir_pedido'},
+        );
+        await _printingStep(
+          () => _printReceiptLocally(activeOrder!, chosen),
+          title: 'O recibo não saiu na impressora',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _error(
+          error,
+          title: 'O pagamento foi registrado, mas o recibo não saiu',
+          action: 'Reimprima pela tela de Pedidos quando quiser.',
+        );
+      }
     }
   }
 
@@ -3306,7 +5179,7 @@ class _HomePageState extends State<HomePage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => AppDialog(
           title: const Text('Abrir caixa'),
           content: SizedBox(
             width: 420,
@@ -3372,8 +5245,19 @@ class _HomePageState extends State<HomePage> {
             'cash_station': stationId,
             'opening_amount': amount.text.replaceAll(',', '.'),
             'notes': notes.text.trim(),
+            ..._terminalIdentity,
           },
           accessToken: token,
+          // Abrir caixa passou a funcionar sem internet (§30): o repositório
+          // precisa do nome do caixa e do operador para montar a sessão local
+          // completa enquanto a operação espera na fila.
+          localContext: {
+            'cash_station': stations.cast<Map<String, dynamic>?>().firstWhere(
+              (item) => '${item?['id']}' == stationId,
+              orElse: () => null,
+            ),
+            'operator_name': widget.controller.session?.user.name,
+          },
         );
         setState(() {});
         return cashSession;
@@ -3391,7 +5275,7 @@ class _HomePageState extends State<HomePage> {
     final isWithdrawal = type == 'withdrawal';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: Text(
           isWithdrawal ? 'Registrar sangria' : 'Registrar suprimento',
         ),
@@ -3450,6 +5334,7 @@ class _HomePageState extends State<HomePage> {
               'reason': reason.text.trim(),
               'destination': destination.text.trim(),
               'source': destination.text.trim(),
+              ..._terminalIdentity,
             },
             accessToken: token,
           );
@@ -3480,7 +5365,7 @@ class _HomePageState extends State<HomePage> {
         context: context,
         barrierDismissible: true,
         builder: (dialogContext) => StatefulBuilder(
-          builder: (context, update) => AlertDialog(
+          builder: (context, update) => AppDialog(
             title: Text(
               movement['movement_type'] == 'withdrawal'
                   ? 'Autorizar sangria'
@@ -3636,27 +5521,48 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _closeCash() async {
-    if (offlinePendingCount > 0) {
-      _error(
-        const ApiException(
-          'Existem vendas ou pagamentos aguardando sincronização. '
-          'Sincronize e revise a fila antes de fechar o caixa.',
-        ),
-        title: 'O caixa ainda possui operações pendentes',
-      );
-      return;
-    }
+    // Operação na fila NÃO impede mais o fechamento. O saldo esperado sai dos
+    // movimentos gravados NESTE terminal, e a venda offline já entrou na
+    // gaveta local no momento do recebimento (`registerLocalSale`) — o número
+    // conferido é o mesmo com ou sem rede. Bloquear aqui prendia o operador
+    // no fim do turno esperando uma conexão que podia não voltar hoje.
+    final pending = offlinePendingCount;
+    final pendingNotice = pending == 1
+        ? '1 operação ainda não subiu para o servidor.'
+        : '$pending operações ainda não subiram para o servidor.';
     final amount = TextEditingController();
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: const Text('Fechar caixa'),
         content: SizedBox(
           width: 420,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (pending > 0) ...[
+                // O operador precisa saber COM O QUE está conferindo — não
+                // ser impedido de encerrar o turno por causa disso.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '$pendingNotice O fechamento usa o que está gravado '
+                        'neste terminal; a fila sobe quando a conexão voltar.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
               TextField(
                 controller: amount,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -3701,12 +5607,258 @@ class _HomePageState extends State<HomePage> {
           body: {
             'actual_amount': amount.text.replaceAll(',', '.'),
             'notes': notes.text.trim(),
+            ..._terminalIdentity,
           },
           accessToken: token,
         );
         setState(() {});
       }, onError: (error) => _cashError(error, 'fechar o caixa'));
     }
+  }
+
+  void _onCashMenuSelected(String value) {
+    if (value == 'toggle_balance') {
+      unawaited(_toggleCashBalanceVisibility());
+      return;
+    }
+    if (value == 'supply' || value == 'withdrawal') {
+      _cashMovement(value);
+    }
+    if (value == 'close') _closeCash();
+  }
+
+  List<PopupMenuEntry<String>> _cashMenuItems() => [
+    PopupMenuItem(
+      value: 'toggle_balance',
+      child: ListTile(
+        leading: Icon(
+          _canSeeCashBalance
+              ? Icons.visibility_off_outlined
+              : Icons.visibility_outlined,
+        ),
+        title: Text(_canSeeCashBalance ? 'Ocultar saldo' : 'Ver saldo'),
+      ),
+    ),
+    const PopupMenuDivider(),
+    const PopupMenuItem(
+      value: 'supply',
+      child: ListTile(
+        leading: Icon(Icons.add_circle_outline),
+        title: Text('Suprimento'),
+      ),
+    ),
+    const PopupMenuItem(
+      value: 'withdrawal',
+      child: ListTile(
+        leading: Icon(Icons.remove_circle_outline),
+        title: Text('Sangria'),
+      ),
+    ),
+    const PopupMenuDivider(),
+    const PopupMenuItem(
+      value: 'close',
+      child: ListTile(leading: Icon(Icons.lock), title: Text('Fechar caixa')),
+    ),
+  ];
+
+  String _sidebarUserSubtitle() {
+    final user = widget.controller.session!.user;
+    final profile = switch (user.profileType) {
+      'owner' => 'Proprietário',
+      'admin' => 'Administrador',
+      'manager' => 'Gerente',
+      'cashier' => 'Operador de caixa',
+      'waiter' => 'Garçom',
+      _ => '',
+    };
+    final username = user.username.trim();
+    if (username.isEmpty) {
+      return profile.isEmpty ? 'Usuário conectado' : profile;
+    }
+    return profile.isEmpty ? '@$username' : '@$username · $profile';
+  }
+
+  Widget _sidebarOperationPanel({bool compact = false}) {
+    final scheme = Theme.of(context).colorScheme;
+    if (compact) {
+      if (cashSession == null) {
+        return IconButton.filled(
+          tooltip: 'Abrir caixa',
+          onPressed: _openCash,
+          icon: const Icon(Icons.lock_open_outlined),
+        );
+      }
+      return PopupMenuButton<String>(
+        tooltip: 'Caixa aberto · $_cashBalanceLabel',
+        onSelected: _onCashMenuSelected,
+        itemBuilder: (_) => _cashMenuItems(),
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            borderRadius: AppTheme.radius,
+          ),
+          child: const Icon(Icons.point_of_sale, color: Colors.white, size: 20),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (restaurants.isNotEmpty) ...[
+          DropdownButtonFormField<String>(
+            initialValue: selectedRestaurantId,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Unidade',
+              prefixIcon: Icon(Icons.storefront_outlined, size: 18),
+            ),
+            items: restaurants
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: '${item['id']}',
+                    child: Text(
+                      '${item['trade_name'] ?? item['name']}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: busy || restaurants.length == 1
+                ? null
+                : (value) {
+                    if (value != null) _changeRestaurant(value);
+                  },
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (cashSession == null)
+          ShadButton(
+            onPressed: _openCash,
+            height: 44,
+            leading: const Icon(Icons.lock_open_outlined, size: 18),
+            child: const Text('Abrir caixa'),
+          )
+        else
+          PopupMenuButton<String>(
+            tooltip: 'Ações do caixa',
+            onSelected: _onCashMenuSelected,
+            itemBuilder: (_) => _cashMenuItems(),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(11, 9, 9, 9),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainer,
+                borderRadius: AppTheme.radius,
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: AppTheme.radius,
+                    ),
+                    child: const Icon(
+                      Icons.point_of_sale,
+                      color: Colors.white,
+                      size: 17,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          cashSessionFromCache
+                              ? 'CAIXA OFFLINE'
+                              : 'CAIXA ABERTO',
+                          style: TextStyle(
+                            color: cashSessionFromCache
+                                ? scheme.error
+                                : scheme.primary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .7,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _cashBalanceLabel,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .5,
+                          ),
+                        ),
+                        Text(
+                          '${cashSession!['station']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 9,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.more_vert, size: 17),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  (String, String, IconData) get _workspaceIdentity {
+    if (flowStep == 'scale-workstation') {
+      return (
+        'Estação de balança',
+        'Pesagem rápida e leitura de comandas',
+        Icons.scale_outlined,
+      );
+    }
+    if (flowStep == 'orders') {
+      return (
+        'Pedidos',
+        'Consulta, edição e pagamentos pendentes',
+        Icons.receipt_long_outlined,
+      );
+    }
+    if (flowStep == 'payment') {
+      return (
+        'Pagamento',
+        'Conferência e finalização do pedido',
+        Icons.payments_outlined,
+      );
+    }
+    if (activeOrder != null) {
+      return (
+        'Pedido #${activeOrder!['sequence']}',
+        'Cardápio e resumo do atendimento',
+        Icons.shopping_bag_outlined,
+      );
+    }
+    if (flowStep == 'context' || flowStep == 'table_details') {
+      return (
+        orderType == 'command' ? 'Comandas' : 'Mesas',
+        'Selecione o contexto do atendimento',
+        orderType == 'command'
+            ? Icons.qr_code_2_outlined
+            : Icons.table_restaurant_outlined,
+      );
+    }
+    return (
+      'Novo atendimento',
+      'Escolha como o pedido será iniciado',
+      Icons.grid_view_outlined,
+    );
   }
 
   @override
@@ -3719,69 +5871,41 @@ class _HomePageState extends State<HomePage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     if (restaurants.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            'StarChef PDV',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          actions: [
-            IconButton(
-              tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
-              onPressed: widget.onToggleTheme,
-              icon: Icon(
-                widget.isDark
-                    ? Icons.light_mode_outlined
-                    : Icons.dark_mode_outlined,
-              ),
-            ),
-            IconButton(
-              tooltip: 'Sair',
-              onPressed: widget.controller.logout,
-              icon: const Icon(Icons.logout),
-            ),
-          ],
+      return AppPageScaffold(
+        title: 'StarChef PDV',
+        description: 'Não foi possível preparar a unidade para atendimento.',
+        leading: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Image.asset('assets/logoicon.png', width: 32, height: 32),
         ),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    offlineMode ? Icons.cloud_off : Icons.storefront_outlined,
-                    size: 64,
-                    color: scheme.primary,
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    offlineMode
-                        ? 'Dados offline ainda não disponíveis'
-                        : 'Não foi possível carregar os restaurantes',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    loadErrorMessage ??
-                        'Conecte o PDV à internet ao menos uma vez para baixar os dados necessários.',
-                    textAlign: TextAlign.center,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 22),
-                  FilledButton.icon(
-                    onPressed: loading ? null : _load,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Tentar novamente'),
-                  ),
-                ],
-              ),
+        actions: [
+          IconButton.outlined(
+            tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
+            onPressed: widget.onToggleTheme,
+            icon: Icon(
+              widget.isDark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
             ),
+          ),
+          IconButton.outlined(
+            tooltip: 'Sair',
+            onPressed: widget.controller.logout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+        body: AppEmptyState(
+          icon: offlineMode ? Icons.cloud_off : Icons.storefront_outlined,
+          title: offlineMode
+              ? 'Dados offline ainda não disponíveis'
+              : 'Não foi possível carregar os restaurantes',
+          description:
+              loadErrorMessage ??
+              'Conecte o PDV à internet ao menos uma vez para baixar os dados necessários.',
+          action: FilledButton.icon(
+            onPressed: loading ? null : _load,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Tentar novamente'),
           ),
         ),
       );
@@ -3797,66 +5921,69 @@ class _HomePageState extends State<HomePage> {
             userName: widget.controller.session!.user.name.trim().isEmpty
                 ? widget.controller.session!.user.username
                 : widget.controller.session!.user.name,
-            restaurantName:
-                '${restaurants.firstWhere((item) => '${item['id']}' == selectedRestaurantId, orElse: () => restaurants.first)['trade_name'] ?? restaurants.first['name']}',
+            userSubtitle: _sidebarUserSubtitle(),
             onLogout: widget.controller.logout,
+            contextPanel: _sidebarOperationPanel(),
+            compactContextPanel: _sidebarOperationPanel(compact: true),
             showOrders: widget.controller.session!.user.canViewOrders,
+            showFinance: widget.controller.session!.user.canAccessCash,
             showScale:
                 widget.controller.session!.user.canManageOrders ||
                 widget.controller.session!.user.canProcessPayments,
             showSettings: true,
+            versionStatus: versionStatus,
+            onCheckVersion: () => unawaited(_checkPdvVersion()),
           ),
           Expanded(
             child: Scaffold(
               appBar: AppBar(
+                toolbarHeight: 72,
                 titleSpacing: 20,
                 title: Row(
                   children: [
-                    Icon(Icons.restaurant_menu, color: scheme.primary),
-                    if (!compactHeader) ...[
-                      const SizedBox(width: 10),
-                      const Text(
-                        'StarChef PDV',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer,
+                        borderRadius: AppTheme.radius,
+                        border: Border.all(color: scheme.outlineVariant),
                       ),
-                    ],
-                    const SizedBox(width: 12),
-                    if (restaurants.length > 1)
-                      Expanded(
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: selectedRestaurantId,
-                            isExpanded: true,
-                            borderRadius: BorderRadius.circular(12),
-                            icon: const Icon(Icons.expand_more),
-                            items: restaurants
-                                .map(
-                                  (item) => DropdownMenuItem(
-                                    value: '${item['id']}',
-                                    child: Text(
-                                      '${item['trade_name'] ?? item['name']}',
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: busy
-                                ? null
-                                : (value) {
-                                    if (value != null) _changeRestaurant(value);
-                                  },
+                      child: Icon(
+                        _workspaceIdentity.$3,
+                        size: 19,
+                        color: scheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _workspaceIdentity.$1,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Text(
-                          '${restaurants.first['trade_name'] ?? restaurants.first['name']}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
+                          if (!compactHeader)
+                            Text(
+                              _workspaceIdentity.$2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: scheme.onSurfaceVariant,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
                 actions: [
@@ -3875,19 +6002,6 @@ class _HomePageState extends State<HomePage> {
                           : null,
                     ),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 2,
-                    ),
-                    child: ValueListenableBuilder<PrinterAvailability>(
-                      valueListenable: deviceAgent.printerAvailability,
-                      builder: (_, status, _) => PdvPrinterBadge(
-                        status: status,
-                        compact: compactHeader,
-                      ),
-                    ),
-                  ),
                   if (isSecondaryStation)
                     Padding(
                       padding: const EdgeInsets.symmetric(
@@ -3897,7 +6011,7 @@ class _HomePageState extends State<HomePage> {
                       child: PdvPrincipalBadge(
                         connected: principalReachable,
                         compact: compactHeader,
-                        detail: topologyService?.status.message ?? '',
+                        detail: topology.status.message,
                         onPressed: () => unawaited(_openTopologySettings()),
                       ),
                     ),
@@ -3912,107 +6026,25 @@ class _HomePageState extends State<HomePage> {
                     onPressed: _goHome,
                     icon: const Icon(Icons.home_outlined),
                   ),
-                  if (cashSession == null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: FilledButton.icon(
-                        onPressed: _openCash,
-                        icon: const Icon(Icons.lock_open),
-                        label: const Text('Abrir caixa'),
-                      ),
-                    )
-                  else
-                    PopupMenuButton<String>(
-                      tooltip: 'Ações do caixa',
-                      onSelected: (value) {
-                        if (value == 'supply' || value == 'withdrawal') {
-                          _cashMovement(value);
-                        }
-                        if (value == 'close') _closeCash();
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          value: 'supply',
-                          child: ListTile(
-                            leading: Icon(Icons.add_circle_outline),
-                            title: Text('Suprimento'),
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'withdrawal',
-                          child: ListTile(
-                            leading: Icon(Icons.remove_circle_outline),
-                            title: Text('Sangria'),
-                          ),
-                        ),
-                        PopupMenuDivider(),
-                        PopupMenuItem(
-                          value: 'close',
-                          child: ListTile(
-                            leading: Icon(Icons.lock),
-                            title: Text('Fechar caixa'),
-                          ),
-                        ),
-                      ],
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 8,
-                        ),
-                        child: Container(
-                          height: 40,
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.point_of_sale,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                              const SizedBox(width: 8),
-                              Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    cashSessionFromCache
-                                        ? 'Caixa (offline) · ${cashSession!['station']}'
-                                        : 'Caixa aberto · ${cashSession!['station']}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      height: 1,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    'Saldo ${_money(cashBalance)}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                      height: 1,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(
-                                Icons.expand_more,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                  // Ajuda ao lado do Home: é onde o operador procura quando
+                  // não sabe o que uma tecla faz, e a lista que ela mostra sai
+                  // do mesmo registro que o teclado consulta.
+                  IconButton(
+                    tooltip: 'Ajuda e atalhos (F1)',
+                    onPressed: () => unawaited(_openHelp()),
+                    icon: const Icon(Icons.help_outline),
+                  ),
+                  IconButton(
+                    tooltip: widget.isDark
+                        ? 'Usar tema claro'
+                        : 'Usar tema escuro',
+                    onPressed: widget.onToggleTheme,
+                    icon: Icon(
+                      widget.isDark
+                          ? Icons.light_mode_outlined
+                          : Icons.dark_mode_outlined,
                     ),
+                  ),
                   IconButton(
                     tooltip: refreshing ? 'Atualizando...' : 'Atualizar',
                     onPressed: refreshing ? null : _load,
@@ -4024,6 +6056,12 @@ class _HomePageState extends State<HomePage> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.refresh),
+                  ),
+                  IconButton(
+                    tooltip: 'Fechar aplicação',
+                    onPressed: widget.onClose,
+                    style: IconButton.styleFrom(foregroundColor: scheme.error),
+                    icon: const Icon(Icons.power_settings_new),
                   ),
                   const SizedBox(width: 10),
                 ],
@@ -4086,11 +6124,6 @@ class _HomePageState extends State<HomePage> {
                     TableDetailsPanel(
                       table: selectedTable!,
                       onBack: () => setState(() => flowStep = 'context'),
-                      onOpenTableOrder: () => _openTableOrder(selectedTable!),
-                      onLinkCommand: _linkCommandDialog,
-                      onUnlinkCommand: _unlinkCommand,
-                      onTransferCommand: _transferCommandDialog,
-                      onTransferAllCommands: _transferAllCommandsDialog,
                       onOpenCommand: (cmd) => _openCommand(cmd),
                     )
                   else if (flowStep == 'payment')
@@ -4103,11 +6136,15 @@ class _HomePageState extends State<HomePage> {
                             : constraints.maxWidth >= 1500
                             ? 420.0
                             : 380.0;
-                        return Row(
-                          children: [
-                            Expanded(child: _catalog()),
-                            SizedBox(width: cartWidth, child: _cart()),
-                          ],
+                        return Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            children: [
+                              Expanded(child: _catalog()),
+                              const SizedBox(width: 12),
+                              SizedBox(width: cartWidth, child: _cart()),
+                            ],
+                          ),
                         );
                       },
                     ),
@@ -4118,7 +6155,9 @@ class _HomePageState extends State<HomePage> {
                         child: Center(
                           child: SizedBox(
                             width: 460,
-                            child: Card(
+                            child: ShadCard(
+                              radius: AppTheme.radius,
+                              shadows: const [],
                               child: Padding(
                                 padding: const EdgeInsets.all(32),
                                 child: Column(
@@ -4164,9 +6203,9 @@ class _HomePageState extends State<HomePage> {
                       child: Material(
                         color: Colors.orange.shade50,
                         elevation: 3,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: AppTheme.radius,
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: AppTheme.radius,
                           onTap: _showMovementApproval,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
@@ -4245,6 +6284,7 @@ class _HomePageState extends State<HomePage> {
           width: 300,
           child: TextField(
             controller: ordersSearchController,
+            focusNode: ordersSearchFocus,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search_rounded),
               hintText: 'Nº do pedido, cliente ou mesa...',
@@ -4308,7 +6348,6 @@ class _HomePageState extends State<HomePage> {
             decoration: const InputDecoration(labelText: 'Tipo'),
             items: const [
               DropdownMenuItem(value: null, child: Text('Todos os tipos')),
-              DropdownMenuItem(value: 'table', child: Text('Mesa')),
               DropdownMenuItem(value: 'command', child: Text('Comanda')),
               DropdownMenuItem(value: 'counter', child: Text('Balcão')),
               DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
@@ -4396,7 +6435,7 @@ class _HomePageState extends State<HomePage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.orange.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: AppTheme.radius,
         border: Border.all(color: Colors.orange.withValues(alpha: .4)),
       ),
       child: Row(
@@ -4507,32 +6546,44 @@ class _HomePageState extends State<HomePage> {
     // sobra a situação, que cruza dois campos e por isso é decidida sempre
     // localmente — inclusive sobre o resultado do servidor.
     final filtered = orders.where(_matchesStatusFilter).toList();
+    final openCount = orders
+        .where(
+          (item) =>
+              const {'open', 'awaiting_payment'}.contains('${item['status']}'),
+        )
+        .length;
+    final paidCount = orders
+        .where((item) => '${item['payment_status']}' == 'paid')
+        .length;
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pedidos',
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                    const Text(
-                      'Edite pedidos em aberto ou finalize pagamentos pendentes.',
-                    ),
-                  ],
+                child: _operationStat(
+                  'RESULTADOS DO FILTRO',
+                  '${filtered.length}',
+                  Icons.filter_alt_outlined,
                 ),
               ),
-              IconButton.filledTonal(
-                tooltip: 'Atualizar pedidos',
-                onPressed: () => _onOrdersFilterChanged(),
-                icon: const Icon(Icons.refresh),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PEDIDOS EM ABERTO',
+                  '$openCount',
+                  Icons.pending_actions_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PAGAMENTOS CONCLUÍDOS',
+                  '$paidCount',
+                  Icons.check_circle_outline,
+                ),
               ),
             ],
           ),
@@ -4544,13 +6595,19 @@ class _HomePageState extends State<HomePage> {
           ],
           const SizedBox(height: 18),
           Expanded(
-            child: Card(
-              clipBehavior: Clip.antiAlias,
+            child: ShadCard(
+              radius: AppTheme.radius,
+              shadows: const [],
+              padding: EdgeInsets.zero,
+              columnCrossAxisAlignment: CrossAxisAlignment.stretch,
               child: ordersLoading
                   ? const Center(child: CircularProgressIndicator())
                   : filtered.isEmpty
-                  ? const Center(
-                      child: Text('Nenhum pedido encontrado neste filtro.'),
+                  ? const AppEmptyState(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Nenhum pedido encontrado',
+                      description:
+                          'Altere os filtros ou atualize a lista para tentar novamente.',
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
@@ -4594,7 +6651,7 @@ class _HomePageState extends State<HomePage> {
                               columns: const [
                                 DataColumn(label: Text('Pedido')),
                                 DataColumn(label: Text('Tipo')),
-                                DataColumn(label: Text('Cliente/Mesa')),
+                                DataColumn(label: Text('Comanda/Mesa/Cliente')),
                                 DataColumn(label: Text('Status')),
                                 DataColumn(label: Text('Pagamento')),
                                 DataColumn(label: Text('Total')),
@@ -4631,8 +6688,12 @@ class _HomePageState extends State<HomePage> {
 
   Widget _startPanel() {
     final options = [
-      ('table', 'Mesa', 'Atendimento no salão', Icons.table_restaurant),
-      ('command', 'Comanda', 'Cartão de comanda', Icons.qr_code_2),
+      (
+        'command',
+        'Comanda',
+        'Atendimento no salão ou cartão de comanda',
+        Icons.qr_code_2,
+      ),
       ('counter', 'Balcão', 'Consumo rápido no local', Icons.storefront),
       (
         'takeaway',
@@ -4642,108 +6703,236 @@ class _HomePageState extends State<HomePage> {
       ),
       ('delivery', 'Delivery', 'Pedido para entrega', Icons.delivery_dining),
     ];
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 940),
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+    final scheme = Theme.of(context).colorScheme;
+    final availableTables = tables
+        .where(
+          (item) =>
+              (item['active_commands'] as List? ?? const []).isEmpty &&
+              item['status'] == 'free',
+        )
+        .length;
+    final availableCommands = commands
+        .where(
+          (item) =>
+              item['is_active'] != false &&
+              item['status'] == 'free' &&
+              item['current_order_id'] == null,
+        )
+        .length;
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Text(
-                'Novo pedido',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Text(
+                  'Escolha o tipo de atendimento',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Selecione o tipo de atendimento para começar.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 28),
-              GridView.builder(
-                shrinkWrap: true,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 5,
-                  mainAxisSpacing: 16,
-                  crossAxisSpacing: 16,
-                  // Cinco colunas deixam cada card mais estreito, então a
-                  // legenda quebra em duas linhas; sem baixar a proporção o
-                  // conteúdo estoura a altura da célula.
-                  childAspectRatio: .92,
-                ),
-                itemCount: options.length,
-                itemBuilder: (_, index) {
-                  final option = options[index];
-                  return Card(
-                    elevation: 0,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: Theme.of(context).dividerColor),
-                    ),
-                    child: InkWell(
-                      onTap: () => _selectOrderType(option.$1),
-                      child: Padding(
-                        padding: const EdgeInsets.all(22),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primaryContainer,
-                                borderRadius: BorderRadius.circular(13),
-                              ),
-                              child: Icon(
-                                option.$4,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              option.$2,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              option.$3,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
+              AppStatusBadge(
+                label: '${products.length} produtos ativos',
+                icon: Icons.inventory_2_outlined,
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _operationStat(
+                  'MESAS LIVRES',
+                  '$availableTables',
+                  Icons.table_restaurant_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'COMANDAS LIVRES',
+                  '$availableCommands',
+                  Icons.qr_code_2_outlined,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _operationStat(
+                  'PEDIDOS CARREGADOS',
+                  '${orders.length}',
+                  Icons.receipt_long_outlined,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Divider(height: 1, color: scheme.outlineVariant),
+          const SizedBox(height: 14),
+          Expanded(
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 230,
+                mainAxisExtent: 190,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+              ),
+              itemCount: options.length,
+              itemBuilder: (_, index) {
+                final option = options[index];
+                return ShadCard(
+                  padding: EdgeInsets.zero,
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: AppTheme.radius,
+                      onTap: () => _selectOrderType(option.$1),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Container(height: 3, color: scheme.primary),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 42,
+                                        height: 42,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primaryContainer,
+                                          borderRadius: AppTheme.radius,
+                                        ),
+                                        child: Icon(
+                                          option.$4,
+                                          color: scheme.primary,
+                                          size: 21,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Text(
+                                        '${index + 1}'.padLeft(2, '0'),
+                                        style: TextStyle(
+                                          color: scheme.onSurfaceVariant,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    option.$2,
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    option.$3,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'INICIAR',
+                                        style: TextStyle(
+                                          color: scheme.primary,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: .8,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Icon(
+                                        Icons.arrow_forward,
+                                        size: 16,
+                                        color: scheme.primary,
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _operationStat(String label, String value, IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: AppTheme.radius,
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _tableContextPanel() => Center(
     child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 980),
+      constraints: const BoxConstraints(maxWidth: 1400),
       child: Padding(
-        padding: const EdgeInsets.all(30),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -4764,7 +6953,7 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 5),
             Text(
-              'Mesas ocupadas retomam o pedido atual.',
+              'A mesa fica ocupada enquanto houver uma comanda vinculada.',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -4781,62 +6970,68 @@ class _HomePageState extends State<HomePage> {
                 itemCount: tables.length,
                 itemBuilder: (_, index) {
                   final table = tables[index];
-                  final occupied = table['current_order_id'] != null;
+                  final occupied =
+                      table['status'] == 'occupied' ||
+                      (table['active_commands'] as List? ?? const [])
+                          .isNotEmpty;
                   final color = occupied ? Colors.orange : Colors.green;
-                  return Card(
-                    elevation: 0,
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(color: color.shade300),
-                    ),
-                    child: InkWell(
-                      onTap: () => _openTable(table),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  '${table['number']}',
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w900,
+                  return ShadCard(
+                    padding: EdgeInsets.zero,
+                    radius: AppTheme.radius,
+                    shadows: const [],
+                    border: ShadBorder.all(color: color.shade300),
+                    columnCrossAxisAlignment: CrossAxisAlignment.stretch,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: AppTheme.radius,
+                        onTap: () => _openTable(table),
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    '${table['number']}',
+                                    style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                ),
-                                const Spacer(),
-                                Container(
-                                  width: 9,
-                                  height: 9,
-                                  decoration: BoxDecoration(
-                                    color: color,
-                                    shape: BoxShape.circle,
+                                  const Spacer(),
+                                  Container(
+                                    width: 9,
+                                    height: 9,
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      shape: BoxShape.circle,
+                                    ),
                                   ),
+                                ],
+                              ),
+                              const Spacer(),
+                              Text(
+                                occupied ? 'Ocupada' : 'Livre',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: color.shade800,
                                 ),
-                              ],
-                            ),
-                            const Spacer(),
-                            Text(
-                              occupied ? 'Ocupada' : 'Livre',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: color.shade800,
                               ),
-                            ),
-                            Text(
-                              '${table['capacity'] ?? 0} lugares · ${table['sector_name'] ?? 'Sem setor'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                              Text(
+                                '${table['capacity'] ?? 0} lugares · ${table['sector_name'] ?? 'Sem setor'}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -4868,6 +7063,24 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
+  /// Abre a comanda direto quando o leitor bipa o código e envia Enter.
+  ///
+  /// Prioriza um match exato de número/código: com a lista já filtrada por
+  /// [visibleCommands], vários cartões podem compartilhar prefixo (comanda 1
+  /// e 10, por exemplo) e o texto digitado por um humano nunca dispara Enter.
+  void _onCommandSearchSubmitted(String value) {
+    final term = value.trim();
+    if (term.isEmpty) return;
+    final matches = visibleCommands;
+    final exact = matches.cast<Map<String, dynamic>?>().firstWhere(
+      (item) =>
+          '${item?['number']}' == term || '${item?['code'] ?? ''}' == term,
+      orElse: () => null,
+    );
+    final command = exact ?? (matches.length == 1 ? matches.first : null);
+    if (command != null) _openCommand(command);
+  }
+
   Widget _commandContextPanel() {
     final visible = visibleCommands;
     final free = commands
@@ -4875,9 +7088,9 @@ class _HomePageState extends State<HomePage> {
         .length;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 980),
+        constraints: const BoxConstraints(maxWidth: 1400),
         child: Padding(
-          padding: const EdgeInsets.all(30),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4907,7 +7120,9 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 16),
               TextField(
                 autofocus: true,
+                focusNode: commandSearchFocus,
                 onChanged: (value) => setState(() => commandSearch = value),
+                onSubmitted: _onCommandSearchSubmitted,
                 decoration: const InputDecoration(
                   prefixIcon: Icon(Icons.search_rounded),
                   hintText: 'Buscar por número, código ou cliente...',
@@ -4916,12 +7131,14 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 18),
               Expanded(
                 child: visible.isEmpty
-                    ? Center(
-                        child: Text(
-                          commands.isEmpty
-                              ? 'Nenhuma comanda cadastrada.'
-                              : 'Nenhuma comanda encontrada.',
-                        ),
+                    ? AppEmptyState(
+                        icon: Icons.qr_code_2_outlined,
+                        title: commands.isEmpty
+                            ? 'Nenhuma comanda cadastrada'
+                            : 'Nenhuma comanda encontrada',
+                        description: commands.isEmpty
+                            ? 'Cadastre comandas na retaguarda para iniciar atendimentos.'
+                            : 'Tente buscar por outro número, código ou cliente.',
                       )
                     : GridView.builder(
                         gridDelegate:
@@ -4938,13 +7155,13 @@ class _HomePageState extends State<HomePage> {
                               command['current_order_id'] != null ||
                               command['status'] == 'occupied';
                           final color = occupied ? Colors.orange : Colors.green;
-                          return Card(
-                            elevation: 0,
-                            clipBehavior: Clip.antiAlias,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              side: BorderSide(color: color.shade300),
-                            ),
+                          return ShadCard(
+                            padding: EdgeInsets.zero,
+                            radius: AppTheme.radius,
+                            shadows: const [],
+                            border: ShadBorder.all(color: color.shade300),
+                            columnCrossAxisAlignment:
+                                CrossAxisAlignment.stretch,
                             child: InkWell(
                               onTap: () => _openCommand(command),
                               child: Padding(
@@ -5027,331 +7244,386 @@ class _HomePageState extends State<HomePage> {
       '0',
       'back',
     ];
-    return Padding(
-      padding: const EdgeInsets.all(26),
-      child: Row(
-        children: [
-          Expanded(
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => setState(() => flowStep = 'order'),
-                      icon: const Icon(Icons.arrow_back),
-                      label: const Text('Voltar ao pedido'),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Pagamento',
-                      style: TextStyle(
-                        fontSize: 27,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Pedido #${activeOrder!['sequence']}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    _paymentSummaryRow(
-                      'Subtotal',
-                      _money(activeOrder!['subtotal']),
-                    ),
-                    if (_number(activeOrder!['service_fee']) > .009)
-                      _paymentSummaryRow(
-                        'Taxa de serviço',
-                        _money(activeOrder!['service_fee']),
-                      ),
-                    if (_number(activeOrder!['delivery_fee']) > .009)
-                      _paymentSummaryRow(
-                        'Entrega',
-                        _money(activeOrder!['delivery_fee']),
-                      ),
-                    if (_number(activeOrder!['discount']) > .009)
-                      _paymentSummaryRow(
-                        'Desconto',
-                        '- ${_money(activeOrder!['discount'])}',
-                      ),
-                    _paymentSummaryRow(
-                      'Total do pedido',
-                      _money(activeOrder!['total']),
-                      strong: true,
-                    ),
-                    _paymentSummaryRow('Valor aplicado', _money(paidTotal)),
-                    _paymentSummaryRow('Total recebido', _money(receivedTotal)),
-                    if (changeTotal > .009)
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(top: 14),
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.green.withValues(alpha: .45),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A janela do PDV pode chegar a 960 px. Com a navegação lateral
+        // aberta, reservar 430 px fixos para o teclado deixava o resumo com
+        // pouco mais de 200 px. O teclado continua confortável, mas agora
+        // cede espaço ao resumo nas larguras menores suportadas.
+        final compact = constraints.maxWidth < 980;
+        final horizontalPadding = compact ? 18.0 : 26.0;
+        final keypadWidth = (constraints.maxWidth * .42)
+            .clamp(340.0, 430.0)
+            .toDouble();
+        return Padding(
+          padding: EdgeInsets.all(horizontalPadding),
+          child: Row(
+            children: [
+              Expanded(
+                child: ShadCard(
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => setState(() => flowStep = 'order'),
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('Voltar ao pedido'),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Pagamento',
+                          style: TextStyle(
+                            fontSize: 27,
+                            fontWeight: FontWeight.w900,
                           ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'TROCO A ENTREGAR',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.green,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _money(changeTotal),
-                              style: const TextStyle(
-                                fontSize: 34,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                              ),
-                            ),
-                            const Text(
-                              'Entregue o troco e depois conclua o pedido.',
-                            ),
-                          ],
+                        const SizedBox(height: 6),
+                        Text(
+                          'Pedido #${activeOrder!['sequence']}',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    const Divider(height: 28),
-                    _paymentSummaryRow(
-                      'Restante',
-                      _money(remainingTotal),
-                      strong: true,
-                    ),
-                    const SizedBox(height: 22),
-                    const Text(
-                      'Pagamentos registrados',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: registeredPayments.isEmpty
-                          ? const Center(
-                              child: Text('Nenhum pagamento registrado.'),
-                            )
-                          : ListView.separated(
-                              itemCount: registeredPayments.length,
-                              separatorBuilder: (_, _) => const Divider(),
-                              itemBuilder: (_, index) {
-                                final payment = registeredPayments[index];
-                                return ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: const CircleAvatar(
-                                    child: Icon(Icons.check, size: 18),
+                        const SizedBox(height: 24),
+                        _paymentSummaryRow(
+                          'Subtotal',
+                          _money(activeOrder!['subtotal']),
+                        ),
+                        if (_number(activeOrder!['service_fee']) > .009)
+                          _paymentSummaryRow(
+                            'Taxa de serviço',
+                            _money(activeOrder!['service_fee']),
+                          ),
+                        if (_number(activeOrder!['delivery_fee']) > .009)
+                          _paymentSummaryRow(
+                            'Entrega',
+                            _money(activeOrder!['delivery_fee']),
+                          ),
+                        if (_number(activeOrder!['discount']) > .009)
+                          _paymentSummaryRow(
+                            'Desconto',
+                            '- ${_money(activeOrder!['discount'])}',
+                          ),
+                        _paymentSummaryRow(
+                          'Total do pedido',
+                          _money(activeOrder!['total']),
+                          strong: true,
+                        ),
+                        _paymentSummaryRow('Valor aplicado', _money(paidTotal)),
+                        _paymentSummaryRow(
+                          'Total recebido',
+                          _money(receivedTotal),
+                        ),
+                        if (changeTotal > .009)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(top: 14),
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withValues(alpha: .12),
+                              borderRadius: AppTheme.radius,
+                              border: Border.all(
+                                color: Colors.green.withValues(alpha: .45),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'TROCO A ENTREGAR',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.green,
                                   ),
-                                  title: Text(
-                                    '${payment['payment_method_name'] ?? 'Pagamento'}',
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _money(changeTotal),
+                                  style: const TextStyle(
+                                    fontSize: 34,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.green,
                                   ),
-                                  subtitle:
-                                      _number(payment['change_amount']) > .009
-                                      ? Text(
-                                          'Recebido: ${_money(_number(payment['amount']) + _number(payment['change_amount']))} · Troco: ${_money(payment['change_amount'])}',
-                                        )
-                                      : null,
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        _money(payment['amount']),
+                                ),
+                                const Text(
+                                  'Entregue o troco e depois conclua o pedido.',
+                                ),
+                              ],
+                            ),
+                          ),
+                        const Divider(height: 28),
+                        _paymentSummaryRow(
+                          'Restante',
+                          _money(remainingTotal),
+                          strong: true,
+                        ),
+                        const SizedBox(height: 22),
+                        Text(
+                          stagedPayments.isEmpty
+                              ? 'Pagamentos registrados'
+                              : 'Pagamentos deste recebimento',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        if (stagedPayments.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Serão enviados ao concluir o pedido.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 10),
+                        Expanded(
+                          child: registeredPayments.isEmpty
+                              ? const Center(
+                                  child: Text('Nenhum pagamento registrado.'),
+                                )
+                              : ListView.separated(
+                                  itemCount: registeredPayments.length,
+                                  separatorBuilder: (_, _) => const Divider(),
+                                  itemBuilder: (_, index) {
+                                    final payment = registeredPayments[index];
+                                    final staged = payment['_staged'] == true;
+                                    final change = _number(
+                                      payment['change_amount'],
+                                    );
+                                    final detail = [
+                                      if (change > .009)
+                                        'Recebido: ${_money(_number(payment['amount']) + change)} · Troco: ${_money(change)}',
+                                      // O selo é o que separa "montado aqui"
+                                      // de "já está no servidor" — e é o que
+                                      // diz por que um deles pode ser
+                                      // excluído sem pedir nada a ninguém.
+                                      if (staged) 'Ainda não enviado',
+                                    ].join(' · ');
+                                    return ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: CircleAvatar(
+                                        child: Icon(
+                                          staged ? Icons.schedule : Icons.check,
+                                          size: 18,
+                                        ),
+                                      ),
+                                      title: Text(
+                                        '${payment['payment_method_name'] ?? 'Pagamento'}',
+                                      ),
+                                      subtitle: detail.isEmpty
+                                          ? null
+                                          : Text(detail),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            _money(payment['amount']),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          if (payment['id'] != null)
+                                            IconButton(
+                                              tooltip: 'Excluir pagamento',
+                                              icon:
+                                                  removingPaymentId ==
+                                                      '${payment['id']}'
+                                                  ? const SizedBox(
+                                                      width: 18,
+                                                      height: 18,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                          ),
+                                                    )
+                                                  : const Icon(
+                                                      Icons.delete_outline,
+                                                      size: 20,
+                                                    ),
+                                              onPressed:
+                                                  removingPaymentId == null
+                                                  ? () =>
+                                                        _removePayment(payment)
+                                                  : null,
+                                            ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed: remainingTotal <= .009
+                                ? _completePaidOrder
+                                : null,
+                            icon: const Icon(Icons.check_circle),
+                            label: Text(
+                              stagedPayments.isEmpty
+                                  ? 'Concluir pedido'
+                                  : 'Concluir pedido e receber',
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: compact ? 14 : 20),
+              SizedBox(
+                width: keypadWidth,
+                child: ShadCard(
+                  radius: AppTheme.radius,
+                  shadows: const [],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedPaymentMethod,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Forma de pagamento',
+                          ),
+                          items: paymentMethods
+                              .map(
+                                (item) => DropdownMenuItem(
+                                  value: '${item['id']}',
+                                  child: Text('${item['name']}'),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) =>
+                              setState(() => selectedPaymentMethod = value),
+                        ),
+                        if (needsReference) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: paymentReference,
+                            decoration: const InputDecoration(
+                              labelText: 'Referência da transação',
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        TextField(
+                          controller: paymentAmount,
+                          readOnly: true,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w900,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Valor do pagamento',
+                            prefixText: r'R$ ',
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 18,
+                            ),
+                          ),
+                        ),
+                        if (pendingChange > .009) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withValues(alpha: .12),
+                              borderRadius: AppTheme.radius,
+                              border: Border.all(
+                                color: Colors.green.withValues(alpha: .45),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Troco',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                Text(
+                                  _money(pendingChange),
+                                  style: const TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.green,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: GridView.builder(
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  childAspectRatio: 1.6,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                ),
+                            itemCount: keys.length,
+                            itemBuilder: (_, index) {
+                              final key = keys[index];
+                              return OutlinedButton(
+                                onPressed: () => _pressPaymentKey(key),
+                                child: key == 'back'
+                                    ? const Icon(Icons.backspace_outlined)
+                                    : key == 'clear'
+                                    ? const Text('C')
+                                    : Text(
+                                        key,
                                         style: const TextStyle(
+                                          fontSize: 20,
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
-                                      if (payment['id'] != null)
-                                        IconButton(
-                                          tooltip: 'Excluir pagamento',
-                                          icon:
-                                              removingPaymentId ==
-                                                  '${payment['id']}'
-                                              ? const SizedBox(
-                                                  width: 18,
-                                                  height: 18,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                )
-                                              : const Icon(
-                                                  Icons.delete_outline,
-                                                  size: 20,
-                                                ),
-                                          onPressed: removingPaymentId == null
-                                              ? () => _removePayment(payment)
-                                              : null,
-                                        ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton.icon(
-                        onPressed: remainingTotal <= .009
-                            ? _completePaidOrder
-                            : null,
-                        icon: const Icon(Icons.check_circle),
-                        label: const Text(
-                          'Concluir pedido',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 20),
-          SizedBox(
-            width: 430,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedPaymentMethod,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Forma de pagamento',
-                      ),
-                      items: paymentMethods
-                          .map(
-                            (item) => DropdownMenuItem(
-                              value: '${item['id']}',
-                              child: Text('${item['name']}'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) =>
-                          setState(() => selectedPaymentMethod = value),
-                    ),
-                    if (needsReference) ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: paymentReference,
-                        decoration: const InputDecoration(
-                          labelText: 'Referência da transação',
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    TextField(
-                      controller: paymentAmount,
-                      readOnly: true,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Valor do pagamento',
-                        prefixText: r'R$ ',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
-                        ),
-                      ),
-                    ),
-                    if (pendingChange > .009) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: Colors.green.withValues(alpha: .45),
+                              );
+                            },
                           ),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Troco',
-                              style: TextStyle(fontWeight: FontWeight.w800),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: FilledButton.icon(
+                            onPressed: paymentValue > 0
+                                ? _addSplitPayment
+                                : null,
+                            icon: const Icon(Icons.add_card),
+                            label: Text(
+                              pendingChange > .009
+                                  ? 'Receber e registrar troco'
+                                  : 'Adicionar pagamento',
+                              style: const TextStyle(fontSize: 16),
                             ),
-                            Text(
-                              _money(pendingChange),
-                              style: const TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    Expanded(
-                      child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              childAspectRatio: 1.6,
-                              crossAxisSpacing: 10,
-                              mainAxisSpacing: 10,
-                            ),
-                        itemCount: keys.length,
-                        itemBuilder: (_, index) {
-                          final key = keys[index];
-                          return OutlinedButton(
-                            onPressed: () => _pressPaymentKey(key),
-                            child: key == 'back'
-                                ? const Icon(Icons.backspace_outlined)
-                                : key == 'clear'
-                                ? const Text('C')
-                                : Text(
-                                    key,
-                                    style: const TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                          );
-                        },
-                      ),
+                      ],
                     ),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: FilledButton.icon(
-                        onPressed: paymentValue > 0 ? _addSplitPayment : null,
-                        icon: const Icon(Icons.add_card),
-                        label: Text(
-                          pendingChange > .009
-                              ? 'Receber e registrar troco'
-                              : 'Adicionar pagamento',
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -5398,6 +7670,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _cart() => OrderCartPanel(
+    selectedItemId: selectedOrderItemId,
+    onSelectItem: _selectOrderItem,
+    onChangeQuantity: _changeItemQuantity,
     order: activeOrder,
     table: selectedTable,
     command: selectedCommand,
@@ -5407,9 +7682,19 @@ class _HomePageState extends State<HomePage> {
     onVoidItem: _voidItem,
     onFinish: _finishOrder,
     onPrint: _printCustomerReceipt,
-    onEmitInvoice: activeOrder == null
+    onCancel: widget.controller.session!.user.canCancelOrders
+        ? _cancelOrder
+        : null,
+    onEmitInvoice:
+        activeOrder == null ||
+            !widget.controller.session!.user.canProcessPayments
         ? null
         : () => _emitFiscalInvoice(activeOrder!),
+    onPrintInvoice:
+        activeOrder == null ||
+            !widget.controller.session!.user.canProcessPayments
+        ? null
+        : () => _reprintDanfe(activeOrder!),
     printing: printingReceipt,
     emittingInvoice: emittingInvoice,
   );

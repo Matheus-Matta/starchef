@@ -112,7 +112,9 @@ def test_sensitive_data_masked_for_unprivileged_profile(account, restaurant, bra
     from django.contrib.auth import get_user_model
 
     waiter = get_user_model().objects.create_user(username="garcom", password="x")
-    UserProfile.objects.create(account=account, user=waiter, profile_type=UserProfile.PROFILE_WAITER, restaurant=restaurant, branch=branch)
+    from apps.accounts.role_catalog import ensure_system_roles
+
+    UserProfile.objects.create(account=account, user=waiter, role=ensure_system_roles(account)["waiter"], restaurant=restaurant, branch=branch)
     client = _authenticated_client(waiter)
 
     resp = client.get("/api/v1/customers/")

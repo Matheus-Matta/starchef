@@ -22,8 +22,14 @@ def get_user_from_token(token):
 
 
 def _token_from_scope(scope):
-    """Prioriza o cookie httpOnly (enviado no handshake); cai para `?token=`."""
+    """Lê JWT do Bearer nativo, cookie web ou `?token=` legado."""
     headers = dict(scope.get("headers", []))
+    authorization = headers.get(b"authorization", b"").decode().strip()
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+
     raw_cookie = headers.get(b"cookie", b"").decode()
     if raw_cookie:
         jar = SimpleCookie()

@@ -34,13 +34,44 @@ def test_permissions_endpoint_lists_catalog(admin_client, permissions):
     assert "orders.view" in codes
 
 
-def test_create_role_with_permissions(admin_client, permissions):
+def test_roles_endpoint_is_read_only(admin_client, permissions):
+    """Perfis de Acesso agora sao fixos: a API nao aceita mais criar/editar/apagar."""
     payload = {
         "name": "Gerente VIP",
         "code": "gerente-vip",
         "permissions": [str(permissions[0].id), str(permissions[1].id)],
     }
     resp = admin_client.post("/api/v1/roles/", payload, format="json")
-    assert resp.status_code == 201, resp.data
-    role = Role.all_objects.get(code="gerente-vip")
-    assert role.permissions.count() == 2
+    assert resp.status_code == 405, resp.data
+    assert not Role.all_objects.filter(code="gerente-vip").exists()
+
+
+def test_roles_endpoint_lists_fixed_roles(admin_client):
+    resp = admin_client.get("/api/v1/roles/")
+    assert resp.status_code == 200, resp.data
+    rows = resp.data["results"] if isinstance(resp.data, dict) else resp.data
+    codes = {row["code"] for row in rows}
+    assert {"waiter", "cashier", "manager", "admin"} <= codes
+
+
+def test_account_creation_provisions_fixed_system_roles(account):
+    """`Account.objects.create` (signal) provisiona os 4 perfis fixos sozinho."""
+    from apps.accounts.role_catalog import SYSTEM_ROLE_CODES
+
+    roles = {role.code: role for role in Role.all_objects.filter(account=account)}
+    assert set(roles) == set(SYSTEM_ROLE_CODES)
+    assert all(role.is_system for role in roles.values())
+
+    admin_codes = set(roles["admin"].permissions.values_list("code", flat=True))
+    assert admin_codes == set(ALL_CODES)
+    assert roles["admin"].is_account_admin is True
+
+    waiter_codes = set(roles["waiter"].permissions.values_list("code", flat=True))
+    cashier_codes = set(roles["cashier"].permissions.values_list("code", flat=True))
+    manager_codes = set(roles["manager"].permissions.values_list("code", flat=True))
+
+    # Hierarquia pedida: garçom ⊂ caixa ⊂ gerente ⊂ admin.
+    assert waiter_codes <= cashier_codes <= manager_codes <= admin_codes
+    assert "orders.view" in cashier_codes and "orders.view" not in waiter_codes
+    assert "payments.manage" in cashier_codes
+    assert "devices.manage" in manager_codes and "devices.manage" not in cashier_codes

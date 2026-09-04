@@ -8,6 +8,7 @@ from apps.accounts.limits import assert_can_create_restaurant
 from apps.core.codes import barcode_data_uri, qr_data_uri
 from apps.core.modules import MODULE_ENTREGA
 from apps.core.viewsets import BaseTenantViewSet
+from apps.realtime.events import broadcast_resource_event
 from apps.restaurants.models import Branch, Command, DeliveryZone, Deliveryman, Restaurant, Table, TableSector
 from apps.restaurants.serializers import (
     BranchSerializer,
@@ -18,7 +19,7 @@ from apps.restaurants.serializers import (
     TableSectorSerializer,
     TableSerializer,
 )
-from apps.restaurants.services import default_command_code, next_command_number
+from apps.restaurants.services import default_command_code, next_command_number, sync_branch_for_restaurant
 
 
 def _codes_payload(obj):
@@ -103,7 +104,7 @@ class TableSectorViewSet(BaseTenantViewSet):
 
 class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
     serializer_class = TableSerializer
-    queryset = Table.objects.select_related("restaurant", "branch", "sector").all()
+    queryset = Table.objects.select_related("restaurant", "branch", "sector").prefetch_related("active_commands").all()
     filterset_fields = ["sector", "status", "is_active"]
     search_fields = ["number", "code"]
     ordering_fields = ["number", "status", "updated_at"]
@@ -122,6 +123,18 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         sector = TableSector.objects.filter(pk=sector_id, account=account).first()
         if not sector:
             raise ValidationError({"sector": "Setor não encontrado nesta conta."})
+        restaurant_id = request.data.get("restaurant")
+        if restaurant_id and str(sector.restaurant_id) != str(restaurant_id):
+            raise ValidationError({"sector": "O setor não pertence ao restaurante selecionado."})
+
+        # Dados antigos podiam guardar um setor do restaurante B com a filial
+        # herdada do restaurante A. Corrige o vínculo antes de verificar/criar
+        # mesas para que a numeração seja independente por restaurante.
+        target_branch = sync_branch_for_restaurant(sector.restaurant)
+        if sector.branch_id != target_branch.id:
+            sector.branch = target_branch
+            sector.updated_by = request.user
+            sector.save(update_fields=["branch", "updated_by", "updated_at"])
 
         from apps.core.access import is_tenant_admin
 
@@ -146,9 +159,10 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
             raise ValidationError({"detail": f"Máximo de {self.MAX_BULK_TABLES} mesas por lote."})
 
         existing = set(
-            Table.all_objects.filter(branch=sector.branch, number__in=[str(n) for n in range(from_number, to_number + 1)]).values_list(
-                "number", flat=True
-            )
+            Table.all_objects.filter(
+                restaurant=sector.restaurant,
+                number__in=[str(n) for n in range(from_number, to_number + 1)],
+            ).values_list("number", flat=True)
         )
         created = []
         for number_int in range(from_number, to_number + 1):
@@ -159,7 +173,7 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 Table(
                     account=account,
                     restaurant=sector.restaurant,
-                    branch=sector.branch,
+                    branch=target_branch,
                     sector=sector,
                     number=number_str,
                     code=number_str,
@@ -169,6 +183,17 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 )
             )
         Table.objects.bulk_create(created)
+        if created:
+            transaction.on_commit(
+                lambda: broadcast_resource_event(
+                    account.id,
+                    resource="restaurants.table",
+                    action="created",
+                    restaurant_id=sector.restaurant_id,
+                    branch_id=sector.branch_id,
+                    changed_fields={"collection"},
+                )
+            )
         return Response(
             {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
             status=201,
@@ -178,48 +203,64 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
     @transaction.atomic
     def transfer_commands(self, request, pk=None):
         """Transfere TODAS as comandas desta mesa para outra."""
-        from_table = self.get_object()
+        from_table = Table.objects.select_for_update().get(pk=self.get_object().pk)
         to_table_id = request.data.get("to_table_id")
-        
+
         if not to_table_id:
             raise ValidationError({"to_table_id": "Informe a mesa de destino."})
-            
-        to_table = self.get_queryset().filter(pk=to_table_id).first()
+
+        to_table = self.get_queryset().select_for_update().filter(pk=to_table_id).first()
         if not to_table:
             raise ValidationError({"to_table_id": "Mesa destino não encontrada."})
-            
+
         if from_table.id == to_table.id:
             raise ValidationError({"to_table_id": "A mesa de destino não pode ser a mesma de origem."})
-            
+        if to_table.status == Table.STATUS_CLEANING:
+            raise ValidationError({"to_table_id": "A mesa de destino aguarda limpeza."})
+
         commands = list(from_table.active_commands.all())
         if not commands:
             raise ValidationError({"detail": "Não há comandas vinculadas a esta mesa para transferir."})
-            
+
+        from apps.orders.models import Order
         from apps.restaurants.models import CommandMovementLog
+
         logs = []
         for cmd in commands:
             cmd.current_table = to_table
             cmd.save(update_fields=["current_table", "updated_at"])
-            logs.append(CommandMovementLog(
-                account=cmd.account,
-                restaurant=cmd.restaurant,
-                branch=cmd.branch,
-                command=cmd,
-                action=CommandMovementLog.ACTION_TRANSFERRED,
-                table=to_table,
-                from_table=from_table,
-                waiter=request.user
-            ))
-            
+            if cmd.current_order_id:
+                Order.objects.filter(
+                    pk=cmd.current_order_id,
+                    status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+                ).update(
+                    table=to_table,
+                    updated_by=request.user,
+                    updated_at=timezone.now(),
+                )
+            logs.append(
+                CommandMovementLog(
+                    account=cmd.account,
+                    restaurant=cmd.restaurant,
+                    branch=cmd.branch,
+                    command=cmd,
+                    action=CommandMovementLog.ACTION_TRANSFERRED,
+                    table=to_table,
+                    from_table=from_table,
+                    waiter=request.user,
+                )
+            )
+
         CommandMovementLog.objects.bulk_create(logs)
-        
-        if to_table.status == Table.STATUS_FREE:
-            to_table.status = Table.STATUS_OCCUPIED
-            to_table.save(update_fields=["status", "updated_at"])
-            
+
+        to_table.status = Table.STATUS_OCCUPIED
+        to_table.current_order_id = None
+        to_table.save(update_fields=["status", "current_order_id", "updated_at"])
+
         from apps.orders.services import free_table_if_empty
+
         free_table_if_empty(from_table)
-        
+
         return Response({"transferred": len(commands)})
 
 
@@ -235,7 +276,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
 
     def destroy(self, request, *args, **kwargs):
         command = self.get_object()
-        if command.status != Command.STATUS_FREE or command.current_order_id:
+        if command.status != Command.STATUS_FREE or command.current_order_id or command.current_table_id:
             raise ValidationError({"detail": "Comandas ocupadas não podem ser excluídas."})
         return super().destroy(request, *args, **kwargs)
 
@@ -254,24 +295,55 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     @transaction.atomic
     def link_table(self, request, pk=None):
         """Vincula a comanda a uma mesa específica."""
-        command = self.get_object()
+        command = Command.objects.select_for_update().get(pk=self.get_object().pk)
         table_id = request.data.get("table_id")
         if not table_id:
             raise ValidationError({"table_id": "Informe a mesa para vincular a comanda."})
-        
-        table = Table.objects.filter(pk=table_id, branch=command.branch).first()
+
+        table = (
+            Table.objects.select_for_update()
+            .filter(
+                pk=table_id,
+                account=command.account,
+                restaurant=command.restaurant,
+                is_active=True,
+            )
+            .first()
+        )
         if not table:
-            raise ValidationError({"table_id": "Mesa não encontrada nesta filial."})
-            
+            raise ValidationError({"table_id": "Mesa não encontrada neste restaurante."})
+
+        # A mesa é a fonte de verdade da filial do vínculo. Isso repara tanto
+        # comandas antigas com filial herdada de outra unidade quanto bases que
+        # ainda possuem mais de uma filial histórica no mesmo restaurante.
+        if command.branch_id != table.branch_id:
+            command.branch = table.branch
+            command.updated_by = request.user
+            command.save(update_fields=["branch", "updated_by", "updated_at"])
+
         if command.current_table_id == table.id:
             return Response(self.get_serializer(command).data)
-            
+        if table.status == Table.STATUS_CLEANING:
+            raise ValidationError({"table_id": "A mesa selecionada aguarda limpeza."})
+
         from apps.restaurants.models import CommandMovementLog
-        
+
         old_table_id = command.current_table_id
         command.current_table = table
         command.save(update_fields=["current_table", "updated_at"])
-        
+
+        if command.current_order_id:
+            from apps.orders.models import Order
+
+            Order.objects.filter(
+                pk=command.current_order_id,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).update(
+                table=table,
+                updated_by=request.user,
+                updated_at=timezone.now(),
+            )
+
         CommandMovementLog.objects.create(
             account=command.account,
             restaurant=command.restaurant,
@@ -280,32 +352,46 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             action=CommandMovementLog.ACTION_LINKED,
             table=table,
             from_table_id=old_table_id,
-            waiter=request.user
+            waiter=request.user,
         )
-        
-        if table.status == Table.STATUS_FREE:
-            table.status = Table.STATUS_OCCUPIED
-            table.save(update_fields=["status", "updated_at"])
-            
+
+        table.status = Table.STATUS_OCCUPIED
+        table.current_order_id = None
+        table.save(update_fields=["status", "current_order_id", "updated_at"])
+
         if old_table_id:
             from apps.orders.services import free_table_if_empty
+
             free_table_if_empty(Table.objects.get(pk=old_table_id))
-            
+
         return Response(self.get_serializer(command).data)
 
     @action(detail=True, methods=["post"], url_path="unlink-table")
     @transaction.atomic
     def unlink_table(self, request, pk=None):
         """Desvincula a comanda da mesa atual."""
-        command = self.get_object()
+        command = Command.objects.select_for_update().get(pk=self.get_object().pk)
         if not command.current_table_id:
             return Response(self.get_serializer(command).data)
-            
+
         old_table_id = command.current_table_id
         command.current_table = None
         command.save(update_fields=["current_table", "updated_at"])
-        
+
+        if command.current_order_id:
+            from apps.orders.models import Order
+
+            Order.objects.filter(
+                pk=command.current_order_id,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).update(
+                table=None,
+                updated_by=request.user,
+                updated_at=timezone.now(),
+            )
+
         from apps.restaurants.models import CommandMovementLog
+
         CommandMovementLog.objects.create(
             account=command.account,
             restaurant=command.restaurant,
@@ -313,12 +399,13 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             command=command,
             action=CommandMovementLog.ACTION_UNLINKED,
             from_table_id=old_table_id,
-            waiter=request.user
+            waiter=request.user,
         )
-        
+
         from apps.orders.services import free_table_if_empty
+
         free_table_if_empty(Table.objects.get(pk=old_table_id))
-        
+
         return Response(self.get_serializer(command).data)
 
     def _resolve_bulk_restaurant(self, request, account, profile):
@@ -331,7 +418,12 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             if restaurant is None:
                 raise ValidationError({"restaurant": "Restaurante não encontrado nesta conta."})
             # Usuário não-admin só cria no próprio restaurante.
-            if profile and profile.restaurant_id and not is_tenant_admin(request.user) and restaurant.id != profile.restaurant_id:
+            if (
+                profile
+                and profile.restaurant_id
+                and not is_tenant_admin(request.user)
+                and restaurant.id != profile.restaurant_id
+            ):
                 raise ValidationError({"restaurant": "Restaurante fora do escopo do usuário."})
             return restaurant
         restaurant = getattr(profile, "restaurant", None)
@@ -350,6 +442,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         account = getattr(request, "account", None)
         profile = getattr(request.user, "profile", None)
         restaurant = self._resolve_bulk_restaurant(request, account, profile)
+        target_branch = sync_branch_for_restaurant(restaurant)
 
         to_number = request.data.get("to_number")
         if to_number is None:
@@ -377,7 +470,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 Command(
                     account=account,
                     restaurant=restaurant,
-                    branch=getattr(profile, "branch", None),
+                    branch=target_branch,
                     number=number,
                     code=default_command_code(number),
                     created_by=request.user,
@@ -385,6 +478,17 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 )
             )
         Command.objects.bulk_create(created)
+        if created:
+            transaction.on_commit(
+                lambda: broadcast_resource_event(
+                    account.id,
+                    resource="restaurants.command",
+                    action="created",
+                    restaurant_id=restaurant.id,
+                    branch_id=target_branch.id,
+                    changed_fields={"collection"},
+                )
+            )
         return Response(
             {"created": len(created), "skipped": len(existing), "from_number": from_number, "to_number": to_number},
             status=201,
@@ -404,13 +508,30 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         commands = self.filter_queryset(self.get_queryset()).filter(pk__in=ids)
         if commands.count() != len(ids):
             raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
-        occupied = commands.filter(status=Command.STATUS_OCCUPIED).count()
-        occupied += commands.exclude(current_order_id=None).exclude(status=Command.STATUS_OCCUPIED).count()
+        occupied = commands.exclude(
+            status=Command.STATUS_FREE,
+            current_order_id=None,
+            current_table_id=None,
+        ).count()
         if occupied:
             raise ValidationError({"ids": f"{occupied} comanda(s) estão ocupadas e não podem ser excluídas."})
 
+        scopes = list(commands.values_list("account_id", "restaurant_id", "branch_id").distinct())
         now = timezone.now()
         deleted = commands.update(deleted_at=now, updated_at=now, updated_by=request.user)
+        for account_id, restaurant_id, branch_id in scopes:
+            transaction.on_commit(
+                lambda account_id=account_id, restaurant_id=restaurant_id, branch_id=branch_id: (
+                    broadcast_resource_event(
+                        account_id,
+                        resource="restaurants.command",
+                        action="deleted",
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        changed_fields={"collection", "deleted_at"},
+                    )
+                )
+            )
         return Response({"deleted": deleted}, status=200)
 
     @action(detail=False, methods=["post"], url_path="bulk-update")
@@ -430,13 +551,36 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         commands = self.filter_queryset(self.get_queryset()).filter(pk__in=ids)
         if commands.count() != len(ids):
             raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
+        if (
+            changes["is_active"] is False
+            and commands.exclude(
+                status=Command.STATUS_FREE,
+                current_order_id=None,
+                current_table_id=None,
+            ).exists()
+        ):
+            raise ValidationError({"ids": "Desvincule e encerre as comandas antes de desativá-las."})
 
+        scopes = list(commands.values_list("account_id", "restaurant_id", "branch_id").distinct())
         now = timezone.now()
         updated = commands.update(
             is_active=changes["is_active"],
             updated_at=now,
             updated_by=request.user,
         )
+        for account_id, restaurant_id, branch_id in scopes:
+            transaction.on_commit(
+                lambda account_id=account_id, restaurant_id=restaurant_id, branch_id=branch_id: (
+                    broadcast_resource_event(
+                        account_id,
+                        resource="restaurants.command",
+                        action="updated",
+                        restaurant_id=restaurant_id,
+                        branch_id=branch_id,
+                        changed_fields={"collection", "is_active"},
+                    )
+                )
+            )
         return Response({"updated": updated}, status=200)
 
 

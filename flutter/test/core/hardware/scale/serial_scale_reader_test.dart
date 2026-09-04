@@ -146,6 +146,70 @@ void main() {
     expect(samples.last.stable, isFalse);
   });
 
+  group('diagnóstico de leitura vazia', () {
+    test('porta aberta e nenhum byte: diz para conferir porta e cabo', () async {
+      // A estação ficava em "Conectado a COM3, aguardando leitura" para
+      // sempre: a checagem de silêncio desistia justamente quando nada tinha
+      // chegado desde a abertura, que é o caso mais comum e o mais difícil de
+      // diagnosticar sem sair da loja.
+      final reader = SerialScaleReader(
+        portName: 'COM20',
+        protocol: GenericNumericProtocol(),
+        transportFactory: FakeTransport.new,
+        silenceTimeout: const Duration(milliseconds: 50),
+      );
+      addTearDown(reader.dispose);
+      await reader.start();
+
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+      expect(reader.status.state, ScaleLinkState.noResponse);
+      expect(reader.status.message, contains('nada chegou'));
+    });
+
+    test('bytes ilegíveis: aponta o protocolo do cadastro', () async {
+      // O sintoma de um protocolo errado é idêntico ao de um cabo solto se a
+      // tela não disser o que chegou pela porta.
+      final transport = FakeTransport();
+      final reader = SerialScaleReader(
+        portName: 'COM21',
+        protocol: ToledoProtocol(),
+        transportFactory: () => transport,
+        silenceTimeout: const Duration(seconds: 5),
+      );
+      addTearDown(reader.dispose);
+      await reader.start();
+
+      transport.send('--.--\r');
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+      expect(reader.status.state, ScaleLinkState.readError);
+      expect(reader.status.message, contains('Toledo'));
+      expect(reader.status.message, contains('--.--'));
+    });
+
+    test('só estado e nenhum peso não conta como leitura', () async {
+      // Um quadro de estabilidade sem valor prova que o protocolo está certo,
+      // mas não é peso. Contado como leitura, ele deixava a estação em
+      // "Peso estável" com o visor mostrando nada.
+      final transport = FakeTransport();
+      final reader = SerialScaleReader(
+        portName: 'COM22',
+        protocol: FilizolaProtocol(),
+        transportFactory: () => transport,
+        silenceTimeout: const Duration(seconds: 5),
+      );
+      addTearDown(reader.dispose);
+      await reader.start();
+
+      transport.send('S\r');
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+
+      expect(reader.status.state, ScaleLinkState.readError);
+      expect(reader.status.message, contains('só com estado'));
+    });
+  });
+
   test('publica porta ocupada quando a abertura é recusada', () async {
     final transport = FakeTransport(
       failure: const ScaleTransportException('COM3 ocupada.', portBusy: true),

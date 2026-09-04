@@ -24,8 +24,7 @@ class DataSignals {
   Stream<String> get changes => _controller.stream;
 
   /// Fluxo de um assunto específico.
-  Stream<void> on(String topic) =>
-      changes.where((value) => value == topic);
+  Stream<void> on(String topic) => changes.where((value) => value == topic);
 
   void emit(String topic) {
     if (_closed || topic.isEmpty) return;
@@ -47,6 +46,51 @@ class DataSignals {
     if (path.startsWith('/payments/')) return 'payments';
     return null;
   }
+
+  /// Assuntos afetados por um modelo informado pelo WebSocket do PDV.
+  ///
+  /// O backend envia apenas metadados seguros; a tela relê o recurso pela API
+  /// e atualiza o cache local antes de redesenhar.
+  static Set<String> topicsForRealtimeResource(String resource) {
+    if (resource.startsWith('orders.')) return const {'orders'};
+    if (resource == 'restaurants.table' ||
+        resource == 'restaurants.tablesector' ||
+        resource == 'restaurants.command' ||
+        resource == 'restaurants.commandmovementlog') {
+      return const {'tables', 'orders'};
+    }
+    if (resource == 'restaurants.restaurant' ||
+        resource == 'restaurants.branch' ||
+        resource.startsWith('menu.')) {
+      return const {'menu'};
+    }
+    if (resource.startsWith('customers.')) return const {'customers'};
+    if (resource == 'payments.paymentmethod') return const {'payments'};
+    if (resource.startsWith('payments.')) return const {'orders', 'cash'};
+    if (resource.startsWith('cash.')) return const {'cash'};
+    if (resource == 'printers.printjob') return const {'print_jobs'};
+    if (resource == 'printers.scalereading') return const {'scale_readings'};
+    if (resource == 'printers.printer' || resource == 'printers.scale') {
+      return const {'devices'};
+    }
+    if (resource.startsWith('accounts.')) return const {'session'};
+    // Um módulo novo do backend não pode ficar invisível para o caixa antigo.
+    // O fallback faz uma reconciliação geral até existir um mapeamento mais
+    // específico para ele.
+    return resource.isEmpty ? const {} : const {'pdv'};
+  }
+
+  /// Uma reconexão pode ter perdido eventos; uma leitura pontual reconcilia
+  /// todos os conjuntos usados no PDV sem reintroduzir polling.
+  static const realtimeSnapshotTopics = {
+    'orders',
+    'tables',
+    'menu',
+    'customers',
+    'payments',
+    'cash',
+    'devices',
+  };
 
   void _flush() {
     if (_closed) return;

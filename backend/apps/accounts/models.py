@@ -85,6 +85,61 @@ class Account(TimeStampedModel):
         return module_key in (self.enabled_modules or [])
 
 
+class FocusNfeConfig(TimeStampedModel):
+    """Credenciais e endpoints da Focus NFe isolados por conta StarChef."""
+
+    account = models.OneToOneField(
+        Account,
+        related_name="focus_nfe_config",
+        on_delete=models.CASCADE,
+    )
+    master_token = models.CharField(max_length=255, blank=True)
+    production_url = models.URLField(blank=True)
+    homologation_url = models.URLField(blank=True)
+    timeout_seconds = models.PositiveSmallIntegerField(default=30)
+    auto_sync = models.BooleanField(default=True)
+    company_dry_run = models.BooleanField(default=False)
+    webhook_url = models.URLField(blank=True)
+    webhook_authorization = models.CharField(max_length=255, blank=True)
+    webhook_authorization_header = models.CharField(max_length=120, blank=True, default="Authorization")
+
+    class Meta:
+        verbose_name = "configuracao Focus NFe"
+        verbose_name_plural = "configuracoes Focus NFe"
+
+    def __str__(self):
+        return f"Focus NFe - {self.account}"
+
+
+class CosmosConfig(TimeStampedModel):
+    """Credenciais da API Bluesoft Cosmos isoladas por conta StarChef."""
+
+    account = models.OneToOneField(
+        Account,
+        related_name="cosmos_config",
+        on_delete=models.CASCADE,
+    )
+    api_token = models.CharField(max_length=255, blank=True)
+    user_agent = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="User-Agent fornecido pela Cosmos junto com o token da API.",
+    )
+    timeout_seconds = models.PositiveSmallIntegerField(default=10)
+    is_active = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "configuracao Cosmos"
+        verbose_name_plural = "configuracoes Cosmos"
+
+    @property
+    def is_ready(self):
+        return bool(self.is_active and self.api_token and self.user_agent)
+
+    def __str__(self):
+        return f"Cosmos - {self.account}"
+
+
 class FirstAccessState(models.Model):
     """Marcador permanente que impede reabrir o bootstrap administrativo."""
 
@@ -184,28 +239,13 @@ class Role(TenantBaseModel):
 
 
 class UserProfile(TenantBaseModel):
-    PROFILE_ADMIN = "admin"
-    PROFILE_OWNER = "owner"
-    PROFILE_MANAGER = "manager"
-    PROFILE_WAITER = "waiter"
-    PROFILE_KITCHEN = "kitchen"
-    PROFILE_CASHIER = "cashier"
-    PROFILE_DRIVER = "driver"
-
-    PROFILE_CHOICES = [
-        (PROFILE_ADMIN, "Administrator"),
-        (PROFILE_OWNER, "Owner"),
-        (PROFILE_MANAGER, "Manager"),
-        (PROFILE_WAITER, "Waiter"),
-        (PROFILE_KITCHEN, "Kitchen"),
-        (PROFILE_CASHIER, "Cashier"),
-        (PROFILE_DRIVER, "Driver"),
-    ]
-
     user = models.OneToOneField(settings.AUTH_USER_MODEL, related_name="profile", on_delete=models.CASCADE)
     phone = models.CharField(max_length=32, blank=True)
-    profile_type = models.CharField(max_length=24, choices=PROFILE_CHOICES, default=PROFILE_WAITER)
-    role = models.ForeignKey(Role, null=True, blank=True, related_name="user_profiles", on_delete=models.SET_NULL)
+    # O cargo (Role) e a UNICA fonte de acesso do usuario — nao ha mais um
+    # "perfil de acesso" solto ao lado dele (campo profile_type, removido).
+    # PROTECT porque o catalogo de perfis e fixo por conta (role_catalog.py):
+    # nenhum profile pode ficar sem cargo por causa de um Role apagado.
+    role = models.ForeignKey(Role, related_name="user_profiles", on_delete=models.PROTECT)
     restaurant = models.ForeignKey(
         "restaurants.Restaurant",
         null=True,
@@ -225,10 +265,10 @@ class UserProfile(TenantBaseModel):
     is_active = models.BooleanField(default=True, db_index=True)
     class Meta:
         indexes = [
-            models.Index(fields=["account", "profile_type"]),
-            models.Index(fields=["restaurant", "branch", "profile_type"]),
+            models.Index(fields=["account", "role"], name="accounts_us_account_role_idx"),
+            models.Index(fields=["restaurant", "branch", "role"], name="accounts_us_rbr_role_idx"),
             models.Index(fields=["is_active"]),
         ]
 
     def __str__(self):
-        return f"{self.user.get_full_name() or self.user.username} ({self.profile_type})"
+        return f"{self.user.get_full_name() or self.user.username} ({self.role.code})"

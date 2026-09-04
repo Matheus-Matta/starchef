@@ -28,6 +28,13 @@
       </div>
     </header>
 
+    <!-- Filtro que chegou por um link de outra tela (ex.: "ver movimentacoes deste insumo"). -->
+    <div v-if="linkFilterLabels.length" class="rpro__linkfilter">
+      <i class="pi pi-filter" />
+      <span>Lista recortada por {{ linkFilterLabels.join(" e ") }}, a pedido da tela anterior.</span>
+      <button type="button" @click="clearLinkFilters">Ver tudo</button>
+    </div>
+
     <!-- ── Toolbar: busca + período · mais filtros + engrenagem ───────── -->
     <button class="rpro__mobile-filter-trigger" type="button" @click="mobileFiltersOpen = true">
       <i class="pi pi-sliders-h" />
@@ -137,7 +144,21 @@
           :header-class="column.align === 'right' ? 'dt-col-right' : undefined"
         >
           <template #body="{ data }">
-            <span v-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+            <span v-if="column.type === 'badges'" class="rpro-badges">
+              <span
+                v-for="(item, index) in badgeValues(value(data, column))"
+                :key="`${item}-${index}`"
+                class="rpro-badge"
+              >
+                {{ item }}
+              </span>
+              <span v-if="!badgeValues(value(data, column)).length" class="rpro-muted">—</span>
+            </span>
+            <span v-else-if="column.type === 'kds'" class="rpro-kds">
+              <span class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+              <small>{{ kdsProgressLabel(value(data, column)) }}</small>
+            </span>
+            <span v-else-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
             <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
             <span v-else-if="column.type === 'date'" class="rpro-muted">{{ dateTime(value(data, column)) }}</span>
             <span v-else-if="column.type === 'boolean'" class="rpro-chip" :data-tone="value(data, column) ? 'success' : 'danger'">{{ value(data, column) ? "Ativo" : "Inativo" }}</span>
@@ -184,14 +205,28 @@
       <Dialog v-model:visible="bulkVisible" modal :header="bulkType === 'commands' ? 'Criar comandas em lote' : 'Criar mesas em lote'" :style="{ width: '420px' }">
         <div class="rpro__bulk">
           <label class="rpro__bulk-field">
-            <span>{{ bulkType === 'commands' ? 'Restaurante' : 'Setor' }}</span>
+            <span>Restaurante</span>
             <Dropdown
-              v-model="bulkForm.parent_id"
-              :options="bulkOptions"
-              :option-label="bulkType === 'commands' ? 'trade_name' : 'name'"
+              v-model="bulkForm.restaurant_id"
+              :options="bulkRestaurants"
+              option-label="trade_name"
               option-value="id"
-              :placeholder="bulkType === 'commands' ? 'Selecione o restaurante' : 'Selecione o setor'"
-              :loading="bulkOptionsLoading"
+              placeholder="Selecione o restaurante"
+              :loading="bulkRestaurantsLoading"
+              filter
+              @change="onBulkRestaurantChange"
+            />
+          </label>
+          <label v-if="bulkType === 'tables'" class="rpro__bulk-field">
+            <span>Setor</span>
+            <Dropdown
+              v-model="bulkForm.sector_id"
+              :options="bulkSectors"
+              option-label="name"
+              option-value="id"
+              :placeholder="bulkForm.restaurant_id ? 'Selecione o setor' : 'Selecione primeiro o restaurante'"
+              :loading="bulkSectorsLoading"
+              :disabled="!bulkForm.restaurant_id || bulkSectorsLoading"
               filter
             />
           </label>
@@ -213,7 +248,12 @@
           <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="bulkSubmitting" @click="bulkVisible = false">
             Cancelar
           </button>
-          <button class="rpro-btn rpro-btn--primary" type="button" :disabled="bulkSubmitting" @click="submitBulk">
+          <button
+            class="rpro-btn rpro-btn--primary"
+            type="button"
+            :disabled="bulkSubmitting || bulkRestaurantsLoading || bulkSectorsLoading"
+            @click="submitBulk"
+          >
             <i :class="bulkSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Criar
           </button>
         </template>
@@ -319,7 +359,7 @@
  * apresentação: cabeçalho com ações, cartões de resumo, filtro de período,
  * seleção em massa, filtros avançados, importação/exportação e paginação enxuta.
  */
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -339,6 +379,7 @@ import { dataExchangeService } from "../services/dataExchangeService";
 import { formatDateTime, formatMoney, mapLabel } from "../utils/format";
 import { resolveColumnValue } from "../utils/object";
 import { normalizeApiError } from "../utils/apiError";
+import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bulkCreate";
 import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
@@ -371,7 +412,9 @@ const primaryAction = computed(() => {
 });
 
 // Colunas atreladas a um módulo só aparecem se a conta tem o módulo.
-const visibleColumns = computed(() => props.columns.filter((column) => auth.hasModule(column.module)));
+const visibleColumns = computed(() => props.columns.filter(
+  (column) => column.showInList !== false && auth.hasModule(column.module),
+));
 
 // ── Estado local dos filtros "pro" ──────────────────────────────────
 const dateRange = ref(null);
@@ -403,6 +446,7 @@ function dateParams() {
 /** Filtros dinâmicos da tela: período (os demais irão para "filtros avançados"). */
 function buildProParams() {
   return {
+    ...linkFilters.value,
     ...dateParams(),
     ...Object.fromEntries(
       Object.entries(advancedFilters)
@@ -424,6 +468,33 @@ const {
   pageSize: proCfg.value.pageSize || 25,
 });
 const loadRows = reload;
+
+// ── Filtros que chegam pela URL ──────────────────────────────────────
+// So passam os campos declarados em `pro.linkFilters`: se qualquer query
+// param da rota virasse filtro da API, um link com um parametro qualquer
+// (ou um `?new=` esquecido) faria a listagem responder 400.
+const linkFilterDefs = computed(() => (proCfg.value.linkFilters || [])
+  .map((item) => (typeof item === "string" ? { key: item, label: item } : item)));
+const activeLinkFilters = computed(() => linkFilterDefs.value.filter((item) => route.query[item.key]));
+const linkFilters = computed(() => Object.fromEntries(
+  activeLinkFilters.value.map((item) => [item.key, route.query[item.key]]),
+));
+const linkFilterLabels = computed(() => activeLinkFilters.value.map((item) => item.label));
+function clearLinkFilters() {
+  router.replace({ name: route.name, query: {} });
+}
+// A mesma rota pode ser reaberta com outro recorte sem remontar o componente.
+// O nome da rota e comparado com o da montagem porque `route` ja aponta para o
+// destino enquanto esta tela ainda existe — sem isso, sair da listagem
+// dispararia uma busca inutil no caminho.
+const listRouteName = route.name;
+watch(
+  () => route.query,
+  () => {
+    if (linkFilterDefs.value.length && route.name === listRouteName) loadRows();
+  },
+  { deep: true },
+);
 if (props.endpoint === "/orders/") ordering.value = "-updated_at";
 const realtimeModelByEndpoint = {
   "/orders/": "orders.order",
@@ -513,7 +584,10 @@ function clearAdvancedFilters() {
 /* ── Navegação ─────────────────────────────────────────────────────── */
 function openDetail(row) {
   if (!row?.id) return;
-  router.push({ name: `${route.name}--view`, params: { id: row.id } });
+  // Recursos com tela de documento propria (entrada/saida de estoque) nao tem
+  // a rota `--view` gerada: o documento E a tela de detalhe.
+  const target = proCfg.value.detailRoute || `${route.name}--view`;
+  router.push({ name: target, params: { id: row.id } });
 }
 function onRowClick(event) {
   const target = event.originalEvent?.target;
@@ -532,6 +606,9 @@ function runPrimary() {
 const headerActions = computed(() => proCfg.value.headerActions || []);
 function runHeaderAction(headerAction) {
   if (headerAction.type === "bulk-create") openBulk(headerAction.bulkType);
+  else if (headerAction.type === "route") {
+    router.push({ name: headerAction.routeName, query: headerAction.query || {} });
+  }
 }
 
 // ── Ações em massa (config `pro.bulkActions`) ─────────────────────────
@@ -836,42 +913,79 @@ function renderLabelsSheet(items, kind, { layout = "sheet", cutlines = true } = 
 const bulkVisible = ref(false);
 const bulkSubmitting = ref(false);
 const bulkType = ref("commands");
-const bulkOptions = ref([]);
-const bulkOptionsLoading = ref(false);
-const bulkForm = ref({ parent_id: null, from_number: null, to_number: null });
+const bulkRestaurants = ref([]);
+const bulkSectors = ref([]);
+const bulkRestaurantsLoading = ref(false);
+const bulkSectorsLoading = ref(false);
+const bulkForm = ref(createBulkForm());
+let bulkSectorRequestId = 0;
+
+async function loadBulkSectors(restaurantId) {
+  const requestId = ++bulkSectorRequestId;
+  bulkSectors.value = [];
+  bulkForm.value.sector_id = null;
+  if (!restaurantId) {
+    bulkSectorsLoading.value = false;
+    return;
+  }
+
+  bulkSectorsLoading.value = true;
+  try {
+    const { data } = await api.get("/tables/sectors/", {
+      params: { restaurant: restaurantId, is_active: true, page_size: 200 },
+      // O restaurante é informado explicitamente acima. Isso também funciona
+      // quando o seletor global está em "Todos".
+      skipRestaurantScope: true,
+    });
+    if (requestId === bulkSectorRequestId && bulkForm.value.restaurant_id === restaurantId) {
+      bulkSectors.value = data.results || data || [];
+    }
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar os setores", detail: normalizeApiError(error).message, life: 4000 });
+  } finally {
+    if (requestId === bulkSectorRequestId) bulkSectorsLoading.value = false;
+  }
+}
+
+function onBulkRestaurantChange() {
+  if (bulkType.value === "tables") return loadBulkSectors(bulkForm.value.restaurant_id);
+}
 
 async function openBulk(type) {
   bulkType.value = type || "commands";
-  bulkOptions.value = []; // zera opções ao abrir
-  bulkForm.value = {
-    // Restaurante (para comandas) tenta pegar o escopo atual. Setor (para mesas) começa vazio.
-    parent_id: type === "commands" ? (localStorage.getItem("starchef-restaurant-scope") || null) : null,
-    from_number: null,
-    to_number: null,
-  };
+  bulkRestaurants.value = [];
+  bulkSectors.value = [];
+  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || null;
+  // Se o topo já tem uma unidade, ela vem pré-selecionada. Em "Todos", o
+  // restaurante fica obrigatório e explícito para mesas e comandas.
+  bulkForm.value = createBulkForm(scopedRestaurant);
   bulkVisible.value = true;
-  bulkOptionsLoading.value = true;
+  bulkRestaurantsLoading.value = true;
   try {
-    const isCommands = type === "commands";
-    const endpoint = isCommands ? "/restaurants/" : "/tables/sectors/";
-    // Apenas ignora o escopo do restaurante se for comandas (onde queremos listar
-    // todos os restaurantes para o usuário escolher o destino do lote).
-    // Para setores, o axios vai injetar o X-Restaurant (se houver), e a API
-    // vai filtrar automaticamente os setores pelo restaurante ativo na sidebar.
-    const { data } = await api.get(endpoint, isCommands ? { skipRestaurantScope: true } : {});
-    bulkOptions.value = data.results || data || [];
+    const { data } = await api.get("/restaurants/", {
+      params: { is_active: true, page_size: 200 },
+      skipRestaurantScope: true,
+    });
+    bulkRestaurants.value = data.results || data || [];
+    if (bulkType.value === "tables" && scopedRestaurant) {
+      await loadBulkSectors(scopedRestaurant);
+    }
   } catch (error) {
-    toast.add({ severity: "error", summary: "Não foi possível carregar os dados", detail: normalizeApiError(error).message, life: 4000 });
+    toast.add({ severity: "error", summary: "Não foi possível carregar os restaurantes", detail: normalizeApiError(error).message, life: 4000 });
   } finally {
-    bulkOptionsLoading.value = false;
+    bulkRestaurantsLoading.value = false;
   }
 }
 
 async function submitBulk() {
-  const { parent_id, from_number, to_number } = bulkForm.value;
-  const parentName = bulkType.value === "commands" ? "restaurante" : "setor";
-  if (!parent_id) {
-    toast.add({ severity: "warn", summary: `Selecione o ${parentName}`, life: 3000 });
+  const { from_number, to_number } = bulkForm.value;
+  const missingScope = missingBulkScope(bulkType.value, bulkForm.value);
+  if (missingScope === "restaurant") {
+    toast.add({ severity: "warn", summary: "Selecione o restaurante", life: 3000 });
+    return;
+  }
+  if (missingScope === "sector") {
+    toast.add({ severity: "warn", summary: "Selecione o setor", life: 3000 });
     return;
   }
   if (!to_number || to_number < 1) {
@@ -886,10 +1000,7 @@ async function submitBulk() {
   }
   bulkSubmitting.value = true;
   try {
-    const payload = { to_number };
-    if (bulkType.value === "commands") payload.restaurant = parent_id;
-    else payload.sector = parent_id;
-    if (from_number) payload.from_number = from_number;
+    const payload = buildBulkPayload(bulkType.value, bulkForm.value);
     const { data } = await api.post(`${props.endpoint}bulk-create/`, payload);
     toast.add({
       severity: "success",
@@ -911,8 +1022,11 @@ const rowMenu = ref(null);
 const menuRow = ref(null);
 const rowMenuItems = computed(() => {
   const items = [{ label: "Ver detalhe", icon: "pi pi-eye", command: () => openDetail(menuRow.value) }];
-  // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos".
+  // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos",
+  // "Configuração fiscal". `module` esconde a ação em contas sem o módulo.
   for (const rowAction of proCfg.value.rowActions || []) {
+    if (!auth.hasModule(rowAction.module)) continue;
+    if (rowAction.visible && !rowAction.visible(menuRow.value)) continue;
     items.push({ label: rowAction.label, icon: rowAction.icon, command: () => runRowAction(rowAction, menuRow.value) });
   }
   if (props.formEnabled) {
@@ -931,6 +1045,38 @@ const codesTitle = ref("");
 
 async function runRowAction(rowAction, row) {
   if (rowAction.type === "codes") return openCodes(row);
+  // Duplicar: abre a tela de NOVO documento pedindo a copia deste registro.
+  if (rowAction.type === "duplicate" && row?.id) {
+    return router.push({ name: rowAction.routeName, query: { copy: row.id } });
+  }
+  // Ação que só leva pra outra página do registro (ex.: configuração fiscal).
+  if (rowAction.type === "route" && row?.id) {
+    return router.push({ name: rowAction.routeName, params: { id: row.id } });
+  }
+  if (rowAction.type === "post-detail" && row?.id) {
+    confirm.require({
+      header: rowAction.label,
+      message: rowAction.confirmMessage || `Executar esta ação em "${rowLabel(row)}"?`,
+      icon: "pi pi-exclamation-triangle",
+      acceptLabel: "Reenviar",
+      rejectLabel: "Cancelar",
+      accept: async () => {
+        try {
+          const { data } = await api.post(`${props.endpoint}${row.id}/${rowAction.action}/`, rowAction.payload || {});
+          toast.add({
+            severity: data.status === "issued" ? "success" : "info",
+            summary: data.status === "issued" ? "Nota autorizada" : "Nota reenviada",
+            detail: data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus.",
+            life: 4500,
+          });
+          await reload();
+        } catch (error) {
+          toast.add({ severity: "error", summary: "Não foi possível reenviar a nota", detail: normalizeApiError(error).message, life: 7000 });
+          await reload();
+        }
+      },
+    });
+  }
 }
 
 async function openCodes(row) {
@@ -1005,7 +1151,38 @@ const money = formatMoney;
 const dateTime = formatDateTime;
 
 function columnBodyStyle(column) {
-  return { textAlign: column.align === "right" ? "right" : "left", whiteSpace: "nowrap" };
+  return {
+    textAlign: column.align === "right" ? "right" : "left",
+    whiteSpace: column.type === "badges" ? "normal" : "nowrap",
+  };
+}
+
+function badgeValues(rawValue) {
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (rawValue === null || rawValue === undefined || rawValue === "") return [];
+  if (typeof rawValue === "string" && rawValue.trim().startsWith("[")) {
+    try {
+      const parsed = JSON.parse(rawValue);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+    } catch {
+      // Mantém o valor original quando uma API antiga retornar texto inválido.
+    }
+  }
+  return [String(rawValue).trim()].filter(Boolean);
+}
+
+const KDS_PROGRESS = {
+  idle: "Não enviado",
+  sent_to_kitchen: "Etapa 1 de 5",
+  preparing: "Etapa 2 de 5",
+  partially_ready: "Etapa 3 de 5",
+  ready: "Etapa 4 de 5",
+  delivered: "Etapa 5 de 5",
+};
+function kdsProgressLabel(status) {
+  return KDS_PROGRESS[status] || "Sem andamento";
 }
 
 // Tom (cor) de cada status — subtil, funciona bem no dark.
@@ -1085,6 +1262,17 @@ onMounted(loadRows);
 .rpro-btn--icon { width: 38px; padding: 0; }
 .rpro-btn--sm { height: 32px; padding: 0 12px; font-size: 12.5px; }
 
+/* ── Aviso do filtro vindo por link ──────────────────────────────────── */
+.rpro__linkfilter {
+  display: flex; align-items: center; gap: 9px; padding: 10px 14px;
+  border: 1px solid var(--info); border-radius: var(--radius-md);
+  background: var(--info-subtle); color: var(--info-text); font-size: 12.5px;
+}
+.rpro__linkfilter button {
+  margin-left: auto; padding: 0; border: 0; background: none; cursor: pointer;
+  color: inherit; font: var(--weight-bold) 12.5px/1 var(--font-sans); text-decoration: underline;
+}
+
 /* ── Toolbar ────────────────────────────────────────────────────────── */
 .rpro__toolbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -1145,10 +1333,20 @@ onMounted(loadRows);
 .rpro-muted { color: var(--text-muted); }
 .rpro-cell { max-width: 260px; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
+.rpro-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 320px; vertical-align: middle; }
+.rpro-badge {
+  display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface-sunken); color: var(--text-body);
+  font: var(--weight-semibold) 11.5px/1.25 var(--font-sans); white-space: nowrap;
+}
+.rpro-kds { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.rpro-kds small { color: var(--text-muted); font: var(--weight-semibold) 10.5px/1 var(--font-sans); white-space: nowrap; }
+
 /* Status pill — subtil (tint + texto colorido), legível no light e no dark */
 .rpro-chip {
   display: inline-flex; align-items: center;
-  padding: 3px 10px; border-radius: 99px;
+  padding: 3px 8px; border-radius: 4px;
   border: 1px solid transparent;
   font: var(--weight-bold) 11px/1.35 var(--font-sans); white-space: nowrap;
   background: var(--surface-sunken); color: var(--text-muted);

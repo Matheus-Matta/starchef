@@ -14,10 +14,7 @@ void main() {
   late HandsFreeMachine machine;
 
   setUp(() {
-    machine = HandsFreeMachine(
-      commandTimeout: const Duration(seconds: 30),
-      gracePeriod: const Duration(seconds: 10),
-    );
+    machine = HandsFreeMachine(commandTimeout: const Duration(seconds: 30));
   });
 
   tearDown(() => machine.dispose());
@@ -135,40 +132,56 @@ void main() {
     expect(machine.commandCode, '4321');
   });
 
-  group('timeout da comanda', () {
+  group('tempo da comanda', () {
     final start = DateTime(2026, 7, 28, 12);
 
-    test('emite alerta ao esgotar o tempo e depois cancela', () {
+    test(
+      'um único prazo: esgotado, cancela na hora — sem um segundo tempo de espera por trás',
+      () {
+        // Havia um segundo temporizador fixo (`gracePeriod`, 10s) somado ao
+        // configurado: com 30s de prazo, o cancelamento de fato só vinha aos
+        // 40s. Configurar N segundos precisa cancelar em N, não em N + algo.
+        machine.start();
+        machine.onSample(sample(1.0, at: start), pricePerKg: 30);
+
+        expect(machine.tick(start.add(const Duration(seconds: 29))), isEmpty);
+        expect(machine.state, HandsFreeState.waitingCommand);
+
+        final cancel = machine.tick(start.add(const Duration(seconds: 30)));
+
+        expect(cancel, [
+          HandsFreeEffect.alertSound,
+          HandsFreeEffect.operationCancelled,
+        ]);
+        expect(machine.state, HandsFreeState.waitingWeight);
+        expect(machine.weighedItem, isNull);
+      },
+    );
+
+    test('ler a comanda um instante antes do prazo ainda conclui a venda', () {
       machine.start();
       machine.onSample(sample(1.0, at: start), pricePerKg: 30);
-
-      expect(machine.tick(start.add(const Duration(seconds: 29))), isEmpty);
-      expect(machine.state, HandsFreeState.waitingCommand);
-
-      final alert = machine.tick(start.add(const Duration(seconds: 30)));
-      expect(alert, contains(HandsFreeEffect.alertSound));
-      expect(machine.state, HandsFreeState.commandOverdue);
-
-      // O período de confirmação ainda permite concluir a venda.
-      expect(machine.tick(start.add(const Duration(seconds: 35))), isEmpty);
-      expect(machine.state, HandsFreeState.commandOverdue);
-
-      final cancel = machine.tick(start.add(const Duration(seconds: 40)));
-      expect(cancel, contains(HandsFreeEffect.operationCancelled));
-      expect(machine.state, HandsFreeState.waitingWeight);
-      expect(machine.weighedItem, isNull);
-    });
-
-    test('ler a comanda durante o alerta ainda conclui a venda', () {
-      machine.start();
-      machine.onSample(sample(1.0, at: start), pricePerKg: 30);
-      machine.tick(start.add(const Duration(seconds: 31)));
+      machine.tick(start.add(const Duration(seconds: 29)));
 
       final effects = machine.onCommandRead('9876');
 
       expect(machine.state, HandsFreeState.creatingOrder);
       expect(effects, contains(HandsFreeEffect.createOrder));
     });
+
+    test(
+      'depois do prazo a leitura não é mais aceita — a operação já foi cancelada',
+      () {
+        machine.start();
+        machine.onSample(sample(1.0, at: start), pricePerKg: 30);
+        machine.tick(start.add(const Duration(seconds: 30)));
+
+        final effects = machine.onCommandRead('9876');
+
+        expect(effects, [HandsFreeEffect.alertSound]);
+        expect(machine.commandCode, isNull);
+      },
+    );
 
     test('o tempo restante é exposto para a interface', () {
       machine.start();

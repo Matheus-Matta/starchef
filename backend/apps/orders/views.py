@@ -1,4 +1,8 @@
+from decimal import InvalidOperation
+
 import django_filters
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.hashers import check_password
 from django.core.exceptions import ValidationError
 from django.db.models import CharField, Q
 from django.db.models.functions import Cast
@@ -7,6 +11,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.viewsets import BaseTenantViewSet
+from apps.core.access import is_tenant_admin
+from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.printers.models import ScaleReading
@@ -17,11 +23,54 @@ from apps.orders.services import (
     close_order,
     comp_order_item,
     create_order,
+    create_order_with_item,
     send_order_to_kitchen,
+    set_order_item_quantity,
     update_order_item_status,
     void_order_item,
 )
-from apps.restaurants.models import Command, Table
+from apps.restaurants.models import Command
+
+User = get_user_model()
+
+
+def _can_authorize_order_cancellation(request, order):
+    """Valida a autorização no mesmo request que altera o pedido.
+
+    A senha nunca entra na fila offline: cancelamento exige resposta imediata
+    do servidor, evitando guardar credenciais em texto puro no terminal.
+    """
+
+    cash_password = str(request.data.get("cash_password") or "")
+    if cash_password:
+        stored = order.restaurant.cash_action_password or ""
+        return check_password(cash_password, stored) if stored else cash_password == "12345678"
+
+    login = str(request.data.get("authorization_username") or "").strip()
+    password = str(request.data.get("authorization_password") or "")
+    if not login or not password:
+        return False
+
+    username = login
+    if "@" in login:
+        matched = (
+            User.objects.filter(
+                email__iexact=login,
+                profile__account_id=order.account_id,
+            )
+            .only("username")
+            .first()
+        )
+        if matched is not None:
+            username = matched.get_username()
+    authorizer = authenticate(request=request, username=username, password=password)
+    if authorizer is None:
+        return False
+    profile = getattr(authorizer, "profile", None)
+    if not profile or not profile.is_active or profile.account_id != order.account_id:
+        return False
+    codes = effective_permission_codes(authorizer)
+    return is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
 
 
 class OrderFilterSet(django_filters.FilterSet):
@@ -49,8 +98,17 @@ class OrderFilterSet(django_filters.FilterSet):
 class OrderViewSet(BaseTenantViewSet):
     serializer_class = OrderSerializer
     queryset = (
-        Order.objects.select_related("restaurant", "branch", "table", "command", "customer", "delivery_address")
-        .prefetch_related("items__product", "items__addons", "items__batch")
+        Order.objects.select_related(
+            "restaurant", "branch", "table", "command", "customer", "delivery_address", "invoice"
+        )
+        .prefetch_related(
+            "items__product",
+            "items__addons",
+            "items__batch",
+            # `payments` entrou no serializer; sem o prefetch a listagem faria
+            # uma consulta por pedido.
+            "payments__payment_method",
+        )
         .all()
     )
     filterset_class = OrderFilterSet
@@ -68,122 +126,13 @@ class OrderViewSet(BaseTenantViewSet):
         # A anotacao precisa ser aplicada aqui, e nao no `queryset` da classe:
         # o mixin de tenant remonta a consulta a partir do model e descartaria
         # qualquer annotate declarado la em cima.
-        return super().get_queryset().annotate(
-            sequence_text=Cast("sequence", CharField()),
-            command_number_text=Cast("command__number", CharField()),
-        )
-
-    @action(detail=True, methods=["post"], url_path="link-table")
-    def link_table(self, request, pk=None):
-        order = self.get_object()
-        table_id = request.data.get("table")
-        if not table_id:
-            return Response(
-                {"detail": "Selecione uma mesa para vincular a comanda."},
-                status=status.HTTP_400_BAD_REQUEST,
+        return (
+            super()
+            .get_queryset()
+            .annotate(
+                sequence_text=Cast("sequence", CharField()),
+                command_number_text=Cast("command__number", CharField()),
             )
-            
-        profile = getattr(request.user, "profile", None)
-        from apps.core.access import is_tenant_admin
-        # Apenas perfis autorizados (garcom, admin, manager, owner)
-        if not is_tenant_admin(request.user) and profile.profile_type not in {"manager", "garcom"}:
-            return Response(
-                {"detail": "Apenas garçons e gerentes podem vincular comandas a mesas."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        table = Table.objects.filter(
-            pk=table_id,
-            account=getattr(request, "account", None),
-            is_active=True,
-        ).first()
-        if table is None:
-            return Response(
-                {"detail": "A mesa selecionada não existe ou está inativa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-            
-        # Capacidade permitida = dobro
-        max_capacity = table.capacity * 2
-        active_orders_count = table.orders.filter(
-            status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT]
-        ).count()
-        
-        from apps.orders.services import link_order_to_table
-        
-        try:
-            order = link_order_to_table(order, table, request.user)
-        except ValidationError as e:
-            return Response({"detail": str(e.message if hasattr(e, 'message') else e.messages[0])}, status=status.HTTP_400_BAD_REQUEST)
-            
-        serializer = self.get_serializer(order)
-        response_data = serializer.data
-        
-        if active_orders_count >= max_capacity:
-            response_data["_warning"] = f"Atenção: A mesa {table.number} já atingiu a capacidade máxima (limite {max_capacity} comandas)."
-            
-        return Response(response_data)
-
-    @action(detail=False, methods=["post"], url_path="open-table")
-    def open_table(self, request):
-        table_id = request.data.get("table")
-        if not table_id:
-            return Response(
-                {"detail": "Selecione uma mesa para abrir o pedido."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        table = (
-            Table.objects.select_related("restaurant")
-            .filter(
-                pk=table_id,
-                account=getattr(request, "account", None),
-                is_active=True,
-            )
-            .first()
-        )
-        if table is None:
-            return Response(
-                {"detail": "A mesa selecionada não existe ou está inativa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        profile = getattr(request.user, "profile", None)
-        from apps.core.access import is_tenant_admin
-
-        if (
-            not is_tenant_admin(request.user)
-            and getattr(profile, "restaurant_id", None) != table.restaurant_id
-        ):
-            return Response(
-                {"detail": "A mesa selecionada pertence a outro restaurante."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if table.current_order_id:
-            existing = Order.objects.filter(
-                pk=table.current_order_id,
-                account=getattr(request, "account", None),
-                restaurant=table.restaurant,
-                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
-            ).first()
-            if existing:
-                return Response(self.get_serializer(existing).data)
-
-        try:
-            order = create_order(
-                restaurant=table.restaurant,
-                branch=None,
-                order_type=Order.TYPE_TABLE,
-                table=table,
-                user=request.user,
-            )
-        except ValidationError as exc:
-            return Response(
-                {"detail": exc.messages},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return Response(
-            self.get_serializer(order).data,
-            status=status.HTTP_201_CREATED,
         )
 
     @action(detail=False, methods=["post"], url_path="open-command")
@@ -235,6 +184,128 @@ class OrderViewSet(BaseTenantViewSet):
                 order_type=Order.TYPE_COMMAND,
                 command=command,
                 user=request.user,
+                responsible_user=self._attending_user(command.restaurant),
+            )
+        except ValidationError as exc:
+            return Response(
+                {"detail": " ".join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+
+    def _attending_user(self, restaurant):
+        """Quem esta atendendo, quando nao e quem gravou.
+
+        O Caixa Principal executa as operacoes do app do garcom com as
+        proprias credenciais — e ele quem tem a sessao com a nuvem. Sem esta
+        atribuicao o pedido nascia no nome do caixa e a comanda saia na cozinha
+        com "ATENDENTE: <caixa>", escondendo quem de fato atendeu a mesa.
+
+        `created_by` continua sendo quem gravou (verdade de auditoria); so o
+        atendimento e atribuido, e apenas a um usuario do mesmo restaurante.
+        """
+        raw = str(self.request.data.get("responsible_user") or "").strip()
+        if not raw:
+            return None
+        try:
+            return (
+                get_user_model()
+                .objects.filter(pk=raw, profile__restaurant=restaurant)
+                .first()
+            )
+        except (ValueError, ValidationError):
+            return None
+
+    @action(detail=False, methods=["post"], url_path="create-with-item")
+    def create_with_item(self, request):
+        """Creates the order and first item in one transaction.
+
+        This is the waiter-app entry point: dismissing a picker never leaves an
+        empty counter/delivery/takeaway/command order behind.
+        """
+        profile = getattr(request.user, "profile", None)
+        restaurant = getattr(profile, "restaurant", None)
+        if restaurant is None:
+            return Response({"detail": "Usuário sem restaurante vinculado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        order_type = request.data.get("order_type")
+        if order_type not in {Order.TYPE_COMMAND, Order.TYPE_COUNTER, Order.TYPE_DELIVERY, Order.TYPE_TAKEAWAY}:
+            return Response({"order_type": "Tipo de pedido inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        command = None
+        table = None
+        if order_type == Order.TYPE_COMMAND:
+            command = Command.objects.filter(
+                pk=request.data.get("command"),
+                restaurant=restaurant,
+                is_active=True,
+            ).first()
+            if command is None:
+                return Response({"command": "Selecione uma comanda válida."}, status=status.HTTP_400_BAD_REQUEST)
+            if request.data.get("table"):
+                from apps.restaurants.models import Table
+
+                table = Table.objects.filter(
+                    pk=request.data["table"],
+                    restaurant=restaurant,
+                    is_active=True,
+                ).first()
+                if table is None:
+                    return Response({"table": "Selecione uma mesa válida."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_item = request.data.get("item")
+        if not isinstance(raw_item, dict) or not raw_item.get("product"):
+            return Response({"item": "Adicione o primeiro item do pedido."}, status=status.HTTP_400_BAD_REQUEST)
+        product = Product.objects.filter(pk=raw_item["product"], restaurants=restaurant, is_active=True).first()
+        if product is None:
+            return Response({"item": "O produto selecionado não está disponível."}, status=status.HTTP_400_BAD_REQUEST)
+
+        item_data = {
+            "quantity": raw_item.get("quantity"),
+            "variations": raw_item.get("variations", []),
+            "addons": raw_item.get("addons", []),
+            "customer_note": raw_item.get("customer_note", ""),
+            "expected_unit_price": raw_item.get("expected_unit_price"),
+        }
+
+        # A comanda ja tem pedido aberto: o item entra NELE.
+        #
+        # Recusar com 409 so fazia sentido quando quem chamava estava on-line e
+        # podia reabrir o pedido na tela. O app do garcom lanca offline: quando
+        # a operacao enfileirada finalmente sobe, a comanda quase sempre ja foi
+        # aberta por alguem (o proprio garcom em outro aparelho, o caixa, ou a
+        # mesma operacao vinda por outro caminho). O 409 transformava isso em
+        # pendencia bloqueada e o item simplesmente sumia do pedido.
+        #
+        # `add_order_item` continua recusando um pedido pago, cancelado ou
+        # estornado, que e o unico caso em que "reabra o pedido" e a resposta
+        # certa.
+        existing_order = None
+        if command is not None and command.current_order_id:
+            existing_order = Order.objects.filter(
+                pk=command.current_order_id,
+                restaurant=restaurant,
+            ).first()
+        if existing_order is not None:
+            try:
+                add_order_item(order=existing_order, product=product, user=request.user, **item_data)
+            except ValidationError as exc:
+                return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+            existing_order = Order.objects.prefetch_related(
+                "items__product", "items__addons", "items__batch"
+            ).get(pk=existing_order.pk)
+            return Response(self.get_serializer(existing_order).data, status=status.HTTP_200_OK)
+
+        try:
+            order = create_order_with_item(
+                restaurant=restaurant,
+                order_type=order_type,
+                command=command,
+                table=table,
+                product=product,
+                user=request.user,
+                item_data=item_data,
+                responsible_user=self._attending_user(restaurant),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
@@ -250,6 +321,7 @@ class OrderViewSet(BaseTenantViewSet):
             branch=branch,
             order_type=serializer.validated_data["order_type"],
             user=user,
+            responsible_user=self._attending_user(restaurant),
             table=serializer.validated_data.get("table"),
             command=serializer.validated_data.get("command"),
             customer=serializer.validated_data.get("customer"),
@@ -296,12 +368,32 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path=r"items/(?P<item_pk>[^/.]+)/quantity")
+    def set_item_quantity(self, request, pk=None, item_pk=None):
+        """Ajusta a quantidade de um item pendente (teclas + e - do PDV)."""
+        try:
+            item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
+            item = set_order_item_quantity(item, request.user, request.data.get("quantity"))
+        except OrderItem.DoesNotExist:
+            return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        except (ValidationError, InvalidOperation, TypeError):
+            return Response(
+                {"detail": "Informe uma quantidade válida maior que zero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(OrderItemSerializer(item).data)
+
     @action(detail=True, methods=["delete"], url_path=r"items/(?P<item_pk>[^/.]+)/void")
     def void_item(self, request, pk=None, item_pk=None):
         """Void a pending item (cancel before sending to kitchen)."""
         try:
             item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
-            item = void_order_item(item, request.user, reason=request.data.get("reason", ""))
+            item = void_order_item(
+                item,
+                request.user,
+                reason=request.data.get("reason", ""),
+                offline_printed=bool(request.data.get("offline_printed")),
+            )
         except OrderItem.DoesNotExist:
             return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
         except ValidationError as exc:
@@ -330,8 +422,25 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="send-to-kitchen")
     def send_to_kitchen(self, request, pk=None):
+        order = self.get_object()
+        # Nada pendente: a rodada que esta chamada queria enviar ja foi.
+        #
+        # Numa fila de entrega ao-menos-uma-vez isso e sucesso, nao erro. O app
+        # do garcom enfileira o envio, e quando a operacao sobe os itens quase
+        # sempre ja foram enviados — pela repeticao da propria operacao, pelo
+        # caixa, ou por outro aparelho. Respondendo 400, a operacao virava
+        # pendencia bloqueada e a comanda ficava presa em "aguardando" ate
+        # alguem remover a pendencia na mao. Quem chama pela tela nunca cai
+        # aqui: o botao de enviar so existe com item pendente.
+        if not order.is_locked and not order.items.filter(status=OrderItem.STATUS_PENDING).exists():
+            return Response(self.get_serializer(order).data)
         try:
-            order = send_order_to_kitchen(self.get_object(), request.user)
+            order = send_order_to_kitchen(
+                order,
+                request.user,
+                client_batch_serial=request.data.get("client_batch_serial"),
+                offline_printed=bool(request.data.get("offline_printed")),
+            )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)
@@ -353,19 +462,33 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="pay")
     def pay(self, request, pk=None):
-        from apps.payments.services import register_payment
         from apps.payments.serializers import PaymentSerializer
+        from apps.payments.services import register_payment
+        from apps.payments.terminals import (
+            CashSessionConflict,
+            CashSessionForbidden,
+            installation_id_from_request,
+            terminal_from_request,
+        )
+        from apps.payments.views import cash_session_error_response
 
+        order = self.get_object()
         try:
             payment = register_payment(
-                order=self.get_object(),
+                order=order,
                 user=request.user,
                 payment_method_id=request.data["payment_method"],
                 amount=request.data["amount"],
                 idempotency_key=request.headers.get("Idempotency-Key") or request.data.get("idempotency_key"),
                 metadata=request.data.get("metadata", {}),
                 cash_register_id=request.data.get("cash_register"),
+                # O dinheiro entra na gaveta de UM terminal: o recebimento
+                # segue a mesma regra de dono da sangria e do fechamento.
+                terminal=terminal_from_request(request, restaurant=order.restaurant),
+                installation_id=installation_id_from_request(request),
             )
+        except (CashSessionConflict, CashSessionForbidden) as exc:
+            return cash_session_error_response(exc)
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
@@ -400,8 +523,27 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
+        from apps.orders.services import order_is_empty
+
+        order = self.get_object()
+        # DESCARTAR UM PEDIDO VAZIO NAO E CANCELAR UMA VENDA.
+        #
+        # Sem item e sem recebimento nao ha nada para proteger: a autorizacao
+        # do supervisor existe para impedir que alguem apague consumo ja
+        # lancado. Exigi-la aqui deixava a comanda ocupada por um pedido que
+        # nunca virou nada — e travava o proximo cliente que fosse usa-la.
+        if not order_is_empty(order) and not _can_authorize_order_cancellation(request, order):
+            return Response(
+                {
+                    "detail": (
+                        "Informe a senha de operação do restaurante ou as "
+                        "credenciais de um usuário com permissão para cancelar pedidos."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         try:
-            order = cancel_order(self.get_object(), request.user, request.data.get("reason", ""))
+            order = cancel_order(order, request.user, request.data.get("reason", ""))
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)
@@ -409,7 +551,7 @@ class OrderViewSet(BaseTenantViewSet):
     @action(detail=True, methods=["post"], url_path="print")
     def print_order(self, request, pk=None):
         from apps.printers.models import Printer
-        from apps.printers.services import register_print_job
+        from apps.printers.services import printer_payload, register_print_job
 
         order = self.get_object()
         printer = None
@@ -426,36 +568,28 @@ class OrderViewSet(BaseTenantViewSet):
                     {"detail": "A impressora selecionada não existe, está inativa ou pertence a outro restaurante."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-        job = register_print_job(
-            order=order,
-            user=request.user,
-            job_type=request.data.get("job_type", "receipt"),
-            printer=printer,
-            manual_only=bool(request.data.get("manual_only", False)),
-        )
+        try:
+            job = register_print_job(
+                order=order,
+                user=request.user,
+                job_type=request.data.get("job_type", "receipt"),
+                printer=printer,
+                manual_only=bool(request.data.get("manual_only", False)),
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         printer = job.printer
         return Response(
             {
                 "print_job_id": str(job.id),
                 "html": job.html_content,
+                # O agente local usa payload.text_content (e barcode/QR) como
+                # texto pronto pro cupom termico; sem isso ele caia pro
+                # conversor generico de HTML, que nao entende tabela e gruda
+                # rotulo com valor ("SubtotalR$ 237,00").
+                "payload": job.payload,
                 "status": job.status,
-                "printer": (
-                    {
-                        "id": str(printer.id),
-                        "name": printer.name,
-                        "endpoint": printer.endpoint,
-                        "connection_type": printer.connection_type,
-                        "host": printer.host,
-                        "port": printer.port,
-                        "timeout_seconds": printer.timeout_seconds,
-                        "driver_type": printer.driver_type,
-                        "settings": printer.settings,
-                        "auto_print": printer.auto_print,
-                        "is_active": printer.is_active,
-                    }
-                    if printer
-                    else None
-                ),
+                "printer": printer_payload(job.printer),
             }
         )
 

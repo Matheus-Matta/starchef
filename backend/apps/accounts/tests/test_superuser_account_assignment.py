@@ -15,6 +15,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from django.contrib.auth import get_user_model
 
 from apps.accounts.models import Account, UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 
 pytestmark = pytest.mark.django_db
 
@@ -36,7 +37,7 @@ def _superuser_client(account):
     user = User.objects.create_superuser(
         username=f"root-{uuid.uuid4().hex[:6]}", password="x", email=f"{uuid.uuid4().hex[:6]}@test.com"
     )
-    UserProfile.objects.create(account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN)
+    UserProfile.objects.create(account=account, user=user, role=ensure_system_roles(account)["admin"])
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
     return client
@@ -49,7 +50,7 @@ def test_superuser_creates_user_for_target_account_via_header(account, other_acc
         "username": f"novo-{uuid.uuid4().hex[:6]}",
         "email": f"novo-{uuid.uuid4().hex[:6]}@test.com",
         "password": "senha12345",
-        "profile": {"profile_type": UserProfile.PROFILE_WAITER},
+        "profile": {"role": str(ensure_system_roles(other_account)["waiter"].id)},
     }
     resp = client.post("/api/v1/users/", payload, format="json", HTTP_X_ACCOUNT_ID=str(other_account.id))
 
@@ -66,7 +67,7 @@ def test_superuser_without_header_falls_back_to_own_account(account, other_accou
         "username": f"novo-{uuid.uuid4().hex[:6]}",
         "email": f"novo-{uuid.uuid4().hex[:6]}@test.com",
         "password": "senha12345",
-        "profile": {"profile_type": UserProfile.PROFILE_WAITER},
+        "profile": {"role": str(ensure_system_roles(account)["waiter"].id)},
     }
     resp = client.post("/api/v1/users/", payload, format="json")
 
@@ -78,7 +79,7 @@ def test_superuser_without_header_falls_back_to_own_account(account, other_accou
 def test_non_superuser_header_is_ignored(account, restaurant, branch, other_account):
     user = User.objects.create_user(username=f"adm-{uuid.uuid4().hex[:6]}", password="x")
     UserProfile.objects.create(
-        account=account, user=user, profile_type=UserProfile.PROFILE_ADMIN, restaurant=restaurant, branch=branch
+        account=account, user=user, role=ensure_system_roles(account)["admin"], restaurant=restaurant, branch=branch
     )
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(user)}")
@@ -86,7 +87,7 @@ def test_non_superuser_header_is_ignored(account, restaurant, branch, other_acco
     payload = {
         "username": f"novo-{uuid.uuid4().hex[:6]}",
         "password": "senha12345",
-        "profile": {"profile_type": UserProfile.PROFILE_WAITER},
+        "profile": {"role": str(ensure_system_roles(account)["waiter"].id)},
     }
     resp = client.post("/api/v1/users/", payload, format="json", HTTP_X_ACCOUNT_ID=str(other_account.id))
 

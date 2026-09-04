@@ -1,0 +1,596 @@
+"""Sincronizacao de empresas do StarChef com a API de Empresas da Focus NFe."""
+
+import logging
+from dataclasses import dataclass
+
+import requests
+from django.db import transaction
+from django.utils import timezone
+
+from apps.accounts.models import FocusNfeConfig
+from apps.invoices.fiscal import only_digits
+from apps.invoices.models import FiscalConfig
+
+logger = logging.getLogger(__name__)
+
+
+class FocusNfeApiError(RuntimeError):
+    """Erro de transporte ou validacao devolvido pela Focus NFe."""
+
+    def __init__(self, message, *, error_code="focus_api_error", upstream_status=None, retryable=False):
+        super().__init__(message)
+        self.error_code = error_code
+        self.upstream_status = upstream_status
+        self.retryable = retryable
+
+
+class FocusNfeConfigurationError(RuntimeError):
+    """A conta ainda nao possui os dados necessarios para usar a Focus."""
+
+
+@dataclass(frozen=True)
+class FocusCompanySyncResult:
+    """Resultado explicito para a API nao confundir dry run com persistencia."""
+
+    config: FiscalConfig
+    synced: bool
+    message: str
+    dry_run: bool = False
+    operation: str = ""
+    warnings: tuple[str, ...] = ()
+
+
+def get_account_focus_config(account):
+    if account is None:
+        return None
+    return FocusNfeConfig.objects.filter(account_id=account.pk).first()
+
+
+def _clean_payload(payload):
+    return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+def _focus_error_message(data, fallback=""):
+    """Extrai a mensagem da Focus sem devolver payloads inteiros ou segredos."""
+
+    def collect(value):
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, list):
+            messages = []
+            for item in value:
+                messages.extend(collect(item))
+            return messages
+        if not isinstance(value, dict):
+            return []
+
+        messages = []
+        for key in ("mensagem", "message", "detail", "descricao", "description"):
+            messages.extend(collect(value.get(key)))
+        for key in ("erros", "errors", "erro", "error", "detalhes", "details"):
+            messages.extend(collect(value.get(key)))
+        return messages
+
+    messages = list(dict.fromkeys(message for message in collect(data) if message))
+    message = "; ".join(messages) or str(fallback or "Resposta de erro sem mensagem.").strip()
+    return message[:1500]
+
+
+def _is_duplicate_message(message):
+    normalized = str(message or "").casefold()
+    return "duplicad" in normalized or "ja existe" in normalized or "já existe" in normalized
+
+
+def _normalize_state_registration(value):
+    """Mantem ISENTO; para inscricoes comuns envia somente os digitos."""
+    normalized = str(value or "").strip().upper()
+    return "ISENTO" if normalized == "ISENTO" else only_digits(normalized)
+
+
+# Campo da Focus -> (campo local que a tela edita, rotulo pro usuario).
+COMPANY_REQUIRED_FIELDS = (
+    ("nome", "corporate_name", "Razao social"),
+    ("cnpj", "cnpj", "CNPJ"),
+    ("inscricao_estadual", "ie", "Inscricao Estadual"),
+    ("logradouro", "address_line", "Endereco"),
+    ("numero", "address_number", "Numero do endereco"),
+    ("bairro", "district", "Bairro"),
+    ("municipio", "city", "Cidade"),
+    ("cep", "zip_code", "CEP"),
+    ("uf", "uf", "UF"),
+)
+
+
+def _company_validation_issues(config, payload):
+    """Valida o minimo que permite cadastrar a empresa e emitir pela Focus."""
+    issues = [
+        {
+            "field": local,
+            "label": label,
+            "message": f"{label}: preenchimento obrigatorio.",
+        }
+        for field, local, label in COMPANY_REQUIRED_FIELDS
+        if not payload.get(field)
+    ]
+    invalid_fields = {issue["field"] for issue in issues}
+
+    def invalid(field, label, message):
+        if field not in invalid_fields:
+            issues.append({"field": field, "label": label, "message": message})
+            invalid_fields.add(field)
+
+    if payload.get("cnpj") and len(str(payload["cnpj"])) != 14:
+        invalid("cnpj", "CNPJ", "CNPJ: informe exatamente 14 digitos.")
+
+    ie = str(payload.get("inscricao_estadual") or "")
+    if ie and ie != "ISENTO" and (not ie.isdigit() or not 2 <= len(ie) <= 14):
+        invalid(
+            "ie",
+            "Inscricao Estadual",
+            "Inscricao Estadual: informe de 2 a 14 digitos ou ISENTO.",
+        )
+
+    cep = str(payload.get("cep") or "")
+    if cep and (not cep.isdigit() or len(cep) != 8):
+        invalid("zip_code", "CEP", "CEP: informe exatamente 8 digitos.")
+
+    uf = str(payload.get("uf") or "")
+    if uf and (len(uf) != 2 or not uf.isalpha()):
+        invalid("uf", "UF", "UF: informe a sigla com 2 letras.")
+
+    if config.document_model == FiscalConfig.MODEL_NFCE:
+        if not payload.get("id_token_nfce_homologacao") and not payload.get("id_token_nfce_producao"):
+            invalid("csc_id", "ID do CSC", "ID do CSC: obrigatorio para emitir NFC-e.")
+        if not payload.get("csc_nfce_homologacao") and not payload.get("csc_nfce_producao"):
+            invalid("csc_token", "CSC", "CSC: obrigatorio para emitir NFC-e.")
+
+    company_already_linked = bool(
+        config.focus_company_id
+        or config.focus_token_production
+        or config.focus_token_homologation
+    )
+    if not company_already_linked:
+        if not config.focus_certificate_base64:
+            invalid(
+                "focus_certificate_base64",
+                "Certificado A1",
+                "Certificado A1: obrigatorio na primeira sincronizacao da empresa.",
+            )
+        if not config.focus_certificate_password:
+            invalid(
+                "focus_certificate_password",
+                "Senha do certificado A1",
+                "Senha do certificado A1: obrigatoria na primeira sincronizacao da empresa.",
+            )
+
+    return issues
+
+
+def company_payload_missing_fields(config):
+    """Pendencias do cadastro fiscal, no formato que a tela consome.
+
+    Nunca levanta: serve a um GET de leitura, entao um cadastro incompleto
+    demais para montar o payload vira "tudo pendente", nao um erro.
+    """
+    try:
+        payload = build_focus_company_payload(config)
+    except Exception:  # noqa: BLE001 - leitura defensiva; ver docstring
+        payload = {}
+    return _company_validation_issues(config, payload)
+
+
+def _validate_company_payload(config, payload):
+    issues = _company_validation_issues(config, payload)
+    if issues:
+        raise FocusNfeConfigurationError(
+            "Corrija a configuracao fiscal antes de sincronizar: "
+            + " ".join(issue["message"] for issue in issues)
+        )
+
+
+def validate_focus_company_config(config):
+    """Monta e valida o cadastro completo antes de qualquer chamada a Focus."""
+    payload = build_focus_company_payload(config)
+    _validate_company_payload(config, payload)
+    return payload
+
+
+def build_focus_company_payload(config):
+    """Converte o cadastro fiscal local no contrato de empresa da Focus."""
+    restaurant = config.restaurant
+    branch = config.branch
+    is_production = config.environment == FiscalConfig.ENV_PRODUCTION
+    is_nfe = config.document_model == FiscalConfig.MODEL_NFE
+    is_nfce = config.document_model == FiscalConfig.MODEL_NFCE
+
+    payload = {
+        "nome": config.corporate_name or restaurant.legal_name or restaurant.trade_name,
+        "nome_fantasia": config.trade_name or restaurant.trade_name,
+        "cnpj": only_digits(config.cnpj or restaurant.cnpj),
+        "inscricao_estadual": _normalize_state_registration(config.ie or branch.state_registration),
+        "regime_tributario": int(config.crt),
+        "logradouro": config.address_line or branch.address,
+        "numero": config.address_number,
+        "bairro": config.district or branch.district or restaurant.district,
+        "municipio": config.city or branch.city,
+        "cep": only_digits(config.zip_code or branch.zip_code),
+        "uf": (config.uf or branch.state).upper(),
+        "telefone": only_digits(branch.phone),
+        "email": branch.email,
+        "discrimina_impostos": True,
+        "habilita_nfe": is_nfe,
+        "habilita_nfce": is_nfce,
+        "habilita_contingencia_offline_nfce": is_nfce,
+        "reaproveita_numero_nfce_contingencia": is_nfce,
+    }
+    if config.focus_certificate_base64:
+        payload["arquivo_certificado_base64"] = config.focus_certificate_base64
+        payload["senha_certificado"] = config.focus_certificate_password
+    if is_nfe:
+        suffix = "producao" if is_production else "homologacao"
+        payload[f"serie_nfe_{suffix}"] = str(config.series)
+        payload[f"proximo_numero_nfe_{suffix}"] = str(config.next_number)
+    if is_nfce:
+        suffix = "producao" if is_production else "homologacao"
+        payload[f"serie_nfce_{suffix}"] = str(config.series)
+        payload[f"proximo_numero_nfce_{suffix}"] = str(config.next_number)
+        if config.csc_token:
+            payload[f"csc_nfce_{suffix}"] = config.csc_token
+        if config.csc_id:
+            payload[f"id_token_nfce_{suffix}"] = int(config.csc_id)
+    return _clean_payload(payload)
+
+
+class FocusNfeCompanyClient:
+    """CRUD da API `/v2/empresas`, autenticado pelo token mestre."""
+
+    def __init__(self, *, account_config=None, token=None, timeout=None, dry_run=None):
+        self.account_config = account_config
+        self.token = token if token is not None else getattr(account_config, "master_token", "")
+        self.timeout = timeout if timeout is not None else getattr(account_config, "timeout_seconds", 30)
+        self.dry_run = dry_run if dry_run is not None else getattr(account_config, "company_dry_run", False)
+        self.base_url = getattr(account_config, "production_url", "").rstrip("/")
+
+    def _request(self, method, path, *, token=None, **kwargs):
+        credential = token or self.token
+        if not credential:
+            raise FocusNfeConfigurationError("Token mestre da Focus NFe nao configurado para esta conta.")
+        if not self.base_url:
+            raise FocusNfeConfigurationError("URL de producao da Focus NFe nao configurada para esta conta.")
+        try:
+            response = requests.request(
+                method,
+                f"{self.base_url}{path}",
+                auth=(credential, ""),
+                timeout=self.timeout,
+                **kwargs,
+            )
+        except requests.Timeout as exc:
+            raise FocusNfeApiError(
+                f"A Focus NFe nao respondeu em ate {self.timeout} segundos. Tente novamente.",
+                error_code="focus_timeout",
+                retryable=True,
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise FocusNfeApiError(
+                "Nao foi possivel conectar a Focus NFe. Verifique a URL e tente novamente.",
+                error_code="focus_unavailable",
+                retryable=True,
+            ) from exc
+        except requests.RequestException as exc:
+            raise FocusNfeApiError(
+                "Falha de comunicacao com a Focus NFe. Tente novamente.",
+                error_code="focus_request_error",
+                retryable=True,
+            ) from exc
+
+        try:
+            data = response.json() if response.content else {}
+        except ValueError:
+            data = {"mensagem": response.text}
+        if response.status_code >= 400:
+            upstream_status = response.status_code
+            message = _focus_error_message(data, response.text)
+            error_code = "focus_api_error"
+            retryable = upstream_status == 429 or upstream_status >= 500
+            if upstream_status in (401, 403):
+                error_code = "focus_auth_error"
+                message = (
+                    "Token mestre recusado pela Focus NFe. Configure o Token Principal de Producao "
+                    "da conta Focus; o token de emissao da empresa nao serve para cadastrar empresas."
+                )
+            elif upstream_status in (400, 409, 422) and _is_duplicate_message(message):
+                error_code = "focus_conflict"
+                message = f"A Focus NFe informou que a empresa ou um de seus dados ja esta cadastrado: {message}"
+            elif upstream_status in (400, 422):
+                error_code = "focus_validation_error"
+                message = f"A Focus NFe recusou os dados da empresa: {message}"
+            elif upstream_status == 404:
+                error_code = "focus_not_found"
+            elif upstream_status == 429:
+                error_code = "focus_rate_limited"
+                message = "A Focus NFe limitou temporariamente as requisicoes. Aguarde e tente novamente."
+            elif upstream_status >= 500:
+                error_code = "focus_unavailable"
+                message = "A Focus NFe esta indisponivel no momento. Tente novamente em instantes."
+            raise FocusNfeApiError(
+                message,
+                error_code=error_code,
+                upstream_status=upstream_status,
+                retryable=retryable,
+            )
+        return data
+
+    def list(self, *, cnpj=None, offset=0):
+        params = {"offset": offset}
+        if cnpj:
+            params["cnpj"] = only_digits(cnpj)
+        return self._request("GET", "/v2/empresas", params=params)
+
+    def get(self, company_id):
+        return self._request("GET", f"/v2/empresas/{company_id}")
+
+    def create(self, payload):
+        params = {"dry_run": 1} if self.dry_run else None
+        return self._request("POST", "/v2/empresas", params=params, json=payload)
+
+    def update(self, company_id, payload):
+        params = {"dry_run": 1} if self.dry_run else None
+        return self._request("PUT", f"/v2/empresas/{company_id}", params=params, json=payload)
+
+    def delete(self, company_id):
+        return self._request("DELETE", f"/v2/empresas/{company_id}")
+
+    def ensure_webhook(self, *, company, cnpj):
+        url = getattr(self.account_config, "webhook_url", "")
+        token = company.get("token_producao")
+        if not url or not token:
+            return None
+        hooks = self._request("GET", "/v2/hooks", token=token)
+        if isinstance(hooks, dict):
+            hooks = hooks.get("data") or hooks.get("results") or []
+        for hook in hooks or []:
+            if hook.get("event") == "nfe" and hook.get("url") == url and only_digits(hook.get("cnpj")) == cnpj:
+                return hook
+        payload = {"cnpj": cnpj, "event": "nfe", "url": url}
+        authorization = getattr(self.account_config, "webhook_authorization", "")
+        if authorization:
+            payload["authorization"] = authorization
+            payload["authorization_header"] = (
+                getattr(self.account_config, "webhook_authorization_header", "") or "Authorization"
+            )
+        return self._request("POST", "/v2/hooks", token=token, json=payload)
+
+
+def _first_company(data):
+    if isinstance(data, list):
+        return data[0] if data else None
+    if not isinstance(data, dict):
+        return None
+    if data.get("id"):
+        return data
+    for key in ("data", "results", "empresas", "items"):
+        if key in data:
+            company = _first_company(data[key])
+            if company:
+                return company
+    return None
+
+
+def _company_conflict_not_visible(error):
+    return FocusNfeApiError(
+        "A Focus informou que essa empresa ja existe, mas o Token Principal de Producao configurado "
+        "nao conseguiu localiza-la pelo CNPJ. Confirme se a empresa pertence a mesma conta Focus do token; "
+        "se pertencer a outra conta, solicite a transferencia/liberacao ao suporte da Focus.",
+        error_code="focus_company_conflict_unresolved",
+        upstream_status=error.upstream_status,
+    )
+
+
+def _store_focus_company(config, company):
+    secret_fragments = ("token", "senha", "password", "csc")
+    safe_remote_data = {
+        key: value
+        for key, value in company.items()
+        if not any(fragment in key.lower() for fragment in secret_fragments)
+    }
+    updates = {
+        "focus_company_id": str(company.get("id") or config.focus_company_id),
+        "focus_sync_status": FiscalConfig.FOCUS_SYNC_SYNCED,
+        "focus_sync_error": "",
+        "focus_synced_at": timezone.now(),
+        "focus_remote_data": safe_remote_data,
+        "updated_at": timezone.now(),
+    }
+    if config.focus_certificate_base64:
+        # O PFX e sua senha so permanecem no banco enquanto a tarefa precisa
+        # deles para criar/atualizar a empresa. Apos sucesso, sao descartados.
+        updates["focus_certificate_base64"] = ""
+        updates["focus_certificate_password"] = ""
+    if company.get("token_producao"):
+        updates["focus_token_production"] = company["token_producao"]
+    if company.get("token_homologacao"):
+        updates["focus_token_homologation"] = company["token_homologacao"]
+    FiscalConfig.all_objects.filter(pk=config.pk).update(**updates)
+    config.refresh_from_db()
+    return config
+
+
+def sync_focus_company(config, *, client=None):
+    """Cria ou atualiza a empresa da Focus e armazena os tokens de emissao."""
+    if config.provider != FiscalConfig.PROVIDER_FOCUS_NFE:
+        raise FocusNfeApiError("A configuracao fiscal nao usa o provedor Focus NFe.")
+    cnpj = only_digits(config.cnpj or config.restaurant.cnpj)
+
+    client = client or FocusNfeCompanyClient(account_config=get_account_focus_config(config.account))
+    try:
+        payload = validate_focus_company_config(config)
+        company = None
+        operation = "updated"
+        if config.focus_company_id:
+            try:
+                company = client.update(config.focus_company_id, payload)
+            except FocusNfeApiError as exc:
+                if exc.upstream_status != 404:
+                    raise
+        if company is None:
+            existing = _first_company(client.list(cnpj=cnpj))
+            if existing:
+                company = client.update(existing["id"], payload)
+            else:
+                try:
+                    company = client.create(payload)
+                    operation = "created"
+                except FocusNfeApiError as exc:
+                    if exc.error_code != "focus_conflict":
+                        raise
+                    # Pode haver um cadastro antigo que nao apareceu na primeira
+                    # consulta ou uma corrida entre duas sincronizacoes. Consulta
+                    # novamente pelo CNPJ e adota o registro remoto existente.
+                    existing = _first_company(client.list(cnpj=cnpj))
+                    if not existing:
+                        raise _company_conflict_not_visible(exc) from exc
+                    company = client.update(existing["id"], payload)
+                    operation = "recovered"
+
+        if getattr(client, "dry_run", False):
+            updates = {"focus_sync_error": "", "updated_at": timezone.now()}
+            if not config.focus_company_id:
+                updates["focus_sync_status"] = FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED
+            FiscalConfig.all_objects.filter(pk=config.pk).update(**updates)
+            config.refresh_from_db()
+            return FocusCompanySyncResult(
+                config=config,
+                synced=False,
+                dry_run=True,
+                operation="validated",
+                message=(
+                    "A Focus validou os dados em modo de simulacao (dry run), mas nao criou nem alterou "
+                    "a empresa. Desative 'Simular cadastro da empresa' e sincronize novamente para persistir."
+                ),
+            )
+
+        company = _first_company(company)
+        if not company:
+            # Algumas respostas de criacao podem ser resumidas. Confirma pelo
+            # CNPJ antes de afirmar ao usuario que houve persistencia.
+            company = _first_company(client.list(cnpj=cnpj))
+        if not company or not company.get("id"):
+            raise FocusNfeApiError(
+                "A Focus respondeu sem erro, mas a empresa nao apareceu na consulta por CNPJ. "
+                "Nenhum cadastro foi marcado como sincronizado; tente novamente ou contate o suporte da Focus.",
+                error_code="focus_company_not_persisted",
+                upstream_status=200,
+            )
+        warnings = []
+        try:
+            client.ensure_webhook(company=company, cnpj=cnpj)
+        except FocusNfeApiError as exc:
+            # O webhook e complementar: NFC-e e sincrona e NF-e tambem pode
+            # ser consultada. Uma falha aqui nao pode inutilizar os tokens.
+            logger.exception("Empresa sincronizada, mas o webhook Focus NFe nao foi cadastrado.")
+            warnings.append(f"Empresa sincronizada, mas o webhook nao foi configurado: {exc}")
+        stored_config = _store_focus_company(config, company)
+        return FocusCompanySyncResult(
+            config=stored_config,
+            synced=True,
+            operation=operation,
+            message=(
+                "Empresa criada e confirmada na Focus NFe."
+                if operation == "created"
+                else (
+                    "Empresa que ja existia na Focus foi localizada pelo CNPJ, vinculada e atualizada."
+                    if operation == "recovered"
+                    else "Empresa atualizada e confirmada na Focus NFe."
+                )
+            ),
+            warnings=tuple(warnings),
+        )
+    except Exception as exc:
+        FiscalConfig.all_objects.filter(pk=config.pk).update(
+            focus_sync_status=(
+                FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED
+                if isinstance(exc, FocusNfeConfigurationError)
+                else FiscalConfig.FOCUS_SYNC_ERROR
+            ),
+            focus_sync_error=str(exc),
+            updated_at=timezone.now(),
+        )
+        if isinstance(exc, (FocusNfeApiError, FocusNfeConfigurationError)):
+            raise
+        raise FocusNfeApiError(str(exc)) from exc
+
+
+def refresh_focus_company(config, *, client=None):
+    if config.provider != FiscalConfig.PROVIDER_FOCUS_NFE:
+        raise FocusNfeApiError("A configuracao fiscal nao usa o provedor Focus NFe.")
+    client = client or FocusNfeCompanyClient(account_config=get_account_focus_config(config.account))
+    if not config.focus_company_id:
+        company = _first_company(client.list(cnpj=config.cnpj))
+        if not company:
+            raise FocusNfeApiError("Empresa ainda nao cadastrada na Focus NFe.")
+    else:
+        company = client.get(config.focus_company_id)
+    return _store_focus_company(config, company)
+
+
+def delete_focus_company(config, *, client=None):
+    """Exclusao remota explicita; nunca e executada por soft-delete local."""
+    client = client or FocusNfeCompanyClient(account_config=get_account_focus_config(config.account))
+    if config.focus_company_id:
+        client.delete(config.focus_company_id)
+    FiscalConfig.all_objects.filter(pk=config.pk).update(
+        focus_company_id="",
+        focus_token_production="",
+        focus_token_homologation="",
+        focus_certificate_base64="",
+        focus_certificate_password="",
+        focus_sync_status=FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED,
+        focus_sync_error="",
+        focus_synced_at=None,
+        focus_remote_data={},
+        updated_at=timezone.now(),
+    )
+    config.refresh_from_db()
+    return config
+
+
+def enqueue_focus_company_sync(config):
+    """Agenda a sincronizacao sem bloquear o cadastro do restaurante."""
+    if config.provider != FiscalConfig.PROVIDER_FOCUS_NFE:
+        return False
+    try:
+        validate_focus_company_config(config)
+    except FocusNfeConfigurationError as exc:
+        FiscalConfig.all_objects.filter(pk=config.pk).update(
+            focus_sync_status=FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED,
+            focus_sync_error=str(exc),
+            updated_at=timezone.now(),
+        )
+        return False
+    account_config = get_account_focus_config(config.account)
+    if account_config is None or not account_config.auto_sync:
+        return False
+    if not account_config.master_token or not account_config.production_url:
+        FiscalConfig.all_objects.filter(pk=config.pk).update(
+            focus_sync_status=FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED,
+            focus_sync_error="Configure o token mestre e a URL de producao da Focus NFe para esta conta.",
+            updated_at=timezone.now(),
+        )
+        return False
+    FiscalConfig.all_objects.filter(pk=config.pk).update(
+        focus_sync_status=FiscalConfig.FOCUS_SYNC_PENDING,
+        focus_sync_error="",
+        updated_at=timezone.now(),
+    )
+
+    def enqueue():
+        try:
+            from apps.invoices.tasks import sync_focus_company_task
+
+            sync_focus_company_task.delay(str(config.pk))
+        except Exception:
+            logger.exception("Nao foi possivel agendar a sincronizacao da empresa Focus NFe.")
+
+    transaction.on_commit(enqueue, robust=True)
+    return True

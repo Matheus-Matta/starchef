@@ -123,6 +123,65 @@ def test_create_from_template_rejects_bad_template(manager_user, restaurant):
     assert resp.status_code == 400, resp.data
 
 
+class TestBoardIgnoresDeadOrders:
+    """O card só sai do quadro quando não há mais produção a fazer.
+
+    O caixa cobra assim que manda os itens para a cozinha, então um pedido PAGO
+    com comida na chapa é o caso normal — ele continua no quadro e o cozinheiro
+    consegue mover. Cancelado/estornado não tem produção: some da lista, em vez
+    de virar um card parado que recusa todo movimento.
+    """
+
+    def test_paid_order_stays_on_board_and_can_advance(self, manager_user, sent_item, entry_column, done_column):
+        sent_item.order.status = Order.STATUS_PAID
+        sent_item.order.save(update_fields=["status", "updated_at"])
+        client = _client(manager_user)
+
+        listed = client.get("/api/v1/kitchen/items/")
+        assert any(row["id"] == str(sent_item.id) for row in listed.data["results"])
+
+        moved = client.post(
+            f"/api/v1/kitchen/items/{sent_item.id}/move/", {"column": str(done_column.id)}, format="json"
+        )
+        assert moved.status_code == 200, moved.data
+        sent_item.refresh_from_db()
+        assert sent_item.status == OrderItem.STATUS_READY
+
+    def test_paid_order_item_still_cannot_be_voided(self, manager_user, sent_item):
+        from django.core.exceptions import ValidationError
+
+        from apps.orders.services import update_order_item_status
+
+        sent_item.order.status = Order.STATUS_PAID
+        sent_item.order.save(update_fields=["status", "updated_at"])
+
+        # Avançar a produção pode; mexer na composição/valor do pedido, não.
+        with pytest.raises(ValidationError):
+            update_order_item_status(sent_item, OrderItem.STATUS_CANCELLED, manager_user, reason="teste")
+
+    def test_cancelled_order_leaves_the_board(self, manager_user, sent_item, done_column):
+        from apps.orders.services import cancel_order
+
+        cancel_order(sent_item.order, manager_user, reason="cliente desistiu")
+        client = _client(manager_user)
+
+        listed = client.get("/api/v1/kitchen/items/")
+        assert all(row["id"] != str(sent_item.id) for row in listed.data["results"])
+
+        # E o card que ficou numa tela já aberta não engana: mover falha.
+        moved = client.post(
+            f"/api/v1/kitchen/items/{sent_item.id}/move/", {"column": str(done_column.id)}, format="json"
+        )
+        assert moved.status_code == 404, moved.data
+
+    def test_refunded_order_leaves_the_board(self, manager_user, sent_item):
+        sent_item.order.status = Order.STATUS_REFUNDED
+        sent_item.order.save(update_fields=["status", "updated_at"])
+
+        listed = _client(manager_user).get("/api/v1/kitchen/items/")
+        assert all(row["id"] != str(sent_item.id) for row in listed.data["results"])
+
+
 def test_move_rejects_column_from_other_account(manager_user, sent_item):
     from apps.accounts.models import Account
     from apps.restaurants.models import Restaurant

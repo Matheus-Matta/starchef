@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -8,6 +9,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.core.access import is_tenant_admin
+from apps.core.audit import record_audit
+from apps.core.models import AuditLog
 from apps.core.modules import MODULE_ECOMMERCE
 from apps.core.viewsets import BaseTenantViewSet
 from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
@@ -46,7 +49,7 @@ class ProductViewSet(BaseTenantViewSet):
         "available_for_counter",
         "available_for_delivery",
     ]
-    search_fields = ["name", "internal_code", "description"]
+    search_fields = ["name", "internal_code", "description", "ean"]
     ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
     ordering = ["name"]
 
@@ -54,9 +57,9 @@ class ProductViewSet(BaseTenantViewSet):
         account = getattr(self.request, "account", None)
         if account is None or not self.request.user.is_authenticated:
             return Product.all_objects.none()
-        queryset = (
+        queryset = self.soft_delete_scope(
             Product.all_objects
-            .filter(account=account, deleted_at__isnull=True)
+            .filter(account=account)
             .select_related("restaurant", "branch", "category", "sector")
             .prefetch_related("variations", "restaurants")
         )
@@ -130,11 +133,42 @@ class ProductVariationViewSet(BaseTenantViewSet):
 
 class IngredientViewSet(BaseTenantViewSet):
     serializer_class = IngredientSerializer
-    queryset = Ingredient.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["unit", "is_active"]
-    search_fields = ["name"]
+    queryset = Ingredient.objects.select_related("restaurant", "branch", "supplier").all()
+    filterset_fields = ["unit", "supplier", "is_active"]
+    search_fields = ["name", "supplier__name"]
     ordering_fields = ["name", "average_cost", "minimum_stock", "created_at"]
     ordering = ["name"]
+
+    @action(detail=False, methods=["post"], url_path="bulk")
+    def bulk_create(self, request):
+        """Cria varios insumos em uma unica transacao."""
+
+        rows = request.data.get("items") if isinstance(request.data, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return Response({"items": "Informe ao menos um insumo."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(rows) > 100:
+            return Response(
+                {"items": "Cadastre no maximo 100 insumos por lote."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(data=rows, many=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            ingredients = serializer.save(
+                account=request.account,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            for ingredient in ingredients:
+                record_audit(
+                    action=AuditLog.ACTION_CREATED,
+                    instance=ingredient,
+                    actor=request.user,
+                    request=request,
+                    metadata={"bulk_create": True},
+                )
+        return Response(self.get_serializer(ingredients, many=True).data, status=status.HTTP_201_CREATED)
 
 
 class RecipeViewSet(BaseTenantViewSet):

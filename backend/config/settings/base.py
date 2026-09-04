@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers as _cors_default_headers
 from decouple import Csv, config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -92,6 +93,23 @@ EMAIL_USE_TLS = config("DJANGO_EMAIL_USE_TLS", default=True, cast=bool)
 EMAIL_USE_SSL = config("DJANGO_EMAIL_USE_SSL", default=False, cast=bool)
 DEFAULT_FROM_EMAIL = config("DJANGO_DEFAULT_FROM_EMAIL", default="StarChef <no-reply@localhost>")
 PASSWORD_RESET_TIMEOUT_MINUTES = config("PASSWORD_RESET_TIMEOUT_MINUTES", default=30, cast=int)
+
+# Focus NFe. Estes valores servem somente para popular FocusNfeConfig na
+# migracao e no signal de criacao de Account. A integracao em runtime consulta
+# exclusivamente a configuracao persistida da conta.
+FOCUS_NFE_MASTER_TOKEN = config("FOCUS_NFE_MASTER_TOKEN", default="")
+FOCUS_NFE_PRODUCTION_URL = config("FOCUS_NFE_PRODUCTION_URL", default="https://api.focusnfe.com.br").rstrip("/")
+FOCUS_NFE_HOMOLOGATION_URL = config(
+    "FOCUS_NFE_HOMOLOGATION_URL", default="https://homologacao.focusnfe.com.br"
+).rstrip("/")
+FOCUS_NFE_TIMEOUT_SECONDS = config("FOCUS_NFE_TIMEOUT_SECONDS", default=30, cast=int)
+FOCUS_NFE_AUTO_SYNC = config("FOCUS_NFE_AUTO_SYNC", default=True, cast=bool)
+FOCUS_NFE_COMPANY_DRY_RUN = config("FOCUS_NFE_COMPANY_DRY_RUN", default=False, cast=bool)
+FOCUS_NFE_WEBHOOK_URL = config("FOCUS_NFE_WEBHOOK_URL", default="")
+FOCUS_NFE_WEBHOOK_AUTHORIZATION = config("FOCUS_NFE_WEBHOOK_AUTHORIZATION", default="")
+FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER = config(
+    "FOCUS_NFE_WEBHOOK_AUTHORIZATION_HEADER", default="Authorization"
+)
 
 TEMPLATES = [
     {
@@ -199,6 +217,12 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "America/Sao_Paulo"
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-due-kitchen-batches": {
+        "task": "orders.dispatch_due_kitchen_batches",
+        "schedule": 5.0,
+    },
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -264,6 +288,11 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+# A identidade do terminal (instalação + nome) viaja em cabeçalho em toda
+# requisição — inclusive as de leitura, então precisa valer para qualquer rota,
+# não só para abertura de caixa. Sem isso o navegador falha no preflight antes
+# mesmo de a requisição chegar à view, e o axios só reporta "CORS error".
+CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name")
 # Necessário para o Django aceitar mutações vindas do front (cookies) cross-origin.
 CSRF_TRUSTED_ORIGINS = config(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
@@ -286,6 +315,12 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
+# A sessão do Django existe SÓ para o /admin (o app usa JWT em cookie próprio).
+# Restringir o path faz o navegador nem enviar o `sessionid` para /api/**: logar
+# no /admin no mesmo navegador não pode influenciar a identidade da API. O
+# TenantMiddleware também ignora a sessão (autentica sempre pelo JWT) — isto
+# aqui é a mesma garantia um nível antes, no navegador.
+SESSION_COOKIE_PATH = "/admin/"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

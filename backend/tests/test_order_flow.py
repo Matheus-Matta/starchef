@@ -1,7 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen, update_order_item_status
@@ -32,6 +34,7 @@ def test_create_order_and_send_to_kitchen(restaurant, branch, table, product, wa
     send_order_to_kitchen(order, waiter_user)
     item.refresh_from_db()
     order.refresh_from_db()
+    item.refresh_from_db()
     table.refresh_from_db()
 
     assert order.status == Order.STATUS_OPEN
@@ -47,6 +50,7 @@ def test_change_kitchen_item_status(restaurant, branch, table, product, manager_
     order = create_order(restaurant=restaurant, branch=branch, order_type=Order.TYPE_TABLE, table=table, user=manager_user)
     item = add_order_item(order=order, product=product, quantity=1, user=manager_user)
     send_order_to_kitchen(order, manager_user)
+    item.refresh_from_db()
 
     update_order_item_status(item, OrderItem.STATUS_PREPARING, manager_user)
     update_order_item_status(item, OrderItem.STATUS_READY, manager_user)
@@ -216,7 +220,16 @@ def test_order_save_always_touches_updated_at(restaurant, branch, manager_user):
         order_type=Order.TYPE_COUNTER,
         user=manager_user,
     )
+    # Recua o carimbo antes de medir: as duas gravações caem no mesmo tique do
+    # relogio com frequencia (a granularidade no Windows passa de 10 ms), e o
+    # teste falhava sozinho em uma execucao a cada tres — o que torna o CI
+    # inutil justamente quando ele deveria acusar um problema real.
+    Order.all_objects.filter(pk=order.pk).update(
+        updated_at=timezone.now() - timedelta(minutes=1)
+    )
+    order.refresh_from_db()
     previous = order.updated_at
+
     order.general_notes = "Atualizado"
     order.save(update_fields=["general_notes"])
 

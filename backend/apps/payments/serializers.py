@@ -3,7 +3,20 @@ from django.db.models import Sum
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.payments.models import CashMovement, CashRegister, CashStation, Payment, PaymentMethod
+from apps.payments.models import CashMovement, CashRegister, CashStation, PdvTerminal, Payment, PaymentMethod
+
+
+class PdvTerminalSerializer(TenantModelSerializer):
+    label = serializers.CharField(read_only=True)
+    restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True, default=None)
+
+    class Meta:
+        model = PdvTerminal
+        fields = "__all__"
+        # `installation_id` é a identidade da instalação: quem a define é o
+        # próprio terminal, no primeiro contato. Aceitar reescrita pela API
+        # permitiria "virar" outro terminal e herdar a sessão dele.
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "installation_id", "last_seen_at"]
 
 
 class CashStationSerializer(TenantModelSerializer):
@@ -45,30 +58,52 @@ class CashStationSerializer(TenantModelSerializer):
     def _session_data(self, session):
         if not session:
             return None
-        return {"id": session.id, "status": session.status, "operator": session.opened_by.get_full_name() or session.opened_by.username,
-                "opened_at": session.opened_at, "closed_at": session.closed_at, "opening_amount": session.opening_amount,
-                "actual_amount": session.actual_amount, "difference_amount": session.difference_amount}
+        from apps.payments.terminals import terminal_label_of
+
+        return {
+            "id": session.id,
+            "status": session.status,
+            "operator": session.opened_by.get_full_name() or session.opened_by.username,
+            "opened_by": session.opened_by_id,
+            # Sem isto a tela não consegue dizer QUEM e DE ONDE está com o
+            # caixa — a mensagem de bloqueio viraria "já está aberto" e ponto.
+            "opened_terminal": session.opened_terminal_id,
+            "opened_terminal_label": terminal_label_of(session),
+            "opened_at": session.opened_at,
+            "closed_at": session.closed_at,
+            "opening_amount": session.opening_amount,
+            "actual_amount": session.actual_amount,
+            "difference_amount": session.difference_amount,
+        }
 
     def get_current_session(self, obj):
         if hasattr(obj, "prefetched_sessions"):
-            closed_statuses = {
-                CashRegister.STATUS_CLOSED,
-                CashRegister.STATUS_CLOSED_DIFFERENCE,
-                CashRegister.STATUS_CANCELLED,
-            }
             return self._session_data(
-                next((item for item in obj.prefetched_sessions if item.status not in closed_statuses), None)
+                next((item for item in obj.prefetched_sessions if item.status not in CashRegister.FINAL_STATUSES), None)
             )
-        session = obj.sessions.exclude(status__in=[CashRegister.STATUS_CLOSED, CashRegister.STATUS_CLOSED_DIFFERENCE, CashRegister.STATUS_CANCELLED]).select_related("opened_by").order_by("-opened_at").first()
+        session = (
+            CashRegister.active_sessions(obj.sessions)
+            .select_related("opened_by", "opened_terminal")
+            .order_by("-opened_at")
+            .first()
+        )
         return self._session_data(session)
 
     def get_recent_sessions(self, obj):
         if hasattr(obj, "prefetched_sessions"):
             return [self._session_data(session) for session in obj.prefetched_sessions[:10]]
-        return [self._session_data(session) for session in obj.sessions.select_related("opened_by").order_by("-opened_at")[:10]]
+        return [
+            self._session_data(session)
+            for session in obj.sessions.select_related("opened_by", "opened_terminal").order_by("-opened_at")[:10]
+        ]
 
 
 class PaymentMethodSerializer(TenantModelSerializer):
+    # Cada restaurante recebe o mesmo conjunto padrão de métodos
+    # (apps/payments/defaults.py), então a listagem tem vários "Dinheiro"/"PIX"
+    # homônimos: sem o nome do restaurante não dá para saber qual é qual.
+    restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True, default=None)
+
     class Meta:
         model = PaymentMethod
         fields = "__all__"
@@ -108,6 +143,9 @@ class CashMovementSerializer(TenantModelSerializer):
 class CashRegisterSerializer(TenantModelSerializer):
     movements = CashMovementSerializer(many=True, read_only=True)
     current_balance = serializers.SerializerMethodField()
+    opened_by_name = serializers.SerializerMethodField()
+    terminal_label = serializers.SerializerMethodField()
+    cash_station_name = serializers.CharField(source="cash_station.name", read_only=True, default=None)
 
     class Meta:
         model = CashRegister
@@ -122,7 +160,24 @@ class CashRegisterSerializer(TenantModelSerializer):
             "closed_at",
             "expected_amount",
             "difference_amount",
+            # Dono da sessão: definido na abertura e alterado só pela
+            # transferência gerencial, nunca por um PATCH do próprio terminal.
+            "opened_by",
+            "opened_terminal",
+            "closed_terminal",
+            "opened_terminal_label",
+            "closed_terminal_label",
         ]
+
+    def get_opened_by_name(self, obj):
+        from apps.payments.terminals import operator_label
+
+        return operator_label(obj.opened_by)
+
+    def get_terminal_label(self, obj):
+        from apps.payments.terminals import terminal_label_of
+
+        return terminal_label_of(obj)
 
     def get_current_balance(self, obj):
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("movements")

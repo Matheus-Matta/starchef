@@ -70,6 +70,8 @@ frontend/
 | `/pedidos/:id/editar-itens` | `OrderEditView` | Wrapper fino sobre `PdvView` em modo edição |
 | `/kds` | `KdsView` | Painel de cozinha ao vivo |
 | `/kds-estacoes` | `KdsStationsView` | Cadastro de estações/colunas do KDS — tela própria |
+| `/configuracao-focus` | `FocusNfeConfigView` | Credenciais, endpoints e webhook Focus isolados por conta |
+| `/configuracao-cosmos` | `CosmosConfigView` | Token, User-Agent e ativação da busca fiscal Cosmos por conta |
 | `/relatorios/{vendas,pedidos,produtos,pagamentos,garcons,restaurantes}` | `ReportsView` | Uma view compartilhada, `section` muda o conteúdo |
 | `/<resource>`, `/<resource>/create`, `/<resource>/:id`, `/<resource>/:id/edit` | `ResourceListViewPro` / `ResourceFormView` | Geradas automaticamente a partir de `config/resources.js` |
 
@@ -106,12 +108,31 @@ Dois composables sustentam isso:
 - **`useResourceList.js`** — paginação/ordenação/busca server-side para `ResourceListViewPro`.
 - **`useResourceForm.js`** — carrega o registro, monta o form a partir de `formFields`, faz POST/PATCH, mapeia erros de validação do backend para os campos.
 
+Em **Ingredientes**, a ação “Cadastrar em lote” abre um formulário repetível e
+salva todas as linhas numa única operação atômica. A Logística também oferece o
+CRUD de **Fornecedores**; o fornecedor padrão fica vinculado ao insumo. Na tela
+de entrada, selecionar o insumo preenche sua unidade, fornecedor e, quando
+disponível, o último custo médio, mantendo os campos editáveis para a compra
+atual.
+
+Na criação de um perfil fiscal, `CosmosFiscalAssist.vue` observa o nome e,
+quando a integração da conta está ativa, consulta a Cosmos depois de uma pausa
+curta na digitação. NCM e CEST encontrados preenchem o formulário para revisão,
+sem sobrescrever campos alterados manualmente. O mesmo componente aparece no
+diálogo de criação rápida aberto pelo cadastro de produto.
+
+No recurso **Restaurantes**, o campo “Definir senha de ações do caixa” recebe a
+senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou
+cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
+deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
+payload do CRUD.
+
 ## 6. Tempo real
 
 Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo Vite em dev e pelo proxy reverso externo em produção):
 
 - **`stores/notifications.js`** conecta em `/ws/notifications/` — sino de notificações, reconecta sozinho após 4s se cair. Mensagens: `{event:"notification", payload}` (nova notificação) e `{event:"connected", payload:{unread}}` (sync inicial do contador).
-- **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
+- **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. A URL do socket é derivada da **origem da API** (`RUNTIME_CONFIG.API_URL`), não da origem da página: com a API num subdomínio próprio (`api.dominio`), o `/ws/` só existe atrás do proxy dela. `RUNTIME_CONFIG.WS_URL` sobrescreve quando o WebSocket fica num host à parte. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
 
 ## 7. Autenticação no frontend
 
@@ -153,7 +174,7 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
 - `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 
-Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `sed` num `docker-entrypoint.sh` próprio, executado no start do container (`window.RUNTIME_CONFIG = { API_URL: "..." }`), permitindo promover a mesma imagem entre ambientes sem rebuild.
+Em produção, a URL da API não é fixada no build: `runtime-config.js.template` vira `runtime-config.js` via `sed` num `docker-entrypoint.sh` próprio, executado no start do container (`window.RUNTIME_CONFIG = { API_URL: "...", WS_URL: "..." }` — `WS_URL` é opcional e fica vazio quando o WebSocket acompanha a origem da API), permitindo promover a mesma imagem entre ambientes sem rebuild.
 
 ## 12. Produção
 

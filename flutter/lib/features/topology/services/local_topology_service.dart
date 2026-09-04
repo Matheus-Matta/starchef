@@ -9,9 +9,13 @@ import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/mutation_relay.dart';
+import '../../../core/network/relay_origin.dart';
 import '../../../core/network/offline_mutations.dart';
+import '../../devices/services/local_device_agent.dart';
 import '../data/local_topology_store.dart';
+import '../domain/lan_addresses.dart';
 import '../domain/local_topology_config.dart';
+import 'relay_print_fallback.dart';
 
 enum LocalTopologyPhase {
   starting,
@@ -53,9 +57,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     required this.accountId,
     required this.actorId,
     required String restaurantId,
+    this.refreshToken = '',
+    this.actorName = '',
+    this.installationId = '',
+    this.terminalName = '',
     LocalTopologyStore? store,
+    LocalDeviceAgent? deviceAgent,
   }) : _restaurantId = restaurantId,
-       store = store ?? LocalTopologyStore();
+       store = store ?? LocalTopologyStore(),
+       _printFallback = deviceAgent == null
+           ? null
+           : RelayPrintFallback(api: api, deviceAgent: deviceAgent);
 
   static const _timestampTolerance = Duration(minutes: 2);
   static const _healthFreshness = Duration(seconds: 5);
@@ -65,10 +77,26 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
 
   final ApiClient api;
   final String accessToken;
+
+  /// Refresh token DESTE terminal, enviado junto da operação encaminhada.
+  ///
+  /// A fila do Caixa Principal é durável: uma venda de um secundário pode
+  /// esperar horas até a nuvem voltar, e o access token já teria vencido. Sem
+  /// o refresh, uma queda longa transformaria a fila inteira em pendência
+  /// manual — e o secundário não pode renovar sozinho, porque ele não fala com
+  /// o servidor.
+  final String refreshToken;
   final String accountId;
   final String actorId;
+
+  /// Nome do operador e da instalação de origem, usados no registro local que
+  /// o principal grava antes de a nuvem confirmar.
+  final String actorName;
+  final String installationId;
+  final String terminalName;
   final LocalTopologyStore store;
   final Expando<bool> _respondedRequests = Expando<bool>();
+  final RelayPrintFallback? _printFallback;
   String _restaurantId;
 
   LocalTopologyConfig? _config;
@@ -84,14 +112,54 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   int _queuedRelays = 0;
   bool _closed = false;
 
+  /// A configuração está válida, mas parada esperando a sessão dizer conta,
+  /// operador e unidade.
+  ///
+  /// O papel do terminal é decidido antes de o PDV carregar os dados — é o que
+  /// permite a um Caixa Secundário ler o cardápio pelo principal em vez de
+  /// depender da nuvem. Nesse instante a unidade ainda não é conhecida, e sem
+  /// esta marca a configuração ficava parada para sempre: nada reaplicava
+  /// depois, então o secundário nunca chegava a testar a conexão.
+  bool _awaitingIdentity = false;
+
+  /// Último teste de conexão que falhou.
+  ///
+  /// Enquanto o principal está fora, o monitor já repete o teste a cada
+  /// [probeInterval]. Sem esta marca, CADA leitura pagava um teste próprio
+  /// antes de cair para a nuvem — a tela inteira travava por segundos a cada
+  /// consulta, com o principal desligado.
+  DateTime? _lastFailureAt;
+
+  bool get _identityComplete =>
+      accountId.trim().isNotEmpty &&
+      actorId.trim().isNotEmpty &&
+      _restaurantId.trim().isNotEmpty;
+
+  bool get _recentlyUnavailable =>
+      _lastFailureAt != null &&
+      DateTime.now().difference(_lastFailureAt!) < probeInterval;
+
   LocalTopologyConfig? get config => _config;
   LocalTopologyStatus get status => _status;
+
+  /// A configuração está gravada e válida, só aguardando a sessão informar a
+  /// unidade deste terminal.
+  bool get isAwaitingIdentity => _awaitingIdentity;
 
   void updateRestaurant(String restaurantId) {
     final normalized = restaurantId.trim();
     if (_restaurantId == normalized) return;
     _restaurantId = normalized;
     _lastHealthyAt = null;
+    _lastFailureAt = null;
+    // A unidade chega depois do papel do terminal, e é ela que faltava para
+    // assinar. Sem reaplicar aqui, a configuração continuaria no estado de
+    // erro que ela mesma causou — sem servidor aberto no principal e sem
+    // nenhum teste de conexão no secundário.
+    final pending = _config;
+    if (_awaitingIdentity && _identityComplete && pending != null) {
+      unawaited(_apply(pending));
+    }
   }
 
   Future<void> start() async {
@@ -106,7 +174,11 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (_closed) return;
     final previous = _config;
     await _apply(next);
-    if (_status.phase == LocalTopologyPhase.error) {
+    // Esperar a sessão dizer a unidade NÃO é uma configuração inválida: é o
+    // estado normal de quem acabou de abrir o PDV. Tratar isso como falha
+    // desfazia a escolha do operador e, pior, não gravava nada — o caixa
+    // reabria amanhã sem saber que era secundário.
+    if (_status.phase == LocalTopologyPhase.error && !_awaitingIdentity) {
       final failure = _status.message;
       if (previous != null) await _apply(previous);
       throw StateError(failure);
@@ -130,6 +202,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (server != null) await server.close(force: false);
     _config = next;
 
+    _awaitingIdentity = false;
     final errors = next.validate();
     if (errors.isNotEmpty) {
       // Um secundário mal configurado precisa continuar **bloqueado para
@@ -151,9 +224,8 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       );
       return;
     }
-    if (accountId.trim().isEmpty ||
-        actorId.trim().isEmpty ||
-        _restaurantId.trim().isEmpty) {
+    if (!_identityComplete) {
+      _awaitingIdentity = true;
       if (next.mode == LocalTopologyMode.client) {
         api.attachMutationRelay(this);
       }
@@ -206,7 +278,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
             );
           },
         );
-        final addresses = await _localAddresses(next.port);
+        final addresses = await LanAddresses.discover(next.port);
+        // Sem esta linha, "a porta abriu" e "o app nunca chegou aqui" ficam
+        // indistinguíveis no diagnóstico — e é a primeira coisa que se
+        // pergunta quando um aparelho não conecta.
+        AppLogger.instance.info(
+          'relay_escutando',
+          data: {
+            'porta': next.port,
+            'enderecos': addresses,
+            'node_id': next.nodeId,
+          },
+        );
         _setStatus(
           LocalTopologyStatus(
             phase: LocalTopologyPhase.principalReady,
@@ -256,6 +339,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     });
   }
 
+  @override
   Future<bool> probe() async {
     final current = _config;
     if (_closed || current?.mode != LocalTopologyMode.client) return false;
@@ -264,6 +348,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       final healthy = response['ok'] == true;
       if (!healthy) throw const FormatException('Resposta local inválida.');
       _lastHealthyAt = DateTime.now();
+      _lastFailureAt = null;
       _setStatus(
         LocalTopologyStatus(
           phase: LocalTopologyPhase.clientReady,
@@ -272,17 +357,45 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       );
       return true;
     } catch (error) {
+      _lastFailureAt = DateTime.now();
+      // O motivo entra na mensagem: "indisponível" sozinho não distingue
+      // chave errada, relógio fora de hora, restaurante diferente e cabo de
+      // rede solto — e era com essa frase que o operador ficava.
       _setStatus(
         LocalTopologyStatus(
           phase: LocalTopologyPhase.unavailable,
           message:
               'Caixa Principal ${current!.principalHost}:${current.port} '
-              'indisponível.',
+              'indisponível. ${_probeFailureDetail(error)}',
         ),
+      );
+      AppLogger.instance.warning(
+        'relay_cliente_sem_principal',
+        data: {
+          'host': '${current.principalHost}:${current.port}',
+          'causa': '$error',
+        },
       );
       return false;
     }
   }
+
+  /// Traduz a falha do teste de conexão para quem está no caixa.
+  ///
+  /// O principal já responde 401 dizendo o motivo exato (chave, relógio,
+  /// conta, restaurante); descartar isso era o que transformava um erro de
+  /// configuração de trinta segundos numa manhã perdida.
+  static String _probeFailureDetail(Object error) => switch (error) {
+    ApiException(:final message) => message,
+    MutationRelayUnavailable(:final message) => message,
+    FormatException(:final message) => message,
+    TimeoutException() => 'Ele não respondeu a tempo pela rede local.',
+    SocketException(:final message) =>
+      'Não houve resposta na rede local ($message). Confira se o Caixa '
+          'Principal está ligado, na mesma rede, e se o firewall do Windows '
+          'libera a porta do relay.',
+    _ => '$error',
+  };
 
   @override
   Future<Map<String, dynamic>> relay(RelayMutation mutation) async {
@@ -307,10 +420,27 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
 
     try {
+      // O secundário não fala com o servidor: quem entrega é o principal. Para
+      // que a entrega aconteça em nome de QUEM originou — e não do principal —,
+      // as credenciais deste terminal viajam junto, lacradas com a chave de
+      // pareamento.
+      final credentials = _ownCredentials;
       final envelope = await _signedRequest(
         'POST',
         '/v1/relay',
-        body: mutation.toJson(),
+        body: credentials == null
+            ? mutation.toJson()
+            : RelayMutation(
+                method: mutation.method,
+                path: mutation.path,
+                operationId: mutation.operationId,
+                query: mutation.query,
+                body: mutation.body,
+                sealedOrigin: LocalRelayAuthenticator.sealOrigin(
+                  secret: current!.pairingSecret,
+                  origin: credentials,
+                ),
+              ).toJson(),
       );
       final rawResult = envelope['result'];
       if (envelope['ok'] != true || rawResult is! Map) {
@@ -343,10 +473,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final recentlyHealthy =
         _lastHealthyAt != null &&
         DateTime.now().difference(_lastHealthyAt!) <= _healthFreshness;
-    if (!recentlyHealthy && !await probe()) {
-      throw const MutationRelayUnavailable(
-        'O Caixa Principal não respondeu ao teste de conexão.',
-      );
+    if (!recentlyHealthy) {
+      // Uma leitura tem para onde cair (cache local e nuvem): repetir o teste
+      // que acabou de falhar só atrasaria a tela.
+      if (_recentlyUnavailable) {
+        throw MutationRelayUnavailable(_status.message);
+      }
+      if (!await probe()) {
+        throw const MutationRelayUnavailable(
+          'O Caixa Principal não respondeu ao teste de conexão.',
+        );
+      }
     }
     try {
       final envelope = await _signedRequest(
@@ -374,24 +511,35 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
-  /// Responde uma leitura pedida por um caixa secundário.
+  /// Responde uma leitura pedida por um caixa secundário ou aplicativo.
   ///
-  /// O principal serve do próprio `ApiClient`: se ele tiver rede, a resposta
-  /// é fresca e o cache dele se atualiza no caminho; se não tiver, sai do
-  /// cache dele. Nos dois casos os dois caixas enxergam a mesma coisa, que é
-  /// o ponto de existir um principal.
+  /// O principal serve do **próprio SQLite** (§8, §10): `api.get` é
+  /// offline-first, então a resposta sai do banco local na hora e a
+  /// reconciliação com a nuvem acontece em paralelo. É por isso que, com a
+  /// internet fora e a rede local de pé, o garçom continua enxergando o mesmo
+  /// pedido que o caixa.
   Future<Map<String, dynamic>> _serveRead(RelayRead request) async {
-    if (!_validReadPath(request.path)) {
+    final path = normalizeLocalPath(request.path);
+    if (!_validReadPath(path)) {
       throw const ApiException(
         'Leitura não autorizada no relay local.',
         statusCode: 400,
       );
     }
-    return api.get(
-      request.path,
-      query: request.query,
-      accessToken: accessToken,
-    );
+    return api.get(path, query: request.query, accessToken: accessToken);
+  }
+
+  /// Traduz o prefixo `/local/...` da API local (§10) para a rota de recurso
+  /// que o resto do sistema já conhece.
+  ///
+  /// `GET /local/orders` e `GET /orders/` são a mesma coisa: um alias mais
+  /// legível para quem escreve o cliente de um aparelho novo, sem criar um
+  /// segundo conjunto de rotas para manter.
+  static String normalizeLocalPath(String path) {
+    if (!path.startsWith('/local/')) return path;
+    final rest = path.substring('/local/'.length);
+    final normalized = rest.startsWith('/') ? rest.substring(1) : rest;
+    return normalized.endsWith('/') ? '/$normalized' : '/$normalized/';
   }
 
   /// Só rotas de leitura conhecidas, e sem travessia de caminho.
@@ -412,6 +560,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       '/restaurants/',
       '/menu/',
       '/tables/',
+      // A comanda é a porta de entrada do pedido de salão (a mesa virou só um
+      // vínculo dela), então o app do garçom precisa listá-las pelo principal
+      // como já faz com mesas e cardápio.
+      '/commands/',
       '/customers/',
       '/payments/methods/',
       '/cash-stations/',
@@ -445,6 +597,26 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       }
     }
     return null;
+  }
+
+  /// As credenciais que este terminal envia junto de cada operação.
+  ///
+  /// `installationId` cai para o `nodeId` da topologia: é o mesmo UUID que já
+  /// identifica a instalação no relay, e é ele que vira o `X-Terminal-Id` do
+  /// encaminhamento — a sessão de caixa fica registrada na máquina certa.
+  RelayOrigin? get _ownCredentials {
+    final token = accessToken.trim();
+    if (token.isEmpty || actorId.trim().isEmpty) return null;
+    return RelayOrigin(
+      accessToken: token,
+      refreshToken: refreshToken,
+      actorId: actorId,
+      actorName: actorName,
+      installationId: installationId.isNotEmpty
+          ? installationId
+          : (_config?.nodeId ?? ''),
+      terminalName: terminalName,
+    );
   }
 
   Future<Map<String, dynamic>> _signedRequest(
@@ -515,8 +687,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         responseSignature,
         expectedResponseSignature,
       )) {
-        throw const FormatException(
-          'A resposta do Caixa Principal não pôde ser autenticada.',
+        // A resposta não confere com a chave deste caixa, então o corpo dela
+        // não pode ser lido — e é justamente nele que o principal explica a
+        // recusa. Com 401, porém, as duas únicas explicações possíveis levam
+        // à mesma ação: a chave está diferente da dele. Sem dizer isso, o
+        // operador ficava com "resposta não autenticada" e ia procurar
+        // problema de rede.
+        throw FormatException(
+          response.statusCode == HttpStatus.unauthorized
+              ? 'O Caixa Principal recusou a chave de pareamento deste '
+                    'caixa. Copie a chave em Configurações → Rede local do '
+                    'principal e cole aqui.'
+              : 'A resposta do Caixa Principal não pôde ser autenticada.',
         );
       }
       final decoded = responseBody.isEmpty
@@ -540,6 +722,17 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   Future<void> _handleServerRequest(HttpRequest request) async {
     try {
       final origin = request.connectionInfo?.remoteAddress;
+      // Uma linha por requisição recebida: é o que permite responder "o
+      // aparelho chegou até aqui?" sem depender do que a tela do celular diz.
+      AppLogger.instance.info(
+        'relay_requisicao',
+        data: {
+          'origem': origin?.address ?? 'desconhecida',
+          'metodo': request.method,
+          'path': request.uri.path,
+          'node': request.headers.value('x-starchef-node') ?? '',
+        },
+      );
       if (!isLocalNetworkAddress(origin)) {
         // Uma tentativa de fora da loja é a única coisa aqui que merece
         // atenção humana: sem registro, ela sumiria em silêncio.
@@ -558,15 +751,30 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         return;
       }
       final body = await _readBody(request);
-      final authenticated = await _authenticate(request, body);
+      final attempt = await _authenticate(request, body);
+      final authenticated = attempt.node;
       if (authenticated == null) {
-        await _respond(
-          request,
-          HttpStatus.unauthorized,
-          const {'detail': 'Assinatura local inválida ou expirada.'},
+        // O motivo vai no corpo: eram seis causas distintas devolvendo a mesma
+        // frase, e quem estava com o celular na mão não tinha como saber se
+        // errou a chave, se o relógio estava fora de hora ou se o caixa atende
+        // outro restaurante.
+        AppLogger.instance.warning(
+          'relay_autenticacao_recusada',
+          data: {'motivo': attempt.detail, 'path': request.uri.path},
         );
+        await _respond(request, HttpStatus.unauthorized, {
+          'detail': attempt.detail,
+        });
         return;
       }
+      AppLogger.instance.info(
+        'relay_autenticado',
+        data: {
+          'node': authenticated.nodeId,
+          'ator': authenticated.actorId,
+          'path': request.uri.path,
+        },
+      );
       final path = request.uri.path;
       if (request.method == 'GET' && path == '/v1/health') {
         await _respond(request, HttpStatus.ok, {
@@ -620,6 +828,55 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
         return;
       }
+      // API local do restaurante (§10). `GET /local/orders` e
+      // `POST /local/orders` são a mesma coisa que `/v1/read` e `/v1/relay`,
+      // com uma rota mais direta para quem escreve o cliente de um aparelho
+      // novo. Os dois caminhos passam pelo mesmo SQLite e pela mesma fila.
+      if (path.startsWith('/local/')) {
+        final resourcePath = normalizeLocalPath(path);
+        if (request.method == 'GET') {
+          final result = await _serveRead(
+            RelayRead(
+              path: resourcePath,
+              query: request.uri.queryParameters.isEmpty
+                  ? null
+                  : Map<String, dynamic>.from(request.uri.queryParameters),
+            ),
+          );
+          await _respond(request, HttpStatus.ok, {
+            'ok': true,
+            'result': result,
+          });
+          return;
+        }
+        final decodedLocal = body.isEmpty ? const {} : jsonDecode(body);
+        final payloadLocal = decodedLocal is Map
+            ? Map<String, dynamic>.from(decodedLocal)
+            : <String, dynamic>{};
+        final mutationLocal = RelayMutation(
+          method: request.method.toUpperCase(),
+          path: resourcePath,
+          // A chave de idempotência é do aparelho que pediu: repetir o mesmo
+          // POST depois de um timeout não pode criar dois pedidos (§7).
+          operationId:
+              request.headers.value('x-starchef-operation') ??
+              '${payloadLocal['operation_id'] ?? ''}',
+          query: request.uri.queryParameters.isEmpty
+              ? null
+              : Map<String, dynamic>.from(request.uri.queryParameters),
+          body: payloadLocal.isEmpty ? null : payloadLocal,
+          origin: _openOrigin(
+            '${payloadLocal['origin'] ?? ''}',
+            authenticated,
+          ),
+        );
+        if (!_validMutationEnvelope(mutationLocal)) {
+          throw const FormatException('Envelope da operação local inválido.');
+        }
+        final result = await _serialRelay(mutationLocal, authenticated);
+        await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
+        return;
+      }
       if (request.method != 'POST' || path != '/v1/relay') {
         await _respond(
           request,
@@ -643,6 +900,7 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         body: payload['body'] is Map
             ? Map<String, dynamic>.from(payload['body'] as Map)
             : null,
+        origin: _openOrigin('${payload['origin'] ?? ''}', authenticated),
       );
       if (!_validMutationEnvelope(mutation)) {
         throw const FormatException('Envelope da operação local inválido.');
@@ -679,10 +937,76 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
-  Future<Map<String, dynamic>> _serialRelay(
+  /// Abre o lacre da origem e confere que ele descreve quem realmente falou.
+  ///
+  /// O ator do lacre precisa bater com o ator do cabeçalho assinado: é o
+  /// cabeçalho que a chave de pareamento autentica, e quem manda não escolhe
+  /// por quem falar. Um lacre ilegível (chave diferente) ou divergente é
+  /// simplesmente descartado — a operação segue com as credenciais do
+  /// principal, como antes, em vez de ser recusada por um cliente
+  /// desatualizado.
+  RelayOrigin? _openOrigin(String sealed, _AuthenticatedNode node) {
+    final secret = _config?.pairingSecret ?? '';
+    if (sealed.isEmpty || secret.isEmpty) return null;
+    final origin = LocalRelayAuthenticator.openOrigin(
+      secret: secret,
+      sealed: sealed,
+    );
+    if (origin == null) return null;
+    if (origin.actorId != node.actorId) {
+      AppLogger.instance.warning(
+        'relay_origem_divergente',
+        data: {'node': node.nodeId, 'ator_assinado': node.actorId},
+      );
+      return null;
+    }
+    return origin.installationId.isNotEmpty
+        ? origin
+        : RelayOrigin(
+            accessToken: origin.accessToken,
+            refreshToken: origin.refreshToken,
+            actorId: origin.actorId,
+            actorName: origin.actorName,
+            // Sem instalação declarada, o nó do relay já identifica a máquina.
+            installationId: node.nodeId,
+            terminalName: origin.terminalName,
+          );
+  }
+
+  /// Diz quem realmente está atendendo, quando a operação abre um pedido.
+  ///
+  /// Este terminal executa com as credenciais DELE — é ele quem tem a sessão
+  /// com a nuvem. Sem essa atribuição o pedido nascia no nome do caixa, e a
+  /// comanda saía na cozinha com `ATENDENTE: <caixa>`: o garçom que lançou não
+  /// aparecia em lugar nenhum. O ator não vem do corpo, e sim do cabeçalho
+  /// assinado com a chave de pareamento — quem manda não escolhe por quem
+  /// falar.
+  RelayMutation _withActingUser(
     RelayMutation mutation,
+    _AuthenticatedNode node,
+  ) {
+    if (!OfflineMutations.opensOrder(mutation.method, mutation.path)) {
+      return mutation;
+    }
+    return mutation.copyWith(
+      body: {...?mutation.body, 'responsible_user': node.actorId},
+    );
+  }
+
+  Future<Map<String, dynamic>> _serialRelay(
+    RelayMutation rawMutation,
     _AuthenticatedNode authenticated,
   ) {
+    // O alias `/local/...` é resolvido em um lugar só: daqui para baixo
+    // existe apenas a rota de recurso, e o recibo de idempotência fica
+    // associado a ela — senão o mesmo pedido enviado pelos dois caminhos
+    // pareceria duas operações diferentes.
+    final mutation = _withActingUser(
+      rawMutation.path.startsWith('/local/')
+          ? rawMutation.copyWith(path: normalizeLocalPath(rawMutation.path))
+          : rawMutation,
+      authenticated,
+    );
     if (_queuedRelays >= _maximumQueuedRelays) {
       throw ApiException(
         'O Caixa Principal está processando muitas operações locais.',
@@ -704,15 +1028,34 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           completer.complete(existing);
           return;
         }
+        // Antes da mutação: depois dela os itens já estão marcados como
+        // enviados/cancelados, e o responsável pela impressão não teria mais
+        // como saber o que mudou nesta chamada.
+        final beforeOrder = await _printFallback?.captureBeforeState(mutation);
+        // Encaminha em nome de quem originou: o token do secundário, o
+        // operador do secundário e a instalação do secundário. As credenciais
+        // do principal só entram quando o cliente não mandou as dele (versão
+        // antiga do app).
         final response = await api.acceptRelayedMutation(
           mutation,
           accessToken: accessToken,
+          origin: mutation.origin,
         );
         await store.saveReceipt(
           accountId: authenticated.accountId,
           nodeId: authenticated.nodeId,
           operationId: mutation.operationId,
           requestHash: requestHash,
+          response: response,
+        );
+        // Quem imprime a comanda/o cupom de cancelamento é este terminal,
+        // nunca quem mandou a operação (§ impressão automática por setor):
+        // o app do garçom não tem impressora, e um Caixa Secundário que
+        // achou a entrega concluída sem o Principal ter alcançado a nuvem
+        // também depende disto.
+        await _printFallback?.afterAcceptedMutation(
+          mutation: mutation,
+          beforeOrder: beforeOrder,
           response: response,
         );
         completer.complete(response);
@@ -725,12 +1068,23 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     return completer.future;
   }
 
-  Future<_AuthenticatedNode?> _authenticate(
+  /// Autentica a requisição de um nó da rede local.
+  ///
+  /// A ordem das checagens é deliberada: a chave de pareamento é verificada
+  /// ANTES de qualquer coisa sobre conta, restaurante ou relógio. Assim quem
+  /// não tem a chave não descobre nada sobre a loja — e quem tem recebe um
+  /// motivo específico em vez de um "não autorizado" cego.
+  Future<({_AuthenticatedNode? node, String detail})> _authenticate(
     HttpRequest request,
     String body,
   ) async {
     final current = _config;
-    if (current?.mode != LocalTopologyMode.principal) return null;
+    if (current?.mode != LocalTopologyMode.principal) {
+      return (
+        node: null,
+        detail: 'Este terminal não está configurado como Caixa Principal.',
+      );
+    }
     final timestamp = int.tryParse(
       request.headers.value('x-starchef-timestamp') ?? '',
     );
@@ -743,18 +1097,15 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     if (timestamp == null ||
         nonce.length < 8 ||
         nodeId.isEmpty ||
-        account != accountId ||
-        actor != actorId ||
-        restaurant != _restaurantId) {
-      return null;
-    }
-    final signedAt = DateTime.fromMillisecondsSinceEpoch(
-      timestamp * 1000,
-      isUtc: true,
-    );
-    if (DateTime.now().toUtc().difference(signedAt).abs() >
-        _timestampTolerance) {
-      return null;
+        actor.isEmpty ||
+        account.isEmpty ||
+        restaurant.isEmpty) {
+      return (
+        node: null,
+        detail:
+            'Requisição incompleta: faltam cabeçalhos de identificação do '
+            'aparelho.',
+      );
     }
     final expected = LocalRelayAuthenticator.signature(
       secret: current!.pairingSecret,
@@ -769,8 +1120,48 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       body: body,
     );
     if (!LocalRelayAuthenticator.constantTimeEquals(received, expected)) {
-      return null;
+      return (
+        node: null,
+        detail:
+            'A chave de pareamento não confere com a deste caixa. Copie a '
+            'chave em Configurações → Rede local.',
+      );
     }
+
+    // Daqui para baixo o chamador provou que tem a chave: os motivos podem ser
+    // específicos sem contar nada da loja para quem não deveria saber.
+    final signedAt = DateTime.fromMillisecondsSinceEpoch(
+      timestamp * 1000,
+      isUtc: true,
+    );
+    final skew = DateTime.now().toUtc().difference(signedAt);
+    if (skew.abs() > _timestampTolerance) {
+      final minutes = skew.inMinutes.abs();
+      return (
+        node: null,
+        detail:
+            'O relógio do aparelho está ${minutes > 0 ? '$minutes min ' : ''}'
+            'fora de hora em relação ao caixa. Ative a data e hora automáticas '
+            'nos dois.',
+      );
+    }
+    if (account != accountId) {
+      return (
+        node: null,
+        detail:
+            'Este caixa atende outra conta. Entre no aplicativo com um '
+            'usuário desta loja.',
+      );
+    }
+    if (restaurant != _restaurantId) {
+      return (
+        node: null,
+        detail:
+            'Este caixa está operando outro restaurante. Selecione o mesmo '
+            'restaurante nos dois.',
+      );
+    }
+
     final now = DateTime.now().toUtc();
     final fresh = await store.consumeNonce(
       accountId: account,
@@ -779,14 +1170,21 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       seenAt: now,
       expiresBefore: now.subtract(_timestampTolerance),
     );
-    return fresh
-        ? _AuthenticatedNode(
-            accountId: account,
-            nodeId: nodeId,
-            actorId: actor,
-            restaurantId: restaurant,
-          )
-        : null;
+    if (!fresh) {
+      return (
+        node: null,
+        detail: 'Requisição repetida: esta operação já foi recebida.',
+      );
+    }
+    return (
+      node: _AuthenticatedNode(
+        accountId: account,
+        nodeId: nodeId,
+        actorId: actor,
+        restaurantId: restaurant,
+      ),
+      detail: '',
+    );
   }
 
   Future<String> _readBody(HttpRequest request) async {
@@ -801,13 +1199,13 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   }
 
   bool _validMutationEnvelope(RelayMutation mutation) {
-    final uri = Uri.tryParse(mutation.path);
+    final uri = Uri.tryParse(normalizeLocalPath(mutation.path));
     if (uri == null ||
         uri.hasScheme ||
         uri.hasAuthority ||
         uri.hasQuery ||
         uri.hasFragment ||
-        uri.path != mutation.path ||
+        uri.path != normalizeLocalPath(mutation.path) ||
         uri.pathSegments.contains('..')) {
       return false;
     }
@@ -819,7 +1217,10 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     final restaurantMatches =
         (bodyRestaurant.isEmpty || bodyRestaurant == _restaurantId) &&
         (queryRestaurant.isEmpty || queryRestaurant == _restaurantId);
-    return OfflineMutations.isRelayable(mutation.method, mutation.path) &&
+    return OfflineMutations.isRelayable(
+          mutation.method,
+          normalizeLocalPath(mutation.path),
+        ) &&
         restaurantMatches &&
         mutation.path.length <= 500 &&
         RegExp(r'^[A-Za-z0-9._:-]{8,160}$').hasMatch(mutation.operationId);
@@ -923,21 +1324,6 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     super.dispose();
   }
 
-  static Future<List<String>> _localAddresses(int port) async {
-    final values = <String>[];
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-      );
-      for (final interface in interfaces) {
-        for (final address in interface.addresses) {
-          values.add('${address.address}:$port');
-        }
-      }
-    } catch (_) {}
-    return values.toSet().toList()..sort();
-  }
 
   static Future<void> _ensurePrivateDestination(String host) async {
     try {
@@ -1013,6 +1399,58 @@ abstract final class LocalRelayAuthenticator {
       utf8.encode(secret),
     ).convert(utf8.encode(canonical));
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
+  }
+
+  /// Lacra as credenciais de origem com a chave de pareamento.
+  ///
+  /// A rede local é autenticada (assinatura HMAC + nonce + endereço privado),
+  /// mas não é criptografada: um access token em claro dentro do corpo ficaria
+  /// legível para quem estivesse no mesmo segmento. Aqui o segredo compartilhado
+  /// deriva um keystream (HMAC-SHA256 em contador, no espírito de um HKDF-expand)
+  /// que é aplicado ao JSON com XOR. A integridade não depende deste lacre: o
+  /// corpo inteiro já vai assinado com a mesma chave, então isto é
+  /// encrypt-then-MAC — quem não tem a chave não lê e não consegue trocar.
+  static String sealOrigin({required String secret, required RelayOrigin origin}) {
+    final nonce = LocalTopologyStore.generateNodeId();
+    final plain = utf8.encode(jsonEncode(origin.toJson()));
+    final cipher = _xorKeystream(secret: secret, nonce: nonce, data: plain);
+    return '$nonce.${base64Url.encode(cipher)}';
+  }
+
+  /// Abre o lacre. Devolve `null` para qualquer coisa que não confira —
+  /// envelope malformado, chave diferente, campo obrigatório ausente.
+  static RelayOrigin? openOrigin({required String secret, required String sealed}) {
+    if (sealed.isEmpty) return null;
+    final separator = sealed.indexOf('.');
+    if (separator <= 0) return null;
+    try {
+      final nonce = sealed.substring(0, separator);
+      final cipher = base64Url.decode(sealed.substring(separator + 1));
+      final plain = _xorKeystream(secret: secret, nonce: nonce, data: cipher);
+      return RelayOrigin.fromJson(jsonDecode(utf8.decode(plain)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static List<int> _xorKeystream({
+    required String secret,
+    required String nonce,
+    required List<int> data,
+  }) {
+    final output = List<int>.filled(data.length, 0);
+    final hmac = Hmac(sha256, utf8.encode(secret));
+    var offset = 0;
+    var counter = 0;
+    while (offset < data.length) {
+      final block = hmac.convert(utf8.encode('ORIGIN\n$nonce\n$counter')).bytes;
+      for (var index = 0; index < block.length && offset < data.length; index++) {
+        output[offset] = data[offset] ^ block[index];
+        offset += 1;
+      }
+      counter += 1;
+    }
+    return output;
   }
 
   static bool constantTimeEquals(String left, String right) {

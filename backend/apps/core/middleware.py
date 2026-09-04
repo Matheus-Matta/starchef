@@ -2,6 +2,7 @@ import json
 import logging
 
 from django.conf import settings
+from django.contrib.auth.models import AnonymousUser
 from django.http import Http404, JsonResponse
 from django.urls import resolve
 from rest_framework.exceptions import AuthenticationFailed
@@ -24,6 +25,7 @@ PUBLIC_URL_NAMES = {
     "token_verify",
     "password-reset",
     "password-reset-confirm",
+    "focus-nfe-webhook",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin
@@ -62,9 +64,6 @@ class TenantMiddleware:
                 is_authenticated = bool(user and user.is_authenticated)
                 account = self.resolve_account(request)
                 if account is None:
-                    if is_authenticated and user.is_superuser:
-                        request.account = None
-                        return self.get_response(request)
                     if not is_authenticated:
                         # Nenhuma credencial foi apresentada. Isso é 401 — o
                         # cliente precisa autenticar, não pedir permissão a
@@ -76,18 +75,30 @@ class TenantMiddleware:
                         )
                         response["WWW-Authenticate"] = 'Bearer realm="api"'
                         return response
+                    if user.is_superuser and request.headers.get("X-Account-ID"):
+                        # A conta foi escolhida explicitamente e não existe (ou
+                        # está inativa): dizer isso é melhor do que devolver a
+                        # mensagem genérica de "usuário sem conta".
+                        return JsonResponse(
+                            {"detail": "Conta informada em X-Account-ID não encontrada ou inativa."},
+                            status=404,
+                        )
                     # Autenticado, mas o usuário não tem perfil ligado a uma
                     # conta. É um problema de cadastro, e a mensagem precisa
-                    # dizer isso em vez de falar em permissão.
-                    return JsonResponse(
-                        {
-                            "detail": (
-                                "Seu usuário não está vinculado a nenhuma conta. "
-                                "Peça ao responsável para associar um perfil ao seu login."
-                            )
-                        },
-                        status=403,
+                    # dizer isso em vez de falar em permissão. Vale também para
+                    # superusuário: na API ele age como admin da conta dele, e
+                    # a visão de todas as contas é o /admin.
+                    detail = (
+                        "Seu usuário não está vinculado a nenhuma conta. "
+                        "Peça ao responsável para associar um perfil ao seu login."
                     )
+                    if user.is_superuser:
+                        detail = (
+                            "Seu usuário de plataforma não está vinculado a nenhuma conta. "
+                            "Vincule um perfil a uma conta para usar o app, ou use o /admin "
+                            "para a visão de todas as contas."
+                        )
+                    return JsonResponse({"detail": detail}, status=403)
                 if not account.is_active or account.status != Account.STATUS_ACTIVE:
                     return JsonResponse({"detail": "A conta não está ativa."}, status=403)
 
@@ -115,10 +126,16 @@ class TenantMiddleware:
         Devolve `True` quando havia uma credencial e ela foi recusada, para que
         o chamador responda 401. Uma requisição sem credencial nenhuma devolve
         `False` e segue o fluxo normal — quem decide ali é a resolução de conta.
-        """
-        if getattr(request, "user", None) is not None and request.user.is_authenticated:
-            return False
 
+        A identidade da API vem SEMPRE do JWT, nunca da sessão do Django. O
+        AuthenticationMiddleware roda antes deste e já deixa `request.user`
+        preenchido a partir do cookie `sessionid` — então, com alguém logado no
+        /admin no mesmo navegador, aceitar esse usuário aqui fazia a API
+        resolver a conta pela sessão do admin em vez de pelo token do app (as
+        duas sessões se contaminavam). O DRF só aceita JWT
+        (DEFAULT_AUTHENTICATION_CLASSES), então honrar a sessão aqui só criava
+        divergência entre `request.account` e o usuário que a view enxerga.
+        """
         try:
             authenticated = self.jwt_authentication.authenticate(request)
         except (InvalidToken, TokenError, AuthenticationFailed):
@@ -131,19 +148,30 @@ class TenantMiddleware:
 
         if authenticated:
             request.user, request.auth = authenticated
+        else:
+            # Sem JWT: a requisição é anônima para a API, mesmo que exista uma
+            # sessão de /admin ativa no navegador.
+            request.user = AnonymousUser()
+            request.auth = None
         return False
 
     def resolve_account(self, request):
+        """Conta do request. A API é SEMPRE escopada por conta — inclusive para
+        superusuário.
+
+        Quem precisa enxergar todas as contas de uma vez usa o /admin (isento
+        deste middleware, ver PUBLIC_PATH_PREFIXES). Na API, o superusuário
+        escolhe explicitamente a conta pelo header `X-Account-ID`; sem ele,
+        opera na própria conta do perfil. Sem perfil, fica sem conta — e os
+        querysets tenant devolvem vazio em vez de dados de todo mundo.
+        """
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             return None
-        if user.is_superuser:
-            if request.headers.get("X-Account-ID"):
-                return Account.objects.filter(id=request.headers["X-Account-ID"], is_active=True).first()
-            # Superusuários sem X-Account-ID operam no escopo global
-            return None
         profile = getattr(user, "profile", None)
-        return profile.account if profile else None
+        if user.is_superuser and request.headers.get("X-Account-ID"):
+            return Account.objects.filter(id=request.headers["X-Account-ID"], is_active=True).first()
+        return profile.account if profile and profile.account_id else None
 
 
 class TenantResponseSafetyMiddleware:

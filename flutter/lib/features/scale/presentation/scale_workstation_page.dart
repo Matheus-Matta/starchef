@@ -4,17 +4,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/errors/app_error.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/widgets/touch_keypad.dart';
-import '../../../core/hardware/scale/scale_protocol.dart';
+import '../../../core/hardware/scale/scale.dart';
+import '../../../core/hardware/scale/scale_device.dart';
 import '../../../core/hardware/scale/scale_sample.dart';
-import '../../../core/hardware/scale/serial_scale_reader.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/storage/local_preferences.dart';
-import '../../../core/widgets/copyable_error.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/shadcn_layout.dart';
+import '../../devices/domain/local_print_renderer.dart';
 import '../../devices/domain/printer_endpoint.dart';
+import '../../devices/services/local_device_agent.dart';
 import '../../home/presentation/product_catalog_panel.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../data/scanner_binding_store.dart';
@@ -31,8 +36,7 @@ class ScaleWorkstationPage extends StatefulWidget {
     required this.products,
     required this.onRestaurantChanged,
     required this.preferences,
-    this.isFullScreen = false,
-    this.onToggleFullScreen,
+    this.onRunningChanged,
   });
 
   final ApiClient api;
@@ -42,14 +46,29 @@ class ScaleWorkstationPage extends StatefulWidget {
   final List<Map<String, dynamic>> products;
   final Future<void> Function(String restaurantId) onRestaurantChanged;
   final LocalPreferences preferences;
-  final bool isFullScreen;
-  final VoidCallback? onToggleFullScreen;
+  final ValueChanged<bool>? onRunningChanged;
 
   @override
   State<ScaleWorkstationPage> createState() => _ScaleWorkstationPageState();
 }
 
 class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
+  /// Altura fixa do cabeçalho das colunas da balança e da comanda — sem isso,
+  /// a segunda linha (código da comanda) deixava aquele cabeçalho mais alto
+  /// que o da balança e as duas colunas ficavam desalinhadas.
+  static const double _panelHeaderHeight = 66;
+
+  /// Altura mínima do rodapé das duas colunas, para que uma comanda ainda sem
+  /// ação (rodapé vazio) não colapse a quase zero ao lado do rodapé da
+  /// balança, que sempre mostra pelo menos o total.
+  static const double _panelFooterMinHeight = 92;
+
+  /// Valor do item "Nenhuma" no select de impressora — um id de impressora de
+  /// verdade nunca é vazio, então não colide com nenhum `printers[i]['id']`.
+  /// Selecionado, a estação continua pesando e lançando o pedido normalmente,
+  /// só não emite o ticket (equivalente a `printerId == null`).
+  static const String _noPrinterOption = '';
+
   List<Map<String, dynamic>> scales = [];
   List<Map<String, dynamic>> printers = [];
   String? scaleId;
@@ -59,9 +78,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   bool started = false;
   String? errorMessage;
 
-  /// Leitor serial desta janela. `null` significa que nenhuma porta foi
-  /// configurada no cadastro da balança.
-  SerialScaleReader? reader;
+  /// Balança aberta por esta janela. `null` significa que nenhuma porta foi
+  /// configurada no cadastro do equipamento.
+  Scale? reader;
   StreamSubscription<ScaleSample>? sampleSubscription;
   StreamSubscription<ScaleLinkStatus>? linkSubscription;
   ScaleLinkStatus linkStatus = const ScaleLinkStatus(
@@ -96,6 +115,22 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   final Map<String, ProductConfigResult> extraConfigs = {};
 
   bool requestingWeight = false;
+
+  /// Esta estação vai emitir a nota de pesagem por conta própria?
+  ///
+  /// É a mesma condição que decide se o servidor deve gerar o `PrintJob` e se
+  /// ele já nasce impresso: uma resposta só, para os dois não divergirem e a
+  /// nota sair duas vezes.
+  bool get _printsTicketHere =>
+      widget.preferences.autoPrint && printerId != null;
+
+  /// Restaurante selecionado, para o cabeçalho da nota impressa aqui.
+  Map<String, dynamic>? get _restaurant => widget.restaurants
+      .cast<Map<String, dynamic>?>()
+      .firstWhere(
+        (item) => '${item?['id']}' == widget.restaurantId,
+        orElse: () => null,
+      );
 
   Map<String, dynamic>? get selectedScale => scales
       .cast<Map<String, dynamic>?>()
@@ -156,16 +191,36 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   double get pricePerKg =>
       ValueFormatters.number(weighedProduct?['current_price']);
 
+  /// Cadastro resolvido da última balança lida, guardado para não refazer a
+  /// leitura do JSON a cada quadro da interface.
+  ScaleDevice? _resolvedDevice;
+  Map<String, dynamic>? _resolvedFrom;
+
+  /// Cadastro da balança escolhida, já resolvido (porta, baud rate,
+  /// protocolo, estabilização). É o mesmo objeto que o leitor usa, então o
+  /// cartão de configuração não pode divergir do que será aberto.
+  ///
+  /// O `build` consulta isto várias vezes por quadro (porta, resumo,
+  /// estabilização); resolver o cadastro é barato, mas não de graça.
+  ScaleDevice? get scaleDevice {
+    final selected = selectedScale;
+    if (selected == null) return null;
+    if (!identical(_resolvedFrom, selected)) {
+      _resolvedFrom = selected;
+      _resolvedDevice = ScaleDevice.fromJson(selected);
+    }
+    return _resolvedDevice;
+  }
+
   /// Segundos de estabilidade exigidos, vindos do cadastro da balança.
-  int get settleSeconds =>
-      (selectedScale?['auto_print_delay_seconds'] as num?)?.toInt() ?? 3;
+  int get settleSeconds => scaleDevice?.settleDuration.inSeconds ?? 3;
 
   String? get scannerSlot {
     if (widget.restaurantId == null || scaleId == null) return null;
     return '${widget.restaurantId}:$scaleId';
   }
 
-  String get configuredPort => '${selectedScale?['port'] ?? ''}'.trim();
+  String get configuredPort => scaleDevice?.port ?? '';
 
   HandsFreeMachine _buildMachine() =>
       HandsFreeMachine(commandTimeout: widget.preferences.commandTimeout);
@@ -204,7 +259,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     machine.dispose();
     unawaited(sampleSubscription?.cancel());
     unawaited(linkSubscription?.cancel());
-    unawaited(reader?.dispose());
+    unawaited(reader?.close());
     unawaited(_detachScanner());
     unawaited(scannerBindingStore.close());
     commandController.dispose();
@@ -223,9 +278,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   bool get _acceptsCommandInput => switch (machine.state) {
-    HandsFreeState.waitingCommand ||
-    HandsFreeState.commandOverdue ||
-    HandsFreeState.failed => true,
+    HandsFreeState.waitingCommand || HandsFreeState.failed => true,
     _ => false,
   };
 
@@ -310,11 +363,11 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         },
         accessToken: widget.accessToken,
       );
+      // A porta vem do cadastro da balança, como qualquer outro detalhe de
+      // protocolo (baud rate, protocolo, timeout): é o cadastro que descreve
+      // o equipamento, não uma cópia local que envelhece.
       final values = (response['results'] as List? ?? const [])
           .cast<Map<String, dynamic>>()
-          .map(
-            (item) => widget.preferences.applySerialPort(item, kind: 'scale'),
-          )
           .toList();
       if (!mounted) return;
       setState(() {
@@ -347,9 +400,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       );
       final values = (response['results'] as List? ?? const [])
           .cast<Map<String, dynamic>>()
-          .map(
-            (item) => widget.preferences.applySerialPort(item, kind: 'printer'),
-          )
           .toList();
       if (mounted) setState(() => printers = values);
     } on ApiException catch (error) {
@@ -378,7 +428,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   Future<void> _selectPrinter(String? value) async {
-    if (scaleId == null || value == null || value == printerId) return;
+    if (scaleId == null || value == printerId) return;
     final previous = printerId;
     setState(() {
       printerId = value;
@@ -414,13 +464,14 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   // ------------------------------------------------------- ciclo da estação
 
   Future<void> _startStation() async {
-    if (scaleId == null || weighedProduct == null || printerId == null) {
+    // A impressora é opcional: sem ela a estação pesa e lança o pedido
+    // normalmente, só não emite o ticket. Exigi-la aqui impedia de operar um
+    // terminal que ainda não tem impressora vinculada.
+    if (scaleId == null || weighedProduct == null) {
       setState(() {
         errorMessage = scaleId == null
             ? 'Selecione uma balança.'
-            : weighedProduct == null
-            ? 'A balança precisa ter um produto por kg configurado.'
-            : 'Selecione a impressora padrão desta balança.';
+            : 'A balança precisa ter um produto por kg configurado.';
       });
       return;
     }
@@ -428,6 +479,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       errorMessage = null;
       started = true;
     });
+    widget.onRunningChanged?.call(true);
     await _attachReader();
     machine.start();
     clock?.cancel();
@@ -443,7 +495,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     linkSubscription = null;
     final current = reader;
     reader = null;
-    await current?.dispose();
+    await current?.close();
     machine.stop();
     extraConfigs.clear();
     if (!mounted) return;
@@ -454,6 +506,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         message: 'Estação parada.',
       );
     });
+    widget.onRunningChanged?.call(false);
   }
 
   /// Abre a porta serial desta janela e passa a receber o peso localmente.
@@ -464,43 +517,47 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Future<void> _attachReader() async {
     await sampleSubscription?.cancel();
     await linkSubscription?.cancel();
-    await reader?.dispose();
+    await reader?.close();
     sampleSubscription = null;
     linkSubscription = null;
     reader = null;
 
-    final port = configuredPort;
-    if (port.isEmpty) {
+    final device = scaleDevice;
+    if (device == null || !device.hasPort) {
       setState(() {
-        linkStatus = const ScaleLinkStatus(
+        linkStatus = ScaleLinkStatus(
           state: ScaleLinkState.disconnected,
           message:
-              'A balança não tem porta serial cadastrada. Informe a COM e o '
-              'baud rate no cadastro para ler o peso automaticamente.',
+              device?.missingConfiguration ??
+              'Selecione uma balança para começar a pesar.',
         );
       });
       return;
     }
 
-    final settings =
-        selectedScale?['settings'] as Map<String, dynamic>? ?? const {};
-    final baudRate = int.tryParse('${settings['baudrate'] ?? 9600}') ?? 9600;
-    final next = SerialScaleReader.serial(
-      portName: port,
-      baudRate: baudRate,
-      protocol: ScaleProtocol.forId('${settings['protocol'] ?? ''}'),
-      stabilityToleranceKg: widget.preferences.stabilityToleranceKg,
-      settleDuration: Duration(seconds: settleSeconds),
-      zeroThresholdKg:
-          double.tryParse('${settings['zero_threshold_kg'] ?? 0.005}') ?? 0.005,
-      ownerDetail: '${selectedScale?['name'] ?? 'balança'}',
+    // Porta, baud rate, protocolo e tempo de estabilização vêm todos do
+    // cadastro, resolvidos uma vez só por [ScaleDevice]. Daqui não sai mais
+    // nenhuma leitura solta do JSON: era assim que o protocolo escolhido no
+    // cadastro deixava de chegar ao leitor.
+    final next = Scale(
+      device,
+      runtime: ScaleRuntime(
+        stabilityToleranceKg: widget.preferences.stabilityToleranceKg,
+      ),
     );
     reader = next;
     sampleSubscription = next.samples.listen(_onSample);
     linkSubscription = next.statusChanges.listen((status) {
-      if (mounted) setState(() => linkStatus = status);
+      if (!mounted) return;
+      setState(() {
+        linkStatus = status;
+        // O equipamento reconectou sozinho e voltou a transmitir: um erro de
+        // porta/leitura anterior (acima do rodapé) ficava preso na tela para
+        // sempre, mesmo já resolvido, porque nada disparava a limpeza dele.
+        if (status.state == ScaleLinkState.connected) errorMessage = null;
+      });
     });
-    await next.start();
+    await next.open();
   }
 
   /// Pede uma pesagem ao equipamento e explica o resultado ao operador.
@@ -528,22 +585,17 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       final message = switch (result) {
         ScaleWeightRequest.sent => null,
         ScaleWeightRequest.writeNotSupported =>
-          'A porta ${current.portName} abriu somente para leitura, então não '
+          'A porta ${current.device.port} abriu somente para leitura, então '
               'dá para pedir o peso. Se o visor mostra o peso mas nada chega '
               'aqui, configure a balança em transmissão contínua ou use o '
               'peso manual.',
         ScaleWeightRequest.notConnected =>
-          'Não foi possível abrir ${current.portName}. Confira o cabo e se '
+          'Não foi possível abrir ${current.device.port}. Confira o cabo e se '
               'outra janela está usando a porta.',
         ScaleWeightRequest.unavailable =>
           'A estação precisa estar em operação para falar com a balança.',
       };
       setState(() => errorMessage = message);
-      if (result == ScaleWeightRequest.sent) {
-        // A resposta chega pelo fluxo; um retorno vazio depois de alguns
-        // segundos aparece no cartão de diagnóstico como "sem resposta".
-        showAppToast(context, 'Peso solicitado à balança.');
-      }
     } finally {
       if (mounted) setState(() => requestingWeight = false);
     }
@@ -594,22 +646,42 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final code = machine.commandCode;
     if (item == null || code == null || scaleId == null) return;
     try {
-      final reading = await widget.api.post(
-        '/scales/readings/',
-        body: {
-          'scale': scaleId,
-          'weight_kg': item.weightKg.toStringAsFixed(3),
-          'tare_kg': '0.000',
-          'is_stable': true,
-          'source': 'agent',
-        },
-        accessToken: widget.accessToken,
-      );
+      // A leitura é um registro do servidor. Com a rede fora ela não existe —
+      // e não pode existir: registrar um peso "de antes" mais tarde criaria
+      // uma leitura que nunca aconteceu naquele instante. O peso bruto segue
+      // na própria operação de fechamento, e o backend materializa a leitura
+      // no replay.
+      Map<String, dynamic>? reading;
+      try {
+        reading = await widget.api.post(
+          '/scales/readings/',
+          body: {
+            'scale': scaleId,
+            'weight_kg': item.weightKg.toStringAsFixed(3),
+            'tare_kg': '0.000',
+            'is_stable': true,
+            'source': 'agent',
+          },
+          accessToken: widget.accessToken,
+        );
+      } on ApiException catch (error) {
+        // Qualquer recusa serve: sem rede, ou num Caixa Secundário (onde esta
+        // rota não existe — ele não fala com a nuvem). O peso segue no corpo
+        // do fechamento e o backend materializa a leitura no replay, que é o
+        // caminho já usado quando a internet cai.
+        AppLogger.instance.info(
+          'pesagem_sem_leitura_no_servidor',
+          data: {'motivo': error.message},
+        );
+      }
       final result = await widget.api.post(
         '/scales/$scaleId/checkout-command/',
         body: {
           'command_code': code,
-          'scale_reading': reading['id'],
+          if (reading != null)
+            'scale_reading': reading['id']
+          else
+            'weight_kg': item.weightKg.toStringAsFixed(3),
           'extras': machine.extras.entries
               .where((entry) => entry.value > 0)
               .map((entry) {
@@ -626,11 +698,40 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                 };
               })
               .toList(),
-          'print': widget.preferences.autoPrint,
+          // Sem impressora vinculada não há ticket a emitir: pedir impressão
+          // aqui faria o servidor recusar o lançamento inteiro
+          // (`_resolve_weigh_printer` exige a impressora da balança).
+          'print': _printsTicketHere,
+          // A reivindicação vai JUNTO com a operação, não depois dela.
+          //
+          // Antes esta estação imprimia a nota e só então marcava o corpo
+          // ainda enfileirado com `offline_printed`. Entre uma coisa e outra
+          // cabe a fila entregar a operação — e aí a marca não entra mais,
+          // o backend cria o `PrintJob` como pendente, e o Caixa Principal
+          // imprime a mesma nota de novo. Num Caixa Secundário, onde a fila
+          // pode ficar horas sem alcançar o principal, isso se acumulava:
+          // todas as notas do expediente saíam outra vez quando o terminal
+          // virava principal e encontrava esse monte de trabalho pendente.
+          //
+          // A nota é montada e impressa aqui em qualquer caso — a estação
+          // sabe fazê-la e o cliente está esperando o papel para pagar no
+          // caixa —, então o backend já nasce sabendo disso. Se a impressora
+          // recusar em definitivo, a marca é devolvida logo abaixo.
+          if (_printsTicketHere) 'offline_printed': true,
         },
         accessToken: widget.accessToken,
+        // O que a API resolveria pelo id: sem ela, o terminal precisa dizer
+        // qual é o produto pesado. A comanda o próprio gateway acha na cópia
+        // local, pelo código lido.
+        localContext: {'weighed_product': weighedProduct},
       );
       if (!mounted) return;
+      // Fechamento local: não existe `PrintJob` para o agente buscar, e a
+      // nota é o que o cliente leva até o caixa. Ela sai aqui, com o mesmo
+      // layout do servidor.
+      if (result['_local_first'] == true) {
+        await _printWeighTicketLocally(result);
+      }
       AppLogger.instance.info(
         'scale_checkout_ok',
         data: {'command': code, 'weight_kg': item.weightKg},
@@ -643,6 +744,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   : '${printJob['id']}'
             : null;
       });
+      if (widget.preferences.autoPrint && lastPrintJobId != null) {
+        await _monitorPrintJob(lastPrintJobId!);
+        if (!mounted) return;
+      }
       machine.onOrderCreated();
       await Future<void>.delayed(const Duration(seconds: 2));
       if (!mounted || !started) return;
@@ -683,6 +788,128 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
+  /// Aguarda a confirmação do agente de impressão. Criar o PrintJob não
+  /// significa que a impressora recebeu o cupom; sem acompanhar o estado, uma
+  /// falha de rede ficava invisível e a tela dizia apenas “pedido concluído”.
+  /// Imprime a nota de pesagem montada neste terminal.
+  ///
+  /// Uma falha aqui não desfaz a venda: o item já está no pedido local e na
+  /// fila. O operador é avisado para conferir a impressora e pode reimprimir
+  /// pelo caixa.
+  Future<void> _printWeighTicketLocally(Map<String, dynamic> order) async {
+    final printer = printers.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == printerId,
+      orElse: () => null,
+    );
+    if (printer == null || !_printsTicketHere) return;
+    try {
+      final agent = LocalDeviceAgent(api: widget.api);
+      final ticketPrinter = WeighTicketPrinter(
+        PrinterDevice.fromJson(printer),
+        runtime: agent.printing,
+      );
+      final result = await agent.submit(
+        ticketPrinter,
+        ticketPrinter.compose(
+          content: LocalPrintRenderer.weighTicket(
+            order: order,
+            restaurant: _restaurant,
+          ),
+          barcode: LocalPrintRenderer.commandBarcode(order, null),
+        ),
+      );
+      // A nota já foi reivindicada no corpo da operação, antes de qualquer
+      // papel. Só a recusa definitiva devolve a impressão ao backend: uma
+      // impressora sem papel **não** conta, porque o cupom está na fila e sai
+      // quando ela voltar — devolver aqui faria a nota sair duas vezes.
+      final operationId = '${order['_sync_operation_id'] ?? ''}';
+      if (!result.accepted && operationId.isNotEmpty) {
+        await widget.api.patchQueuedBody(operationId, {
+          'offline_printed': false,
+        });
+      }
+      // O cliente está com o prato na mão esperando a nota para pagar no
+      // caixa: o silêncio o mandaria embora sem papel nenhum.
+      if (!result.printed) {
+        throw ApiException(
+          result.accepted
+              ? 'A impressora não respondeu agora. A nota está na fila e sai '
+                    'assim que ela voltar.'
+              : 'A nota não pôde ser impressa.',
+        );
+      }
+    } catch (error) {
+      AppLogger.instance.warning(
+        'nota_pesagem_local_falhou',
+        data: {'causa': '$error'},
+      );
+      if (mounted) {
+        ErrorCenterScope.read(context).reportApi(
+          ApiException(
+            'A pesagem foi lançada na comanda, mas a nota não saiu. $error',
+          ),
+          title: 'A nota de pesagem não foi impressa',
+          recommendedAction:
+              'Confira papel e cabo da impressora. O item já está no pedido e '
+              'pode ser reimpresso pelo caixa.',
+        );
+      }
+    }
+  }
+
+  Future<void> _monitorPrintJob(String jobId) async {
+    for (var attempt = 0; attempt < 16; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      try {
+        final job = await widget.api.get(
+          '/print-jobs/$jobId/',
+          accessToken: widget.accessToken,
+        );
+        if (!mounted) return;
+        final status = '${job['status'] ?? ''}';
+        if (status == 'printed') {
+          return;
+        }
+        if (status == 'failed') {
+          final detail = '${job['error_message'] ?? ''}'.trim();
+          ErrorCenterScope.read(context).report(
+            AppError(
+              title: 'Pedido concluído, mas a impressão falhou',
+              message: detail.isEmpty
+                  ? 'A impressora não confirmou o recebimento da comanda.'
+                  : detail,
+              origin: AppErrorOrigin.peripheral,
+              recommendedAction:
+                  'Confira o IP, a porta e a energia da impressora e use Reimprimir.',
+              dedupeKey: 'scale-print-$jobId',
+            ),
+          );
+          return;
+        }
+      } on ApiException catch (error) {
+        AppLogger.instance.warning(
+          'scale_print_status_failed',
+          data: {'print_job': jobId, 'message': error.message},
+        );
+      }
+    }
+    if (!mounted) return;
+    ErrorCenterScope.read(context).report(
+      AppError(
+        title: 'Pedido concluído; impressão aguardando confirmação',
+        message:
+            'O trabalho foi criado, mas o agente de impressão ainda não confirmou a comanda.',
+        origin: AppErrorOrigin.peripheral,
+        severity: AppErrorSeverity.warning,
+        recommendedAction:
+            'Confira se o PDV principal está aberto e use Reimprimir se necessário.',
+        dedupeKey: 'scale-print-$jobId',
+      ),
+    );
+  }
+
   /// Reimprime o último cupom sem criar outro pedido.
   ///
   /// Reenfileira o mesmo trabalho de impressão em vez de gerar um novo a
@@ -699,7 +926,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         accessToken: widget.accessToken,
       );
       if (!mounted) return;
-      showAppToast(context, 'Reimpressão enviada para a impressora.');
+      await _monitorPrintJob(jobId);
+      if (!mounted) return;
       AppLogger.instance.info('scale_reprint', data: {'print_job': jobId});
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -822,7 +1050,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final choice = await showDialog<_ScannerChoice>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
+        builder: (context, setDialogState) => AppDialog(
           title: const Row(
             children: [
               Icon(Icons.barcode_reader),
@@ -969,7 +1197,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             Navigator.pop(dialogContext, parsed);
           }
 
-          return AlertDialog(
+          return AppDialog(
             title: const Row(
               children: [
                 Icon(Icons.touch_app_outlined),
@@ -990,7 +1218,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                     ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surfaceContainer,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: AppTheme.radius,
                     ),
                     child: Text(
                       '${rawValue.isEmpty ? '0,000' : rawValue} kg',
@@ -1116,30 +1344,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           // cardápio — porque é onde o operador passa a maior parte do
           // tempo: pesar, conferir os extras e ler a comanda. O cardápio
           // fica à direita, como destino de toque, não de leitura constante.
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                // Três colunas: itens pesados/extras à esquerda (com
-                // excluir), cardápio de extras no meio — o alvo de toque
-                // principal — e a comanda (código + teclado + finalizar)
-                // isolada à direita. Antes a comanda ficava empilhada
-                // dentro da mesma coluna dos itens, o que misturava duas
-                // etapas distintas: pesar/escolher extras e ler a comanda.
-                final itemsWidth = (constraints.maxWidth * 0.28).clamp(
-                  320.0,
-                  420.0,
-                );
-                final commandWidth = (constraints.maxWidth * 0.22).clamp(
-                  300.0,
-                  380.0,
-                );
-                return Row(
-                  children: [
-                    SizedBox(width: itemsWidth, child: _itemsPanel()),
-                    Expanded(child: _catalog()),
-                    SizedBox(width: commandWidth, child: _commandPanel()),
-                  ],
-                );
-              },
+          : ScaleOperationGrid(
+              items: _itemsPanel(),
+              catalog: widget.preferences.showScaleCatalog ? _catalog() : null,
+              command: _commandPanel(),
             ),
     );
   }
@@ -1164,7 +1372,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final id = '${product['id']}';
     final config = await showProductConfigDialog(context, product);
     if (config == null) return;
-    machine.addExtra(id, config.quantity);
+    machine.addExtra(id, config.quantity.round());
     extraConfigs[id] = config;
   }
 
@@ -1172,7 +1380,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     child: SizedBox(
       width: 620,
       child: SingleChildScrollView(
-        child: Card(
+        child: AppSection(
+          padding: EdgeInsets.zero,
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
@@ -1244,13 +1453,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                     initialValue:
                         printers.any((item) => '${item['id']}' == printerId)
                         ? printerId
-                        : null,
+                        : _noPrinterOption,
                     isExpanded: true,
                     decoration: InputDecoration(
-                      labelText: 'Impressora padrão da balança',
+                      labelText: 'Impressora da balança (opcional)',
                       prefixIcon: const Icon(Icons.print_outlined),
                       helperText:
-                          'O ticket de pesagem sempre será enviado para esta impressora.',
+                          'Com "Nenhuma" selecionada, a estação pesa e lança o pedido normalmente, só não emite o ticket.',
                       suffixIcon: loadingPrinters
                           ? const Padding(
                               padding: EdgeInsets.all(12),
@@ -1258,20 +1467,28 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                             )
                           : null,
                     ),
-                    items: printers
-                        .map(
-                          (item) => DropdownMenuItem(
-                            value: '${item['id']}',
-                            child: Text(
-                              '${item['name']} · ${PrinterEndpoint.fromJson(item).label}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: _noPrinterOption,
+                        child: Text('Nenhuma (não imprime)'),
+                      ),
+                      ...printers.map(
+                        (item) => DropdownMenuItem(
+                          value: '${item['id']}',
+                          child: Text(
+                            '${item['name']} · ${PrinterEndpoint.fromJson(item).label}',
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        )
-                        .toList(),
+                        ),
+                      ),
+                    ],
                     onChanged: loadingPrinters
                         ? null
-                        : (value) => unawaited(_selectPrinter(value)),
+                        : (value) => unawaited(
+                            _selectPrinter(
+                              value == _noPrinterOption ? null : value,
+                            ),
+                          ),
                   ),
                 ],
                 if (weighedProduct != null) ...[
@@ -1303,11 +1520,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// Resumo do que a estação vai usar: porta, protocolo e tolerância.
   Widget _scaleSetupCard() {
     final scheme = Theme.of(context).colorScheme;
-    final settings =
-        selectedScale?['settings'] as Map<String, dynamic>? ?? const {};
-    final port = configuredPort;
-    final baudRate = '${settings['baudrate'] ?? 9600}';
-    final protocol = ScaleProtocol.forId('${settings['protocol'] ?? ''}');
+    // O mesmo cadastro resolvido que o leitor usa: o cartão promete a porta e
+    // o protocolo que serão de fato abertos, não uma segunda leitura do JSON.
+    final device = scaleDevice;
+    final port = device?.port ?? '';
     final missingPort = port.isEmpty;
     final color = missingPort ? Colors.orange.shade800 : scheme.primary;
 
@@ -1315,7 +1531,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
         border: Border.all(
           color: missingPort
               ? color.withValues(alpha: .45)
@@ -1329,7 +1545,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             height: 46,
             decoration: BoxDecoration(
               color: color.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppTheme.radius,
             ),
             child: Icon(
               missingPort
@@ -1354,8 +1570,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   missingPort
                       ? 'Informe a COM e o baud rate no cadastro. Sem isso só '
                             'o peso manual funciona nesta estação.'
-                      : '$baudRate baud · ${protocol.label} · estabiliza em '
-                            '$settleSeconds s',
+                      : device!.summary,
                   style: TextStyle(
                     color: missingPort ? color : scheme.onSurfaceVariant,
                     fontSize: 12,
@@ -1391,7 +1606,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: AppTheme.radius,
         border: Border.all(color: color.withValues(alpha: .4)),
       ),
       child: Row(
@@ -1435,7 +1650,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
         border: Border.all(
           color: scannerError != null
               ? colorScheme.error.withValues(alpha: .45)
@@ -1449,7 +1664,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             height: 46,
             decoration: BoxDecoration(
               color: statusColor.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: AppTheme.radius,
             ),
             child: scannerConnecting
                 ? const Padding(
@@ -1508,44 +1723,59 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final scheme = Theme.of(context).colorScheme;
     final waitingCommand = {
       HandsFreeState.waitingCommand,
-      HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _itemsHeader(),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              children: [
-                _weightBlock(compact: waitingCommand),
-                // O estado da porta some da tela quando a balança está
-                // saudável e a etapa é outra: o que o operador precisa ver
-                // aí são os itens, não a conexão que já está funcionando.
-                if (!waitingCommand ||
-                    linkStatus.state != ScaleLinkState.connected) ...[
-                  const SizedBox(height: 10),
-                  _linkCard(),
+    final showWeightActions =
+        machine.state == HandsFreeState.idle ||
+        machine.state == HandsFreeState.waitingWeight;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+      child: AppSection(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _itemsHeader(),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                children: [
+                  _weightBlock(compact: waitingCommand),
+                  // As ações de peso moram no corpo rolável, não no rodapé —
+                  // um rodapé com botão de altura variável nunca alinharia
+                  // com o rodapé da comanda, que só mostra total e produto.
+                  if (showWeightActions) ...[
+                    const SizedBox(height: 14),
+                    ..._weightActions(),
+                  ],
+                  // O estado da porta some da tela quando a balança está
+                  // saudável e a etapa é outra: o que o operador precisa ver
+                  // aí são os itens, não a conexão que já está funcionando.
+                  if (!waitingCommand ||
+                      linkStatus.state != ScaleLinkState.connected) ...[
+                    const SizedBox(height: 10),
+                    _linkCard(),
+                  ],
+                  const SizedBox(height: 14),
+                  _cartItems(),
+                  if (errorMessage != null) _errorBox(),
                 ],
-                const SizedBox(height: 14),
-                _cartItems(),
-                if (errorMessage != null) _errorBox(),
-              ],
+              ),
             ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLowest,
-              border: Border(top: BorderSide(color: scheme.outlineVariant)),
+            Container(
+              constraints: const BoxConstraints(
+                minHeight: _panelFooterMinHeight,
+              ),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLowest,
+                border: Border(top: BorderSide(color: scheme.outlineVariant)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: _itemsFooter(),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-            child: _itemsFooter(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1553,8 +1783,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Widget _itemsHeader() {
     final scheme = Theme.of(context).colorScheme;
     return Container(
+      height: _panelHeaderHeight,
       color: scheme.surfaceContainerLowest,
-      padding: const EdgeInsets.fromLTRB(16, 14, 10, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 10, 0),
+      alignment: Alignment.centerLeft,
       child: Row(
         children: [
           const Expanded(
@@ -1563,16 +1795,21 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
           ),
-          if (widget.onToggleFullScreen != null)
-            IconButton(
-              tooltip: widget.isFullScreen
-                  ? 'Sair da tela cheia (F11)'
-                  : 'Usar tela cheia (F11)',
-              onPressed: widget.onToggleFullScreen,
-              icon: Icon(
-                widget.isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-              ),
+          IconButton(
+            tooltip: widget.preferences.showScaleCatalog
+                ? 'Ocultar cardápio'
+                : 'Mostrar cardápio',
+            onPressed: () {
+              final next = !widget.preferences.showScaleCatalog;
+              unawaited(widget.preferences.setShowScaleCatalog(next));
+              setState(() {});
+            },
+            icon: Icon(
+              widget.preferences.showScaleCatalog
+                  ? Icons.view_column_outlined
+                  : Icons.view_column_rounded,
             ),
+          ),
           IconButton(
             tooltip: 'Trocar restaurante ou balança',
             onPressed: machine.state == HandsFreeState.creatingOrder
@@ -1585,9 +1822,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     );
   }
 
-  /// Total e as ações ligadas ao peso (pegar/digitar/reimprimir) — as ações
-  /// de comanda (finalizar/cancelar) ficam no rodapé de [_commandPanel].
+  /// Só o essencial para bater com o rodapé da comanda: produto (quando já
+  /// pesado) e total. As ações de peso ficam no corpo rolável — ver
+  /// [_itemsPanel] — porque um botão ali faria o rodapé variar de altura e
+  /// desalinhar da coluna ao lado.
   Widget _itemsFooter() {
+    final scheme = Theme.of(context).colorScheme;
     final item = machine.weighedItem;
     var total = item?.total ?? 0;
     for (final entry in machine.extras.entries) {
@@ -1598,13 +1838,24 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       );
       total += ValueFormatters.number(product?['current_price']) * entry.value;
     }
-    final showWeightActions =
-        machine.state == HandsFreeState.idle ||
-        machine.state == HandsFreeState.waitingWeight;
+    final productName = weighedProduct?['name'] as String?;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (productName != null) ...[
+          Text(
+            productName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1618,10 +1869,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             ),
           ],
         ),
-        if (showWeightActions) ...[
-          const SizedBox(height: 10),
-          ..._weightActions(),
-        ],
       ],
     );
   }
@@ -1675,28 +1922,34 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// (aguardando peso) ou o resultado (finalizando/concluído).
   Widget _commandPanel() {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _commandHeader(),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              child: _commandBody(),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      child: AppSection(
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _commandHeader(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                child: _commandBody(),
+              ),
             ),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLowest,
-              border: Border(top: BorderSide(color: scheme.outlineVariant)),
+            Container(
+              constraints: const BoxConstraints(
+                minHeight: _panelFooterMinHeight,
+              ),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLowest,
+                border: Border(top: BorderSide(color: scheme.outlineVariant)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: _commandFooter(),
             ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-            child: _commandFooter(),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1705,9 +1958,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final scheme = Theme.of(context).colorScheme;
     final code = commandController.text.trim();
     return Container(
+      height: _panelHeaderHeight,
       color: scheme.surfaceContainerLowest,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      alignment: Alignment.centerLeft,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
@@ -1758,7 +2014,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           ),
         );
       case HandsFreeState.waitingCommand:
-      case HandsFreeState.commandOverdue:
       case HandsFreeState.failed:
         return _commandInput();
       case HandsFreeState.idle:
@@ -1788,7 +2043,6 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Widget _commandFooter() {
     if ({
       HandsFreeState.waitingCommand,
-      HandsFreeState.commandOverdue,
       HandsFreeState.failed,
     }.contains(machine.state)) {
       return Column(
@@ -1835,7 +2089,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: EdgeInsets.symmetric(vertical: compact ? 12 : 20),
       decoration: BoxDecoration(
         color: scheme.primaryContainer.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: AppTheme.radius,
       ),
       child: Column(
         children: [
@@ -2023,12 +2277,17 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     return parts.isEmpty ? null : parts.join(' · ');
   }
 
+  /// Últimos segundos do prazo único em que a contagem vira alerta vermelho.
+  ///
+  /// Não é um segundo temporizador — é só o aviso visual perto do fim do
+  /// MESMO prazo (`HandsFreeMachine.commandTimeout`), sem somar tempo algum.
+  static const _finalWarning = Duration(seconds: 5);
+
   /// Campo do código da comanda e teclado touch, na etapa de leitura.
   Widget _commandInput() {
-    final overdue = machine.state == HandsFreeState.commandOverdue;
     final now = DateTime.now();
-    final remaining =
-        machine.remainingForCancel(now) ?? machine.remainingForCommand(now);
+    final remaining = machine.remainingForCommand(now);
+    final overdue = remaining != null && remaining <= _finalWarning;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2085,7 +2344,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     padding: const EdgeInsets.all(11),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: AppTheme.radius,
     ),
     child: Text(
       message,
@@ -2103,7 +2362,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppTheme.radius,
       ),
       child: Text(
         errorMessage!,
@@ -2114,6 +2373,46 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         ),
       ),
     ),
+  );
+}
+
+/// Grade operacional da Balança Rápida: resumo 25%, catálogo 50% e
+/// comanda 25%. `Expanded` é o equivalente adequado a uma grade de colunas
+/// para painéis únicos no Flutter.
+///
+/// Com [catalog] nulo (coluna ocultada nas preferências do terminal), o
+/// espaço dela é redistribuído entre itens e comanda — em vez de reservar um
+/// `Expanded` vazio no meio da tela.
+class ScaleOperationGrid extends StatelessWidget {
+  const ScaleOperationGrid({
+    super.key,
+    required this.items,
+    required this.catalog,
+    required this.command,
+  });
+
+  final Widget items;
+  final Widget? catalog;
+  final Widget command;
+
+  static const double _gap = 10;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(key: const Key('scale-items-column'), child: items),
+      const SizedBox(key: Key('scale-columns-gap'), width: _gap),
+      if (catalog != null) ...[
+        Expanded(
+          key: const Key('scale-catalog-column'),
+          flex: 2,
+          child: catalog!,
+        ),
+        const SizedBox(key: Key('scale-columns-gap-2'), width: _gap),
+      ],
+      Expanded(key: const Key('scale-command-column'), child: command),
+    ],
   );
 }
 
@@ -2132,7 +2431,7 @@ class _ScannerEmptyState extends StatelessWidget {
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surfaceContainer,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: AppTheme.radius,
     ),
     child: const Column(
       children: [

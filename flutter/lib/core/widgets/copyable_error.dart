@@ -54,16 +54,15 @@ void showAppError(
 /// Confirmação rápida (sucesso ou aviso leve) no mesmo cartão do topo direito.
 ///
 /// Substitui o `SnackBar` de rodapé espalhado pela interface: um único lugar
-/// para tudo que aparece sozinho na tela, avisos de verdade e confirmações
-/// juntos. Diferente de [showAppError], soma sozinho depois de
-/// [autoDismissAfter] — o operador não precisa fechar um "impresso com
-/// sucesso" no `X`.
+/// para tudo que aparece sozinho na tela. Sem [autoDismissAfter] explícito,
+/// o [ErrorCenter] aplica seu próprio padrão (2s) — vale para `info`,
+/// `warning` e `failure` igualmente.
 void showAppToast(
   BuildContext context,
   String message, {
   String? title,
   AppErrorSeverity severity = AppErrorSeverity.info,
-  Duration autoDismissAfter = const Duration(milliseconds: 2200),
+  Duration? autoDismissAfter,
 }) {
   ErrorCenterScope.read(context).report(
     AppError(

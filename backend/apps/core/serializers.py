@@ -77,6 +77,11 @@ class TenantModelSerializer(serializers.ModelSerializer):
         # ANINHADO (ex.: o profile dentro do usuário), ele não existe — e a conta
         # nunca vem no payload aninhado, então tratamos como ausente.
         initial = getattr(self, "initial_data", None) or {}
+        # Em um serializer `many=True`/aninhado, o DRF pode expor aqui o
+        # `initial_data` da lista raiz. Campos de tenant so podem ser lidos de
+        # um objeto individual.
+        if not isinstance(initial, dict):
+            initial = {}
         payload_account_id = initial.get("account") or initial.get("account_id")
         if payload_account_id and str(payload_account_id) != str(account_id):
             raise serializers.ValidationError(

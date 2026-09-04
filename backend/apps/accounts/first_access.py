@@ -12,7 +12,8 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters
 
-from apps.accounts.models import Account, FirstAccessState, UserProfile
+from apps.accounts.models import Account, FirstAccessState, Role, UserProfile
+from apps.accounts.role_catalog import CODE_ADMIN
 
 User = get_user_model()
 LOCK_KEY = "starchef:first-access:create"
@@ -116,10 +117,13 @@ def admin_login_or_first_access(request):
                         first_name=form.cleaned_data["first_name"],
                         last_name=form.cleaned_data["last_name"],
                     )
+                    # `Account.objects.create` acima ja disparou o signal que
+                    # provisiona os 4 perfis fixos da conta.
+                    admin_role = Role.all_objects.filter(account=account, code=CODE_ADMIN).first()
                     UserProfile.objects.create(
                         account=account,
                         user=user,
-                        profile_type=UserProfile.PROFILE_ADMIN,
+                                    role=admin_role,
                         is_active=True,
                     )
                     FirstAccessState.objects.create()

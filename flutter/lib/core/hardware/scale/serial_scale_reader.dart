@@ -38,6 +38,7 @@ class SerialScaleReader {
     double stabilityToleranceKg = 0.002,
     Duration settleDuration = const Duration(seconds: 2),
     double zeroThresholdKg = 0.005,
+    Duration silenceTimeout = const Duration(seconds: 4),
     String role = 'balanca-rapida',
     String? ownerDetail,
   }) {
@@ -65,6 +66,7 @@ class SerialScaleReader {
       stabilityToleranceKg: stabilityToleranceKg,
       settleDuration: settleDuration,
       zeroThresholdKg: zeroThresholdKg,
+      silenceTimeout: silenceTimeout,
       role: role,
       ownerDetail: ownerDetail,
       transportFactory: () => SerialScaleTransport(
@@ -103,7 +105,11 @@ class SerialScaleReader {
   bool _started = false;
   bool _disposed = false;
 
-  DateTime? _lastFrameAt;
+  DateTime? _openedAt;
+  DateTime? _lastByteAt;
+  DateTime? _lastSampleAt;
+  DateTime? _lastWeightAt;
+  String? _undecodedSample;
   DateTime? _stableSince;
   DateTime? _lastWeightRequestAt;
   double _referenceWeight = 0;
@@ -178,7 +184,11 @@ class SerialScaleReader {
         cancelOnError: false,
       );
       _retryAttempt = 0;
-      _lastFrameAt = null;
+      _openedAt = DateTime.now();
+      _lastByteAt = null;
+      _lastSampleAt = null;
+      _lastWeightAt = null;
+      _undecodedSample = null;
       _publish(
         ScaleLinkStatus(
           state: ScaleLinkState.connecting,
@@ -222,12 +232,46 @@ class SerialScaleReader {
 
   void _onBytes(List<int> bytes) {
     if (_disposed) return;
-    _lastFrameAt = DateTime.now();
+    if (bytes.isEmpty) return;
+    _lastByteAt = DateTime.now();
     final decoded = protocol.decode(bytes);
-    if (decoded.isEmpty) return;
+    if (decoded.isEmpty) {
+      // Guardado para o aviso de protocolo errado: sem ver o que chegou, quem
+      // atende a loja não tem como saber se o cadastro aponta o fabricante
+      // certo. É uma amostra curta, só o suficiente para reconhecer o
+      // enquadramento.
+      if (_undecodedSample == null) {
+        _undecodedSample = _describeBytes(bytes);
+        AppLogger.instance.warning(
+          'scale_frame_not_decoded',
+          data: {
+            'port': portName,
+            'protocol': protocol.id,
+            'bruto': _undecodedSample,
+          },
+        );
+      }
+      return;
+    }
+    _undecodedSample = null;
+    _lastSampleAt = _lastByteAt;
+    // Um quadro só de estado (`hasWeight == false`) prova que o protocolo
+    // está certo, mas não é leitura de peso: sem separar os dois, uma balança
+    // que só anuncia estabilidade aparecia como "lendo normalmente" e o
+    // operador ficava olhando um peso que nunca chegava.
+    if (decoded.any((sample) => sample.hasWeight)) _lastWeightAt = _lastByteAt;
     for (final sample in decoded) {
       _emit(sample);
     }
+  }
+
+  /// Amostra legível dos bytes crus, para o aviso na tela e para o log.
+  static String _describeBytes(List<int> bytes) {
+    final visible = bytes.take(24).map((byte) {
+      if (byte >= 32 && byte <= 126) return String.fromCharCode(byte);
+      return '<${byte.toRadixString(16).padLeft(2, '0').toUpperCase()}>';
+    }).join();
+    return bytes.length > 24 ? '$visible...' : visible;
   }
 
   void _emit(ScaleSample sample) {
@@ -288,14 +332,64 @@ class SerialScaleReader {
     }
   }
 
+  /// Diz por que o peso não está chegando, em vez de esperar calado.
+  ///
+  /// Antes esta checagem desistia quando nada tinha chegado desde a abertura —
+  /// justamente o caso mais comum e mais difícil de diagnosticar. A estação
+  /// ficava em "Conectado a COM3, aguardando leitura" para sempre, com a
+  /// mesma frase para uma porta trocada, um cabo solto, um protocolo errado
+  /// no cadastro e uma balança em modo sob demanda. Cada um desses tem uma
+  /// providência diferente, então cada um ganha a sua frase.
   void _checkSilence() {
     if (_disposed) return;
-    final last = _lastFrameAt;
-    if (last == null) {
-      // Ainda não chegou nenhum quadro desde a abertura da porta.
+    final openedAt = _openedAt;
+    if (openedAt == null) return;
+
+    final now = DateTime.now();
+    final lastByte = _lastByteAt;
+
+    // 1. Porta aberta, nenhum byte: ninguém do outro lado.
+    if (lastByte == null) {
+      if (now.difference(openedAt) > silenceTimeout) {
+        _publish(
+          ScaleLinkStatus(
+            state: ScaleLinkState.noResponse,
+            message:
+                'A porta $portName abriu, mas nada chegou dela. Confira se é '
+                'mesmo a porta da balança, o cabo e o baud rate cadastrado. '
+                'Se o visor mostra o peso, o equipamento pode estar em modo '
+                'sob demanda: use "Pegar peso da balança".',
+            portName: portName,
+          ),
+        );
+      }
       return;
     }
-    if (DateTime.now().difference(last) > silenceTimeout &&
+
+    // 2. Bytes chegando e nenhum peso saindo deles. São duas causas
+    //    diferentes, e a providência de cada uma também é.
+    final lastWeight = _lastWeightAt;
+    if (lastWeight == null && now.difference(lastByte) < silenceTimeout) {
+      final raw = _undecodedSample;
+      _publish(
+        ScaleLinkStatus(
+          state: ScaleLinkState.readError,
+          message: _lastSampleAt == null
+              ? 'A balança está transmitindo em $portName, mas nada do que ela '
+                    'envia é legível como ${protocol.label}. Confira o '
+                    'protocolo no cadastro do equipamento'
+                    '${raw == null ? '' : '. Recebido: $raw'}'
+              : 'A balança está respondendo em $portName, mas só com estado — '
+                    'nenhum peso. Confira o modo de transmissão contínua do '
+                    'equipamento e o protocolo no cadastro.',
+          portName: portName,
+        ),
+      );
+      return;
+    }
+
+    // 3. Já leu peso e parou.
+    if (now.difference(lastByte) > silenceTimeout &&
         _status.state == ScaleLinkState.connected) {
       _publish(
         ScaleLinkStatus(
@@ -304,7 +398,7 @@ class SerialScaleReader {
               'A balança parou de transmitir em $portName. Verifique o cabo '
               'e o modo de transmissão contínua do equipamento.',
           portName: portName,
-          lastSampleAt: last,
+          lastSampleAt: lastWeight,
         ),
       );
     }
@@ -392,6 +486,7 @@ class SerialScaleReader {
   Future<void> _teardownTransport() async {
     _watchdog?.cancel();
     _watchdog = null;
+    _openedAt = null;
     await _subscription?.cancel();
     _subscription = null;
     final transport = _transport;

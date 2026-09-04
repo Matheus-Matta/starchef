@@ -16,13 +16,26 @@ import {
   CHANNEL_OPTIONS,
   COMMAND_STATUS_LABELS,
   EMISSION_TYPE_LABELS,
+  FISCAL_CSOSN_OPTIONS,
+  FISCAL_CST_ICMS_OPTIONS,
+  FISCAL_CST_PIS_COFINS_OPTIONS,
+  FISCAL_ORIGEM_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
+  LABEL_CODE_TYPE_LABELS,
+  LABEL_CODE_TYPE_OPTIONS,
   MOVEMENT_TYPE_LABELS,
+  STOCK_DOC_STATUS_LABELS,
+  STOCK_EXIT_TYPE_LABELS,
+  STOCK_LOT_STATUS_LABELS,
   DELIVERY_STATUS_LABELS,
   ORDER_TYPE_LABELS,
   PAYMENT_STATUS_LABELS,
   PRODUCTION_STATUS_LABELS,
+  TERMINAL_ROLE_LABELS,
+  TERMINAL_ROLE_OPTIONS,
+  TERMINAL_TYPE_LABELS,
+  TERMINAL_TYPE_OPTIONS,
   PAYMENT_METHOD_TYPE_LABELS,
   PAYMENT_TYPE_OPTIONS,
   PRICING_OPTIONS,
@@ -35,8 +48,6 @@ import {
   SLA_PRIORITY_OPTIONS,
   SLA_TYPE_LABELS,
   SLA_TYPE_OPTIONS,
-  PROFILE_TYPE_LABELS,
-  PROFILE_TYPE_OPTIONS,
   SCALE_PROTOCOL_LABELS,
   SCALE_PROTOCOL_OPTIONS,
   SECTOR_OPTIONS,
@@ -70,11 +81,12 @@ export const resources = [
     columns: [
       { key: "sequence", label: "Pedido" },
       { key: "order_type", label: "Tipo", map: ORDER_TYPE_LABELS },
+      { key: "command_number", label: "Comanda" },
       { key: "table_number", label: "Mesa" },
       { key: "customer_name", label: "Cliente" },
       { key: "total", label: "Total", type: "money", align: "right" },
       // Status separados: preparação, pagamento e entrega (esta só com o módulo).
-      { key: "production_status", label: "Preparação", type: "status", map: PRODUCTION_STATUS_LABELS },
+      { key: "production_status", label: "KDS", type: "kds", map: PRODUCTION_STATUS_LABELS },
       { key: "payment_status", label: "Pagamento", type: "status", map: PAYMENT_STATUS_LABELS },
       { key: "delivery_status", label: "Entrega", type: "status", map: DELIVERY_STATUS_LABELS, module: "entrega" },
       { key: "opened_at", label: "Aberto", type: "date" },
@@ -227,8 +239,9 @@ export const resources = [
     endpoint: "/menu/products/",
     columns: [
       { key: "internal_code", label: "Codigo" },
+      { key: "ean", label: "Cód. barras" },
       { key: "name", label: "Produto" },
-      { key: "restaurant_names", label: "Restaurantes", sortable: false },
+      { key: "restaurant_names", label: "Restaurantes", type: "badges", sortable: false },
       { key: "category_name", label: "Categoria" },
       { key: "current_price", label: "Preco", type: "money", align: "right" },
       { key: "sector_name", label: "Setor" },
@@ -239,6 +252,9 @@ export const resources = [
       { name: "name", label: "Nome do produto", type: "text", required: true, full: true, section: "Informações básicas" },
       { name: "restaurants", label: "Restaurantes que utilizam o produto", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, full: true, section: "Informações básicas", hint: "Disponibilize o mesmo produto em vários restaurantes da franquia." },
       { name: "internal_code", label: "Codigo interno", type: "text", section: "Informações básicas" },
+      // Texto, nunca número: `0000012345670` e `12345670` são códigos
+      // diferentes, e perder os zeros faria o leitor não achar o produto.
+      { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
       { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
       { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
       { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
@@ -247,11 +263,17 @@ export const resources = [
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },
       { name: "product_type", label: "Tipo de produto", type: "dropdown", options: PRODUCT_TYPE_OPTIONS, default: "meal", section: "Classificação" },
-      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e; sem ele, usa o perfil padrão do restaurante.
-      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Usar perfil padrão do restaurante", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile" },
+      // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e. O mesmo
+      // perfil serve vários produtos (1:N) e é cadastrado em Financeiro › Perfis fiscais.
+      { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Sem perfil (item sai sem tributação)", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile", hint: "Grupo tributário reutilizável. Cadastre em Financeiro › Perfis fiscais ou crie um novo no \"+\"." },
       { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
       // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
       { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
+      // Produto vendido direto da prateleira (refrigerante em lata): não tem
+      // ficha técnica, mas move saldo. Produto COM receita ignora este vínculo.
+      { name: "stock_ingredient", label: "Insumo consumido (venda direta)", type: "remote-dropdown", endpoint: "/menu/ingredients/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum (usa a ficha técnica)", module: "logistica", section: "Produção e logística", hint: "Só para produtos sem receita. Com ficha técnica, ela é que manda." },
+      { name: "stock_consumption_quantity", label: "Quantidade por unidade vendida", type: "decimal", module: "logistica", section: "Produção e logística" },
+      { name: "stock_consumption_unit", label: "Unidade do consumo", type: "dropdown", options: UNIT_OPTIONS, module: "logistica", section: "Produção e logística" },
       // Switches de disponibilidade — alinhados em grid na seção "Disponibilidade".
       { name: "available_for_table", label: "Disponivel para mesa", type: "boolean", default: true, section: "Disponibilidade" },
       { name: "available_for_counter", label: "Disponivel para balcao", type: "boolean", default: true, section: "Disponibilidade" },
@@ -284,23 +306,56 @@ export const resources = [
   },
   {
     name: "ingredientes",
-    title: "Ingredientes",
+    title: "Insumos",
     endpoint: "/menu/ingredients/",
+    pro: {
+      headerActions: [
+        { key: "bulk-create", label: "Cadastrar em lote", icon: "pi pi-list", type: "route", routeName: "ingredientes-lote" },
+      ],
+    },
     // Compartilhados entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
     sharedAcrossRestaurants: true,
     // Regra de negocio (Modulo Base): o ingrediente serve para composicao/ficha
     // tecnica, SEM dados de custo/preco. Custo e estoque sao do Modulo Logistica.
     columns: [
-      { key: "name", label: "Ingrediente" },
+      { key: "name", label: "Insumo" },
       { key: "unit", label: "Unidade" },
+      { key: "supplier_name", label: "Fornecedor", module: "logistica" },
       { key: "minimum_stock", label: "Estoque min.", align: "right" },
+      { key: "average_cost", label: "Custo medio", type: "money", align: "right", module: "logistica" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
       { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
       { name: "unit", label: "Unidade de medida", type: "dropdown", options: UNIT_OPTIONS, section: "Identificação" },
+      { name: "supplier", label: "Fornecedor padrão", type: "remote-dropdown", endpoint: "/stock/suppliers/", optionLabel: "name", optionValue: "id", placeholder: "Sem fornecedor padrão", module: "logistica", section: "Logística" },
       // Estoque mínimo (STC-031/032): opcional e só aparece com o Módulo Logística.
       { name: "minimum_stock", label: "Estoque minimo", type: "decimal", module: "logistica", section: "Logística" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
+    ],
+  },
+  {
+    name: "fornecedores",
+    module: "logistica",
+    title: "Fornecedores",
+    endpoint: "/stock/suppliers/",
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Fornecedor" },
+      { key: "tax_id", label: "CPF / CNPJ" },
+      { key: "contact_name", label: "Contato" },
+      { key: "phone", label: "Telefone" },
+      { key: "email", label: "E-mail" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
+      { name: "legal_name", label: "Razão social", type: "text", section: "Identificação" },
+      { name: "tax_id", label: "CPF / CNPJ", type: "text", section: "Identificação" },
+      { name: "contact_name", label: "Pessoa de contato", type: "text", section: "Contato" },
+      { name: "phone", label: "Telefone", type: "text", section: "Contato" },
+      { name: "email", label: "E-mail", type: "text", inputType: "email", section: "Contato" },
+      { name: "notes", label: "Observações", type: "textarea", full: true, section: "Observações" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
     ],
   },
@@ -363,6 +418,10 @@ export const resources = [
       { name: "production_sector", label: "Setor", type: "dropdown", options: SECTOR_OPTIONS },
       // O vínculo com produtos é gerenciado na edição do PRODUTO (não aqui).
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
+      // Sem este vínculo, "bacon extra" vende sem tirar bacon do estoque.
+      { name: "ingredient", label: "Insumo consumido", type: "remote-dropdown", endpoint: "/menu/ingredients/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum (apenas comercial)", module: "logistica", section: "Consumo de estoque" },
+      { name: "consumption_quantity", label: "Quantidade por unidade vendida", type: "decimal", module: "logistica", section: "Consumo de estoque", hint: "Quanto do insumo sai a cada adicional vendido." },
+      { name: "consumption_unit", label: "Unidade do consumo", type: "dropdown", options: UNIT_OPTIONS, module: "logistica", section: "Consumo de estoque", hint: "Precisa ser da mesma grandeza da unidade do insumo." },
     ],
   },
 
@@ -372,6 +431,13 @@ export const resources = [
     module: "logistica",
     title: "Estoque",
     endpoint: "/stock/movements/",
+    // A posicao de estoque manda o operador para ca com o insumo ja escolhido.
+    pro: {
+      linkFilters: [
+        { key: "ingredient", label: "um insumo" },
+        { key: "location", label: "um local" },
+      ],
+    },
     columns: [
       { key: "ingredient_name", label: "Ingrediente" },
       { key: "location_name", label: "Local" },
@@ -395,6 +461,107 @@ export const resources = [
       { name: "name", label: "Nome do local", type: "text", required: true },
       { name: "description", label: "Descricao", type: "textarea", full: true },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
+    ],
+  },
+  {
+    // Lista das entradas. O documento em si (cabecalho + linhas) tem tela
+    // propria: um formulario de campos fixos nao da conta de uma lista de
+    // insumos que cresce enquanto o operador digita.
+    name: "estoque-entradas",
+    documentView: true,
+    pro: {
+      primaryAction: { label: "Nova entrada", icon: "pi pi-plus", route: "estoque-entrada-nova" },
+      detailRoute: "estoque-entrada-documento",
+      // Recompra do mesmo fornecedor e a rotina: abre a nova entrada com as
+      // linhas da anterior ja preenchidas, para so ajustar o que mudou.
+      headerActions: [
+        { key: "copy-last-entry", label: "Copiar última entrada", icon: "pi pi-copy", type: "route", routeName: "estoque-entrada-nova", query: { copy: "last" } },
+      ],
+      rowActions: [
+        { label: "Duplicar entrada", icon: "pi pi-copy", type: "duplicate", routeName: "estoque-entrada-nova" },
+      ],
+    },
+    module: "logistica",
+    title: "Entradas de Estoque",
+    endpoint: "/stock/entries/",
+    columns: [
+      { key: "effective_date", label: "Data", type: "date" },
+      { key: "document_number", label: "Documento" },
+      { key: "supplier", label: "Fornecedor" },
+      { key: "location_name", label: "Local" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+    ],
+  },
+  {
+    name: "estoque-saidas",
+    documentView: true,
+    pro: {
+      primaryAction: { label: "Nova saída", icon: "pi pi-plus", route: "estoque-saida-nova" },
+      detailRoute: "estoque-saida-documento",
+      headerActions: [
+        { key: "copy-last-exit", label: "Copiar última saída", icon: "pi pi-copy", type: "route", routeName: "estoque-saida-nova", query: { copy: "last" } },
+      ],
+      rowActions: [
+        { label: "Duplicar saída", icon: "pi pi-copy", type: "duplicate", routeName: "estoque-saida-nova" },
+      ],
+    },
+    module: "logistica",
+    title: "Saidas de Estoque",
+    endpoint: "/stock/exits/",
+    columns: [
+      { key: "effective_date", label: "Data", type: "date" },
+      { key: "exit_type", label: "Tipo", type: "status", map: STOCK_EXIT_TYPE_LABELS },
+      { key: "location_name", label: "Local" },
+      { key: "reason", label: "Motivo" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_DOC_STATUS_LABELS },
+    ],
+  },
+  {
+    // Somente leitura: um lote nasce da confirmacao de uma entrada, e e o
+    // movimento positivo dela que explica de onde veio o saldo.
+    name: "estoque-lotes",
+    module: "logistica",
+    title: "Lotes e Validades",
+    endpoint: "/stock/lots/",
+    columns: [
+      { key: "code", label: "Lote" },
+      { key: "ingredient_name", label: "Insumo" },
+      { key: "location_name", label: "Local" },
+      { key: "quantity", label: "Saldo", align: "right" },
+      { key: "entered_at", label: "Entrada", type: "date" },
+      { key: "expires_at", label: "Validade", type: "date" },
+      { key: "status", label: "Situacao", type: "status", map: STOCK_LOT_STATUS_LABELS },
+    ],
+  },
+  {
+    name: "etiquetas-estoque",
+    module: "logistica",
+    title: "Modelos de Etiqueta",
+    endpoint: "/stock/label-templates/",
+    columns: [
+      { key: "name", label: "Modelo" },
+      { key: "width_mm", label: "Largura (mm)", align: "right" },
+      { key: "height_mm", label: "Altura (mm)", align: "right" },
+      { key: "code_type", label: "Codigo", type: "status", map: LABEL_CODE_TYPE_LABELS },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do modelo", type: "text", required: true, section: "Identificação" },
+      { name: "code_type", label: "Tipo de codigo", type: "dropdown", options: LABEL_CODE_TYPE_OPTIONS, section: "Identificação" },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
+      { name: "width_mm", label: "Largura (mm)", type: "decimal", default: 60, required: true, section: "Papel" },
+      { name: "height_mm", label: "Altura (mm)", type: "decimal", default: 40, required: true, section: "Papel" },
+      { name: "margin_mm", label: "Margem (mm)", type: "decimal", default: 2, section: "Papel" },
+      { name: "columns", label: "Etiquetas por linha", type: "number", default: 1, section: "Papel" },
+      { name: "font_size_pt", label: "Tamanho da fonte (pt)", type: "decimal", default: 8, section: "Papel" },
+      { name: "show_ingredient", label: "Mostrar insumo", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_lot_code", label: "Mostrar codigo do lote", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_supplier_lot", label: "Mostrar lote do fornecedor", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_entered_at", label: "Mostrar data de entrada", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_expires_at", label: "Mostrar validade", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_quantity", label: "Mostrar quantidade", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "show_location", label: "Mostrar local", type: "boolean", default: true, section: "Campos impressos" },
+      { name: "custom_text", label: "Texto livre", type: "text", full: true, section: "Campos impressos" },
     ],
   },
 
@@ -444,15 +611,20 @@ export const resources = [
 
   // ── Pagamentos ─────────────────────────────────────────────────────
   {
-    // Formas de pagamento são valores controlados pelo sistema — sem CRUD no MVP
-    // (STC-060). Apenas leitura: a tela lista os métodos ativos, sem criar/editar.
+    // A forma de pagamento pertence a UM restaurante (PaymentMethod é TenantModel) e
+    // todo restaurante novo nasce com o mesmo conjunto padrão (apps/payments/defaults.py):
+    // com mais de um restaurante a conta tem vários "Dinheiro"/"PIX" homônimos. Por isso
+    // NÃO é `globalScope` — a lista segue o restaurante do seletor do topo e o formulário
+    // ganha o campo "Restaurante" (injetado por ResourceFormView) — e a coluna
+    // `restaurant_name` distingue os homônimos quando o escopo é "Todos".
     name: "formas-pagamento",
     title: "Formas de Pagamento",
     endpoint: "/payments/methods/",
-    globalScope: true,
     columns: [
       { key: "name", label: "Forma" },
+      { key: "restaurant_name", label: "Restaurante" },
       { key: "method_type", label: "Tipo", map: PAYMENT_METHOD_TYPE_LABELS },
+      { key: "requires_reference", label: "Exige referencia", type: "boolean" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -484,6 +656,19 @@ export const resources = [
     title: "Notas Fiscais",
     endpoint: "/invoices/",
     globalScope: true,
+    pro: {
+      rowActions: [
+        {
+          key: "resend",
+          label: "Reenviar nota",
+          icon: "pi pi-send",
+          type: "post-detail",
+          action: "resend",
+          confirmMessage: "Reenviar somente esta nota para a Focus NFe?",
+          visible: (row) => row.status === "error" || (row.status === "pending" && row.emission_type === "9"),
+        },
+      ],
+    },
     columns: [
       { key: "number", label: "Numero" },
       { key: "phase", label: "Tipo" },
@@ -491,6 +676,42 @@ export const resources = [
       { key: "emission_type", label: "Emissao", type: "status", map: EMISSION_TYPE_LABELS },
       { key: "total_amount", label: "Valor", type: "money", align: "right" },
       { key: "issued_at", label: "Emissao em", type: "date" },
+      { key: "error_message", label: "Motivo / erro", showInList: false },
+    ],
+  },
+  {
+    // Grupo tributario reutilizavel: quem escolhe o perfil e o PRODUTO (1:N),
+    // igual a categoria. Nao pertence a restaurante nenhum — e da conta.
+    name: "perfis-fiscais",
+    module: "financeiro",
+    title: "Perfis Fiscais",
+    endpoint: "/fiscal/profiles/",
+    sharedAcrossRestaurants: true,
+    columns: [
+      { key: "name", label: "Perfil" },
+      { key: "ncm", label: "NCM" },
+      { key: "cfop", label: "CFOP" },
+      { key: "csosn", label: "CSOSN" },
+      { key: "cst_icms", label: "CST ICMS" },
+      { key: "is_default", label: "Padrao", type: "boolean" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do perfil", type: "text", required: true, full: true, placeholder: "Ex.: Bebida, Prato padrao", section: "Identificacao", hint: "Como voce vai reconhecer este grupo tributario ao cadastrar um produto." },
+      { name: "ncm", label: "NCM", type: "text", placeholder: "22021000", section: "Classificacao", hint: "8 digitos. Obrigatorio na NF-e/NFC-e." },
+      { name: "cest", label: "CEST", type: "text", placeholder: "0300100", section: "Classificacao", hint: "Somente para produtos sujeitos a substituicao tributaria." },
+      { name: "cfop", label: "CFOP de venda", type: "text", default: "5102", placeholder: "5102", section: "Classificacao", hint: "5102 = venda dentro do estado. 6102 = fora do estado." },
+      { name: "origem", label: "Origem da mercadoria", type: "dropdown", options: FISCAL_ORIGEM_OPTIONS, default: "0", section: "Classificacao" },
+      { name: "csosn", label: "CSOSN (Simples Nacional)", type: "dropdown", options: FISCAL_CSOSN_OPTIONS, placeholder: "Selecione se a empresa e do Simples", section: "ICMS", hint: "Use este campo quando o CRT da empresa for Simples Nacional." },
+      { name: "cst_icms", label: "CST ICMS (Regime Normal)", type: "dropdown", options: FISCAL_CST_ICMS_OPTIONS, placeholder: "Selecione se a empresa e do Regime Normal", section: "ICMS", hint: "Preencha CSOSN ou CST ICMS — o que valer para o enquadramento da empresa." },
+      { name: "icms_rate", label: "Aliquota ICMS (%)", type: "decimal", default: 0, section: "ICMS" },
+      { name: "pis_cst", label: "CST PIS", type: "dropdown", options: FISCAL_CST_PIS_COFINS_OPTIONS, default: "49", section: "PIS / COFINS" },
+      { name: "pis_rate", label: "Aliquota PIS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
+      { name: "cofins_cst", label: "CST COFINS", type: "dropdown", options: FISCAL_CST_PIS_COFINS_OPTIONS, default: "49", section: "PIS / COFINS" },
+      { name: "cofins_rate", label: "Aliquota COFINS (%)", type: "decimal", default: 0, section: "PIS / COFINS" },
+      { name: "approx_tax_rate", label: "Tributos aprox. (Lei 12.741) (%)", type: "decimal", default: 0, full: true, section: "Outros", hint: "Percentual informado no cupom como tributo aproximado ao consumidor." },
+      { name: "is_default", label: "Sugerir como padrao", type: "boolean", default: false, section: "Outros", hint: "Destaca este perfil no cadastro de produtos. Nao altera sozinho a emissao." },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Outros" },
     ],
   },
 
@@ -567,6 +788,22 @@ export const resources = [
     title: "Restaurantes",
     endpoint: "/restaurants/",
     globalScope: true,
+    pro: {
+      // A configuração fiscal (emitente, CSC, certificado, Focus NFe) tem tela
+      // própria — é um cadastro à parte, com dados e riscos próprios, e ficava
+      // disputando o salvamento com o cadastro do restaurante quando morava
+      // dentro dele. Ver views/RestaurantFiscalConfigView.vue.
+      rowActions: [
+        {
+          key: "fiscal",
+          label: "Configuração fiscal (Focus NFe)",
+          icon: "pi pi-receipt",
+          type: "route",
+          routeName: "restaurante-fiscal",
+          module: "financeiro",
+        },
+      ],
+    },
     columns: [
       { key: "trade_name", label: "Nome fantasia" },
       { key: "legal_name", label: "Razao social" },
@@ -581,13 +818,43 @@ export const resources = [
       { name: "phone", label: "Telefone", type: "text" },
       { name: "email", label: "Email", type: "text", inputType: "email" },
       { name: "address", label: "Endereco", type: "text", full: true },
+      { name: "district", label: "Bairro", type: "text" },
       { name: "city", label: "Cidade", type: "text" },
       { name: "state", label: "UF", type: "text", placeholder: "SP" },
       { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
-      // Senha para autorizar ações do caixa (armazenada com hash; usada no app offline).
-      { name: "cash_action_password", label: "Senha de ações do caixa", type: "password", placeholder: "Deixe em branco para não alterar", section: "Operacao" },
+      // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
+      { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", configuredField: "has_cash_action_password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "As bolinhas indicam que já existe uma senha salva. Digite apenas para substituir. Não cole uma hash." },
+    ],
+  },
+  {
+    // Terminais (instalações) que já operaram na conta. O cadastro nasce
+    // sozinho na primeira operação de cada terminal — esta tela existe para
+    // dar nome ao que seria um UUID ("Balcão 01" em vez de "Navegador a1b2c3",
+    // que é o que aparece na mensagem de caixa ocupado) e para revogar uma
+    // instalação que não deve mais abrir caixa.
+    name: "terminais",
+    title: "Terminais do PDV",
+    endpoint: "/pdv-terminals/",
+    globalScope: true,
+    module: "base",
+    columns: [
+      { key: "name", label: "Terminal" },
+      { key: "installation_id", label: "Instalacao" },
+      { key: "device_type", label: "Tipo", type: "status", map: TERMINAL_TYPE_LABELS },
+      { key: "role", label: "Papel", type: "status", map: TERMINAL_ROLE_LABELS },
+      { key: "restaurant_name", label: "Restaurante" },
+      { key: "last_seen_at", label: "Ultimo contato", type: "date" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do terminal", type: "text", required: true, placeholder: "Balcao 01", full: true, hint: "É este nome que aparece em \"o caixa já está aberto por João no terminal ...\"." },
+      { name: "device_type", label: "Tipo", type: "dropdown", options: TERMINAL_TYPE_OPTIONS },
+      { name: "role", label: "Papel na rede local", type: "dropdown", options: TERMINAL_ROLE_OPTIONS },
+      { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, hint: "Desative para impedir que esta instalação volte a abrir caixa." },
+      { name: "revoked_reason", label: "Motivo da revogacao", type: "textarea", full: true, section: "Revogacao" },
     ],
   },
   {
@@ -599,42 +866,26 @@ export const resources = [
       { key: "username", label: "Usuario" },
       { key: "email", label: "Email" },
       { key: "first_name", label: "Nome" },
-      { key: "profile.profile_type", label: "Perfil", type: "status", map: PROFILE_TYPE_LABELS },
+      { key: "profile.role_name", label: "Cargo" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
       { name: "username", label: "Nome de usuario", type: "text", required: true, section: "Acesso" },
       { name: "email", label: "Email", type: "text", inputType: "email", required: true, section: "Acesso" },
       { name: "password", label: "Senha", type: "password", section: "Acesso" },
-      // Só superusuário vê isso (ResourceFormView filtra por `superuserOnly`).
-      // Não vai no corpo do POST/PATCH — vira o header X-Account-ID, que é
-      // como o backend decide em qual conta o usuário é criado (ver
-      // TenantMiddleware.resolve_account). Sem escolher, cai na própria
-      // conta do superusuário — por isso esse campo existe.
-      {
-        name: "account_scope",
-        label: "Conta",
-        type: "remote-dropdown",
-        endpoint: "/accounts/",
-        optionLabel: "name",
-        optionValue: "id",
-        placeholder: "Sua própria conta",
-        globalScope: true,
-        superuserOnly: true,
-        header: "X-Account-ID",
-        section: "Acesso",
-      },
       { name: "first_name", label: "Nome", type: "text", section: "Identificação" },
       { name: "last_name", label: "Sobrenome", type: "text", section: "Identificação" },
       { name: "profile.phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Identificação" },
       // Perfil (UserProfile) — enviado aninhado como `profile.*`.
-      { name: "profile.profile_type", label: "Perfil de acesso", type: "dropdown", options: PROFILE_TYPE_OPTIONS, default: "waiter", required: true, section: "Perfil de acesso" },
       { name: "profile.restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil de acesso" },
-      { name: "profile.role", label: "Cargo / permissões", type: "remote-dropdown", endpoint: "/roles/", optionLabel: "name", optionValue: "id", placeholder: "Sem cargo específico", globalScope: true, section: "Perfil de acesso" },
+      { name: "profile.role", label: "Cargo / permissões", type: "remote-dropdown", endpoint: "/roles/", optionLabel: "name", optionValue: "id", required: true, globalScope: true, section: "Perfil de acesso" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Perfil de acesso" },
     ],
   },
   {
+    // Perfis fixos (Garçom, Caixa, Gerente, Administrador) — ver backend
+    // apps/accounts/role_catalog.py. Sem `formFields`: tela somente-leitura,
+    // não há mais opção de criar/editar/apagar perfil (API também bloqueia).
     name: "perfis",
     title: "Perfis de Acesso",
     endpoint: "/roles/",
@@ -642,15 +893,9 @@ export const resources = [
     columns: [
       { key: "name", label: "Perfil" },
       { key: "code", label: "Codigo" },
+      { key: "is_account_admin", label: "Admin da conta", type: "boolean" },
+      { key: "max_discount_percent", label: "Desconto max. (%)" },
       { key: "created_at", label: "Criado em", type: "date" },
-    ],
-    formFields: [
-      { name: "name", label: "Nome do perfil", type: "text", required: true, section: "Perfil" },
-      { name: "code", label: "Codigo", type: "text", required: true, placeholder: "ex: gerente-vip", section: "Perfil" },
-      { name: "restaurant", label: "Restaurante (opcional)", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil" },
-      { name: "is_account_admin", label: "Administrador da Conta", type: "boolean", default: false, section: "Perfil", hint: "Dá acesso irrestrito a todos os restaurantes e configurações globais da conta." },
-      // Permissões de negócio vinculadas ao perfil (M2M).
-      { name: "permissions", label: "Permissões", type: "remote-multiselect", endpoint: "/permissions/", optionLabel: "name", optionValue: "id", grouped: true, full: true, section: "Permissões", hint: "Agrupadas por área. Itens com \"meu/meus\" restringem ao próprio operador (ex.: ver meus pedidos, gerenciar somente meu caixa)." },
     ],
   },
 ];

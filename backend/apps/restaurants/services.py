@@ -15,6 +15,7 @@ _MIRRORED_RESTAURANT_FIELDS = (
     "phone",
     "email",
     "address",
+    "district",
     "city",
     "state",
     "zip_code",

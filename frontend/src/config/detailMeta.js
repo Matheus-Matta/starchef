@@ -14,7 +14,6 @@ import {
   CASH_STATUS_LABELS,
   ORDER_STATUS_LABELS,
   ORDER_TYPE_LABELS,
-  PROFILE_TYPE_LABELS,
   TABLE_STATUS_LABELS,
 } from "./enums";
 import { formatMoney } from "../utils/format";
@@ -38,6 +37,7 @@ export function resolveDetailType(endpoint) {
     ["/delivery/deliverymen", "deliveryman"],
     ["/payments/methods", "paymentMethod"],
     ["/payments", "payment"],
+    ["/fiscal/profiles", "fiscalProfile"],
     ["/invoices", "invoice"],
     ["/printers", "printer"],
     ["/scales", "scale"],
@@ -69,6 +69,7 @@ export const DETAIL_META = {
     badge: (r) => ORDER_STATUS_LABELS[r.status] || r.status,
     metrics: [
       { label: "Total", key: "total", type: "money" },
+      { label: "Comanda", key: "command_number" },
       { label: "Mesa", key: "table_number" },
       { label: "Cliente", key: "customer_name" },
     ],
@@ -96,10 +97,10 @@ export const DETAIL_META = {
     ],
   },
   user: {
-    icon: "pi-user", accent: "indigo", eyebrow: "Usuario", badgeKey: "profile.profile_type",
+    icon: "pi-user", accent: "indigo", eyebrow: "Usuario", badgeKey: "profile.role_name",
     title: (r) => r.first_name || r.username || "Usuario",
     subtitle: (r) => r.email || r.username,
-    badge: (r) => PROFILE_TYPE_LABELS[r.profile?.profile_type] || r.profile?.profile_type || "-",
+    badge: (r) => r.profile?.role_name || "-",
   },
   payment: {
     icon: "pi-dollar", accent: "teal", eyebrow: "Pagamento",
@@ -137,6 +138,11 @@ export const DETAIL_META = {
   deliveryman: { icon: "pi-truck", accent: "green", eyebrow: "Entregador", title: (r) => r.name || "Entregador" },
   paymentMethod: { icon: "pi-credit-card", accent: "teal", eyebrow: "Forma de pagamento", title: (r) => r.name || "Forma" },
   invoice: { icon: "pi-file", accent: "indigo", eyebrow: "Nota fiscal", title: (r) => r.number || "Nota" },
+  fiscalProfile: {
+    icon: "pi-percentage", accent: "amber", eyebrow: "Perfil fiscal",
+    title: (r) => r.name || "Perfil fiscal",
+    subtitle: (r) => [r.ncm && `NCM ${r.ncm}`, r.cfop && `CFOP ${r.cfop}`].filter(Boolean).join(" · ") || "-",
+  },
   printer: { icon: "pi-print", accent: "slate", eyebrow: "Impressora", title: (r) => r.name || "Impressora" },
   scale: { icon: "pi-gauge", accent: "green", eyebrow: "Balanca", title: (r) => r.name || "Balanca" },
   role: { icon: "pi-shield", accent: "rose", eyebrow: "Perfil de acesso", title: (r) => r.name || "Perfil" },

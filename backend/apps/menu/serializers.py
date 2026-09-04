@@ -2,6 +2,8 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
+from apps.menu.barcodes import GTIN_LENGTHS, is_valid_gtin, normalize_barcode
+from apps.menu.units import IncompatibleUnitError, convert
 from apps.menu.models import (
     Ingredient,
     Menu,
@@ -60,11 +62,59 @@ class ProductVariationSerializer(TenantModelSerializer):
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
+def _validate_consumption(serializer, attrs, *, ingredient_field, quantity_field, unit_field):
+    """Coerencia entre insumo, quantidade e unidade de um vinculo de consumo."""
+    def current(name):
+        if name in attrs:
+            return attrs[name]
+        return getattr(serializer.instance, name, None)
+
+    ingredient = current(ingredient_field)
+    quantity = current(quantity_field) or 0
+    unit = current(unit_field) or ""
+
+    if ingredient is None:
+        if quantity:
+            raise serializers.ValidationError(
+                {ingredient_field: "Informe o insumo consumido ou zere a quantidade de consumo."}
+            )
+        return attrs
+
+    if quantity <= 0:
+        raise serializers.ValidationError(
+            {quantity_field: "Informe quanto do insumo cada unidade vendida consome."}
+        )
+
+    if unit and unit != ingredient.unit:
+        try:
+            convert(quantity, unit, ingredient.unit)
+        except IncompatibleUnitError:
+            raise serializers.ValidationError(
+                {unit_field: f"Nao e possivel converter {unit} para {ingredient.unit}, a unidade do insumo."}
+            ) from None
+    return attrs
+
+
 class ProductAddonSerializer(TenantModelSerializer):
     class Meta:
         model = ProductAddon
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def validate(self, attrs):
+        """O consumo declarado precisa fechar com a unidade do insumo.
+
+        A checagem vive aqui, e nao so na baixa: no momento da venda uma
+        unidade incoerente e apenas ignorada (o pedido ja foi pago e travar o
+        fechamento deixaria o operador sem saida), entao o erro passaria em
+        silencio e so apareceria como falta no inventario.
+        """
+        return _validate_consumption(
+            self, attrs,
+            ingredient_field="ingredient",
+            quantity_field="consumption_quantity",
+            unit_field="consumption_unit",
+        )
 
 
 class RecipeItemSerializer(TenantModelSerializer):
@@ -123,6 +173,42 @@ class ProductSerializer(TenantModelSerializer):
             raise serializers.ValidationError("O setor deve pertencer à mesma filial do produto.")
         return value
 
+    def validate_ean(self, value):
+        """Normaliza e recusa duplicidade e dígito verificador errado.
+
+        O erro precisa aparecer AQUI, no cadastro. Um código repetido só se
+        manifestaria na frente do cliente, com o PDV tendo de escolher entre
+        dois produtos sem ter como saber qual; e um dígito verificador errado
+        vira um produto que o leitor nunca encontra.
+        """
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        digits = normalize_barcode(raw)
+        if not digits:
+            raise serializers.ValidationError("O código de barras deve conter apenas dígitos.")
+        if len(digits) > 32:
+            raise serializers.ValidationError("Código de barras longo demais (máximo 32 dígitos).")
+        if len(digits) in GTIN_LENGTHS and not is_valid_gtin(digits):
+            raise serializers.ValidationError(
+                f"Dígito verificador inválido para um código de {len(digits)} dígitos. "
+                "Confira a etiqueta — um código errado aqui é um produto que o leitor nunca acha."
+            )
+
+        account = getattr(self.context.get("request"), "account", None)
+        duplicates = Product.all_objects.filter(ean=digits, deleted_at__isnull=True)
+        if account is not None:
+            duplicates = duplicates.filter(account=account)
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        conflict = duplicates.first()
+        if conflict is not None:
+            raise serializers.ValidationError(
+                f"O código {digits} já está cadastrado em \"{conflict.name}\". "
+                "Dois produtos com o mesmo código deixariam o PDV escolher um deles em silêncio."
+            )
+        return digits
+
     def validate_restaurants(self, value):
         account = getattr(self.context.get("request"), "account", None)
         if account and any(restaurant.account_id != account.id for restaurant in value):
@@ -139,14 +225,40 @@ class ProductSerializer(TenantModelSerializer):
         attrs = super().validate(attrs)
         if selected is not serializers.empty:
             attrs["restaurants"] = selected
+        # Vínculo direto (refrigerante em lata e afins): mesma coerência
+        # exigida do adicional. Produto COM ficha técnica ignora este vínculo
+        # na baixa — a ficha descreve a composição real —, mas um cadastro
+        # incoerente continua sendo recusado aqui.
+        return _validate_consumption(
+            self, attrs,
+            ingredient_field="stock_ingredient",
+            quantity_field="stock_consumption_quantity",
+            unit_field="stock_consumption_unit",
+        )
+
+
+class IngredientListSerializer(serializers.ListSerializer):
+    def validate(self, attrs):
+        seen = set()
+        errors = {}
+        for index, row in enumerate(attrs):
+            normalized = str(row.get("name") or "").strip().casefold()
+            if normalized in seen:
+                errors[index] = {"name": "O nome do insumo esta repetido neste lote."}
+            seen.add(normalized)
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
 
 class IngredientSerializer(TenantModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
+
     class Meta:
         model = Ingredient
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+        list_serializer_class = IngredientListSerializer
 
     def validate_minimum_stock(self, value):
         # Opcional, mas não pode ser negativo quando informado (STC-031).
@@ -156,17 +268,22 @@ class IngredientSerializer(TenantModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        # Nome único por filial — erro claro no campo em vez de 500/duplicidade (STC-033).
+        # O insumo é da conta: não se prende a restaurante nem a filial, e
+        # aceitar um vínculo aqui faria ele sumir da busca das outras
+        # unidades (o recorte por tenant esconde o que é de outro).
+        attrs["restaurant"] = None
+        attrs["branch"] = None
+        # Nome único na CONTA — erro claro no campo em vez de 500 por
+        # violação de constraint (STC-033).
         name = attrs.get("name", getattr(self.instance, "name", None))
-        branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if name is not None:
             siblings = Ingredient.objects.filter(name__iexact=name)
-            if branch is not None:
-                siblings = siblings.filter(branch=branch)
             if self.instance is not None:
                 siblings = siblings.exclude(pk=self.instance.pk)
             if siblings.exists():
-                raise serializers.ValidationError({"name": "Já existe um ingrediente com este nome."})
+                raise serializers.ValidationError(
+                    {"name": "Já existe um insumo com este nome nesta conta."}
+                )
         return attrs
 
 

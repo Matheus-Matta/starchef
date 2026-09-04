@@ -15,7 +15,8 @@ from unfold.widgets import (
     UnfoldBooleanSwitchWidget,
 )
 
-from apps.accounts.models import Account, UserProfile
+from apps.accounts.models import Account, Role, UserProfile
+from apps.accounts.role_catalog import CODE_ADMIN
 from apps.core.modules import MODULE_CATALOG, OPTIONAL_MODULES
 
 User = get_user_model()
@@ -116,10 +117,13 @@ class AccountCreationForm(AccountChangeForm):
         )
         user.set_password(self.cleaned_data["admin_password"])
         user.save()
+        # O signal `provision_account_system_roles` ja criou o perfil fixo
+        # "Administrador" junto com a conta (linha acima, no save_model).
+        admin_role = Role.all_objects.filter(account=account, code=CODE_ADMIN).first()
         UserProfile.objects.create(
             account=account,
             user=user,
-            profile_type=UserProfile.PROFILE_ADMIN,
+            role=admin_role,
             is_active=True,
         )
         return user

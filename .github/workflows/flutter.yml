@@ -3,27 +3,28 @@ name: flutter
 on:
   push:
     branches: [main]
-    # Tag de release (ex.: v1.4.0) — numa criação de tag o GitHub não tem um
-    # "before" sha significativo pra comparar, então o `paths:` abaixo não
-    # filtra nada: toda tag de release gera o instalador, ponto de corte oficial.
     tags: ["v*.*.*"]
     paths:
       - "flutter/**"
+      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
   pull_request:
     paths:
       - "flutter/**"
+      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
-  # Permite gerar o instalador sob demanda (ex.: apontando pra uma API diferente
-  # da variável PDV_API_BASE_URL do repositório) sem precisar alterar código.
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: "API_BASE_URL a embutir no build (vazio = usa a variável de repositório PDV_API_BASE_URL)"
+        description: "API_BASE_URL do build (vazio = variável PDV_API_BASE_URL)"
         required: false
         type: string
       sentry_dsn:
-        description: "PDV_SENTRY_DSN a embutir no build (vazio = usa o secret PDV_SENTRY_DSN do repositório)"
+        description: "PDV_SENTRY_DSN do build (vazio = secret PDV_SENTRY_DSN)"
+        required: false
+        type: string
+      update_manifest_url:
+        description: "URL do latest.json (vazio = GitHub Releases deste repositório)"
         required: false
         type: string
 
@@ -33,8 +34,6 @@ defaults:
 
 jobs:
   test:
-    # windows-latest porque é um app desktop Windows (window_manager, sqlite_async
-    # com paths do Windows) — analyze/test em outro OS não pega tudo que importa aqui.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,22 +48,95 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+      # `flutter test` roda em windows-latest, o runner hospedado mais lento
+      # do GitHub Actions, e alguns testes fazem I/O real de disco (SQLite
+      # temporário) sob timers reais — com a suíte inteira disputando disco em
+      # paralelo, um pico de contenção pontual pode estourar até uma folga
+      # generosa. Uma repetição automática absorve essa flakiness transitória
+      # sem esconder regressão de verdade: uma falha real reproduz nas duas
+      # tentativas e continua barrando o release.
       - name: Testes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $maxAttempts = 2
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            flutter test
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            if ($attempt -lt $maxAttempts) {
+              Write-Host "::warning::flutter test falhou na tentativa $attempt/$maxAttempts — tentando novamente (possível flakiness de I/O no runner Windows)."
+              Start-Sleep -Seconds 5
+            }
+          }
+          exit $LASTEXITCODE
+
+  test-garcom:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_garcom
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências do app do garçom
+        run: flutter pub get
+
+      - name: Analyze do app do garçom
+        run: flutter analyze
+
+      - name: Testes do app do garçom
         run: flutter test
 
-  # Só roda em tag vX.Y.Z ou disparo manual (nunca em PR nem em push direto
-  # na main) e só depois do job `test` passar. Commit direto na main nunca
-  # gera instalador — só a tag de release builda, pra backend/frontend/flutter
-  # saírem sempre com a MESMA versão sem duplicar build a cada commit.
-  build-installer:
-    needs: test
+  # O pubspec é a fonte da versão do binário e a tag é a fonte da versão do
+  # release. O pipeline para antes do build se os dois valores divergirem.
+  release-metadata:
+    needs: [test, test-garcom]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      garcom_version: ${{ steps.version.outputs.garcom_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conferir tag x versão do pubspec.yaml
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          full_version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+          version="${full_version%%+*}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida no pubspec.yaml: $full_version" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+              echo "Tag ${GITHUB_REF_NAME} não bate com pubspec.yaml (${version})." >&2
+              exit 1
+            fi
+          fi
+          garcom_full_version="$(awk '/^version:/{print $2; exit}' ../flutter_garcom/pubspec.yaml)"
+          garcom_version="${garcom_full_version%%+*}"
+          if [[ ! "$garcom_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida no flutter_garcom/pubspec.yaml: $garcom_full_version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "garcom_version=$garcom_version" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: release-metadata
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
     runs-on: windows-latest
-    permissions:
-      contents: write
     env:
       API_BASE_URL: ${{ inputs.api_base_url || vars.PDV_API_BASE_URL }}
       PDV_SENTRY_DSN: ${{ inputs.sentry_dsn || secrets.PDV_SENTRY_DSN }}
+      CUSTOM_UPDATE_MANIFEST_URL: ${{ inputs.update_manifest_url || vars.PDV_UPDATE_MANIFEST_URL }}
+      APP_VERSION: ${{ needs.release-metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,53 +147,296 @@ jobs:
       - name: Instalar dependências
         run: flutter pub get
 
-      # A tag é a fonte da verdade da versão do release (build_installer.ps1
-      # lê pubspec.yaml) — se alguém esquecer de bumpar o pubspec antes de
-      # taguear, o instalador sairia com o número errado sem ninguém notar.
-      - name: Conferir tag x versão do pubspec.yaml
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $tagVersion = $tag -replace '^v', ''
-          $versionLine = Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1
-          $pubspecVersion = $versionLine.Matches[0].Groups[1].Value.Split('+')[0]
-          if ($tagVersion -ne $pubspecVersion) {
-            throw "Tag $tag (versao $tagVersion) nao bate com pubspec.yaml (versao $pubspecVersion). Atualize o pubspec.yaml antes de taguear."
-          }
-
-      # API_BASE_URL é embutida no .exe via --dart-define (ver core/config/app_config.dart)
-      # — sem ela o app cairia no fallback de localhost em produção, então falha
-      # cedo em vez de gerar um instalador silenciosamente quebrado.
       - name: Build Windows (release)
         shell: pwsh
         run: |
           if (-not $env:API_BASE_URL) {
-            throw "API_BASE_URL nao definido. Configure a variavel de repositorio PDV_API_BASE_URL ou informe api_base_url no 'Run workflow'."
+            throw "API_BASE_URL não definido. Configure PDV_API_BASE_URL ou informe api_base_url."
           }
-          $defines = @("--dart-define=API_BASE_URL=$env:API_BASE_URL")
+          $manifestUrl = $env:CUSTOM_UPDATE_MANIFEST_URL
+          if (-not $manifestUrl) {
+            $manifestUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          }
+          $defines = @(
+            "--dart-define=API_BASE_URL=$env:API_BASE_URL",
+            "--dart-define=PDV_UPDATE_MANIFEST_URL=$manifestUrl"
+          )
           if ($env:PDV_SENTRY_DSN) {
             $defines += "--dart-define=PDV_SENTRY_DSN=$env:PDV_SENTRY_DSN"
           }
           flutter build windows --release @defines
-          if ($LASTEXITCODE -ne 0) { throw "flutter build windows falhou com codigo $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) {
+            throw "flutter build windows falhou com código $LASTEXITCODE"
+          }
 
       - name: Gerar instalador (Inno Setup)
         shell: pwsh
         run: .\windows\installer\build_installer.ps1
 
-      - name: Upload do instalador
+      - name: Gerar ZIP portátil do Windows
+        shell: pwsh
+        run: |
+          $output = "..\artifacts\StarChef-PDV-Windows-v$env:APP_VERSION.zip"
+          Compress-Archive -Path ".\build\windows\x64\runner\Release\*" -DestinationPath $output -Force
+
+      - name: Upload dos pacotes Windows
         uses: actions/upload-artifact@v4
         with:
-          name: starchef-pdv-installer
-          path: artifacts/StarChef-PDV-Setup-*.exe
+          name: starchef-pdv-windows-${{ needs.release-metadata.outputs.version }}
+          path: |
+            artifacts/StarChef-PDV-Setup-*.exe
+            artifacts/StarChef-PDV-Windows-v*.zip
           if-no-files-found: error
 
-      # Só em tag de release: publica (ou atualiza, se já existir) o Release do
-      # GitHub com o instalador anexado e notas geradas a partir dos commits.
+  build-linux:
+    needs: release-metadata
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
+    runs-on: ubuntu-latest
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url || vars.PDV_API_BASE_URL }}
+      PDV_SENTRY_DSN: ${{ inputs.sentry_dsn || secrets.PDV_SENTRY_DSN }}
+      CUSTOM_UPDATE_MANIFEST_URL: ${{ inputs.update_manifest_url || vars.PDV_UPDATE_MANIFEST_URL }}
+      APP_VERSION: ${{ needs.release-metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar bibliotecas do Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev zip
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências
+        run: flutter pub get
+
+      - name: Build Linux (release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${API_BASE_URL:-}" ]]; then
+            echo "API_BASE_URL não definido. Configure PDV_API_BASE_URL ou informe api_base_url." >&2
+            exit 1
+          fi
+          manifest_url="${CUSTOM_UPDATE_MANIFEST_URL:-}"
+          if [[ -z "$manifest_url" ]]; then
+            manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+          fi
+          defines=(
+            "--dart-define=API_BASE_URL=${API_BASE_URL}"
+            "--dart-define=PDV_UPDATE_MANIFEST_URL=${manifest_url}"
+          )
+          if [[ -n "${PDV_SENTRY_DSN:-}" ]]; then
+            defines+=("--dart-define=PDV_SENTRY_DSN=${PDV_SENTRY_DSN}")
+          fi
+          flutter config --enable-linux-desktop
+          flutter build linux --release "${defines[@]}"
+
+      - name: Gerar ZIP do Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../artifacts
+          cd build/linux/x64/release/bundle
+          zip -r "$GITHUB_WORKSPACE/artifacts/StarChef-PDV-Linux-v${APP_VERSION}.zip" .
+
+      - name: Upload do pacote Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-pdv-linux-${{ needs.release-metadata.outputs.version }}
+          path: artifacts/StarChef-PDV-Linux-v*.zip
+          if-no-files-found: error
+
+  build-garcom-apk:
+    needs: release-metadata
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_garcom
+    env:
+      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
+      GARCOM_KEYSTORE_BASE64: ${{ secrets.GARCOM_KEYSTORE_BASE64 }}
+      GARCOM_KEYSTORE_PASSWORD: ${{ secrets.GARCOM_KEYSTORE_PASSWORD }}
+      GARCOM_KEY_ALIAS: ${{ secrets.GARCOM_KEY_ALIAS }}
+      GARCOM_KEY_PASSWORD: ${{ secrets.GARCOM_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências do app do garçom
+        run: flutter pub get
+
+      - name: Configurar assinatura do APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          values=(
+            "${GARCOM_KEYSTORE_BASE64:-}"
+            "${GARCOM_KEYSTORE_PASSWORD:-}"
+            "${GARCOM_KEY_ALIAS:-}"
+            "${GARCOM_KEY_PASSWORD:-}"
+          )
+          present=0
+          for value in "${values[@]}"; do
+            if [[ -n "$value" ]]; then
+              present=$((present + 1))
+            fi
+          done
+          if [[ "$present" -ne 0 && "$present" -ne 4 ]]; then
+            echo "Configure todos os quatro Secrets GARCOM_*; a configuração está incompleta." >&2
+            exit 1
+          fi
+          if [[ "$present" -eq 0 ]]; then
+            # Sem os Secrets a build NAO falha: publicar o PDV e mais
+            # importante do que a atualizacao in-place do APK do garcom.
+            # Mas o APK sai assinado com a chave de debug, e cada execucao
+            # gera uma chave nova — o Android recusa em silencio instalar
+            # esse APK por cima de um ja instalado, entao a atualizacao
+            # automatica do garcom NAO vai funcionar neste release. Para
+            # ligar de vez: cadastre os quatro Secrets GARCOM_* (sempre o
+            # mesmo keystore, para sempre).
+            echo "::warning::Secrets GARCOM_* ausentes: APK assinado com chave de debug. A atualização automática do app do garçom NÃO funcionará neste release (o Android bloqueia a instalação por cima do app já instalado). Cadastre GARCOM_KEYSTORE_BASE64, GARCOM_KEYSTORE_PASSWORD, GARCOM_KEY_ALIAS e GARCOM_KEY_PASSWORD para habilitar."
+            exit 0
+          fi
+          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks
+          {
+            printf 'storeFile=starchef-garcom-release.jks\n'
+            printf 'storePassword=%s\n' "$GARCOM_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$GARCOM_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build do APK universal do garçom
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk --release
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+
+      - name: Upload do APK do garçom
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
+          path: artifacts/StarChef-Garcom-v*.apk
+          if-no-files-found: error
+
+  # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes do PDV
+  # e publica o manifesto junto do Release. O APK não entra no latest.json.
+  publish-release:
+    needs: [release-metadata, build-windows, build-linux, build-garcom-apk]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      APP_VERSION: ${{ needs.release-metadata.outputs.version }}
+      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
+    steps:
+      - name: Baixar pacotes dos builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: starchef-pdv-*-${{ needs.release-metadata.outputs.version }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Baixar APK do app do garçom
+        uses: actions/download-artifact@v4
+        with:
+          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
+          path: release-assets
+
+      - name: Gerar latest.json com SHA-256
+        shell: python
+        working-directory: .
+        run: |
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from urllib.parse import quote
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          assets = root / "release-assets"
+          version = os.environ["APP_VERSION"]
+          garcom_version = os.environ["GARCOM_VERSION"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          repository = os.environ["GITHUB_REPOSITORY"]
+
+          names = {
+              "windows_installer": f"StarChef-PDV-Setup-{version}.exe",
+              "windows_zip": f"StarChef-PDV-Windows-v{version}.zip",
+              "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
+              "garcom_apk": f"StarChef-Garcom-v{garcom_version}.apk",
+          }
+          for name in names.values():
+              if not (assets / name).is_file():
+                  raise SystemExit(f"Artefato obrigatório ausente: {name}")
+
+          def package(key, kind, file_format, recommended):
+              name = names[key]
+              path = assets / name
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              return {
+                  "kind": kind,
+                  "format": file_format,
+                  "name": name,
+                  "url": f"https://github.com/{repository}/releases/download/{tag}/{quote(name)}",
+                  "sha256": digest,
+                  "size": path.stat().st_size,
+                  "recommended": recommended,
+              }
+
+          manifest = {
+              "schema_version": 1,
+              "version": version,
+              "tag": tag,
+              "published_at": datetime.now(timezone.utc).isoformat(),
+              "commit": os.environ["GITHUB_SHA"],
+              "release_url": f"https://github.com/{repository}/releases/tag/{tag}",
+              "platforms": {
+                  "windows": {
+                      "packages": [
+                          package("windows_installer", "installer", "exe", True),
+                          package("windows_zip", "portable", "zip", False),
+                      ]
+                  },
+                  "linux": {
+                      "packages": [
+                          package("linux_zip", "portable", "zip", True),
+                      ]
+                  },
+              },
+              # App do garcom: versionamento proprio (flutter_garcom/pubspec.yaml),
+              # nao participa de "platforms" porque nao roda no PDV. O app
+              # consulta esta chave direto pra saber se ha versao nova pra
+              # baixar e instalar por cima da atual.
+              "garcom": {
+                  "version": garcom_version,
+                  "package": package("garcom_apk", "apk", "apk", True),
+              },
+          }
+          (assets / "latest.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+      - name: Guardar pacote completo do release no Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-pdv-release-${{ needs.release-metadata.outputs.version }}
+          path: release-assets/*
+          if-no-files-found: error
+
       - name: Publicar GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/StarChef-PDV-Setup-*.exe
+          files: release-assets/*

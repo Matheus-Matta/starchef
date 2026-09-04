@@ -84,6 +84,43 @@ class AuthUser {
       permissions.contains('*') ||
       permissions.contains('payments.manage');
 
+  /// Alguma permissão de caixa (abrir/fechar/sangria/suprimento/aprovar) —
+  /// controla se o destino "Financeiro" aparece no PDV.
+  bool get canAccessCash =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      const {
+        'cash.view',
+        'cash.view.own',
+        'cash.open',
+        'cash.close.own',
+        'cash.manage',
+        'cash.manage.own',
+        'cash.withdrawal',
+        'cash.supply',
+        'cash.approve',
+      }.any(permissions.contains);
+
+  /// Vê o saldo do caixa sem senha, só pelo próprio login.
+  ///
+  /// Cada conferência de caixa deve ser feita às cegas — quem conta não pode
+  /// primeiro olhar o saldo esperado e "ajustar" a contagem para bater. Isso
+  /// vale até para o gerente, que segue a mesma regra de segregação usada em
+  /// toda parte deste app (só quem administra a conta dispensa autorização
+  /// adicional). Ver [canAccessCash]: aquele controla se o destino Financeiro
+  /// aparece; este controla se o número dentro dele pode ser lido sem senha.
+  bool get canViewCashBalanceFreely =>
+      isSuperuser || profileType == 'admin' || profileType == 'owner';
+
+  bool get canCancelOrders =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      permissions.contains('orders.cancel');
+
   factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
     id: json['id'] as String,
     username: json['username'] as String,

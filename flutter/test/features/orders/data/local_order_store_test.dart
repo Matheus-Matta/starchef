@@ -1,240 +1,258 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:starchef_pdv/features/orders/data/local_order_store.dart';
+import 'package:starchef_pdv/core/data/entity_catalog.dart';
+import 'package:starchef_pdv/core/formatters/value_formatters.dart';
 
-const _scope = 'starchef.test|acc-1';
+import '../../../core/data/pdv_test_support.dart';
 
-Map<String, dynamic> order({
-  String id = 'order-1',
-  List<Map<String, dynamic>> items = const [],
-  String serviceFee = '0.00',
-  String discount = '0.00',
-  String restaurant = 'rest-1',
-}) => {
-  'id': id,
-  'restaurant': restaurant,
-  'sequence': 42,
-  'service_fee': serviceFee,
-  'delivery_fee': '0.00',
-  'discount': discount,
-  'subtotal': '0.00',
-  'total': '0.00',
-  'items': items,
-};
-
-Map<String, dynamic> item({
-  String id = 'item-1',
-  String total = '10.00',
-  String status = 'pending',
-  String name = 'X-Burger',
-}) => {
-  'id': id,
-  'product_name': name,
-  'quantity': 1,
-  'unit_price': total,
-  'total_price': total,
-  'status': status,
-};
-
+/// O pedido é o registro mais movimentado do PDV, e por isso o que mais dói
+/// quando some. Estes testes garantem que a edição feita sem rede sobrevive a
+/// sair e voltar da tela, que a versão do servidor não apaga o que ainda está
+/// na fila, e que os totais batem com o que o operador vê.
+///
+/// Antes existia um segundo banco (`local_orders.sqlite`) só para isto; agora
+/// é o mesmo `OrderRepository` que o resto do PDV usa (§1, §27).
 void main() {
-  late Directory directory;
-  late LocalOrderStore store;
+  late TestPdvStack stack;
 
   setUp(() async {
-    directory = await Directory.systemTemp.createTemp('starchef-local-orders');
-    store = LocalOrderStore(
-      file: File('${directory.path}${Platform.pathSeparator}orders.sqlite'),
-    );
+    stack = await TestPdvStack.create();
+    await stack.gateway.repository(EntityCatalog.product).applyRemoteList([
+      {
+        'id': 'prod-1',
+        'name': 'Coxinha',
+        'restaurant': 'rest-1',
+        'current_price': '6.00',
+      },
+    ]);
   });
 
-  tearDown(() async {
-    await store.close();
-    try {
-      if (await directory.exists()) await directory.delete(recursive: true);
-    } on FileSystemException {
-      // No Windows o arquivo pode continuar preso por instantes.
-    }
-  });
+  tearDown(() async => stack.dispose());
+
+  Future<String> abrirPedido() async {
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/',
+      body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+    );
+    return '${created.payload['id']}';
+  }
 
   test('guarda e devolve o pedido do servidor', () async {
-    await store.saveFromServer(order(items: [item()]), scope: _scope);
+    await stack.gateway.orders.applyRemote({
+      'id': 'pedido-1',
+      'sequence': 7,
+      'status': 'open',
+      'items': const [],
+    });
 
-    final stored = await store.read('order-1', scope: _scope);
+    final stored = await stack.gateway.orders.read('pedido-1');
 
-    expect(stored, isNotNull);
-    expect((stored!['items'] as List), hasLength(1));
+    expect(stored!.payload['sequence'], 7);
   });
 
   test('pedido criado offline existe antes do primeiro item', () async {
-    final local = await store.saveLocal(
-      order(id: 'offline-order-1'),
-      scope: _scope,
-    );
+    final orderId = await abrirPedido();
 
-    expect(local['updated_at'], isNotNull);
-    expect(await store.read('offline-order-1', scope: _scope), isNotNull);
-    final withItem = await store.addItem(
-      'offline-order-1',
-      item(id: 'offline-item-1'),
-      scope: _scope,
-    );
-    expect((withItem!['items'] as List), hasLength(1));
-  });
+    final stored = await stack.gateway.orders.read(orderId);
 
-  test('pagamento offline é removido depois que o ID é reconciliado', () async {
-    await store.saveLocal({
-      ...order(),
-      'offline_payments': [
-        {
-          'id': 'offline-payment-1',
-          'amount': '10.00',
-          '_offline_pending': true,
-        },
-      ],
-    }, scope: _scope);
-
-    await store.replaceId('offline-payment-1', 'payment-real-1', scope: _scope);
-    final merged = await store.saveFromServer(order(), scope: _scope);
-
-    expect(merged['offline_payments'], isNull);
+    expect(stored, isNotNull);
+    expect(stored!.payload['status'], 'open');
+    expect(stored.payload['items'], isEmpty);
   });
 
   test('a edição offline sobrevive a sair e voltar da tela', () async {
-    await store.saveFromServer(order(items: [item()]), scope: _scope);
-
-    await store.addItem(
-      'order-1',
-      item(id: 'offline-abc', total: '15.00', name: 'Suco'),
-      scope: _scope,
+    final orderId = await abrirPedido();
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 3},
     );
 
-    // Releitura simulando o operador navegando e voltando ao pedido.
-    final reread = await store.read('order-1', scope: _scope);
+    // "Sair e voltar" é exatamente isto: uma leitura nova, sem estado de tela.
+    final relido = await stack.gateway.read('/orders/$orderId/');
 
-    expect((reread!['items'] as List), hasLength(2));
-    expect(reread['subtotal'], '25.00');
-    expect(reread['total'], '25.00');
+    expect((relido['items'] as List), hasLength(1));
+    expect(ValueFormatters.number(relido['subtotal']), 18.0);
   });
 
   test('os totais respeitam taxa e desconto do servidor', () async {
-    await store.saveFromServer(
-      order(serviceFee: '3.00', discount: '5.00'),
-      scope: _scope,
+    await stack.gateway.orders.applyRemote({
+      'id': 'pedido-1',
+      'status': 'open',
+      'items': const [],
+      'service_fee': '5.00',
+      'discount': '2.00',
+      'delivery_fee': '3.00',
+    });
+    await stack.gateway.write(
+      'POST',
+      '/orders/pedido-1/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
     );
 
-    final updated = await store.addItem(
-      'order-1',
-      item(total: '20.00'),
-      scope: _scope,
-    );
+    final stored = await stack.gateway.orders.read('pedido-1');
 
-    // 20 + 3 de serviço - 5 de desconto. O terminal não recalcula a regra de
-    // serviço nem a promoção; ele preserva o que o servidor definiu.
-    expect(updated!['subtotal'], '20.00');
-    expect(updated['total'], '18.00');
+    // 6 (item) + 5 (serviço) + 3 (entrega) - 2 (desconto)
+    expect(ValueFormatters.number(stored!.payload['total']), 12.0);
   });
 
   test('cancelar um item tira o valor do total sem apagar o registro', () async {
-    await store.saveFromServer(
-      order(
-        items: [
-          item(id: 'a', total: '10.00'),
-          item(id: 'b', total: '4.00'),
-        ],
-      ),
-      scope: _scope,
+    final orderId = await abrirPedido();
+    final added = await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    final itemId = '${(added.payload['_created_item'] as Map)['id']}';
+
+    await stack.gateway.write(
+      'DELETE',
+      '/orders/$orderId/items/$itemId/void/',
+      body: {'reason': 'Desistiu'},
     );
 
-    final updated = await store.voidItem('order-1', 'a', scope: _scope);
-
-    expect(updated!['subtotal'], '4.00');
-    // O item continua no pedido marcado como cancelado, como o servidor faria.
-    final items = (updated['items'] as List).cast<Map<String, dynamic>>();
-    expect(items, hasLength(2));
-    expect(items.firstWhere((row) => row['id'] == 'a')['status'], 'voided');
+    final stored = await stack.gateway.orders.read(orderId);
+    final items = (stored!.payload['items'] as List).cast<Map>();
+    expect(items.single['status'], 'voided');
+    expect(items.single['void_reason'], 'Desistiu');
+    expect(ValueFormatters.number(stored.payload['total']), 0);
   });
 
-  test(
-    'uma resposta do servidor não apaga o item que ainda está na fila',
-    () async {
-      await store.saveFromServer(
-        order(items: [item(id: 'a')]),
-        scope: _scope,
-      );
-      await store.addItem(
-        'order-1',
-        item(id: 'offline-novo', total: '7.00'),
-        scope: _scope,
-      );
+  test('a versão do servidor não apaga o item que ainda está na fila', () async {
+    final orderId = await abrirPedido();
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
 
-      // O servidor responde sem conhecer o item da fila.
-      final merged = await store.saveFromServer(
-        order(items: [item(id: 'a')]),
-        scope: _scope,
-      );
+    // O servidor ainda não conhece o item lançado agora.
+    await stack.gateway.orders.applyRemote({
+      'id': orderId,
+      'status': 'open',
+      'items': const [],
+    });
 
-      // Sumir aqui daria ao operador a impressão de que o lançamento se perdeu.
-      final ids = (merged['items'] as List)
-          .cast<Map<String, dynamic>>()
-          .map((row) => '${row['id']}')
-          .toList();
-      expect(ids, containsAll(['a', 'offline-novo']));
-    },
-  );
+    final stored = await stack.gateway.orders.read(orderId);
+    expect((stored!.payload['items'] as List), hasLength(1));
+  });
 
   test('o item confirmado pelo servidor não vira duplicata', () async {
-    await store.saveFromServer(order(), scope: _scope);
-    await store.addItem(
-      'order-1',
-      item(id: 'offline-abc', total: '7.00'),
-      scope: _scope,
-    );
+    await stack.gateway.orders.applyRemote({
+      'id': 'pedido-1',
+      'status': 'open',
+      'items': [
+        {'id': 'item-real', 'product': 'prod-1', 'total_price': '6.00'},
+      ],
+    });
 
-    // A fila sincronizou: o ID temporário virou o real.
-    await store.replaceId('offline-abc', 'item-real', scope: _scope);
-    final merged = await store.saveFromServer(
-      order(
-        items: [item(id: 'item-real', total: '7.00')],
-      ),
-      scope: _scope,
-    );
+    final stored = await stack.gateway.orders.read('pedido-1');
 
-    expect((merged['items'] as List), hasLength(1));
-    expect((merged['items'] as List).single['id'], 'item-real');
+    expect((stored!.payload['items'] as List), hasLength(1));
   });
 
   test('a lista recente vem do mais novo para o mais antigo', () async {
-    await store.saveFromServer(order(id: 'order-1'), scope: _scope);
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    await store.saveFromServer(order(id: 'order-2'), scope: _scope);
+    await stack.gateway.orders.applyRemote({
+      'id': 'antigo',
+      'sequence': 1,
+      'created_at': '2026-01-01T10:00:00Z',
+      'items': const [],
+    });
+    await stack.gateway.orders.applyRemote({
+      'id': 'novo',
+      'sequence': 2,
+      'created_at': '2026-01-02T10:00:00Z',
+      'items': const [],
+    });
 
-    final recent = await store.recent(scope: _scope);
+    final page = await stack.gateway.orders.list();
 
-    expect(recent.map((row) => row['id']), ['order-2', 'order-1']);
+    expect(page.results.map((item) => item['id']), ['novo', 'antigo']);
   });
 
   test('escopos diferentes não enxergam os pedidos um do outro', () async {
-    await store.saveFromServer(order(), scope: _scope);
+    await stack.gateway.orders.applyRemote({
+      'id': 'pedido-1',
+      'items': const [],
+    });
 
-    expect(await store.read('order-1', scope: 'outra-conta'), isNull);
-    expect(await store.recent(scope: 'outra-conta'), isEmpty);
+    stack.gateway.bindSession(scope: 'starchef.test|conta-2:operador-9');
+
+    expect(await stack.gateway.orders.read('pedido-1'), isNull);
   });
 
   test('mutação em pedido desconhecido não cria registro solto', () async {
-    expect(await store.addItem('inexistente', item(), scope: _scope), isNull);
-    expect(await store.recent(scope: _scope), isEmpty);
+    await expectLater(
+      stack.gateway.write(
+        'POST',
+        '/orders/nao-existe/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await stack.gateway.orders.read('nao-existe'), isNull);
   });
 
   test('o total nunca fica negativo', () async {
-    await store.saveFromServer(order(discount: '50.00'), scope: _scope);
-
-    final updated = await store.addItem(
-      'order-1',
-      item(total: '10.00'),
-      scope: _scope,
+    await stack.gateway.orders.applyRemote({
+      'id': 'pedido-1',
+      'status': 'open',
+      'items': const [],
+      'discount': '999.00',
+    });
+    await stack.gateway.write(
+      'POST',
+      '/orders/pedido-1/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
     );
 
-    expect(updated!['total'], '0.00');
+    final stored = await stack.gateway.orders.read('pedido-1');
+    expect(ValueFormatters.number(stored!.payload['total']), 0);
+  });
+
+  test('pagamento offline some depois que o servidor confirma o pedido', () async {
+    final orderId = await abrirPedido();
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/close/',
+      body: {'service_fee_enabled': false},
+    );
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/pay/',
+      body: {'payment_method': 'pix', 'amount': '6.00'},
+      context: {
+        'payment_method': {'id': 'pix', 'method_type': 'pix'},
+      },
+    );
+    final local = await stack.gateway.orders.payments(orderId);
+    expect(local, hasLength(1));
+
+    // Quando a fila sobe, o `OfflineFirstGateway` reconcilia o id do
+    // recebimento antes de aplicar a resposta — é isso que impede o mesmo
+    // pagamento de aparecer duas vezes.
+    await stack.gateway.orders.replaceReference(
+      orderId,
+      '${local.single['id']}',
+      'pagamento-real',
+    );
+    await stack.gateway.orders.applyRemote({
+      'id': orderId,
+      'status': 'paid',
+      'items': const [],
+      'payments': [
+        {'id': 'pagamento-real', 'amount': '6.00'},
+      ],
+    }, overwriteLocalChanges: true);
+
+    final payments = await stack.gateway.orders.payments(orderId);
+    expect(payments, hasLength(1));
+    expect(payments.single['id'], 'pagamento-real');
   });
 }

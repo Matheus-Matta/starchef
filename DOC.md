@@ -85,12 +85,15 @@ O comando `sync_permissions` mantém catálogo, grupos e papéis padrão sincron
 
 Restaurantes podem exigir caixa aberto para vender e definir senha de autorização de caixa. Mesas e comandas podem ter códigos gerados em lote.
 
+`PdvTerminal` registra a instalação de onde cada operação partiu (UUID gerado pelo próprio terminal). A sessão de caixa pertence ao par operador + terminal: só quem abriu, na máquina onde abriu, movimenta e fecha. Trocar de operador ou de máquina exige uma transferência gerencial, com justificativa e auditoria.
+
 ### Menu
 
 - categorias, produtos, variações, adicionais, ingredientes, receitas e itens de receita;
 - menus e seus itens;
 - produto pode exigir a escolha de uma variação;
 - produto pode ser direcionado a um setor de produção;
+- produto pode ter código de barras (EAN/GTIN), opcional e único na conta, usado pelo leitor do PDV;
 - adicionais são vinculados explicitamente ao produto.
 
 ### Orders

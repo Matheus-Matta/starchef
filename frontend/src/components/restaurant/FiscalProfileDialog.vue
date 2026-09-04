@@ -10,6 +10,12 @@
     @save="save"
   >
     <AppErrorSummary :message="formError" />
+    <CosmosFiscalAssist
+      v-if="!profile"
+      class="fpd__cosmos"
+      :name="form.name"
+      @suggestion="applyCosmosSuggestion"
+    />
     <AppFormGrid :columns="2">
       <AppFormField label="Nome" name="name" :error="fieldErrors.name" required full>
         <template #default="{ fieldId, invalid }">
@@ -76,7 +82,7 @@
           <InputNumber :id="fieldId" v-model="form.approx_tax_rate" :class="{ 'p-invalid': invalid }" :min-fraction-digits="2" @update:model-value="dirty = true" />
         </template>
       </AppFormField>
-      <AppFormField label="Perfil padrão do restaurante">
+      <AppFormField label="Sugerir como padrão">
         <div class="fpd__switch">
           <InputSwitch v-model="form.is_default" @update:model-value="dirty = true" />
           <span>{{ form.is_default ? "Sim" : "Não" }}</span>
@@ -94,10 +100,13 @@
 
 <script setup>
 /**
- * Modal de criar/editar um perfil fiscal (FiscalProfile) — componente
- * genérico e reutilizável: usado na seção fiscal do restaurante e também no
- * formulário de produto (criação rápida sem sair da tela), bastando passar
- * `restaurantId`/`branchId`.
+ * Modal de criação rápida de um perfil fiscal (FiscalProfile) a partir do
+ * formulário de produto — evita sair da tela só para cadastrar o grupo
+ * tributário. O cadastro completo (com todos os campos) mora em
+ * Financeiro › Perfis fiscais.
+ *
+ * O perfil é da CONTA, não de um restaurante: o payload não leva
+ * restaurante/filial, e o mesmo perfil serve produtos de qualquer unidade.
  */
 import { reactive, ref, watch } from "vue";
 import InputNumber from "primevue/inputnumber";
@@ -108,13 +117,12 @@ import AppEntityDialog from "../form/AppEntityDialog.vue";
 import AppFormGrid from "../form/AppFormGrid.vue";
 import AppFormField from "../form/AppFormField.vue";
 import AppErrorSummary from "../form/AppErrorSummary.vue";
+import CosmosFiscalAssist from "../fiscal/CosmosFiscalAssist.vue";
 import { ResourceService } from "../../services/ResourceService";
 import { normalizeApiError } from "../../utils/apiError";
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
-  restaurantId: { type: String, required: true },
-  branchId: { type: String, required: true },
   /** Perfil a editar; null/undefined cria um novo. */
   profile: { type: Object, default: null },
 });
@@ -137,6 +145,18 @@ function emptyForm() {
 }
 
 const form = reactive(emptyForm());
+const cosmosAppliedFields = reactive({});
+
+function applyCosmosSuggestion(suggestion) {
+  for (const [field, value] of Object.entries(suggestion.fields || {})) {
+    if (!(field in form) || value == null || value === "") continue;
+    if (form[field] === "" || form[field] === cosmosAppliedFields[field]) {
+      form[field] = value;
+      cosmosAppliedFields[field] = value;
+      dirty.value = true;
+    }
+  }
+}
 
 // Reabre com os dados certos toda vez que o modal abre (criar limpo, editar preenchido).
 watch(
@@ -146,6 +166,7 @@ watch(
     Object.assign(form, props.profile ? { ...emptyForm(), ...props.profile } : emptyForm());
     formError.value = "";
     fieldErrors.value = {};
+    Object.keys(cosmosAppliedFields).forEach((key) => delete cosmosAppliedFields[key]);
     dirty.value = false;
   },
 );
@@ -159,7 +180,8 @@ async function save() {
   formError.value = "";
   fieldErrors.value = {};
   try {
-    const payload = { ...form, restaurant: props.restaurantId, branch: props.branchId };
+    // Sem restaurante/filial: o perfil vale para a conta inteira.
+    const payload = { ...form };
     const saved = props.profile?.id
       ? await service.update(props.profile.id, payload)
       : await service.create(payload);
@@ -176,5 +198,6 @@ async function save() {
 </script>
 
 <style scoped>
+.fpd__cosmos { margin: 0 0 16px; }
 .fpd__switch { display: flex; align-items: center; gap: 10px; height: var(--control-h); color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); }
 </style>

@@ -1,11 +1,105 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/network/api_client.dart';
+import 'package:starchef_pdv/core/storage/app_paths.dart';
 import 'package:starchef_pdv/core/network/realtime_client.dart';
 import 'package:starchef_pdv/features/devices/services/local_device_agent.dart';
 
+import '../../../core/data/pdv_test_support.dart';
+
 void main() {
+  group('DANFE não sai duas vezes', () {
+    Map<String, dynamic> danfeJob({String key = 'CHAVE-1'}) => {
+      'id': 'job-1',
+      'job_type': 'fiscal_danfe',
+      'payload': {
+        'payload_version': 2,
+        'invoice_id': 'nota-1',
+        'access_key': key,
+        'text_content': 'DANFE NFC-e',
+      },
+    };
+
+    test('a chave é da NOTA, não do trabalho de impressão', () {
+      // Dois trabalhos diferentes para a mesma nota são exatamente o que fazia
+      // o cliente receber duas vias idênticas.
+      final first = LocalDeviceAgent.fiscalDedupeKey(danfeJob());
+      final second = LocalDeviceAgent.fiscalDedupeKey({
+        ...danfeJob(),
+        'id': 'job-2',
+      });
+
+      expect(first, 'danfe:CHAVE-1');
+      expect(second, first);
+    });
+
+    test('recibo e comanda continuam podendo sair mais de uma vez', () {
+      for (final type in ['receipt', 'kitchen', 'weigh_ticket']) {
+        expect(
+          LocalDeviceAgent.fiscalDedupeKey({
+            ...danfeJob(),
+            'job_type': type,
+          }),
+          isNull,
+          reason: type,
+        );
+      }
+    });
+
+    test('nota sem chave nem id não inventa identidade', () {
+      expect(
+        LocalDeviceAgent.fiscalDedupeKey({
+          'job_type': 'fiscal_danfe',
+          'payload': {'payload_version': 2, 'text_content': 'DANFE'},
+        }),
+        isNull,
+      );
+    });
+
+    test('a marca do documento impresso sobrevive no banco local', () async {
+      final stack = await TestPdvStack.create();
+      addTearDown(stack.dispose);
+      final queue = stack.gateway.printQueue;
+      const key = 'danfe:CHAVE-1';
+
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: key,
+        ),
+        isFalse,
+      );
+
+      await queue.markDocumentPrinted(
+        scope: TestPdvStack.scope,
+        dedupeKey: key,
+      );
+
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: key,
+        ),
+        isTrue,
+      );
+      // Marcar de novo não é erro: os dois caminhos (fila e impressão manual)
+      // escrevem a mesma chave.
+      await queue.markDocumentPrinted(
+        scope: TestPdvStack.scope,
+        dedupeKey: key,
+      );
+      expect(
+        await queue.wasDocumentPrinted(
+          scope: TestPdvStack.scope,
+          dedupeKey: 'danfe:OUTRA',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('LocalDeviceAgent filtro de evento em tempo real', () {
     test('aceita PrintJob do próprio restaurante', () {
       final event = RealtimeEvent('model.updated', {
@@ -33,343 +127,366 @@ void main() {
       });
       expect(LocalDeviceAgent.isPrintJobEvent(event, 'r1'), isFalse);
     });
-  });
 
-  group('LocalDeviceAgent Code128 payload', () {
-    test('extracts Code128 only from payload version 2', () {
-      expect(
-        LocalDeviceAgent.code128ValueFromPayload({
-          'payload_version': 2,
-          'barcode': {'symbology': 'code128', 'value': ' CMD-1042 '},
-        }),
-        'CMD-1042',
-      );
-      expect(
-        LocalDeviceAgent.code128ValueFromPayload({
-          'payload_version': 1,
-          'barcode': {'symbology': 'CODE128', 'value': 'CMD-1042'},
-        }),
-        isNull,
-      );
-      expect(
-        LocalDeviceAgent.code128ValueFromPayload({
-          'payload_version': 2,
-          'barcode': {'symbology': 'QR', 'value': 'CMD-1042'},
-        }),
-        isNull,
-      );
-      expect(
-        LocalDeviceAgent.code128ValueFromPayload({
-          'payload_version': 2,
-          'barcode': {'symbology': 'CODE128', 'value': '   '},
-        }),
-        isNull,
-      );
-    });
-  });
-
-  group('LocalDeviceAgent ESC/POS Code128', () {
-    test('encodes a GS k Code128-B command with human-readable text', () {
-      final bytes = LocalDeviceAgent.escPosCode128Bytes('ABC123');
-
-      expect(bytes, isNotNull);
-      expect(
-        bytes,
-        containsAllInOrder([
-          0x1d,
-          0x48,
-          0x02,
-          0x1d,
-          0x68,
-          0x50,
-          0x1d,
-          0x77,
-          0x02,
-          0x1d,
-          0x6b,
-          0x49,
-          8,
-          0x7b,
-          0x42,
-          0x41,
-          0x42,
-          0x43,
-          0x31,
-          0x32,
-          0x33,
-        ]),
-      );
-      expect(bytes!.sublist(bytes.length - 4), [0x0a, 0x1b, 0x61, 0x00]);
-    });
-
-    test('escapes literal braces in Code128-B data', () {
-      final bytes = LocalDeviceAgent.escPosCode128Bytes('A{B')!;
-      final gsK = bytes.indexOf(0x49);
-
-      expect(bytes.sublist(gsK + 1, gsK + 8), [
-        6,
-        0x7b,
-        0x42,
-        0x41,
-        0x7b,
-        0x7b,
-        0x42,
-      ]);
-    });
-
-    test('rejects values that cannot be represented safely', () {
-      expect(LocalDeviceAgent.escPosCode128Bytes('COMANDÁ'), isNull);
-      final tooLong = List.filled(254, 'A').join();
-      expect(LocalDeviceAgent.escPosCode128Bytes(tooLong), isNull);
-      expect(LocalDeviceAgent.escPosCode128Bytes('   '), isNull);
-    });
-
-    test(
-      'assembles content, barcode, then feed and cut for raw transports',
-      () {
-        final barcode = LocalDeviceAgent.escPosCode128Bytes('CMD-42')!;
-        final bytes = LocalDeviceAgent.rawTransportBytes(
-          'TICKET',
-          isEscPos: true,
-          barcodeValue: 'CMD-42',
-        );
-        final barcodeStart = _sublistIndex(bytes, barcode);
-
+    test('reconhece alterações de impressora e balança da unidade', () {
+      for (final resource in ['printers.printer', 'printers.scale']) {
+        final event = RealtimeEvent('model.updated', {
+          'resource': resource,
+          'restaurant_id': 'r1',
+        });
         expect(
-          bytes,
-          containsAllInOrder([0x1b, 0x40, 0x1b, 0x74, 0x02, 0x1b, 0x33, 34]),
+          LocalDeviceAgent.isDeviceConfigurationEvent(event, 'r1'),
+          isTrue,
         );
-        expect(bytes, containsAllInOrder(utf8.encode('TICKET')));
-        expect(
-          bytes.sublist(barcodeStart, barcodeStart + barcode.length),
-          barcode,
-        );
-        expect(bytes.sublist(barcodeStart + barcode.length), [
-          10,
-          10,
-          10,
-          29,
-          86,
-          0,
-        ]);
-      },
-    );
+      }
+    });
 
+    test('ignora configuração de equipamento de outra unidade', () {
+      final event = RealtimeEvent('model.updated', {
+        'resource': 'printers.printer',
+        'restaurant_id': 'r2',
+      });
+      expect(LocalDeviceAgent.isDeviceConfigurationEvent(event, 'r1'), isFalse);
+    });
+  });
+
+  group('LocalDeviceAgent pausas físicas padrão', () {
     test(
-      'selects PC850 and encodes Brazilian accents without UTF-8 mojibake',
-      () {
-        final bytes = LocalDeviceAgent.rawTransportBytes(
-          'Serviço · preferência',
-          isEscPos: true,
-        );
-
-        expect(bytes, containsAllInOrder([0x1b, 0x74, 0x02]));
-        expect(
-          bytes,
-          containsAllInOrder([0x53, 0x65, 0x72, 0x76, 0x69, 0x87, 0x6f]),
-        );
-        expect(bytes, isNot(containsAllInOrder(utf8.encode('Serviço'))));
-      },
-    );
-  });
-
-  group('LocalDeviceAgent QR payload (DANFE NFC-e)', () {
-    test('extracts qr_data only from payload version 2', () {
-      expect(
-        LocalDeviceAgent.qrValueFromPayload({
-          'payload_version': 2,
-          'qr_data': ' https://sefaz.sp.gov.br/nfce?p=abc ',
-        }),
-        'https://sefaz.sp.gov.br/nfce?p=abc',
-      );
-      expect(
-        LocalDeviceAgent.qrValueFromPayload({
-          'payload_version': 1,
-          'qr_data': 'https://sefaz.sp.gov.br/nfce?p=abc',
-        }),
-        isNull,
-      );
-      expect(
-        LocalDeviceAgent.qrValueFromPayload({
-          'payload_version': 2,
-          'qr_data': '   ',
-        }),
-        isNull,
-      );
-      expect(
-        LocalDeviceAgent.qrValueFromPayload({'payload_version': 2}),
-        isNull,
-      );
-    });
-  });
-
-  group('LocalDeviceAgent ESC/POS QR Code', () {
-    test(
-      'encodes a GS ( k sequence: model, size, correction, store, print',
-      () {
-        final bytes = LocalDeviceAgent.escPosQrCodeBytes('abc')!;
-        final data = utf8.encode('abc');
-
-        expect(
-          bytes,
-          containsAllInOrder([
-            // Select model 2.
-            0x1d, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00,
-            // Module size 6.
-            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,
-            // Error correction level M.
-            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,
-            // Store data (pL/pH = 3 + len(data) = 6, little-endian).
-            0x1d, 0x28, 0x6b, 3 + data.length, 0x00, 0x31, 0x50, 0x30,
-            ...data,
-            // Print symbol.
-            0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,
-          ]),
-        );
-        expect(bytes.first, 0x0a);
-        expect(bytes.sublist(1, 4), [0x1b, 0x61, 0x01]); // center before.
-        expect(bytes.sublist(bytes.length - 4), [
-          0x0a,
-          0x1b,
-          0x61,
-          0x00,
-        ]); // restore after.
-      },
-    );
-
-    test('computes a two-byte little-endian length for larger payloads', () {
-      final longUrl = 'https://sefaz.sp.gov.br/nfce?p=${'0' * 300}';
-      final bytes = LocalDeviceAgent.escPosQrCodeBytes(longUrl)!;
-      final data = utf8.encode(longUrl);
-      final storeLength = 3 + data.length;
-
-      final storeCmd = bytes.indexOf(0x50); // fn='P' (store).
-      // Os dois bytes anteriores ao cn/fn são pL/pH.
-      expect(bytes[storeCmd - 3], storeLength & 0xff);
-      expect(bytes[storeCmd - 2], (storeLength >> 8) & 0xff);
-    });
-
-    test('rejects empty or oversized payloads', () {
-      expect(LocalDeviceAgent.escPosQrCodeBytes('   '), isNull);
-      final tooLong = List.filled(701, 'A').join();
-      expect(LocalDeviceAgent.escPosQrCodeBytes(tooLong), isNull);
-    });
-
-    test('assembles content then QR bytes for raw transports', () {
-      final qr = LocalDeviceAgent.escPosQrCodeBytes('https://x.test')!;
-      final bytes = LocalDeviceAgent.rawTransportBytes(
-        'DANFE',
-        isEscPos: true,
-        qrValue: 'https://x.test',
-      );
-      final qrStart = _sublistIndex(bytes, qr);
-
-      expect(bytes, containsAllInOrder(utf8.encode('DANFE')));
-      expect(bytes.sublist(qrStart, qrStart + qr.length), qr);
-      expect(bytes.sublist(qrStart + qr.length), [10, 10, 10, 29, 86, 0]);
-    });
-  });
-
-  group('LocalDeviceAgent barcode text fallback', () {
-    test('adds an explicit fallback when raw barcode is unavailable', () {
-      expect(
-        LocalDeviceAgent.textWithBarcodeFallback('TICKET', 'CMD-42'),
-        'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42',
-      );
-    });
-
-    test('does not duplicate a fallback already rendered by the backend', () {
-      const content = 'TICKET\nCOMANDA - CODE128\nCMD-42';
-
-      expect(
-        LocalDeviceAgent.textWithBarcodeFallback(content, 'CMD-42'),
-        content,
-      );
-    });
-
-    test('keeps textual fallback on a non-ESC/POS raw transport', () {
-      final bytes = LocalDeviceAgent.rawTransportBytes(
-        'TICKET',
-        isEscPos: false,
-        barcodeValue: 'CMD-42',
-      );
-
-      expect(utf8.decode(bytes), 'TICKET\n\nCOMANDA - CODE128 (TEXTO)\nCMD-42');
-    });
-  });
-
-  group('LocalDeviceAgent corte e disponibilidade', () {
-    test('separa a guilhotina do conteúdo para drenar antes do corte', () {
-      final bytes = LocalDeviceAgent.rawTransportBytes(
-        'CUPOM LONGO',
-        isEscPos: true,
-      );
-
-      final parts = LocalDeviceAgent.splitCutCommand(bytes, isEscPos: true);
-
-      expect(parts.content, isNotEmpty);
-      expect(parts.content.sublist(parts.content.length - 3), [10, 10, 10]);
-      expect(parts.cut, LocalDeviceAgent.escPosCutBytes);
-    });
-
-    test(
-      'publica status dinâmico retornado pela checagem de hardware',
+      'mantém uma folga padrão depois do corte, antes de liberar a porta',
       () async {
-        var connected = true;
+        // Sem essa folga, um segundo trabalho enfileirado logo em seguida na
+        // MESMA porta (ex.: a nota de cancelamento, na impressora que acabou
+        // de receber a comanda original) reabria a porta antes da guilhotina
+        // terminar de atuar — o sistema aceitava os bytes sem erro nenhum,
+        // mas a impressora nunca chegava a processar o segundo cupom.
         final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
-        final agent = LocalDeviceAgent(
-          api: api,
-          availabilityProbe: (_) async => connected,
-        );
-        final printer = <String, dynamic>{
-          'connection_type': 'serial',
-          'endpoint': '/dev/starchef-printer',
-        };
-
-        expect(await agent.checkPrinterAvailability(printer), isTrue);
-        expect(agent.printerAvailability.value.isAvailable, isTrue);
-
-        connected = false;
-        expect(await agent.checkPrinterAvailability(printer), isFalse);
-        expect(
-          agent.printerAvailability.value.phase,
-          PrinterAvailabilityPhase.unavailable,
-        );
+        final agent = LocalDeviceAgent(api: api);
+        expect(agent.postCutSettleDelay, const Duration(milliseconds: 400));
         await api.dispose();
       },
     );
-
-    test('impressora ausente gera aviso amigável sem exceção nativa', () async {
-      final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
-      final agent = LocalDeviceAgent(
-        api: api,
-        availabilityProbe: (_) async => false,
-      );
-
-      expect(
-        () => agent.printForPrinter({
-          'connection_type': 'serial',
-          'endpoint': 'COM99',
-        }, 'RECIBO'),
-        throwsA(
-          isA<PrinterCommunicationException>().having(
-            (error) => error.message,
-            'message',
-            contains('Falha ao comunicar com a impressora'),
-          ),
-        ),
-      );
-      await api.dispose();
-    });
   });
-}
 
-int _sublistIndex(List<int> source, List<int> pattern) {
-  for (var index = 0; index <= source.length - pattern.length; index++) {
-    if (source.sublist(index, index + pattern.length).join(',') ==
-        pattern.join(',')) {
-      return index;
+  group('LocalDeviceAgent fila com várias impressoras', () {
+    late TestPdvStack stack;
+    late Directory locks;
+
+    setUp(() async {
+      stack = await TestPdvStack.create();
+      locks = await Directory.systemTemp.createTemp('starchef-drain-locks');
+      AppPaths.overrideDataDirectory(locks);
+    });
+
+    tearDown(() async {
+      AppPaths.overrideDataDirectory(null);
+      await stack.dispose();
+      try {
+        await locks.delete(recursive: true);
+      } on FileSystemException {
+        // No Windows o arquivo de trava pode continuar preso por instantes.
+      }
+    });
+
+    test(
+      'uma impressora fora do ar não segura o cupom das outras',
+      () async {
+        // O sintoma era exatamente este: o cupom do bar travado numa térmica
+        // de rede sem resposta, e a comanda da cozinha — enfileirada depois,
+        // numa impressora que estava funcionando — nunca saindo, sem erro
+        // nenhum na tela. A drenagem parava no primeiro que falhava.
+        final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final escritas = <String>[];
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async {
+            if (target.host == '192.0.2.99') {
+              throw const SocketException('sem resposta');
+            }
+            escritas.add(target.host);
+          },
+        );
+        addTearDown(agent.dispose);
+
+        final queue = stack.gateway.printQueue;
+        await queue.enqueue(
+          scope: TestPdvStack.scope,
+          printer: const {
+            'id': 'bar',
+            'name': 'Bar',
+            'connection_type': 'network',
+            'host': '192.0.2.99',
+            'port': 9100,
+          },
+          jobType: 'kitchen',
+          content: 'CHOPP',
+        );
+        await queue.enqueue(
+          scope: TestPdvStack.scope,
+          printer: const {
+            'id': 'cozinha',
+            'name': 'Cozinha',
+            'connection_type': 'network',
+            'host': '192.0.2.10',
+            'port': 9100,
+          },
+          jobType: 'kitchen',
+          content: 'X-BURGER',
+        );
+
+        await agent.drainPrintQueue();
+
+        expect(escritas, ['192.0.2.10']);
+        final resumo = await queue.summary(scope: TestPdvStack.scope);
+        // O cupom do bar continua na fila para a próxima tentativa; o da
+        // cozinha já saiu no papel.
+        expect(resumo.pending, 1);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+  });
+
+  group('LocalDeviceAgent confirmação de impressão', () {
+    test(
+      'mark-printed falhando não reimprime o mesmo trabalho no ciclo seguinte',
+      () async {
+        var writes = 0;
+        var markPrintedAttempts = 0;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        server.listen((request) async {
+          final response = request.response;
+          response.headers.contentType = ContentType.json;
+          switch (request.uri.path) {
+            case '/api/v1/printers/':
+              response.write(
+                jsonEncode({
+                  'results': [
+                    {
+                      'id': 'printer-1',
+                      'name': 'Balança',
+                      'connection_type': 'network',
+                      'host': '192.0.2.10',
+                      'port': 9100,
+                      'driver_type': 'escpos',
+                      'auto_print': false,
+                    },
+                  ],
+                }),
+              );
+            case '/api/v1/print-jobs/':
+              final status = request.uri.queryParameters['status'];
+              response.write(
+                jsonEncode({
+                  'results': status == 'pending'
+                      ? [
+                          {
+                            'id': 'job-1',
+                            'status': 'pending',
+                            'job_type': 'weigh_ticket',
+                            'printer': 'printer-1',
+                            'payload': {'text_content': 'NOTA DE PESAGEM'},
+                          },
+                        ]
+                      : const [],
+                }),
+              );
+            case '/api/v1/print-jobs/job-1/mark-printed/':
+              markPrintedAttempts++;
+              if (markPrintedAttempts == 1) {
+                response.statusCode = HttpStatus.internalServerError;
+                response.write(jsonEncode({'detail': 'falha simulada'}));
+              } else {
+                response.write(jsonEncode({'ok': true}));
+              }
+            default:
+              response.statusCode = HttpStatus.notFound;
+          }
+          await response.close();
+        });
+        addTearDown(() => server.close(force: true));
+
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        final agent = LocalDeviceAgent(
+          api: api,
+          networkWriter: (target, bytes) async => writes++,
+        );
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+        );
+        expect(writes, 1, reason: 'primeiro ciclo imprime fisicamente');
+        expect(markPrintedAttempts, 1);
+
+        // mark-printed falhou no ciclo anterior: o job continua "pending" no
+        // servidor de mentira e volta a aparecer aqui — sem a correção, isto
+        // reimprimiria o mesmo cupom.
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+        );
+        expect(
+          writes,
+          1,
+          reason: 'não reimprime; só reenvia a confirmação',
+        );
+        expect(markPrintedAttempts, 2);
+      },
+    );
+  });
+
+  group('LocalDeviceAgent ao assumir o papel de Caixa Principal', () {
+    /// Servidor de mentira com o acúmulo que um Caixa Principal anterior
+    /// deixou pendente.
+    Future<HttpServer> servidorComBacklog({
+      required String criadoEm,
+      required List<int> writes,
+    }) async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final response = request.response;
+        response.headers.contentType = ContentType.json;
+        switch (request.uri.path) {
+          case '/api/v1/printers/':
+            response.write(
+              jsonEncode({
+                'results': [
+                  {
+                    'id': 'printer-1',
+                    'name': 'Balança',
+                    'connection_type': 'network',
+                    'host': '192.0.2.10',
+                    'port': 9100,
+                    'driver_type': 'escpos',
+                    'auto_print': false,
+                  },
+                ],
+              }),
+            );
+          case '/api/v1/print-jobs/':
+            final status = request.uri.queryParameters['status'];
+            response.write(
+              jsonEncode({
+                'results': status == 'pending'
+                    ? [
+                        {
+                          'id': 'job-antigo',
+                          'status': 'pending',
+                          'job_type': 'weigh_ticket',
+                          'printer': 'printer-1',
+                          'created_at': criadoEm,
+                          'payload': {'text_content': 'NOTA DE PESAGEM'},
+                        },
+                      ]
+                    : const [],
+              }),
+            );
+          case '/api/v1/print-jobs/job-antigo/mark-printed/':
+            response.write(jsonEncode({'ok': true}));
+          default:
+            response.statusCode = HttpStatus.notFound;
+        }
+        await response.close();
+      });
+      return server;
     }
-  }
-  return -1;
+
+    test(
+      'não imprime o que já estava pendente antes da virada',
+      () async {
+        // O caso relatado: o terminal operou como Caixa Secundário e imprimiu
+        // as notas na hora, na impressora dele. Os `PrintJob` correspondentes
+        // ficaram pendentes no servidor, porque quem os fecharia era o
+        // principal daquele momento. Ao virar principal, ele encontrava esse
+        // acúmulo inteiro e mandava tudo para a impressora de uma vez — todas
+        // as notas do expediente saindo de novo.
+        final writes = <int>[];
+        final server = await servidorComBacklog(
+          criadoEm: DateTime.now()
+              .toUtc()
+              .subtract(const Duration(hours: 2))
+              .toIso8601String(),
+          writes: writes,
+        );
+        addTearDown(() => server.close(force: true));
+
+        final stack = await TestPdvStack.create();
+        addTearDown(stack.dispose);
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async => writes.add(bytes.length),
+        );
+        addTearDown(agent.dispose);
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+          takingOver: true,
+        );
+
+        expect(writes, isEmpty, reason: 'nada sai no papel sozinho');
+        // Mas o cupom não some: ele fica visível na fila, esperando a decisão
+        // de quem está no balcão.
+        // O escopo da fila segue a sessao do token usado nas requisicoes, e
+        // nao o do bind inicial do stack de teste.
+        final retidos = await stack.gateway.printQueue.entries(
+          scope: agent.printScope!,
+        );
+        expect(retidos.single.remoteJobId, 'job-antigo');
+        expect(retidos.single.lastError, contains('Caixa Principal'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'imprime normalmente o que o servidor cria depois da virada',
+      () async {
+        // A retenção vale só para o acúmulo herdado. Um trabalho novo é
+        // responsabilidade deste terminal e tem de sair sem ninguém mandar.
+        final writes = <int>[];
+        final server = await servidorComBacklog(
+          criadoEm: DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 1))
+              .toIso8601String(),
+          writes: writes,
+        );
+        addTearDown(() => server.close(force: true));
+
+        final stack = await TestPdvStack.create();
+        addTearDown(stack.dispose);
+        final api = ApiClient(
+          baseUrl: 'http://127.0.0.1:${server.port}/api/v1',
+        );
+        addTearDown(api.dispose);
+        api.attachLocalStore(gateway: stack.gateway);
+        final agent = LocalDeviceAgent(
+          api: api,
+          delay: (_) async {},
+          networkWriter: (target, bytes) async => writes.add(bytes.length),
+        );
+        addTearDown(agent.dispose);
+
+        await agent.processPendingPrintJobsForTesting(
+          token: 'tok',
+          restaurantId: 'rest-1',
+          takingOver: true,
+        );
+
+        expect(writes, hasLength(1));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+  });
 }

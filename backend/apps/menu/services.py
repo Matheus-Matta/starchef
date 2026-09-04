@@ -33,18 +33,34 @@ def recalculate_recipe_costs(recipe):
 
 @transaction.atomic
 def update_ingredient_average_cost(ingredient, incoming_quantity, incoming_unit_cost):
-    """Update Ingredient.average_cost using weighted average when stock comes in."""
+    """Update Ingredient.average_cost using weighted average when stock comes in.
+
+    A entrada e chamada DEPOIS que o movimento foi gravado, entao o saldo lido
+    aqui ja inclui a quantidade que esta chegando. Some-la de novo contaria a
+    entrada duas vezes e puxaria a media na direcao do custo novo — o preco de
+    uma compra grande virava praticamente o custo medio do insumo. Descontar a
+    entrada devolve o saldo ANTERIOR, que e a base correta da ponderacao.
+    """
     from apps.stock.models import StockMovement
 
-    current_stock = (
-        StockMovement.objects.filter(
+    incoming_quantity = Decimal(str(incoming_quantity))
+    incoming_unit_cost = Decimal(str(incoming_unit_cost))
+
+    # `all_objects` com o filtro de conta explicito, e nao o manager com escopo
+    # de tenant: este servico e chamado de dentro de outros servicos, onde o
+    # contexto ambiente pode nao estar definido. Sem conta no contexto, o
+    # manager devolve queryset vazio — o saldo viria zero e a media passaria a
+    # ser simplesmente o custo da ultima compra, sem ponderacao nenhuma.
+    balance = (
+        StockMovement.all_objects.filter(
+            account_id=ingredient.account_id,
             ingredient=ingredient,
             branch=ingredient.branch,
+            deleted_at__isnull=True,
         ).aggregate(balance=Sum("quantity"))["balance"]
         or Decimal("0")
     )
-    incoming_quantity = Decimal(str(incoming_quantity))
-    incoming_unit_cost = Decimal(str(incoming_unit_cost))
+    current_stock = balance - incoming_quantity
     current_cost = ingredient.average_cost
 
     if current_stock > Decimal("0") and incoming_quantity > Decimal("0"):

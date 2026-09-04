@@ -34,8 +34,8 @@ backend/
     kitchen/               telas/config do KDS (estações e colunas)
     payments/              formas de pagamento, pagamentos, caixa (CashRegister/CashMovement)
     printers/              impressoras, balanças, leituras de peso, fila de impressão (PrintJob)
-    stock/                 locais de estoque e movimentações
-    invoices/               perfil/config fiscal e notas fiscais (contrato, sem emissor real)
+    stock/                 fornecedores, locais, entradas, lotes e movimentações de estoque
+    invoices/               perfil/config fiscal, notas e provedores Manual + Focus NFe
     integrations/           contratos de integração externa (ex.: FiscalProvider)
     reports/                endpoints de relatórios agregados
     sla/                    acordos de nível de serviço operacionais
@@ -50,6 +50,15 @@ backend/
 ```
 
 Cada app de domínio segue o padrão: `models.py`, `serializers.py`, `views.py` (ViewSets DRF), `admin.py`, e `services.py` quando há regra transacional não trivial (ex.: `orders/services.py`, `payments/services.py`, `printers/services.py`).
+
+As credenciais da Focus NFe ficam em `accounts.FocusNfeConfig`, numa relação `OneToOne` com `Account`. O `.env` apenas provisiona esse registro na migration/criação da conta; chamadas externas nunca usam o `.env` como fallback.
+
+As credenciais da Bluesoft Cosmos ficam em `accounts.CosmosConfig`, também em
+`OneToOne` com `Account`. A integração nasce desativada e não usa fallback do
+`.env`: cada conta informa seu próprio `X-Cosmos-Token` e `User-Agent`. O token
+é somente escrita; a API devolve apenas `api_token_configured`/`is_ready`.
+`apps/invoices/cosmos.py` pesquisa produtos por descrição, sugere NCM/CEST e
+mantém o resultado em cache por sete dias para economizar a cota da Cosmos.
 
 ## 3. Como rodar em desenvolvimento
 
@@ -112,17 +121,22 @@ Outras peças centrais:
 - **Refresh**: `CookieTokenRefreshView` lê o refresh token do corpo ou do cookie, reemite tokens e regrava os cookies.
 - **Logout**: `LogoutView` faz blacklist do refresh token e limpa os cookies.
 - **Autenticação por requisição**: `apps/core/authentication.py:CookieJWTAuthentication` tenta primeiro `Authorization: Bearer`, senão cai no cookie httpOnly. Proteção CSRF vem do `SameSite=Lax` (cookie não trafega em POST/PUT/PATCH/DELETE cross-site).
-- **Resolução de tenant**: `apps/core/middleware.py:TenantMiddleware` roda em toda request (exceto rotas públicas) e autentica o JWT manualmente antes do DRF. Resolve `request.account` a partir de `user.profile.account` — exceto para superusuário, que pode injetar `X-Account-ID` no header para escolher o tenant (usado pelo admin da plataforma). Há uma segunda camada, `TenantResponseSafetyMiddleware`, que varre o JSON de resposta e bloqueia qualquer registro cujo `account_id` não bata com o tenant da requisição — defesa em profundidade contra vazamento cross-tenant.
+- **Resolução de tenant**: `apps/core/middleware.py:TenantMiddleware` roda em toda request (exceto rotas públicas) e autentica o JWT manualmente antes do DRF. Resolve `request.account` a partir de `user.profile.account`; o superusuário pode injetar `X-Account-ID` no header para escolher outro tenant. **A API nunca opera em escopo global** — nem para superusuário, que age como admin da conta a que está vinculado. Sem conta resolvida a request é barrada (403 com mensagem explícita) e o login nem completa; os querysets tenant ainda devolvem vazio como segunda camada (`TenantQuerySetMixin`). Enxergar todas as contas de uma vez é papel do `/admin`, que é isento deste middleware. A identidade também vem sempre do JWT, nunca do `sessionid`: estar logado no `/admin` no mesmo navegador não muda o que a API entrega ao app (e o cookie de sessão fica restrito a `/admin/` via `SESSION_COOKIE_PATH`). Há uma segunda camada, `TenantResponseSafetyMiddleware`, que varre o JSON de resposta e bloqueia qualquer registro cujo `account_id` não bata com o tenant da requisição — defesa em profundidade contra vazamento cross-tenant.
 
 ## 6. WebSocket / tempo real
 
-`config/routing.py` agrega três grupos de rota WebSocket, autenticados via `apps/core/jwt_middleware.py:JwtAuthMiddlewareStack` (lê o JWT do cookie httpOnly no handshake, com fallback `?token=` — usado pelo app Flutter, que não tem cookie de navegador):
+`config/routing.py` agrega as rotas WebSocket autenticadas via `apps/core/jwt_middleware.py:JwtAuthMiddlewareStack`. A credencial é lida primeiro de `Authorization: Bearer <access JWT>`, depois do cookie httpOnly e, apenas para clientes antigos, de `?token=`. O Caixa Principal usa o header Bearer para que o token não apareça em URLs nem em logs de proxy.
 
 | Rota | Consumer | Uso |
 |---|---|---|
 | `/ws/realtime/` | `apps/realtime/consumers.py:RealtimeConsumer` | Canal genérico por conta; qualquer app pode publicar eventos de modelo via `broadcast_model_event` (`apps/realtime/events.py`) para o frontend atualizar listas/boards sem polling |
+| `/ws/pdv/<restaurant_id>/` | `apps/realtime/consumers.py:PdvRealtimeConsumer` | Canal dedicado do Caixa Principal. Exige JWT válido, confirma que o restaurante está ativo e pertence à conta do usuário e descarta eventos de outras unidades. Envia mudanças de mesas, comandas, pedidos/itens, produtos, clientes, pagamentos, caixa, impressoras, balanças e demais modelos do tenant |
 | `/ws/kitchen/<branch_id>/<sector>/` | `apps/orders/consumers.py:KitchenConsumer` | Específico do KDS. Grupo por conta+filial+setor; acesso restrito a quem pertence à filial ou tem perfil admin/owner/manager. Eventos: `order_item.sent` (item mandado à cozinha) e `order_item.status_changed` |
 | `/ws/notifications/...` | `apps/notifications/consumers.py:NotificationConsumer` | Grupo por usuário; envia contagem de não lidas na conexão e um evento `notification` por notificação nova |
+
+O protocolo do PDV usa mensagens `{"event":"model.created|model.updated|model.deleted","payload":{...}}`. O payload contém somente metadados de invalidação (`resource`, `id`, `restaurant_id`, `branch_id`, `changed_fields`, `occurred_at` e `protocol_version`), nunca senhas ou dados completos. Ao receber o evento, o desktop relê pela API REST autenticada apenas o conjunto afetado e atualiza seu cache. A conexão mantém heartbeat, reconecta com backoff e faz uma única reconciliação ao reconectar; não há polling periódico de dados.
+
+Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusão lógica/física e relações N:N de todos os `TenantBaseModel`. Operações em lote de mesas/comandas, que não executam signals do Django, publicam um evento compacto de coleção explicitamente.
 
 ## 7. Pedidos, pagamento e impressão
 
@@ -134,7 +148,15 @@ Outras peças centrais:
 
 Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo; retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`.
 
-**Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)), que faz polling dos `PrintJob`s pendentes e imprime via rede/serial/spool do SO.
+**Senha de ações do caixa**: o cadastro de restaurante recebe a senha comum
+escolhida pelo responsável (por exemplo, `123`), nunca uma hash. O modelo
+converte automaticamente qualquer valor novo para PBKDF2-SHA256, inclusive
+quando vem do Django Admin, import ou script; a API expõe apenas
+`has_cash_action_password` e o endpoint autenticado `cash-auth` entrega a hash
+ao PDV para verificação offline. A migration `restaurants.0003` converte valores
+simples já existentes sem alterar hashes válidas.
+
+**Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)). O agente recebe a criação do `PrintJob` pelo WebSocket do PDV, busca a fila pendente pela API e imprime via rede/serial/spool do SO; também reconcilia a fila uma vez ao conectar ou reconectar, sem polling periódico.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.
 
@@ -152,6 +174,9 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 - `GET /api/schema/` e `/api/schema/swagger-ui/` — OpenAPI via `drf-spectacular`.
 - `/admin/` — Django Admin (Unfold), com `/admin/login/` cobrindo o fluxo de primeiro acesso.
 - Todo o resto é `router.urls` (DRF `DefaultRouter`) — um ViewSet por recurso, RESTful padrão (list/retrieve/create/update/partial_update/destroy) mais actions customizadas onde necessário (ex.: `orders/send-to-kitchen`, `cash-register/open`, `cash-register/close`).
+- `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
+- `/api/v1/stock/suppliers/` mantém os fornecedores da conta. O insumo pode apontar para um fornecedor padrão e cada linha da entrada registra o fornecedor efetivamente usado.
+- `POST /api/v1/menu/ingredients/bulk/` recebe `{ "items": [...] }` e cria até 100 insumos atomicamente. Unidade e fornecedor padrão do insumo também são aplicados pelo backend quando a linha de entrada os omite.
 
 ## 10. Configuração / variáveis de ambiente
 

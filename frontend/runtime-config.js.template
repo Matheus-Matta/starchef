@@ -1,3 +1,6 @@
 window.RUNTIME_CONFIG = {
   API_URL: "${API_URL}",
+  // Opcional: só precisa ser definido se o WebSocket não ficar na mesma origem
+  // da API (por padrão o socket é derivado de API_URL).
+  WS_URL: "${WS_URL}",
 };

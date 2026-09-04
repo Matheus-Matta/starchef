@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/widgets/app_dialog.dart';
+
 import '../../../core/hardware/scale/scale_protocol.dart';
 import '../../../core/hardware/scale/scale_transport.dart';
 import '../../../core/storage/local_preferences.dart';
@@ -11,16 +13,30 @@ import '../../../core/storage/local_preferences.dart';
 /// restaurante podem precisar de valores diferentes. Por isso ficam no
 /// `preferences.json` local e não no cadastro do backend.
 class TerminalPreferencesDialog extends StatefulWidget {
-  const TerminalPreferencesDialog({super.key, required this.preferences});
+  const TerminalPreferencesDialog({
+    super.key,
+    required this.preferences,
+    this.detectedPorts,
+    this.printers = const [],
+  });
 
   final LocalPreferences preferences;
+  final List<String>? detectedPorts;
+
+  /// Impressoras ativas do restaurante, para escolher a impressora master do
+  /// recibo de pagamento e do recibo do cliente.
+  final List<Map<String, dynamic>> printers;
 
   static Future<void> show(
     BuildContext context,
-    LocalPreferences preferences,
-  ) => showDialog<void>(
+    LocalPreferences preferences, {
+    List<Map<String, dynamic>> printers = const [],
+  }) => showDialog<void>(
     context: context,
-    builder: (_) => TerminalPreferencesDialog(preferences: preferences),
+    builder: (_) => TerminalPreferencesDialog(
+      preferences: preferences,
+      printers: printers,
+    ),
   );
 
   @override
@@ -28,14 +44,13 @@ class TerminalPreferencesDialog extends StatefulWidget {
       _TerminalPreferencesDialogState();
 }
 
-class _TerminalPreferencesDialogState
-    extends State<TerminalPreferencesDialog> {
-  late int commandTimeoutSeconds =
-      widget.preferences.commandTimeout.inSeconds;
-  late double toleranceGrams =
-      widget.preferences.stabilityToleranceKg * 1000;
+class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
+  late int commandTimeoutSeconds = widget.preferences.commandTimeout.inSeconds;
+  late double toleranceGrams = widget.preferences.stabilityToleranceKg * 1000;
   late bool audibleAlerts = widget.preferences.audibleAlerts;
   late bool autoPrint = widget.preferences.autoPrint;
+  late bool showCatalog = widget.preferences.showScaleCatalog;
+  late String? masterPrinterId = widget.preferences.masterPrinterId;
 
   Future<void> _save() async {
     final preferences = widget.preferences;
@@ -45,106 +60,150 @@ class _TerminalPreferencesDialogState
     await preferences.setStabilityToleranceKg(toleranceGrams / 1000);
     await preferences.setAudibleAlerts(audibleAlerts);
     await preferences.setAutoPrint(autoPrint);
+    await preferences.setShowScaleCatalog(showCatalog);
+    await preferences.setMasterPrinterId(masterPrinterId);
     if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return AppDialog(
+      scrollable: true,
+      maxWidth: 668,
       title: Row(
         children: [
           const Icon(Icons.tune),
           const SizedBox(width: 10),
           const Expanded(child: Text('Preferências deste terminal')),
-          IconButton(
-            tooltip: 'Fechar',
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close),
-          ),
         ],
       ),
       content: SizedBox(
         width: 620,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _section('Balança Rápida', scheme),
-              _slider(
-                label: 'Tempo para ler a comanda',
-                value: commandTimeoutSeconds.toDouble(),
-                min: 10,
-                max: 300,
-                divisions: 29,
-                display: '$commandTimeoutSeconds s',
-                helper:
-                    'Depois desse tempo a estação avisa e, se ninguém ler a '
-                    'comanda, cancela a pesagem e volta a esperar peso.',
-                onChanged: (value) =>
-                    setState(() => commandTimeoutSeconds = value.round()),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _section('Balança Rápida', scheme),
+            _slider(
+              label: 'Tempo para ler a comanda',
+              value: commandTimeoutSeconds.toDouble(),
+              min: 10,
+              max: 300,
+              divisions: 29,
+              display: '$commandTimeoutSeconds s',
+              helper:
+                  'Depois desse tempo, sem ninguém ler a comanda, a estação '
+                  'avisa e cancela a pesagem na hora — não há um segundo '
+                  'tempo de espera além deste.',
+              onChanged: (value) =>
+                  setState(() => commandTimeoutSeconds = value.round()),
+            ),
+            _slider(
+              label: 'Tolerância de estabilidade',
+              value: toleranceGrams,
+              min: 1,
+              max: 50,
+              divisions: 49,
+              display: '${toleranceGrams.round()} g',
+              helper:
+                  'Oscilação ignorada entre leituras. Aumente se a bancada '
+                  'vibra e o peso nunca estabiliza.',
+              onChanged: (value) => setState(() => toleranceGrams = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: audibleAlerts,
+              onChanged: (value) => setState(() => audibleAlerts = value),
+              title: const Text('Alertas sonoros'),
+              subtitle: const Text(
+                'Bipe ao confirmar o peso, ao aceitar a comanda e no aviso '
+                'de tempo esgotado.',
               ),
-              _slider(
-                label: 'Tolerância de estabilidade',
-                value: toleranceGrams,
-                min: 1,
-                max: 50,
-                divisions: 49,
-                display: '${toleranceGrams.round()} g',
-                helper:
-                    'Oscilação ignorada entre leituras. Aumente se a bancada '
-                    'vibra e o peso nunca estabiliza.',
-                onChanged: (value) => setState(() => toleranceGrams = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: autoPrint,
+              onChanged: (value) => setState(() => autoPrint = value),
+              title: const Text('Imprimir o cupom automaticamente'),
+              subtitle: const Text(
+                'Desligue apenas se o cupom for emitido por outro caminho; '
+                'o pedido continua sendo lançado normalmente.',
               ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: audibleAlerts,
-                onChanged: (value) => setState(() => audibleAlerts = value),
-                title: const Text('Alertas sonoros'),
-                subtitle: const Text(
-                  'Bipe ao confirmar o peso, ao aceitar a comanda e no aviso '
-                  'de tempo esgotado.',
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: showCatalog,
+              onChanged: (value) => setState(() => showCatalog = value),
+              title: const Text('Mostrar cardápio de extras'),
+              subtitle: const Text(
+                'Desligue em terminais que só pesam e leem a comanda, sem '
+                'vender extras — a coluna some em vez de ficar vazia.',
+              ),
+            ),
+            const SizedBox(height: 18),
+            _section('Impressão', scheme),
+            DropdownButtonFormField<String>(
+              initialValue: widget.printers.any(
+                    (printer) => '${printer['id']}' == masterPrinterId,
+                  )
+                  ? masterPrinterId
+                  : null,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Impressora master',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<String>(
+                  value: null,
+                  child: Text(
+                    'Nenhuma (perguntar sempre)',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: autoPrint,
-                onChanged: (value) => setState(() => autoPrint = value),
-                title: const Text('Imprimir o cupom automaticamente'),
-                subtitle: const Text(
-                  'Desligue apenas se o cupom for emitido por outro caminho; '
-                  'o pedido continua sendo lançado normalmente.',
-                ),
-              ),
-              const SizedBox(height: 18),
-              _section('Diagnóstico do terminal', scheme),
-              _readOnlyRow(
-                icon: Icons.usb,
-                label: 'Portas seriais detectadas',
-                value: _portsSummary(),
-                scheme: scheme,
-              ),
-              _readOnlyRow(
-                icon: Icons.settings_input_component,
-                label: 'Protocolos de balança suportados',
-                value: ScaleProtocol.available
-                    .map((protocol) => protocol.label)
-                    .join(', '),
-                scheme: scheme,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'O protocolo, a porta e o baud rate de cada balança ficam no '
-                'cadastro do equipamento, porque valem para todos os terminais '
-                'que a usam.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+                for (final printer in widget.printers)
+                  DropdownMenuItem<String>(
+                    value: '${printer['id']}',
+                    child: Text(
+                      '${printer['name']}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (value) => setState(() => masterPrinterId = value),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Com uma impressora master definida, o recibo de pagamento e o '
+              'recibo do cliente saem direto nela, sem perguntar qual usar. '
+              'Sem master, continua perguntando como hoje.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 18),
+            _section('Diagnóstico do terminal', scheme),
+            _readOnlyRow(
+              icon: Icons.usb,
+              label: 'Portas seriais detectadas',
+              value: _portsSummary(),
+              scheme: scheme,
+            ),
+            _readOnlyRow(
+              icon: Icons.settings_input_component,
+              label: 'Protocolos de balança suportados',
+              value: ScaleProtocol.available
+                  .map((protocol) => protocol.label)
+                  .join(', '),
+              scheme: scheme,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'O protocolo, a porta e o baud rate de cada balança ficam no '
+              'cadastro do equipamento, porque valem para todos os terminais '
+              'que a usam.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
         ),
       ),
       actions: [
@@ -248,10 +307,7 @@ class _TerminalPreferencesDialogState
               ),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -260,8 +316,8 @@ class _TerminalPreferencesDialogState
     ),
   );
 
-  static String _portsSummary() {
-    final ports = SerialScaleTransport.availablePorts();
+  String _portsSummary() {
+    final ports = widget.detectedPorts ?? SerialScaleTransport.availablePorts();
     return ports.isEmpty ? 'Nenhuma porta encontrada' : ports.join(', ');
   }
 }
