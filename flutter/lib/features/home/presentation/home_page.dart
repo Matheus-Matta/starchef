@@ -1,3 +1,13 @@
+// A tela guarda o estado e o ciclo de vida; cada assunto vive num `part` como
+// um mixin. Membro definido aqui e consumido por uma seção através da
+// declaração abstrata dela é marcado como `unused_element`: o analisador não
+// liga as duas pontas entre mixins.
+//
+// O custo assumido: código realmente morto neste arquivo também deixa de ser
+// apontado. É menos ruim do que dezenas de `ignore` espalhados escondendo
+// exatamente a mesma coisa, um a um, sem explicar por quê.
+// ignore_for_file: unused_element
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -56,15 +66,20 @@ import 'table_details_panel.dart';
 part 'home_page_cash.dart';
 part 'home_page_cash_ops.dart';
 part 'home_page_commands.dart';
+part 'home_page_commands_view.dart';
 part 'home_page_customer.dart';
 part 'home_page_kitchen.dart';
 part 'home_page_order.dart';
 part 'home_page_product.dart';
 part 'home_page_orders.dart';
+part 'home_page_orders_view.dart';
 part 'home_page_payment.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_receipt.dart';
+part 'home_page_panels.dart';
 part 'home_page_shared.dart';
+part 'home_page_shell.dart';
+part 'home_page_sidebar.dart';
 part 'home_page_fiscal.dart';
 part 'home_page_input.dart';
 
@@ -98,6 +113,7 @@ class _HomePageState extends State<HomePage>
         _CashSection,
         _CashOpsSection,
         _CommandSection,
+        _CommandView,
         _FiscalSection,
         _InputSection,
         _CustomerSection,
@@ -105,9 +121,13 @@ class _HomePageState extends State<HomePage>
         _OrderSection,
         _ProductSection,
         _OrdersSection,
+        _OrdersView,
         _PaymentSection,
         _PaymentView,
-        _ReceiptSection {
+        _ReceiptSection,
+        _ShellSection,
+        _SidebarSection,
+        _PanelsSection {
   @override
   ApiClient get api => widget.controller.repository.apiClient;
   @override
@@ -124,10 +144,12 @@ class _HomePageState extends State<HomePage>
   double get defaultServiceFeePercent =>
       _number(selectedRestaurant?['default_service_fee_percent']);
 
+  @override
   bool loading = true;
 
   /// Recarga em segundo plano: os dados estão sendo atualizados, mas a tela
   /// atual continua utilizável.
+  @override
   bool refreshing = false;
   @override
   bool busy = false;
@@ -143,7 +165,9 @@ class _HomePageState extends State<HomePage>
   String flowStep = 'type';
   @override
   String? orderType;
+  @override
   String search = '';
+  @override
   String? category;
   @override
   Map<String, dynamic>? cashSession;
@@ -172,9 +196,11 @@ class _HomePageState extends State<HomePage>
   Map<String, dynamic>? pendingCashMovement;
   @override
   List<Map<String, dynamic>> stations = [];
+  @override
   List<Map<String, dynamic>> restaurants = [];
   @override
   List<Map<String, dynamic>> products = [];
+  @override
   List<Map<String, dynamic>> categories = [];
   @override
   List<Map<String, dynamic>> tables = [];
@@ -198,6 +224,7 @@ class _HomePageState extends State<HomePage>
   List<Map<String, dynamic>> orders = [];
   @override
   bool ordersLoading = false;
+  @override
   String? loadErrorMessage;
   @override
   String orderStatusFilter = 'pending';
@@ -241,6 +268,7 @@ class _HomePageState extends State<HomePage>
   late final PdvRepository repository;
   late final PdvPresenter presenter;
   late final PdvUpdateService updateService;
+  @override
   PdvUpdateStatus versionStatus = const PdvUpdateStatus.checking();
 
   /// Porta de entrada da tela para os pedidos guardados no banco do Caixa
@@ -272,9 +300,11 @@ class _HomePageState extends State<HomePage>
   StreamController<void>? productScanRepeats;
   @override
   String? scanningProductId;
+  @override
   NetworkSyncStatus networkStatus = const NetworkSyncStatus(
     phase: NetworkSyncPhase.unknown,
   );
+  @override
   bool offlineMode = false;
 
   /// Este terminal é um Caixa Cliente, que depende do principal para gravar.
@@ -308,6 +338,7 @@ class _HomePageState extends State<HomePage>
   /// vigias sobre a mesma nota mandariam o DANFE para a impressora duas vezes.
   @override
   final Set<String> watchedFiscalInvoices = {};
+  @override
   bool sidebarExpanded = true;
 
   /// Última filtragem do catálogo, para não refazê-la a cada build.
@@ -324,6 +355,7 @@ class _HomePageState extends State<HomePage>
   String? _visibleCategory;
   String _visibleTerm = '';
 
+  @override
   List<Map<String, dynamic>> get visibleProducts {
     final term = search.trim().toLowerCase();
     final cached = _visibleCache;
@@ -411,6 +443,7 @@ class _HomePageState extends State<HomePage>
       (_cashBalanceRevealedForSessionId != null &&
           _cashBalanceRevealedForSessionId == '${cashSession?['id'] ?? ''}');
 
+  @override
   String get _cashBalanceLabel =>
       _canSeeCashBalance ? _money(cashBalance) : '••••••';
 
@@ -530,6 +563,7 @@ class _HomePageState extends State<HomePage>
     _load();
   }
 
+  @override
   Future<void> _checkPdvVersion() async {
     if (mounted) {
       setState(
@@ -908,6 +942,7 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  @override
   Future<void> _changeRestaurant(String value) async {
     if (value == selectedRestaurantId) return;
     setState(() {
@@ -934,6 +969,7 @@ class _HomePageState extends State<HomePage>
     await _load();
   }
 
+  @override
   Future<void> _changeScaleRestaurant(String value) async {
     await _changeRestaurant(value);
     if (mounted) setState(() => flowStep = 'scale-workstation');
@@ -958,6 +994,7 @@ class _HomePageState extends State<HomePage>
   }
 
   /// Abre a revisão da fila e reflete o resultado no badge ao fechar.
+  @override
   Future<void> _openOutboxReview() async {
     await OutboxReviewDialog.show(context, api);
     final pending = await api.pendingOperations();
@@ -981,6 +1018,7 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  @override
   PdvDestination get _selectedDestination {
     if (flowStep == 'scale-workstation') return PdvDestination.scale;
     if (flowStep == 'orders') return PdvDestination.orders;
@@ -1096,6 +1134,7 @@ class _HomePageState extends State<HomePage>
     if (selection == 'fullscreen') widget.onToggleFullScreen();
   }
 
+  @override
   Future<void> _openTopologySettings() async {
     // O diálogo pode ser aberto antes de a carga terminar: garantir a rede
     // local aqui é o que permite corrigir o endereço do principal justamente
@@ -1395,7 +1434,6 @@ class _HomePageState extends State<HomePage>
   /// internet voltar, com o operador impedido de encerrar o turno.
   @override
   // Consumido pelas seções de caixa via declaração abstrata.
-  // ignore: unused_element
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String reason,
     required String password,
@@ -1446,894 +1484,4 @@ class _HomePageState extends State<HomePage>
   /// Restaurante, itens e recebimentos vêm do SQLite local, então o cupom sai
   /// completo mesmo com a rede fora — inclusive os pagamentos que ainda estão
   /// na fila.
-
-  String _sidebarUserSubtitle() {
-    final user = widget.controller.session!.user;
-    final profile = switch (user.profileType) {
-      'owner' => 'Proprietário',
-      'admin' => 'Administrador',
-      'manager' => 'Gerente',
-      'cashier' => 'Operador de caixa',
-      'waiter' => 'Garçom',
-      _ => '',
-    };
-    final username = user.username.trim();
-    if (username.isEmpty) {
-      return profile.isEmpty ? 'Usuário conectado' : profile;
-    }
-    return profile.isEmpty ? '@$username' : '@$username · $profile';
-  }
-
-  Widget _sidebarOperationPanel({bool compact = false}) {
-    final scheme = Theme.of(context).colorScheme;
-    if (compact) {
-      if (cashSession == null) {
-        return IconButton.filled(
-          tooltip: 'Abrir caixa',
-          onPressed: _openCash,
-          icon: const Icon(Icons.lock_open_outlined),
-        );
-      }
-      return PopupMenuButton<String>(
-        tooltip: 'Caixa aberto · $_cashBalanceLabel',
-        onSelected: _onCashMenuSelected,
-        itemBuilder: (_) => _cashMenuItems(),
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: scheme.primary,
-            borderRadius: AppTheme.radius,
-          ),
-          child: const Icon(Icons.point_of_sale, color: Colors.white, size: 20),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (restaurants.isNotEmpty) ...[
-          DropdownButtonFormField<String>(
-            initialValue: selectedRestaurantId,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: 'Unidade',
-              prefixIcon: Icon(Icons.storefront_outlined, size: 18),
-            ),
-            items: restaurants
-                .map(
-                  (item) => DropdownMenuItem(
-                    value: '${item['id']}',
-                    child: Text(
-                      '${item['trade_name'] ?? item['name']}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                )
-                .toList(),
-            onChanged: busy || restaurants.length == 1
-                ? null
-                : (value) {
-                    if (value != null) _changeRestaurant(value);
-                  },
-          ),
-          const SizedBox(height: 10),
-        ],
-        if (cashSession == null)
-          ShadButton(
-            onPressed: _openCash,
-            height: 44,
-            leading: const Icon(Icons.lock_open_outlined, size: 18),
-            child: const Text('Abrir caixa'),
-          )
-        else
-          PopupMenuButton<String>(
-            tooltip: 'Ações do caixa',
-            onSelected: _onCashMenuSelected,
-            itemBuilder: (_) => _cashMenuItems(),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(11, 9, 9, 9),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainer,
-                borderRadius: AppTheme.radius,
-                border: Border.all(color: scheme.outlineVariant),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      borderRadius: AppTheme.radius,
-                    ),
-                    child: const Icon(
-                      Icons.point_of_sale,
-                      color: Colors.white,
-                      size: 17,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          cashSessionFromCache
-                              ? 'CAIXA OFFLINE'
-                              : 'CAIXA ABERTO',
-                          style: TextStyle(
-                            color: cashSessionFromCache
-                                ? scheme.error
-                                : scheme.primary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: .7,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _cashBalanceLabel,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: .5,
-                          ),
-                        ),
-                        Text(
-                          '${cashSession!['station']}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 9,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.more_vert, size: 17),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  (String, String, IconData) get _workspaceIdentity {
-    if (flowStep == 'scale-workstation') {
-      return (
-        'Estação de balança',
-        'Pesagem rápida e leitura de comandas',
-        Icons.scale_outlined,
-      );
-    }
-    if (flowStep == 'orders') {
-      return (
-        'Pedidos',
-        'Consulta, edição e pagamentos pendentes',
-        Icons.receipt_long_outlined,
-      );
-    }
-    if (flowStep == 'payment') {
-      return (
-        'Pagamento',
-        'Conferência e finalização do pedido',
-        Icons.payments_outlined,
-      );
-    }
-    if (activeOrder != null) {
-      return (
-        'Pedido #${activeOrder!['sequence']}',
-        'Cardápio e resumo do atendimento',
-        Icons.shopping_bag_outlined,
-      );
-    }
-    if (flowStep == 'context' || flowStep == 'table_details') {
-      return (
-        orderType == 'command' ? 'Comandas' : 'Mesas',
-        'Selecione o contexto do atendimento',
-        orderType == 'command'
-            ? Icons.qr_code_2_outlined
-            : Icons.table_restaurant_outlined,
-      );
-    }
-    return (
-      'Novo atendimento',
-      'Escolha como o pedido será iniciado',
-      Icons.grid_view_outlined,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final windowWidth = MediaQuery.sizeOf(context).width;
-    final compactHeader = windowWidth < 1320;
-    final sidebarIsExpanded = sidebarExpanded && windowWidth >= 1180;
-    if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (restaurants.isEmpty) {
-      return AppPageScaffold(
-        title: 'StarChef PDV',
-        description: 'Não foi possível preparar a unidade para atendimento.',
-        leading: Padding(
-          padding: const EdgeInsets.all(5),
-          child: Image.asset('assets/logoicon.png', width: 32, height: 32),
-        ),
-        actions: [
-          IconButton.outlined(
-            tooltip: widget.isDark ? 'Usar tema claro' : 'Usar tema escuro',
-            onPressed: widget.onToggleTheme,
-            icon: Icon(
-              widget.isDark
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
-            ),
-          ),
-          IconButton.outlined(
-            tooltip: 'Sair',
-            onPressed: widget.controller.logout,
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-        body: AppEmptyState(
-          icon: offlineMode ? Icons.cloud_off : Icons.storefront_outlined,
-          title: offlineMode
-              ? 'Dados offline ainda não disponíveis'
-              : 'Não foi possível carregar os restaurantes',
-          description:
-              loadErrorMessage ??
-              'Conecte o PDV à internet ao menos uma vez para baixar os dados necessários.',
-          action: FilledButton.icon(
-            onPressed: loading ? null : _load,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Tentar novamente'),
-          ),
-        ),
-      );
-    }
-    return Scaffold(
-      body: Row(
-        children: [
-          PdvSidebar(
-            expanded: sidebarIsExpanded,
-            selected: _selectedDestination,
-            onToggle: () => setState(() => sidebarExpanded = !sidebarExpanded),
-            onSelected: (destination) => unawaited(_navigateTo(destination)),
-            userName: widget.controller.session!.user.name.trim().isEmpty
-                ? widget.controller.session!.user.username
-                : widget.controller.session!.user.name,
-            userSubtitle: _sidebarUserSubtitle(),
-            onLogout: widget.controller.logout,
-            contextPanel: _sidebarOperationPanel(),
-            compactContextPanel: _sidebarOperationPanel(compact: true),
-            showOrders: widget.controller.session!.user.canViewOrders,
-            showFinance: widget.controller.session!.user.canAccessCash,
-            showScale:
-                widget.controller.session!.user.canManageOrders ||
-                widget.controller.session!.user.canProcessPayments,
-            showSettings: true,
-            versionStatus: versionStatus,
-            onCheckVersion: () => unawaited(_checkPdvVersion()),
-          ),
-          Expanded(
-            child: Scaffold(
-              appBar: AppBar(
-                toolbarHeight: 72,
-                titleSpacing: 20,
-                title: Row(
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer,
-                        borderRadius: AppTheme.radius,
-                        border: Border.all(color: scheme.outlineVariant),
-                      ),
-                      child: Icon(
-                        _workspaceIdentity.$3,
-                        size: 19,
-                        color: scheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 11),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _workspaceIdentity.$1,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          if (!compactHeader)
-                            Text(
-                              _workspaceIdentity.$2,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: scheme.onSurfaceVariant,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                actions: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 6,
-                    ),
-                    child: PdvConnectionBadge(
-                      status: networkStatus,
-                      // Clicar no badge abre a revisão da fila. Um item
-                      // bloqueado não é resolvido por "sincronizar de novo":
-                      // ele precisa ser inspecionado.
-                      onPressed: offlinePendingCount > 0
-                          ? () => unawaited(_openOutboxReview())
-                          : null,
-                    ),
-                  ),
-                  if (isSecondaryStation)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 2,
-                      ),
-                      child: PdvPrincipalBadge(
-                        connected: principalReachable,
-                        compact: compactHeader,
-                        detail: topology.status.message,
-                        onPressed: () => unawaited(_openTopologySettings()),
-                      ),
-                    ),
-                  if (flowStep != 'type' || activeOrder != null)
-                    IconButton(
-                      tooltip: 'Voltar',
-                      onPressed: _goBack,
-                      icon: const Icon(Icons.arrow_back),
-                    ),
-                  IconButton(
-                    tooltip: 'Ir para o início',
-                    onPressed: _goHome,
-                    icon: const Icon(Icons.home_outlined),
-                  ),
-                  // Ajuda ao lado do Home: é onde o operador procura quando
-                  // não sabe o que uma tecla faz, e a lista que ela mostra sai
-                  // do mesmo registro que o teclado consulta.
-                  IconButton(
-                    tooltip: 'Ajuda e atalhos (F1)',
-                    onPressed: () => unawaited(_openHelp()),
-                    icon: const Icon(Icons.help_outline),
-                  ),
-                  IconButton(
-                    tooltip: widget.isDark
-                        ? 'Usar tema claro'
-                        : 'Usar tema escuro',
-                    onPressed: widget.onToggleTheme,
-                    icon: Icon(
-                      widget.isDark
-                          ? Icons.light_mode_outlined
-                          : Icons.dark_mode_outlined,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: refreshing ? 'Atualizando...' : 'Atualizar',
-                    onPressed: refreshing ? null : _load,
-                    // Toda a sinalização de recarga cabe aqui: o operador vê
-                    // que algo está acontecendo sem perder a tela em que está.
-                    icon: refreshing
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh),
-                  ),
-                  IconButton(
-                    tooltip: 'Fechar aplicação',
-                    onPressed: widget.onClose,
-                    style: IconButton.styleFrom(foregroundColor: scheme.error),
-                    icon: const Icon(Icons.power_settings_new),
-                  ),
-                  const SizedBox(width: 10),
-                ],
-                bottom: widget.controller.offlineMode
-                    ? PreferredSize(
-                        preferredSize: const Size.fromHeight(38),
-                        child: Container(
-                          width: double.infinity,
-                          height: 38,
-                          color: scheme.errorContainer,
-                          alignment: Alignment.center,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.cloud_off_outlined,
-                                size: 18,
-                                color: scheme.onErrorContainer,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Modo Offline — login validado no cache local; a Retaguarda está indisponível.',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.onErrorContainer,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : null,
-              ),
-              body: Stack(
-                children: [
-                  if (flowStep == 'scale-workstation')
-                    ScaleWorkstationPage(
-                      api: api,
-                      accessToken: token,
-                      restaurants: restaurants,
-                      restaurantId: restaurantId,
-                      products: products,
-                      onRestaurantChanged: _changeScaleRestaurant,
-                      preferences: widget.preferences,
-                    )
-                  else if (flowStep == 'orders')
-                    _ordersPage()
-                  else if (activeOrder == null && flowStep == 'type')
-                    _startPanel()
-                  else if (activeOrder == null && flowStep == 'context')
-                    (orderType == 'command'
-                        ? _commandContextPanel()
-                        : _tableContextPanel())
-                  else if (activeOrder == null &&
-                      flowStep == 'table_details' &&
-                      selectedTable != null)
-                    TableDetailsPanel(
-                      table: selectedTable!,
-                      onBack: () => setState(() => flowStep = 'context'),
-                      onOpenCommand: (cmd) => _openCommand(cmd),
-                    )
-                  else if (flowStep == 'payment')
-                    _paymentPage()
-                  else
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final cartWidth = constraints.maxWidth < 980
-                            ? 350.0
-                            : constraints.maxWidth >= 1500
-                            ? 420.0
-                            : 380.0;
-                        return Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
-                            children: [
-                              Expanded(child: _catalog()),
-                              const SizedBox(width: 12),
-                              SizedBox(width: cartWidth, child: _cart()),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  if (cashSession == null)
-                    Positioned.fill(
-                      child: ColoredBox(
-                        color: scheme.surface.withValues(alpha: .94),
-                        child: Center(
-                          child: SizedBox(
-                            width: 460,
-                            child: ShadCard(
-                              radius: AppTheme.radius,
-                              shadows: const [],
-                              child: Padding(
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.lock_outline,
-                                      size: 58,
-                                      color: scheme.primary,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    const Text(
-                                      'Abra o caixa para iniciar',
-                                      style: TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'O PDV só pode registrar pedidos quando o operador possui um caixa vinculado e uma sessão aberta.',
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 22),
-                                    FilledButton.icon(
-                                      onPressed: _openCash,
-                                      icon: const Icon(Icons.lock_open),
-                                      label: const Text('Abrir caixa'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (pendingCashMovement != null && !hasCashDivergence)
-                    Positioned(
-                      top: 12,
-                      left: 24,
-                      right: 24,
-                      child: Material(
-                        color: Colors.orange.shade50,
-                        elevation: 3,
-                        borderRadius: AppTheme.radius,
-                        child: InkWell(
-                          borderRadius: AppTheme.radius,
-                          onTap: _showMovementApproval,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 13,
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.warning_amber_rounded,
-                                  color: Colors.orange.shade900,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    '${pendingCashMovement!['movement_type'] == 'withdrawal' ? 'Sangria' : 'Suprimento'} de ${_money(_number(pendingCashMovement!['amount']).abs())} aguardando autorização gerencial.',
-                                    style: TextStyle(
-                                      color: Colors.orange.shade900,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                const Text(
-                                  'Resolver agora',
-                                  style: TextStyle(fontWeight: FontWeight.w800),
-                                ),
-                                const SizedBox(width: 6),
-                                const Icon(Icons.chevron_right),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  // Uma barra fina no topo, em vez de cobrir a tela.
-                  //
-                  // O overlay escuro com spinner central aparecia em toda
-                  // operação — abrir mesa, incluir item, pagar — e dava a
-                  // sensação de que o PDV recarregava a cada toque. Bloquear
-                  // a interface também era redundante: `_work` já ignora uma
-                  // segunda chamada enquanto a primeira não termina.
-                  if (busy)
-                    const Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: LinearProgressIndicator(minHeight: 3),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _startPanel() {
-    final options = [
-      (
-        'command',
-        'Comanda',
-        'Atendimento no salão ou cartão de comanda',
-        Icons.qr_code_2,
-      ),
-      ('counter', 'Balcão', 'Consumo rápido no local', Icons.storefront),
-      (
-        'takeaway',
-        'Retirada',
-        'Pedido para viagem',
-        Icons.shopping_bag_outlined,
-      ),
-      ('delivery', 'Delivery', 'Pedido para entrega', Icons.delivery_dining),
-    ];
-    final scheme = Theme.of(context).colorScheme;
-    final availableTables = tables
-        .where(
-          (item) =>
-              (item['active_commands'] as List? ?? const []).isEmpty &&
-              item['status'] == 'free',
-        )
-        .length;
-    final availableCommands = commands
-        .where(
-          (item) =>
-              item['is_active'] != false &&
-              item['status'] == 'free' &&
-              item['current_order_id'] == null,
-        )
-        .length;
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Escolha o tipo de atendimento',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              AppStatusBadge(
-                label: '${products.length} produtos ativos',
-                icon: Icons.inventory_2_outlined,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _operationStat(
-                  'MESAS LIVRES',
-                  '$availableTables',
-                  Icons.table_restaurant_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'COMANDAS LIVRES',
-                  '$availableCommands',
-                  Icons.qr_code_2_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'PEDIDOS CARREGADOS',
-                  '${orders.length}',
-                  Icons.receipt_long_outlined,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Divider(height: 1, color: scheme.outlineVariant),
-          const SizedBox(height: 14),
-          Expanded(
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 230,
-                mainAxisExtent: 190,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-              ),
-              itemCount: options.length,
-              itemBuilder: (_, index) {
-                final option = options[index];
-                return ShadCard(
-                  padding: EdgeInsets.zero,
-                  radius: AppTheme.radius,
-                  shadows: const [],
-                  columnCrossAxisAlignment: CrossAxisAlignment.stretch,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: AppTheme.radius,
-                      onTap: () => _selectOrderType(option.$1),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Container(height: 3, color: scheme.primary),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        width: 42,
-                                        height: 42,
-                                        decoration: BoxDecoration(
-                                          color: scheme.primaryContainer,
-                                          borderRadius: AppTheme.radius,
-                                        ),
-                                        child: Icon(
-                                          option.$4,
-                                          color: scheme.primary,
-                                          size: 21,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Text(
-                                        '${index + 1}'.padLeft(2, '0'),
-                                        style: TextStyle(
-                                          color: scheme.onSurfaceVariant,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const Spacer(),
-                                  Text(
-                                    option.$2,
-                                    style: const TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    option.$3,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'INICIAR',
-                                        style: TextStyle(
-                                          color: scheme.primary,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: .8,
-                                        ),
-                                      ),
-                                      const Spacer(),
-                                      Icon(
-                                        Icons.arrow_forward,
-                                        size: 16,
-                                        color: scheme.primary,
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget _operationStat(String label, String value, IconData icon) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: AppTheme.radius,
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 19, color: scheme.onSurfaceVariant),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _catalog() {
-    final filteredProducts = visibleProducts;
-    return ProductCatalogPanel(
-      products: filteredProducts,
-      allProducts: products,
-      categories: categories,
-      selectedCategory: category,
-      search: search,
-      money: _money,
-      onSearchChanged: (value) => setState(() => search = value),
-      onCategoryChanged: (value) => setState(() => category = value),
-      onProductPressed: _configureProduct,
-    );
-  }
-
-  Widget _cart() => OrderCartPanel(
-    selectedItemId: selectedOrderItemId,
-    onSelectItem: _selectOrderItem,
-    onChangeQuantity: _changeItemQuantity,
-    order: activeOrder,
-    table: selectedTable,
-    command: selectedCommand,
-    customer: selectedCustomer,
-    items: orderItems,
-    money: _money,
-    onVoidItem: _voidItem,
-    onFinish: _finishOrder,
-    onPrint: _printCustomerReceipt,
-    onCancel: widget.controller.session!.user.canCancelOrders
-        ? _cancelOrder
-        : null,
-    onEmitInvoice:
-        activeOrder == null ||
-            !widget.controller.session!.user.canProcessPayments
-        ? null
-        : () => _emitFiscalInvoice(activeOrder!),
-    onPrintInvoice:
-        activeOrder == null ||
-            !widget.controller.session!.user.canProcessPayments
-        ? null
-        : () => _reprintDanfe(activeOrder!),
-    printing: printingReceipt,
-    emittingInvoice: emittingInvoice,
-  );
 }

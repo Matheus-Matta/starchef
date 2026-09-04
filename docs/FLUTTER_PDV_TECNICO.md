@@ -731,14 +731,18 @@ declarar o mesmo membro em dois mixins faz o Dart recusar a classe.
 `_money` e `_number` deixaram de ser `static` por causa disso — um membro
 estático não pode coexistir com um herdado de mesmo nome.
 
-Seções já extraídas: caixa, comandas/mesas, entrada (teclado/leitor/atalhos),
-fiscal, pedido, pedidos (histórico), pagamento e recibo. Sobrou em
-`home_page.dart` o ciclo de vida, a carga, a navegação e os painéis de `build`.
+São 20 arquivos hoje. `home_page.dart` guarda o estado, o ciclo de vida, a
+carga e a navegação; o resto vive nos `part`, um por assunto — e, onde o
+assunto era grande demais, separado ainda em **lógica** e **tela**
+(`_PaymentSection`/`_PaymentView`, `_OrdersSection`/`_OrdersView`,
+`_CommandSection`/`_CommandView`). Não é só tamanho: são coisas de ritmo
+diferente, uma muda por regra e a outra por desenho.
 
-O alvo é nenhum arquivo passar de ~200 linhas, e ainda não chegamos: as seções
-grandes precisam ser quebradas de novo, e o corte natural ali é por diálogo e
-por painel — cada `showDialog` e cada `Widget _algoPanel()` é um pedaço
-independente.
+O alvo declarado era ~200 linhas por arquivo. O maior hoje é `home_page.dart`
+com ~1.400 (era 7.733) e o segundo tem ~600. Chegar aos 200 exigiria quebrar
+por método, o que trocaria um arquivo grande e coerente por dez fragmentos sem
+assunto próprio — e cada mixin novo cobra um contrato explícito, que é o que
+mantém isso legível. O corte foi feito onde existe uma fronteira de verdade.
 
 **Um lint aparece nesse desenho.** Um membro definido num mixin e consumido
 por outro através da declaração abstrata é marcado como `unused_element`: o
