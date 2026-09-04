@@ -731,10 +731,19 @@ declarar o mesmo membro em dois mixins faz o Dart recusar a classe.
 `_money` e `_number` deixaram de ser `static` por causa disso — um membro
 estático não pode coexistir com um herdado de mesmo nome.
 
-Seções já extraídas: caixa, comandas/mesas, fiscal, pedidos, pagamento e
-recibo. O trabalho continua (entrada por teclado, produto/pedido e os painéis
-de `build`), e o alvo é nenhum arquivo passar de ~200 linhas — o que significa
-quebrar também as seções grandes em pedaços menores, por diálogo e por painel.
+Seções já extraídas: caixa, comandas/mesas, entrada (teclado/leitor/atalhos),
+fiscal, pedido, pedidos (histórico), pagamento e recibo. Sobrou em
+`home_page.dart` o ciclo de vida, a carga, a navegação e os painéis de `build`.
+
+O alvo é nenhum arquivo passar de ~200 linhas, e ainda não chegamos: as seções
+grandes precisam ser quebradas de novo, e o corte natural ali é por diálogo e
+por painel — cada `showDialog` e cada `Widget _algoPanel()` é um pedaço
+independente.
+
+**Um lint aparece nesse desenho.** Um membro definido num mixin e consumido
+por outro através da declaração abstrata é marcado como `unused_element`: o
+analisador não liga as duas pontas entre mixins. Onde isso acontece há um
+`// ignore: unused_element` com a explicação em cima da definição.
 
 **A tela só é apagada uma vez.** Havia três formas de sinalizar carregamento e
 todas ocupavam a tela inteira, então qualquer oscilação de rede, voltar ao

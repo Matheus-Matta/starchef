@@ -67,6 +67,9 @@ mixin _PaymentSection on _HomePageShared {
     Map<String, dynamic> printer,
   );
 
+  // Consumido por outra seção via declaração abstrata; o analisador não
+  // enxerga a ligação entre mixins.
+  // ignore: unused_element
   Future<void> _paymentDialog() async {
     try {
       await _preparePaymentPage();
@@ -152,6 +155,9 @@ mixin _PaymentSection on _HomePageShared {
   /// à esquerda se atualizava e o teclado ficava para trás — o operador via
   /// "Restante R$ 12,43" e o teclado oferecendo R$ 11,00, que é o subtotal sem
   /// a taxa. Cobrar a menos é um erro que só aparece no fechamento do caixa.
+  // Consumido por outra seção via declaração abstrata; o analisador não
+  // enxerga a ligação entre mixins.
+  // ignore: unused_element
   void _refreshSuggestedPaymentAmount() {
     if (paymentAmountTyped) return;
     final suggested = (remainingTotal * 100).round().toString();
