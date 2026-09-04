@@ -184,10 +184,14 @@ class Product(TenantModel):
     class Meta:
         ordering = ["category__display_order", "name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "internal_code"], name="unique_product_code_by_branch"),
+            models.UniqueConstraint(
+                fields=["branch", "internal_code"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_product_code_by_branch",
+            ),
             models.UniqueConstraint(
                 fields=["branch", "gtin"],
-                condition=~models.Q(gtin=""),
+                condition=~models.Q(gtin="") & models.Q(deleted_at__isnull=True),
                 name="unique_product_gtin_by_branch",
             ),
         ]

@@ -25,6 +25,7 @@ class AssetDisposalSerializer(TenantModelSerializer):
 
 
 class AssetSerializer(TenantModelSerializer):
+    name = serializers.CharField(source="product.name", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_internal_code = serializers.CharField(source="product.internal_code", read_only=True)
     location_name = serializers.CharField(source="location.name", read_only=True)

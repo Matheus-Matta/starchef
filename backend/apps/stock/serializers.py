@@ -33,11 +33,26 @@ class GoodsReceiptSerializer(TenantModelSerializer):
     received_by_name = serializers.CharField(source="received_by.get_full_name", read_only=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True)
     supplier_name = serializers.CharField(source="invoice.supplier_name", read_only=True)
+    location_name = serializers.SerializerMethodField()
 
     class Meta:
         model = GoodsReceipt
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def get_location_name(self, obj):
+        if obj.location:
+            return obj.location.name
+        from apps.assets.models import Asset
+        asset = Asset.all_objects.filter(receipt=obj).select_related("location").first()
+        if asset and asset.location:
+            return asset.location.name
+        if obj.invoice:
+            from apps.stock.models import StockMovement
+            sm = StockMovement.all_objects.filter(nfe=obj.invoice, location__isnull=False).select_related("location").first()
+            if sm and sm.location:
+                return sm.location.name
+        return None
 
 
 class InventoryLotSerializer(TenantModelSerializer):

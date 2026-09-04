@@ -176,8 +176,22 @@ class ProductSerializer(TenantModelSerializer):
 
         gtin = (attrs.get("gtin") or getattr(self.instance, "gtin", "") or "").strip()
         branch = attrs.get("branch") or getattr(self.instance, "branch", None)
+        if not branch and request:
+            profile = getattr(request.user, "profile", None)
+            restaurant = attrs.get("restaurant") or getattr(profile, "restaurant", None)
+            if restaurant:
+                from apps.restaurants.models import Branch
+                inherited_branch = getattr(profile, "branch", None)
+                if inherited_branch and inherited_branch.restaurant_id == getattr(restaurant, "id", restaurant):
+                    branch = inherited_branch
+                else:
+                    branch = Branch.all_objects.filter(
+                        restaurant_id=getattr(restaurant, "id", restaurant),
+                        deleted_at__isnull=True,
+                    ).first()
+
         if gtin and branch:
-            existing_product = Product.all_objects.filter(branch=branch, gtin=gtin)
+            existing_product = Product.objects.filter(branch=branch, gtin=gtin)
             if self.instance:
                 existing_product = existing_product.exclude(pk=self.instance.pk)
             if existing_product.exists():

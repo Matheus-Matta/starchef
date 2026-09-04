@@ -92,6 +92,14 @@ class GoodsReceipt(TenantModel):
         default=STATUS_CONFIRMED,
         db_index=True
     )
+    location = models.ForeignKey(
+        "stock.StockLocation",
+        null=True,
+        blank=True,
+        related_name="goods_receipts",
+        on_delete=models.PROTECT,
+        help_text="Local de estoque de entrada."
+    )
     notes = models.TextField(
         blank=True,
         help_text="Observações gerais da conferência e recebimento."

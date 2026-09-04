@@ -1,5 +1,6 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -123,6 +124,100 @@ class AssetViewSet(BaseTenantViewSet):
         )
         serializer = self.get_serializer(asset)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="bulk-update-status")
+    def bulk_update_status(self, request):
+        """Atualiza o status operacional de múltiplos ativos em lote."""
+        ids = request.data.get("ids", [])
+        new_status = request.data.get("status")
+        valid_statuses = [choice[0] for choice in Asset.STATUS_CHOICES]
+
+        if not new_status or new_status not in valid_statuses:
+            return Response(
+                {"error": f"Status inválido. Escolha um dos seguintes: {', '.join(valid_statuses)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ids or not isinstance(ids, list):
+            return Response(
+                {"error": "Nenhum ativo selecionado para atualização."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = self.filter_queryset(self.get_queryset()).filter(id__in=ids)
+        updated_count = queryset.update(status=new_status, updated_at=timezone.now())
+
+        return Response({
+            "success": True,
+            "updated": updated_count,
+            "status": new_status,
+        })
+
+    @action(detail=False, methods=["post"], url_path="bulk-transfer")
+    def bulk_transfer(self, request):
+        """Transfere múltiplos ativos para uma nova localização física em lote."""
+        ids = request.data.get("ids", [])
+        to_location_id = request.data.get("to_location")
+        reason = request.data.get("reason", "Transferência em lote")
+        notes = request.data.get("notes", "")
+
+        if not to_location_id:
+            return Response(
+                {"error": "O campo 'to_location' é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not ids or not isinstance(ids, list):
+            return Response(
+                {"error": "Nenhum ativo selecionado para transferência."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        to_location = get_object_or_404(
+            StockLocation.all_objects.filter(account=request.account),
+            id=to_location_id,
+        )
+
+        assets = list(self.filter_queryset(self.get_queryset()).filter(id__in=ids))
+        if not assets:
+            return Response(
+                {"error": "Nenhum ativo encontrado para os identificadores fornecidos."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        history_records = []
+        asset_ids_to_update = []
+        for asset in assets:
+            history_records.append(
+                AssetLocationHistory(
+                    account=request.account,
+                    restaurant=asset.restaurant,
+                    branch=asset.branch,
+                    asset=asset,
+                    from_location=asset.location,
+                    to_location=to_location,
+                    moved_by=request.user,
+                    reason=reason,
+                    notes=notes,
+                )
+            )
+            asset_ids_to_update.append(asset.id)
+
+        with transaction.atomic():
+            AssetLocationHistory.objects.bulk_create(history_records)
+            Asset.objects.filter(id__in=asset_ids_to_update).update(
+                location=to_location,
+                updated_at=timezone.now(),
+            )
+
+        return Response({
+            "success": True,
+            "transferred": len(asset_ids_to_update),
+            "to_location": {
+                "id": str(to_location.id),
+                "name": to_location.name,
+            },
+        })
 
 
 class AssetLocationHistoryViewSet(BaseTenantViewSet):

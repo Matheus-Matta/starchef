@@ -642,18 +642,70 @@ class SupplierItemMapping(TenantModel):
         auto_now=True
     )
 
+    @classmethod
+    def save_mapping(
+        cls,
+        account,
+        supplier_cnpj,
+        supplier_code,
+        supplier_ean,
+        defaults,
+    ):
+        """
+        Salva ou atualiza mapeamento de fornecedor garantindo integridade.
+        Se já existir mapeamento por código e/ou por EAN, consolida em um único
+        registro sem violar as constraints unique_mapping_by_supplier_code
+        e unique_mapping_by_supplier_ean.
+        """
+        code = (supplier_code or "").strip()
+        ean = (supplier_ean or "").strip()
+        cnpj = (supplier_cnpj or "").strip()
+        if not cnpj or (not code and not ean):
+            return None
+
+        q = models.Q()
+        if code:
+            q |= models.Q(supplier_code=code)
+        if ean:
+            q |= models.Q(supplier_ean=ean)
+
+        existing = list(cls.all_objects.filter(account=account, supplier_cnpj=cnpj).filter(q))
+
+        if existing:
+            primary = existing[0]
+            for duplicate in existing[1:]:
+                models.Model.delete(duplicate)
+
+            if code:
+                primary.supplier_code = code
+            if ean:
+                primary.supplier_ean = ean
+
+            for k, v in defaults.items():
+                setattr(primary, k, v)
+            primary.save()
+            return primary
+        else:
+            return cls.objects.create(
+                account=account,
+                supplier_cnpj=cnpj,
+                supplier_code=code,
+                supplier_ean=ean,
+                **defaults,
+            )
+
     class Meta:
         verbose_name = "Mapeamento de Fornecedor"
         verbose_name_plural = "Mapeamentos de Fornecedores"
         constraints = [
             models.UniqueConstraint(
                 fields=["account", "supplier_cnpj", "supplier_code"],
-                condition=~models.Q(supplier_code=""),
+                condition=~models.Q(supplier_code="") & models.Q(deleted_at__isnull=True),
                 name="unique_mapping_by_supplier_code"
             ),
             models.UniqueConstraint(
                 fields=["account", "supplier_cnpj", "supplier_ean"],
-                condition=~models.Q(supplier_ean=""),
+                condition=~models.Q(supplier_ean="") & models.Q(deleted_at__isnull=True),
                 name="unique_mapping_by_supplier_ean"
             )
         ]

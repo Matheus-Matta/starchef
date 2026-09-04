@@ -133,8 +133,12 @@ class Asset(TenantModel):
             self.asset_code = f"EQ-{next_num:06d}"
         super().save(*args, **kwargs)
 
+    @property
+    def name(self):
+        return self.product.name if self.product else ""
+
     def __str__(self):
-        return f"{self.asset_code} - {self.product.name} ({self.get_status_display()})"
+        return f"{self.asset_code} - {self.name} ({self.get_status_display()})"
 
 
 class AssetLocationHistory(TenantModel):

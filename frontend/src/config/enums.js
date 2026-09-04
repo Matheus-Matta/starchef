@@ -282,11 +282,35 @@ export const INBOUND_NFE_STATUS_LABELS = {
 };
 
 export const ASSET_STATUS_LABELS = {
+  IN_USE: { label: "Em Uso", tone: "success" },
+  IN_STOCK: { label: "Disponível / Estoque", tone: "info" },
+  IN_MAINTENANCE: { label: "Em Manutenção", tone: "warning" },
+  BROKEN: { label: "Com Avaria", tone: "danger" },
+  LOANED: { label: "Emprestado", tone: "neutral" },
+  TRANSFERRED: { label: "Transferido", tone: "neutral" },
+  INACTIVE: { label: "Desativado", tone: "neutral" },
+  DISPOSED: { label: "Baixado", tone: "danger" },
+  LOST: { label: "Extraviado", tone: "danger" },
+  STOLEN: { label: "Furtado / Roubado", tone: "danger" },
+  // Compatibilidade com minúsculas legadas
   in_use: { label: "Em Uso", tone: "success" },
   in_maintenance: { label: "Em Manutenção", tone: "warning" },
   idle: { label: "Disponível", tone: "info" },
   disposed: { label: "Baixado", tone: "danger" },
 };
+
+export const ASSET_STATUS_OPTIONS = [
+  { label: "Em Uso / Operação", value: "IN_USE" },
+  { label: "Disponível / Em Estoque", value: "IN_STOCK" },
+  { label: "Em Manutenção", value: "IN_MAINTENANCE" },
+  { label: "Com Avaria / Inoperante", value: "BROKEN" },
+  { label: "Emprestado / Comodato", value: "LOANED" },
+  { label: "Transferido", value: "TRANSFERRED" },
+  { label: "Desativado", value: "INACTIVE" },
+  { label: "Baixado / Descartado", value: "DISPOSED" },
+  { label: "Extraviado", value: "LOST" },
+  { label: "Furtado / Roubado", value: "STOLEN" },
+];
 
 export const INVENTORY_LOT_STATUS_LABELS = {
   active: { label: "Ativo", tone: "success" },

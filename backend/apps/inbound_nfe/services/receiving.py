@@ -98,6 +98,7 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
         received_by=user,
         status=GoodsReceipt.STATUS_CONFIRMED,
         notes=receipt_notes,
+        location=location,
     )
 
     has_divergence = False
@@ -288,26 +289,13 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
                 "confirmed_by_user": True,
             }
 
-            if item.supplier_code:
-                SupplierItemMapping.objects.update_or_create(
-                    account=invoice.account,
-                    supplier_cnpj=invoice.supplier_cnpj,
-                    supplier_code=item.supplier_code,
-                    defaults={
-                        **mapping_defaults,
-                        "supplier_ean": item.ean,
-                    },
-                )
-            elif item.ean:
-                SupplierItemMapping.objects.update_or_create(
-                    account=invoice.account,
-                    supplier_cnpj=invoice.supplier_cnpj,
-                    supplier_ean=item.ean,
-                    defaults={
-                        **mapping_defaults,
-                        "supplier_code": item.supplier_code,
-                    },
-                )
+            SupplierItemMapping.save_mapping(
+                account=invoice.account,
+                supplier_cnpj=invoice.supplier_cnpj,
+                supplier_code=item.supplier_code,
+                supplier_ean=item.ean,
+                defaults=mapping_defaults,
+            )
             # Salvar conversão de unidade se houver unidade comercial diferente
             if item.commercial_unit and item.commercial_unit.upper() != product.stock_unit.upper():
                 ProductUnitConversion.objects.update_or_create(

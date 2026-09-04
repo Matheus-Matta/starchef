@@ -93,6 +93,54 @@ class ProductViewSet(BaseTenantViewSet):
             queryset = queryset.filter(restaurants__id=restaurant_id)
         return queryset.distinct()
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        gtin = (serializer.validated_data.get("gtin") or "").strip()
+        account = getattr(request, "account", None)
+        profile = getattr(request.user, "profile", None)
+        selected_restaurant = serializer.validated_data.get("restaurant") or getattr(profile, "restaurant", None)
+        selected_branch = serializer.validated_data.get("branch") or getattr(profile, "branch", None)
+        if not selected_branch and selected_restaurant:
+            from apps.restaurants.models import Branch
+            selected_branch = Branch.all_objects.filter(restaurant=selected_restaurant, deleted_at__isnull=True).first()
+
+        if gtin and account:
+            deleted_qs = Product.all_objects.filter(account=account, gtin=gtin, deleted_at__isnull=False)
+            if selected_branch:
+                deleted_qs = deleted_qs.filter(branch=selected_branch)
+            deleted_prod = deleted_qs.first()
+
+            if deleted_prod:
+                deleted_prod.deleted_at = None
+                deleted_prod.is_active = True
+
+                restaurants = serializer.validated_data.get("restaurants")
+                for key, val in serializer.validated_data.items():
+                    if key not in ("id", "created_at", "created_by", "restaurants"):
+                        setattr(deleted_prod, key, val)
+                if selected_branch:
+                    deleted_prod.branch = selected_branch
+                if selected_restaurant:
+                    deleted_prod.restaurant = selected_restaurant
+                deleted_prod.save()
+
+                if restaurants:
+                    deleted_prod.restaurants.set(restaurants)
+                elif selected_restaurant:
+                    deleted_prod.restaurants.add(selected_restaurant)
+
+                from apps.core.models import AuditLog
+                from apps.core.mixins import record_audit
+                record_audit(action=AuditLog.ACTION_UPDATED, instance=deleted_prod, actor=request.user, request=request)
+
+                return Response(self.get_serializer(deleted_prod).data, status=status.HTTP_201_CREATED)
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         selected = serializer.validated_data.get("restaurants") or []
         if not serializer.validated_data.get("restaurant") and selected:

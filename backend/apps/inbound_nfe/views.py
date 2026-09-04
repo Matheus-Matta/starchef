@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -777,6 +778,27 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
                 item.invoice.status = InboundNFe.STATUS_PENDING_RECEIPT
                 item.invoice.save(update_fields=["status"])
 
+            profile = getattr(request.user, "profile", None)
+            target_restaurant = (
+                item.invoice.restaurant
+                or getattr(product, "restaurant", None)
+                or getattr(ingredient, "restaurant", None)
+                or getattr(profile, "restaurant", None)
+            )
+            if not target_restaurant:
+                from apps.restaurants.models import Restaurant
+                target_restaurant = Restaurant.all_objects.filter(account=request.account, is_active=True).first()
+
+            target_branch = (
+                item.invoice.branch
+                or getattr(product, "branch", None)
+                or getattr(ingredient, "branch", None)
+                or getattr(profile, "branch", None)
+            )
+            if not target_branch and target_restaurant:
+                from apps.restaurants.models import Branch
+                target_branch = Branch.all_objects.filter(restaurant=target_restaurant, deleted_at__isnull=True).first()
+
             if save_mapping and item.invoice.supplier_cnpj:
                 mapping_defaults = {
                     "ingredient": ingredient,
@@ -784,21 +806,16 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
                     "supplier_description": item.description,
                     "conversion_factor": conversion_factor,
                     "confirmed_by_user": True,
+                    "restaurant": target_restaurant,
+                    "branch": target_branch,
                 }
-                if item.supplier_code:
-                    SupplierItemMapping.objects.update_or_create(
-                        account=request.account,
-                        supplier_cnpj=item.invoice.supplier_cnpj,
-                        supplier_code=item.supplier_code,
-                        defaults=mapping_defaults,
-                    )
-                if item.ean:
-                    SupplierItemMapping.objects.update_or_create(
-                        account=request.account,
-                        supplier_cnpj=item.invoice.supplier_cnpj,
-                        supplier_ean=item.ean,
-                        defaults=mapping_defaults,
-                    )
+                SupplierItemMapping.save_mapping(
+                    account=request.account,
+                    supplier_cnpj=item.invoice.supplier_cnpj,
+                    supplier_code=item.supplier_code,
+                    supplier_ean=item.ean,
+                    defaults=mapping_defaults,
+                )
 
             # Grava regra de conversão de unidades do produto se aplicável
             if product and item.commercial_unit:
@@ -814,8 +831,8 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
                     defaults={
                         "target_unit": target_u,
                         "factor": conversion_factor,
-                        "restaurant": item.invoice.restaurant,
-                        "branch": item.invoice.branch,
+                        "restaurant": target_restaurant,
+                        "branch": target_branch,
                     },
                 )
 

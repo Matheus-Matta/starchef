@@ -345,7 +345,7 @@
               <span v-if="!badgeValues(value(data, column)).length" class="rpro-muted">—</span>
             </span>
             <span v-else-if="column.type === 'kds'" class="rpro-kds">
-              <span class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+              <span class="rpro-chip" :data-tone="statusTone(value(data, column), column.map)">{{ label(value(data, column), column.map) }}</span>
               <small>{{ kdsProgressLabel(value(data, column)) }}</small>
             </span>
             <span v-else-if="column.key === 'nsu'" class="rpro-nsu-cell">
@@ -397,7 +397,7 @@
                 <i class="pi pi-cloud-download text-indigo-400 mr-1" /> Baixar XML
               </button>
             </span>
-            <span v-else-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column))">{{ label(value(data, column), column.map) }}</span>
+            <span v-else-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column), column.map)">{{ label(value(data, column), column.map) }}</span>
             <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
             <span v-else-if="column.type === 'date'" class="rpro-muted">{{ dateTime(value(data, column)) }}</span>
             <span v-else-if="column.type === 'boolean'" class="rpro-chip" :data-tone="value(data, column) ? 'success' : 'danger'">{{ value(data, column) ? "Ativo" : "Inativo" }}</span>
@@ -537,6 +537,78 @@
           </button>
           <button class="rpro-btn rpro-btn--primary" type="button" :disabled="labelsLoading" @click="printLabels">
             <i :class="labelsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-print'" /> Imprimir
+          </button>
+        </template>
+      </Dialog>
+
+      <!-- Modal: Alterar Status Operacional de Ativos em Lote -->
+      <Dialog v-model:visible="assetBulkStatusVisible" modal header="Alterar Status Operacional em Lote" :style="{ width: '440px' }">
+        <div class="rpro__labels">
+          <p class="rpro-muted">
+            <i class="pi pi-info-circle" />
+            {{ selection.length }} {{ selection.length === 1 ? "ativo selecionado" : "ativos selecionados" }}.
+          </p>
+
+          <div class="rpro__labels-group">
+            <span class="rpro__labels-label">Novo status operacional</span>
+            <Dropdown
+              v-model="assetBulkStatusTarget"
+              :options="ASSET_STATUS_OPTIONS"
+              option-label="label"
+              option-value="value"
+              placeholder="Selecione o status"
+              class="w-full"
+            />
+          </div>
+        </div>
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="assetBulkStatusLoading" @click="assetBulkStatusVisible = false">
+            Cancelar
+          </button>
+          <button class="rpro-btn rpro-btn--primary" type="button" :disabled="assetBulkStatusLoading" @click="submitAssetBulkStatus">
+            <i :class="assetBulkStatusLoading ? 'pi pi-spin pi-spinner' : 'pi pi-check'" />
+            {{ assetBulkStatusLoading ? "Salvando..." : "Salvar Status em Lote" }}
+          </button>
+        </template>
+      </Dialog>
+
+      <!-- Modal: Mover Local de Estoque de Ativos em Lote -->
+      <Dialog v-model:visible="assetBulkLocationVisible" modal header="Mover Local de Estoque em Lote" :style="{ width: '480px' }">
+        <div class="rpro__labels">
+          <p class="rpro-muted">
+            <i class="pi pi-info-circle" />
+            {{ selection.length }} {{ selection.length === 1 ? "ativo selecionado" : "ativos selecionados" }}.
+          </p>
+
+          <div class="rpro__labels-group">
+            <span class="rpro__labels-label">Local de estoque de destino</span>
+            <Dropdown
+              v-model="assetBulkLocationTarget"
+              :options="assetStockLocations"
+              option-label="name"
+              option-value="id"
+              :loading="assetBulkLocationsLoading"
+              placeholder="Selecione o local de estoque"
+              class="w-full"
+            />
+          </div>
+
+          <div class="rpro__labels-group">
+            <span class="rpro__labels-label">Motivo / Justificativa da movimentação</span>
+            <InputText
+              v-model="assetBulkLocationReason"
+              placeholder="Ex: Transferência para o salão, armário, etc."
+              class="w-full"
+            />
+          </div>
+        </div>
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="assetBulkLocationLoading" @click="assetBulkLocationVisible = false">
+            Cancelar
+          </button>
+          <button class="rpro-btn rpro-btn--primary" type="button" :disabled="assetBulkLocationLoading || !assetBulkLocationTarget" @click="submitAssetBulkLocation">
+            <i :class="assetBulkLocationLoading ? 'pi pi-spin pi-spinner' : 'pi pi-map-marker'" />
+            {{ assetBulkLocationLoading ? "Movendo..." : "Mover Ativos em Lote" }}
           </button>
         </template>
       </Dialog>
@@ -1709,6 +1781,7 @@ import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bul
 import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
+import { ASSET_STATUS_OPTIONS, ASSET_STATUS_LABELS } from "../config/enums";
 
 const route = useRoute();
 const router = useRouter();
@@ -2449,6 +2522,15 @@ async function openMapModal(item) {
       selectTargetProduct(existing);
       mappingForm.stock_unit = (existing.stock_unit || mappingForm.stock_unit).toUpperCase();
     }
+  } else if (item.ean && item.ean !== "Sem GTIN") {
+    const cleanEan = item.ean.trim();
+    const existingByEan = allNormalizedItems.value.find(
+      (it) => it.gtin && it.gtin.trim() === cleanEan
+    );
+    if (existingByEan) {
+      selectTargetProduct(existingByEan);
+      mappingForm.stock_unit = (existingByEan.stock_unit || mappingForm.stock_unit).toUpperCase();
+    }
   }
 }
 
@@ -2469,20 +2551,25 @@ async function submitItemMapping() {
         } else if (selectedTargetProduct.value.type === "ingredient") {
           await api.patch(`/menu/ingredients/${selectedTargetProduct.value.id}/`, { unit: chosenUnit.toLowerCase() });
         }
-        selectedTargetProduct.value.stock_unit = chosenUnit;
-      } catch (patchErr) {
-        console.warn("Não foi possível atualizar unidade padrão do produto:", patchErr);
-      }
+      } catch (_) {}
     }
 
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
-      ingredient_id: mappingForm.targetType === "ingredient" ? mappingForm.ingredient_id : null,
-      product_id: mappingForm.targetType === "product" ? mappingForm.product_id : null,
+      product_id: selectedTargetProduct.value.type === "product" ? selectedTargetProduct.value.id : null,
+      ingredient_id: selectedTargetProduct.value.type === "ingredient" ? selectedTargetProduct.value.id : null,
       conversion_factor: effectiveConversionFactor.value,
       save_supplier_mapping: mappingForm.save_supplier_mapping,
     });
-    toast.add({ severity: "success", summary: "Vínculo salvo!", detail: `Item vinculado com sucesso a '${selectedTargetProduct.value.name}'.`, life: 3500 });
+
+    toast.add({
+      severity: "success",
+      summary: "Vínculo salvo",
+      detail: `Item vinculado a '${selectedTargetProduct.value.name}' com sucesso.`,
+      life: 4000,
+    });
+
     mapItemDialogVisible.value = false;
+    await loadMappingOptions();
     if (inboundDetailData.value?.id) {
       await openInboundDetail(inboundDetailData.value);
     }
@@ -2536,7 +2623,14 @@ async function submitQuickCreateAndMap() {
     } catch (createErr) {
       // Se já existe produto com o mesmo GTIN, localiza o existente para vincular
       if (gtinVal) {
-        const existing = allNormalizedItems.value.find((it) => it.gtin === gtinVal);
+        let existing = allNormalizedItems.value.find((it) => it.gtin && it.gtin.trim() === gtinVal);
+        if (!existing) {
+          try {
+            const findResp = await api.get(`/menu/products/?search=${encodeURIComponent(gtinVal)}&page_size=10`);
+            const foundList = findResp.data?.results || findResp.data || [];
+            existing = foundList.find((it) => it.gtin && it.gtin.trim() === gtinVal);
+          } catch (_) {}
+        }
         if (existing) {
           toast.add({
             severity: "info",
@@ -2980,6 +3074,8 @@ const bulkActions = computed(() => {
 });
 function runBulkAction(bulkAction) {
   if (bulkAction.type === "print-codes") openLabels();
+  else if (bulkAction.type === "asset-bulk-status") openAssetBulkStatus();
+  else if (bulkAction.type === "asset-bulk-location") openAssetBulkLocation();
   else if (bulkAction.type === "patch") executeBulkMutation(bulkAction);
   else if (bulkAction.type === "delete") {
     confirm.require({
@@ -3328,6 +3424,120 @@ function renderLabelsSheet(items, kind, { layout = "sheet", cutlines = true } = 
   win.document.close();
 }
 
+// ── Ações em lote para Patrimônio e Equipamentos (Status e Local de Estoque) ──
+const assetBulkStatusVisible = ref(false);
+const assetBulkStatusLoading = ref(false);
+const assetBulkStatusTarget = ref("IN_USE");
+
+function openAssetBulkStatus() {
+  if (!selection.value.length) return;
+  assetBulkStatusTarget.value = "IN_USE";
+  assetBulkStatusVisible.value = true;
+}
+
+async function submitAssetBulkStatus() {
+  if (!selection.value.length) return;
+  assetBulkStatusLoading.value = true;
+  try {
+    const ids = selection.value.map((r) => r.id);
+    const { data } = await api.post("/assets/bulk-update-status/", {
+      ids,
+      status: assetBulkStatusTarget.value,
+    });
+    const statusObj = ASSET_STATUS_OPTIONS.find((opt) => opt.value === assetBulkStatusTarget.value);
+    const statusLabel = statusObj ? statusObj.label : assetBulkStatusTarget.value;
+    toast.add({
+      severity: "success",
+      summary: "Status atualizado em lote",
+      detail: `${data.updated || ids.length} ativo(s) alterado(s) para "${statusLabel}".`,
+      life: 4000,
+    });
+    selection.value = [];
+    assetBulkStatusVisible.value = false;
+    reload();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Não foi possível alterar status",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    assetBulkStatusLoading.value = false;
+  }
+}
+
+const assetBulkLocationVisible = ref(false);
+const assetBulkLocationLoading = ref(false);
+const assetBulkLocationsLoading = ref(false);
+const assetBulkLocationTarget = ref(null);
+const assetBulkLocationReason = ref("Transferência em lote");
+const assetStockLocations = ref([]);
+
+async function openAssetBulkLocation() {
+  if (!selection.value.length) return;
+  assetBulkLocationTarget.value = null;
+  assetBulkLocationReason.value = "Transferência em lote";
+  assetBulkLocationVisible.value = true;
+  assetBulkLocationsLoading.value = true;
+  try {
+    const { data } = await api.get("/stock/locations/", { params: { page_size: 100 } });
+    assetStockLocations.value = data.results || data || [];
+    if (assetStockLocations.value.length && !assetBulkLocationTarget.value) {
+      assetBulkLocationTarget.value = assetStockLocations.value[0].id;
+    }
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Erro ao carregar locais de estoque",
+      detail: normalizeApiError(err).message,
+      life: 4000,
+    });
+  } finally {
+    assetBulkLocationsLoading.value = false;
+  }
+}
+
+async function submitAssetBulkLocation() {
+  if (!selection.value.length) return;
+  if (!assetBulkLocationTarget.value) {
+    toast.add({
+      severity: "warn",
+      summary: "Selecione o local de destino",
+      life: 3000,
+    });
+    return;
+  }
+  assetBulkLocationLoading.value = true;
+  try {
+    const ids = selection.value.map((r) => r.id);
+    const { data } = await api.post("/assets/bulk-transfer/", {
+      ids,
+      to_location: assetBulkLocationTarget.value,
+      reason: assetBulkLocationReason.value,
+    });
+    const targetLocationName = data.to_location?.name || "novo local";
+    toast.add({
+      severity: "success",
+      summary: "Local de estoque atualizado",
+      detail: `${data.transferred || ids.length} ativo(s) movido(s) para "${targetLocationName}".`,
+      life: 4000,
+    });
+    selection.value = [];
+    assetBulkLocationVisible.value = false;
+    reload();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Não foi possível mover os ativos",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    assetBulkLocationLoading.value = false;
+  }
+}
+
 // ── Diálogo "Criar em lote" (comandas e mesas) ────────────────────────────────
 const bulkVisible = ref(false);
 const bulkSubmitting = ref(false);
@@ -3602,8 +3812,12 @@ const STATUS_TONE = {
   partial: "info", partially_ready: "info", open: "info", preparing: "info", sent_to_kitchen: "info", out_for_delivery: "info", reserved: "info",
   refunded: "danger", cancelled: "danger", failed: "danger", error: "danger", occupied: "danger", out: "danger",
   idle: "neutral", draft: "neutral", closed: "neutral",
+  IN_USE: "success", IN_STOCK: "info", IN_MAINTENANCE: "warning", BROKEN: "danger", DISPOSED: "danger",
+  LOST: "danger", STOLEN: "danger", LOANED: "neutral", TRANSFERRED: "neutral", INACTIVE: "neutral",
+  CONFIRMED: "success", DIVERGENT: "warning", DRAFT: "neutral", CANCELLED: "danger",
 };
-function statusTone(v) {
+function statusTone(v, map) {
+  if (map && map[v] && map[v].tone) return map[v].tone;
   return STATUS_TONE[v] || "neutral";
 }
 

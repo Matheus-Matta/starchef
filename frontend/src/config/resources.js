@@ -46,6 +46,7 @@ import {
   VEHICLE_TYPE_LABELS,
   INBOUND_NFE_STATUS_LABELS,
   ASSET_STATUS_LABELS,
+  ASSET_STATUS_OPTIONS,
   INVENTORY_LOT_STATUS_LABELS,
   GOODS_RECEIPT_STATUS_LABELS,
   ITEM_TYPE_OPTIONS,
@@ -687,10 +688,14 @@ export const resources = [
     pro: {
       pageSize: 15,
       description: "Controle patrimonial de equipamentos e maquinários com número de série, localização física atual, QR code e histórico de manutenções e garantias.",
+      bulkActions: [
+        { key: "bulk-status", label: "Alterar Status", icon: "pi pi-tag", type: "asset-bulk-status" },
+        { key: "bulk-location", label: "Mover Local de Estoque", icon: "pi pi-map-marker", type: "asset-bulk-location" },
+      ],
     },
     columns: [
       { key: "asset_code", label: "Código", align: "center" },
-      { key: "name", label: "Equipamento / Ativo" },
+      { key: "name", label: "Equipamento / Ativo", value: (row) => row.name || row.product_name || (row.product && row.product.name) || "-" },
       { key: "location_name", label: "Localização Atual" },
       { key: "serial_number", label: "Nº de Série" },
       { key: "purchase_price", label: "Valor de Compra", type: "money", align: "right" },
@@ -706,12 +711,7 @@ export const resources = [
       { name: "purchase_price", label: "Preço de aquisição (R$)", type: "decimal", section: "Aquisição e Garantia" },
       { name: "purchase_date", label: "Data de compra", type: "text", placeholder: "AAAA-MM-DD", section: "Aquisição e Garantia" },
       { name: "warranty_end_date", label: "Término da garantia", type: "text", placeholder: "AAAA-MM-DD", section: "Aquisição e Garantia" },
-      { name: "status", label: "Status operacional", type: "dropdown", options: [
-        { label: "Em Uso", value: "in_use" },
-        { label: "Em Manutenção", value: "in_maintenance" },
-        { label: "Disponível / Reserva", value: "idle" },
-        { label: "Baixado", value: "disposed" },
-      ], default: "in_use", section: "Status" },
+      { name: "status", label: "Status operacional", type: "dropdown", options: ASSET_STATUS_OPTIONS, default: "IN_USE", section: "Status" },
     ],
   },
   {
