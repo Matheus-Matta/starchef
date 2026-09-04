@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_exception.dart';
-import '../../../core/security/app_close_password.dart';
 import '../data/auth_repository.dart';
 import '../domain/auth_session.dart';
 
@@ -30,11 +29,6 @@ class AuthController extends ChangeNotifier {
 
   Future<void> updateApiBaseUrl(String value) =>
       _repository.apiClient.updateBaseUrl(value);
-
-  /// Usada somente antes do login, quando ainda não há restaurante nem
-  /// credenciais administrativas disponíveis para autorizar o fechamento.
-  Future<bool> verifyLoginClosePassword(String password) =>
-      AppClosePassword.verify(password);
 
   Future<void> initialize() async {
     // A restauração renova o token por conta própria quando necessário, então

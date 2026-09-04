@@ -530,7 +530,26 @@ continua recomendada para proteger contra acesso físico à máquina desligada.
 JSON por linha em `<dados>/StarChef/pdv.log`, com uma rotação em 2 MB. As
 escritas são encadeadas e tolerantes: disco cheio degrada para console, nunca
 derruba o caixa. Chaves sensíveis (`password`, `access`, `refresh`, `token`,
-`pairing_secret`, …) são substituídas por `***` antes de gravar.
+`pairing_secret`, `csc_token`, …) são substituídas por `***` antes de gravar —
+**em qualquer profundidade**. A máscara olhava só o primeiro nível, e este PDV
+registra corpo de requisição inteiro em vários pontos: um `token` dentro de
+`{'origin': {...}}` ou numa lista de operações da fila ia para o disco em texto
+puro.
+
+### 4.7-b Fechar o aplicativo
+
+Com sessão, fechar o PDV pede a **senha do restaurante** (a mesma das ações de
+caixa, configurável por loja — inclusive curta, como `123`) ou a credencial de
+um administrador da conta. É a proteção que importa: alguém fechando o caixa no
+meio do expediente.
+
+**Sem sessão, a janela fecha direto.** Antes existia aqui um verificador
+PBKDF2 embutido no binário, igual em toda instalação — um segredo que basta
+extrair de um executável para valer em todos os terminais, e que ainda podia
+ser atacado offline. Ele também não protegia nada de verdade: impedir o
+fechamento pela janela não é fronteira de segurança, o processo pode ser
+encerrado pelo sistema operacional a qualquer momento. E antes do login não há
+turno em andamento, caixa aberto nem venda na tela — não há o que proteger.
 
 ### 4.8 `core/formatters` e `core/widgets`
 
@@ -584,7 +603,7 @@ módulos.
 
 ### 5.2 `home` — o PDV
 
-`home_page.dart` é o arquivo maior do projeto (~3.800 linhas) e concentra
+`home_page.dart` é o arquivo maior do projeto (~7.700 linhas) e concentra
 catálogo, carrinho, pagamento, caixa e navegação. É reconhecidamente grande;
 qualquer trabalho novo ali deve extrair para painéis, como já foi feito com
 `product_catalog_panel.dart` e `order_cart_panel.dart`.
@@ -974,9 +993,15 @@ essa propriedade, e não outra coisa, que resolve.
 Estas são específicas do cliente Flutter; a lista completa, incluindo backend e
 hardware, está em `PDV_OFFLINE_SCALE_ARCHITECTURE.md`.
 
-1. **`home_page.dart` é grande demais.** ~3.800 linhas concentrando fluxos
-   distintos. Extrair painéis é trabalho pendente e deve acompanhar qualquer
-   mudança grande nessa tela.
+1. **`home_page.dart` é grande demais.** ~7.700 linhas e 87 `setState`
+   concentrando catálogo, pedido, pagamento, caixa, fiscal, impressão e
+   topologia. Extrair painéis é trabalho pendente e deve acompanhar qualquer
+   mudança grande nessa tela. O caminho desenhado é View/ViewModel por
+   assunto — venda, pagamento, caixa, pedidos, fiscal e casca de navegação —
+   mantendo `ChangeNotifier`, sem migrar o projeto para outra biblioteca de
+   estado. `core/network/api_client.dart` (~1.865 linhas) tem o mesmo
+   problema e se separa em transporte, conectividade, sincronização e
+   renovação de sessão.
 2. **Idempotência depende do servidor.** O cliente envia a chave; nem todas as
    rotas a deduplicam de forma uniforme.
 3. **A fila do sistema de impressão não é portátil.** Rede e serial funcionam
@@ -992,5 +1017,9 @@ hardware, está em `PDV_OFFLINE_SCALE_ARCHITECTURE.md`.
    ao mesmo equipamento continuam sendo um problema de instalação.
 6. **O cache não tem TTL.** Offline, ele entrega a última resposta conhecida
    marcada com `_offline_cache: true`.
-7. **Não há atualização automática do aplicativo.** A distribuição do binário é
-   manual.
+7. **A atualização automática ainda não é verificável.** O `PdvAutoUpdater`
+   existe e roda (`app/starchef_app.dart`): ele consulta o manifesto, baixa e
+   troca o binário. O que falta é a garantia de PROCEDÊNCIA — o instalador não
+   é assinado com Authenticode e o `latest.json` não é assinado, então o
+   SHA-256 publicado ali só protege contra corrupção de download, não contra
+   um manifesto substituído. Ver `PDV_UPDATE_RELEASE.md`.

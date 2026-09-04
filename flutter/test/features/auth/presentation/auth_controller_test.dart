@@ -63,32 +63,4 @@ void main() {
       await api.dispose();
     },
   );
-
-  test('fechamento na tela de login usa apenas o verificador local', () async {
-    final api = ApiClient(baseUrl: 'http://starchef.test/api/v1');
-    final controller = AuthController(
-      AuthRepository(apiClient: api, sessionStore: _MemorySessionStore()),
-    );
-    final expectedPassword = String.fromCharCodes(const [
-      83,
-      109,
-      118,
-      102,
-      64,
-      53,
-      51,
-      53,
-      51,
-      33,
-    ]);
-
-    expect(await controller.verifyLoginClosePassword(expectedPassword), isTrue);
-    expect(
-      await controller.verifyLoginClosePassword('senha-incorreta'),
-      isFalse,
-    );
-
-    controller.dispose();
-    await api.dispose();
-  });
 }

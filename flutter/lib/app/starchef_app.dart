@@ -82,27 +82,36 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
     if (_closeDialogOpen || !mounted || dialogContext == null) return;
     _closeDialogOpen = true;
     try {
-      final closingFromLogin = !_auth.isAuthenticated;
+      // ANTES DO LOGIN O APLICATIVO FECHA DIRETO.
+      //
+      // Aqui existia uma senha PBKDF2 embutida no binário, igual em toda
+      // instalação: um segredo que basta extrair de um executável para valer
+      // em todos os terminais. E ela não protegia nada de verdade — impedir o
+      // fechamento pela janela não é fronteira de segurança, o processo pode
+      // ser encerrado pelo sistema operacional a qualquer momento.
+      //
+      // Sem sessão não há turno em andamento, caixa aberto nem venda na tela:
+      // não há o que proteger. Com sessão, a autorização continua sendo a do
+      // restaurante (senha cadastrada ou credencial de administrador), que é
+      // configurável por loja e existe justamente para o caso que importa —
+      // alguém fechando o PDV no meio do expediente.
+      if (!_auth.isAuthenticated) {
+        await windowManager.setPreventClose(false);
+        await windowManager.destroy();
+        return;
+      }
       final authorized = await showSupervisorCloseDialog(
         context: dialogContext,
         title: 'Autorização para fechar o PDV',
-        description: closingFromLogin
-            ? 'Use a senha local de fechamento do aplicativo.'
-            : 'Use a senha cadastrada do restaurante ou as credenciais de um administrador da conta.',
+        description:
+            'Use a senha cadastrada do restaurante ou as credenciais de um administrador da conta.',
         confirmLabel: 'Fechar aplicação',
-        verifyPassword: closingFromLogin
-            ? _auth.verifyLoginClosePassword
-            : _auth.verifySupervisorClosePassword,
-        verifyAdminCredentials: closingFromLogin
-            ? null
-            : _auth.verifyAdministratorCloseCredentials,
-        passwordLabel: closingFromLogin
-            ? 'Senha de fechamento'
-            : 'Senha do restaurante',
-        invalidPasswordMessage: closingFromLogin
-            ? 'Senha de fechamento incorreta.'
-            : 'Senha do restaurante incorreta. Se ela foi alterada, '
-                  'recarregue os dados do PDV.',
+        verifyPassword: _auth.verifySupervisorClosePassword,
+        verifyAdminCredentials: _auth.verifyAdministratorCloseCredentials,
+        passwordLabel: 'Senha do restaurante',
+        invalidPasswordMessage:
+            'Senha do restaurante incorreta. Se ela foi alterada, '
+            'recarregue os dados do PDV.',
         onInvalidPassword: () async {
           await windowManager.setFullScreen(true);
           if (mounted) setState(() => _isFullScreen = true);

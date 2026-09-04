@@ -28,16 +28,36 @@ class ProductCatalogPanel extends StatelessWidget {
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Map<String, dynamic>> onProductPressed;
 
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  /// Quantos produtos cada categoria tem, sem refazer a conta a cada build.
+  ///
+  /// O painel se reconstrói a cada tecla da busca e a cada mudança de estado
+  /// da tela de vendas — e a contagem varria o catálogo INTEIRO em todas
+  /// elas. A lista de produtos só é reatribuída quando o catálogo é
+  /// recarregado (nunca alterada no lugar), então a identidade dela basta
+  /// como chave: mesma lista, mesma conta.
+  ///
+  /// Um registro só é suficiente porque existe um catálogo por vez na tela.
+  static List<Map<String, dynamic>>? _countedSource;
+  static Map<String, int> _countedResult = const {};
+
+  static Map<String, int> _categoryCounts(List<Map<String, dynamic>> products) {
+    if (identical(products, _countedSource)) return _countedResult;
     final counts = <String, int>{};
-    for (final product in allProducts) {
+    for (final product in products) {
       final categoryId = '${product['category'] ?? ''}';
       if (categoryId.isNotEmpty) {
         counts.update(categoryId, (value) => value + 1, ifAbsent: () => 1);
       }
     }
+    _countedSource = products;
+    _countedResult = counts;
+    return counts;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final counts = _categoryCounts(allProducts);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -391,11 +411,28 @@ class _ProductImage extends StatelessWidget {
       ),
     );
     if (url.isEmpty) return fallback;
-    return Image.network(
-      url,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (_, _, _) => fallback,
+    // A imagem é DECODIFICADA no tamanho do card, não no tamanho do arquivo.
+    //
+    // Sem `cacheWidth`/`cacheHeight`, uma foto de 2000x1500 do cardápio ocupa
+    // ~12 MB de bitmap na memória para aparecer num quadro de 88px de altura —
+    // e o catálogo desenha dezenas deles ao mesmo tempo. O pixel ratio entra
+    // na conta para a foto continuar nítida numa tela HiDPI.
+    //
+    // Só muda o custo: a mesma URL, o mesmo `BoxFit.cover`, o mesmo fallback.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final ratio = MediaQuery.devicePixelRatioOf(context);
+        int? cache(double side) =>
+            side.isFinite && side > 0 ? (side * ratio).round() : null;
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.medium,
+          cacheWidth: cache(constraints.maxWidth),
+          cacheHeight: cache(constraints.maxHeight),
+          errorBuilder: (_, _, _) => fallback,
+        );
+      },
     );
   }
 }

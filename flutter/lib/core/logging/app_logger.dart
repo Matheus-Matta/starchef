@@ -23,6 +23,13 @@ class AppLogger {
   File? _file;
   Future<void> _writeTail = Future.value();
 
+  /// Espera o que já foi enfileirado chegar ao disco.
+  ///
+  /// As escritas são encadeadas e disparadas sem espera (o log nunca segura o
+  /// caixa). Isso torna o arquivo impossível de conferir em teste sem um ponto
+  /// de sincronização — e a máscara de segredos precisa ser conferível.
+  Future<void> flush() => _writeTail;
+
   void debug(String event, {Map<String, Object?>? data}) =>
       log(LogLevel.debug, event, data: data);
 
@@ -69,25 +76,46 @@ class AppLogger {
     _writeTail = _writeTail.then((_) => _append(line));
   }
 
+  static const _secretKeys = {
+    'password',
+    'cash_password',
+    'access',
+    'refresh',
+    'token',
+    'access_token',
+    'refresh_token',
+    'authorization',
+    'pairing_secret',
+    'csc_token',
+    'certificate_password',
+  };
+
   /// Remove valores que não devem chegar ao disco em texto puro.
-  static Map<String, Object?> _sanitize(Map<String, Object?> data) {
-    const secretKeys = {
-      'password',
-      'cash_password',
-      'access',
-      'refresh',
-      'token',
-      'access_token',
-      'refresh_token',
-      'authorization',
-      'pairing_secret',
-    };
-    return {
-      for (final entry in data.entries)
-        entry.key: secretKeys.contains(entry.key.toLowerCase())
-            ? '***'
-            : entry.value,
-    };
+  ///
+  /// Desce nos mapas e listas aninhados. A máscara olhava só o primeiro nível,
+  /// e o log deste PDV registra corpo de requisição inteiro em vários pontos
+  /// (`causa: '$error'`, `data: {...body}`) — um `token` dentro de
+  /// `{'origin': {...}}` ou de uma lista de operações da fila passava direto
+  /// para o disco em texto puro.
+  static Map<String, Object?> _sanitize(Map<String, Object?> data) => {
+    for (final entry in data.entries)
+      entry.key: _sanitizeValue(entry.key, entry.value),
+  };
+
+  static Object? _sanitizeValue(String key, Object? value) {
+    if (_secretKeys.contains(key.toLowerCase())) return '***';
+    if (value is Map) {
+      return {
+        for (final entry in value.entries)
+          '${entry.key}': _sanitizeValue('${entry.key}', entry.value),
+      };
+    }
+    if (value is Iterable) {
+      // A chave do item de uma lista é a da própria lista: `tokens: [...]`
+      // já foi mascarado acima; aqui só se desce em busca de mapas dentro.
+      return [for (final item in value) _sanitizeValue(key, item)];
+    }
+    return value;
   }
 
   Future<void> _append(String line) async {
@@ -99,11 +127,7 @@ class AppLogger {
         await file.rename('${file.path}.1');
         _file = file;
       }
-      await file.writeAsString(
-        '$line\n',
-        mode: FileMode.append,
-        flush: false,
-      );
+      await file.writeAsString('$line\n', mode: FileMode.append, flush: false);
     } catch (_) {
       // Sem log em disco o aplicativo continua operando normalmente.
     }

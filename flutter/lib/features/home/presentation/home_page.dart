@@ -220,16 +220,45 @@ class _HomePageState extends State<HomePage> {
   final Set<String> watchedFiscalInvoices = {};
   bool sidebarExpanded = true;
 
-  List<Map<String, dynamic>> get visibleProducts => products.where((product) {
-    final matchesCategory =
-        category == null || '${product['category']}' == category;
+  /// Última filtragem do catálogo, para não refazê-la a cada build.
+  ///
+  /// A tela de vendas se reconstrói a cada tecla e a cada mudança de estado, e
+  /// o filtro varria o catálogo INTEIRO em todas elas — normalizando o termo
+  /// de busca uma vez por produto, ainda por cima. A lista de produtos só é
+  /// reatribuída no carregamento (nunca alterada no lugar), então identidade
+  /// da lista + categoria + termo descrevem o resultado por inteiro.
+  ///
+  /// O resultado é o mesmo de antes; muda só quantas vezes ele é calculado.
+  List<Map<String, dynamic>>? _visibleCache;
+  List<Map<String, dynamic>>? _visibleSource;
+  String? _visibleCategory;
+  String _visibleTerm = '';
+
+  List<Map<String, dynamic>> get visibleProducts {
     final term = search.trim().toLowerCase();
-    return matchesCategory &&
-        (term.isEmpty ||
-            '${product['name']}'.toLowerCase().contains(term) ||
-            '${product['internal_code'] ?? ''}'.toLowerCase().contains(term) ||
-            '${product['category_name'] ?? ''}'.toLowerCase().contains(term));
-  }).toList();
+    final cached = _visibleCache;
+    if (cached != null &&
+        identical(products, _visibleSource) &&
+        category == _visibleCategory &&
+        term == _visibleTerm) {
+      return cached;
+    }
+    final filtered = products.where((product) {
+      final matchesCategory =
+          category == null || '${product['category']}' == category;
+      return matchesCategory &&
+          (term.isEmpty ||
+              '${product['name']}'.toLowerCase().contains(term) ||
+              '${product['internal_code'] ?? ''}'.toLowerCase().contains(
+                term,
+              ) ||
+              '${product['category_name'] ?? ''}'.toLowerCase().contains(term));
+    }).toList();
+    _visibleSource = products;
+    _visibleCategory = category;
+    _visibleTerm = term;
+    return _visibleCache = filtered;
+  }
 
   double get paidTotal => registeredPayments.fold(
     0,
