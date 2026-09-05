@@ -79,4 +79,48 @@ void main() {
     }
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a linha de tabela sai do tema, não de cada tela', (
+    tester,
+  ) async {
+    // Sem isto cada lista escolhia a própria altura para caber os botões da
+    // célula de ações — a de pedidos chegou a 68 px por linha.
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: DataTable(
+            columns: const [DataColumn(label: Text('Pedido'))],
+            rows: [
+              DataRow(
+                cells: [
+                  DataCell(
+                    IconButton(
+                      onPressed: () {},
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final tema = Theme.of(
+      tester.element(find.byType(DataTable)),
+    ).dataTableTheme;
+    expect(tema.dataRowMinHeight, AppTheme.tableRowHeight);
+    expect(tema.dataRowMaxHeight, AppTheme.tableRowHeight);
+    expect(tema.headingRowHeight, AppTheme.tableRowHeight);
+
+    // O botão de ícone é quem manda na altura da célula de ações: se ele
+    // voltar aos 40 px de área de toque do Material, a linha estoura.
+    expect(
+      tester.getSize(find.byType(IconButton)).height,
+      lessThanOrEqualTo(AppTheme.tableRowHeight),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

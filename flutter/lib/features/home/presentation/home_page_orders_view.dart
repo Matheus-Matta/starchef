@@ -399,12 +399,12 @@ mixin _OrdersView on _HomePageShared {
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        // Precisa ser a mesma altura passada em
-                        // dataRowMaxHeight abaixo: a tabela não rola
-                        // internamente, então se a conta de quantas linhas
-                        // cabem usar uma altura menor que a real, a tabela
-                        // fica mais alta que o espaço disponível e estoura.
-                        const rowHeight = 68.0;
+                        // Precisa ser a MESMA altura que a tabela usa de
+                        // fato: ela não rola internamente, então uma conta
+                        // feita com altura menor que a real deixa a tabela
+                        // mais alta que o espaço disponível e estoura. Por
+                        // isso lê o tema em vez de repetir um número aqui.
+                        const rowHeight = AppTheme.tableRowHeight;
                         final calculatedRows =
                             ((constraints.maxHeight - 180) / rowHeight).floor();
                         final rowsPerPage = calculatedRows.clamp(1, 10);
@@ -420,13 +420,7 @@ mixin _OrdersView on _HomePageShared {
                               // o DataTable mostra uma caixa de marcação por
                               // linha por padrão, sem nenhuma ação associada.
                               showCheckboxColumn: false,
-                              // A linha padrão tem 48 px fixos, e a célula de
-                              // ações traz botões que passam disso com o texto
-                              // ampliado que o PDV usa — daí o estouro de
-                              // poucos pixels repetido em toda linha. Dar
-                              // altura suficiente resolve na origem, em vez de
-                              // encolher os alvos de toque do operador.
-                              dataRowMinHeight: 52,
+                              dataRowMinHeight: rowHeight,
                               dataRowMaxHeight: rowHeight,
                               rowsPerPage: rowsPerPage,
                               availableRowsPerPage: <int>{

@@ -283,7 +283,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('mostra o código do produto com # ao lado do título', (
+    testWidgets('o código fica acima da categoria, no tamanho dela', (
       tester,
     ) async {
       final coded = <Map<String, dynamic>>[
@@ -317,8 +317,34 @@ void main() {
         ),
       );
 
-      expect(find.textContaining('#104'), findsOneWidget);
-      expect(find.textContaining('Suco de laranja'), findsOneWidget);
+      // O código já foi prefixo do título, no mesmo corpo e no mesmo peso:
+      // comia a primeira das duas linhas do nome, e num produto de nome longo
+      // sobrava na tela o número e reticências. Agora é uma linha própria,
+      // acima da categoria e do tamanho dela.
+      // Dentro da grade: 'Bebidas' também é o nome de um filtro de categoria
+      // logo acima, e a busca solta acharia os dois.
+      Finder noCard(String texto) => find.descendant(
+        of: find.byType(GridView),
+        matching: find.text(texto),
+      );
+      final codigo = noCard('#104');
+      final categoria = noCard('Bebidas');
+      final titulo = noCard('Suco de laranja');
+      expect(codigo, findsOneWidget);
+      expect(
+        titulo,
+        findsOneWidget,
+        reason: 'o nome não carrega mais o código',
+      );
+
+      expect(
+        tester.getTopLeft(codigo).dy,
+        lessThan(tester.getTopLeft(categoria).dy),
+      );
+      expect(
+        tester.widget<Text>(codigo).style?.fontSize,
+        tester.widget<Text>(categoria).style?.fontSize,
+      );
       expect(tester.takeException(), isNull);
     });
   });
@@ -422,9 +448,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Cancelar item'));
       await tester.tap(find.widgetWithText(FilledButton, 'Revisar pedido'));
-      await tester.tap(
-        find.widgetWithText(OutlinedButton, 'Imprimir recibo'),
-      );
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Imprimir recibo'));
       await tester.tap(find.byTooltip('Mais ações do pedido'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cancelar pedido'));

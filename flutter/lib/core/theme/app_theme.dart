@@ -18,6 +18,13 @@ abstract final class AppTheme {
   /// data, cada um parando num lugar.
   static const controlHeight = 34.0;
 
+  /// Altura de uma linha de tabela e do cabeçalho dela.
+  ///
+  /// Fica dois pixels acima de [controlHeight] porque a célula de ações traz
+  /// botões: a linha precisa caber um controle inteiro mais o fio de respiro,
+  /// senão volta o estouro de poucos pixels repetido em toda linha.
+  static const tableRowHeight = controlHeight + 2;
+
   /// O que faz um botão medir [controlHeight] de verdade.
   ///
   /// `minimumSize` sozinho não basta, e essa foi a razão de a barra de filtros
@@ -35,6 +42,41 @@ abstract final class AppTheme {
   /// botão inteiro — largo — e não um ícone solto de 34 px.
   static const _buttonDensity = VisualDensity.standard;
   static const _buttonTapTarget = MaterialTapTargetSize.shrinkWrap;
+
+  /// Um ponto a menos em toda a tipografia: corpo 13, apoio 11, título 21.
+  ///
+  /// Um ponto fixo, e não uma porcentagem: a porcentagem produzia tamanhos
+  /// quebrados (12,88 px) e encolhia o texto grande muito mais que o pequeno —
+  /// justamente onde a legibilidade já era o limite.
+  ///
+  /// O atalho seria `TextTheme.apply(fontSizeDelta: -1)`, mas ele exige que
+  /// TODO estilo do tema declare tamanho, e o tema padrão do Material traz
+  /// slots sem tamanho: o atalho estourava numa asserção antes de a primeira
+  /// tela aparecer. Aqui quem não declara tamanho passa intacto.
+  static TextTheme _umPontoMenor(TextTheme base) {
+    TextStyle? menor(TextStyle? style) {
+      final size = style?.fontSize;
+      return size == null ? style : style!.copyWith(fontSize: size - 1);
+    }
+
+    return base.copyWith(
+      displayLarge: menor(base.displayLarge),
+      displayMedium: menor(base.displayMedium),
+      displaySmall: menor(base.displaySmall),
+      headlineLarge: menor(base.headlineLarge),
+      headlineMedium: menor(base.headlineMedium),
+      headlineSmall: menor(base.headlineSmall),
+      titleLarge: menor(base.titleLarge),
+      titleMedium: menor(base.titleMedium),
+      titleSmall: menor(base.titleSmall),
+      bodyLarge: menor(base.bodyLarge),
+      bodyMedium: menor(base.bodyMedium),
+      bodySmall: menor(base.bodySmall),
+      labelLarge: menor(base.labelLarge),
+      labelMedium: menor(base.labelMedium),
+      labelSmall: menor(base.labelSmall),
+    );
+  }
 
   static ThemeData light() => _buildMaterial(Brightness.light);
   static ThemeData dark() => _buildMaterial(Brightness.dark);
@@ -112,10 +154,12 @@ abstract final class AppTheme {
           error: dark ? const Color(0xFFEF4444) : AppColors.danger,
         );
 
-    final textTheme = ThemeData(brightness: brightness).textTheme.apply(
-      fontFamily: 'Segoe UI',
-      bodyColor: scheme.onSurface,
-      displayColor: scheme.onSurface,
+    final textTheme = _umPontoMenor(
+      ThemeData(brightness: brightness).textTheme.apply(
+        fontFamily: 'Segoe UI',
+        bodyColor: scheme.onSurface,
+        displayColor: scheme.onSurface,
+      ),
     );
 
     return ThemeData(
@@ -249,6 +293,15 @@ abstract final class AppTheme {
       ),
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(
+          // Sem isto o botão de ícone fica em 40 px pela área de toque
+          // reservada — e é ele que manda na altura da célula de ações de uma
+          // tabela, onde o vizinho é um botão de 34.
+          minimumSize: const Size(controlHeight, controlHeight),
+          maximumSize: const Size.fromHeight(controlHeight),
+          padding: const EdgeInsets.all(6),
+          iconSize: 18,
+          visualDensity: _buttonDensity,
+          tapTargetSize: _buttonTapTarget,
           shape: const RoundedRectangleBorder(borderRadius: radius),
         ),
       ),
@@ -299,8 +352,14 @@ abstract final class AppTheme {
         headingRowColor: WidgetStatePropertyAll(scheme.surfaceContainer),
         dataRowColor: WidgetStatePropertyAll(surface),
         dividerThickness: 1,
-        horizontalMargin: 16,
-        columnSpacing: 28,
+        // A linha vinha dos 48 px padrão do Material, e cada tela que achasse
+        // pouco aumentava por conta própria — a lista de pedidos chegou a 68.
+        // Com a régua no tema, uma tabela nova já nasce na densidade certa.
+        headingRowHeight: tableRowHeight,
+        dataRowMinHeight: tableRowHeight,
+        dataRowMaxHeight: tableRowHeight,
+        horizontalMargin: 10,
+        columnSpacing: 18,
         headingTextStyle: textTheme.labelMedium?.copyWith(
           color: scheme.onSurfaceVariant,
           fontWeight: FontWeight.w800,

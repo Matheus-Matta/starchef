@@ -21,7 +21,9 @@ class AppPageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
+      // Era o bloco mais alto de qualquer tela — 38 px só de respiro
+      // vertical, antes de qualquer conteúdo.
+      padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border.all(color: scheme.outlineVariant),
@@ -101,7 +103,7 @@ class AppPageScaffold extends StatelessWidget {
     this.description,
     this.leading,
     this.actions = const [],
-    this.padding = const EdgeInsets.all(16),
+    this.padding = const EdgeInsets.all(10),
     this.showHeader = true,
   });
 
@@ -134,7 +136,7 @@ class AppPageScaffold extends StatelessWidget {
                     actions: actions,
                   ),
                 ),
-                SizedBox(height: showHeader ? 12 : 0),
+                SizedBox(height: showHeader ? 8 : 0),
                 Expanded(child: body),
               ],
             ),
@@ -152,7 +154,7 @@ class AppSection extends StatelessWidget {
     this.description,
     this.trailing,
     required this.child,
-    this.padding = const EdgeInsets.all(18),
+    this.padding = const EdgeInsets.all(12),
   });
 
   final String? title;
@@ -195,7 +197,7 @@ class AppSection extends StatelessWidget {
         type: MaterialType.transparency,
         child: Padding(
           padding: EdgeInsets.only(
-            top: title == null && description == null ? 0 : 16,
+            top: title == null && description == null ? 0 : 10,
           ),
           child: child,
         ),

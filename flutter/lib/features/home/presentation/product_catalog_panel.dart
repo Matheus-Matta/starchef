@@ -125,12 +125,12 @@ class ProductCatalogPanel extends StatelessWidget {
               ),
               Divider(height: 1, color: scheme.outlineVariant),
               SizedBox(
-                height: 54,
+                height: 44,
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
+                    horizontal: 12,
+                    vertical: 6,
                   ),
                   children: [
                     _CategoryButton(
@@ -156,15 +156,19 @@ class ProductCatalogPanel extends StatelessWidget {
                 child: products.isEmpty
                     ? _EmptyCatalog(search: search)
                     : GridView.builder(
-                        padding: const EdgeInsets.all(14),
+                        padding: const EdgeInsets.all(10),
                         keyboardDismissBehavior:
                             ScrollViewKeyboardDismissBehavior.onDrag,
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: 226,
-                              mainAxisExtent: 204,
-                              crossAxisSpacing: 10,
-                              mainAxisSpacing: 10,
+                              // O card encolheu junto com o resto: cabe
+                              // mais produto por tela sem o operador rolar.
+                              // A altura tem folga de propósito — o nome usa
+                              // até duas linhas, e é o pior caso que decide.
+                              maxCrossAxisExtent: 200,
+                              mainAxisExtent: 190,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
                             ),
                         itemCount: products.length,
                         itemBuilder: (context, index) {
@@ -202,8 +206,8 @@ class _CategoryButton extends StatelessWidget {
   Widget build(BuildContext context) => ShadButton.raw(
     variant: selected ? ShadButtonVariant.primary : ShadButtonVariant.outline,
     onPressed: onPressed,
-    height: 38,
-    padding: const EdgeInsets.symmetric(horizontal: 11),
+    height: AppTheme.controlHeight,
+    padding: const EdgeInsets.symmetric(horizontal: 10),
     leading: Icon(
       selected ? Icons.check_rounded : Icons.restaurant_menu_outlined,
       size: 15,
@@ -251,7 +255,7 @@ class _ProductCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                height: 88,
+                height: 76,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -288,33 +292,40 @@ class _ProductCard extends StatelessWidget {
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(11, 9, 9, 9),
+                  padding: const EdgeInsets.fromLTRB(9, 7, 7, 7),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text.rich(
-                        TextSpan(
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.15,
-                            fontWeight: FontWeight.w800,
-                            color: scheme.onSurface,
-                          ),
-                          children: [
-                            if (code.isNotEmpty)
-                              TextSpan(
-                                text: '#$code  ',
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            TextSpan(text: '${product['name']}'),
-                          ],
-                        ),
+                      // O CÓDIGO SAIU DE DENTRO DO NOME.
+                      //
+                      // Ele vinha como prefixo do título, no mesmo corpo e no
+                      // mesmo peso: comia a primeira linha do nome — que só
+                      // tem duas — e num produto de nome longo o que sobrava
+                      // na tela era o número e reticências. Agora fica na
+                      // linha de cima da categoria, no tamanho dela.
+                      Text(
+                        '${product['name']}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.onSurface,
+                        ),
                       ),
                       const SizedBox(height: 3),
+                      if (code.isNotEmpty)
+                        Text(
+                          '#$code',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       Text(
                         '${product['category_name'] ?? 'Sem categoria'}',
                         maxLines: 1,
