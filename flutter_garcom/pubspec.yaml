@@ -27,8 +27,6 @@ dependencies:
   mobile_scanner: ^7.4.0
   open_filex: ^4.7.0
   package_info_plus: ^10.2.1
-  permission_handler: ^13.0.2
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
