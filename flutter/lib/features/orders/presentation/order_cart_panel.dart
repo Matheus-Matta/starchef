@@ -205,7 +205,16 @@ class OrderCartPanel extends StatelessWidget {
                 ),
               ),
             ),
-          if (order != null && !_readOnly && onCancel != null)
+          // O menu aparece para qualquer operador; o que a permissão controla é
+          // se o item DENTRO dele funciona.
+          //
+          // Antes o menu inteiro sumia quando faltava `orders.cancel`, e com
+          // ele sumia a única pista de que cancelar um pedido é possível: o
+          // operador concluía que o PDV não faz isso, em vez de saber que
+          // precisa chamar alguém que pode. Desabilitado, ele diz o que existe
+          // e por que está fora de alcance — sem afrouxar nada, porque quem
+          // não tem a permissão continua sem cancelar.
+          if (order != null && !_readOnly)
             PopupMenuButton<String>(
               tooltip: 'Mais ações do pedido',
               icon: const Icon(Icons.more_vert),
@@ -213,28 +222,40 @@ class OrderCartPanel extends StatelessWidget {
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: 'cancel',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.cancel_outlined,
-                        size: 18,
-                        color: scheme.error,
-                      ),
-                      const SizedBox(width: 9),
-                      Text(
-                        'Cancelar pedido',
-                        style: TextStyle(
-                          color: scheme.error,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
+                  enabled: onCancel != null,
+                  child: _cancelEntry(scheme, allowed: onCancel != null),
                 ),
               ],
             ),
         ],
       ),
+    );
+  }
+
+  /// "Cancelar pedido" — em vermelho quando é possível, apagado e explicado
+  /// quando o operador não tem `orders.cancel`.
+  Widget _cancelEntry(ColorScheme scheme, {required bool allowed}) {
+    final color = allowed ? scheme.error : scheme.onSurfaceVariant;
+    return Row(
+      children: [
+        Icon(Icons.cancel_outlined, size: 18, color: color),
+        const SizedBox(width: 9),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Cancelar pedido',
+              style: TextStyle(color: color, fontWeight: FontWeight.w700),
+            ),
+            if (!allowed)
+              Text(
+                'Seu perfil não tem permissão',
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11),
+              ),
+          ],
+        ),
+      ],
     );
   }
 

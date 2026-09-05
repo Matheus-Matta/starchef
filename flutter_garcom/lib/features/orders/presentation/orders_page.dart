@@ -18,6 +18,7 @@ import 'pending_sheet.dart';
 import 'stale_data_banner.dart';
 import 'sync_banner.dart';
 import 'update_banner.dart';
+import 'update_dialog.dart';
 
 /// Tela inicial: os pedidos abertos do salão.
 ///
@@ -47,7 +48,19 @@ class _OrdersPageState extends State<OrdersPage> {
   void initState() {
     super.initState();
     unawaited(_presenter.load());
-    unawaited(_updateController.checkForUpdate());
+    unawaited(_announceUpdate());
+  }
+
+  /// Versão nova entra na frente de tudo, assim que o app abre.
+  ///
+  /// A faixa continua existindo (é o lembrete de quem fechou o diálogo), mas
+  /// ela sozinha não dava conta: divide o topo com pendências de envio e
+  /// dados de cache, e ninguém para de atender para ler um aviso fino.
+  Future<void> _announceUpdate() async {
+    await _updateController.checkForUpdate();
+    if (!mounted) return;
+    if (_updateController.phase != GarcomUpdateBannerPhase.available) return;
+    await showGarcomUpdateDialog(context, _updateController);
   }
 
   @override

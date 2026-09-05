@@ -214,13 +214,13 @@ class OrderDetailPresenter extends ChangeNotifier {
   /// estava em andamento. Uma falha de CONEXÃO não é erro: [MutationQueued] é
   /// a operação salva com sucesso no aparelho, e o selo de pendência aparece
   /// sozinho.
-  Future<String?> run(Future<void> Function() action, String success) async {
+  Future<String?> run(Future<Object?> Function() action, String success) async {
     if (_working) return null;
     _working = true;
     _notify();
     try {
-      await action();
-      await load();
+      final response = await action();
+      if (!_adoptIfOrder(response)) await load();
       return success;
     } on MutationQueued catch (queued) {
       return describeFailure(queued);
@@ -230,6 +230,31 @@ class OrderDetailPresenter extends ChangeNotifier {
       _working = false;
       _notify();
     }
+  }
+
+  /// Adota a resposta de uma gravação como a nova verdade do pedido.
+  ///
+  /// O Caixa Principal responde a uma gravação com o pedido JÁ ATUALIZADO —
+  /// é a versão mais nova que existe. Antes essa resposta era descartada e a
+  /// tela refazia um `GET` logo em seguida; só que a leitura do principal sai
+  /// do SQLite dele, que a gravação ainda pode não ter alcançado. O `GET`
+  /// voltava com o pedido de antes, e a tela ficava exatamente como estava
+  /// depois de um "enviado com sucesso" — itens parados em "a enviar", botão
+  /// ainda oferecendo enviar.
+  ///
+  /// Por isso, quando a resposta é reconhecidamente ESTE pedido, ela vale e a
+  /// releitura é dispensada. Quando não é (a operação foi para a fila, ou
+  /// devolveu outro recurso — um item, um recebimento), o `GET` continua sendo
+  /// o caminho.
+  bool _adoptIfOrder(Object? response) {
+    if (response is! Map) return false;
+    final data = Map<String, dynamic>.from(response);
+    if ('${data['id']}' != _orderId || data['items'] is! List) return false;
+    _order = data;
+    _origin = const ReadOrigin.live();
+    _lastPendingCount = gateway.pendingFor(_orderId).length;
+    _notify();
+    return true;
   }
 
   /// Acrescenta o item à lista de "a enviar" — sem tocar na rede.
@@ -294,12 +319,13 @@ class OrderDetailPresenter extends ChangeNotifier {
       }
       // A comanda só é impressa uma vez, no fim: uma impressão por item
       // encheria a cozinha de papel para a mesma rodada.
+      Object? confirmed;
       try {
-        await repository.sendToKitchen(_orderId);
+        confirmed = await repository.sendToKitchen(_orderId);
       } on MutationQueued {
         queued++;
       }
-      await load();
+      if (!_adoptIfOrder(confirmed)) await load();
       return queued == 0
           ? 'Pedido enviado para produção e impressão.'
           : 'Sem conexão: $sent de ${pending.length} itens foram entregues. '

@@ -76,18 +76,59 @@ class OrdersRepository {
   /// que uma longa que trava a tela.
   static const _pageSize = 30;
 
+  /// O que "em atendimento" quer dizer para o salão.
+  ///
+  /// São DOIS estados, não um. `awaiting_payment` é a conta fechada e ainda não
+  /// recebida — a mesa continua ocupada, o cliente continua sentado e o garçom
+  /// continua atendendo. Pedir só `open` fazia a comanda sumir da lista no
+  /// instante em que alguém fechava a conta, e ela só reaparecia por um
+  /// caminho torto: "novo pedido → comanda", porque o backend procura o pedido
+  /// existente da comanda nos dois estados
+  /// (`OrderViewSet.by_command`, `status__in=[open, awaiting_payment]`).
+  ///
+  /// É a mesma dupla que o PDV desktop considera aberta
+  /// (`home_page_orders.dart`), então caixa e salão passam a enxergar a mesma
+  /// lista.
+  static const _openStatuses = ['open', 'awaiting_payment'];
+
   /// Pedidos em aberto do restaurante do garçom.
+  ///
+  /// Uma consulta por estado, e não uma só: o filtro `status` é de igualdade
+  /// exata tanto no DRF quanto no SQLite local que o Caixa Principal usa para
+  /// responder — não existe `status__in` para o app pedir. Duas consultas
+  /// curtas na rede da loja custam menos do que baixar a lista inteira sem
+  /// filtro e separar aqui.
   Future<List<Map<String, dynamic>>> openOrders() async {
-    final page = await _read(
-      '/orders/',
-      query: {
-        'status': 'open',
-        'restaurant': session.user.restaurantId,
-        'ordering': '-opened_at',
-        'page_size': 50,
-      },
+    final merged = <String, Map<String, dynamic>>{};
+    var origin = const ReadOrigin.live();
+    for (final status in _openStatuses) {
+      final page = await _read(
+        '/orders/',
+        query: {
+          'status': status,
+          'restaurant': session.user.restaurantId,
+          'ordering': '-opened_at',
+          'page_size': 50,
+        },
+      );
+      // A origem mais pessimista manda: se QUALQUER uma das duas veio da cópia
+      // local, a lista inteira é um retrato e a faixa de aviso precisa
+      // aparecer. Sem isto, a segunda leitura (viva) apagaria o aviso da
+      // primeira (de cache) e o garçom lançaria item sobre dado velho sem
+      // saber.
+      if (lastReadOrigin.fromCache) origin = lastReadOrigin;
+      for (final order in _rows(page)) {
+        merged['${order['id']}'] = order;
+      }
+    }
+    lastReadOrigin = origin;
+    final orders = merged.values.toList();
+    // O `-opened_at` de cada consulta ordena só a sua metade; juntas, elas
+    // voltariam com os `awaiting_payment` todos depois dos `open`.
+    orders.sort(
+      (a, b) => '${b['opened_at'] ?? ''}'.compareTo('${a['opened_at'] ?? ''}'),
     );
-    return _rows(page);
+    return orders;
   }
 
   Future<Map<String, dynamic>> order(String id) => _read('/orders/$id/');
