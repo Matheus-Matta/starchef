@@ -144,9 +144,31 @@ procedimento completo para cadastrá-los e publicar está em
 
 Para instalar no aparelho do garçom: **arm64** cobre praticamente todo celular
 atual; **arm32** só para aparelhos antigos; o **universal** é o à prova de erro,
-ao custo de ~50 MB. Como a instalação é fora da Play Store, o aparelho precisa
+ao custo de ~69 MB. Como a instalação é fora da Play Store, o aparelho precisa
 permitir "instalar apps desconhecidos" para o app que estiver abrindo o arquivo
 (navegador, gerenciador de arquivos ou WhatsApp).
+
+O release publica os quatro: o universal e um por arquitetura. **A atualização
+automática baixa o da arquitetura do aparelho** (~25 MB), descoberto pelo
+`Abi.current()` do `dart:ffi`; o universal fica para instalação manual e para as
+versões do app anteriores a 1.8.3, que só conhecem a chave `package`.
+
+### Permissão de instalação
+
+O app verifica `REQUEST_INSTALL_PACKAGES` **antes de baixar**, não depois. Sem
+isso o operador atravessava o download inteiro para esbarrar numa tela de
+permissão no fim e, voltando sem conceder, repetia tudo na tentativa seguinte.
+
+A permissão é por instalação: desinstalar e instalar de novo — o que acontece ao
+trocar a chave de assinatura — zera a concessão, e ela precisa ser dada mais uma
+vez. Não é o app pedindo à toa.
+
+> **Play Protect.** Um APK fora da loja é assinado por um certificado
+> desconhecido do Google e tem contagem de instalações baixa, então o Play
+> Protect avisa que o app "não foi verificado". Isso não tem conserto no
+> aplicativo: só a distribuição pela Play Store (ou Managed Google Play) faz o
+> aviso sumir. Enquanto a distribuição for por APK, o operador precisa confirmar
+> a instalação mesmo assim.
 
 ### Assinatura
 

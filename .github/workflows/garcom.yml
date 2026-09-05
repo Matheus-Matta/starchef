@@ -140,16 +140,32 @@ jobs:
             printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
           } > android/key.properties
 
-      - name: Build do APK universal
+      # Dois builds, e os dois são usados.
+      #
+      # O universal carrega o código nativo das três arquiteturas e passa de
+      # 69 MB; o de uma arquitetura só fica em torno de 25 MB. A atualização
+      # automática baixa o da arquitetura do aparelho — dois terços a menos de
+      # Wi-Fi da loja por celular, a cada versão. O universal continua sendo
+      # publicado porque é o que se instala à mão em qualquer aparelho sem
+      # pensar, e é ele que as versões antigas do app (que só conhecem
+      # `package`) continuam baixando.
+      - name: Build dos APKs
         shell: bash
         env:
           GARCOM_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          flutter build apk --release --split-per-abi
           flutter build apk --release
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          cp build/app/outputs/flutter-apk/app-release.apk \
-            "$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+          out="$GITHUB_WORKSPACE/artifacts"
+          mkdir -p "$out"
+          apks=build/app/outputs/flutter-apk
+          cp "$apks/app-release.apk" "$out/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            nome="StarChef-Garcom-v${GARCOM_VERSION}-$abi.apk"
+            cp "$apks/app-$abi-release.apk" "$out/$nome"
+          done
+          ls -la "$out"
 
       # Quem assinou, dito em voz alta. Antes o único sinal era a AUSÊNCIA de
       # um aviso amarelo — fácil de não notar, e impossível de conferir depois

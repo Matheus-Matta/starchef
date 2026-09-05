@@ -99,7 +99,8 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 | Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | primeira instalação ou atualização manual pelo Inno Setup |
 | Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | bundle usado pelo atualizador automático transacional |
 | Linux | `StarChef-PDV-Linux-vX.Y.Z.zip` | pacote principal com o bundle completo |
-| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom; publicado na chave `garcom` do `latest.json`, fora de `platforms` |
+| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom (~69 MB); instalação manual em qualquer aparelho, e o que as versões do app anteriores a 1.8.3 baixam |
+| Android | `StarChef-Garcom-vA.B.C-<abi>.apk` | um por arquitetura (`arm64-v8a`, `armeabi-v7a`, `x86_64`), ~25 MB; é o que a atualização automática baixa |
 | Todos | `latest.json` | manifesto consumido pelo verificador do PDV |
 
 No Windows, prefira o instalador para a primeira instalação. O `AppId` permanece
@@ -175,6 +176,33 @@ https://github.com/Matheus-Matta/starchef/releases/latest/download/latest.json
 
 O redirecionamento de `releases/latest` faz a URL acompanhar o release mais
 recente sem precisar alterar ou recompilar os terminais a cada versão.
+
+### A chave `garcom` do manifesto
+
+O aplicativo do garçom tem versionamento próprio, então não entra em
+`platforms`. Ele lê esta chave:
+
+```json
+"garcom": {
+  "version": "1.8.3",
+  "package": { "kind": "apk", "name": "StarChef-Garcom-v1.8.3.apk", "url": "...", "sha256": "...", "size": 72488796 },
+  "packages": [
+    { "abi": "arm64-v8a",   "name": "StarChef-Garcom-v1.8.3-arm64-v8a.apk",   "url": "...", "sha256": "...", "size": 26214400 },
+    { "abi": "armeabi-v7a", "name": "StarChef-Garcom-v1.8.3-armeabi-v7a.apk", "url": "...", "sha256": "...", "size": 24117248 },
+    { "abi": "x86_64",      "name": "StarChef-Garcom-v1.8.3-x86_64.apk",      "url": "...", "sha256": "...", "size": 26738688 }
+  ]
+}
+```
+
+`package` é o APK universal e **não pode sair do manifesto**: é o único campo
+que as versões do app anteriores a 1.8.3 conhecem, e é por ele que elas
+continuam se atualizando.
+
+`packages` é a lista por arquitetura. O app descobre a própria ABI pelo
+`Abi.current()` do `dart:ffi` (sem plugin nem canal nativo), procura a entrada
+correspondente e baixa só ela — cerca de um terço do universal, que carrega o
+código nativo das três. Sem correspondência, ou sem a lista, ele cai no
+`package`.
 
 ## Estados mostrados no PDV
 

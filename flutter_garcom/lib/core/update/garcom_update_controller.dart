@@ -43,6 +43,25 @@ class GarcomUpdateController extends ChangeNotifier {
   Future<void> downloadAndInstall() async {
     final package = _package;
     if (package == null) return;
+    // A permissão vem ANTES do download, e essa ordem é o ponto.
+    //
+    // Um APK do garçom passa de 20 MB, baixados pelo Wi-Fi do salão. Pedindo
+    // só na hora de instalar, o operador atravessava o download inteiro para
+    // esbarrar numa tela de permissão no fim — e, se voltasse sem conceder,
+    // repetia tudo na tentativa seguinte. Perguntando antes, ou ele libera de
+    // uma vez ou não gastou nada.
+    if (!await GarcomUpdateInstaller.ensureAllowed()) {
+      if (_disposed) return;
+      _setPhase(
+        GarcomUpdateBannerPhase.failed,
+        detail:
+            'Para atualizar sozinho, o aparelho precisa autorizar o StarChef '
+            'Garçom a instalar aplicativos. Toque de novo e libere na tela do '
+            'sistema.',
+      );
+      return;
+    }
+    if (_disposed) return;
     _setPhase(GarcomUpdateBannerPhase.downloading);
     try {
       final destination = await getApplicationDocumentsDirectory();

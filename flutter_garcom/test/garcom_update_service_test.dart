@@ -88,4 +88,47 @@ void main() {
       );
     });
   });
+
+  group('pickPackageForDevice', () {
+    Map<String, Object?> garcom({List<Object?>? packages}) => {
+      'version': '1.8.3',
+      'package': {'name': 'universal.apk', 'url': 'https://x/u.apk'},
+      'packages': ?packages,
+    };
+
+    final porAbi = [
+      {'abi': 'armeabi-v7a', 'name': 'v7a.apk', 'url': 'https://x/v7a.apk'},
+      {'abi': 'arm64-v8a', 'name': 'v8a.apk', 'url': 'https://x/v8a.apk'},
+      {'abi': 'x86_64', 'name': 'x64.apk', 'url': 'https://x/x64.apk'},
+    ];
+
+    test('escolhe o APK da arquitetura do aparelho', () {
+      final escolhido = pickPackageForDevice(
+        garcom(packages: porAbi),
+        abi: 'arm64-v8a',
+      );
+      expect(escolhido?['name'], 'v8a.apk');
+    });
+
+    test('sem lista por arquitetura, cai no universal', () {
+      expect(
+        pickPackageForDevice(garcom(), abi: 'arm64-v8a')?['name'],
+        'universal.apk',
+      );
+    });
+
+    test('arquitetura desconhecida cai no universal', () {
+      final escolhido = pickPackageForDevice(
+        garcom(packages: porAbi),
+        abi: 'riscv64',
+      );
+      expect(escolhido?['name'], 'universal.apk');
+    });
+
+    // É o que mantém um release novo instalável a partir de um manifesto
+    // herdado de antes desta mudança, quando `packages` não existia.
+    test('manifesto sem nenhum pacote devolve nulo', () {
+      expect(pickPackageForDevice(const {'version': '1.8.3'}), isNull);
+    });
+  });
 }

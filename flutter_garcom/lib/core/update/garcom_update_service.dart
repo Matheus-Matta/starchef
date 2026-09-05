@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -41,8 +42,8 @@ class GarcomUpdatePackage {
     if (version.isEmpty) {
       throw const FormatException('Versão do app do garçom ausente.');
     }
-    final package = garcom['package'];
-    if (package is! Map) {
+    final package = pickPackageForDevice(garcom);
+    if (package == null) {
       throw const FormatException('Pacote do app do garçom ausente.');
     }
     final url = Uri.tryParse('${package['url'] ?? ''}');
@@ -64,6 +65,47 @@ class GarcomUpdatePackage {
       size: size,
     );
   }
+}
+
+/// A etiqueta que o Android dá à arquitetura DESTE aparelho.
+///
+/// Sai do `dart:ffi`, que já sabe para qual ABI este binário foi compilado —
+/// não precisa de plugin nem de canal nativo para descobrir.
+String get deviceAbi => switch (Abi.current()) {
+  Abi.androidArm64 => 'arm64-v8a',
+  Abi.androidArm => 'armeabi-v7a',
+  Abi.androidX64 => 'x86_64',
+  _ => '',
+};
+
+/// Escolhe qual APK baixar: o da arquitetura do aparelho, se existir.
+///
+/// O APK universal carrega o código nativo das TRÊS arquiteturas e pesa ~69 MB;
+/// o da arquitetura certa fica em torno de 25 MB. Baixar os outros dois é jogar
+/// fora dois terços do Wi-Fi da loja em algo que o aparelho nunca vai executar.
+///
+/// O universal continua em `package` e continua sendo a resposta quando não há
+/// `packages` no manifesto ou quando nenhuma etiqueta bate — inclusive para as
+/// versões do app anteriores a esta, que só conhecem `package` e continuam
+/// atualizando normalmente.
+///
+/// [abi] existe para o teste poder fingir um aparelho: rodando no desktop,
+/// [deviceAbi] é vazio e o caminho da escolha nunca seria exercitado.
+Map<String, dynamic>? pickPackageForDevice(
+  Map<Object?, Object?> garcom, {
+  String? abi,
+}) {
+  final target = abi ?? deviceAbi;
+  final packages = garcom['packages'];
+  if (target.isNotEmpty && packages is List) {
+    for (final entry in packages) {
+      if (entry is Map && '${entry['abi'] ?? ''}' == target) {
+        return Map<String, dynamic>.from(entry);
+      }
+    }
+  }
+  final universal = garcom['package'];
+  return universal is Map ? Map<String, dynamic>.from(universal) : null;
 }
 
 enum GarcomUpdatePhase { checking, upToDate, updateAvailable, unavailable }

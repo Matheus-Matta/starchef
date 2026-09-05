@@ -373,6 +373,13 @@ jobs:
                   "recommended": recommended,
               }
 
+          # As arquiteturas que o `--split-per-abi` do Flutter gera.
+          GARCOM_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
+          for _abi in GARCOM_ABIS:
+              names[f"garcom_{_abi}"] = (
+                  f"StarChef-Garcom-v{garcom_version}-{_abi}.apk"
+              )
+
           def garcom_block():
               """O APK deste release, ou o do release anterior.
 
@@ -384,9 +391,20 @@ jobs:
               nao baixa nada.
               """
               if (assets / names["garcom_apk"]).is_file():
+                  # `package` continua sendo o universal, e continua sendo o
+                  # unico campo que as versoes antigas do app conhecem: elas
+                  # seguem atualizando por ele. `packages` e a lista por
+                  # arquitetura, ~25 MB cada em vez dos ~69 MB do universal —
+                  # o app novo escolhe a sua e baixa um terco.
+                  por_abi = [
+                      {**package(f"garcom_{abi}", "apk", "apk", True), "abi": abi}
+                      for abi in GARCOM_ABIS
+                      if (assets / names[f"garcom_{abi}"]).is_file()
+                  ]
                   return {
                       "version": garcom_version,
                       "package": package("garcom_apk", "apk", "apk", True),
+                      "packages": por_abi,
                   }
               previous = os.environ["MANIFEST_URL"]
               with urlopen(previous, timeout=30) as response:

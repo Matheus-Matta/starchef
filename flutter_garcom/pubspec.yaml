@@ -1,7 +1,7 @@
 name: starchef_garcom
 description: "StarChef Garçom — pedidos no salão, pelo Caixa Principal."
 publish_to: 'none'
-version: 1.8.2+15
+version: 1.8.3+16
 
 environment:
   sdk: ^3.12.2
@@ -27,6 +27,7 @@ dependencies:
   mobile_scanner: ^7.4.0
   open_filex: ^4.7.0
   package_info_plus: ^10.2.1
+  permission_handler: ^13.0.2
 
 dev_dependencies:
   flutter_test:
