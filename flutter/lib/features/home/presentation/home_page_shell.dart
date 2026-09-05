@@ -42,6 +42,8 @@ mixin _ShellSection on _HomePageShared {
   String get _cashBalanceLabel;
   int get offlinePendingCount;
 
+  PdvScreen get _currentScreen;
+
   Future<void> _load();
   void _goBack();
   Future<void> _goHome();
@@ -139,6 +141,14 @@ mixin _ShellSection on _HomePageShared {
       );
     }
     return Scaffold(
+      // A faixa de atalhos fica ANCORADA no rodapé, fora do `Stack` do
+      // conteúdo: assim ela não rola junto com o catálogo nem é coberta pela
+      // barra de progresso, e continua no mesmo lugar em todas as etapas —
+      // que é o que faz o operador aprender a olhar para lá.
+      bottomNavigationBar: PdvShortcutBar(
+        screen: _currentScreen,
+        hasOrder: activeOrder != null,
+      ),
       body: Row(
         children: [
           PdvSidebar(

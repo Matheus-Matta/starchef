@@ -17,6 +17,7 @@ class PdvShortcut {
     this.screens = const {},
     this.requiresOrder = false,
     this.guardsRepeat = false,
+    this.documentedOnly = false,
     this.group = 'Geral',
   });
 
@@ -45,6 +46,15 @@ class PdvShortcut {
   /// roteador se desencontraria dele no primeiro atalho novo, e o sintoma
   /// seria uma tecla presa virando duas cobranças.
   final bool guardsRepeat;
+
+  /// A tecla é tratada FORA do roteador do PDV.
+  ///
+  /// F11 é assim: quem escuta é a janela do aplicativo (`starchef_app.dart`),
+  /// porque tela cheia não é assunto do caixa. Ela aparece na ajuda e na
+  /// faixa de atalhos — o operador precisa saber que existe —, mas `resolve`
+  /// a ignora de propósito: se o roteador a consumisse, o handler da janela
+  /// nunca a receberia e a tecla pararia de funcionar.
+  final bool documentedOnly;
 
   final String group;
 
@@ -123,11 +133,25 @@ abstract final class PdvAction {
   static const moveSelectionUp = 'move-selection-up';
   static const moveSelectionDown = 'move-selection-down';
   static const confirm = 'confirm';
+
+  /// Tratada pela janela do aplicativo; ver [PdvShortcut.documentedOnly].
+  static const toggleFullScreen = 'toggle-full-screen';
 }
 
 /// O catálogo de atalhos do PDV.
 abstract final class PdvShortcuts {
   static const all = <PdvShortcut>[
+    PdvShortcut(
+      id: PdvAction.toggleFullScreen,
+      label: 'Tela cheia',
+      description:
+          'Alterna entre janela e tela cheia. Quem trata esta tecla é a '
+          'janela do aplicativo, não o PDV — por isso ela funciona em '
+          'qualquer tela, inclusive com um campo de texto focado.',
+      trigger: ShortcutTrigger(LogicalKeyboardKey.f11, label: 'F11'),
+      documentedOnly: true,
+      group: 'Navegação',
+    ),
     PdvShortcut(
       id: PdvAction.help,
       label: 'Ajuda e atalhos',
@@ -391,6 +415,9 @@ abstract final class PdvShortcuts {
   }) {
     final board = keyboard ?? HardwareKeyboard.instance;
     for (final shortcut in all) {
+      // Documentado, mas de outra camada: deixar passar é o que mantém a
+      // tecla funcionando onde ela realmente é tratada.
+      if (shortcut.documentedOnly) continue;
       if (!shortcut.appliesTo(screen)) continue;
       if (shortcut.trigger.matches(event, board)) return shortcut;
     }

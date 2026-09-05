@@ -98,6 +98,47 @@ class OrderCartPanel extends StatelessWidget {
     );
   }
 
+  /// Conteúdo de um botão de ação: ícone, rótulo e a tecla de atalho.
+  ///
+  /// A tecla precisa aparecer NO BOTÃO — escondida só na ajuda, ela não é
+  /// descoberta por quem já sabe clicar. Mas não pode custar o rótulo: no
+  /// painel de 380 px o texto tem de reticenciar em vez de estourar a linha.
+  ///
+  /// Por isso o layout é montado aqui, e não com `FilledButton.icon`: aquele
+  /// construtor põe ícone e rótulo numa `Row` sem `Flexible`, o rótulo recebe
+  /// largura infinita, e `TextOverflow.ellipsis` nunca chega a valer. O
+  /// sintoma era o botão vazando alguns pixels — o teste de layout estreito
+  /// pegou nas duas tentativas anteriores.
+  Widget _acaoDoBotao(
+    Widget icone,
+    String texto, {
+    String? tecla,
+    double fontSize = 14,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        icone,
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            texto,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w800),
+          ),
+        ),
+        if (tecla != null) ...[
+          const SizedBox(width: 8),
+          Text(
+            tecla,
+            style: TextStyle(fontSize: fontSize - 3, letterSpacing: .4),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _header(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final pendingOffline = order?['_offline_pending'] == true;
@@ -173,7 +214,7 @@ class OrderCartPanel extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: scheme.onSurfaceVariant,
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -285,17 +326,15 @@ class OrderCartPanel extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             height: 54,
-            child: FilledButton.icon(
+            child: FilledButton(
               onPressed: order != null && items.isNotEmpty && !_readOnly
                   ? onFinish
                   : null,
-              icon: const Icon(Icons.arrow_forward_rounded, size: 21),
-              label: Text(
+              child: _acaoDoBotao(
+                const Icon(Icons.arrow_forward_rounded, size: 21),
                 _readOnly ? 'Pedido somente para consulta' : 'Revisar pedido',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
+                tecla: _readOnly ? null : 'F10',
+                fontSize: 16,
               ),
             ),
           ),
@@ -303,19 +342,20 @@ class OrderCartPanel extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             height: 44,
-            child: OutlinedButton.icon(
+            child: OutlinedButton(
               onPressed: order != null && items.isNotEmpty && !printing
                   ? onPrint
                   : null,
-              icon: printing
-                  ? const SizedBox(
-                      width: 17,
-                      height: 17,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.print_outlined, size: 19),
-              label: Text(
-                printing ? 'Gerando recibo...' : 'Imprimir recibo de venda',
+              child: _acaoDoBotao(
+                printing
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.print_outlined, size: 19),
+                printing ? 'Gerando recibo...' : 'Imprimir recibo',
+                tecla: printing ? null : 'F12',
               ),
             ),
           ),
@@ -558,7 +598,7 @@ class OrderCartPanel extends StatelessWidget {
             label.toUpperCase(),
             style: TextStyle(
               color: color,
-              fontSize: 10,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
               letterSpacing: .5,
             ),
@@ -656,7 +696,7 @@ class _CartItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: scheme.onSurfaceVariant,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -669,7 +709,7 @@ class _CartItem extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: scheme.onSurfaceVariant,
-                      fontSize: 10,
+                      fontSize: 12,
                       fontStyle: FontStyle.italic,
                     ),
                   ),
@@ -696,7 +736,7 @@ class _CartItem extends StatelessWidget {
                 '${item['pricing_unit'] == 'kg' ? '/kg' : ''}',
                 style: TextStyle(
                   color: scheme.onSurfaceVariant,
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -771,7 +811,7 @@ class _CartItem extends StatelessWidget {
           'un',
           style: TextStyle(
             color: scheme.onSurfaceVariant,
-            fontSize: 9,
+            fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -831,7 +871,7 @@ class _CartItem extends StatelessWidget {
         shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
         child: Text(
           label,
-          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
         ),
       );
 

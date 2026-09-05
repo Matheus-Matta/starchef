@@ -20,7 +20,7 @@ class ResponsiveScale extends StatelessWidget {
     super.key,
     required this.child,
     this.referenceSize = const Size(1280, 800),
-    this.minScale = 0.72,
+    this.minScale = 0.9,
     this.maxScale = 1.3,
   });
 
@@ -31,6 +31,18 @@ class ResponsiveScale extends StatelessWidget {
   /// interface encolhe; acima, cresce; sempre proporcionalmente.
   final Size referenceSize;
 
+  /// Piso da redução. **Não desce mais de 10%.**
+  ///
+  /// Era 0,72: a interface inteira encolhia quase um terço numa janela
+  /// pequena, e junto com ela os alvos de toque e o texto. Um botão de 40 px
+  /// terminava perto de 29, abaixo do mínimo recomendado para toque, e um
+  /// rótulo de 12 px virava 8,6 — ilegível na tela do balcão, que fica a mais
+  /// de meio metro do operador.
+  ///
+  /// O caminho para telas apertadas é o LAYOUT se adaptar (empilhar, esconder
+  /// o que é secundário, rolar), não a interface inteira encolher: quem tem
+  /// pouco espaço precisa do controle do mesmo tamanho, com menos coisas em
+  /// volta.
   final double minScale;
   final double maxScale;
 

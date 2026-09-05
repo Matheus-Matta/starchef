@@ -60,6 +60,7 @@ import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
+import 'pdv_shortcut_bar.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 

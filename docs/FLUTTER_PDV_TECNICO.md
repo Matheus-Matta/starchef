@@ -699,6 +699,24 @@ escolhida, peso maior que zero). O atalho vive num `CallbackShortcuts` com um
 ancestral — e a tecla passa por cima sem tocar em nada. O campo de observação é
 multilinha e trata o próprio Enter (quebra de linha), então continua imune.
 
+**A faixa de atalhos do rodapé nasce do catálogo.** `PdvShortcutBar` lê
+`PdvShortcuts.all` filtrado pela tela atual — não existe segunda lista para
+desencontrar. Um atalho novo aparece lá no mesmo commit em que passa a
+funcionar, e um que só vale no pagamento não polui a tela de vendas. Ela é
+rasa de propósito (20 px, texto de 10): serve para a tecla ser DESCOBERTA sem
+abrir a ajuda.
+
+Atalhos tratados fora do roteador entram no catálogo com `documentedOnly`.
+F11 é o caso: quem escuta é a janela do aplicativo, porque tela cheia não é
+assunto do caixa. Ela aparece na ajuda e na faixa, mas `resolve` a ignora — se
+o roteador a consumisse, a tecla pararia de funcionar.
+
+**A escala global não desce mais de 10%** (`ResponsiveScale.minScale`). Era
+0,72: um botão de 40 px terminava perto de 30 e um rótulo de 12 px virava 9 —
+abaixo do que se toca com o dedo e do que se lê a meio metro. Quem tem pouco
+espaço precisa do controle do mesmo tamanho, com menos coisas em volta; o
+caminho é o layout se adaptar, não tudo encolher.
+
 **A tela é quebrada em seções por `part` + mixin.** `home_page.dart` concentra
 catálogo, pedido, pagamento, caixa, fiscal, impressão e topologia num único
 `State` com ~100 campos. Dividir isso em ViewModels de verdade mudaria o fluxo;

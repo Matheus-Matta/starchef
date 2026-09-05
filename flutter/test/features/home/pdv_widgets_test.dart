@@ -360,7 +360,7 @@ void main() {
       expect(
         tester
             .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Imprimir recibo de venda'),
+              find.widgetWithText(OutlinedButton, 'Imprimir recibo'),
             )
             .onPressed,
         isNull,
@@ -423,7 +423,7 @@ void main() {
       await tester.tap(find.byTooltip('Cancelar item'));
       await tester.tap(find.widgetWithText(FilledButton, 'Revisar pedido'));
       await tester.tap(
-        find.widgetWithText(OutlinedButton, 'Imprimir recibo de venda'),
+        find.widgetWithText(OutlinedButton, 'Imprimir recibo'),
       );
       await tester.tap(find.byTooltip('Mais ações do pedido'));
       await tester.pumpAndSettle();

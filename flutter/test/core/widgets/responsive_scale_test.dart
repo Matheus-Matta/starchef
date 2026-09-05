@@ -36,16 +36,25 @@ void main() {
     testWidgets('janela menor que a referência encolhe (zoom out)', (
       tester,
     ) async {
-      // O mínimo configurado em WindowOptions (main.dart).
-      final scale = await reportedScale(tester, const Size(960, 640));
-      // min(960/1280, 640/800) = min(0.75, 0.8) = 0.75.
-      expect(scale, closeTo(0.75, 0.001));
+      // 1180/1280 = 0,92: encolhe, e ainda acima do piso.
+      final scale = await reportedScale(tester, const Size(1180, 800));
+      expect(scale, closeTo(1180 / 1280, 0.001));
     });
 
     testWidgets('a dimensão mais apertada decide a escala', (tester) async {
       // Larga e baixa: a altura é o fator limitante.
-      final scale = await reportedScale(tester, const Size(2000, 700));
-      expect(scale, closeTo(700 / 800, 0.001));
+      final scale = await reportedScale(tester, const Size(2000, 760));
+      expect(scale, closeTo(760 / 800, 0.001));
+    });
+
+    testWidgets('não encolhe além do piso', (tester) async {
+      // O mínimo configurado em WindowOptions (main.dart). A conta crua daria
+      // 0,75 — e nessa escala um botão de 40 px vira 30 e um rótulo de 12 px
+      // vira 9: abaixo do que se toca com o dedo e do que se lê a meio metro
+      // de distância. Numa janela apertada quem se adapta é o LAYOUT, não o
+      // tamanho de tudo.
+      final scale = await reportedScale(tester, const Size(960, 640));
+      expect(scale, closeTo(0.9, 0.001));
     });
 
     testWidgets('janela muito grande não ultrapassa o teto', (tester) async {
