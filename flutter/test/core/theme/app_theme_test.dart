@@ -103,8 +103,8 @@ void main() {
                           icon: const Icon(Icons.edit_outlined),
                         ),
                         // A variante preenchida tem defaults próprios no
-                        // Material e pode escapar do tema sem ninguém notar:
-                        // é ela a ação de pagar na lista de pedidos.
+                        // Material e pode escapar do tema sem ninguém notar.
+                        // A barra lateral usa ela quando está recolhida.
                         IconButton.filled(
                           onPressed: () {},
                           icon: const Icon(Icons.payments_outlined),

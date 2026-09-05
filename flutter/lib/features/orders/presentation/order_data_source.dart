@@ -68,15 +68,16 @@ class OrderDataSource extends DataTableSource {
                   onPressed: () => onEdit(order),
                   icon: const Icon(Icons.edit_outlined),
                 ),
-              // SÓ O ÍCONE, como as outras ações da linha.
+              // O MESMO BOTÃO DAS OUTRAS AÇÕES.
               //
-              // Um botão com rótulo no meio de botões de ícone era o item mais
-              // largo da tabela e empurrava a coluna de ações; e, por ser o
-              // único com texto, era também o que mais crescia quando o
-              // sistema está com fonte ampliada. O tom preenchido continua
-              // separando a ação principal das demais.
+              // Já foi um botão com rótulo: o item mais largo da tabela,
+              // empurrando a coluna de ações, e o que mais crescia quando o
+              // sistema está com fonte ampliada. Depois virou ícone
+              // preenchido, que destacava a ação mas continuava sendo o
+              // estranho da linha. Três ícones iguais lado a lado se leem como
+              // uma barra de ações, e é isso que a coluna é.
               if (canPay)
-                IconButton.filled(
+                IconButton(
                   tooltip: 'Receber pagamento',
                   onPressed: () => onPay(order),
                   icon: const Icon(Icons.payments_outlined),
