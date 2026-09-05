@@ -4,23 +4,27 @@
    read these tokens so density is tuned in one place, never per-screen.
    ===========================================================================*/
 :root {
-  /* Compact control heights (inputs, selects, buttons) — tamanho "small" */
-  --control-h-sm: 28px;
-  --control-h:    32px;   /* small default */
-  --control-h-lg: 38px;
+  /* ALTURA DOS CONTROLES.
+     Campo de texto, select, data, senha e botão usam TODOS o mesmo valor.
+     Antes só o `.p-inputtext` tinha altura fixa e o resto tinha apenas um
+     mínimo, então cada tipo de campo parava numa altura diferente e a linha
+     do formulário ficava desalinhada. Ver `compact.css`. */
+  --control-h-sm: 26px;
+  --control-h:    30px;   /* small default */
+  --control-h-lg: 34px;
 
   /* Control typography & padding */
   --control-font:  var(--text-sm);   /* 13px */
-  --control-pad-x: 10px;
+  --control-pad-x: 9px;
 
-  /* Form rhythm */
-  --field-gap-y:   var(--space-4);   /* 16px between rows   */
-  --field-gap-x:   var(--space-5);   /* 20px between cols   */
-  --field-label-gap: 6px;
-  --section-gap:   var(--space-5);   /* 20px between sections */
-  --card-pad:      var(--space-5);   /* 20px inner card padding */
+  /* Form rhythm — mais junto, sem encostar */
+  --field-gap-y:   var(--space-3);   /* 12px between rows   */
+  --field-gap-x:   var(--space-4);   /* 16px between cols   */
+  --field-label-gap: 4px;
+  --section-gap:   var(--space-4);   /* 16px between sections */
+  --card-pad:      var(--space-4);   /* 16px inner card padding */
 
   /* Table density */
-  --table-cell-pad-y: 8px;
-  --table-cell-pad-x: 12px;
+  --table-cell-pad-y: 6px;
+  --table-cell-pad-x: 10px;
 }

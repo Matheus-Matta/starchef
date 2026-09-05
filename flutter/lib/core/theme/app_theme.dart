@@ -170,7 +170,10 @@ abstract final class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          minimumSize: const Size.fromHeight(42),
+          // A MESMA altura dos outros controles. Estava em 42 enquanto todo o
+          // resto usava `controlHeight`, e um `ElevatedButton` ao lado de um
+          // campo ou de um `FilledButton` saía dois pixels mais alto.
+          minimumSize: const Size.fromHeight(controlHeight),
           backgroundColor: scheme.primary,
           foregroundColor: Colors.white,
           disabledBackgroundColor: scheme.surfaceContainerHigh,

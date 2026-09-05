@@ -149,6 +149,22 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 ## 9. Tema e design tokens
 
+**Altura dos campos.** Todo controle de UMA LINHA — texto, select, multi-select,
+calendário, senha, número e botão — tem a MESMA altura, fixada em
+`--control-h` (`tokens/density.css`) e aplicada em `compact.css`.
+
+Antes só o `.p-inputtext` tinha altura fixa; o resto tinha apenas
+`min-height`. Como cada componente do PrimeVue traz o próprio padding interno,
+o select parava mais alto que o campo de texto e o calendário mais alto que os
+dois — a linha do formulário saía em escadinha. Os invólucros (`.p-calendar`,
+`.p-password`, `.p-inputnumber`) também precisam que o `.p-inputtext` de
+dentro ocupe `height: 100%`, senão o campo tem o tamanho certo e o texto
+flutua fora do centro.
+
+A `textarea` fica de fora de propósito: ela cresce com o texto, e travar a
+altura esconderia o que o operador acabou de escrever. `density.test.js` fixa
+essas regras.
+
 Toggle claro/escuro no `Topbar.vue` (`toggle-theme`), estado via `provide/inject("theme")` em `AppLayout.vue`, aplicado como `data-theme` na raiz do app. Tokens em `src/styles/tokens/` (`colors.css` com blocos `[data-theme="light"|"dark"]`, `spacing.css`, `typography.css`, `density.css` — escala compacta) e `primevue-tokens.css` (mapeia variáveis de componente do PrimeVue para o sistema de tokens).
 
 ## 10. Como rodar em desenvolvimento

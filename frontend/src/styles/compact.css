@@ -27,11 +27,41 @@ textarea.p-inputtext {
   line-height: var(--leading-normal);
 }
 
+/* TODO controle de UMA LINHA tem a MESMA altura.
+   `min-height` não bastava: cada componente do PrimeVue tem o seu próprio
+   padding interno, então o select parava mais alto que o campo de texto, o
+   calendário mais alto que os dois, e a linha do formulário saía escadinha.
+   Aqui a altura é FIXA e o conteúdo é centrado dentro dela.
+   A textarea fica de fora de propósito — ela cresce com o texto. */
+.p-dropdown,
+.p-multiselect,
+.p-calendar,
+.p-password,
+.p-inputnumber,
+.p-selectbutton,
+.p-inputgroup {
+  height: var(--control-h);
+}
+
+/* O que vive DENTRO desses invólucros também precisa ocupar a altura toda,
+   senão o campo tem o tamanho certo e o texto flutua fora do centro. */
+.p-calendar > .p-inputtext,
+.p-password > .p-inputtext,
+.p-inputnumber > .p-inputtext,
+.p-inputgroup > .p-inputtext,
+.p-inputgroup > .p-button,
+.p-calendar > .p-button {
+  height: 100%;
+}
+
 .p-dropdown,
 .p-multiselect {
-  min-height: var(--control-h);
+  display: flex;
+  align-items: center;
 }
-.p-dropdown .p-dropdown-label {
+
+.p-dropdown .p-dropdown-label,
+.p-multiselect .p-multiselect-label {
   display: flex;
   align-items: center;
   padding-top: 0;
