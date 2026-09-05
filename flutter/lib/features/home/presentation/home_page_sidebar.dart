@@ -216,7 +216,9 @@ mixin _SidebarSection on _HomePageShared {
     }
     if (flowStep == 'payment') {
       return (
-        'Pagamento',
+        activeOrder == null
+            ? 'Pagamento'
+            : 'Pagamento · Pedido #${activeOrder!['sequence']}',
         'Conferência e finalização do pedido',
         Icons.payments_outlined,
       );

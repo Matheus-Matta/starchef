@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
+import 'product_card_metrics.dart';
 
 class ProductCatalogPanel extends StatelessWidget {
   const ProductCatalogPanel({
@@ -155,30 +158,35 @@ class ProductCatalogPanel extends StatelessWidget {
               Expanded(
                 child: products.isEmpty
                     ? _EmptyCatalog(search: search)
-                    : GridView.builder(
-                        padding: const EdgeInsets.all(10),
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        gridDelegate:
-                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                              // O card encolheu junto com o resto: cabe
-                              // mais produto por tela sem o operador rolar.
-                              // A altura tem folga de propósito — o nome usa
-                              // até duas linhas, e é o pior caso que decide.
-                              maxCrossAxisExtent: 200,
-                              mainAxisExtent: 190,
-                              crossAxisSpacing: 8,
-                              mainAxisSpacing: 8,
+                    : LayoutBuilder(
+                        builder: (context, constraints) => GridView.builder(
+                          padding: const EdgeInsets.all(10),
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: ProductCardMetrics.maxCardWidth,
+                            // A ALTURA VEM DA LARGURA, e não de um número
+                            // escolhido à mão: é assim que a foto fecha
+                            // quadrada. Um número fixo aqui só acertaria o
+                            // quadrado numa largura de painel específica —
+                            // em todas as outras a foto sairia deitada ou
+                            // em pé, dependendo de quantas colunas coubessem.
+                            mainAxisExtent: ProductCardMetrics.cardHeight(
+                              constraints.maxWidth - 20,
                             ),
-                        itemCount: products.length,
-                        itemBuilder: (context, index) {
-                          final product = products[index];
-                          return _ProductCard(
-                            product: product,
-                            money: money,
-                            onPressed: () => onProductPressed(product),
-                          );
-                        },
+                            crossAxisSpacing: ProductCardMetrics.spacing,
+                            mainAxisSpacing: ProductCardMetrics.spacing,
+                          ),
+                          itemCount: products.length,
+                          itemBuilder: (context, index) {
+                            final product = products[index];
+                            return _ProductCard(
+                              product: product,
+                              money: money,
+                              onPressed: () => onProductPressed(product),
+                            );
+                          },
+                        ),
                       ),
               ),
             ],
@@ -254,8 +262,15 @@ class _ProductCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                height: 76,
+              // A PROPORÇÃO DA FOTO VEM DE UM LUGAR SÓ.
+              //
+              // Aqui e na altura do card ([ProductCardMetrics.cardHeight]) —
+              // se as duas discordarem, a foto sobra ou falta espaço e o card
+              // estoura. Já foi uma faixa de 76 px fixos por toda a largura,
+              // que cortava a foto em cima e embaixo em qualquer tamanho de
+              // painel.
+              AspectRatio(
+                aspectRatio: ProductCardMetrics.photoAspect,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -340,40 +355,51 @@ class _ProductCard extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
+                          // O PRECO CABE EM UMA LINHA, SEMPRE.
+                          //
+                          // Era um `Wrap`: num card estreito o "/ kg" descia
+                          // para a segunda linha e o preco riscado para uma
+                          // terceira, e o card ficava mais alto do que a
+                          // grade tinha reservado — o estouro aparecia so em
+                          // algumas larguras de painel, que sao justamente as
+                          // que deixam as colunas mais estreitas. Numa linha
+                          // so, a altura do texto para de depender da largura.
                           Expanded(
-                            child: Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.end,
-                              spacing: 4,
-                              children: [
-                                Text(
-                                  money(product['current_price']),
-                                  style: TextStyle(
-                                    color: scheme.primary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                if (weighed)
-                                  Text(
-                                    '/ kg',
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: money(product['current_price']),
                                     style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
+                                      color: scheme.primary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w900,
                                     ),
                                   ),
-                                if (promotional &&
-                                    product['sale_price'] !=
-                                        product['promotional_price'])
-                                  Text(
-                                    money(product['sale_price']),
-                                    style: TextStyle(
-                                      color: scheme.onSurfaceVariant,
-                                      fontSize: 9,
-                                      decoration: TextDecoration.lineThrough,
+                                  if (weighed)
+                                    TextSpan(
+                                      text: ' /kg',
+                                      style: TextStyle(
+                                        color: scheme.onSurfaceVariant,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
-                                  ),
-                              ],
+                                  if (promotional &&
+                                      product['sale_price'] !=
+                                          product['promotional_price'])
+                                    TextSpan(
+                                      text: '  ${money(product['sale_price'])}',
+                                      style: TextStyle(
+                                        color: scheme.onSurfaceVariant,
+                                        fontSize: 9,
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           Container(
@@ -424,23 +450,31 @@ class _ProductImage extends StatelessWidget {
     if (url.isEmpty) return fallback;
     // A imagem é DECODIFICADA no tamanho do card, não no tamanho do arquivo.
     //
-    // Sem `cacheWidth`/`cacheHeight`, uma foto de 2000x1500 do cardápio ocupa
-    // ~12 MB de bitmap na memória para aparecer num quadro de 88px de altura —
-    // e o catálogo desenha dezenas deles ao mesmo tempo. O pixel ratio entra
-    // na conta para a foto continuar nítida numa tela HiDPI.
+    // Sem isso, uma foto de 2000x1500 do cardápio ocupa ~12 MB de bitmap na
+    // memória para aparecer num quadro de menos de 200 px — e o catálogo
+    // desenha dezenas deles ao mesmo tempo. O pixel ratio entra na conta para
+    // a foto continuar nítida numa tela HiDPI.
     //
-    // Só muda o custo: a mesma URL, o mesmo `BoxFit.cover`, o mesmo fallback.
+    // UMA DIMENSÃO SÓ, e essa parte é o que estava errado. Passando
+    // `cacheWidth` E `cacheHeight` juntos, o decodificador entrega o bitmap
+    // exatamente nessa medida e ignora a proporção original: a foto chegava
+    // aqui já achatada ou esticada, e o `BoxFit.cover` não tinha como
+    // desfazer. Com a moldura quadrada o efeito virou o que se vê na tela —
+    // um prato deitado ficando em pé. Fixando só a largura, a proporção é
+    // preservada e o corte fica por conta do `cover`, que é quem sabe fazer
+    // isso sem deformar.
     return LayoutBuilder(
       builder: (context, constraints) {
         final ratio = MediaQuery.devicePixelRatioOf(context);
-        int? cache(double side) =>
-            side.isFinite && side > 0 ? (side * ratio).round() : null;
+        // Numa moldura quadrada as duas medidas são iguais; o `max` cobre o
+        // caso de a moldura deixar de ser quadrada algum dia sem que a foto
+        // volte a sair borrada.
+        final side = math.max(constraints.maxWidth, constraints.maxHeight);
         return Image.network(
           url,
           fit: BoxFit.cover,
           filterQuality: FilterQuality.medium,
-          cacheWidth: cache(constraints.maxWidth),
-          cacheHeight: cache(constraints.maxHeight),
+          cacheWidth: side.isFinite && side > 0 ? (side * ratio).round() : null,
           errorBuilder: (_, _, _) => fallback,
         );
       },

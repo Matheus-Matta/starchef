@@ -107,6 +107,80 @@ abstract final class OrderPresenter {
     };
   }
 
+  /// Quem e este pedido, em uma linha: contexto, itens e total.
+  ///
+  /// Mora na BARRA DO APLICATIVO. Ja foi um bloco dentro do painel do pedido e
+  /// outro dentro da tela de pagamento, os dois repetindo o que a barra logo
+  /// acima ja dizia pela metade — e cada um com a sua propria versao do
+  /// contexto, que e a parte que tem regra de verdade: comanda manda em mesa,
+  /// mesa manda em cliente, e uma comanda sem cliente nem mesa e self-service.
+  ///
+  /// Fica aqui, e nao na tela, porque essa regra e a unica parte da barra que
+  /// vale a pena provar com teste.
+  static String headerSubtitle({
+    required JsonMap order,
+    required int itemCount,
+    required String Function(dynamic) money,
+    JsonMap? table,
+    JsonMap? command,
+    double? remaining,
+  }) {
+    final partes = <String>[];
+    final customerName = '${order['customer_name'] ?? ''}'.trim();
+    if (command != null) {
+      final name = '${command['customer_name'] ?? ''}'.trim();
+      partes.add('Comanda ${command['number']}');
+      if (table != null) partes.add('Mesa ${table['number']}');
+      if (name.isNotEmpty) {
+        partes.add(name);
+      } else if (table == null) {
+        partes.add('Self-service');
+      }
+    } else if (table != null) {
+      partes.add('Mesa ${table['number']}');
+    } else if (customerName.isNotEmpty) {
+      partes.add(customerName);
+    } else {
+      partes.add(orderTypeLabel('${order['order_type'] ?? ''}'));
+    }
+
+    partes.add(itemCount == 1 ? '1 item' : '$itemCount itens');
+    partes.add(money(order['total']));
+    // No pagamento, o que o operador olha o tempo todo e o que ainda falta.
+    if (remaining != null && remaining > .009) {
+      partes.add('Falta ${money(remaining)}');
+    }
+    return partes.join('  ·  ');
+  }
+
+  static String orderTypeLabel(String value) =>
+      const {
+        'command': 'Comanda',
+        'table': 'Mesa',
+        'counter': 'Balcao',
+        'takeaway': 'Retirada',
+        'delivery': 'Delivery',
+      }[value] ??
+      'Pedido';
+
+  /// Le um valor DIGITADO no campo de pagamento como o teclado da tela le.
+  ///
+  /// Devolve a mesma cadeia de digitos que as teclas montam: os digitos entram
+  /// pela direita e os dois ultimos sao os centavos. Ler o texto como um
+  /// decimal comum daria ao campo um comportamento e ao teclado outro, e "12"
+  /// significaria R$ 0,12 ou R$ 12,00 dependendo de por onde o operador tivesse
+  /// entrado com o valor.
+  ///
+  /// O teto de nove digitos e o mesmo das teclas: acima disso nao existe venda,
+  /// existe engano de dedo.
+  static String typedPaymentDigits(String raw) {
+    final digitos = raw
+        .replaceAll(RegExp(r'[^0-9]'), '')
+        .replaceFirst(RegExp(r'^0+(?=\d)'), '');
+    if (digitos.isEmpty) return '0';
+    return digitos.length > 9 ? digitos.substring(0, 9) : digitos;
+  }
+
   static bool isOffline(JsonMap? value) =>
       value?['_offline_pending'] == true ||
       '${value?['id'] ?? ''}'.startsWith('offline-');

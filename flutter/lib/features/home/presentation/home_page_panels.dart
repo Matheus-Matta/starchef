@@ -41,6 +41,7 @@ mixin _PanelsSection on _HomePageShared {
   Future<void> _changeItemQuantity(Map<String, dynamic> item, int delta);
   Future<void> _voidItem(Map<String, dynamic> item);
   Future<void> _finishOrder();
+  Future<void> _sendPendingFromShortcut();
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
   Future<void> _cancelOrder();
   Future<void> _emitFiscalInvoice(
@@ -317,7 +318,10 @@ mixin _PanelsSection on _HomePageShared {
     items: orderItems,
     money: _money,
     onVoidItem: _voidItem,
-    onFinish: _finishOrder,
+    onFinish: widget.controller.session!.user.canProcessPayments
+        ? _finishOrder
+        : null,
+    onSendToKitchen: () => unawaited(_sendPendingFromShortcut()),
     onPrint: _printCustomerReceipt,
     onCancel: widget.controller.session!.user.canCancelOrders
         ? _cancelOrder

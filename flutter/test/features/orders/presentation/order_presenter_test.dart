@@ -114,7 +114,11 @@ void main() {
         table: null,
         command: null,
         pendingItems: [
-          {'product': 'product-2', 'product_name': 'Refrigerante', 'quantity': 1},
+          {
+            'product': 'product-2',
+            'product_name': 'Refrigerante',
+            'quantity': 1,
+          },
         ],
         products: products,
         printers: [
@@ -318,5 +322,118 @@ void main() {
     expect(first, isNot(equals(second)));
     expect(uuidV4.hasMatch(first), isTrue);
     expect(uuidV4.hasMatch(second), isTrue);
+  });
+
+  group('a linha de identidade do pedido na barra', () {
+    String dinheiro(dynamic value) =>
+        'R\$ ${(value as num).toStringAsFixed(2).replaceAll('.', ',')}';
+
+    test(
+      'comanda com cliente: o operador precisa saber que cartão está na mão',
+      () {
+        final linha = OrderPresenter.headerSubtitle(
+          order: const {'sequence': 51, 'order_type': 'command', 'total': 0},
+          command: const {'number': 12, 'customer_name': 'Ana'},
+          itemCount: 2,
+          money: dinheiro,
+        );
+        expect(linha, startsWith('Comanda 12  ·  Ana'));
+        expect(linha, contains('2 itens'));
+      },
+    );
+
+    test('comanda sem cliente nem mesa é self-service', () {
+      final linha = OrderPresenter.headerSubtitle(
+        order: const {'sequence': 52, 'order_type': 'command', 'total': 0},
+        command: const {'number': 3, 'customer_name': ''},
+        itemCount: 1,
+        money: dinheiro,
+      );
+      expect(linha, startsWith('Comanda 3  ·  Self-service'));
+      // Um item, e não "1 itens".
+      expect(linha, contains('1 item'));
+    });
+
+    test('comanda na mesa mostra as duas, e a comanda vem antes', () {
+      final linha = OrderPresenter.headerSubtitle(
+        order: const {'order_type': 'command', 'total': 0},
+        command: const {'number': 7, 'customer_name': ''},
+        table: const {'number': 4},
+        itemCount: 0,
+        money: dinheiro,
+      );
+      expect(linha, startsWith('Comanda 7  ·  Mesa 4'));
+      expect(linha, isNot(contains('Self-service')));
+    });
+
+    test('sem comanda e sem mesa, o cliente identifica o pedido', () {
+      final linha = OrderPresenter.headerSubtitle(
+        order: const {
+          'order_type': 'delivery',
+          'customer_name': 'Bruno',
+          'total': 0,
+        },
+        itemCount: 3,
+        money: dinheiro,
+      );
+      expect(linha, startsWith('Bruno'));
+    });
+
+    test('sem nada disso, sobra o tipo do pedido', () {
+      final linha = OrderPresenter.headerSubtitle(
+        order: const {'order_type': 'counter', 'total': 0},
+        itemCount: 0,
+        money: dinheiro,
+      );
+      expect(linha, startsWith('Balcao'));
+    });
+
+    test('no pagamento entra o que ainda falta receber', () {
+      final linha = OrderPresenter.headerSubtitle(
+        order: const {'order_type': 'counter', 'total': 30},
+        itemCount: 1,
+        money: dinheiro,
+        remaining: 12.5,
+      );
+      expect(linha, endsWith('Falta R\$ 12,50'));
+
+      // Quitado, o aviso some em vez de mostrar "Falta R\$ 0,00".
+      final quitado = OrderPresenter.headerSubtitle(
+        order: const {'order_type': 'counter', 'total': 30},
+        itemCount: 1,
+        money: dinheiro,
+        remaining: 0,
+      );
+      expect(quitado, isNot(contains('Falta')));
+    });
+  });
+
+  group('valor digitado no campo de pagamento', () {
+    test('lê como o teclado da tela: os dois últimos dígitos são centavos', () {
+      expect(OrderPresenter.typedPaymentDigits('12'), '12');
+      expect(OrderPresenter.typedPaymentDigits('1234'), '1234');
+    });
+
+    test('pontuação e letras não contam', () {
+      // O próprio campo se reescreve formatado a cada tecla, então o texto que
+      // chega aqui já vem com vírgula — e às vezes com "R\$" colado.
+      expect(OrderPresenter.typedPaymentDigits('12,34'), '1234');
+      expect(OrderPresenter.typedPaymentDigits(r'R$ 1.234,56'), '123456');
+    });
+
+    test('campo vazio é zero, não uma cadeia vazia', () {
+      expect(OrderPresenter.typedPaymentDigits(''), '0');
+      expect(OrderPresenter.typedPaymentDigits('abc'), '0');
+      expect(OrderPresenter.typedPaymentDigits('0'), '0');
+    });
+
+    test('zeros à esquerda somem, mas o zero sozinho fica', () {
+      expect(OrderPresenter.typedPaymentDigits('000123'), '123');
+      expect(OrderPresenter.typedPaymentDigits('0000'), '0');
+    });
+
+    test('acima de nove dígitos é engano de dedo, não venda', () {
+      expect(OrderPresenter.typedPaymentDigits('12345678901'), '123456789');
+    });
   });
 }

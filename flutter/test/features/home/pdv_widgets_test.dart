@@ -364,24 +364,37 @@ void main() {
           money: _money,
           onVoidItem: (_) {},
           onFinish: () {},
+          onSendToKitchen: () {},
           onPrint: () {},
           printing: false,
         ),
       );
 
-      expect(find.text('Novo pedido'), findsOneWidget);
       expect(find.text('O pedido está vazio'), findsOneWidget);
       expect(
         find.text('Toque em um produto do cardápio para começar.'),
         findsOneWidget,
       );
+      // O número do pedido e o contexto saíram daqui para a barra do
+      // aplicativo — a regra de como essa linha é montada está em
+      // `order_presenter_test.dart`.
+      expect(find.text('Novo pedido'), findsNothing);
       expect(
         tester
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Revisar pedido'),
+              find.widgetWithText(FilledButton, 'Pagamento'),
             )
             .onPressed,
         isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Enviar pedidos'),
+            )
+            .onPressed,
+        isNull,
+        reason: 'sem itens pendentes não há rodada para mandar à produção',
       );
       expect(
         tester
@@ -431,14 +444,13 @@ void main() {
           money: _money,
           onVoidItem: (value) => voidedItem = value,
           onFinish: () => finishes++,
+          onSendToKitchen: () {},
           onPrint: () => prints++,
           onCancel: () => cancellations++,
           printing: false,
         ),
       );
 
-      expect(find.text('Pedido #42'), findsOneWidget);
-      expect(find.text('Mesa 7 · Histórico'), findsOneWidget);
       expect(find.text('LOCAL'), findsOneWidget);
       expect(find.text('Prato executivo'), findsOneWidget);
       expect(find.text('Sem cebola'), findsOneWidget);
@@ -447,7 +459,7 @@ void main() {
       expect(find.text('R\$ 21,00'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Cancelar item'));
-      await tester.tap(find.widgetWithText(FilledButton, 'Revisar pedido'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Pagamento'));
       await tester.tap(find.widgetWithText(OutlinedButton, 'Imprimir recibo'));
       await tester.tap(find.byTooltip('Mais ações do pedido'));
       await tester.pumpAndSettle();
@@ -486,6 +498,7 @@ void main() {
           money: _money,
           onVoidItem: (_) {},
           onFinish: () {},
+          onSendToKitchen: () {},
           onPrint: () {},
           printing: false,
           onChangeQuantity: (_, delta) => deltas.add(delta),
@@ -536,6 +549,7 @@ void main() {
           money: _money,
           onVoidItem: (_) {},
           onFinish: () {},
+          onSendToKitchen: () {},
           onPrint: () {},
           printing: false,
           onChangeQuantity: (_, _) {},
@@ -584,6 +598,7 @@ void main() {
           money: _money,
           onVoidItem: (value) => voidedItem = value,
           onFinish: () {},
+          onSendToKitchen: () {},
           onPrint: () {},
           printing: false,
         ),
@@ -600,56 +615,6 @@ void main() {
       expect(find.byTooltip('Cancelar item'), findsOneWidget);
       await tester.tap(find.byTooltip('Cancelar item'));
       expect(voidedItem?['id'], 'item-sent');
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('identifica o pedido pela comanda quando não há mesa', (
-      tester,
-    ) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(380, 700),
-        child: OrderCartPanel(
-          order: const {'sequence': 51, 'order_type': 'command', 'total': 0},
-          table: null,
-          command: const {'number': 12, 'customer_name': 'Ana'},
-          customer: null,
-          items: const [],
-          money: _money,
-          onVoidItem: (_) {},
-          onFinish: () {},
-          onPrint: () {},
-          printing: false,
-        ),
-      );
-
-      // Sem isso o cabeçalho cairia no rótulo genérico do tipo e o operador
-      // não saberia qual cartão está na mão.
-      expect(find.text('Comanda 12 · Ana'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('comanda sem cliente ainda diz que é self-service', (
-      tester,
-    ) async {
-      await _pumpAtSize(
-        tester,
-        size: const Size(380, 700),
-        child: OrderCartPanel(
-          order: const {'sequence': 52, 'order_type': 'command', 'total': 0},
-          table: null,
-          command: const {'number': 3, 'customer_name': ''},
-          customer: null,
-          items: const [],
-          money: _money,
-          onVoidItem: (_) {},
-          onFinish: () {},
-          onPrint: () {},
-          printing: false,
-        ),
-      );
-
-      expect(find.text('Comanda 3 · Self-service'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

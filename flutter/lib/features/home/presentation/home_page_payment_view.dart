@@ -39,6 +39,7 @@ mixin _PaymentView on _HomePageShared {
 
   void _goBack();
   void _pressPaymentKey(String key);
+  void _typePaymentAmount(String raw);
   void _addSplitPayment();
   Future<void> _removePayment(Map<String, dynamic> payment);
   Future<void> _completePaidOrder();
@@ -71,7 +72,7 @@ mixin _PaymentView on _HomePageShared {
         // pouco mais de 200 px. O teclado continua confortável, mas agora
         // cede espaço ao resumo nas larguras menores suportadas.
         final compact = constraints.maxWidth < 980;
-        final horizontalPadding = compact ? 18.0 : 26.0;
+        final horizontalPadding = compact ? 10.0 : 14.0;
         final keypadWidth = (constraints.maxWidth * .42)
             .clamp(340.0, 430.0)
             .toDouble();
@@ -84,33 +85,16 @@ mixin _PaymentView on _HomePageShared {
                   radius: AppTheme.radius,
                   shadows: const [],
                   child: Padding(
-                    padding: const EdgeInsets.all(24),
+                    // O TITULO E O BOTAO DE VOLTAR SAIRAM DAQUI.
+                    //
+                    // 'Pagamento', o numero do pedido e um 'Voltar ao pedido'
+                    // com rotulo ocupavam a primeira faixa do resumo dizendo o
+                    // que a barra do aplicativo, logo acima, ja diz — e a
+                    // barra tem uma seta de voltar desde sempre.
+                    padding: const EdgeInsets.all(12),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        TextButton.icon(
-                          onPressed: () => setState(() => flowStep = 'order'),
-                          icon: const Icon(Icons.arrow_back),
-                          label: const Text('Voltar ao pedido'),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Pagamento',
-                          style: TextStyle(
-                            fontSize: 27,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Pedido #${activeOrder!['sequence']}',
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
                         _paymentSummaryRow(
                           'Subtotal',
                           _money(activeOrder!['subtotal']),
@@ -143,8 +127,8 @@ mixin _PaymentView on _HomePageShared {
                         if (changeTotal > .009)
                           Container(
                             width: double.infinity,
-                            margin: const EdgeInsets.only(top: 14),
-                            padding: const EdgeInsets.all(18),
+                            margin: const EdgeInsets.only(top: 8),
+                            padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: Colors.green.withValues(alpha: .12),
                               borderRadius: AppTheme.radius,
@@ -166,7 +150,7 @@ mixin _PaymentView on _HomePageShared {
                                 Text(
                                   _money(changeTotal),
                                   style: const TextStyle(
-                                    fontSize: 34,
+                                    fontSize: 24,
                                     fontWeight: FontWeight.w900,
                                     color: Colors.green,
                                   ),
@@ -177,32 +161,35 @@ mixin _PaymentView on _HomePageShared {
                               ],
                             ),
                           ),
-                        const Divider(height: 28),
+                        const Divider(height: 16),
                         _paymentSummaryRow(
                           'Restante',
                           _money(remainingTotal),
                           strong: true,
                         ),
-                        const SizedBox(height: 22),
+                        const SizedBox(height: 10),
                         Text(
                           stagedPayments.isEmpty
                               ? 'Pagamentos registrados'
                               : 'Pagamentos deste recebimento',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                         if (stagedPayments.isNotEmpty) ...[
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 2),
                           Text(
                             'Serão enviados ao concluir o pedido.',
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
                               color: Theme.of(
                                 context,
                               ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 6),
                         Expanded(
                           child: registeredPayments.isEmpty
                               ? const Center(
@@ -281,17 +268,17 @@ mixin _PaymentView on _HomePageShared {
                         ),
                         SizedBox(
                           width: double.infinity,
-                          height: 52,
+                          height: 40,
                           child: FilledButton.icon(
                             onPressed: remainingTotal <= .009
                                 ? _completePaidOrder
                                 : null,
-                            icon: const Icon(Icons.check_circle),
+                            icon: const Icon(Icons.check_circle, size: 18),
                             label: Text(
                               stagedPayments.isEmpty
                                   ? 'Concluir pedido'
                                   : 'Concluir pedido e receber',
-                              style: const TextStyle(fontSize: 16),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                         ),
@@ -300,14 +287,14 @@ mixin _PaymentView on _HomePageShared {
                   ),
                 ),
               ),
-              SizedBox(width: compact ? 14 : 20),
+              SizedBox(width: compact ? 8 : 12),
               SizedBox(
                 width: keypadWidth,
                 child: ShadCard(
                   radius: AppTheme.radius,
                   shadows: const [],
                   child: Padding(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(12),
                     child: Column(
                       children: [
                         DropdownButtonFormField<String>(
@@ -328,7 +315,7 @@ mixin _PaymentView on _HomePageShared {
                               setState(() => selectedPaymentMethod = value),
                         ),
                         if (needsReference) ...[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 8),
                           TextField(
                             controller: paymentReference,
                             decoration: const InputDecoration(
@@ -336,31 +323,37 @@ mixin _PaymentView on _HomePageShared {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 10),
                         TextField(
                           controller: paymentAmount,
-                          readOnly: true,
+                          // Dá para digitar aqui, e não só clicar no teclado
+                          // da tela: num caixa com teclado físico o número já
+                          // está debaixo dos dedos.
+                          onChanged: _typePaymentAmount,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           textAlign: TextAlign.right,
                           style: const TextStyle(
-                            fontSize: 34,
+                            fontSize: 26,
                             fontWeight: FontWeight.w900,
                           ),
                           decoration: const InputDecoration(
                             labelText: 'Valor do pagamento',
                             prefixText: r'R$ ',
                             contentPadding: EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 18,
+                              horizontal: 12,
+                              vertical: 10,
                             ),
                           ),
                         ),
                         if (pendingChange > .009) ...[
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 8),
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 14,
+                              horizontal: 12,
+                              vertical: 9,
                             ),
                             decoration: BoxDecoration(
                               color: Colors.green.withValues(alpha: .12),
@@ -379,7 +372,7 @@ mixin _PaymentView on _HomePageShared {
                                 Text(
                                   _money(pendingChange),
                                   style: const TextStyle(
-                                    fontSize: 26,
+                                    fontSize: 20,
                                     fontWeight: FontWeight.w900,
                                     color: Colors.green,
                                   ),
@@ -388,16 +381,16 @@ mixin _PaymentView on _HomePageShared {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 8),
                         Expanded(
                           child: GridView.builder(
                             physics: const NeverScrollableScrollPhysics(),
                             gridDelegate:
                                 const SliverGridDelegateWithFixedCrossAxisCount(
                                   crossAxisCount: 3,
-                                  childAspectRatio: 1.6,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10,
+                                  childAspectRatio: 1.9,
+                                  crossAxisSpacing: 6,
+                                  mainAxisSpacing: 6,
                                 ),
                             itemCount: keys.length,
                             itemBuilder: (_, index) {
@@ -411,7 +404,7 @@ mixin _PaymentView on _HomePageShared {
                                     : Text(
                                         key,
                                         style: const TextStyle(
-                                          fontSize: 20,
+                                          fontSize: 17,
                                           fontWeight: FontWeight.w800,
                                         ),
                                       ),
@@ -421,17 +414,17 @@ mixin _PaymentView on _HomePageShared {
                         ),
                         SizedBox(
                           width: double.infinity,
-                          height: 52,
+                          height: 40,
                           child: FilledButton.icon(
                             onPressed: paymentValue > 0
                                 ? _addSplitPayment
                                 : null,
-                            icon: const Icon(Icons.add_card),
+                            icon: const Icon(Icons.add_card, size: 18),
                             label: Text(
                               pendingChange > .009
                                   ? 'Receber e registrar troco'
                                   : 'Adicionar pagamento',
-                              style: const TextStyle(fontSize: 16),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                         ),
@@ -452,20 +445,21 @@ mixin _PaymentView on _HomePageShared {
     String value, {
     bool strong = false,
   }) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
+    padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
           style: TextStyle(
+            fontSize: 12,
             fontWeight: strong ? FontWeight.w800 : FontWeight.w500,
           ),
         ),
         Text(
           value,
           style: TextStyle(
-            fontSize: strong ? 24 : 16,
+            fontSize: strong ? 18 : 13,
             fontWeight: FontWeight.w900,
             color: strong ? Theme.of(context).colorScheme.primary : null,
           ),

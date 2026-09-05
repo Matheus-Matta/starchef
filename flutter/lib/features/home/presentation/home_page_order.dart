@@ -139,51 +139,46 @@ mixin _OrderSection on _HomePageShared {
     );
   }
 
+  /// O caminho do PAGAMENTO. Pergunta só o que falta decidir.
+  ///
+  /// Este diálogo já foi uma revisão inteira do pedido: subtotal, taxa, total
+  /// estimado e três saídas — voltar, "pagar depois" e ir para o pagamento.
+  /// Mas "pagar depois" era mandar para a cozinha, escondido atrás de um botão
+  /// que fala de dinheiro, e o resumo repetia número por número o que o painel
+  /// do pedido mostra ao lado. O envio à produção virou botão próprio, e o que
+  /// sobrou aqui é a única coisa que o operador precisa mesmo responder antes
+  /// de ir para o teclado: a taxa de serviço entra ou não.
   Future<void> _finishOrder() async {
     if (activeOrder == null || orderItems.isEmpty) return;
+    if (!widget.controller.session!.user.canProcessPayments) return;
+
     var chargeService = activeOrder?['service_fee_enabled'] != false;
-    final nextStep = await showDialog<String>(
+    final taxa = defaultServiceFeePercent > 0
+        ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100
+        : 0.0;
+
+    final seguir = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AppDialog(
-          title: const Text('Revisar pedido'),
+          title: const Text('Ir para o pagamento'),
           content: SizedBox(
-            width: 420,
+            width: 380,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Subtotal', style: Theme.of(context).textTheme.labelLarge),
-                const SizedBox(height: 4),
-                Text(
-                  _money(activeOrder?['subtotal']),
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 12),
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
                   value: chargeService,
                   onChanged: (value) =>
                       setDialogState(() => chargeService = value ?? true),
                   title: const Text('Cobrar taxa de serviço'),
-                  subtitle: const Text(
-                    'Desmarque para retirar a taxa deste pedido.',
+                  subtitle: Text(
+                    defaultServiceFeePercent > 0
+                        ? '${defaultServiceFeePercent.toStringAsFixed(2).replaceAll('.', ',')}% · ${_money(taxa)}'
+                        : 'Desmarque para retirar a taxa deste pedido.',
                   ),
-                ),
-                if (chargeService && defaultServiceFeePercent > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Taxa estimada (${defaultServiceFeePercent.toStringAsFixed(2).replaceAll('.', ',')}%): '
-                    '${_money(_number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100)}',
-                  ),
-                ],
-                const SizedBox(height: 8),
-                Text(
-                  'Total estimado: ${_money(_number(activeOrder?['subtotal']) + (chargeService ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100 : 0) + _number(activeOrder?['delivery_fee']) - _number(activeOrder?['discount']))}',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ],
             ),
@@ -193,43 +188,17 @@ mixin _OrderSection on _HomePageShared {
               onPressed: () => Navigator.pop(context),
               child: const Text('Voltar'),
             ),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(context, 'later'),
-              icon: const Icon(Icons.schedule),
-              label: const Text('Pagar depois'),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.payments_outlined),
+              label: const Text('Ir para pagamento'),
             ),
-            // Sem `payments.manage`, o operador só pode mandar para a cozinha
-            // e deixar o recebimento para quem tem a permissão de caixa.
-            if (widget.controller.session!.user.canProcessPayments)
-              FilledButton(
-                onPressed: () => Navigator.pop(context, 'payment'),
-                child: const Text('Ir para pagamento'),
-              ),
           ],
         ),
       ),
     );
-    if (nextStep == null) return;
-    // "Pagar depois" manda os itens para a produção e devolve o operador ao
-    // pedido: o cliente segue consumindo, então fechar aqui (status
-    // `aguardando pagamento`) travaria o lançamento de novos itens. O
-    // fechamento acontece só no caminho do pagamento.
-    if (nextStep == 'later') {
-      await _work(() async {
-        final pending = orderItems
-            .where((item) => item['status'] == 'pending')
-            .toList();
-        if (pending.isEmpty) return <String, dynamic>{};
-        // O `OrderRepository` já marcou a rodada como enviada e gravou; a
-        // tela relê logo abaixo.
-        await _sendPendingItemsToKitchen(pending);
-        return activeOrder ?? <String, dynamic>{};
-      });
-      if (!mounted) return;
-      await _refreshOrder();
-      if (mounted) setState(() => flowStep = 'order');
-      return;
-    }
+    if (seguir != true) return;
+
     final closed = await _work(() async {
       final hasPendingItems = orderItems.any(
         (item) => item['status'] == 'pending',

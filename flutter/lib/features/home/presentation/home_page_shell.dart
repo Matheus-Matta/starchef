@@ -41,6 +41,7 @@ mixin _ShellSection on _HomePageShared {
   bool get _canSeeCashBalance;
   String get _cashBalanceLabel;
   int get offlinePendingCount;
+  double get remainingTotal;
 
   Future<void> _load();
   void _goBack();
@@ -71,6 +72,23 @@ mixin _ShellSection on _HomePageShared {
   Widget _paymentPage();
   Widget _tableContextPanel();
   Widget _commandContextPanel();
+
+  /// A linha de apoio da barra: quem é este pedido, em uma linha.
+  ///
+  /// A regra de como montar essa linha está em [OrderPresenter.headerSubtitle]
+  /// — aqui só se junta o que a tela tem em mãos.
+  String get _headerSubtitle {
+    final order = activeOrder;
+    if (order == null) return _workspaceIdentity.$2;
+    return OrderPresenter.headerSubtitle(
+      order: order,
+      table: selectedTable,
+      command: selectedCommand,
+      itemCount: orderItems.length,
+      money: _money,
+      remaining: flowStep == 'payment' ? remainingTotal : null,
+    );
+  }
 
   String _sidebarUserSubtitle() {
     final user = widget.controller.session!.user;
@@ -200,7 +218,7 @@ mixin _ShellSection on _HomePageShared {
                           ),
                           if (!compactHeader)
                             Text(
-                              _workspaceIdentity.$2,
+                              _headerSubtitle,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(

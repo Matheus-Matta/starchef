@@ -152,6 +152,24 @@ mixin _PaymentSection on _HomePageShared {
     });
   }
 
+  /// O MESMO valor, agora digitado no campo em vez de clicado no teclado.
+  ///
+  /// O campo era só um visor: `readOnly`, alimentado pelas teclas da tela. Num
+  /// caixa com teclado físico isso obriga a soltar as mãos e ir ao mouse para
+  /// um número que já está debaixo dos dedos.
+  ///
+  /// A regra de leitura é a MESMA das teclas — os dígitos entram pela direita,
+  /// os dois últimos são os centavos. Ler o texto como um decimal comum daria
+  /// ao campo um comportamento e ao teclado outro, e "12" significaria R$ 0,12
+  /// ou R$ 12,00 dependendo de como o operador tivesse entrado com o valor.
+  void _typePaymentAmount(String raw) {
+    setState(() {
+      paymentAmountTyped = true;
+      paymentDigits = OrderPresenter.typedPaymentDigits(raw);
+      _syncPaymentAmount();
+    });
+  }
+
   /// Reapresenta o restante no teclado enquanto ninguém digitou nada.
   ///
   /// O valor era fixado UMA vez, ao abrir a tela, e não acompanhava mais nada.
