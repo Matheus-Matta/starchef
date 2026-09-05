@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/update/garcom_update_controller.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 
-/// Aviso de nova versão do app, no mesmo lugar/estilo do [SyncBanner] — um
-/// estado visível ao entrar no app, não um diálogo que interrompe o
-/// atendimento.
+/// Aviso de nova versão do app, no mesmo lugar e no mesmo formato do
+/// [SyncBanner] — um estado visível ao entrar no app, não um diálogo que
+/// interrompe o atendimento.
 class UpdateBanner extends StatelessWidget {
   const UpdateBanner({super.key, required this.controller});
 
@@ -13,78 +14,41 @@ class UpdateBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (controller.phase == GarcomUpdateBannerPhase.hidden) {
+    final phase = controller.phase;
+    if (phase == GarcomUpdateBannerPhase.hidden) {
       return const SizedBox.shrink();
     }
-    final scheme = Theme.of(context).colorScheme;
+    final failed = phase == GarcomUpdateBannerPhase.failed;
+    final working =
+        phase == GarcomUpdateBannerPhase.downloading ||
+        phase == GarcomUpdateBannerPhase.readyToInstall;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: scheme.primaryContainer,
-          borderRadius: AppTheme.radius,
-          border: Border.all(color: scheme.primary.withValues(alpha: .35)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  controller.phase == GarcomUpdateBannerPhase.failed
-                      ? Icons.error_outline
-                      : Icons.system_update_alt,
-                  size: 18,
-                  color: scheme.onPrimaryContainer,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _message(controller),
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onPrimaryContainer,
-                    ),
-                  ),
-                ),
-                if (controller.phase == GarcomUpdateBannerPhase.available ||
-                    controller.phase == GarcomUpdateBannerPhase.failed)
-                  TextButton(
-                    onPressed: controller.downloadAndInstall,
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                    child: const Text('Baixar', style: TextStyle(fontSize: 12.5)),
-                  ),
-                if (controller.phase ==
-                        GarcomUpdateBannerPhase.downloading ||
-                    controller.phase == GarcomUpdateBannerPhase.readyToInstall)
-                  const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            if (controller.phase == GarcomUpdateBannerPhase.downloading) ...[
-              const SizedBox(height: 8),
-              LinearProgressIndicator(value: controller.progress),
-            ],
-          ],
-        ),
+      padding: AppTheme.bannerPadding,
+      child: AppNotice(
+        tone: failed ? AppNoticeTone.danger : AppNoticeTone.info,
+        icon: failed ? Icons.error_outline : Icons.system_update_alt,
+        message: _message(phase),
+        actionLabel: phase == GarcomUpdateBannerPhase.available || failed
+            ? 'Baixar'
+            : null,
+        onAction: controller.downloadAndInstall,
+        trailing: working
+            ? const SizedBox.square(
+                dimension: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : null,
+        footer: phase == GarcomUpdateBannerPhase.downloading
+            ? LinearProgressIndicator(value: controller.progress)
+            : null,
       ),
     );
   }
 
-  String _message(GarcomUpdateController controller) => switch (controller
-      .phase) {
-    GarcomUpdateBannerPhase.available =>
-      'Nova versão do app disponível.',
+  String _message(GarcomUpdateBannerPhase phase) => switch (phase) {
+    GarcomUpdateBannerPhase.available => 'Nova versão do app disponível.',
     GarcomUpdateBannerPhase.downloading => 'Baixando atualização...',
-    GarcomUpdateBannerPhase.readyToInstall =>
-      'Abrindo o instalador...',
+    GarcomUpdateBannerPhase.readyToInstall => 'Abrindo o instalador...',
     GarcomUpdateBannerPhase.failed =>
       controller.detail ?? 'Não foi possível atualizar.',
     GarcomUpdateBannerPhase.hidden => '',

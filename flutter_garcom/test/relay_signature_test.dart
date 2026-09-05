@@ -34,7 +34,10 @@ String pdvSignature({
     nodeId,
     body,
   ].join('\n');
-  final digest = Hmac(sha256, utf8.encode(secret)).convert(utf8.encode(canonical));
+  final digest = Hmac(
+    sha256,
+    utf8.encode(secret),
+  ).convert(utf8.encode(canonical));
   return base64UrlEncode(digest.bytes).replaceAll('=', '');
 }
 

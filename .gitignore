@@ -38,3 +38,10 @@ infra/simuladores/impressoes/
 infra/simuladores/logs/
 
 logs/
+
+# Chaves de assinatura Android, em QUALQUER pasta. O flutter_garcom/android/
+# já tinha a própria regra, mas um .jks gerado um nível acima (ao rodar o
+# keytool da pasta errada) escapava dela — e este repositório é público.
+*.jks
+*.keystore
+key.properties

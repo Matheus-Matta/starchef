@@ -26,8 +26,12 @@ void main() {
   late RelayGateway gateway;
   late Directory tempDir;
 
-  PrincipalConfig config() =>
-      PrincipalConfig(host: '127.0.0.1', port: principal.port, secret: secret, nodeId: 'aparelho');
+  PrincipalConfig config() => PrincipalConfig(
+    host: '127.0.0.1',
+    port: principal.port,
+    secret: secret,
+    nodeId: 'aparelho',
+  );
 
   setUp(() async {
     tempDir = Directory.systemTemp.createTempSync('starchef-garcom-gateway-');
@@ -83,11 +87,19 @@ void main() {
   test('a pendência sobrevive a fechar e abrir o app', () async {
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: 'x')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          kind: 'add_item',
+          summary: 'x',
+        )
         .catchError((_) => <String, dynamic>{});
 
     // Uma instância nova simula reabrir o app: lê o que ficou no disco.
-    final reaberto = RelayGateway(client: PrincipalClient(), store: gateway.store);
+    final reaberto = RelayGateway(
+      client: PrincipalClient(),
+      store: gateway.store,
+    );
     await reaberto.restore();
 
     expect(reaberto.pendingCount, 1);
@@ -97,7 +109,12 @@ void main() {
   test('conexão volta: reenvia sozinho sem precisar de ação manual', () async {
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: 'x')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          kind: 'add_item',
+          summary: 'x',
+        )
         .catchError((_) => <String, dynamic>{});
     expect(gateway.pendingCount, 1);
 
@@ -106,7 +123,10 @@ void main() {
 
     // O timer do gateway dispara sozinho; damos tempo para ele rodar em vez
     // de chamar flushNow(), que é justamente o caminho manual.
-    await _waitUntil(() => gateway.pendingCount == 0, timeout: const Duration(seconds: 8));
+    await _waitUntil(
+      () => gateway.pendingCount == 0,
+      timeout: const Duration(seconds: 8),
+    );
 
     expect(principal.received, hasLength(1));
   });
@@ -114,7 +134,12 @@ void main() {
   test('botão manual "tentar agora" também esvazia a fila', () async {
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: 'x')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          kind: 'add_item',
+          summary: 'x',
+        )
         .catchError((_) => <String, dynamic>{});
 
     await principal.start(port: 0);
@@ -177,24 +202,39 @@ void main() {
       throwsA(isA<ApiException>()),
     );
 
-    expect(gateway.pendingCount, 0, reason: 'reenviar um 409 só repetiria o mesmo erro');
+    expect(
+      gateway.pendingCount,
+      0,
+      reason: 'reenviar um 409 só repetiria o mesmo erro',
+    );
   });
 
-  test('recusa de negócio DURANTE o reenvio vira pendência "recusada", não fica presa', () async {
-    await principal.stop();
-    await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/send-to-kitchen/', kind: 'send_to_kitchen', summary: 'Enviar')
-        .catchError((_) => <String, dynamic>{});
+  test(
+    'recusa de negócio DURANTE o reenvio vira pendência "recusada", não fica presa',
+    () async {
+      await principal.stop();
+      await gateway
+          .mutate(
+            method: 'POST',
+            path: '/orders/pedido-1/send-to-kitchen/',
+            kind: 'send_to_kitchen',
+            summary: 'Enviar',
+          )
+          .catchError((_) => <String, dynamic>{});
 
-    principal.rejectWith(statusCode: 409, detail: 'Pedido já foi fechado no caixa.');
-    await principal.start(port: 0);
-    gateway.updateContext(config: config(), identity: identity);
-    await gateway.flushNow();
+      principal.rejectWith(
+        statusCode: 409,
+        detail: 'Pedido já foi fechado no caixa.',
+      );
+      await principal.start(port: 0);
+      gateway.updateContext(config: config(), identity: identity);
+      await gateway.flushNow();
 
-    expect(gateway.pendingCount, 0);
-    expect(gateway.failed, hasLength(1));
-    expect(gateway.failed.single.reason, contains('fechado'));
-  });
+      expect(gateway.pendingCount, 0);
+      expect(gateway.failed, hasLength(1));
+      expect(gateway.failed.single.reason, contains('fechado'));
+    },
+  );
 
   test('descartar uma pendência recusada a remove da lista', () async {
     // A recusa de negócio só entra em `failed` quando descoberta DURANTE o
@@ -202,7 +242,12 @@ void main() {
     // enfileira primeiro (caixa fora do ar) e só então rejeita.
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/send-to-kitchen/', kind: 'send_to_kitchen', summary: 'Enviar')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/send-to-kitchen/',
+          kind: 'send_to_kitchen',
+          summary: 'Enviar',
+        )
         .catchError((_) => <String, dynamic>{});
 
     principal.rejectWith(statusCode: 409, detail: 'Recusado.');
@@ -223,15 +268,26 @@ void main() {
     // no primeiro reinício e ninguém mais sabia que ele tinha existido.
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: '2x Coxinha')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          kind: 'add_item',
+          summary: '2x Coxinha',
+        )
         .catchError((_) => <String, dynamic>{});
-    principal.rejectWith(statusCode: 400, detail: 'Selecione uma variacao obrigatoria.');
+    principal.rejectWith(
+      statusCode: 400,
+      detail: 'Selecione uma variacao obrigatoria.',
+    );
     await principal.start(port: 0);
     gateway.updateContext(config: config(), identity: identity);
     await gateway.flushNow();
     expect(gateway.failed, hasLength(1));
 
-    final reaberto = RelayGateway(client: PrincipalClient(), store: gateway.store);
+    final reaberto = RelayGateway(
+      client: PrincipalClient(),
+      store: gateway.store,
+    );
     await reaberto.restore();
 
     expect(reaberto.failed, hasLength(1));
@@ -246,7 +302,12 @@ void main() {
     // novo e arriscar a duplicata.
     await principal.stop();
     await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: '2x Coxinha')
+        .mutate(
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          kind: 'add_item',
+          summary: '2x Coxinha',
+        )
         .catchError((_) => <String, dynamic>{});
     principal.rejectWith(statusCode: 400, detail: 'Recusado.');
     await principal.start(port: 0);
@@ -264,19 +325,32 @@ void main() {
     expect(principal.received.last['operation_id'], id);
   });
 
-  test('pendingFor filtra por pedido — a tela de detalhe só vê as suas', () async {
-    await principal.stop();
-    await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-1/items/', kind: 'add_item', summary: 'x')
-        .catchError((_) => <String, dynamic>{});
-    await gateway
-        .mutate(method: 'POST', path: '/orders/pedido-2/items/', kind: 'add_item', summary: 'y')
-        .catchError((_) => <String, dynamic>{});
+  test(
+    'pendingFor filtra por pedido — a tela de detalhe só vê as suas',
+    () async {
+      await principal.stop();
+      await gateway
+          .mutate(
+            method: 'POST',
+            path: '/orders/pedido-1/items/',
+            kind: 'add_item',
+            summary: 'x',
+          )
+          .catchError((_) => <String, dynamic>{});
+      await gateway
+          .mutate(
+            method: 'POST',
+            path: '/orders/pedido-2/items/',
+            kind: 'add_item',
+            summary: 'y',
+          )
+          .catchError((_) => <String, dynamic>{});
 
-    expect(gateway.pendingFor('pedido-1'), hasLength(1));
-    expect(gateway.pendingFor('pedido-2'), hasLength(1));
-    expect(gateway.pendingFor('pedido-3'), isEmpty);
-  });
+      expect(gateway.pendingFor('pedido-1'), hasLength(1));
+      expect(gateway.pendingFor('pedido-2'), hasLength(1));
+      expect(gateway.pendingFor('pedido-3'), isEmpty);
+    },
+  );
 
   test(
     'pedido criado offline: resolve o id local quando a criação sincroniza',
@@ -335,24 +409,35 @@ void main() {
     },
   );
 
-  test('sem pareamento nenhum, a operação recusa direto (sem travar)', () async {
-    final semContexto = RelayGateway(
-      client: PrincipalClient(),
-      store: OfflineQueueStore(
-        testFile: File('${tempDir.path}${Platform.pathSeparator}outro.json'),
-      ),
-    );
+  test(
+    'sem pareamento nenhum, a operação recusa direto (sem travar)',
+    () async {
+      final semContexto = RelayGateway(
+        client: PrincipalClient(),
+        store: OfflineQueueStore(
+          testFile: File('${tempDir.path}${Platform.pathSeparator}outro.json'),
+        ),
+      );
 
-    await expectLater(
-      semContexto.mutate(method: 'POST', path: '/orders/x/items/', kind: 'add_item', summary: 's'),
-      throwsA(isA<PrincipalUnavailable>()),
-    );
-    expect(semContexto.pendingCount, 0);
-    semContexto.dispose();
-  });
+      await expectLater(
+        semContexto.mutate(
+          method: 'POST',
+          path: '/orders/x/items/',
+          kind: 'add_item',
+          summary: 's',
+        ),
+        throwsA(isA<PrincipalUnavailable>()),
+      );
+      expect(semContexto.pendingCount, 0);
+      semContexto.dispose();
+    },
+  );
 }
 
-Future<void> _waitUntil(bool Function() condition, {required Duration timeout}) async {
+Future<void> _waitUntil(
+  bool Function() condition, {
+  required Duration timeout,
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (!condition()) {
     if (DateTime.now().isAfter(deadline)) {
@@ -390,7 +475,10 @@ class _FakePrincipal {
   }
 
   Future<void> start({int port = 0}) async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port == 0 ? _lastPort : port);
+    final server = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      port == 0 ? _lastPort : port,
+    );
     _server = server;
     _lastPort = server.port;
     server.listen(_handle);
@@ -403,7 +491,9 @@ class _FakePrincipal {
 
   Future<void> _handle(HttpRequest request) async {
     final body = await utf8.decoder.bind(request).join();
-    final decoded = body.isEmpty ? <String, dynamic>{} : Map<String, dynamic>.from(jsonDecode(body) as Map);
+    final decoded = body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(body) as Map);
     received.add(decoded);
     final mutationBody = decoded['body'];
     if (mutationBody is Map && mutationBody['label'] != null) {

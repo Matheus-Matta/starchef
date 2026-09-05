@@ -1,1 +1,11 @@
+# Mesma configuração do PDV desktop (`flutter/analysis_options.yaml`): os dois
+# apps compartilham estilo, então compartilham também o que o analisador cobra.
 include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # Campo privado atribuído a partir de um parâmetro nomeado público
+    # (ex.: `required String orderId` -> `_orderId`): o formal de
+    # inicialização exigiria renomear o parâmetro pro nome privado, quebrando
+    # os call sites (`orderId:`) em outros arquivos.
+    prefer_initializing_formals: false

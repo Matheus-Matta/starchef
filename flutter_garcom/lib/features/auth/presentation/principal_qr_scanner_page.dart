@@ -103,7 +103,10 @@ class _PrincipalQrScannerPageState extends State<_PrincipalQrScannerPage> {
             child: const Text(
               'Aponte para o QR Code em Configurações → Rede local, no PDV.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),

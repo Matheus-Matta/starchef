@@ -88,14 +88,18 @@ class ApiClient {
     if (error is Map) {
       final message = error['message'];
       if (message is String && message.trim().isNotEmpty) return message;
-      if (message is Map && message['detail'] != null) return '${message['detail']}';
+      if (message is Map && message['detail'] != null) {
+        return '${message['detail']}';
+      }
       if (error['detail'] != null) return '${error['detail']}';
     }
     if (payload['detail'] != null) return '${payload['detail']}';
     if (payload.isNotEmpty) {
       final first = payload.entries.first;
       final value = first.value;
-      final text = value is List && value.isNotEmpty ? '${value.first}' : '$value';
+      final text = value is List && value.isNotEmpty
+          ? '${value.first}'
+          : '$value';
       return '${first.key}: $text';
     }
     return 'Não foi possível concluir a operação.';

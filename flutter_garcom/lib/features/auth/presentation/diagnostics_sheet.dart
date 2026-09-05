@@ -5,6 +5,8 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/principal_diagnostics.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_sheet.dart';
+import '../../../core/widgets/app_toast.dart';
 
 /// Mostra onde a ligação com o Caixa Principal parou.
 ///
@@ -16,10 +18,8 @@ Future<void> showPrincipalDiagnostics(
   required PrincipalClient client,
   required PrincipalConfig config,
   required RelayIdentity identity,
-}) => showModalBottomSheet<void>(
-  context: context,
-  isScrollControlled: true,
-  showDragHandle: true,
+}) => showAppSheet<void>(
+  context,
   builder: (context) => _DiagnosticsSheet(
     diagnostics: PrincipalDiagnostics(client: client),
     config: config,
@@ -70,110 +70,99 @@ class _DiagnosticsSheetState extends State<_DiagnosticsSheet> {
     ..._steps.map((step) => '$step'),
   ].join('\n');
 
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: _asText));
+    if (mounted) showToast(context, 'Resultado copiado.');
+  }
+
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppSheetHeader(
+          title: 'Teste de conexão',
+          subtitle: '${widget.config.host}:${widget.config.port}',
+          trailing: _running
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : null,
+        ),
+        for (final step in _steps) _StepRow(step: step),
+        const SizedBox(height: 8),
+        Row(
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Teste de conexão',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                if (_running)
-                  const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${widget.config.host}:${widget.config.port}',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 16),
-            ..._steps.map(
-              (step) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      step.ok ? Icons.check_circle : Icons.cancel,
-                      color: step.ok ? AppColors.success : scheme.error,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            step.elapsed == null
-                                ? step.name
-                                : '${step.name} · ${step.elapsed!.inMilliseconds} ms',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 2),
-                          SelectableText(
-                            step.detail,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+            Expanded(
+              child: ShadButton.outline(
+                onPressed: _running ? null : _run,
+                height: AppTheme.controlHeight,
+                leading: const Icon(Icons.refresh, size: 18),
+                child: const Text('Testar de novo'),
               ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ShadButton.outline(
-                    onPressed: _running ? null : _run,
-                    height: AppTheme.controlHeight,
-                    leading: const Icon(Icons.refresh, size: 18),
-                    child: const Text('Testar de novo'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ShadButton(
-                    onPressed: _steps.isEmpty
-                        ? null
-                        : () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: _asText),
-                            );
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Resultado copiado.'),
-                              ),
-                            );
-                          },
-                    height: AppTheme.controlHeight,
-                    leading: const Icon(Icons.copy, size: 18),
-                    child: const Text('Copiar'),
-                  ),
-                ),
-              ],
+            const SizedBox(width: AppTheme.gap),
+            Expanded(
+              child: ShadButton(
+                onPressed: _steps.isEmpty ? null : _copy,
+                height: AppTheme.controlHeight,
+                leading: const Icon(Icons.copy, size: 18),
+                child: const Text('Copiar'),
+              ),
             ),
           ],
         ),
+      ],
+    ),
+  );
+}
+
+/// Uma etapa do teste: passou ou não, quanto demorou e o que aconteceu.
+class _StepRow extends StatelessWidget {
+  const _StepRow({required this.step});
+
+  final ProbeStep step;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final elapsed = step.elapsed;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            step.ok ? Icons.check_circle : Icons.cancel,
+            color: step.ok ? AppColors.success : scheme.error,
+            size: 20,
+          ),
+          const SizedBox(width: AppTheme.gap),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  elapsed == null
+                      ? step.name
+                      : '${step.name} · ${elapsed.inMilliseconds} ms',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                SelectableText(
+                  step.detail,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

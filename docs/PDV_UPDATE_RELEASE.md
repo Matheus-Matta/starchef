@@ -33,11 +33,13 @@ realmente transacional.
 > ou o bundle Linux `1.0.34` manualmente uma vez. A partir de um PDV que já
 > contenha este atualizador, os releases superiores são aplicados sozinhos.
 
-Esta atualização se aplica somente ao **PDV desktop**. O APK do aplicativo do
-garçom possui versionamento e distribuição próprios e não está no
-`latest.json` do PDV. O mesmo workflow gera o APK universal e o anexa ao
-GitHub Release apenas para centralizar a distribuição; a versão do APK continua
-vindo de `flutter_garcom/pubspec.yaml`.
+O mecanismo transacional descrito acima (ZIP, troca de bundle, rollback) é
+somente do **PDV desktop**. O aplicativo do garçom tem versionamento próprio
+(`flutter_garcom/pubspec.yaml`) e um caminho de atualização diferente — baixa o
+APK e entrega ao instalador do Android —, mas **compartilha o mesmo
+`latest.json`**: ele lê a chave `garcom`, fora de `platforms` justamente porque
+não é uma plataforma do PDV. O contrato dessa chave está em
+[Manifesto `latest.json`](#manifesto-latestjson).
 
 ## Visão do fluxo
 
@@ -97,7 +99,7 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 | Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | primeira instalação ou atualização manual pelo Inno Setup |
 | Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | bundle usado pelo atualizador automático transacional |
 | Linux | `StarChef-PDV-Linux-vX.Y.Z.zip` | pacote principal com o bundle completo |
-| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom; não participa do `latest.json` |
+| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom; publicado na chave `garcom` do `latest.json`, fora de `platforms` |
 | Todos | `latest.json` | manifesto consumido pelo verificador do PDV |
 
 No Windows, prefira o instalador para a primeira instalação. O `AppId` permanece
@@ -213,13 +215,25 @@ https://github.com/<owner>/<repository>/releases/latest/download/latest.json
 O override é útil se o manifesto passar a ser entregue por domínio próprio ou
 CDN. Ele é incorporado no binário por `--dart-define`; não é um segredo.
 
-Os quatro Secrets `GARCOM_*` são opcionais, em tag ou em `workflow_dispatch`.
-Sem eles, o job publica o APK assinado com a chave de debug do Flutter e o
-Actions mostra um aviso explícito — o app do garçom ainda não depende de
-atualização in-place, então essa assinatura variável não bloqueia o release do
-PDV. Configure os quatro Secrets somente quando o APK precisar reinstalar por
-cima de uma versão já instalada (mesma assinatura entre builds). Se apenas
-parte dos quatro estiver definida, o job falha por configuração incompleta.
+Os quatro Secrets `GARCOM_*` são **obrigatórios em uma tag** e opcionais em
+Pull Request e `workflow_dispatch`.
+
+O Android só instala uma versão por cima da anterior quando a assinatura é
+idêntica, e a chave de debug do Flutter é gerada nova a cada execução do
+runner. Um release assinado com ela não atualiza nenhum aparelho que já tenha o
+app — só desinstalar e instalar de novo, perdendo sessão e pareamento em cada
+celular do salão. Por isso o job `build-apk` de `garcom.yml`:
+
+- **falha** numa tag se os Secrets estiverem ausentes (`require_signing`);
+- **falha** numa tag se o APK gerado tiver saído com `CN=Android Debug`, mesmo
+  que os Secrets existam — a checagem é sobre o certificado do arquivo, não
+  sobre a presença da configuração;
+- **avisa e segue** em Pull Request e `workflow_dispatch`, onde um APK de
+  homologação assinado com debug é útil para instalar em aparelho limpo;
+- **falha em qualquer evento** se apenas parte dos quatro estiver definida.
+
+A impressão digital de quem assinou é impressa no log e no resumo do job, para
+conferência sem depender de ausência de aviso.
 
 Para cadastrar o JKS local no GitHub sem versioná-lo, gere o Base64 no
 PowerShell e copie somente a saída para o Secret `GARCOM_KEYSTORE_BASE64`:
@@ -233,6 +247,58 @@ PowerShell e copie somente a saída para o Secret `GARCOM_KEYSTORE_BASE64`:
 Cadastre os quatro valores em **Settings → Secrets and variables → Actions →
 Secrets**. Nunca adicione `key.properties`, o JKS ou suas senhas ao Git.
 
+## Builds condicionais
+
+Uma tag corta backend, frontend, PDV e app do garçom de uma vez, mas quase
+nunca os quatro mudaram. Nos dez releases anteriores a `v1.6.42`, o backend foi
+reconstruído dez vezes **sem uma única alteração** em `backend/`, e o APK de
+~72 MB foi recompilado e republicado dez vezes idêntico ao anterior.
+
+Por isso cada workflow decide, na hora da tag, se tem o que publicar:
+
+| Componente | Constrói quando | Quando não constrói |
+| --- | --- | --- |
+| `backend` | `backend/` ou o próprio workflow mudaram desde a tag anterior | re-etiqueta a imagem publicada com a versão nova |
+| `frontend` | `frontend/` ou o próprio workflow mudaram | re-etiqueta a imagem publicada com a versão nova |
+| PDV (`flutter`) | **sempre** | — |
+| APK (`garcom`) | `flutter_garcom/` ou `garcom.yml` mudaram | o manifesto herda a chave `garcom` do release anterior |
+
+O PDV não tem exceção porque a tag **é** a versão dele: `release-metadata`
+recusa uma tag que não bata com `flutter/pubspec.yaml`, então cortar um release
+já implica ter subido a versão do PDV.
+
+### Por que por arquivo alterado, e não pela versão declarada
+
+A decisão sai de `git diff` entre a tag anterior e a atual, e não de comparar
+versões declaradas em `pubspec.yaml`/`package.json`. Dois motivos:
+
+- **A falha é para o lado seguro.** Esquecer de subir uma versão faria a
+  correção não ser publicada, em silêncio, e ninguém descobriria até o bug
+  reaparecer em produção. O pior caso do `git diff` é construir de mais — um
+  README alterado gera uma imagem igual —, o que custa minutos de CI e nada
+  mais.
+- **Não exige versionamento que não existe.** O backend não declara versão
+  nenhuma (`pyproject.toml` só traz `target-version`, que é do ruff) e o
+  `frontend/package.json` está em `0.1.0` desde o início, nunca incrementado.
+  Decidir por versão exigiria criar e manter dois versionamentos novos.
+
+### O que acontece com quem não foi reconstruído
+
+**Imagens.** O `docker-compose.yml` referencia `:latest` em todos os serviços,
+então pular um build não afeta deploy nenhum: o `latest` continua apontando
+para a imagem correta, a última realmente construída. Ainda assim o job
+re-etiqueta essa imagem com `X.Y.Z` e `X.Y` usando
+`docker buildx imagetools create`. Isso não gera camada nem consome espaço —
+são nomes novos para o **mesmo digest** — e mantém respondível a pergunta
+"qual backend rodava no release `X.Y.Z`?".
+
+**APK.** O `publish-release` lê o `latest.json` do release anterior (naquele
+instante `releases/latest` ainda é o anterior, pois o desta tag só é criado no
+último passo) e copia a chave `garcom` inteira para o manifesto novo. A URL
+aponta para o asset do release antigo, que continua válido. O app compara a
+versão, vê que já está nela e não baixa nada. Se o manifesto anterior não
+trouxer um APK reaproveitável, `release-metadata` força a reconstrução.
+
 ## Por que aparecem vários processos no Actions
 
 Abrir um Pull Request e enviar uma tag são dois eventos independentes. Se os
@@ -242,20 +308,21 @@ dois acontecerem próximos um do outro, é normal aparecerem seis execuções:
 | --- | --- | --- |
 | Pull Request | `backend` | testes, lint e migrations; não publica imagem |
 | Pull Request | `frontend` | lint, testes, build e auditoria; não publica imagem |
-| Pull Request | `flutter` | analyze e testes dos dois apps e APK temporário de homologação; não publica release |
-| tag `vX.Y.Z` | `backend` | testa e publica imagens no GHCR |
-| tag `vX.Y.Z` | `frontend` | testa e publica imagens no GHCR |
-| tag `vX.Y.Z` | `flutter` | testa, compila Windows/Linux e publica o Release |
+| Pull Request | `flutter` | analyze e testes do PDV; não publica release |
+| Pull Request | `garcom` | analyze, testes e APK temporário de homologação do app do garçom |
+| tag `vX.Y.Z` | `backend` | testa e publica a imagem no GHCR **se `backend/` mudou** |
+| tag `vX.Y.Z` | `frontend` | testa e publica a imagem no GHCR **se `frontend/` mudou** |
+| tag `vX.Y.Z` | `flutter` | testa, compila Windows/Linux, chama `garcom` se preciso e publica o Release |
 
 Portanto, as execuções do Pull Request não duplicam o release. Elas são as
 verificações exigidas para aprovar o merge. Somente as execuções iniciadas pela
 tag entram nos jobs de publicação.
 
-Na página do workflow Flutter de um Pull Request, `release-metadata` e
-`build-garcom-apk` executam e deixam o APK nos artefatos temporários do Actions.
-`build-windows`, `build-linux` e `publish-release` ficam ignorados porque exigem
-tag ou disparo manual. Na execução da tag, todos os jobs são liberados em
-sequência depois dos testes.
+Em um Pull Request que toca `flutter_garcom/`, quem roda é o workflow `garcom`,
+que deixa o APK de homologação nos artefatos temporários do Actions. No workflow
+`flutter`, `build-windows`, `build-linux` e `publish-release` ficam ignorados
+porque exigem tag ou disparo manual. Na execução da tag, todos os jobs são
+liberados em sequência depois dos testes.
 
 ## Como publicar uma nova atualização
 
@@ -338,15 +405,20 @@ conjunto completo estiver pronto para produção.
 
 No workflow `flutter`, os jobs executam nesta ordem:
 
-1. `test` e `test-garcom`: dependências, analyze e testes dos dois apps;
-2. `release-metadata`: lê as duas versões e compara a versão do PDV com a tag;
-3. `build-windows`, `build-linux` e `build-garcom-apk`: geram instalador, ZIPs
-   e o APK universal;
-4. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
+1. `test`: dependências, analyze e testes do PDV;
+2. `release-metadata`: lê as duas versões, compara a versão do PDV com a tag e
+   decide se o APK do garçom precisa ser reconstruído;
+3. `build-windows` e `build-linux`: geram o instalador e os ZIPs;
+4. `garcom`: chama o workflow `garcom.yml`, que roda analyze/testes do app e
+   compila o APK assinado. **É pulado quando `flutter_garcom/` não mudou desde
+   a tag anterior**;
+5. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
    publica o GitHub Release.
 
-Se qualquer job falhar, `publish-release` não roda e o novo `latest.json` não é
-publicado.
+Se um build do PDV falhar, `publish-release` não roda e o novo `latest.json`
+não é publicado. O job `garcom` **pulado** não impede a publicação: nesse caso
+o manifesto herda a chave `garcom` do release anterior, cuja URL continua
+válida (ver [Builds condicionais](#builds-condicionais)).
 
 ### 6. Conferir o release
 

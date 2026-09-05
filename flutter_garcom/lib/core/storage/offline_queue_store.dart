@@ -26,9 +26,7 @@ class OfflineQueueStore {
         testFile ??
         await () async {
           final dir = await getApplicationSupportDirectory();
-          return File(
-            '${dir.path}${Platform.pathSeparator}garcom_outbox.json',
-          );
+          return File('${dir.path}${Platform.pathSeparator}garcom_outbox.json');
         }();
     _file = file;
     return file;
@@ -92,7 +90,9 @@ class OfflineQueueStore {
       if (decoded is! List) return [];
       return decoded
           .whereType<Map>()
-          .map((row) => PendingMutation.fromJson(Map<String, dynamic>.from(row)))
+          .map(
+            (row) => PendingMutation.fromJson(Map<String, dynamic>.from(row)),
+          )
           .toList();
     } catch (_) {
       // Arquivo corrompido ou de uma versão antiga: melhor começar vazio do

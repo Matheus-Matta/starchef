@@ -103,22 +103,21 @@ class PendingMutation {
     if (placeholderOrderId != null) 'placeholder_order_id': placeholderOrderId,
   };
 
-  static PendingMutation fromJson(Map<String, dynamic> json) =>
-      PendingMutation(
-        operationId: '${json['operation_id'] ?? ''}',
-        method: '${json['method'] ?? ''}',
-        path: '${json['path'] ?? ''}',
-        body: json['body'] is Map
-            ? Map<String, dynamic>.from(json['body'] as Map)
-            : null,
-        kind: '${json['kind'] ?? ''}',
-        summary: '${json['summary'] ?? ''}',
-        createdAt:
-            DateTime.tryParse('${json['created_at'] ?? ''}') ?? DateTime.now(),
-        attempts: (json['attempts'] as num?)?.toInt() ?? 0,
-        lastError: json['last_error'] as String?,
-        placeholderOrderId: json['placeholder_order_id'] as String?,
-      );
+  static PendingMutation fromJson(Map<String, dynamic> json) => PendingMutation(
+    operationId: '${json['operation_id'] ?? ''}',
+    method: '${json['method'] ?? ''}',
+    path: '${json['path'] ?? ''}',
+    body: json['body'] is Map
+        ? Map<String, dynamic>.from(json['body'] as Map)
+        : null,
+    kind: '${json['kind'] ?? ''}',
+    summary: '${json['summary'] ?? ''}',
+    createdAt:
+        DateTime.tryParse('${json['created_at'] ?? ''}') ?? DateTime.now(),
+    attempts: (json['attempts'] as num?)?.toInt() ?? 0,
+    lastError: json['last_error'] as String?,
+    placeholderOrderId: json['placeholder_order_id'] as String?,
+  );
 }
 
 /// Uma pendência que o Caixa Principal recusou de vez (erro de negócio, não de

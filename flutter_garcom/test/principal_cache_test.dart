@@ -34,9 +34,7 @@ void main() {
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('starchef-garcom-cache');
     cache = PrincipalCache(
-      testFile: File(
-        '${directory.path}${Platform.pathSeparator}cache.json',
-      ),
+      testFile: File('${directory.path}${Platform.pathSeparator}cache.json'),
     );
   });
 
@@ -53,9 +51,7 @@ void main() {
     gateway: RelayGateway(
       client: client,
       store: OfflineQueueStore(
-        testFile: File(
-          '${directory.path}${Platform.pathSeparator}outbox.json',
-        ),
+        testFile: File('${directory.path}${Platform.pathSeparator}outbox.json'),
       ),
     ),
     session: session,
@@ -110,9 +106,7 @@ void main() {
   });
 
   test('arquivo corrompido não impede o app de abrir', () async {
-    final file = File(
-      '${directory.path}${Platform.pathSeparator}cache.json',
-    );
+    final file = File('${directory.path}${Platform.pathSeparator}cache.json');
     await file.writeAsString('isto não é json');
     final quebrado = PrincipalCache(testFile: file);
 
@@ -207,6 +201,5 @@ class _FakePrincipalClient implements PrincipalClient {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

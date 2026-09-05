@@ -48,7 +48,9 @@ class PrincipalDiagnostics {
       ProbeStep(
         name: 'Endereço informado',
         ok: erros.isEmpty,
-        detail: erros.isEmpty ? '${config.host}:${config.port}' : erros.join(' '),
+        detail: erros.isEmpty
+            ? '${config.host}:${config.port}'
+            : erros.join(' '),
       ),
     );
     if (erros.isNotEmpty) return steps;
@@ -93,7 +95,8 @@ class PrincipalDiagnostics {
     } on SocketException catch (error) {
       // A distinção importa: "recusada" é alguém dizendo não (nada escutando
       // na porta); silêncio até o tempo acabar é firewall ou rede errada.
-      final recusada = error.osError?.errorCode == 61 ||
+      final recusada =
+          error.osError?.errorCode == 61 ||
           error.osError?.errorCode == 111 ||
           error.osError?.errorCode == 10061 ||
           '${error.osError?.message}'.toLowerCase().contains('recus');
@@ -141,7 +144,8 @@ class PrincipalDiagnostics {
         name: 'Pareamento (assinatura)',
         ok: false,
         elapsed: relogio.elapsed,
-        detail: '${error.message} '
+        detail:
+            '${error.message} '
             '(a resposta não foi assinada com esta chave — normalmente é a '
             'chave errada)',
       );
@@ -152,7 +156,8 @@ class PrincipalDiagnostics {
         name: 'Pareamento (assinatura)',
         ok: false,
         elapsed: relogio.elapsed,
-        detail: 'chave confere; o caixa recusou com '
+        detail:
+            'chave confere; o caixa recusou com '
             '${error.statusCode ?? '-'}: ${error.message}',
       );
     }

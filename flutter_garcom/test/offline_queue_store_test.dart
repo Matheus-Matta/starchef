@@ -50,7 +50,9 @@ void main() {
   });
 
   test('sobrevive a fechar e abrir o app (arquivo persiste)', () async {
-    await OfflineQueueStore(testFile: file).save([mutation('op-1'), mutation('op-2')]);
+    await OfflineQueueStore(
+      testFile: file,
+    ).save([mutation('op-1'), mutation('op-2')]);
 
     // Uma instância nova simula o app reaberto: nada em memória, só o disco.
     final afterRestart = await OfflineQueueStore(testFile: file).load();
@@ -97,7 +99,11 @@ void main() {
 
     expect(retried.attempts, 1);
     expect(retried.lastError, 'timeout');
-    expect(retried.operationId, original.operationId, reason: 'id estável entre retentativas');
+    expect(
+      retried.operationId,
+      original.operationId,
+      reason: 'id estável entre retentativas',
+    );
 
     final again = retried.retry(error: 'timeout de novo');
     expect(again.attempts, 2);

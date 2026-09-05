@@ -4,7 +4,11 @@
 /// a tela trata os dois de formas diferentes — a primeira sugere conferir a
 /// rede, a segunda mostra o motivo que veio do servidor.
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode, this.isConnectivity = false});
+  const ApiException(
+    this.message, {
+    this.statusCode,
+    this.isConnectivity = false,
+  });
 
   final String message;
   final int? statusCode;

@@ -40,7 +40,8 @@ class FakePrincipal {
       method: request.method,
       path: request.uri.toString(),
       timestamp:
-          int.tryParse(request.headers.value('x-starchef-timestamp') ?? '') ?? 0,
+          int.tryParse(request.headers.value('x-starchef-timestamp') ?? '') ??
+          0,
       nonce: nonce,
       account: request.headers.value('x-starchef-account') ?? '',
       actor: request.headers.value('x-starchef-actor') ?? '',

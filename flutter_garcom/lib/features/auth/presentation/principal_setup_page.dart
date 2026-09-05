@@ -5,6 +5,7 @@ import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/relay_signature.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/labeled_field.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 import 'auth_scaffold.dart';
 import 'diagnostics_sheet.dart';
 import 'principal_qr_scanner_page.dart';
@@ -17,11 +18,7 @@ import 'session_controller.dart';
 /// uma configuração do APARELHO: feita uma vez pelo gerente, sobrevive à troca
 /// de garçom no fim do turno.
 class PrincipalSetupPage extends StatefulWidget {
-  const PrincipalSetupPage({
-    super.key,
-    required this.controller,
-    this.onDone,
-  });
+  const PrincipalSetupPage({super.key, required this.controller, this.onDone});
 
   final SessionController controller;
 
@@ -111,6 +108,16 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
     );
   }
 
+  /// A porta do relay é sempre alta: abaixo de 1024 o sistema operacional
+  /// reserva para serviços do próprio computador.
+  static String? _validatePort(String? value) {
+    final port = int.tryParse((value ?? '').trim());
+    if (port == null || port < 1024 || port > 65535) {
+      return 'Entre 1024 e 65535.';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -142,41 +149,27 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            AppResponsiveFields(
+              flex: const [3, 2],
               children: [
-                Expanded(
-                  flex: 3,
-                  child: LabeledField(
-                    controller: _host,
-                    label: 'IP na rede',
-                    hint: '192.168.0.10',
-                    icon: Icons.router_outlined,
-                    keyboardType: TextInputType.url,
-                    textInputAction: TextInputAction.next,
-                    validator: (value) =>
-                        (value == null || value.trim().isEmpty)
-                        ? 'Informe o IP.'
-                        : null,
-                  ),
+                LabeledField(
+                  controller: _host,
+                  label: 'IP na rede',
+                  hint: '192.168.0.10',
+                  icon: Icons.router_outlined,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.next,
+                  validator: (value) => (value == null || value.trim().isEmpty)
+                      ? 'Informe o IP.'
+                      : null,
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 2,
-                  child: LabeledField(
-                    controller: _port,
-                    label: 'Porta',
-                    hint: '${PrincipalConfig.defaultPort}',
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    validator: (value) {
-                      final port = int.tryParse((value ?? '').trim());
-                      if (port == null || port < 1024 || port > 65535) {
-                        return 'Entre 1024 e 65535.';
-                      }
-                      return null;
-                    },
-                  ),
+                LabeledField(
+                  controller: _port,
+                  label: 'Porta',
+                  hint: '${PrincipalConfig.defaultPort}',
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  validator: _validatePort,
                 ),
               ],
             ),
@@ -204,22 +197,12 @@ class _PrincipalSetupPageState extends State<PrincipalSetupPage> {
               ),
             ),
             const SizedBox(height: 20),
-            ShadButton(
+            AppSubmitButton(
+              label: 'Conectar',
+              busyLabel: 'Testando...',
+              icon: Icons.wifi_tethering,
+              busy: controller.loading,
               onPressed: _submit,
-              enabled: !controller.loading,
-              height: AppTheme.controlHeight,
-              leading: controller.loading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.wifi_tethering, size: 18),
-              child: Text(
-                controller.loading ? 'Testando...' : 'Conectar',
-              ),
             ),
             const SizedBox(height: 8),
             ShadButton.outline(

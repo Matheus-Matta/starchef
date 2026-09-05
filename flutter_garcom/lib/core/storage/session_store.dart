@@ -67,7 +67,10 @@ class SecureSessionStore implements SessionStorage {
   Future<void> saveNodeId(String value) =>
       _storage.write(key: _nodeKey, value: value);
 
-  Future<T?> _read<T>(String key, T Function(Map<String, dynamic>) parse) async {
+  Future<T?> _read<T>(
+    String key,
+    T Function(Map<String, dynamic>) parse,
+  ) async {
     try {
       final raw = await _storage.read(key: key);
       if (raw == null || raw.isEmpty) return null;

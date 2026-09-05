@@ -77,10 +77,16 @@ void main() {
     });
   }
 
-  test('no escuro, a superfície do bottom sheet é realmente escura (preta)', () {
-    final scheme = AppTheme.materialDark().colorScheme;
-    // HSL lightness baixo = perto do preto. É literalmente o pedido do
-    // usuário: "fundo... preto e não laranja".
-    expect(HSLColor.fromColor(scheme.surfaceContainerLow).lightness, lessThan(.15));
-  });
+  test(
+    'no escuro, a superfície do bottom sheet é realmente escura (preta)',
+    () {
+      final scheme = AppTheme.materialDark().colorScheme;
+      // HSL lightness baixo = perto do preto. É literalmente o pedido do
+      // usuário: "fundo... preto e não laranja".
+      expect(
+        HSLColor.fromColor(scheme.surfaceContainerLow).lightness,
+        lessThan(.15),
+      );
+    },
+  );
 }

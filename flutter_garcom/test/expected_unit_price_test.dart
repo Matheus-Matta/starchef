@@ -37,10 +37,7 @@ void main() {
   });
 
   test('cada adicional marcado soma o próprio preço', () {
-    expect(
-      expectedUnitPrice(produto, addonIds: ['a-bacon']),
-      24.00,
-    );
+    expect(expectedUnitPrice(produto, addonIds: ['a-bacon']), 24.00);
     expect(
       expectedUnitPrice(produto, addonIds: ['a-bacon', 'a-queijo']),
       27.50,

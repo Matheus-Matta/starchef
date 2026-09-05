@@ -1,12 +1,19 @@
 import 'dart:async';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/resource_page.dart';
 import '../../../core/relay/principal_client.dart';
 import '../../../core/relay/relay_gateway.dart';
 import '../../../core/relay/relay_signature.dart';
 import '../../../core/storage/principal_cache.dart';
 import '../../auth/domain/waiter_session.dart';
 import 'order_drafts.dart';
+
+/// Reexportado para quem consome o repositório não precisar saber que a
+/// página paginada é um tipo do núcleo — a lista de escolha (`PaginatedPicker`)
+/// fala o mesmo tipo, e é o que evita converter registro em classe no meio do
+/// caminho.
+export '../../../core/network/resource_page.dart';
 
 /// Pedidos do salão, sempre pela ótica do Caixa Principal.
 ///
@@ -452,27 +459,6 @@ class OrdersRepository {
     return const [];
   }
 }
-
-/// Uma página da API (DRF): as linhas e se ainda há mais para buscar.
-class ResourcePage {
-  const ResourcePage({required this.rows, required this.hasMore});
-
-  final List<Map<String, dynamic>> rows;
-  final bool hasMore;
-
-  static ResourcePage from(Map<String, dynamic> payload) {
-    final results = payload['results'];
-    return ResourcePage(
-      rows: results is List
-          ? results.whereType<Map>().map(Map<String, dynamic>.from).toList()
-          : const [],
-      // `next` nulo é o fim da lista — é o próprio DRF dizendo, sem o app ter
-      // de adivinhar por contagem.
-      hasMore: payload['next'] != null,
-    );
-  }
-}
-
 
 /// De onde veio a última leitura servida ao aplicativo.
 class ReadOrigin {

@@ -2,14 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../network/resource_page.dart';
 import '../theme/app_theme.dart';
+import 'shadcn_layout.dart';
 
-/// Uma página de resultados vinda da API.
-typedef PageFetcher =
-    Future<({List<Map<String, dynamic>> rows, bool hasMore})> Function(
-      int page,
-      String search,
-    );
+/// Busca uma página de resultados — a assinatura que o repositório já expõe.
+typedef PageFetcher = Future<ResourcePage> Function(int page, String search);
 
 /// Lista com busca e carregamento por rolagem.
 ///
@@ -66,8 +64,8 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
     // Dispara antes de bater no fim: a próxima página costuma chegar enquanto
     // o dedo ainda está rolando, e a lista não "pula".
     if (!_scroll.hasClients || _loading || !_hasMore) return;
-    final restante = _scroll.position.maxScrollExtent - _scroll.position.pixels;
-    if (restante < 400) _load();
+    final left = _scroll.position.maxScrollExtent - _scroll.position.pixels;
+    if (left < 400) _load();
   }
 
   /// Busca digitada espera o operador parar: um pedido por tecla afogaria o
@@ -125,6 +123,9 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
             onSubmitted: (_) => _load(reset: true),
             decoration: InputDecoration(
               hintText: widget.searchHint,
+              // Sem rótulo, então também sem o espaço que ele reservaria
+              // acima da caixa (o tema flutua o rótulo por padrão).
+              floatingLabelBehavior: FloatingLabelBehavior.auto,
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _search.text.isEmpty
                   ? null
@@ -135,12 +136,6 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
                         _load(reset: true);
                       },
                     ),
-              filled: true,
-              fillColor: scheme.surface,
-              border: OutlineInputBorder(
-                borderRadius: AppTheme.radius,
-                borderSide: BorderSide(color: scheme.outlineVariant),
-              ),
             ),
           ),
         ),
@@ -161,115 +156,48 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_rows.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Text(
-            _error ?? widget.emptyMessage,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: scheme.onSurfaceVariant),
-          ),
-        ),
+      return AppEmptyState(
+        icon: _error == null ? Icons.search_off : Icons.wifi_off,
+        title: _error == null ? 'Nada encontrado' : 'Falha na busca',
+        description: _error ?? widget.emptyMessage,
       );
     }
     return ListView.separated(
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       itemCount: _rows.length + (_hasMore || _error != null ? 1 : 0),
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index >= _rows.length) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Center(
-              child: _error != null
-                  ? Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: scheme.error, fontSize: 12),
-                    )
-                  : const SizedBox.square(
-                      dimension: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-            ),
-          );
-        }
-        return widget.itemBuilder(context, _rows[index]);
-      },
+      separatorBuilder: (_, _) => const SizedBox(height: AppTheme.gapTight),
+      itemBuilder: (context, index) => index >= _rows.length
+          ? _Footer(error: _error)
+          : widget.itemBuilder(context, _rows[index]),
     );
   }
 }
 
-/// Cartão padrão dos itens escolhíveis (comanda, produto).
-class PickerTile extends StatelessWidget {
-  const PickerTile({
-    super.key,
-    required this.title,
-    required this.onTap,
-    this.subtitle,
-    this.trailing,
-    this.leading,
-    this.enabled = true,
-  });
+/// Última linha da lista: o carregamento da próxima página, ou o motivo de ela
+/// não ter vindo.
+class _Footer extends StatelessWidget {
+  const _Footer({this.error});
 
-  final String title;
-  final String? subtitle;
-  final Widget? trailing;
-  final Widget? leading;
-  final VoidCallback onTap;
-  final bool enabled;
+  final String? error;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surface,
-      borderRadius: AppTheme.radius,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: AppTheme.radius,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: AppTheme.radius,
-            border: Border.all(color: scheme.outlineVariant),
-          ),
-          child: Opacity(
-            opacity: enabled ? 1 : .5,
-            child: Row(
-              children: [
-                if (leading != null) ...[leading!, const SizedBox(width: 12)],
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                      ),
-                      if (subtitle != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          subtitle!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                ?trailing,
-              ],
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: AppTheme.gapLoose),
+    child: Center(
+      child: error != null
+          ? Text(
+              error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 12,
+              ),
+            )
+          : const SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-          ),
-        ),
-      ),
-    );
-  }
+    ),
+  );
 }

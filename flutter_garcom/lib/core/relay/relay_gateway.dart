@@ -206,7 +206,9 @@ class RelayGateway extends ChangeNotifier {
           // O caixa respondeu e recusou: não é problema de conexão, então não
           // adianta insistir. Sai da fila e vira uma pendência visível.
           _pending.removeAt(0);
-          _failed.add(FailedMutation(mutation: mutation, reason: error.message));
+          _failed.add(
+            FailedMutation(mutation: mutation, reason: error.message),
+          );
           await store.save(_pending);
           await store.saveFailed(_failed);
           notifyListeners();

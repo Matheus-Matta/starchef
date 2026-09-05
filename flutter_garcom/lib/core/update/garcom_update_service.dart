@@ -225,5 +225,7 @@ List<int> _parts(String value) {
   final normalized = value.trim().replaceFirst(RegExp(r'^v'), '').split('+')[0];
   final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)').firstMatch(normalized);
   if (match == null) return const [0, 0, 0];
-  return [for (var index = 1; index <= 3; index++) int.parse(match.group(index)!)];
+  return [
+    for (var index = 1; index <= 3; index++) int.parse(match.group(index)!),
+  ];
 }

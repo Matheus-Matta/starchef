@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_sheet.dart';
 import '../../../core/widgets/paginated_picker.dart';
+import '../../../core/widgets/picker_tile.dart';
 import '../data/orders_repository.dart';
+import 'order_formatters.dart';
 
 /// Escolha da comanda para abrir (ou retomar) um pedido.
 ///
@@ -12,43 +15,25 @@ import '../data/orders_repository.dart';
 Future<Map<String, dynamic>?> showCommandPicker(
   BuildContext context,
   OrdersRepository repository,
-) => showModalBottomSheet<Map<String, dynamic>>(
-  context: context,
-  isScrollControlled: true,
-  showDragHandle: true,
-  builder: (context) => SizedBox(
-    height: MediaQuery.of(context).size.height * .85,
-    child: Column(
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Escolha a comanda',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-            ),
+) => showAppSheet<Map<String, dynamic>>(
+  context,
+  heightFactor: .85,
+  builder: (context) => Column(
+    children: [
+      const AppSheetHeader(title: 'Escolha a comanda'),
+      Expanded(
+        child: PaginatedPicker(
+          searchHint: 'Número ou código da comanda',
+          emptyMessage: 'Nenhuma comanda cadastrada neste restaurante.',
+          fetch: (page, search) =>
+              repository.commands(page: page, search: search),
+          itemBuilder: (context, command) => _CommandTile(
+            command: command,
+            onTap: () => Navigator.of(context).pop(command),
           ),
         ),
-        Expanded(
-          child: PaginatedPicker(
-            searchHint: 'Número ou código da comanda',
-            emptyMessage: 'Nenhuma comanda cadastrada neste restaurante.',
-            fetch: (page, search) async {
-              final result = await repository.commands(
-                page: page,
-                search: search,
-              );
-              return (rows: result.rows, hasMore: result.hasMore);
-            },
-            itemBuilder: (context, command) => _CommandTile(
-              command: command,
-              onTap: () => Navigator.of(context).pop(command),
-            ),
-          ),
-        ),
-      ],
-    ),
+      ),
+    ],
   ),
 );
 
@@ -61,34 +46,32 @@ class _CommandTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final ocupada = command['status'] == 'occupied';
-    final mesa = '${command['current_table_number'] ?? ''}'.trim();
-    final cliente = '${command['customer_name'] ?? ''}'.trim();
-
-    final detalhes = [
-      if (ocupada) 'em atendimento',
-      if (mesa.isNotEmpty && mesa != 'null') 'mesa $mesa',
-      if (cliente.isNotEmpty && cliente != 'null') cliente,
+    final busy = command['status'] == 'occupied';
+    final table = fieldText(command['current_table_number']);
+    final customer = fieldText(command['customer_name']);
+    final details = [
+      if (busy) 'em atendimento',
+      if (table.isNotEmpty) 'mesa $table',
+      if (customer.isNotEmpty) customer,
     ];
+    final color = busy ? AppColors.warning : AppColors.success;
 
     return PickerTile(
       title: 'Comanda ${command['number'] ?? ''}',
-      subtitle: detalhes.isEmpty ? 'livre' : detalhes.join(' · '),
+      subtitle: details.isEmpty ? 'livre' : details.join(' · '),
       onTap: onTap,
       leading: Container(
         height: 38,
         width: 38,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: (ocupada ? AppColors.warning : AppColors.success).withValues(
-            alpha: .12,
-          ),
+          color: color.withValues(alpha: .12),
           borderRadius: AppTheme.radius,
         ),
         child: Icon(
-          ocupada ? Icons.pending_actions : Icons.check_circle_outline,
+          busy ? Icons.pending_actions : Icons.check_circle_outline,
           size: 20,
-          color: ocupada ? AppColors.warning : AppColors.success,
+          color: color,
         ),
       ),
       trailing: Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),

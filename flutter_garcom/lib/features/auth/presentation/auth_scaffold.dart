@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 
 /// Moldura das telas de entrada (login e pareamento).
 ///
@@ -30,7 +30,7 @@ class AuthScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -57,7 +57,7 @@ class AuthScaffold extends StatelessWidget {
                   Text(
                     title,
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    style: theme.textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -65,31 +65,31 @@ class AuthScaffold extends StatelessWidget {
                   Text(
                     subtitle,
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 20),
-                  ShadCard(
-                    radius: AppTheme.radius,
-                    columnCrossAxisAlignment: CrossAxisAlignment.stretch,
-                    child: child,
-                  ),
+                  AppSection(child: child),
                   if (error != null) ...[
                     const SizedBox(height: 14),
-                    _ErrorBanner(message: error!),
+                    AppNotice(
+                      tone: AppNoticeTone.danger,
+                      icon: Icons.error_outline,
+                      message: error!,
+                      // O erro de entrada é técnico (host, chave, token) e
+                      // acaba no WhatsApp do suporte: precisa ser copiável.
+                      selectable: true,
+                    ),
                   ],
-                  if (action != null) ...[
-                    const SizedBox(height: 12),
-                    action!,
-                  ],
+                  if (action != null) ...[const SizedBox(height: 12), action!],
                   if (footnote != null) ...[
                     const SizedBox(height: 14),
                     Text(
                       footnote!,
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -98,38 +98,6 @@ class AuthScaffold extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: AppTheme.radius,
-        border: Border.all(color: scheme.error.withValues(alpha: .4)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.error_outline, color: scheme.error, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: SelectableText(
-              message,
-              style: TextStyle(color: scheme.onErrorContainer, fontSize: 13),
-            ),
-          ),
-        ],
       ),
     );
   }

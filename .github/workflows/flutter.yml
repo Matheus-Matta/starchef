@@ -6,13 +6,13 @@ on:
     tags: ["v*.*.*"]
     paths:
       - "flutter/**"
-      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
+      - ".github/workflows/garcom.yml"
   pull_request:
     paths:
       - "flutter/**"
-      - "flutter_garcom/**"
       - ".github/workflows/flutter.yml"
+      - ".github/workflows/garcom.yml"
   workflow_dispatch:
     inputs:
       api_base_url:
@@ -70,37 +70,22 @@ jobs:
           }
           exit $LASTEXITCODE
 
-  test-garcom:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_garcom
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-
-      - name: Instalar dependências do app do garçom
-        run: flutter pub get
-
-      - name: Analyze do app do garçom
-        run: flutter analyze
-
-      - name: Testes do app do garçom
-        run: flutter test
-
   # O pubspec é a fonte da versão do binário e a tag é a fonte da versão do
   # release. O pipeline para antes do build se os dois valores divergirem.
   release-metadata:
-    needs: [test, test-garcom]
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       garcom_version: ${{ steps.version.outputs.garcom_version }}
+      garcom_changed: ${{ steps.garcom.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # O histórico inteiro: o passo abaixo compara esta tag com a
+          # anterior, e com o clone raso do padrão não existe tag anterior
+          # para comparar.
+          fetch-depth: 0
 
       - name: Conferir tag x versão do pubspec.yaml
         id: version
@@ -127,6 +112,45 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "garcom_version=$garcom_version" >> "$GITHUB_OUTPUT"
+
+      # O APK só é recompilado quando o aplicativo do garçom mudou de verdade
+      # desde o release anterior. Um APK universal pesa ~72 MB; republicar um
+      # arquivo idêntico a cada tag do PDV enche o Release de peso morto e
+      # ainda faz o aparelho do garçom baixar de novo o que já tem.
+      #
+      # A conta é por ARQUIVO ALTERADO, não pela versão declarada: esquecer de
+      # subir o `version:` do pubspec faria a correção não ser publicada, em
+      # silêncio — falha muito pior do que um build a mais.
+      - name: Decidir se o APK do garçom precisa ser reconstruído
+        id: garcom
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          MANIFEST_URL: ${{ vars.PDV_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*'             "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [[ -z "$previous" ]]; then
+            changed=true
+            reason="não há release anterior para comparar"
+          elif ! git diff --quiet "$previous" "$GITHUB_SHA" --               flutter_garcom .github/workflows/garcom.yml; then
+            changed=true
+            reason="flutter_garcom mudou desde $previous"
+          elif ! curl -fsSL --max-time 30 "$MANIFEST_URL"               | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("garcom",{}).get("package",{}).get("url") else 1)'; then
+            # Sem um APK reaproveitável no manifesto anterior não há o que
+            # herdar: o app ficaria sem para onde apontar.
+            changed=true
+            reason="o manifesto anterior não traz um APK reaproveitável"
+          else
+            changed=false
+            reason="nada mudou em flutter_garcom desde $previous"
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [[ "$changed" == "true" ]]; then
+            echo "::notice::APK do garçom será reconstruído ($reason)."
+          else
+            echo "::notice::APK do garçom reaproveitado do release anterior ($reason)."
+          fi
 
   build-windows:
     needs: release-metadata
@@ -249,95 +273,47 @@ jobs:
           path: artifacts/StarChef-PDV-Linux-v*.zip
           if-no-files-found: error
 
-  build-garcom-apk:
+  # O aplicativo do garçom tem workflow próprio (`garcom.yml`); aqui ele é
+  # apenas CHAMADO, para o APK sair no mesmo run e poder ser anexado ao mesmo
+  # Release. `require_signing` é o que impede um release de sair com a chave de
+  # debug: assinado assim, o APK não instala por cima do app já instalado.
+  garcom:
     needs: release-metadata
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: flutter_garcom
-    env:
-      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
-      GARCOM_KEYSTORE_BASE64: ${{ secrets.GARCOM_KEYSTORE_BASE64 }}
-      GARCOM_KEYSTORE_PASSWORD: ${{ secrets.GARCOM_KEYSTORE_PASSWORD }}
-      GARCOM_KEY_ALIAS: ${{ secrets.GARCOM_KEY_ALIAS }}
-      GARCOM_KEY_PASSWORD: ${{ secrets.GARCOM_KEY_PASSWORD }}
-    steps:
-      - uses: actions/checkout@v4
+    if: >-
+      needs.release-metadata.outputs.garcom_changed == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && github.ref_type == 'tag'))
+    uses: ./.github/workflows/garcom.yml
+    with:
+      version: ${{ needs.release-metadata.outputs.garcom_version }}
+      require_signing: ${{ github.ref_type == 'tag' }}
+    secrets: inherit
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-
-      - name: Instalar dependências do app do garçom
-        run: flutter pub get
-
-      - name: Configurar assinatura do APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          values=(
-            "${GARCOM_KEYSTORE_BASE64:-}"
-            "${GARCOM_KEYSTORE_PASSWORD:-}"
-            "${GARCOM_KEY_ALIAS:-}"
-            "${GARCOM_KEY_PASSWORD:-}"
-          )
-          present=0
-          for value in "${values[@]}"; do
-            if [[ -n "$value" ]]; then
-              present=$((present + 1))
-            fi
-          done
-          if [[ "$present" -ne 0 && "$present" -ne 4 ]]; then
-            echo "Configure todos os quatro Secrets GARCOM_*; a configuração está incompleta." >&2
-            exit 1
-          fi
-          if [[ "$present" -eq 0 ]]; then
-            # Sem os Secrets a build NAO falha: publicar o PDV e mais
-            # importante do que a atualizacao in-place do APK do garcom.
-            # Mas o APK sai assinado com a chave de debug, e cada execucao
-            # gera uma chave nova — o Android recusa em silencio instalar
-            # esse APK por cima de um ja instalado, entao a atualizacao
-            # automatica do garcom NAO vai funcionar neste release. Para
-            # ligar de vez: cadastre os quatro Secrets GARCOM_* (sempre o
-            # mesmo keystore, para sempre).
-            echo "::warning::Secrets GARCOM_* ausentes: APK assinado com chave de debug. A atualização automática do app do garçom NÃO funcionará neste release (o Android bloqueia a instalação por cima do app já instalado). Cadastre GARCOM_KEYSTORE_BASE64, GARCOM_KEYSTORE_PASSWORD, GARCOM_KEY_ALIAS e GARCOM_KEY_PASSWORD para habilitar."
-            exit 0
-          fi
-          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks
-          {
-            printf 'storeFile=starchef-garcom-release.jks\n'
-            printf 'storePassword=%s\n' "$GARCOM_KEYSTORE_PASSWORD"
-            printf 'keyAlias=%s\n' "$GARCOM_KEY_ALIAS"
-            printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
-          } > android/key.properties
-
-      - name: Build do APK universal do garçom
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter build apk --release
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          cp build/app/outputs/flutter-apk/app-release.apk \
-            "$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
-
-      - name: Upload do APK do garçom
-        uses: actions/upload-artifact@v4
-        with:
-          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
-          path: artifacts/StarChef-Garcom-v*.apk
-          if-no-files-found: error
-
-  # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes do PDV
-  # e publica o manifesto junto do Release. O APK não entra no latest.json.
+  # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes e
+  # publica o manifesto junto do Release. O `latest.json` carrega o PDV em
+  # `platforms` e o app do garçom na chave `garcom` — este último com
+  # versionamento próprio, por isso fora de `platforms`.
   publish-release:
-    needs: [release-metadata, build-windows, build-linux, build-garcom-apk]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    # `always()` porque o job do garçom é PULADO quando o app não mudou desde
+    # o release anterior; sem isso, um job pulado em `needs` pularia o publish
+    # junto e o release inteiro não sairia. Os builds do PDV continuam
+    # obrigatórios.
+    needs: [release-metadata, build-windows, build-linux, garcom]
+    if: >-
+      always() && github.event_name == 'push' && github.ref_type == 'tag' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-linux.result == 'success' &&
+      (needs.garcom.result == 'success' || needs.garcom.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       APP_VERSION: ${{ needs.release-metadata.outputs.version }}
       GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
+      # De onde herdar o APK quando ele nao foi reconstruido neste release.
+      # Neste instante `releases/latest` ainda aponta para o release ANTERIOR:
+      # o desta tag so e criado no ultimo passo deste job.
+      MANIFEST_URL: ${{ vars.PDV_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
     steps:
       - name: Baixar pacotes dos builds
         uses: actions/download-artifact@v4
@@ -347,6 +323,7 @@ jobs:
           merge-multiple: true
 
       - name: Baixar APK do app do garçom
+        if: needs.garcom.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
@@ -362,6 +339,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           from urllib.parse import quote
+          from urllib.request import urlopen
 
           root = Path(os.environ["GITHUB_WORKSPACE"])
           assets = root / "release-assets"
@@ -376,9 +354,10 @@ jobs:
               "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
               "garcom_apk": f"StarChef-Garcom-v{garcom_version}.apk",
           }
-          for name in names.values():
-              if not (assets / name).is_file():
-                  raise SystemExit(f"Artefato obrigatório ausente: {name}")
+          # Os três do PDV são obrigatórios: o manifesto existe para servi-los.
+          for key in ("windows_installer", "windows_zip", "linux_zip"):
+              if not (assets / names[key]).is_file():
+                  raise SystemExit(f"Artefato obrigatório ausente: {names[key]}")
 
           def package(key, kind, file_format, recommended):
               name = names[key]
@@ -393,6 +372,32 @@ jobs:
                   "size": path.stat().st_size,
                   "recommended": recommended,
               }
+
+          def garcom_block():
+              """O APK deste release, ou o do release anterior.
+
+              Quando `flutter_garcom/` nao muda entre duas tags, o APK nao e
+              recompilado: republicar 72 MB identicos encheria o Release de
+              peso morto e faria cada aparelho baixar de novo o que ja tem. O
+              manifesto entao aponta para o APK do release ANTERIOR, cuja URL
+              continua valida — o app compara versao, ve que ja esta nela e
+              nao baixa nada.
+              """
+              if (assets / names["garcom_apk"]).is_file():
+                  return {
+                      "version": garcom_version,
+                      "package": package("garcom_apk", "apk", "apk", True),
+                  }
+              previous = os.environ["MANIFEST_URL"]
+              with urlopen(previous, timeout=30) as response:
+                  herdado = json.load(response).get("garcom")
+              if not herdado or not herdado.get("package", {}).get("url"):
+                  raise SystemExit(
+                      "APK ausente e o manifesto anterior nao traz um para "
+                      "herdar. Rode o release de novo com o job do garcom."
+                  )
+              print(f"Reaproveitando o APK {herdado['version']} do release anterior.")
+              return herdado
 
           manifest = {
               "schema_version": 1,
@@ -418,10 +423,7 @@ jobs:
               # nao participa de "platforms" porque nao roda no PDV. O app
               # consulta esta chave direto pra saber se ha versao nova pra
               # baixar e instalar por cima da atual.
-              "garcom": {
-                  "version": garcom_version,
-                  "package": package("garcom_apk", "apk", "apk", True),
-              },
+              "garcom": garcom_block(),
           }
           (assets / "latest.json").write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

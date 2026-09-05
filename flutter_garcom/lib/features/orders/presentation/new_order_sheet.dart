@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_sheet.dart';
 
 /// Formas de abrir um pedido, iguais às do PDV.
 ///
@@ -29,49 +29,20 @@ enum NewOrderKind {
 }
 
 Future<NewOrderKind?> showNewOrderSheet(BuildContext context) =>
-    showModalBottomSheet<NewOrderKind>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Novo pedido',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                ),
-              ),
+    showAppSheet<NewOrderKind>(
+      context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AppSheetHeader(title: 'Novo pedido'),
+          for (final kind in NewOrderKind.values)
+            AppSheetOption(
+              icon: kind.icon,
+              label: kind.label,
+              description: kind.description,
+              onTap: () => Navigator.of(context).pop(kind),
             ),
-            for (final kind in NewOrderKind.values)
-              ListTile(
-                leading: Container(
-                  height: 40,
-                  width: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.primary.withValues(alpha: .12),
-                    borderRadius: AppTheme.radius,
-                  ),
-                  child: Icon(
-                    kind.icon,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-                title: Text(
-                  kind.label,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(kind.description),
-                onTap: () => Navigator.of(context).pop(kind),
-              ),
-            const SizedBox(height: 12),
-          ],
-        ),
+          const SizedBox(height: 12),
+        ],
       ),
     );

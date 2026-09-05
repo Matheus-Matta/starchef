@@ -24,8 +24,16 @@ void main() {
 
   setUp(() => diagnostics = PrincipalDiagnostics(client: PrincipalClient()));
 
-  PrincipalConfig config(int port, {String key = secret, String host = '127.0.0.1'}) =>
-      PrincipalConfig(host: host, port: port, secret: key, nodeId: 'aparelho-teste');
+  PrincipalConfig config(
+    int port, {
+    String key = secret,
+    String host = '127.0.0.1',
+  }) => PrincipalConfig(
+    host: host,
+    port: port,
+    secret: key,
+    nodeId: 'aparelho-teste',
+  );
 
   test('endereço inválido para antes de tocar na rede', () async {
     final steps = await diagnostics.run(

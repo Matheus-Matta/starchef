@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/config/app_env.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/labeled_field.dart';
+import '../../../core/widgets/shadcn_layout.dart';
 import 'auth_scaffold.dart';
 import 'session_controller.dart';
 
@@ -89,25 +88,16 @@ class _LoginPageState extends State<LoginPage> {
                       : Icons.visibility_off_outlined,
                   size: 20,
                 ),
-                onPressed: () =>
-                    setState(() => _hidePassword = !_hidePassword),
+                onPressed: () => setState(() => _hidePassword = !_hidePassword),
               ),
             ),
             const SizedBox(height: 20),
-            ShadButton(
+            AppSubmitButton(
+              label: 'Entrar',
+              busyLabel: 'Entrando...',
+              icon: Icons.login,
+              busy: controller.loading,
               onPressed: _submit,
-              enabled: !controller.loading,
-              height: AppTheme.controlHeight,
-              leading: controller.loading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.login, size: 18),
-              child: Text(controller.loading ? 'Entrando...' : 'Entrar'),
             ),
           ],
         ),

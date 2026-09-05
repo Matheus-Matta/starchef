@@ -73,17 +73,19 @@ void main() {
     reaberto.dispose();
   });
 
-  test('o pedido criado offline leva os itens junto ao ganhar o id real',
-      () async {
-    // Sem isto, os itens escolhidos antes de a criação sincronizar ficariam
-    // apontando para um id que deixou de existir — e nunca seriam enviados.
-    await drafts.add(item(orderId: 'offline-abc'));
+  test(
+    'o pedido criado offline leva os itens junto ao ganhar o id real',
+    () async {
+      // Sem isto, os itens escolhidos antes de a criação sincronizar ficariam
+      // apontando para um id que deixou de existir — e nunca seriam enviados.
+      await drafts.add(item(orderId: 'offline-abc'));
 
-    await drafts.reassign('offline-abc', 'pedido-real-1');
+      await drafts.reassign('offline-abc', 'pedido-real-1');
 
-    expect(drafts.countFor('offline-abc'), 0);
-    expect(drafts.countFor('pedido-real-1'), 1);
-  });
+      expect(drafts.countFor('offline-abc'), 0);
+      expect(drafts.countFor('pedido-real-1'), 1);
+    },
+  );
 
   test('avisa a tela a cada mudança', () async {
     var avisos = 0;

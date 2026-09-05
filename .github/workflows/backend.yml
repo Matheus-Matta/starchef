@@ -60,6 +60,34 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Historico completo: o passo abaixo compara esta tag com a anterior.
+          fetch-depth: 0
+
+      # Uma tag do monorepo corta backend, frontend e PDV de uma vez, mas nem
+      # todo release mexe nos tres. Sem esta checagem, uma correcao so no PDV
+      # publicava uma imagem de backend byte a byte identica a anterior — build de
+      # varios minutos, camada nova no GHCR e nada de diferente dentro.
+      #
+      # A conta e por ARQUIVO ALTERADO desde a tag anterior, nao pela versao
+      # declarada: esquecer de subir uma versao faria a correcao NAO ser
+      # publicada, em silencio — falha bem pior do que uma imagem a mais.
+      - name: Decidir se a imagem precisa ser reconstruida
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*'             "${GITHUB_SHA}^" 2>/dev/null || true)"
+          if [[ -z "$previous" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sem release anterior para comparar: imagem sera construida."
+          elif git diff --quiet "$previous" "$GITHUB_SHA" --               backend .github/workflows/backend.yml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nada mudou em backend/ desde $previous: a imagem atual sera apenas re-etiquetada."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::backend/ mudou desde $previous: imagem sera reconstruida."
+          fi
 
       - uses: docker/setup-buildx-action@v3
 
@@ -88,6 +116,7 @@ jobs:
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
       # lidos em runtime pelo container via .env (docker-compose.yml).
       - name: Build e push
+        if: steps.changed.outputs.changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: backend
@@ -98,6 +127,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+
+      # Nada mudou: em vez de reconstruir, aponta as etiquetas desta versao
+      # para a imagem que ja esta publicada. Nao gera camada nova nem consome
+      # espaco — sao apenas nomes novos para o MESMO digest — e mantem a
+      # pergunta "qual backend rodava no release X.Y.Z?" respondivel.
+      - name: Re-etiquetar a imagem existente
+        if: steps.changed.outputs.changed != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/starchef-backend"
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create             --tag "$image:$version"             --tag "$image:${version%.*}"             "$image:latest"
 
   # Poda o GHCR por idade: qualquer versão (tag ou sem tag) com mais de 1 ano
   # vira lixo e é apagada, MENOS a que estiver com a tag `latest` no momento —

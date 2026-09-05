@@ -162,17 +162,20 @@ void main() {
     expect(await store.readPrincipal(), isNull);
   });
 
-  test('a identidade do aparelho no relay não muda entre pareamentos', () async {
-    await controller.restore();
-    await login();
-    await pair();
-    final primeiro = controller.principal!.nodeId;
+  test(
+    'a identidade do aparelho no relay não muda entre pareamentos',
+    () async {
+      await controller.restore();
+      await login();
+      await pair();
+      final primeiro = controller.principal!.nodeId;
 
-    await controller.unpair();
-    await pair();
+      await controller.unpair();
+      await pair();
 
-    expect(controller.principal!.nodeId, primeiro);
-  });
+      expect(controller.principal!.nodeId, primeiro);
+    },
+  );
 }
 
 /// Backend de mentira: responde só o login.

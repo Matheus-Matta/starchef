@@ -121,15 +121,24 @@ flutter build apk --release                   # 1 APK universal (serve em qualqu
 
 ### APK pelo GitHub Actions
 
-O workflow `.github/workflows/flutter.yml` executa analyze e testes do app e,
-em toda execução, gera o APK universal
-`StarChef-Garcom-vA.B.C.apk`. `A.B.C` vem deste `pubspec.yaml`, pois a versão do
-app do garçom é independente da versão do PDV. Em Pull Request ou push ele
-aparece nos artefatos temporários do job `build-garcom-apk`; em uma tag
-`vX.Y.Z`, também é anexado aos assets do GitHub Release.
+O workflow próprio do app é `.github/workflows/garcom.yml`: ele roda analyze,
+testes e gera o APK universal `StarChef-Garcom-vA.B.C.apk`. `A.B.C` vem deste
+`pubspec.yaml`, pois a versão do app do garçom é independente da versão do PDV.
 
-Uma tag exige os Secrets `GARCOM_KEYSTORE_BASE64`,
-`GARCOM_KEYSTORE_PASSWORD`, `GARCOM_KEY_ALIAS` e `GARCOM_KEY_PASSWORD`. O
+- **Pull Request ou push** que toque `flutter_garcom/`: o workflow roda sozinho
+  e deixa o APK nos artefatos temporários do Actions.
+- **Tag `vX.Y.Z`**: o `flutter.yml` chama este workflow, e o APK sai no mesmo
+  run para ser anexado ao GitHub Release e escrito na chave `garcom` do
+  `latest.json`.
+
+Em uma tag o APK **só é reconstruído se `flutter_garcom/` mudou** desde a tag
+anterior; senão o manifesto herda o APK do release anterior, cuja URL continua
+válida. Republicar 72 MB idênticos a cada tag do PDV só encheria o Release de
+peso morto.
+
+Uma tag exige os quatro Secrets `GARCOM_KEYSTORE_BASE64`,
+`GARCOM_KEYSTORE_PASSWORD`, `GARCOM_KEY_ALIAS` e `GARCOM_KEY_PASSWORD`, e o job
+**falha** sem eles — ou se o certificado do APK gerado for o de debug. O
 procedimento completo para cadastrá-los e publicar está em
 [`../docs/PDV_UPDATE_RELEASE.md`](../docs/PDV_UPDATE_RELEASE.md).
 

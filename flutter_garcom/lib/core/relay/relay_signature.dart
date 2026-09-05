@@ -44,7 +44,10 @@ abstract final class RelaySignature {
 
   static String _digest(String secret, List<String> parts) {
     final canonical = parts.join('\n');
-    final digest = Hmac(sha256, utf8.encode(secret)).convert(utf8.encode(canonical));
+    final digest = Hmac(
+      sha256,
+      utf8.encode(secret),
+    ).convert(utf8.encode(canonical));
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
   }
 

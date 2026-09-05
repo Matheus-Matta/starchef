@@ -43,11 +43,11 @@ double expectedUnitPrice(
 /// A comanda vem antes da mesa: é ela que identifica o atendimento — a mesa é
 /// um vínculo que pode mudar durante a refeição, ou nem existir.
 String orderTitle(Map<String, dynamic> order) {
-  final command = _text(order['command_number']);
+  final command = fieldText(order['command_number']);
   if (command.isNotEmpty) return 'Comanda $command';
-  final table = _text(order['table_number']);
+  final table = fieldText(order['table_number']);
   if (table.isNotEmpty) return 'Mesa $table';
-  final customer = _text(order['customer_name']);
+  final customer = fieldText(order['customer_name']);
   if (customer.isNotEmpty) return customer;
   return '${orderTypeLabel(order['order_type'])} #${order['sequence'] ?? ''}';
 }
@@ -55,11 +55,11 @@ String orderTitle(Map<String, dynamic> order) {
 /// Linha de apoio do cartão: tipo do pedido e onde ele está.
 String orderSubtitle(Map<String, dynamic> order) {
   final partes = <String>[orderTypeLabel(order['order_type'])];
-  final table = _text(order['table_number']);
-  if (table.isNotEmpty && _text(order['command_number']).isNotEmpty) {
+  final table = fieldText(order['table_number']);
+  if (table.isNotEmpty && fieldText(order['command_number']).isNotEmpty) {
     partes.add('mesa $table');
   }
-  final customer = _text(order['customer_name']);
+  final customer = fieldText(order['customer_name']);
   if (customer.isNotEmpty) partes.add(customer);
   return partes.join(' · ');
 }
@@ -75,7 +75,13 @@ String orderTypeLabel(Object? type) => switch ('$type') {
   _ => 'Pedido',
 };
 
-String _text(Object? value) {
+/// Texto de um campo da API, já limpo.
+///
+/// A API devolve ausência de três formas diferentes — campo faltando, `null`
+/// de verdade e a string `"null"` vinda da interpolação de um id vazio. As
+/// três viram string vazia aqui, para nenhuma tela precisar repetir o
+/// `.trim() != 'null'` que estava espalhado.
+String fieldText(Object? value) {
   final text = '${value ?? ''}'.trim();
   return text == 'null' ? '' : text;
 }

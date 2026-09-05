@@ -86,23 +86,26 @@ void main() {
       });
     });
 
-    test('recebimento carrega o identificador que evita cobrança dupla', () async {
-      await repository.pay(
-        orderId: 'pedido-1',
-        paymentMethodId: 'pix-1',
-        amount: '25.00',
-        reference: 'NSU-9',
-      );
+    test(
+      'recebimento carrega o identificador que evita cobrança dupla',
+      () async {
+        await repository.pay(
+          orderId: 'pedido-1',
+          paymentMethodId: 'pix-1',
+          amount: '25.00',
+          reference: 'NSU-9',
+        );
 
-      final body = principal.lastRelay['body'] as Map<String, dynamic>;
-      expect(principal.lastRelay['path'], '/orders/pedido-1/pay/');
-      expect(body['payment_method'], 'pix-1');
-      expect(body['amount'], '25.00');
-      // O id nasce no aparelho: um reenvio depois de um timeout devolve o
-      // mesmo recebimento em vez de cobrar de novo.
-      expect('${body['client_payment_id']}', startsWith('offline-'));
-      expect((body['metadata'] as Map)['reference'], 'NSU-9');
-    });
+        final body = principal.lastRelay['body'] as Map<String, dynamic>;
+        expect(principal.lastRelay['path'], '/orders/pedido-1/pay/');
+        expect(body['payment_method'], 'pix-1');
+        expect(body['amount'], '25.00');
+        // O id nasce no aparelho: um reenvio depois de um timeout devolve o
+        // mesmo recebimento em vez de cobrar de novo.
+        expect('${body['client_payment_id']}', startsWith('offline-'));
+        expect((body['metadata'] as Map)['reference'], 'NSU-9');
+      },
+    );
 
     test('recebimento em dinheiro informa o caixa aberto', () async {
       await repository.pay(
@@ -181,17 +184,20 @@ void main() {
       },
     );
 
-    test('com o caixa disponível, devolve o pedido real, sem enfileirar', () async {
-      final order = await repository.createOrderWithItem(
-        orderType: 'counter',
-        productId: 'produto-1',
-        quantity: 1,
-        addonIds: const [],
-      );
+    test(
+      'com o caixa disponível, devolve o pedido real, sem enfileirar',
+      () async {
+        final order = await repository.createOrderWithItem(
+          orderType: 'counter',
+          productId: 'produto-1',
+          quantity: 1,
+          addonIds: const [],
+        );
 
-      expect(order['id'], 'pedido-1');
-      expect(order.containsKey('_offline_pending'), isFalse);
-    });
+        expect(order['id'], 'pedido-1');
+        expect(order.containsKey('_offline_pending'), isFalse);
+      },
+    );
   });
 
   test('vínculo com a mesa vai na comanda e usa table_id', () async {

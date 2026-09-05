@@ -1,0 +1,194 @@
+name: garcom
+
+# Tudo do aplicativo do garçom mora aqui: analyze, testes e o APK.
+#
+# Antes isso vivia dentro de `flutter.yml`, junto do PDV desktop. São dois
+# produtos com versões independentes, plataformas diferentes e ciclos que não
+# se encostam — misturados, uma mudança no instalador do Windows passava pelo
+# mesmo arquivo que a assinatura do Android.
+#
+# O release continua sendo UM só: em uma tag `vX.Y.Z`, o `flutter.yml` chama
+# este workflow (`workflow_call`), o APK sai no mesmo run e é anexado ao mesmo
+# GitHub Release, escrito na mesma chave `garcom` do `latest.json`. Separar o
+# arquivo não separou o release.
+
+on:
+  pull_request:
+    paths:
+      - "flutter_garcom/**"
+      - ".github/workflows/garcom.yml"
+  push:
+    branches: [main]
+    paths:
+      - "flutter_garcom/**"
+      - ".github/workflows/garcom.yml"
+  workflow_dispatch:
+  # Chamado pelo `flutter.yml` durante o release.
+  workflow_call:
+    inputs:
+      version:
+        description: "Versão pública do APK (vem do flutter_garcom/pubspec.yaml)"
+        required: true
+        type: string
+      require_signing:
+        description: "Falha se o APK não sair assinado com a chave de release"
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      GARCOM_KEYSTORE_BASE64:
+        required: false
+      GARCOM_KEYSTORE_PASSWORD:
+        required: false
+      GARCOM_KEY_ALIAS:
+        required: false
+      GARCOM_KEY_PASSWORD:
+        required: false
+
+defaults:
+  run:
+    working-directory: flutter_garcom
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Testes
+        run: flutter test
+
+  build-apk:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      GARCOM_KEYSTORE_BASE64: ${{ secrets.GARCOM_KEYSTORE_BASE64 }}
+      GARCOM_KEYSTORE_PASSWORD: ${{ secrets.GARCOM_KEYSTORE_PASSWORD }}
+      GARCOM_KEY_ALIAS: ${{ secrets.GARCOM_KEY_ALIAS }}
+      GARCOM_KEY_PASSWORD: ${{ secrets.GARCOM_KEY_PASSWORD }}
+      REQUIRE_SIGNING: ${{ inputs.require_signing && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Instalar dependências
+        run: flutter pub get
+
+      # A versão vem do próprio pubspec quando o workflow roda sozinho; no
+      # release ela chega pronta do `flutter.yml`, que já a validou.
+      - name: Resolver a versão do APK
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+          if [[ -z "$version" ]]; then
+            version="$(awk '/^version:/{print $2; exit}' pubspec.yaml)"
+            version="${version%%+*}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida em flutter_garcom/pubspec.yaml: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Configurar assinatura do APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          present=0
+          for value in "${GARCOM_KEYSTORE_BASE64:-}" \
+                       "${GARCOM_KEYSTORE_PASSWORD:-}" \
+                       "${GARCOM_KEY_ALIAS:-}" \
+                       "${GARCOM_KEY_PASSWORD:-}"; do
+            if [[ -n "$value" ]]; then present=$((present + 1)); fi
+          done
+          if [[ "$present" -ne 0 && "$present" -ne 4 ]]; then
+            echo "Configure os QUATRO Secrets GARCOM_*; a configuração está incompleta." >&2
+            exit 1
+          fi
+          if [[ "$present" -eq 0 ]]; then
+            # Numa tag isto é fatal: um APK com a chave de debug NÃO instala
+            # por cima do app já instalado no aparelho do garçom (o Android
+            # exige assinatura idêntica), então a atualização automática
+            # morreria em silêncio no aparelho de cada um.
+            if [[ "$REQUIRE_SIGNING" == "true" ]]; then
+              echo "::error::Secrets GARCOM_* ausentes. Um release NÃO pode sair com a chave de debug: o APK não instalaria por cima do app já instalado. Cadastre GARCOM_KEYSTORE_BASE64, GARCOM_KEYSTORE_PASSWORD, GARCOM_KEY_ALIAS e GARCOM_KEY_PASSWORD."
+              exit 1
+            fi
+            echo "::warning::Secrets GARCOM_* ausentes: APK de homologação assinado com a chave de debug. Serve para instalar em aparelho limpo, não para atualizar."
+            exit 0
+          fi
+          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks
+          {
+            printf 'storeFile=starchef-garcom-release.jks\n'
+            printf 'storePassword=%s\n' "$GARCOM_KEYSTORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$GARCOM_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build do APK universal
+        shell: bash
+        env:
+          GARCOM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          flutter build apk --release
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+
+      # Quem assinou, dito em voz alta. Antes o único sinal era a AUSÊNCIA de
+      # um aviso amarelo — fácil de não notar, e impossível de conferir depois
+      # que o run rolou a tela. Aqui a impressão digital aparece no log, e a
+      # chave de debug é recusada explicitamente em release.
+      - name: Conferir quem assinou o APK
+        shell: bash
+        env:
+          GARCOM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk="$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+          apksigner="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" \
+            -name apksigner -type f 2>/dev/null | sort -r | head -n1 || true)"
+          if [[ -n "$apksigner" ]]; then
+            certs="$("$apksigner" verify --print-certs "$apk")"
+          else
+            # Sem o SDK à mão o keytool lê a assinatura v1 (JAR), que o build
+            # do Flutter ainda inclui junto da v2.
+            certs="$(keytool -printcert -jarfile "$apk")"
+          fi
+          echo "$certs"
+          owner="$(printf '%s' "$certs" | grep -iE 'DN:|Propriet|Owner' | head -n1 || true)"
+          sha="$(printf '%s' "$certs" | grep -iE 'SHA-?256 digest|SHA256:' | head -n1 || true)"
+          {
+            printf '### Assinatura do APK\n\n'
+            printf '```\n%s\n%s\n```\n' "$owner" "$sha"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if printf '%s' "$certs" | grep -qi 'CN=Android Debug'; then
+            if [[ "$REQUIRE_SIGNING" == "true" ]]; then
+              echo "::error::O APK saiu assinado com a chave de DEBUG do Android. Um release assim não atualiza nenhum aparelho que já tenha o app."
+              exit 1
+            fi
+            echo "::warning::APK assinado com a chave de debug (build de homologação)."
+          fi
+
+      - name: Upload do APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: starchef-garcom-android-${{ steps.version.outputs.version }}
+          path: artifacts/StarChef-Garcom-v*.apk
+          if-no-files-found: error
