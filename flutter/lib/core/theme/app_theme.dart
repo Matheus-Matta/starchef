@@ -10,7 +10,31 @@ import 'app_colors.dart';
 /// fluxos de operação.
 abstract final class AppTheme {
   static const radius = BorderRadius.all(Radius.circular(4));
-  static const controlHeight = 40.0;
+
+  /// Altura de TODO controle de uma linha: campo, select, data e botão.
+  ///
+  /// Um número só. Quando cada tipo escolhia a própria altura, a barra de
+  /// filtros saía em escadinha — um campo de busca, três selects e um botão de
+  /// data, cada um parando num lugar.
+  static const controlHeight = 34.0;
+
+  /// O que faz um botão medir [controlHeight] de verdade.
+  ///
+  /// `minimumSize` sozinho não basta, e essa foi a razão de a barra de filtros
+  /// continuar em escadinha mesmo com todos os controles apontando para o mesmo
+  /// número. Dois ajustes do Material entram na frente dele:
+  ///
+  /// * `tapTargetSize.padded` reserva 48 px de área de toque em volta do botão,
+  ///   e é essa reserva — não o conteúdo — que definia a altura final.
+  /// * [ThemeData.visualDensity] `compact` desconta 8 px de qualquer medida
+  ///   pedida, então um `minimumSize` de 34 virava 26.
+  ///
+  /// Os dois juntos travavam todo botão em 40 px ao lado de campos de 34. Aqui
+  /// eles saem do caminho: a altura passa a ser exatamente a que se pede.
+  /// O PDV é operado em tela sensível ao toque, então o alvo continua sendo o
+  /// botão inteiro — largo — e não um ícone solto de 34 px.
+  static const _buttonDensity = VisualDensity.standard;
+  static const _buttonTapTarget = MaterialTapTargetSize.shrinkWrap;
 
   static ThemeData light() => _buildMaterial(Brightness.light);
   static ThemeData dark() => _buildMaterial(Brightness.dark);
@@ -137,7 +161,12 @@ abstract final class AppTheme {
         fillColor: surface,
         hintStyle: TextStyle(color: muted, fontWeight: FontWeight.w400),
         labelStyle: TextStyle(color: muted),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        // `floatingLabelBehavior: always` mantém o rótulo ACIMA da caixa em
+        // vez de dentro dela. Dentro, ele empurra o conteúdo e o campo fica
+        // mais alto que um botão da mesma barra — era a origem da escadinha
+        // entre busca, selects e o seletor de período.
+        floatingLabelBehavior: FloatingLabelBehavior.always,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         constraints: const BoxConstraints(minHeight: controlHeight),
         prefixIconConstraints: const BoxConstraints(
           minWidth: controlHeight,
@@ -174,6 +203,8 @@ abstract final class AppTheme {
           // resto usava `controlHeight`, e um `ElevatedButton` ao lado de um
           // campo ou de um `FilledButton` saía dois pixels mais alto.
           minimumSize: const Size.fromHeight(controlHeight),
+          visualDensity: _buttonDensity,
+          tapTargetSize: _buttonTapTarget,
           backgroundColor: scheme.primary,
           foregroundColor: Colors.white,
           disabledBackgroundColor: scheme.surfaceContainerHigh,
@@ -186,6 +217,8 @@ abstract final class AppTheme {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, controlHeight),
+          visualDensity: _buttonDensity,
+          tapTargetSize: _buttonTapTarget,
           backgroundColor: primary,
           foregroundColor: Colors.white,
           disabledBackgroundColor: scheme.surfaceContainerHigh,
@@ -197,6 +230,8 @@ abstract final class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(0, controlHeight),
+          visualDensity: _buttonDensity,
+          tapTargetSize: _buttonTapTarget,
           foregroundColor: scheme.onSurface,
           side: BorderSide(color: border),
           shape: const RoundedRectangleBorder(borderRadius: radius),
@@ -205,6 +240,9 @@ abstract final class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
+          minimumSize: const Size(0, controlHeight),
+          visualDensity: _buttonDensity,
+          tapTargetSize: _buttonTapTarget,
           shape: const RoundedRectangleBorder(borderRadius: radius),
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),

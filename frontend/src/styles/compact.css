@@ -13,72 +13,35 @@
   font-size: var(--control-font);
 }
 
-/* TODO controle de UMA LINHA tem a MESMA altura.
-   `min-height` não bastava: cada componente do PrimeVue tem o seu próprio
-   padding interno, então o select parava mais alto que o campo de texto, o
-   calendário mais alto que os dois, e a linha do formulário saía escadinha.
-
-   O prefixo `html` é o mesmo recurso já usado em `primevue-tokens.css`: o
-   tema aura traz regras que ganham de um seletor de classe simples, e sem
-   essa especificidade a altura aqui simplesmente não valia — o CSS estava
-   escrito e a tela continuava desalinhada.
-
-   `padding` vertical zerado e `line-height: 1` completam: com padding, a
-   altura fixa espremia o texto contra a borda em vez de centrá-lo.
-
-   A textarea fica de fora de propósito — ela cresce com o texto. */
-html .p-inputtext,
-html .p-dropdown,
-html .p-multiselect,
-html .p-calendar,
-html .p-password,
-html .p-inputnumber,
-html .p-inputgroup,
-html .p-inputgroup > .p-inputtext,
-html .p-inputgroup > .p-button,
-html .p-calendar > .p-inputtext,
-html .p-calendar > .p-button,
-html .p-password > .p-inputtext,
-html .p-inputnumber > .p-inputtext {
-  height: var(--control-h);
-  min-height: var(--control-h);
+.p-inputtext {
   padding-top: 0;
   padding-bottom: 0;
-  line-height: 1;
+  height: var(--control-h);
 }
 
-/* A textarea é a exceção: travar a altura esconderia o que acabou de ser
-   escrito. */
-html textarea.p-inputtext {
+/* Textareas keep auto height but pick up the compact font */
+textarea.p-inputtext {
   height: auto;
-  min-height: var(--control-h);
-  padding-top: 7px;
-  padding-bottom: 7px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   line-height: var(--leading-normal);
 }
 
-/* O conteúdo precisa ficar centrado DENTRO da altura fixa; sem isto o campo
-   tem o tamanho certo e o texto encosta no topo. */
-html .p-dropdown,
-html .p-multiselect {
-  display: inline-flex;
-  align-items: center;
+.p-dropdown,
+.p-multiselect {
+  min-height: var(--control-h);
 }
-
-html .p-dropdown .p-dropdown-label,
-html .p-multiselect .p-multiselect-label {
+.p-dropdown .p-dropdown-label {
   display: flex;
   align-items: center;
   padding-top: 0;
   padding-bottom: 0;
-  line-height: 1;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
-html .p-button {
-  padding: 0 12px;
+.p-button {
+  padding: 0 14px;
   height: var(--control-h);
-  min-height: var(--control-h);
   font-size: var(--control-font);
 }
 .p-button.p-button-sm {

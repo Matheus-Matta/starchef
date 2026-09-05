@@ -364,7 +364,7 @@ function selectScope(restaurantId) {
 }
 
 .sidebar__branch {
-  padding: 7px 10px;
+  padding: 10px 12px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -455,7 +455,7 @@ function selectScope(restaurantId) {
 .sidebar__nav {
   flex: 1;
   overflow-y: auto;
-  padding: 6px 11px 10px;
+  padding: 8px 14px 14px;
 }
 
 .sidebar__group {
@@ -467,7 +467,7 @@ function selectScope(restaurantId) {
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--text-subtle);
-  padding: 5px 9px 8px;
+  padding: 6px 10px 10px;
 }
 
 .sidebar__items {
@@ -479,10 +479,8 @@ function selectScope(restaurantId) {
 .sidebar__item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  /* Acompanha a densidade do resto. Estava em 40 px fixos, então reduzir os
-     controles não mudava nada na barra e a redução "não aparecia". */
-  height: var(--control-h-lg);
+  gap: 11px;
+  height: 40px;
   width: 100%;
   border: none;
   cursor: pointer;

@@ -8,6 +8,12 @@
 @import url("./styles/compact.css");
 @import url("./styles/motion.css");
 
+:root {
+  --sidebar-w: 280px;
+  --sidebar-w-mini: 76px;
+  --topbar-h: 68px;
+}
+
 /* Impede scroll horizontal causado pelo drawer off-canvas (position: fixed,
    translateX(-100%)) que fica fora da tela à esquerda no mobile. */
 html,

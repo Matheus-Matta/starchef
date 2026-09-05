@@ -116,9 +116,9 @@ class PdvSidebar extends StatelessWidget {
                           : MainAxisAlignment.center,
                       children: [
                         Container(
-                          width: 40,
-                          height: 40,
-                          padding: const EdgeInsets.all(6),
+                          width: AppTheme.controlHeight,
+                          height: AppTheme.controlHeight,
+                          padding: const EdgeInsets.all(5),
                           decoration: BoxDecoration(
                             color: scheme.primaryContainer,
                             borderRadius: AppTheme.radius,
@@ -619,7 +619,10 @@ class _DestinationButton extends StatelessWidget {
       variant: selected ? ShadButtonVariant.primary : ShadButtonVariant.ghost,
       onPressed: onTap,
       width: expanded ? 204 : 56,
-      height: 46,
+      // A MESMA régua dos campos e botões. Estes dois ficavam em 46 e 44 px
+      // fixos, então uma redução geral da interface não chegava até a barra
+      // lateral: tudo encolhia menos o menu, que continuava do mesmo tamanho.
+      height: AppTheme.controlHeight,
       padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
       foregroundColor: foreground,
       hoverForegroundColor: selected ? scheme.onPrimary : scheme.onSurface,
@@ -663,7 +666,7 @@ class _SidebarAction extends StatelessWidget {
     final child = ShadButton.ghost(
       onPressed: onTap,
       width: expanded ? 204 : 56,
-      height: 44,
+      height: AppTheme.controlHeight,
       padding: EdgeInsets.symmetric(horizontal: expanded ? 13 : 0),
       foregroundColor: scheme.onSurfaceVariant,
       hoverForegroundColor: scheme.onSurface,

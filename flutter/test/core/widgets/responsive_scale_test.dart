@@ -47,14 +47,14 @@ void main() {
       expect(scale, closeTo(760 / 800, 0.001));
     });
 
-    testWidgets('não encolhe além do piso', (tester) async {
-      // O mínimo configurado em WindowOptions (main.dart). A conta crua daria
-      // 0,75 — e nessa escala um botão de 40 px vira 30 e um rótulo de 12 px
-      // vira 9: abaixo do que se toca com o dedo e do que se lê a meio metro
-      // de distância. Numa janela apertada quem se adapta é o LAYOUT, não o
-      // tamanho de tudo.
+    testWidgets('numa janela apertada a escala acompanha, sem travar', (
+      tester,
+    ) async {
+      // 960/1280 = 0,75 e 640/800 = 0,8: vale o mais apertado, 0,75 — acima do
+      // piso, então a conta passa inteira. Já foi travado em 0,9 aqui, e o
+      // efeito era o operador diminuir a janela e nada mudar de tamanho.
       final scale = await reportedScale(tester, const Size(960, 640));
-      expect(scale, closeTo(0.9, 0.001));
+      expect(scale, closeTo(0.75, 0.001));
     });
 
     testWidgets('janela muito grande não ultrapassa o teto', (tester) async {

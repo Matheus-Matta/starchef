@@ -40,6 +40,15 @@ void main() {
                     onPressed: () {},
                     child: const Text('Periodo'),
                   ),
+                  const SizedBox(height: 8),
+                  // Os três tipos de botão entram porque cada um tem seu
+                  // próprio tema: já aconteceu de um deles ficar dois pixels
+                  // mais alto que os vizinhos sem ninguém notar.
+                  ElevatedButton(onPressed: () {}, child: const Text('Salvar')),
+                  const SizedBox(height: 8),
+                  FilledButton(onPressed: () {}, child: const Text('Pagar')),
+                  const SizedBox(height: 8),
+                  TextButton(onPressed: () {}, child: const Text('Cancelar')),
                 ],
               ),
             ),
@@ -56,10 +65,18 @@ void main() {
       tester.getSize(find.byType(DropdownButtonFormField<String>)).height,
       AppTheme.controlHeight,
     );
-    expect(
-      tester.getSize(find.byType(OutlinedButton)).height,
-      AppTheme.controlHeight,
-    );
+    for (final botao in [
+      find.byType(OutlinedButton),
+      find.byType(ElevatedButton),
+      find.byType(FilledButton),
+      find.byType(TextButton),
+    ]) {
+      expect(
+        tester.getSize(botao).height,
+        AppTheme.controlHeight,
+        reason: 'todo botão mede o mesmo que um campo ao lado',
+      );
+    }
     expect(tester.takeException(), isNull);
   });
 }

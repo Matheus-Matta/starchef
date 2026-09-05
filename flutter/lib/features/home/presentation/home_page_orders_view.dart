@@ -251,12 +251,24 @@ mixin _OrdersView on _HomePageShared {
       _onOrdersFilterChanged();
     }
 
+    // O SELETOR DE PERÍODO É UM CAMPO, não um botão.
+    //
+    // Ele fica na mesma barra do campo de busca e de três selects, todos
+    // desenhados como `InputDecorator`. Um `OutlinedButton` ali tem outra
+    // altura, outra borda e nenhum rótulo — e a linha inteira saía em
+    // escadinha. Vestindo a mesma decoração, ele passa a medir o mesmo que os
+    // vizinhos sem ninguém precisar acertar pixels à mão.
     return MenuAnchor(
-      builder: (context, controller, child) => OutlinedButton.icon(
-        onPressed: () =>
-            controller.isOpen ? controller.close() : controller.open(),
-        icon: const Icon(Icons.date_range_outlined),
-        label: Text(label),
+      builder: (context, controller, child) => InkWell(
+        onTap: () => controller.isOpen ? controller.close() : controller.open(),
+        borderRadius: AppTheme.radius,
+        child: InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'Período',
+            prefixIcon: Icon(Icons.date_range_outlined, size: 18),
+          ),
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
       ),
       menuChildren: [
         MenuItemButton(

@@ -76,8 +76,8 @@ mixin _SidebarSection on _HomePageShared {
         onSelected: _onCashMenuSelected,
         itemBuilder: (_) => _cashMenuItems(),
         child: Container(
-          width: 42,
-          height: 42,
+          width: AppTheme.controlHeight,
+          height: AppTheme.controlHeight,
           decoration: BoxDecoration(
             color: scheme.primary,
             borderRadius: AppTheme.radius,
@@ -120,7 +120,7 @@ mixin _SidebarSection on _HomePageShared {
         if (cashSession == null)
           ShadButton(
             onPressed: _openCash,
-            height: 44,
+            height: AppTheme.controlHeight,
             leading: const Icon(Icons.lock_open_outlined, size: 18),
             child: const Text('Abrir caixa'),
           )

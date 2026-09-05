@@ -20,7 +20,7 @@ class ResponsiveScale extends StatelessWidget {
     super.key,
     required this.child,
     this.referenceSize = const Size(1280, 800),
-    this.minScale = 0.9,
+    this.minScale = 0.72,
     this.maxScale = 1.3,
   });
 
@@ -31,18 +31,16 @@ class ResponsiveScale extends StatelessWidget {
   /// interface encolhe; acima, cresce; sempre proporcionalmente.
   final Size referenceSize;
 
-  /// Piso da redução. **Não desce mais de 10%.**
+  /// Piso da redução.
   ///
-  /// Era 0,72: a interface inteira encolhia quase um terço numa janela
-  /// pequena, e junto com ela os alvos de toque e o texto. Um botão de 40 px
-  /// terminava perto de 29, abaixo do mínimo recomendado para toque, e um
-  /// rótulo de 12 px virava 8,6 — ilegível na tela do balcão, que fica a mais
-  /// de meio metro do operador.
+  /// A interface do PDV encolhe junto com a janela — é assim que a mesma tela
+  /// serve um monitor de balcão e um notebook. Chegou a ficar em 0,9, e nessa
+  /// faixa a redução era pequena demais para ser percebida: o operador
+  /// diminuía a janela e nada mudava de tamanho.
   ///
-  /// O caminho para telas apertadas é o LAYOUT se adaptar (empilhar, esconder
-  /// o que é secundário, rolar), não a interface inteira encolher: quem tem
-  /// pouco espaço precisa do controle do mesmo tamanho, com menos coisas em
-  /// volta.
+  /// O que a escala NÃO resolve é a densidade base — quantas linhas cabem, o
+  /// quanto os campos são altos. Isso vem de [AppTheme.controlHeight], e é lá
+  /// que se mexe quando a tela parece grande demais em qualquer tamanho.
   final double minScale;
   final double maxScale;
 
@@ -69,10 +67,9 @@ class ResponsiveScale extends StatelessWidget {
         // O menor dos dois: numa janela larga e baixa (ou estreita e alta),
         // é a dimensão mais apertada que decide, senão a interface vaza pela
         // outra.
-        final scale = math.min(
-          scaleByWidth,
-          scaleByHeight,
-        ).clamp(minScale, maxScale);
+        final scale = math
+            .min(scaleByWidth, scaleByHeight)
+            .clamp(minScale, maxScale);
 
         // O filho enxerga um espaço "virtual" maior ou menor que o real — na
         // proporção inversa da escala — e faz o layout normalmente nesse

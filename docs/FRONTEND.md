@@ -149,38 +149,6 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 ## 9. Tema e design tokens
 
-**A densidade responde ao tamanho da tela** (`tokens/density.css`). Não é
-zoom: escalar a página inteira borra o texto e encolhe o alvo do clique junto.
-Quem muda são os tokens, em três degraus explícitos — até 1280 px tudo fica
-mais junto (cabe mais linha no notebook), a base é o 1366×768 da operação, e a
-partir de 1600 px tudo respira, porque sobra espaço e o operador está mais
-longe da tela.
-
-Altura de controle, tipografia de formulário, respiro, célula de tabela,
-largura da barra lateral e altura do cabeçalho saem TODOS daí. `styles.css` não
-redefine nenhum desses tokens: dois donos para o mesmo valor é armadilha — o de
-baixo vence, em silêncio, e foi assim que a barra lateral ficou grande depois
-de os controles terem sido reduzidos.
-
-Os degraus são passos, não `clamp()` com `vw`: uma altura de 31,4 px não é
-legível para quem for mexer na régua depois.
-
-**Altura dos campos.** Todo controle de UMA LINHA — texto, select, multi-select,
-calendário, senha, número e botão — tem a MESMA altura, fixada em
-`--control-h` (`tokens/density.css`) e aplicada em `compact.css`.
-
-Antes só o `.p-inputtext` tinha altura fixa; o resto tinha apenas
-`min-height`. Como cada componente do PrimeVue traz o próprio padding interno,
-o select parava mais alto que o campo de texto e o calendário mais alto que os
-dois — a linha do formulário saía em escadinha. Os invólucros (`.p-calendar`,
-`.p-password`, `.p-inputnumber`) também precisam que o `.p-inputtext` de
-dentro ocupe `height: 100%`, senão o campo tem o tamanho certo e o texto
-flutua fora do centro.
-
-A `textarea` fica de fora de propósito: ela cresce com o texto, e travar a
-altura esconderia o que o operador acabou de escrever. `density.test.js` fixa
-essas regras.
-
 Toggle claro/escuro no `Topbar.vue` (`toggle-theme`), estado via `provide/inject("theme")` em `AppLayout.vue`, aplicado como `data-theme` na raiz do app. Tokens em `src/styles/tokens/` (`colors.css` com blocos `[data-theme="light"|"dark"]`, `spacing.css`, `typography.css`, `density.css` — escala compacta) e `primevue-tokens.css` (mapeia variáveis de componente do PrimeVue para o sistema de tokens).
 
 ## 10. Como rodar em desenvolvimento
