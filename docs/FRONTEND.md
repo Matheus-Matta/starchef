@@ -149,6 +149,22 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 ## 9. Tema e design tokens
 
+**A densidade responde ao tamanho da tela** (`tokens/density.css`). Não é
+zoom: escalar a página inteira borra o texto e encolhe o alvo do clique junto.
+Quem muda são os tokens, em três degraus explícitos — até 1280 px tudo fica
+mais junto (cabe mais linha no notebook), a base é o 1366×768 da operação, e a
+partir de 1600 px tudo respira, porque sobra espaço e o operador está mais
+longe da tela.
+
+Altura de controle, tipografia de formulário, respiro, célula de tabela,
+largura da barra lateral e altura do cabeçalho saem TODOS daí. `styles.css` não
+redefine nenhum desses tokens: dois donos para o mesmo valor é armadilha — o de
+baixo vence, em silêncio, e foi assim que a barra lateral ficou grande depois
+de os controles terem sido reduzidos.
+
+Os degraus são passos, não `clamp()` com `vw`: uma altura de 31,4 px não é
+legível para quem for mexer na régua depois.
+
 **Altura dos campos.** Todo controle de UMA LINHA — texto, select, multi-select,
 calendário, senha, número e botão — tem a MESMA altura, fixada em
 `--control-h` (`tokens/density.css`) e aplicada em `compact.css`.

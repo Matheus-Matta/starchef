@@ -63,14 +63,35 @@ describe("densidade dos formulários", () => {
     );
   });
 
-  it("a casca acompanha a densidade", () => {
-    // Sidebar e topbar ficavam fora do sistema: reduzir os controles não
-    // mudava nada na tela, e a redução "não aparecia".
-    const largura = shell.match(/--sidebar-w:\s*(\d+)px/);
-    const altura = shell.match(/--topbar-h:\s*(\d+)px/);
-    expect(largura, "--sidebar-w precisa existir").not.toBeNull();
-    expect(altura, "--topbar-h precisa existir").not.toBeNull();
-    expect(Number(largura[1])).toBeLessThanOrEqual(240);
-    expect(Number(altura[1])).toBeLessThanOrEqual(56);
+  it("a casca vive no mesmo arquivo dos outros tamanhos", () => {
+    // Sidebar e topbar ficavam soltos no `styles.css`, fora do sistema:
+    // reduzir os controles não mudava nada na tela. Dois donos para o mesmo
+    // token também é armadilha — o de baixo vence, em silêncio.
+    for (const token of ["--sidebar-w", "--sidebar-w-mini", "--topbar-h"]) {
+      expect(density, `${token} precisa estar em density.css`).toContain(token);
+      expect(shell, `${token} não pode ser redefinido em styles.css`).not.toContain(
+        `${token}:`,
+      );
+    }
+  });
+
+  it("os tamanhos respondem ao tamanho da tela", () => {
+    // Não é zoom: escalar a página inteira borra o texto e encolhe o alvo do
+    // clique junto. Quem muda são os tokens.
+    const degraus = density.match(/@media[^{]+\{\s*:root\s*\{/g) ?? [];
+    expect(degraus.length, "faltam degraus de densidade").toBeGreaterThanOrEqual(2);
+    expect(density).toMatch(/@media \(max-width: \d+px\)/);
+    expect(density).toMatch(/@media \(min-width: \d+px\)/);
+  });
+
+  it("cada degrau redefine a altura do controle", () => {
+    // Um degrau que não mexe em `--control-h` não muda nada de visível: foi
+    // exatamente esse o sintoma antes — a regra existia e a tela não mudava.
+    const blocos = density.split("@media").slice(1);
+    expect(blocos.length).toBeGreaterThanOrEqual(2);
+    for (const bloco of blocos) {
+      expect(bloco).toMatch(/--control-h:\s*\d+px/);
+      expect(bloco).toMatch(/--sidebar-w:\s*\d+px/);
+    }
   });
 });

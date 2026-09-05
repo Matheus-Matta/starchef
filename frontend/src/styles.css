@@ -8,16 +8,6 @@
 @import url("./styles/compact.css");
 @import url("./styles/motion.css");
 
-:root {
-  /* A casca acompanha a densidade do resto. Estes três ficavam de fora do
-     sistema de tokens, então reduzir os controles não mudava nada aqui — a
-     tela continuava com a mesma barra larga e o mesmo cabeçalho alto, e a
-     redução "não aparecia". */
-  --sidebar-w: 232px;
-  --sidebar-w-mini: 64px;
-  --topbar-h: 52px;
-}
-
 /* Impede scroll horizontal causado pelo drawer off-canvas (position: fixed,
    translateX(-100%)) que fica fora da tela à esquerda no mobile. */
 html,

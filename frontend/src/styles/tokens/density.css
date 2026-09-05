@@ -1,30 +1,95 @@
 /* ===========================================================================
-   StarChef — Compact density tokens (Sprint 0 · STC-002)
-   Single source of truth for the compact theme. Controls, forms and tables
-   read these tokens so density is tuned in one place, never per-screen.
+   StarChef — Densidade compacta (Sprint 0 · STC-002)
+
+   FONTE ÚNICA do tamanho de tudo que é "casca": altura de controle, tipografia
+   de formulário, respiro entre campos, célula de tabela, barra lateral e
+   cabeçalho. Nenhuma tela repete esses números.
+
+   E ela RESPONDE AO TAMANHO DA TELA. Não com zoom — escalar a página inteira
+   borra o texto e encolhe o alvo do clique junto. Aqui quem muda são os
+   tokens: num notebook tudo fica mais junto para caber mais linha na tela; num
+   monitor grande tudo respira, porque sobra espaço e o operador está mais
+   longe. Como todo o resto lê estes tokens, o ajuste acontece em um lugar só.
+
+   Os degraus são explícitos de propósito: `clamp()` com `vw` daria valores
+   quebrados e imprevisíveis (altura 31,4 px), e a régua deixaria de ser
+   legível para quem for mexer nela depois.
    ===========================================================================*/
+
+/* ── Base: notebook comum (1366×768), o mais frequente na operação ───────── */
 :root {
-  /* ALTURA DOS CONTROLES.
-     Campo de texto, select, data, senha e botão usam TODOS o mesmo valor.
-     Antes só o `.p-inputtext` tinha altura fixa e o resto tinha apenas um
-     mínimo, então cada tipo de campo parava numa altura diferente e a linha
-     do formulário ficava desalinhada. Ver `compact.css`. */
+  /* Altura dos controles. Campo de texto, select, data, senha e botão usam
+     TODOS o mesmo valor — ver `compact.css`. */
   --control-h-sm: 26px;
-  --control-h:    30px;   /* small default */
+  --control-h:    30px;
   --control-h-lg: 34px;
 
-  /* Control typography & padding */
   --control-font:  var(--text-sm);   /* 13px */
   --control-pad-x: 9px;
 
-  /* Form rhythm — mais junto, sem encostar */
-  --field-gap-y:   var(--space-3);   /* 12px between rows   */
-  --field-gap-x:   var(--space-4);   /* 16px between cols   */
+  /* Respiro do formulário */
+  --field-gap-y:   12px;
+  --field-gap-x:   16px;
   --field-label-gap: 4px;
-  --section-gap:   var(--space-4);   /* 16px between sections */
-  --card-pad:      var(--space-4);   /* 16px inner card padding */
+  --section-gap:   16px;
+  --card-pad:      16px;
 
-  /* Table density */
+  /* Tabela */
   --table-cell-pad-y: 6px;
   --table-cell-pad-x: 10px;
+
+  /* Casca. Ficavam soltos no `styles.css`, fora do sistema: reduzir os
+     controles não mudava nada na tela, e a redução "não aparecia". */
+  --sidebar-w:      232px;
+  --sidebar-w-mini: 64px;
+  --topbar-h:       52px;
+}
+
+/* ── Tela apertada: notebook pequeno e tablet paisagem ──────────────────── */
+@media (max-width: 1280px) {
+  :root {
+    --control-h-sm: 24px;
+    --control-h:    28px;
+    --control-h-lg: 32px;
+
+    --control-font:  var(--text-xs);   /* 12px */
+    --control-pad-x: 8px;
+
+    --field-gap-y:   10px;
+    --field-gap-x:   12px;
+    --section-gap:   12px;
+    --card-pad:      12px;
+
+    --table-cell-pad-y: 5px;
+    --table-cell-pad-x: 8px;
+
+    --sidebar-w:      208px;
+    --sidebar-w-mini: 60px;
+    --topbar-h:       48px;
+  }
+}
+
+/* ── Monitor grande: sobra espaço, e o operador está mais longe da tela ─── */
+@media (min-width: 1600px) {
+  :root {
+    --control-h-sm: 28px;
+    --control-h:    34px;
+    --control-h-lg: 38px;
+
+    --control-font:  var(--text-base);  /* 14px */
+    --control-pad-x: 11px;
+
+    --field-gap-y:   16px;
+    --field-gap-x:   20px;
+    --field-label-gap: 6px;
+    --section-gap:   20px;
+    --card-pad:      20px;
+
+    --table-cell-pad-y: 8px;
+    --table-cell-pad-x: 12px;
+
+    --sidebar-w:      264px;
+    --sidebar-w-mini: 72px;
+    --topbar-h:       60px;
+  }
 }
