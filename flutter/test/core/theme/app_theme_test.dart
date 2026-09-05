@@ -95,9 +95,21 @@ void main() {
               DataRow(
                 cells: [
                   DataCell(
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(Icons.edit_outlined),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: () {},
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
+                        // A variante preenchida tem defaults próprios no
+                        // Material e pode escapar do tema sem ninguém notar:
+                        // é ela a ação de pagar na lista de pedidos.
+                        IconButton.filled(
+                          onPressed: () {},
+                          icon: const Icon(Icons.payments_outlined),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -117,10 +129,12 @@ void main() {
 
     // O botão de ícone é quem manda na altura da célula de ações: se ele
     // voltar aos 40 px de área de toque do Material, a linha estoura.
-    expect(
-      tester.getSize(find.byType(IconButton)).height,
-      lessThanOrEqualTo(AppTheme.tableRowHeight),
-    );
+    for (var i = 0; i < 2; i++) {
+      expect(
+        tester.getSize(find.byType(IconButton).at(i)).height,
+        lessThanOrEqualTo(AppTheme.tableRowHeight),
+      );
+    }
     expect(tester.takeException(), isNull);
   });
 }
