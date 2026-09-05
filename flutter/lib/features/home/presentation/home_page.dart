@@ -37,6 +37,7 @@ import '../../devices/services/local_device_agent.dart';
 import '../../orders/data/local_order_store.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
+import '../../orders/presentation/orders_table_metrics.dart';
 import '../../orders/presentation/order_cart_panel.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
 import '../../orders/presentation/product_config_dialog.dart';
@@ -60,7 +61,6 @@ import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
-import 'pdv_shortcut_bar.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
 

@@ -38,7 +38,14 @@ mixin _OrdersView on _HomePageShared {
   Future<void> _editOrder(Map<String, dynamic> order);
   Future<void> _payOrder(Map<String, dynamic> order);
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
-  Widget _operationStat(String label, String value, IconData icon);
+
+  /// Dois pixels acima e abaixo, para o campo não colar na linha.
+  ///
+  /// Por fora e não por dentro: por dentro o respiro empurraria o conteúdo e o
+  /// campo ficaria mais alto que os vizinhos — a escadinha que esta barra
+  /// acabou de deixar de ter.
+  static Widget _respiro(Widget child) =>
+      Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: child);
 
   Widget _ordersFilterBar() {
     final range = orderDateRange;
@@ -84,121 +91,137 @@ mixin _OrdersView on _HomePageShared {
         ),
         SizedBox(
           width: 230,
-          child: DropdownButtonFormField<String>(
-            initialValue: orderStatusFilter,
-            // Sem `isExpanded` o rótulo selecionado usa a largura natural do
-            // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
-            // 230 px com o texto ampliado.
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Situação'),
-            items: const [
-              DropdownMenuItem(
-                value: 'pending',
-                child: Text(
-                  'Pendentes de pagamento',
-                  overflow: TextOverflow.ellipsis,
+          child: _respiro(
+            DropdownButtonFormField<String>(
+              initialValue: orderStatusFilter,
+              // Sem `isExpanded` o rótulo selecionado usa a largura natural do
+              // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
+              // 230 px com o texto ampliado.
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Situação'),
+              items: const [
+                DropdownMenuItem(
+                  value: 'pending',
+                  child: Text(
+                    'Pendentes de pagamento',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              DropdownMenuItem(value: 'open', child: Text('Em aberto')),
-              DropdownMenuItem(
-                value: 'awaiting_payment',
-                child: Text(
-                  'Aguardando pagamento',
-                  overflow: TextOverflow.ellipsis,
+                DropdownMenuItem(value: 'open', child: Text('Em aberto')),
+                DropdownMenuItem(
+                  value: 'awaiting_payment',
+                  child: Text(
+                    'Aguardando pagamento',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              DropdownMenuItem(value: 'paid', child: Text('Pagos')),
-              DropdownMenuItem(value: 'all', child: Text('Todos')),
-            ],
-            onChanged: (value) {
-              setState(() => orderStatusFilter = value ?? 'pending');
-              _onOrdersFilterChanged();
-            },
+                DropdownMenuItem(value: 'paid', child: Text('Pagos')),
+                DropdownMenuItem(value: 'all', child: Text('Todos')),
+              ],
+              onChanged: (value) {
+                setState(() => orderStatusFilter = value ?? 'pending');
+                _onOrdersFilterChanged();
+              },
+            ),
           ),
         ),
         SizedBox(
           width: 180,
-          child: DropdownButtonFormField<String?>(
-            initialValue: orderTypeFilter,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Tipo'),
-            items: const [
-              DropdownMenuItem(value: null, child: Text('Todos os tipos')),
-              DropdownMenuItem(value: 'command', child: Text('Comanda')),
-              DropdownMenuItem(value: 'counter', child: Text('Balcão')),
-              DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
-              DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
-            ],
-            onChanged: (value) {
-              setState(() => orderTypeFilter = value);
-              _onOrdersFilterChanged();
-            },
+          child: _respiro(
+            DropdownButtonFormField<String?>(
+              initialValue: orderTypeFilter,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Tipo'),
+              items: const [
+                DropdownMenuItem(value: null, child: Text('Todos os tipos')),
+                DropdownMenuItem(value: 'command', child: Text('Comanda')),
+                DropdownMenuItem(value: 'counter', child: Text('Balcão')),
+                DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
+                DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
+              ],
+              onChanged: (value) {
+                setState(() => orderTypeFilter = value);
+                _onOrdersFilterChanged();
+              },
+            ),
           ),
         ),
         SizedBox(
           width: 210,
-          child: DropdownButtonFormField<String>(
-            initialValue: orderOrdering,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Ordenar por'),
-            items: const [
-              DropdownMenuItem(
-                value: '-updated_at',
-                child: Text(
-                  'Última atualização',
-                  overflow: TextOverflow.ellipsis,
+          child: _respiro(
+            DropdownButtonFormField<String>(
+              initialValue: orderOrdering,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Ordenar por'),
+              items: const [
+                DropdownMenuItem(
+                  value: '-updated_at',
+                  child: Text(
+                    'Última atualização',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              DropdownMenuItem(
-                value: '-opened_at',
-                child: Text(
-                  'Abertos recentemente',
-                  overflow: TextOverflow.ellipsis,
+                DropdownMenuItem(
+                  value: '-opened_at',
+                  child: Text(
+                    'Abertos recentemente',
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              DropdownMenuItem(
-                value: 'opened_at',
-                child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: '-total',
-                child: Text('Maior valor', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: 'total',
-                child: Text('Menor valor', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: '-sequence',
-                child: Text('Nº decrescente', overflow: TextOverflow.ellipsis),
-              ),
-              DropdownMenuItem(
-                value: 'sequence',
-                child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
-              ),
-            ],
-            onChanged: (value) {
-              setState(() => orderOrdering = value ?? '-updated_at');
-              _onOrdersFilterChanged();
-            },
+                DropdownMenuItem(
+                  value: 'opened_at',
+                  child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
+                ),
+                DropdownMenuItem(
+                  value: '-total',
+                  child: Text('Maior valor', overflow: TextOverflow.ellipsis),
+                ),
+                DropdownMenuItem(
+                  value: 'total',
+                  child: Text('Menor valor', overflow: TextOverflow.ellipsis),
+                ),
+                DropdownMenuItem(
+                  value: '-sequence',
+                  child: Text(
+                    'Nº decrescente',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: 'sequence',
+                  child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() => orderOrdering = value ?? '-updated_at');
+                _onOrdersFilterChanged();
+              },
+            ),
           ),
         ),
         _ordersDateRangeMenu(dateLabel),
+        // SÓ O ÍCONE.
+        //
+        // Era o único item com rótulo depois de quatro campos rotulados, e o
+        // texto "Limpar filtros" pesava mais na barra do que a ação merece —
+        // ela só existe quando há filtro aplicado.
         if (hasFilters)
-          TextButton.icon(
-            onPressed: () {
-              ordersSearchController.clear();
-              setState(() {
-                orderSearch = '';
-                orderTypeFilter = null;
-                orderDateRange = null;
-                orderStatusFilter = 'pending';
-                orderOrdering = '-updated_at';
-              });
-              _onOrdersFilterChanged();
-            },
-            icon: const Icon(Icons.filter_alt_off_outlined),
-            label: const Text('Limpar filtros'),
+          _respiro(
+            IconButton.outlined(
+              tooltip: 'Limpar filtros',
+              onPressed: () {
+                ordersSearchController.clear();
+                setState(() {
+                  orderSearch = '';
+                  orderTypeFilter = null;
+                  orderDateRange = null;
+                  orderStatusFilter = 'pending';
+                  orderOrdering = '-updated_at';
+                });
+                _onOrdersFilterChanged();
+              },
+              icon: const Icon(Icons.filter_alt_off_outlined),
+            ),
           ),
       ],
     );
@@ -251,66 +274,69 @@ mixin _OrdersView on _HomePageShared {
       _onOrdersFilterChanged();
     }
 
-    // O SELETOR DE PERÍODO É UM CAMPO, não um botão.
+    // Um botão pequeno, não um campo.
     //
-    // Ele fica na mesma barra do campo de busca e de três selects, todos
-    // desenhados como `InputDecorator`. Um `OutlinedButton` ali tem outra
-    // altura, outra borda e nenhum rótulo — e a linha inteira saía em
-    // escadinha. Vestindo a mesma decoração, ele passa a medir o mesmo que os
-    // vizinhos sem ninguém precisar acertar pixels à mão.
-    return MenuAnchor(
-      builder: (context, controller, child) => InkWell(
-        onTap: () => controller.isOpen ? controller.close() : controller.open(),
-        borderRadius: AppTheme.radius,
-        child: InputDecorator(
-          decoration: const InputDecoration(
-            labelText: 'Período',
-            prefixIcon: Icon(Icons.date_range_outlined, size: 18),
-          ),
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
-      ),
-      menuChildren: [
-        MenuItemButton(
+    // Chegou a ser vestido de `InputDecorator` para casar com os vizinhos, e
+    // ficou parecendo um select que não abre lista. A altura já vem certa do
+    // tema, então o alinhamento com a barra não depende mais do disfarce — e
+    // um botão diz melhor o que ele faz: abre um menu de atalhos.
+    return _respiro(
+      MenuAnchor(
+        builder: (context, controller, child) => OutlinedButton.icon(
           onPressed: () =>
-              apply(DateTimeRange(start: startOfToday, end: startOfToday)),
-          child: const Text('Hoje'),
-        ),
-        MenuItemButton(
-          onPressed: () {
-            final yesterday = startOfToday.subtract(const Duration(days: 1));
-            apply(DateTimeRange(start: yesterday, end: yesterday));
-          },
-          child: const Text('Ontem'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(lastDays(7)),
-          child: const Text('Últimos 7 dias'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(lastDays(30)),
-          child: const Text('Últimos 30 dias'),
-        ),
-        MenuItemButton(
-          onPressed: () => apply(
-            DateTimeRange(
-              start: DateTime(today.year, today.month, 1),
-              end: startOfToday,
+              controller.isOpen ? controller.close() : controller.open(),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            textStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          child: const Text('Este mês'),
+          icon: const Icon(Icons.date_range_outlined, size: 16),
+          label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
-        const Divider(height: 1),
-        MenuItemButton(
-          onPressed: () => unawaited(_pickCustomDateRange()),
-          child: const Text('Personalizado...'),
-        ),
-        if (orderDateRange != null)
+        menuChildren: [
           MenuItemButton(
-            onPressed: () => apply(null),
-            child: const Text('Limpar período'),
+            onPressed: () =>
+                apply(DateTimeRange(start: startOfToday, end: startOfToday)),
+            child: const Text('Hoje'),
           ),
-      ],
+          MenuItemButton(
+            onPressed: () {
+              final yesterday = startOfToday.subtract(const Duration(days: 1));
+              apply(DateTimeRange(start: yesterday, end: yesterday));
+            },
+            child: const Text('Ontem'),
+          ),
+          MenuItemButton(
+            onPressed: () => apply(lastDays(7)),
+            child: const Text('Últimos 7 dias'),
+          ),
+          MenuItemButton(
+            onPressed: () => apply(lastDays(30)),
+            child: const Text('Últimos 30 dias'),
+          ),
+          MenuItemButton(
+            onPressed: () => apply(
+              DateTimeRange(
+                start: DateTime(today.year, today.month, 1),
+                end: startOfToday,
+              ),
+            ),
+            child: const Text('Este mês'),
+          ),
+          const Divider(height: 1),
+          MenuItemButton(
+            onPressed: () => unawaited(_pickCustomDateRange()),
+            child: const Text('Personalizado...'),
+          ),
+          if (orderDateRange != null)
+            MenuItemButton(
+              onPressed: () => apply(null),
+              child: const Text('Limpar período'),
+            ),
+        ],
+      ),
     );
   }
 
@@ -334,54 +360,20 @@ mixin _OrdersView on _HomePageShared {
     // sobra a situação, que cruza dois campos e por isso é decidida sempre
     // localmente — inclusive sobre o resultado do servidor.
     final filtered = orders.where(_matchesStatusFilter).toList();
-    final openCount = orders
-        .where(
-          (item) =>
-              const {'open', 'awaiting_payment'}.contains('${item['status']}'),
-        )
-        .length;
-    final paidCount = orders
-        .where((item) => '${item['payment_status']}' == 'paid')
-        .length;
+    // Os três cartões de contagem que ficavam aqui saíram. Eles ocupavam a
+    // faixa mais nobre da tela — a primeira que se olha — para dizer o que a
+    // própria lista já mostra, e o espaço deles é linha de pedido.
     return Padding(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _operationStat(
-                  'RESULTADOS DO FILTRO',
-                  '${filtered.length}',
-                  Icons.filter_alt_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'PEDIDOS EM ABERTO',
-                  '$openCount',
-                  Icons.pending_actions_outlined,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _operationStat(
-                  'PAGAMENTOS CONCLUÍDOS',
-                  '$paidCount',
-                  Icons.check_circle_outline,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           _ordersFilterBar(),
           if (ordersPartial) ...[
             const SizedBox(height: 12),
             _ordersPartialWarning(),
           ],
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
           Expanded(
             child: ShadCard(
               radius: AppTheme.radius,
@@ -399,15 +391,13 @@ mixin _OrdersView on _HomePageShared {
                     )
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        // Precisa ser a MESMA altura que a tabela usa de
-                        // fato: ela não rola internamente, então uma conta
-                        // feita com altura menor que a real deixa a tabela
-                        // mais alta que o espaço disponível e estoura. Por
-                        // isso lê o tema em vez de repetir um número aqui.
+                        // A linha da tabela vem do tema, e quantas cabem
+                        // vem de `OrdersTableMetrics` — que existe justamente
+                        // para essa conta poder ser testada.
                         const rowHeight = AppTheme.tableRowHeight;
-                        final calculatedRows =
-                            ((constraints.maxHeight - 180) / rowHeight).floor();
-                        final rowsPerPage = calculatedRows.clamp(1, 10);
+                        final rowsPerPage = OrdersTableMetrics.rowsThatFit(
+                          constraints.maxHeight,
+                        );
                         return SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: SizedBox(
@@ -415,7 +405,10 @@ mixin _OrdersView on _HomePageShared {
                                 ? 1000
                                 : constraints.maxWidth,
                             child: PaginatedDataTable(
-                              header: Text('${filtered.length} pedido(s)'),
+                              // Sem título: a contagem que ficava aqui é a
+                              // mesma que a paginação mostra logo abaixo, e a
+                              // faixa do título custava 64 px de altura que
+                              // agora são duas linhas de pedido.
                               // Não há seleção múltipla nessa lista; sem isso
                               // o DataTable mostra uma caixa de marcação por
                               // linha por padrão, sem nenhuma ação associada.
