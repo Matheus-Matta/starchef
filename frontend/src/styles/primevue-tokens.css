@@ -49,7 +49,7 @@ html .p-icon-field-right > .p-inputtext {
    restauramos o clique que alterna entre password e text em todo o sistema. */
 html .p-password.p-icon-field-right .p-input-icon {
   width: 32px;
-  height: 32px;
+  height: var(--control-h);
   box-sizing: border-box;
   padding: 7px;
   right: 5px;

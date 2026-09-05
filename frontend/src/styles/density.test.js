@@ -5,45 +5,72 @@ import { describe, expect, it } from "vitest";
 const ler = (arquivo) =>
   readFileSync(fileURLToPath(new URL(arquivo, import.meta.url)), "utf8");
 
+const compact = ler("./compact.css");
+const density = ler("./tokens/density.css");
+const shell = ler("../styles.css");
+
 /**
  * A linha do formulário só fica alinhada se TODO controle de uma linha tiver a
- * mesma altura. `min-height` não garante isso: cada componente do PrimeVue tem
- * o seu próprio padding interno, então o select parava mais alto que o campo
- * de texto e o calendário mais alto que os dois.
+ * mesma altura. Duas coisas precisam ser verdade, e as duas já falharam uma
+ * vez: a regra tem de EXISTIR para cada tipo de campo, e tem de VENCER o tema
+ * aura — que ganha de um seletor de classe simples.
  */
 describe("densidade dos formulários", () => {
-  const compact = ler("./compact.css");
-  const density = ler("./tokens/density.css");
+  /** O bloco de regras que fixa a altura dos controles. */
+  const blocoDeAltura = () => {
+    const inicio = compact.indexOf("html .p-inputtext,");
+    expect(inicio, "o bloco de altura precisa existir").toBeGreaterThan(-1);
+    return compact.slice(inicio, compact.indexOf("}", inicio));
+  };
 
-  it("todo controle de uma linha usa a mesma altura", () => {
-    const bloco = compact.slice(
-      compact.indexOf(".p-dropdown,"),
-      compact.indexOf(".p-calendar > .p-inputtext"),
-    );
+  it("cobre todo tipo de campo de uma linha", () => {
+    const bloco = blocoDeAltura();
     for (const seletor of [
+      ".p-inputtext",
       ".p-dropdown",
       ".p-multiselect",
       ".p-calendar",
       ".p-password",
       ".p-inputnumber",
     ]) {
-      expect(bloco).toContain(seletor);
+      expect(bloco, `${seletor} ficou de fora`).toContain(`html ${seletor}`);
     }
-    // Altura fixa, não apenas um piso.
-    expect(bloco).toContain("height: var(--control-h);");
-    expect(bloco).not.toContain("min-height: var(--control-h);");
   });
 
-  it("o campo de texto usa o mesmo token dos demais", () => {
-    expect(compact).toMatch(/\.p-inputtext\s*\{[^}]*height:\s*var\(--control-h\)/);
+  it("usa o token, e não um número solto", () => {
+    expect(blocoDeAltura()).toContain("height: var(--control-h)");
+    expect(density).toMatch(/--control-h:\s*\d+px/);
+  });
+
+  it("vence o tema: toda regra de altura tem o prefixo html", () => {
+    // Sem esta especificidade o CSS fica escrito e a tela continua
+    // desalinhada — foi exatamente o que aconteceu na primeira tentativa.
+    const seletores = blocoDeAltura()
+      .split("{")[0]
+      .split(",")
+      .map((linha) => linha.trim())
+      .filter(Boolean);
+    expect(seletores.length).toBeGreaterThan(5);
+    for (const seletor of seletores) {
+      expect(seletor, `${seletor} sem prefixo html`).toMatch(/^html /);
+    }
   });
 
   it("a textarea continua crescendo com o texto", () => {
     // Travar a altura dela esconderia o que o operador acabou de escrever.
-    expect(compact).toMatch(/textarea\.p-inputtext\s*\{[^}]*height:\s*auto/);
+    expect(compact).toMatch(
+      /html textarea\.p-inputtext\s*\{[^}]*height:\s*auto/,
+    );
   });
 
-  it("a altura vem de um token só", () => {
-    expect(density).toMatch(/--control-h:\s*\d+px/);
+  it("a casca acompanha a densidade", () => {
+    // Sidebar e topbar ficavam fora do sistema: reduzir os controles não
+    // mudava nada na tela, e a redução "não aparecia".
+    const largura = shell.match(/--sidebar-w:\s*(\d+)px/);
+    const altura = shell.match(/--topbar-h:\s*(\d+)px/);
+    expect(largura, "--sidebar-w precisa existir").not.toBeNull();
+    expect(altura, "--topbar-h precisa existir").not.toBeNull();
+    expect(Number(largura[1])).toBeLessThanOrEqual(240);
+    expect(Number(altura[1])).toBeLessThanOrEqual(56);
   });
 });
