@@ -24,6 +24,7 @@ from apps.orders.services import (
     comp_order_item,
     create_order,
     create_order_with_item,
+    recalculate_order,
     send_order_to_kitchen,
     set_order_item_quantity,
     update_order_item_status,
@@ -134,6 +135,21 @@ class OrderViewSet(BaseTenantViewSet):
                 command_number_text=Cast("command__number", CharField()),
             )
         )
+
+    def perform_update(self, serializer):
+        """Mexer no dinheiro pela API genérica também refaz taxa e total.
+
+        `discount` e `delivery_fee` são graváveis por `PATCH /orders/{id}/`, e
+        ali não passa nenhum serviço: sem este gancho o desconto entrava e o
+        `total` continuava o antigo — a mesma classe de divergência que
+        derrubava o fechamento do PDV, só por outra porta.
+        """
+        money_inputs = {"discount", "delivery_fee"}
+        touched = money_inputs & set(serializer.validated_data)
+        super().perform_update(serializer)
+        if touched:
+            recalculate_order(serializer.instance)
+            serializer.instance.refresh_from_db()
 
     @action(detail=False, methods=["post"], url_path="open-command")
     def open_command(self, request):
@@ -454,11 +470,18 @@ class OrderViewSet(BaseTenantViewSet):
                 discount=request.data.get("discount", 0),
                 service_fee=request.data.get("service_fee"),
                 service_fee_enabled=request.data.get("service_fee_enabled"),
+                fiscal_customer_cpf=request.data.get("fiscal_customer_cpf"),
                 expected_total=request.data.get("expected_total"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(self.get_serializer(order).data)
+        data = dict(self.get_serializer(order).data)
+        reconciled = bool(getattr(order, "_total_reconciled", False))
+        data["total_reconciled"] = reconciled
+        if reconciled:
+            data["client_expected_total"] = str(order._client_expected_total)
+            data["authoritative_total"] = data["total"]
+        return Response(data)
 
     @action(detail=True, methods=["post"], url_path="pay")
     def pay(self, request, pk=None):
@@ -473,6 +496,10 @@ class OrderViewSet(BaseTenantViewSet):
         from apps.payments.views import cash_session_error_response
 
         order = self.get_object()
+        payment_metadata = request.data.get("metadata", {})
+        payment_metadata = dict(payment_metadata) if isinstance(payment_metadata, dict) else {}
+        if request.data.get("card_subtype"):
+            payment_metadata["card_subtype"] = request.data["card_subtype"]
         try:
             payment = register_payment(
                 order=order,
@@ -480,7 +507,7 @@ class OrderViewSet(BaseTenantViewSet):
                 payment_method_id=request.data["payment_method"],
                 amount=request.data["amount"],
                 idempotency_key=request.headers.get("Idempotency-Key") or request.data.get("idempotency_key"),
-                metadata=request.data.get("metadata", {}),
+                metadata=payment_metadata,
                 cash_register_id=request.data.get("cash_register"),
                 # O dinheiro entra na gaveta de UM terminal: o recebimento
                 # segue a mesma regra de dono da sangria e do fechamento.

@@ -332,7 +332,9 @@ class SyncService {
         nextRetryAt: nextRetryAt,
       );
       _scheduleRetryAfter(nextRetryAt.difference(DateTime.now().toUtc()));
-      return false;
+      // Mesmo que a conexão deste envio tenha caído, outras operações podem
+      // usar outro relay/origem e continuar. Esta sai da vez até o backoff.
+      return true;
     } on ApiException catch (error) {
       // Sessão vencida não é recusa de negócio. O `ApiClient` já tentou
       // renovar o token uma vez; se a renovação falhou por falta de rede,
@@ -350,7 +352,28 @@ class SyncService {
           error: 'Sessão expirada. Entre novamente para retomar o envio.',
           nextRetryAt: nextRetryAt,
         );
-        return false;
+        // Outra operação pode pertencer a outro operador/origem e possuir uma
+        // sessão válida. O item atual entra em backoff sem bloquear a fila.
+        return true;
+      }
+      // Divergência de total no fechamento é a exceção: o servidor recusou
+      // conferindo um número que só este terminal calculou. Reenviar sem o
+      // `expected_total` deixa o total autoritativo valer, em vez de prender a
+      // venda — e o pagamento, que espera atrás dela — numa revisão manual que
+      // o operador não tem como fazer.
+      if (_isCloseTotalDivergence(entry, error) &&
+          await gateway.queue.requeueCloseIgnoringExpectedTotal(entry.id)) {
+        AppLogger.instance.warning(
+          'sync_fechamento_total_reconciliado',
+          data: {
+            'operation_id': entry.operationId,
+            'path': entry.path,
+            'expected_total': '${entry.payload?['expected_total']}',
+            'causa': error.message,
+          },
+        );
+        await _publish(SyncPhase.syncing, error: error.message);
+        return true;
       }
       // Recusa de negócio: reenviar repetiria a rejeição para sempre. Sai da
       // rotação e vira uma pendência visível — sem travar as vendas seguintes,
@@ -368,6 +391,19 @@ class SyncService {
       await _publish(SyncPhase.blocked, error: error.message);
       return true;
     }
+  }
+
+  /// O servidor recusou este fechamento só porque o total conferido não bate?
+  ///
+  /// A checagem exige as duas coisas: um fechamento que ainda carrega o total
+  /// calculado aqui, e uma recusa que fala do total. Uma recusa por outro
+  /// motivo (desconto sem permissão de gerente, pedido bloqueado) continua
+  /// indo para a revisão, onde é o lugar dela.
+  static bool _isCloseTotalDivergence(SyncQueueEntry entry, ApiException error) {
+    if (error.statusCode != 400) return false;
+    if (!entry.path.endsWith('/close/')) return false;
+    if (entry.payload?['expected_total'] == null) return false;
+    return error.message.toLowerCase().contains('total');
   }
 
   // ---------------------------------------------------------------- entrada

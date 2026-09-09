@@ -1,5 +1,5 @@
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -161,7 +161,7 @@ def test_offline_item_replay_stops_when_price_changed(
 
 
 @pytest.mark.django_db
-def test_offline_close_replay_stops_when_total_changed(
+def test_offline_close_replay_uses_authoritative_total_when_total_changed(
     restaurant, branch, product, manager_user
 ):
     order = create_order(
@@ -172,15 +172,69 @@ def test_offline_close_replay_stops_when_total_changed(
     )
     add_order_item(order=order, product=product, quantity=1, user=manager_user)
 
-    with pytest.raises(ValidationError, match="total do pedido mudou"):
-        close_order(
-            order,
-            manager_user,
-            expected_total=order.total + Decimal("1.00"),
-        )
+    client_expected_total = order.total + Decimal("1.00")
+    order = close_order(
+        order,
+        manager_user,
+        expected_total=client_expected_total,
+    )
 
     order.refresh_from_db()
-    assert order.status == Order.STATUS_OPEN
+    assert order.status == Order.STATUS_AWAITING_PAYMENT
+    assert order.total != client_expected_total
+
+
+@pytest.mark.django_db
+def test_item_delivered_after_close_keeps_service_fee_on_the_new_subtotal(
+    restaurant, branch, product, manager_user
+):
+    """O item que a fila offline entrega DEPOIS do fechamento traz a taxa consigo.
+
+    Era aqui que o valor do servidor deixava de bater com o do PDV: a taxa
+    ficava presa no subtotal do fechamento, o item novo entrava "sem taxa", e o
+    proximo fechamento reenviado pelo PDV divergia do total do servidor — o
+    pagamento nao fechava e nao havia como resolver a mao.
+    """
+    restaurant.default_service_fee_percent = Decimal("10.00")
+    restaurant.save(update_fields=["default_service_fee_percent"])
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order = close_order(order, manager_user)
+    assert order.service_fee == (order.subtotal * Decimal("0.10")).quantize(Decimal("0.01"))
+
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    order.refresh_from_db()
+    expected_fee = (order.subtotal * Decimal("0.10")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    assert order.service_fee == expected_fee
+    assert order.total == order.subtotal + expected_fee
+
+
+@pytest.mark.django_db
+def test_manually_typed_service_fee_survives_recalculation(
+    restaurant, branch, product, manager_user
+):
+    """Taxa digitada pelo gerente e decisao, nao derivado: recalculo nao mexe."""
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_COUNTER,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order = close_order(order, manager_user, service_fee=Decimal("7.77"))
+
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+
+    order.refresh_from_db()
+    assert order.service_fee_percent is None
+    assert order.service_fee == Decimal("7.77")
+    assert order.total == order.subtotal + Decimal("7.77")
 
 
 @pytest.mark.django_db

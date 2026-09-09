@@ -143,6 +143,8 @@ class OrderSerializer(TenantModelSerializer):
             "subtotal",
             "service_fee",
             "service_fee_enabled",
+            "service_fee_percent",
+            "fiscal_customer_cpf",
             "total",
             "payment_status",
             "production_status",

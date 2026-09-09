@@ -140,7 +140,9 @@ O backend executa `close_order` dentro de uma transação:
 3. aplica desconto, exigindo gerente quando o desconto é maior que zero;
 4. aplica ou remove a taxa de serviço;
 5. recalcula subtotal e total;
-6. quando recebido, compara `expected_total` com o total do servidor;
+6. quando recebido, registra `expected_total` como conferência — divergência
+   não recusa o fechamento, o total do servidor prevalece e a resposta traz
+   `total_reconciled`;
 7. muda o pedido para `awaiting_payment`;
 8. recalcula `payment_status` considerando pagamentos já aprovados.
 

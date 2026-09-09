@@ -137,6 +137,19 @@ class Order(TenantModel):
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     service_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     service_fee_enabled = models.BooleanField(default=True)
+    # Percentual que originou `service_fee`, guardado no fechamento.
+    #
+    # A taxa e um valor em reais, mas ela e DERIVADA do subtotal. Sem guardar a
+    # aliquota, um item que chegava depois do fechamento (a fila offline do PDV
+    # entrega na ordem dela, e um item recusado por preco pode subir depois de
+    # corrigido) aumentava o subtotal com a taxa congelada no subtotal antigo:
+    # o total do servidor deixava de ser subtotal + 10%, e divergia do que o
+    # PDV mostrou ao cliente. `None` significa "taxa fixada a mao" — um valor
+    # que o gerente digitou nao pode ser reescrito por recalculo.
+    service_fee_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True, default=None
+    )
+    fiscal_customer_cpf = models.CharField(max_length=11, blank=True, default="")
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)

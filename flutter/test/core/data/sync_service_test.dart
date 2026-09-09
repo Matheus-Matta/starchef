@@ -228,6 +228,140 @@ void main() {
     expect(sync.snapshot.phase, SyncPhase.blocked);
   });
 
+  test(
+    'fechamento recusado por total divergente reenvia com o total do servidor',
+    () async {
+      // O caso real: itens mexidos offline deixaram o total deste terminal
+      // diferente do que o servidor recalculou. `expected_total` existe para
+      // CONFERIR, não para decidir o preço — recusar para sempre prendia o
+      // fechamento, e o pagamento atrás dele, numa revisão que o operador não
+      // tinha como resolver.
+      const realId = 'pedido-real-1';
+      await stack.gateway.repository(EntityCatalog.product).applyRemoteList([
+        {
+          'id': 'prod-1',
+          'name': 'Pastel de queijo',
+          'restaurant': 'rest-1',
+          'current_price': '7.50',
+          'pricing_unit': 'unit',
+        },
+      ]);
+      stack.gateway.serviceFeePercent = 10;
+      transport.handlers['POST /orders/'] = (request) => {
+        'id': realId,
+        'sequence': 1,
+        'status': 'open',
+        'items': const [],
+      };
+      final closes = <Map<String, dynamic>?>[];
+      transport.handlers['POST /orders/$realId/close/'] = (request) {
+        closes.add(request.body);
+        if (closes.length == 1) {
+          return const ApiException(
+            'O total do pedido mudou durante o período offline. '
+            'Revise os valores antes de registrar o pagamento.',
+            statusCode: 400,
+          );
+        }
+        return {
+          'id': realId,
+          'sequence': 1,
+          'status': 'awaiting_payment',
+          'total': '99.99',
+          'items': const [
+            {
+              'id': 'item-real-1',
+              'product': 'prod-1',
+              'quantity': '2.000',
+              'unit_price': '7.50',
+              'total_price': '15.00',
+              'status': 'pending',
+            },
+          ],
+        };
+      };
+
+      final created = await stack.gateway.write(
+        'POST',
+        '/orders/',
+        body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+      );
+      final localId = '${created.payload['id']}';
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localId/items/',
+        body: {'product': 'prod-1', 'quantity': 2},
+      );
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localId/close/',
+        body: {'discount': 0, 'service_fee_enabled': true},
+      );
+
+      await sync.push();
+
+      // Duas tentativas: a primeira conferindo, a segunda entregando sem o
+      // número que só existia aqui.
+      expect(closes, hasLength(2));
+      expect(closes.first!['expected_total'], '16.50');
+      expect(closes.last!.containsKey('expected_total'), isFalse);
+      // Nada ficou preso na fila, e o pedido adotou o total do servidor.
+      expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+      expect(sync.snapshot.phase, SyncPhase.idle);
+      final stored = await stack.gateway.orders.read(realId);
+      expect(stored!.payload['status'], 'awaiting_payment');
+    },
+  );
+
+  test(
+    'fechamento recusado por outro motivo continua indo para a revisão',
+    () async {
+      const realId = 'pedido-real-2';
+      transport.handlers['POST /orders/'] = (request) => {
+        'id': realId,
+        'sequence': 1,
+        'status': 'open',
+        'items': const [],
+      };
+      var tentativas = 0;
+      transport.handlers['POST /orders/$realId/close/'] = (request) {
+        tentativas += 1;
+        return const ApiException(
+          'Aplicar desconto exige permissão de gerente.',
+          statusCode: 400,
+        );
+      };
+
+      final created = await stack.gateway.write(
+        'POST',
+        '/orders/',
+        body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+      );
+      final localId = '${created.payload['id']}';
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localId/close/',
+        body: {'discount': '10.00', 'service_fee_enabled': true},
+      );
+
+      await sync.push();
+
+      // A reconciliação é só para divergência de total: uma recusa por outro
+      // motivo não gasta tentativa extra e chega à tela de revisão com o
+      // motivo verdadeiro.
+      expect(tentativas, 1);
+      final entries = await stack.queue.entries(scope: TestPdvStack.scope);
+      expect(entries, hasLength(1));
+      expect(entries.single.lastError, contains('gerente'));
+      expect(sync.snapshot.phase, SyncPhase.blocked);
+    },
+  );
+
   test('carga de entrada percorre as páginas de 20 em 20 (§13)', () async {
     final pedidas = <int>[];
     transport.handlers['GET /menu/products/'] = (request) {

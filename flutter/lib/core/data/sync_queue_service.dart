@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:sqlite_async/sqlite_async.dart';
+
 import '../network/relay_origin.dart';
 import 'local_id.dart';
 import 'pdv_database.dart';
@@ -117,12 +119,14 @@ class SyncQueueService {
       final now = DateTime.now().toUtc();
       final rows = await tx.getAll(
         '''
-        SELECT * FROM sync_queue
-        WHERE scope = ? AND status IN ('PENDING', 'PROCESSING')
-        ORDER BY id
+        SELECT candidate.* FROM sync_queue AS candidate
+        WHERE candidate.scope = ?
+          AND candidate.status IN ('PENDING', 'PROCESSING')
+          AND (candidate.next_retry_at IS NULL OR candidate.next_retry_at <= ?)
+        ORDER BY candidate.id
         LIMIT $_scanWindow
         ''',
-        [scope],
+        [scope, now.toIso8601String()],
       );
 
       Map<String, Object?>? chosen;
@@ -135,6 +139,26 @@ class SyncQueueService {
           '${row['lease_until'] ?? ''}',
         )?.toUtc();
         if (leaseUntil != null && leaseUntil.isAfter(now)) continue;
+        // Duas janelas podem compartilhar este SQLite, mas nunca podem manter
+        // duas requisições do mesmo pedido simultaneamente em voo.
+        final inFlight = await tx.getOptional(
+          '''
+          SELECT 1 FROM sync_queue
+          WHERE scope = ? AND entity_type = ? AND entity_id = ?
+            AND id != ? AND status = 'PROCESSING'
+            AND (lease_until IS NULL OR lease_until > ?)
+          LIMIT 1
+          ''',
+          [
+            scope,
+            '${row['entity_type']}',
+            '${row['entity_id']}',
+            row['id'],
+            now.toIso8601String(),
+          ],
+        );
+        if (inFlight != null) continue;
+        if (await _hasBlockingPredecessor(tx, row)) continue;
         if (_hasUnresolvedDependency(row, mappings)) continue;
         chosen = row;
         break;
@@ -160,6 +184,50 @@ class SyncQueueService {
       );
       return claimed == null ? null : SyncQueueEntry.fromRow(claimed);
     });
+  }
+
+  /// Fechamento, envio à cozinha e pagamento consomem o estado produzido
+  /// pelas operações anteriores. Itens independentes podem ceder a vez entre
+  /// si durante um backoff; estas barreiras não podem ultrapassá-los.
+  Future<bool> _hasBlockingPredecessor(
+    SqliteWriteContext tx,
+    Map<String, Object?> candidate,
+  ) async {
+    final path = '${candidate['path']}';
+    final isPayment = path.endsWith('/pay/');
+    final isKitchen = path.endsWith('/send-to-kitchen/');
+    final isBarrier = isPayment || path.endsWith('/close/') || isKitchen;
+    if (!isBarrier) return false;
+
+    final activeClause = isKitchen
+        ? '''
+          (status IN ('PENDING', 'PROCESSING')
+           AND path NOT LIKE '/orders/%/close/'
+           AND path NOT LIKE '/orders/%/pay/')
+          '''
+        : "status IN ('PENDING', 'PROCESSING')";
+    final failedClause = isPayment
+        ? "OR status = 'FAILED'"
+        : '''
+          OR (status = 'FAILED'
+              AND path NOT LIKE '/orders/%/close/'
+              AND path NOT LIKE '/orders/%/pay/')
+          ''';
+    final predecessor = await tx.getOptional(
+      '''
+      SELECT 1 FROM sync_queue
+      WHERE scope = ? AND entity_type = ? AND entity_id = ? AND id < ?
+        AND ($activeClause $failedClause)
+      LIMIT 1
+      ''',
+      [
+        '${candidate['scope']}',
+        '${candidate['entity_type']}',
+        '${candidate['entity_id']}',
+        candidate['id'],
+      ],
+    );
+    return predecessor != null;
   }
 
   /// Substitui referências a IDs locais pelo ID real já confirmado.
@@ -301,6 +369,53 @@ class SyncQueueService {
     );
   }
 
+  /// Devolve à fila um fechamento recusado por divergência de total, agora
+  /// sem o `expected_total` que causou a recusa.
+  ///
+  /// `expected_total` é o total que este terminal calculou; ele existe para o
+  /// servidor CONFERIR, não para decidir o preço. Quando os dois discordam —
+  /// um item que subiu depois do fechamento, um item recusado por preço, um
+  /// centavo de arredondamento — quem tem autoridade sobre a venda é o
+  /// servidor, que acabou de recalcular tudo sob lock.
+  ///
+  /// Sem isto o fechamento virava `FAILED` para sempre: reenviar repetia a
+  /// mesma conferência com o mesmo número errado, o pagamento ficava barrado
+  /// atrás dele e a única saída era abrir o SQLite do terminal. Como a chave
+  /// sai do corpo, esta recuperação acontece UMA vez por operação: a segunda
+  /// tentativa não tem mais o que conferir, e uma recusa por outro motivo
+  /// segue o caminho normal da revisão manual.
+  Future<bool> requeueCloseIgnoringExpectedTotal(int id) async {
+    return database.write((tx) async {
+      final row = await tx.getOptional(
+        'SELECT path, payload FROM sync_queue WHERE id = ?',
+        [id],
+      );
+      if (row == null || !'${row['path']}'.endsWith('/close/')) return false;
+      final raw = row['payload'];
+      final decoded = raw is String && raw.isNotEmpty ? jsonDecode(raw) : null;
+      if (decoded is! Map || !decoded.containsKey('expected_total')) {
+        return false;
+      }
+      final payload = Map<String, dynamic>.from(decoded)
+        ..remove('expected_total');
+      await tx.execute(
+        '''
+        UPDATE sync_queue
+        SET payload = ?, status = 'PENDING', next_retry_at = NULL,
+            last_error = NULL, lease_owner = NULL, lease_until = NULL,
+            updated_at = ?
+        WHERE id = ?
+        ''',
+        [
+          jsonEncode(payload),
+          DateTime.now().toUtc().toIso8601String(),
+          id,
+        ],
+      );
+      return true;
+    });
+  }
+
   /// Devolve uma operação recusada para a fila, depois que o operador
   /// corrigiu a causa. A chave de idempotência é a mesma: se o servidor já
   /// tinha aceitado antes de recusar, o reenvio não duplica.
@@ -338,7 +453,7 @@ class SyncQueueService {
   Future<bool> discardFailed(int id) async {
     return database.write((tx) async {
       final row = await tx.getOptional(
-        'SELECT scope, status, entity_id, created_at FROM sync_queue WHERE id = ?',
+        'SELECT scope, status, entity_type, entity_id, path FROM sync_queue WHERE id = ?',
         [id],
       );
       if (row == null || '${row['status']}' != 'FAILED') return false;
@@ -360,8 +475,64 @@ class SyncQueueService {
           ''',
           ['${row['scope']}', id, entityId, entityId, entityId],
         );
+      } else if (_isOrderFinalizationPath('${row['path']}')) {
+        // Um fechamento recusado invalida pagamentos/fechamentos posteriores,
+        // mas NÃO os itens usados para corrigir a divergência.
+        await tx.execute(
+          '''
+          DELETE FROM sync_queue
+          WHERE scope = ? AND entity_type = ? AND entity_id = ? AND id > ?
+            AND status != 'PROCESSING'
+            AND (path LIKE '/orders/%/close/' OR path LIKE '/orders/%/pay/')
+          ''',
+          ['${row['scope']}', '${row['entity_type']}', entityId, id],
+        );
       }
       return true;
+    });
+  }
+
+  /// Substitui a tentativa de finalizar um pedido que o servidor recusou.
+  ///
+  /// Ao entrar novamente no pagamento, o PDV cria um fechamento e pagamentos
+  /// novos sobre o estado local atual. As tentativas antigas não podem ficar
+  /// na frente deles, mas itens e cozinha continuam intactos e sincronizam.
+  Future<List<SyncQueueEntry>> supersedeRejectedOrderFinalization({
+    required String scope,
+    required String orderId,
+  }) async {
+    return database.write((tx) async {
+      final root = await tx.getOptional(
+        '''
+        SELECT id FROM sync_queue
+        WHERE scope = ? AND entity_type = 'order' AND entity_id = ?
+          AND status = 'FAILED'
+          AND (path LIKE '/orders/%/close/' OR path LIKE '/orders/%/pay/')
+        ORDER BY id LIMIT 1
+        ''',
+        [scope, orderId],
+      );
+      if (root == null) return const <SyncQueueEntry>[];
+      final rows = await tx.getAll(
+        '''
+        SELECT * FROM sync_queue
+        WHERE scope = ? AND entity_type = 'order' AND entity_id = ?
+          AND id >= ? AND status != 'PROCESSING'
+          AND (path LIKE '/orders/%/close/' OR path LIKE '/orders/%/pay/')
+        ORDER BY id
+        ''',
+        [scope, orderId, root['id']],
+      );
+      await tx.execute(
+        '''
+        DELETE FROM sync_queue
+        WHERE scope = ? AND entity_type = 'order' AND entity_id = ?
+          AND id >= ? AND status != 'PROCESSING'
+          AND (path LIKE '/orders/%/close/' OR path LIKE '/orders/%/pay/')
+        ''',
+        [scope, orderId, root['id']],
+      );
+      return rows.map(SyncQueueEntry.fromRow).toList();
     });
   }
 
@@ -496,6 +667,62 @@ class SyncQueueService {
     return rows.map(SyncQueueEntry.fromRow).toList();
   }
 
+  /// Primeira recusa ainda não resolvida de uma entidade.
+  Future<SyncQueueEntry?> failureForEntity({
+    required String scope,
+    required String entityType,
+    required String entityId,
+  }) async {
+    final row = await database.querySingle(
+      '''
+      SELECT * FROM sync_queue
+      WHERE scope = ? AND entity_type = ? AND entity_id = ?
+        AND status = 'FAILED'
+      ORDER BY id LIMIT 1
+      ''',
+      [scope, entityType, entityId],
+    );
+    return row == null ? null : SyncQueueEntry.fromRow(row);
+  }
+
+  /// Recusa que uma nova finalização não pode substituir sozinha.
+  Future<SyncQueueEntry?> orderMutationFailure({
+    required String scope,
+    required String orderId,
+  }) async {
+    final row = await database.querySingle(
+      '''
+      SELECT * FROM sync_queue
+      WHERE scope = ? AND entity_type = 'order' AND entity_id = ?
+        AND status = 'FAILED'
+        AND path NOT LIKE '/orders/%/close/'
+        AND path NOT LIKE '/orders/%/pay/'
+      ORDER BY id LIMIT 1
+      ''',
+      [scope, orderId],
+    );
+    return row == null ? null : SyncQueueEntry.fromRow(row);
+  }
+
+  Future<bool> hasActiveForEntity({
+    required String scope,
+    required String entityType,
+    required String entityId,
+  }) async =>
+      await database.querySingle(
+        '''
+        SELECT 1 FROM sync_queue
+        WHERE scope = ? AND entity_type = ? AND entity_id = ?
+          AND status IN ('PENDING', 'PROCESSING')
+        LIMIT 1
+        ''',
+        [scope, entityType, entityId],
+      ) !=
+      null;
+
+  static bool _isOrderFinalizationPath(String path) =>
+      path.endsWith('/close/') || path.endsWith('/pay/');
+
   /// Registra que um ID local virou definitivo e reescreve o que ainda está
   /// na fila apontando para ele.
   Future<void> registerResolvedId({
@@ -533,6 +760,21 @@ class SyncQueueService {
           remoteId,
           scope,
         ],
+      );
+      // A nota fiscal pode nascer enquanto o pedido ainda usa ID temporário.
+      // Quando a criação sobe, ela precisa acompanhar a mesma promoção.
+      await tx.execute(
+        '''
+        UPDATE fiscal_queue SET
+          order_id = CASE WHEN order_id = ? THEN ? ELSE order_id END,
+          payload = replace(payload, ?, ?),
+          snapshot = CASE
+            WHEN snapshot IS NULL THEN NULL
+            ELSE replace(snapshot, ?, ?)
+          END
+        WHERE scope = ?
+        ''',
+        [localId, remoteId, localId, remoteId, localId, remoteId, scope],
       );
     });
   }

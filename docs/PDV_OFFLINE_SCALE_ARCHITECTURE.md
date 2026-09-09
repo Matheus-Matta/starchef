@@ -256,8 +256,15 @@ trataria o item confirmado como "ainda pendente" e o somaria de novo.
 A fila é FIFO por `id` autoincremental — determinístico mesmo para operações
 criadas no mesmo milissegundo. FIFO cego, porém, travaria a loja: uma operação
 recusada por regra de negócio seguraria todas as vendas atrás dela. A ordem é
-preservada **onde importa**: quem ainda cita um ID temporário não resolvido
-espera a sua vez; o que é independente passa na frente.
+preservada **onde importa**. Nunca há duas requisições do mesmo pedido em voo,
+inclusive entre o PDV e a janela da Balança Rápida. Um item em backoff ou
+recusado, porém, cede a vez aos itens independentes seguintes; fechamento,
+cozinha e pagamento funcionam como barreiras e aguardam as alterações das
+quais dependem. Uma venda com problema também não segura outras vendas. Quem
+ainda cita um ID temporário não resolvido espera a criação correspondente.
+Falha de conexão durante uma entrega e sessão expirada também reenfileiram só
+a operação afetada; o ciclo ainda tenta as próximas, que podem usar outro relay
+ou credencial.
 
 | Situação | Efeito |
 | --- | --- |
@@ -268,9 +275,27 @@ espera a sua vez; o que é independente passa na frente.
 operações, uma requisição por vez. A reserva (`lease_owner`/`lease_until`)
 impede que o PDV e a janela da Balança Rápida enviem a mesma operação.
 
-Descartar uma operação recusada leva junto o que dependia dela — manter os
-dependentes deixaria a fila tentando alterar para sempre um pedido que nunca
-existirá no servidor.
+Descartar a criação recusada de um registro temporário leva seus dependentes.
+Nos demais casos, itens corretivos permanecem na fila. Ao entrar novamente no
+pagamento, fechamentos e recebimentos recusados são substituídos por uma nova
+finalização calculada depois dos itens; o efeito otimista de um pagamento que
+o servidor recusou também é removido.
+
+O novo fechamento usa aritmética decimal em centavos para itens, subtotal e
+taxa de serviço. O arredondamento é o mesmo `ROUND_HALF_UP` do backend; valores
+na fronteira de meio centavo não voltam para a revisão por diferença causada
+pela representação binária de `double`.
+
+**Divergência de total não prende o fechamento.** `expected_total` viaja no
+corpo para o servidor CONFERIR, não para decidir o preço. Quando o servidor
+recusa um `/close/` por divergência de total, `SyncService` devolve a operação à
+fila sem `expected_total` (`requeueCloseIgnoringExpectedTotal`) e o total
+autoritativo do servidor vale. Como a chave sai do corpo, isso acontece uma vez
+por operação: a segunda tentativa não tem mais o que conferir, e uma recusa por
+outro motivo — desconto sem permissão de gerente, pedido bloqueado — continua
+indo para a tela de revisão com o motivo verdadeiro. Sem isso o fechamento
+virava `FAILED` para sempre, o pagamento ficava barrado atrás dele e a única
+saída era abrir o SQLite do terminal.
 
 ### Sincronização de entrada
 
@@ -316,6 +341,12 @@ devolve `_fiscal_pending`; o pedido segue `paid` enquanto o documento fica
 (15s, 30s, 1min, 5min, 15min): uma nota recusada pela SEFAZ não pode segurar a
 sincronização das vendas. Uma rejeição definitiva vira `FAILED` e não volta em
 laço.
+
+A transmissão fiscal, porém, só é reivindicada quando não resta nenhuma
+mutação do mesmo pedido na `sync_queue`. Isso impede montar a NFC-e com itens
+ou recebimentos que ainda existem apenas no SQLite local. Quando um pedido
+temporário recebe o ID definitivo, `registerResolvedId` atualiza também o
+`order_id`, o payload e o snapshot da fila fiscal.
 
 Antes, a mesma situação devolvia erro no meio do recebimento, como se a venda
 tivesse falhado.

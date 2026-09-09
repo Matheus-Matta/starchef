@@ -11,6 +11,7 @@ from apps.core.access import has_role_at_least
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
+from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
 from apps.menu.models import ProductVariation
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
@@ -329,16 +330,48 @@ def add_order_item(
 
 @transaction.atomic
 def recalculate_order(order):
+    """Reprojeta subtotal, taxa de servico e total a partir dos itens de agora.
+
+    A taxa acompanha o subtotal sempre que ela nasceu de um percentual
+    (`service_fee_percent`). Antes ela ficava congelada no valor calculado no
+    fechamento: qualquer item que chegasse depois — e a fila offline do PDV
+    entrega itens depois do fechamento com frequencia, seja por ordem de fila,
+    seja porque um item recusado por preco subiu ja corrigido — aumentava o
+    subtotal sem aumentar a taxa. O total do servidor deixava de ser
+    "subtotal + 10%" e divergia, centavo a centavo ou real a real, do total que
+    o PDV mostrou e cobrou do cliente.
+
+    Taxa digitada a mao pelo gerente nao tem percentual e continua intocada: ali
+    o valor E a decisao, nao um derivado.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         excluded = {OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED}
         subtotal = order.items.exclude(status__in=excluded).aggregate(value=Sum("total_price"))["value"]
         order.subtotal = subtotal or Decimal("0.00")
+        order.service_fee = service_fee_for(order)
         order.total = order.subtotal + order.service_fee + order.delivery_fee - order.discount
         if order.total < Decimal("0.00"):
             order.total = Decimal("0.00")
-        order.save(update_fields=["subtotal", "total", "updated_at"])
+        order.save(update_fields=["subtotal", "service_fee", "total", "updated_at"])
         return order
+
+
+def service_fee_for(order):
+    """Taxa de servico que corresponde ao subtotal atual do pedido.
+
+    O arredondamento acontece AQUI, e nao no campo do banco: SQLite nao trunca
+    `DecimalField` como o Postgres, e o PDV soma a taxa ja arredondada. Deixar
+    o arredondamento para a gravacao fazia os dois lados discordarem por um
+    centavo.
+    """
+    if not order.service_fee_enabled:
+        return Decimal("0.00")
+    if order.service_fee_percent is None:
+        return order.service_fee
+    return ((order.subtotal * order.service_fee_percent) / Decimal("100")).quantize(
+        TWO_PLACES, rounding=ROUND_HALF_UP
+    )
 
 
 @transaction.atomic
@@ -781,6 +814,7 @@ def close_order(
     discount=Decimal("0.00"),
     service_fee=None,
     service_fee_enabled=None,
+    fiscal_customer_cpf=None,
     expected_total=None,
 ):
     with tenant_context(order.account):
@@ -795,22 +829,30 @@ def close_order(
                 raise ValidationError("Aplicar desconto exige permissão de gerente.")
 
         order.discount = discount
+        if fiscal_customer_cpf is not None:
+            normalized_cpf = strip_cpf(str(fiscal_customer_cpf))
+            if normalized_cpf and not is_valid_cpf(normalized_cpf):
+                raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
+            order.fiscal_customer_cpf = normalized_cpf
         if service_fee_enabled is not None:
             if isinstance(service_fee_enabled, str):
                 service_fee_enabled = service_fee_enabled.lower() in {"1", "true", "yes", "on"}
             order.service_fee_enabled = bool(service_fee_enabled)
+        # A ALIQUOTA e o que fica gravado, nao apenas o valor: `recalculate_order`
+        # refaz a taxa a partir dela toda vez que o subtotal muda, e e isso que
+        # mantem o total do servidor igual ao que o PDV cobrou quando um item
+        # chega depois do fechamento.
         if not order.service_fee_enabled:
+            order.service_fee_percent = None
             order.service_fee = Decimal("0.00")
         elif service_fee is not None:
+            # Valor digitado: nao e derivado de percentual nenhum e nao pode ser
+            # reescrito pelo recalculo.
+            order.service_fee_percent = None
             order.service_fee = Decimal(str(service_fee)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        elif order.restaurant.default_service_fee_percent:
-            # Arredonda aqui, e não deixa para o campo do banco: SQLite não trunca
-            # DecimalField como o Postgres, então o total recalculado a seguir
-            # divergia do total previsto pelo cliente (que já soma a taxa
-            # arredondada), derrubando o fechamento por "total mudou offline".
-            order.service_fee = (
-                (order.subtotal * order.restaurant.default_service_fee_percent) / Decimal("100")
-            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        else:
+            order.service_fee_percent = order.restaurant.default_service_fee_percent or Decimal("0.00")
+            order.service_fee = service_fee_for(order)
         order.status = Order.STATUS_AWAITING_PAYMENT
         order.closed_by = user
         order.updated_by = user
@@ -820,6 +862,8 @@ def close_order(
                 "discount",
                 "service_fee",
                 "service_fee_enabled",
+                "service_fee_percent",
+                "fiscal_customer_cpf",
                 "status",
                 "closed_by",
                 "closed_at",
@@ -827,13 +871,18 @@ def close_order(
             ]
         )
         order = recalculate_order(order)
+        expected = None
         if expected_total not in (None, ""):
             expected = Decimal(str(expected_total)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-            if expected != order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP):
-                raise ValidationError(
-                    "O total do pedido mudou durante o período offline. "
-                    "Revise os valores antes de registrar o pagamento."
-                )
+        actual_total = order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        # `expected_total` é diagnóstico de concorrência, não autoridade sobre
+        # o preço. Todas as mutações anteriores já passaram pelas próprias
+        # validações e o servidor acabou de recalcular a venda sob lock; rejeitar
+        # aqui deixava o PDV preso tentando adivinhar o mesmo arredondamento.
+        # O fechamento segue com o total autoritativo e a resposta informa a
+        # reconciliação para a tela atualizar antes de receber o pagamento.
+        order._client_expected_total = expected
+        order._total_reconciled = expected is not None and expected != actual_total
 
         # Fechar novamente um pedido parcialmente pago pode alterar desconto ou
         # taxa. O estado financeiro precisa acompanhar o novo total; caso
@@ -866,7 +915,17 @@ def close_order(
                 from apps.stock.services import deduct_order_stock
 
                 deduct_order_stock(order=order, user=user)
-        record_audit(action=AuditLog.ACTION_UPDATED, instance=order, actor=user, metadata={"event": "close_order"})
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=order,
+            actor=user,
+            metadata={
+                "event": "close_order",
+                "total_reconciled": order._total_reconciled,
+                "client_expected_total": str(expected) if expected is not None else None,
+                "authoritative_total": str(actual_total),
+            },
+        )
         return order
 
 

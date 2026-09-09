@@ -148,6 +148,39 @@ Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusã
 
 Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo; retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`.
 
+No fechamento, `POST /orders/{id}/close/` aceita `fiscal_customer_cpf`. O CPF é
+validado, normalizado para 11 dígitos e armazenado no pedido antes do pagamento.
+A emissão automática e `POST /invoices/emit/` usam esse valor para preencher
+`recipient_cpf`; o provider Focus envia `cpf_destinatario` na NFC-e. Uma string
+vazia remove a opção do pedido.
+
+`expected_total` é uma referência de concorrência enviada pelo PDV. Se
+divergir, o backend não recusa o fechamento: conclui com o total autoritativo
+recalculado sob lock e devolve `total_reconciled`, `client_expected_total` e
+`authoritative_total` para o terminal atualizar a tela antes do pagamento.
+
+**A taxa de serviço acompanha o subtotal.** O fechamento grava a alíquota
+aplicada em `Order.service_fee_percent`, e `recalculate_order` refaz a taxa a
+partir dela sempre que o subtotal muda. Sem isso, um item entregue depois do
+fechamento — a fila offline do PDV entrega na ordem dela, e um item recusado por
+preço sobe depois de corrigido — aumentava o subtotal com a taxa congelada no
+subtotal antigo, e o total do servidor deixava de bater com o que o PDV cobrou.
+Taxa digitada à mão pelo gerente (`service_fee` no corpo) grava
+`service_fee_percent = NULL` e nunca é reescrita pelo recálculo.
+
+A migration `orders.0006` conserta o que já estava no banco: realinha subtotal,
+taxa e total dos pedidos em `awaiting_payment`. Não toca pedido pago, cancelado
+ou estornado (livro fechado se corrige por estorno, não por UPDATE) nem pedido
+aberto (a taxa nasce no fechamento; gravá-la antes a faria aparecer no
+carrinho). Para rodar o mesmo reparo depois — um pedido específico, um
+restaurante que mudou de percentual — existe
+`python manage.py repair_order_totals --adopt-restaurant-percent --apply`
+(sem `--apply` apenas relata; aceita `--order`, `--restaurant` e `--branch`).
+
+`PATCH /orders/{id}/` aceita `discount` e `delivery_fee`; `perform_update`
+recalcula taxa e total quando um deles muda, para a API genérica não deixar o
+total defasado do jeito que o fechamento deixava.
+
 **Senha de ações do caixa**: o cadastro de restaurante recebe a senha comum
 escolhida pelo responsável (por exemplo, `123`), nunca uma hash. O modelo
 converte automaticamente qualquer valor novo para PBKDF2-SHA256, inclusive
