@@ -121,6 +121,13 @@ jobs:
       # A conta é por ARQUIVO ALTERADO, não pela versão declarada: esquecer de
       # subir o `version:` do pubspec faria a correção não ser publicada, em
       # silêncio — falha muito pior do que um build a mais.
+      # A tag anterior e achada pelo NOME (a mais recente que nao seja esta), nao
+      # por `git describe` a partir do commit pai: refazer uma tag (apagar e
+      # recriar sobre outro commit, como a v1.7.2 e a v1.8.1 ja precisaram) muda
+      # o ref sem mudar o grafo de commits na mesma velocidade, e `describe`
+      # podia encontrar a propria tag recem-apagada como "anterior" — o diff
+      # contra ela mesma (ou quase) dava vazio, e o APK ficava reaproveitado em
+      # silencio mesmo com flutter_garcom tendo mudado de verdade.
       - name: Decidir se o APK do garçom precisa ser reconstruído
         id: garcom
         shell: bash
@@ -129,7 +136,7 @@ jobs:
           MANIFEST_URL: ${{ vars.PDV_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest.json', github.repository) }}
         run: |
           set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*'             "${GITHUB_SHA}^" 2>/dev/null || true)"
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
           if [[ -z "$previous" ]]; then
             changed=true
             reason="não há release anterior para comparar"

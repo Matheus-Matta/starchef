@@ -72,16 +72,25 @@ jobs:
       # A conta e por ARQUIVO ALTERADO desde a tag anterior, nao pela versao
       # declarada: esquecer de subir uma versao faria a correcao NAO ser
       # publicada, em silencio — falha bem pior do que uma imagem a mais.
+      #
+      # A tag anterior e achada pelo NOME (a mais recente que nao seja esta),
+      # nao por `git describe` a partir do commit pai: refazer uma tag (apagar
+      # e recriar sobre outro commit, como a v1.7.2 e a v1.8.1 ja precisaram)
+      # muda o ref sem mudar o grafo de commits na mesma velocidade, e
+      # `describe` podia encontrar a propria tag recem-apagada como "anterior"
+      # — o diff contra ela mesma (ou quase) dava vazio, e o build era pulado
+      # em silencio mesmo com backend/ tendo mudado de verdade desde o ultimo
+      # release publicado.
       - name: Decidir se a imagem precisa ser reconstruida
         id: changed
         shell: bash
         run: |
           set -euo pipefail
-          previous="$(git describe --tags --abbrev=0 --match 'v*.*.*'             "${GITHUB_SHA}^" 2>/dev/null || true)"
+          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
           if [[ -z "$previous" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Sem release anterior para comparar: imagem sera construida."
-          elif git diff --quiet "$previous" "$GITHUB_SHA" --               backend .github/workflows/backend.yml; then
+          elif git diff --quiet "$previous" "$GITHUB_SHA" -- backend .github/workflows/backend.yml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Nada mudou em backend/ desde $previous: a imagem atual sera apenas re-etiquetada."
           else

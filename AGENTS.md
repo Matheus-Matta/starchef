@@ -38,6 +38,18 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   `test` → `release-metadata` → builds Windows/Linux → `publish-release`.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
   `pubspec.yaml`.
+- Apagar e recriar uma tag existente (já foi preciso na v1.7.2 e na v1.8.1,
+  quando o pubspec não batia com a tag) é reconhecido pelos workflows, mas gera
+  DUAS execuções para o mesmo nome de tag — a que falhou e a corrigida.
+  `backend.yml`/`frontend.yml`/`flutter.yml` decidem se reconstroem a imagem
+  comparando o conteúdo com a tag anterior, achada pelo NOME (a mais recente
+  que não seja esta), nunca por commit ancestral do SHA anterior — a segunda
+  forma já produziu um "nada mudou" falso logo após uma tag recriada (a v1.8.1
+  ficou com `latest` apontando para o conteúdo da v1.8.0 até a v1.8.2
+  corrigir). Preferir sempre uma tag NOVA a apagar/recriar uma existente,
+  mesmo sabendo que os workflows já são seguros hoje: uma tag nova nunca
+  depende de nenhuma corrida entre a exclusão do ref antigo e a criação do
+  novo.
 
 ## Contrato de atualização atual
 
