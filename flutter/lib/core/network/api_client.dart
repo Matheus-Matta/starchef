@@ -104,6 +104,19 @@ class ApiClient {
   AccessTokenRefresher? _tokenRefresher;
   Future<String?>? _refreshInFlight;
 
+  /// O WebSocket de tempo real deste terminal está de pé agora?
+  ///
+  /// É a prova de que o servidor responde, sem gastar uma requisição HTTP
+  /// própria para descobrir isso. Antes, cada ciclo da fila com a rede fora
+  /// perguntava por conta própria (`GET /health/`) enquanto esperava a rede
+  /// voltar — um heartbeat inteiro só para "ainda está fora?", em cima do que
+  /// o WebSocket já sabe (ele reconecta sozinho, com o próprio backoff). Ver
+  /// [notifyRealtimeConnected] e [notifyRealtimeDisconnected].
+  bool _realtimeConnected = false;
+
+  /// Ver [_realtimeConnected].
+  bool get isRealtimeConnected => _realtimeConnected;
+
   /// Armazenamento operacional local. Quando presente, ele — e não a rede —
   /// responde as rotas de entidade (§1). Continua opcional para que a janela
   /// da Balança Rápida e os testes possam usar o cliente sem banco.
@@ -316,17 +329,36 @@ class ApiClient {
   }
 
   void notifyRealtimeConnected() {
+    _realtimeConnected = true;
     for (final topic in DataSignals.realtimeSnapshotTopics) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
     }
+    // O momento em que o WebSocket conecta é o próprio aviso de "o servidor
+    // voltou": quem estava esperando o próximo tique do backoff para
+    // descobrir isso não precisa mais esperar.
+    unawaited(_flushPending());
+    _syncService?.schedulePush(delay: Duration.zero);
   }
 
-  /// Verifica se a API está acessível antes de gastar tentativas da fila.
+  /// O WebSocket caiu (ou ainda não foi tentado nesta rodada do agente).
   ///
-  /// Sem esta checagem, cada ciclo com o servidor fora do ar incrementaria o
-  /// `attempt_count` das operações e empurraria o backoff para o teto, mesmo
-  /// quando o problema é simplesmente falta de rede.
+  /// Não é, por si só, motivo para anunciar "offline" na tela — uma queda
+  /// breve e reconectada em segundos não deveria acender aviso nenhum, e é
+  /// exatamente para isso que a fila continua decidindo o `NetworkSyncPhase`
+  /// pelo resultado das entregas de verdade. Este método só apaga a prova
+  /// positiva: enquanto ela não voltar, a fila não gasta tentativa alguma
+  /// adivinhando que o servidor responde.
+  void notifyRealtimeDisconnected() {
+    _realtimeConnected = false;
+  }
+
+  /// Requisição HTTP direta contra `/health/`.
+  ///
+  /// Não é mais como a fila descobre se pode gastar uma tentativa — isso é
+  /// [isRealtimeConnected] agora, sem pagar uma requisição própria a cada
+  /// ciclo. Este método fica como verificação avulsa (diagnóstico, um botão
+  /// de "testar conexão" futuro), não em nenhum laço de repetição.
   Future<bool> ping({Duration timeout = const Duration(seconds: 4)}) async {
     try {
       final response = await _client
@@ -1167,7 +1199,14 @@ class ApiClient {
     }
   }
 
-  Future<void> _flushPending() async {
+  /// [force] pula a checagem de conectividade e tenta entregar direto.
+  ///
+  /// É o que [syncPendingNow] pede: alguém pediu "tentar agora" olhando para
+  /// a fila (o diálogo de revisão da fila, hoje) e a resposta certa é tentar
+  /// de verdade, não confiar em o WebSocket já ter percebido que o servidor
+  /// voltou. Uma tentativa real que falhar segue o mesmo tratamento de erro
+  /// de sempre — este parâmetro só pula a ADIVINHAÇÃO prévia.
+  Future<void> _flushPending({bool force = false}) async {
     final token = _lastAccessToken;
     final scope = _activeScope;
     if (_disposed || _syncing || token == null || scope == null) return;
@@ -1180,8 +1219,16 @@ class ApiClient {
       // Antes de tocar na fila, confirma que o servidor responde. Sem isso um
       // ciclo com a rede caída consumiria o `attempt_count` de cada operação e
       // levaria o backoff ao teto sem nenhuma chance real de entrega.
+      //
+      // A confirmação é o WebSocket ([isRealtimeConnected]), não mais uma
+      // requisição própria (`GET /health/`): ele já reconecta sozinho com o
+      // próprio backoff, e perguntar de novo por HTTP a cada ciclo era pedir
+      // duas vezes a mesma coisa. Assim que ele conecta,
+      // [notifyRealtimeConnected] já dispara este flush na hora — este
+      // `_scheduleRetry` abaixo é só a rede de segurança caso esse aviso se
+      // perca.
       final hasWork = summary.pending > 0 || summary.retrying > 0;
-      if (hasWork && !_syncStatus.hasConnection && !await ping()) {
+      if (!force && hasWork && !_syncStatus.hasConnection && !isRealtimeConnected) {
         // SILENCIOSO. Esta verificação roda a cada ciclo enquanto a rede está
         // fora: anunciar "o servidor não respondeu" a cada tentativa enche a
         // tela de um aviso que não muda nada e que o operador já lê no
@@ -1643,7 +1690,7 @@ class ApiClient {
     final scope = _activeScope;
     if (scope != null) await _offlineStore.retryNow(scope: scope);
     _retryTimer?.cancel();
-    await _flushPending();
+    await _flushPending(force: true);
     // A fila legada (`offline_outbox`) só existe para entregar o que ficou
     // pendente antes desta versão. A fila operacional é a nova `sync_queue`.
     await _syncService?.syncNow();
@@ -1938,8 +1985,10 @@ class _ApiSyncTransport implements SyncTransport {
 
   final ApiClient _api;
 
+  // O WebSocket já prova isso sozinho (ver [ApiClient.isRealtimeConnected]);
+  // um `GET /health/` aqui seria a mesma pergunta feita duas vezes.
   @override
-  Future<bool> ping() => _api.ping();
+  Future<bool> ping() => Future.value(_api.isRealtimeConnected);
 
   @override
   Future<Map<String, dynamic>> send(

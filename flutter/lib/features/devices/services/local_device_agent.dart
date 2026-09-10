@@ -92,6 +92,7 @@ class LocalDeviceAgent {
   RealtimeClient? _realtime;
   StreamSubscription<RealtimeEvent>? _eventSubscription;
   StreamSubscription<void>? _connectedSubscription;
+  StreamSubscription<void>? _disconnectedSubscription;
   bool _running = false;
   String? _token;
   String? _restaurantId;
@@ -213,7 +214,15 @@ class LocalDeviceAgent {
     // Ao (re)conectar, uma verificação pontual cobre o que pode ter mudado
     // enquanto a conexão estava caída — nunca um timer recorrente.
     _connectedSubscription = realtime.onConnected.listen((_) => _onConnected());
+    _disconnectedSubscription = realtime.onDisconnected.listen(
+      (_) => api.notifyRealtimeDisconnected(),
+    );
     _eventSubscription = realtime.events.listen(_onRealtimeEvent);
+    // Sem conexão nenhuma ainda até o `onConnected` provar o contrário —
+    // reaproveitar um "conectado" de uma rodada anterior deste agente faria a
+    // fila de vendas tentar entregar contra um servidor que este novo socket
+    // nem tentou alcançar de verdade.
+    api.notifyRealtimeDisconnected();
     realtime.start();
   }
 
@@ -223,6 +232,7 @@ class LocalDeviceAgent {
         'print_agent_stop',
         data: {'restaurante': _restaurantId},
       );
+      api.notifyRealtimeDisconnected();
     }
     _stopRealtime();
     _availabilityTimer?.cancel();
@@ -253,6 +263,8 @@ class LocalDeviceAgent {
     _eventSubscription = null;
     unawaited(_connectedSubscription?.cancel());
     _connectedSubscription = null;
+    unawaited(_disconnectedSubscription?.cancel());
+    _disconnectedSubscription = null;
     _realtime?.dispose();
     _realtime = null;
   }

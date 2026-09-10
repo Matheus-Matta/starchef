@@ -284,6 +284,77 @@ void main() {
   );
 
   test(
+    'a fila automática não fica batendo na API offline; a reconexão do WebSocket entrega sozinha',
+    () async {
+      // Antes desta correção, cada ciclo automático de retry perguntava
+      // `GET /health/` ao servidor por conta própria enquanto esperava a rede
+      // voltar. Agora quem prova que o servidor voltou é o WebSocket
+      // (`notifyRealtimeConnected`, chamado pelo agente que mantém essa
+      // conexão) — nenhuma requisição própria de conectividade deveria
+      // acontecer enquanto ele não avisar.
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef-no-ping-',
+      );
+      var online = false;
+      final requestedPaths = <String>[];
+      final client = ApiClient(
+        baseUrl: 'http://starchef.test/api/v1',
+        offlineStore: OfflineStore(
+          file: File('${directory.path}/offline.json'),
+        ),
+        client: MockClient((request) async {
+          requestedPaths.add(request.url.path);
+          if (!online) throw const SocketException('offline');
+          return http.Response(
+            '{"id":"server-1","name":"Cliente offline"}',
+            201,
+          );
+        }),
+      );
+
+      final queued = await client.post(
+        '/customers/',
+        body: const {'name': 'Cliente offline'},
+        accessToken: 'token',
+      );
+      expect(queued['_offline_pending'], isTrue);
+      expect(
+        requestedPaths.any((path) => path.contains('health')),
+        isFalse,
+        reason: 'a primeira tentativa (que falhou) não é um health check',
+      );
+
+      // Tempo de sobra para pelo menos uma volta do backoff automático, sem
+      // ninguém chamar `notifyRealtimeConnected` nem `syncPendingNow`.
+      await Future<void>.delayed(const Duration(seconds: 3));
+      expect(
+        requestedPaths.any((path) => path.contains('health')),
+        isFalse,
+        reason: 'o ciclo automático não deveria pingar `/health/` sozinho',
+      );
+      expect(
+        await client.pendingOperations(),
+        1,
+        reason:
+            'sem o WebSocket avisar que voltou, a fila não deveria ter '
+            'gasto nenhuma tentativa real contra o servidor offline',
+      );
+
+      online = true;
+      client.notifyRealtimeConnected();
+      await Future.doWhile(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        return await client.pendingOperations() > 0;
+      }).timeout(const Duration(seconds: 5));
+
+      expect(await client.pendingOperations(), 0);
+      expect(requestedPaths.where((path) => path.contains('health')), isEmpty);
+      await client.dispose();
+      await directory.delete(recursive: true);
+    },
+  );
+
+  test(
     'resolve IDs locais entre pedido e item no mesmo ciclo de sincronização',
     () async {
       final directory = await Directory.systemTemp.createTemp(

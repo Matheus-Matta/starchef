@@ -32,6 +32,7 @@ class RealtimeClient {
 
   final _eventsController = StreamController<RealtimeEvent>.broadcast();
   final _connectedController = StreamController<void>.broadcast();
+  final _disconnectedController = StreamController<void>.broadcast();
 
   WebSocket? _socket;
   StreamSubscription? _subscription;
@@ -43,6 +44,14 @@ class RealtimeClient {
 
   Stream<RealtimeEvent> get events => _eventsController.stream;
   Stream<void> get onConnected => _connectedController.stream;
+
+  /// A conexão caiu e uma nova tentativa já foi agendada.
+  ///
+  /// É o sinal de "não confie mais em respostas antigas sobre isto estar de
+  /// pé" — quem usa esta classe como prova de que o servidor responde (em vez
+  /// de perguntar por HTTP num timer à parte) precisa saber tanto de quando
+  /// ela conecta quanto de quando ela cai.
+  Stream<void> get onDisconnected => _disconnectedController.stream;
 
   void start() {
     if (!_stopped) return;
@@ -67,6 +76,7 @@ class RealtimeClient {
     stop();
     unawaited(_eventsController.close());
     unawaited(_connectedController.close());
+    unawaited(_disconnectedController.close());
   }
 
   Future<void> _connect() async {
@@ -122,6 +132,7 @@ class RealtimeClient {
     _socket = null;
     _subscription = null;
     if (_stopped) return;
+    _disconnectedController.add(null);
     final index = _attempt.clamp(0, _backoffSeconds.length - 1);
     _attempt++;
     _reconnectTimer?.cancel();

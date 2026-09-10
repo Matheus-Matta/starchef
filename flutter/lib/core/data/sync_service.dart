@@ -166,6 +166,13 @@ class SyncService {
   /// Chegou trabalho novo enquanto um ciclo já rodava — o ciclo atual não vai
   /// vê-lo, então mais uma volta é necessária antes de dar por concluído.
   bool _pushAgain = false;
+
+  /// Um `push(force: true)` pediu para pular a checagem de conectividade e a
+  /// próxima volta ainda não começou. Existe para o "tentar agora" (§ push)
+  /// não se perder quando chega enquanto outro ciclo já está em voo — sem
+  /// isto, ele só reaproveitaria o ciclo alheio via `_pushAgain` e a volta
+  /// extra voltaria a adivinhar a conexão como um ciclo automático qualquer.
+  bool _forceNextPush = false;
   bool _pulling = false;
   bool _disposed = false;
 
@@ -213,7 +220,11 @@ class SyncService {
     final scope = gateway.scope;
     if (scope == null) return;
     await gateway.queue.retryAllNow(scope: scope);
-    await push();
+    // "Agora" é literal: quem chamou (o diálogo de revisão da fila) já está
+    // olhando para o problema e pediu para tentar na hora — a resposta certa
+    // é uma tentativa real, não confiar em o WebSocket já ter percebido a
+    // volta do servidor.
+    await push(force: true);
     await pushFiscal();
     await pullAll();
   }
@@ -227,8 +238,9 @@ class SyncService {
   /// Sem isso, quem precisa da GARANTIA de entrega (como o "Concluir pedido"
   /// esperando o recebimento chegar antes de emitir a nota) podia receber de
   /// volta um retorno vazio sem ter entregado nada.
-  Future<void> push() {
+  Future<void> push({bool force = false}) {
     if (_disposed || gateway.scope == null) return Future.value();
+    if (force) _forceNextPush = true;
     final inFlight = _pushCycle;
     if (inFlight != null) {
       _pushAgain = true;
@@ -243,14 +255,16 @@ class SyncService {
     try {
       do {
         _pushAgain = false;
-        await _pushOnce();
+        final force = _forceNextPush;
+        _forceNextPush = false;
+        await _pushOnce(force: force);
       } while (_pushAgain && !_disposed);
     } finally {
       _pushCycle = null;
     }
   }
 
-  Future<void> _pushOnce() async {
+  Future<void> _pushOnce({bool force = false}) async {
     final scope = gateway.scope;
     if (_disposed || scope == null) return;
     var summary = await gateway.queue.summary(scope: scope);
@@ -261,8 +275,13 @@ class SyncService {
 
     // Confirma que o servidor responde antes de gastar tentativas: sem
     // isso, um ciclo com a rede caída levaria o backoff de cada operação ao
-    // teto sem nenhuma chance real de entrega.
-    if (!_snapshot.hasConnection && !await transport.ping()) {
+    // teto sem nenhuma chance real de entrega. Falando direto com a nuvem
+    // (Caixa Principal ou terminal sozinho), quem responde por isso é o
+    // WebSocket do próprio terminal (`ApiClient.isRealtimeConnected`), não um
+    // `GET /health/` à parte — ver `ApiClient.notifyRealtimeConnected`. Num
+    // Caixa Secundário, `ping()` é o `probe()` local contra o Principal (§8),
+    // que continua HTTP porque é rede local, não a nuvem.
+    if (!force && !_snapshot.hasConnection && !await transport.ping()) {
       await _publish(
         SyncPhase.offline,
         error: 'O servidor não respondeu à verificação de saúde.',

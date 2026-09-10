@@ -102,6 +102,33 @@ void main() {
     expect(connections, greaterThanOrEqualTo(2));
   });
 
+  test('avisa onDisconnected quando a conexão cai, antes de reconectar', () async {
+    // Quem usa esta classe como prova de conectividade (em vez de perguntar
+    // por HTTP) precisa saber tanto de quando ela conecta quanto de quando
+    // ela cai — sem o segundo aviso, uma queda ficaria invisível até a
+    // próxima reconexão silenciosa, e uma fila de vendas continuaria achando
+    // que pode entregar contra um servidor que já não responde mais.
+    final client = RealtimeClient(urlBuilder: () => url);
+    addTearDown(client.dispose);
+    var disconnections = 0;
+    final subscription = client.onDisconnected.listen((_) => disconnections++);
+    addTearDown(subscription.cancel);
+
+    client.start();
+    await client.onConnected.first.timeout(const Duration(seconds: 5));
+    await waitForServerSocket();
+    expect(disconnections, 0);
+
+    await serverSockets.single.close();
+
+    await Future.doWhile(() async {
+      await Future.delayed(const Duration(milliseconds: 100));
+      return disconnections < 1;
+    }).timeout(const Duration(seconds: 15));
+
+    expect(disconnections, 1);
+  });
+
   test('stop() encerra a conexão e não reconecta mais', () async {
     final client = RealtimeClient(urlBuilder: () => url);
     addTearDown(client.dispose);
