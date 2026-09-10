@@ -256,6 +256,157 @@ void main() {
     expect(stored, isNotNull);
   });
 
+  /// **O caixa do secundário é dele, e funciona com o principal desligado.**
+  ///
+  /// A gaveta é física: quem conta o dinheiro é quem está na frente daquele
+  /// terminal. Um Caixa Secundário sem o principal por perto precisa abrir,
+  /// vender, receber, sangrar e fechar o PRÓPRIO caixa — e a sessão aberta no
+  /// principal, que ele recebe pela sincronização, não pode se meter nisso.
+  group('o caixa do Caixa Secundário', () {
+    const pdv2 = 'no-de-instalacao-pdv2';
+    const pdv1 = 'no-de-instalacao-pdv1';
+
+    setUp(() async {
+      stack.gateway.installationId = pdv2;
+      stack.gateway.terminalLabel = 'PDV 2';
+      // A sessão do PDV 1 chegou pela carga vinda do principal — ele guarda os
+      // dados da loja inteira, inclusive os dos outros terminais.
+      await stack.gateway.repository(EntityCatalog.cashSession).applyRemoteList([
+        {
+          'id': 'sessao-do-pdv1',
+          'restaurant': 'rest-1',
+          'cash_station': 'caixa-pdv1',
+          'cash_station_name': 'Caixa PDV 1',
+          'status': 'open',
+          'opening_amount': '200.00',
+          'current_balance': '200.00',
+          'opened_by': 'operador-1',
+          'opened_by_name': 'Operador',
+          'opened_terminal_installation_id': pdv1,
+          'opened_terminal_label': 'PDV 1',
+          'movements': const [],
+        },
+      ]);
+    });
+
+    Future<Map<String, dynamic>> abrirCaixaDoPdv2() async {
+      final aberta = await stack.gateway.write(
+        'POST',
+        '/cash-register/open/',
+        body: {
+          'cash_station': 'caixa-pdv2',
+          'opening_amount': '50.00',
+          'terminal_installation_id': pdv2,
+          'terminal_name': 'PDV 2',
+        },
+        context: {
+          'cash_station': {'id': 'caixa-pdv2', 'name': 'Caixa PDV 2'},
+          'operator_name': 'Maria',
+        },
+      );
+      return aberta.payload;
+    }
+
+    test('com o principal desligado, abre e opera o próprio caixa', () async {
+      principal.reachable = false;
+
+      final minha = await abrirCaixaDoPdv2();
+      expect(minha['cash_station'], 'caixa-pdv2');
+      expect(minha['opened_terminal_installation_id'], pdv2);
+
+      // `current` devolve a MINHA gaveta, não a do PDV 1.
+      final atual = await stack.gateway.read('/cash-register/current/');
+      expect(atual['id'], minha['id']);
+      expect(atual['cash_station_name'], 'Caixa PDV 2');
+
+      // Sangria e suprimento entram na minha sessão, sem servidor nenhum.
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/${minha['id']}/withdrawal/',
+        body: {
+          'amount': '20.00',
+          'reason': 'troco',
+          'terminal_installation_id': pdv2,
+        },
+      );
+      final depois = await stack.gateway.read('/cash-register/current/');
+      expect(depois['current_balance'], '30.00');
+
+      // E o fechamento também é local.
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/${minha['id']}/close/',
+        body: {'actual_amount': '30.00', 'terminal_installation_id': pdv2},
+      );
+      final semCaixa = await stack.gateway.read('/cash-register/current/');
+      expect(semCaixa['_empty'], isTrue);
+    });
+
+    test('a gaveta do PDV 1 não é adotada nem movimentada aqui', () async {
+      principal.reachable = false;
+
+      // Sem caixa próprio aberto, o secundário NÃO herda o do principal.
+      final atual = await stack.gateway.read('/cash-register/current/');
+      expect(atual['_empty'], isTrue);
+
+      // E não consegue sangrar nem fechar a gaveta do outro terminal.
+      await expectLater(
+        stack.gateway.write(
+          'POST',
+          '/cash-register/sessao-do-pdv1/withdrawal/',
+          body: {
+            'amount': '10.00',
+            'reason': 'nao e minha',
+            'terminal_installation_id': pdv2,
+          },
+        ),
+        throwsA(isA<ApiException>()),
+      );
+    });
+
+    test('o que foi operado offline sobe quando o principal volta', () async {
+      principal.reachable = false;
+      final minha = await abrirCaixaDoPdv2();
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/${minha['id']}/withdrawal/',
+        body: {
+          'amount': '20.00',
+          'reason': 'troco',
+          'terminal_installation_id': pdv2,
+        },
+      );
+
+      principal.reachable = true;
+      principal.onRelay = (mutation) => {'id': 'sessao-real-pdv2'};
+      await sync.push();
+
+      // As duas operações chegaram ao principal, na ordem, com o terminal
+      // deste caixa — e não com o do principal que as encaminhou.
+      final caminhos = principal.received.map((m) => m.path).toList();
+      expect(caminhos.first, '/cash-register/open/');
+      expect(caminhos.last, contains('/withdrawal/'));
+      expect(
+        principal.received.first.body?['terminal_installation_id'],
+        pdv2,
+      );
+      expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+    });
+
+    test('reiniciar o terminal offline recupera a própria gaveta', () async {
+      principal.reachable = false;
+      final minha = await abrirCaixaDoPdv2();
+
+      // Reiniciar não muda operador nem instalação: o `nodeId` fica gravado no
+      // SQLite local e não depende de rede para ser lido.
+      stack.gateway.bindSession(scope: TestPdvStack.scope);
+      stack.gateway.installationId = pdv2;
+
+      final atual = await stack.gateway.read('/cash-register/current/');
+      expect(atual['id'], minha['id']);
+    });
+  });
+
   test('sem o principal, a leitura sai do que já foi sincronizado', () async {
     principal.reachable = false;
 

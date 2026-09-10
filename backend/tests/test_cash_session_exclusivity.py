@@ -455,3 +455,42 @@ def test_payment_from_another_terminal_is_refused(
         f"/api/v1/orders/{order.id}/pay/", payload, format="json"
     )
     assert owner.status_code == 201, owner.content
+
+
+def test_payload_carrega_a_instalacao_de_quem_abriu(station, manager_user):
+    """O PDV offline precisa do MESMO fato que `session_belongs_to` compara.
+
+    Sem a instalacao no payload, o espelho offline da regra ficava sem lado
+    direito da igualdade e adotava a primeira sessao em aberto: era assim que o
+    Caixa Secundario mostrava a gaveta aberta no Principal.
+    """
+    client = client_for(manager_user, installation_id=BALCAO_01)
+    aberta = client.post(
+        "/api/v1/cash-register/open/",
+        {"cash_station": str(station.id), "opening_amount": "100.00"},
+        format="json",
+    )
+    assert aberta.status_code == 201, aberta.data
+    assert aberta.data["opened_terminal_installation_id"] == BALCAO_01
+
+    atual = client.get(f"/api/v1/cash-register/current/?restaurant={station.restaurant_id}")
+    assert atual.status_code == 200, atual.data
+    assert atual.data["opened_terminal_installation_id"] == BALCAO_01
+
+    # E a mesma verdade chega pela listagem de caixas, que e por onde o PDV
+    # secundario recebe as sessoes das outras maquinas.
+    listagem = client.get("/api/v1/cash-stations/")
+    sessao = listagem.data["results"][0]["current_session"]
+    assert sessao["opened_terminal_installation_id"] == BALCAO_01
+
+
+def test_sessao_sem_terminal_registrado_devolve_instalacao_vazia(station, branch, manager_user):
+    """Base anterior ao PdvTerminal: campo presente e vazio, nunca ausente."""
+    session = open_cash_register(branch=branch, user=manager_user, cash_station=station)
+    sessions().filter(pk=session.pk).update(opened_terminal=None)
+
+    client = client_for(manager_user)
+    atual = client.get(f"/api/v1/cash-register/current/?restaurant={station.restaurant_id}")
+
+    assert atual.status_code == 200, atual.data
+    assert atual.data["opened_terminal_installation_id"] == ""

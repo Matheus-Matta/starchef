@@ -92,20 +92,32 @@ class CashRegisterRepository extends EntityRepository {
 
   /// A sessão é deste operador nesta instalação?
   ///
-  /// Quando a sessão não registra dono (base antiga), não há o que comparar e
-  /// ela é aceita; quando registra, os dois lados precisam bater.
+  /// Espelho exato de `session_belongs_to` (`apps/payments/terminals.py`). O
+  /// caixa é uma gaveta física: cada terminal cuida do seu, offline inclusive.
+  /// Afrouxar qualquer um dos três degraus abaixo faz um terminal adotar a
+  /// gaveta de outro — foi assim que o Caixa Secundário passou a mostrar a
+  /// sessão aberta no Principal.
   static bool _belongsTo(
     Map<String, dynamic> session, {
     String? operatorId,
     String? installationId,
   }) {
+    // 1. Dono. Não saber quem está na frente do terminal não autoriza a
+    //    adotar a sessão de ninguém: sem identidade, nada é "meu".
     final owner = '${session['opened_by'] ?? ''}';
-    if (owner.isNotEmpty && (operatorId ?? '').isNotEmpty && owner != operatorId) {
-      return false;
-    }
+    final actor = operatorId ?? '';
+    if (owner.isNotEmpty && (actor.isEmpty || owner != actor)) return false;
+
+    // 2. Sessão sem máquina registrada (base anterior ao PdvTerminal): não há
+    //    o que comparar, e a checagem por operador já decidiu.
     final terminal = '${session['opened_terminal_installation_id'] ?? ''}';
-    if (terminal.isNotEmpty && terminal != (installationId ?? '')) return false;
-    return true;
+    if (terminal.isEmpty) return true;
+
+    // 3. A sessão TEM dona de máquina. Se esta instalação não se identificou,
+    //    ela é outra máquina — como no servidor. Afrouxar aqui anularia a
+    //    regra, porque bastaria não conhecer a própria identidade para
+    //    herdar a gaveta do vizinho.
+    return terminal == (installationId ?? '');
   }
 
   /// Mensagem de bloqueio, no mesmo formato do backend.

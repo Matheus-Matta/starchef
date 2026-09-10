@@ -120,6 +120,104 @@ void main() {
     expect(atual['_empty'], isTrue);
   });
 
+  /// A sessão vinda do SERVIDOR também tem dona de máquina.
+  ///
+  /// O Caixa Secundário sincroniza as sessões da loja inteira — inclusive a do
+  /// Principal. Enquanto o payload do servidor não trazia a instalação de quem
+  /// abriu, `_belongsTo` não tinha com o que comparar e adotava a primeira
+  /// sessão em aberto: o secundário mostrava o caixa do principal.
+  Future<void> sincronizarDoServidor({
+    required String id,
+    required String operador,
+    required String instalacao,
+    String station = 'caixa-1',
+  }) => stack.gateway
+      .repository(EntityCatalog.cashSession)
+      .applyRemoteList([
+        {
+          'id': id,
+          'restaurant': 'rest-1',
+          'cash_station': station,
+          'cash_station_name': 'Caixa PDV 1',
+          'status': CashSessionStatus.open,
+          'opening_amount': '100.00',
+          'current_balance': '100.00',
+          'opened_by': operador,
+          'opened_by_name': 'Operador',
+          'opened_terminal_installation_id': instalacao,
+          'opened_terminal_label': 'PDV 1',
+          'movements': const [],
+        },
+      ]);
+
+  test('o secundário não adota o caixa aberto no principal', () async {
+    // A sessão do PDV 1, de outro operador, chegou pela sincronização.
+    await sincronizarDoServidor(
+      id: 'sessao-do-principal',
+      operador: 'operador-2',
+      instalacao: balcao02,
+    );
+
+    final atual = await stack.gateway.read('/cash-register/current/');
+
+    expect(atual['_empty'], isTrue);
+  });
+
+  test('o mesmo operador em duas máquinas não herda a gaveta da outra', () async {
+    // O caso que mais engana: é a MESMA pessoa, então a checagem por operador
+    // passa. Só a instalação separa uma gaveta da outra.
+    await sincronizarDoServidor(
+      id: 'sessao-do-principal',
+      operador: 'operador-1',
+      instalacao: balcao02,
+    );
+
+    final atual = await stack.gateway.read('/cash-register/current/');
+
+    expect(atual['_empty'], isTrue);
+  });
+
+  test('terminal que ainda não sabe a própria instalação não adota nada', () async {
+    await sincronizarDoServidor(
+      id: 'sessao-do-principal',
+      operador: 'operador-1',
+      instalacao: balcao02,
+    );
+    stack.gateway.installationId = null;
+
+    final atual = await stack.gateway.read('/cash-register/current/');
+
+    // Como no servidor: sessão com dona de máquina e cliente sem identidade é
+    // tratada como outra máquina. Afrouxar aqui deixaria a regra contornável.
+    expect(atual['_empty'], isTrue);
+  });
+
+  test('sessão antiga, sem máquina registrada, ainda é do seu operador', () async {
+    await sincronizarDoServidor(
+      id: 'sessao-antiga',
+      operador: 'operador-1',
+      instalacao: '',
+    );
+
+    final atual = await stack.gateway.read('/cash-register/current/');
+
+    expect(atual['id'], 'sessao-antiga');
+  });
+
+  test('a sessão deste terminal sobrevive à sincronização', () async {
+    final aberta = await abrir();
+    // O servidor devolve a MESMA sessão, agora com a instalação no payload.
+    await sincronizarDoServidor(
+      id: '${aberta['id']}',
+      operador: 'operador-1',
+      instalacao: balcao01,
+    );
+
+    final atual = await stack.gateway.read('/cash-register/current/');
+
+    expect(atual['id'], aberta['id']);
+  });
+
   test('outra máquina não fecha nem movimenta a sessão', () async {
     final aberta = await abrir();
     stack.gateway.installationId = balcao02;

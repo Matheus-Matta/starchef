@@ -68,6 +68,12 @@ class CashStationSerializer(TenantModelSerializer):
             # Sem isto a tela não consegue dizer QUEM e DE ONDE está com o
             # caixa — a mensagem de bloqueio viraria "já está aberto" e ponto.
             "opened_terminal": session.opened_terminal_id,
+            # A INSTALACAO, e nao so a chave do terminal: e por ela que o PDV
+            # offline confere se a sessao e desta maquina, do mesmo jeito que
+            # `session_belongs_to` confere aqui.
+            "opened_terminal_installation_id": (
+                session.opened_terminal.installation_id if session.opened_terminal_id else ""
+            ),
             "opened_terminal_label": terminal_label_of(session),
             "opened_at": session.opened_at,
             "closed_at": session.closed_at,
@@ -145,6 +151,11 @@ class CashRegisterSerializer(TenantModelSerializer):
     current_balance = serializers.SerializerMethodField()
     opened_by_name = serializers.SerializerMethodField()
     terminal_label = serializers.SerializerMethodField()
+    # O PDV offline espelha `session_belongs_to`: sem a instalacao de quem
+    # abriu, a regra "cada terminal cuida do proprio caixa" nao existe do lado
+    # de fora do servidor — o terminal secundario adotava a sessao do
+    # principal por nao ter com o que comparar.
+    opened_terminal_installation_id = serializers.SerializerMethodField()
     cash_station_name = serializers.CharField(source="cash_station.name", read_only=True, default=None)
 
     class Meta:
@@ -178,6 +189,9 @@ class CashRegisterSerializer(TenantModelSerializer):
         from apps.payments.terminals import terminal_label_of
 
         return terminal_label_of(obj)
+
+    def get_opened_terminal_installation_id(self, obj):
+        return obj.opened_terminal.installation_id if obj.opened_terminal_id else ""
 
     def get_current_balance(self, obj):
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("movements")
