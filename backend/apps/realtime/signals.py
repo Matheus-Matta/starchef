@@ -1,10 +1,29 @@
 from django.db import transaction
-from django.db.models.signals import m2m_changed, post_delete, post_save
+from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 from django.dispatch import receiver
 
 from apps.core.models import TenantBaseModel
 
-from .events import broadcast_model_event
+from .events import broadcast_model_event, broadcast_resource_event
+
+
+_RESTAURANT_RESOURCE = "restaurants.restaurant"
+_CASH_AUTH_RESOURCE = "restaurants.cashauth"
+
+
+@receiver(pre_save)
+def remember_cash_auth_change(sender, instance, raw=False, **kwargs):
+    """Detecta a troca da hash sem jamais colocá-la no evento WebSocket."""
+    if raw or instance._meta.label_lower != _RESTAURANT_RESOURCE:
+        return
+    previous = None
+    if instance.pk:
+        previous = (
+            sender.all_objects.filter(pk=instance.pk)
+            .values_list("cash_action_password", flat=True)
+            .first()
+        )
+    instance._cash_auth_changed = previous != instance.cash_action_password
 
 
 def _publish(instance, action, *, update_fields=None):
@@ -37,6 +56,17 @@ def tenant_model_saved(sender, instance, created, raw=False, update_fields=None,
     deleted = bool(getattr(instance, "deleted_at", None))
     action = "created" if created else "deleted" if deleted else "updated"
     _publish(instance, action, update_fields=update_fields)
+    if getattr(instance, "_cash_auth_changed", False):
+        account_id = instance.account_id
+        restaurant_id = instance.pk
+        transaction.on_commit(
+            lambda: broadcast_resource_event(
+                account_id,
+                resource=_CASH_AUTH_RESOURCE,
+                action="updated",
+                restaurant_id=restaurant_id,
+            )
+        )
 
 
 @receiver(post_delete)

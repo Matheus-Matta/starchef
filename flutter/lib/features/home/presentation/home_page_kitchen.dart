@@ -211,8 +211,9 @@ mixin _KitchenSection on _HomePageShared {
         }
         return failure;
       },
-      onInvalidPassword: () => widget.controller.refreshSupervisorPassword(
+      onInvalidPassword: () => widget.controller.syncSupervisorPassword(
         restaurantId: restaurantId,
+        force: true,
       ),
     );
     if (!mounted ||

@@ -53,6 +53,7 @@ class DataSignals {
   /// e atualiza o cache local antes de redesenhar.
   static Set<String> topicsForRealtimeResource(String resource) {
     if (resource.startsWith('orders.')) return const {'orders'};
+    if (resource == 'restaurants.cashauth') return const {'cash_auth'};
     if (resource == 'restaurants.table' ||
         resource == 'restaurants.tablesector' ||
         resource == 'restaurants.command' ||
@@ -89,6 +90,7 @@ class DataSignals {
     'customers',
     'payments',
     'cash',
+    'cash_auth',
     'devices',
   };
 

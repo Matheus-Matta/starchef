@@ -87,7 +87,7 @@ class _ScaleWindowPageState extends State<ScaleWindowPage> {
           ? preferred
           : '${loadedRestaurants.first['id']}';
       widget.controller.setActiveRestaurant(selected);
-      await widget.controller.refreshSupervisorPassword(restaurantId: selected);
+      await widget.controller.syncSupervisorPassword(restaurantId: selected);
       final loadedProducts = await repository.list(
         '/menu/products/',
         query: {'page_size': 300, 'restaurant': selected, 'is_active': true},

@@ -151,7 +151,10 @@ class AuthController extends ChangeNotifier {
 
   /// Rebaixa o hash mais recente da senha do restaurante para a memória e para
   /// o cofre criptografado do sistema. Retorna false quando não há rede.
-  Future<bool> refreshSupervisorPassword({String? restaurantId}) async {
+  Future<bool> syncSupervisorPassword({
+    String? restaurantId,
+    bool force = false,
+  }) async {
     final current = session;
     final cashAuth = _repository.cashAuth;
     restaurantId ??= activeRestaurantId ?? current?.user.restaurantId;
@@ -161,7 +164,7 @@ class AuthController extends ChangeNotifier {
         restaurantId.isEmpty) {
       return false;
     }
-    return cashAuth.trySync(current, restaurantId: restaurantId);
+    return cashAuth.trySync(current, restaurantId: restaurantId, force: force);
   }
 
   /// Valida online credenciais administrativas da mesma conta. `null`

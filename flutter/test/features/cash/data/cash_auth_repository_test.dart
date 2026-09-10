@@ -68,4 +68,78 @@ void main() {
       await api.dispose();
     },
   );
+
+  test('não repete a leitura sem evento de invalidação', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    var requests = 0;
+    final hash = await CashPassword.encode('senha', iterations: 1000);
+    final api = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((_) async {
+        requests += 1;
+        return http.Response(
+          jsonEncode({'algorithm': 'pbkdf2_sha256', 'password_hash': hash}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final repository = CashAuthRepository(apiClient: api);
+    const session = AuthSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      user: AuthUser(
+        id: 'user-1',
+        username: 'operador',
+        name: 'Operador',
+        restaurantId: 'restaurant-1',
+      ),
+    );
+
+    expect(await repository.trySync(session), isTrue);
+    expect(await repository.trySync(session), isTrue);
+    expect(requests, 1);
+
+    expect(await repository.trySync(session, force: true), isTrue);
+    expect(requests, 2);
+    await api.dispose();
+  });
+
+  test('agrupa leituras simultâneas da mesma unidade', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    var requests = 0;
+    final hash = await CashPassword.encode('senha', iterations: 1000);
+    final api = ApiClient(
+      baseUrl: 'http://starchef.test/api/v1',
+      client: MockClient((_) async {
+        requests += 1;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        return http.Response(
+          jsonEncode({'algorithm': 'pbkdf2_sha256', 'password_hash': hash}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final repository = CashAuthRepository(apiClient: api);
+    const session = AuthSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      user: AuthUser(
+        id: 'user-1',
+        username: 'operador',
+        name: 'Operador',
+        restaurantId: 'restaurant-1',
+      ),
+    );
+
+    final results = await Future.wait([
+      repository.trySync(session),
+      repository.trySync(session, force: true),
+    ]);
+
+    expect(results, everyElement(isTrue));
+    expect(requests, 1);
+    await api.dispose();
+  });
 }

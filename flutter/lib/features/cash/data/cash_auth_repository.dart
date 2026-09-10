@@ -19,12 +19,41 @@ class CashAuthRepository {
   // A memória guarda somente o hash PBKDF2, nunca a senha em texto puro. O
   // mesmo hash também fica no cofre criptografado do sistema para uso offline.
   final Map<String, String> _memoryHashes = {};
+  final Set<String> _syncedRestaurants = {};
+  final Map<String, Future<bool>> _syncsInFlight = {};
 
   /// Baixa o hash do backend e persiste localmente. Silencioso em falha
   /// (offline/sem permissão): mantém o hash já guardado.
-  Future<bool> trySync(AuthSession session, {String? restaurantId}) async {
+  ///
+  /// Depois do primeiro sucesso, uma nova leitura só acontece com [force]. O
+  /// WebSocket usa esse modo quando a senha muda ou quando reconecta; recargas
+  /// comuns da interface não transformam este endpoint em polling.
+  Future<bool> trySync(
+    AuthSession session, {
+    String? restaurantId,
+    bool force = false,
+  }) {
     restaurantId ??= session.user.restaurantId;
-    if (restaurantId == null || restaurantId.isEmpty) return false;
+    if (restaurantId == null || restaurantId.isEmpty) {
+      return Future.value(false);
+    }
+    final pending = _syncsInFlight[restaurantId];
+    if (pending != null) return pending;
+    if (!force && _syncedRestaurants.contains(restaurantId)) {
+      return Future.value(true);
+    }
+
+    late final Future<bool> operation;
+    operation = _sync(session, restaurantId).whenComplete(() {
+      if (identical(_syncsInFlight[restaurantId], operation)) {
+        _syncsInFlight.remove(restaurantId);
+      }
+    });
+    _syncsInFlight[restaurantId] = operation;
+    return operation;
+  }
+
+  Future<bool> _sync(AuthSession session, String restaurantId) async {
     try {
       final json = await apiClient.get(
         '/restaurants/$restaurantId/cash-auth/',
@@ -39,6 +68,7 @@ class CashAuthRepository {
         _memoryHashes.remove(restaurantId);
         await store.clear(restaurantId); // restaurante sem senha definida
       }
+      _syncedRestaurants.add(restaurantId);
       return true;
     } catch (_) {
       // Offline ou sem permissão: preserva o hash local (se existir).
@@ -91,6 +121,7 @@ class CashAuthRepository {
 
   Future<void> clear() async {
     _memoryHashes.clear();
+    _syncedRestaurants.clear();
     await store.clearAll();
   }
 }

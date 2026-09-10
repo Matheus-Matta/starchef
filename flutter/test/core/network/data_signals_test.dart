@@ -84,6 +84,9 @@ void main() {
         containsAll({'tables', 'orders'}),
       );
       expect(DataSignals.topicsForRealtimeResource('menu.product'), {'menu'});
+      expect(DataSignals.topicsForRealtimeResource('restaurants.cashauth'), {
+        'cash_auth',
+      });
       expect(DataSignals.topicsForRealtimeResource('customers.customer'), {
         'customers',
       });
@@ -109,6 +112,10 @@ void main() {
         'pdv',
       });
       expect(DataSignals.topicsForRealtimeResource(''), isEmpty);
+    });
+
+    test('reconexão inclui a invalidação da senha de caixa', () {
+      expect(DataSignals.realtimeSnapshotTopics, contains('cash_auth'));
     });
   });
 

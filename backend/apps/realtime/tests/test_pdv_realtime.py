@@ -155,5 +155,44 @@ async def test_tenant_model_update_is_pushed_to_pdv(restaurant, manager_user):
     assert message["payload"]["id"] == str(restaurant.id)
     assert message["payload"]["changed_fields"] == ["trade_name", "updated_at"]
     assert message["payload"]["protocol_version"] == 1
+    assert await communicator.receive_nothing(timeout=0.1)
+
+    await communicator.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_cash_password_change_pushes_dedicated_invalidation(
+    restaurant, manager_user
+):
+    token = AccessToken.for_user(manager_user)
+    communicator = WebsocketCommunicator(
+        application,
+        f"/ws/pdv/{restaurant.id}/",
+        headers=[(b"authorization", f"Bearer {token}".encode())],
+    )
+    connected, _ = await communicator.connect()
+    assert connected is True
+    await communicator.receive_json_from()  # connected
+
+    @database_sync_to_async
+    def change_cash_password():
+        restaurant.set_cash_action_password("nova-senha")
+        restaurant.save(update_fields=["cash_action_password", "updated_at"])
+
+    await change_cash_password()
+    messages = [
+        await communicator.receive_json_from(),
+        await communicator.receive_json_from(),
+    ]
+    invalidation = next(
+        message
+        for message in messages
+        if message["payload"]["resource"] == "restaurants.cashauth"
+    )
+
+    assert invalidation["event"] == "model.updated"
+    assert invalidation["payload"]["restaurant_id"] == str(restaurant.id)
+    assert "password" not in invalidation["payload"]
 
     await communicator.disconnect()
