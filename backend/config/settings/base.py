@@ -381,28 +381,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ── Cardápio digital (storefront) ────────────────────────────────────────────
-# Endereços públicos do site e do editor. Servem para montar links absolutos
-# (preview, e-mail, instrução de DNS) sem o backend ter de adivinhar o host.
-STOREFRONT_PUBLIC_URL = config("STOREFRONT_PUBLIC_URL", default="").rstrip("/")
-STOREFRONT_EDITOR_URL = config("STOREFRONT_EDITOR_URL", default=FRONTEND_URL).rstrip("/")
-# Domínio da plataforma sob o qual cada site ganha `<slug>.<base>`. Vazio
-# desliga a resolução automática por subdomínio (só domínio próprio cadastrado).
-STOREFRONT_BASE_DOMAIN = config("STOREFRONT_BASE_DOMAIN", default="")
-# Hosts que ninguém pode reivindicar como domínio próprio (os da plataforma).
-STOREFRONT_RESERVED_HOSTNAMES = config("STOREFRONT_RESERVED_HOSTNAMES", default="")
-# Tempo de vida do payload público. A invalidação por publicação é o caminho
-# normal; o TTL é a rede de segurança para alteração feita fora da aplicação.
-STOREFRONT_CACHE_TIMEOUT = config("STOREFRONT_CACHE_TIMEOUT", default=300, cast=int)
-STOREFRONT_DOMAIN_CACHE_TIMEOUT = config("STOREFRONT_DOMAIN_CACHE_TIMEOUT", default=900, cast=int)
-# Tetos do JSON do editor (ver apps.storefront.builder_schema).
-STOREFRONT_MAX_PROJECT_BYTES = config("STOREFRONT_MAX_PROJECT_BYTES", default=2 * 1024 * 1024, cast=int)
-STOREFRONT_MAX_NODES = config("STOREFRONT_MAX_NODES", default=5000, cast=int)
-STOREFRONT_MAX_DEPTH = config("STOREFRONT_MAX_DEPTH", default=40, cast=int)
-STOREFRONT_ASSET_MAX_BYTES = config("STOREFRONT_ASSET_MAX_BYTES", default=8 * 1024 * 1024, cast=int)
-IMAGE_UPLOAD_MAX_BYTES = config("IMAGE_UPLOAD_MAX_BYTES", default=8 * 1024 * 1024, cast=int)
-
 # ── Armazenamento de mídia (uploads) ─────────────────────────────────────────
+# Teto do arquivo aceito no acervo de imagens (`apps.images.validation`).
+IMAGE_UPLOAD_MAX_BYTES = config("IMAGE_UPLOAD_MAX_BYTES", default=8 * 1024 * 1024, cast=int)
 # Quem decide o destino é `apps.core.storage.MediaStorageService`, e não estas
 # variáveis diretamente: bucket vazio mantém tudo em MEDIA_ROOT (o modo de
 # desenvolvimento); bucket preenchido usa S3/R2 via django-storages.

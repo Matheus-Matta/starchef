@@ -31,7 +31,6 @@ backend/
     restaurants/          Restaurant/Branch, mesas, setores, comandas, zonas/entregadores de delivery
     customers/             clientes e endereços
     menu/                  categorias, produtos, variações, adicionais, ingredientes, receitas, catálogos (Menu/MenuItem)
-    storefront/            cardápio digital editável: site, páginas, versões, modelos, imagens, domínios, temas e provisionamento
     orders/                pedidos, itens, lotes de produção, WebSocket de cozinha (KitchenConsumer)
     kitchen/               telas/config do KDS (estações e colunas)
     payments/              formas de pagamento, pagamentos, caixa (CashRegister/CashMovement)
@@ -123,8 +122,7 @@ Outras peças centrais:
 - **Refresh**: `CookieTokenRefreshView` lê o refresh token do corpo ou do cookie, reemite tokens e regrava os cookies.
 - **Logout**: `LogoutView` faz blacklist do refresh token e limpa os cookies.
 - **Autenticação por requisição**: `apps/core/authentication.py:CookieJWTAuthentication` tenta primeiro `Authorization: Bearer`, senão cai no cookie httpOnly. Proteção CSRF vem do `SameSite=Lax` (cookie não trafega em POST/PUT/PATCH/DELETE cross-site).
-- **Dois escopos de cookie**: o painel usa `sc_access`/`sc_refresh`/`sc_session`; o editor do storefront usa `sf_access`/`sf_refresh`/`sf_session`. Os dois aplicativos batem no mesmo backend, então os cookies caem no mesmo domínio — com o mesmo nome, entrar no editor derrubaria a sessão do painel na outra aba, e as duas telas passariam a agir como o último usuário que entrou. Quem escolhe qual escopo ler é o header `X-Auth-Scope: storefront` (`apps/core/cookies.py`, `request_auth_scope`); sem ele, painel. Forjar o header não dá privilégio nenhum: ele só seleciona entre cookies do próprio navegador.
-- **Sessão do editor do storefront** (`apps/storefront/auth_views.py`): `/api/v1/storefront/auth/` expõe `login/`, `refresh/`, `logout/` e `session/`. O editor abre por endereço público (`/burger/editor/`), então o slug do site é **entrada do usuário** — `session/?site=<slug>` cruza o slug com os sites que aquele usuário realmente pode editar (admin da conta vê a conta inteira; os demais, só o próprio restaurante) e responde 403 quando não bate. É o que impede trocar o slug na barra de endereço e abrir o editor do vizinho. `login/` e `refresh/` são anônimos por natureza (estão em `PUBLIC_URL_NAMES`); `session/` e `logout/` exigem sessão. A resposta carrega só identidade, permissões `storefront.*` e os sites do próprio usuário.
+- **Dois escopos de cookie**: o painel usa `sc_access`/`sc_refresh`/`sc_session`; um segundo escopo (`sf_access`/`sf_refresh`/`sf_session`) existe para um aplicativo que bata no mesmo backend pelo mesmo domínio. Os dois aplicativos batem no mesmo backend, então os cookies caem no mesmo domínio — com o mesmo nome, entrar no segundo aplicativo derrubaria a sessão do painel na outra aba, e as duas telas passariam a agir como o último usuário que entrou. Quem escolhe qual escopo ler é o header `X-Auth-Scope` (`apps/core/cookies.py`, `request_auth_scope`); sem ele, painel. Forjar o header não dá privilégio nenhum: ele só seleciona entre cookies do próprio navegador.
 - **Resolução de tenant**: `apps/core/middleware.py:TenantMiddleware` roda em toda request (exceto rotas públicas) e autentica o JWT manualmente antes do DRF. Resolve `request.account` a partir de `user.profile.account`; o superusuário pode injetar `X-Account-ID` no header para escolher outro tenant. **A API nunca opera em escopo global** — nem para superusuário, que age como admin da conta a que está vinculado. Sem conta resolvida a request é barrada (403 com mensagem explícita) e o login nem completa; os querysets tenant ainda devolvem vazio como segunda camada (`TenantQuerySetMixin`). Enxergar todas as contas de uma vez é papel do `/admin`, que é isento deste middleware. A identidade também vem sempre do JWT, nunca do `sessionid`: estar logado no `/admin` no mesmo navegador não muda o que a API entrega ao app (e o cookie de sessão fica restrito a `/admin/` via `SESSION_COOKIE_PATH`). Há uma segunda camada, `TenantResponseSafetyMiddleware`, que varre o JSON de resposta e bloqueia qualquer registro cujo `account_id` não bata com o tenant da requisição — defesa em profundidade contra vazamento cross-tenant.
 
 ## 6. WebSocket / tempo real
@@ -205,17 +203,6 @@ Configurado (`config/celery.py`), com Redis como broker/result backend em produ�
 
 Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 
-- `/api/v1/public/**` — a única superfície sem autenticação (o `TenantMiddleware` isenta esse prefixo). Hoje: o storefront público.
-  - `GET /api/v1/public/storefront/<slug>/` — payload consolidado do site publicado (restaurante, tema, página, categorias, produtos, adicionais, promoções, horários, entrega, formas de pagamento). Aceita `?page=<slug>`.
-  - `GET /api/v1/public/storefront/by-host/` — o mesmo, resolvido pelo domínio da requisição (ou `?hostname=`), que é o caminho usado em produção.
-- `/api/v1/storefront/**` — API privada do editor (exige o módulo **E-commerce** na conta e os códigos `storefront.*`):
-  - `sites/` (tema, SEO, catálogo curado) e `sites/{id}/preview/` (payload público montado a partir do rascunho);
-  - `pages/` (GET/PATCH do `draft_data`), `pages/{id}/publish/`, `pages/{id}/unpublish/`;
-  - `pages/{id}/versions/`, `versions/{vid}/` e `versions/{vid}/restore/` (com `{"publish": true}` para rollback completo);
-  - `pages/{id}/apply-template/{tid}/` e `templates/` (catálogo da plataforma, somente leitura);
-  - `assets/` (upload de imagem, throttle próprio) e `domains/` + `domains/{id}/verify/` e `dns-instructions/`;
-  - `GET /api/v1/storefront/schema/` — os blocos, tags e propriedades de CSS que o backend aceita, para o editor não divergir da validação;
-  - `GET /api/v1/storefront/themes/` — presets de tema; `POST sites/provision/` cria o site de um restaurante que ainda não tem.
 - `GET /health/` — healthcheck (usado pelo Docker healthcheck e pelo proxy reverso externo).
 - `GET /` — índice JSON com links (health/swagger/login).
 - `GET /api/schema/` e `/api/schema/swagger-ui/` — OpenAPI via `drf-spectacular`.
@@ -224,75 +211,6 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 - `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
 - `/api/v1/stock/suppliers/` mantém os fornecedores da conta. O insumo pode apontar para um fornecedor padrão e cada linha da entrada registra o fornecedor efetivamente usado.
 - `POST /api/v1/menu/ingredients/bulk/` recebe `{ "items": [...] }` e cria até 100 insumos atomicamente. Unidade e fornecedor padrão do insumo também são aplicados pelo backend quando a linha de entrada os omite.
-
-### 9.1 Cardápio digital (storefront)
-
-O app `apps/storefront` é o backend do site público editável por blocos. Ele
-guarda **apresentação**; regra de negócio (preço, taxa de entrega, estoque,
-horário, checkout) continua nos models de sempre.
-
-**Modelos** — `MenuSite` (um por restaurante: slug público, tema, SEO, catálogo
-curado opcional), `MenuPage` (`draft_data` + `published_data`), `MenuPageVersion`
-(histórico, 30 versões por página), `MenuTemplate` (catálogo da plataforma, sem
-tenant), `MenuAsset` (imagens do editor), `MenuDomain` (subdomínio/domínio
-próprio). Todos carregam `restaurant` — é por esse campo que o
-`TenantQuerySetMixin` recorta a listagem.
-
-**Rascunho ≠ publicado.** Salvar no editor grava só em `draft_data`; o público
-lê `published_data`. `status`, `published_data` e `published_at` são read-only no
-serializer: publicar é uma ação própria, com permissão própria. Cada publicação
-versiona o conteúdo que sai do ar, então todo `publish` tem um `restore`
-correspondente.
-
-**Validação do JSON (`builder_schema.py`).** O payload do editor é *reescrito*,
-não apenas aprovado: componentes fora do catálogo, tags proibidas (`script`,
-`iframe`, `form`…), atributos `on*`, URLs `javascript:`/`data:` e CSS com
-`expression()`/`@import` são recusados com o caminho do nó; propriedades de CSS
-e atributos desconhecidos são descartados em silêncio. Texto rico passa por um
-sanitizador de allowlist. `GET /api/v1/storefront/schema/` publica esse contrato
-para o editor não oferecer o que o backend recusa.
-
-**Cache (`services/cache.py`).** O payload público é cacheado por restaurante,
-com um contador de versão na chave — invalidar é incrementar um inteiro
-(atômico no Redis, e funciona no LocMem de dev/teste, onde não existe "apague
-por prefixo"). Os sinais em `signals.py` disparam a invalidação em produto,
-preço, variação, adicional, categoria, filial, zona de entrega, forma de
-pagamento, restaurante, site, página e domínio — sempre em `transaction.on_commit`,
-para não repovoar o cache com dados pré-commit.
-
-**Tema e home padrão.** Nenhum cliente começa com um site em branco. Todo
-restaurante de conta com o módulo E-commerce é provisionado por sinal
-(`signals.provision_site_for_new_restaurant`) com o tema padrão de `themes.py`
-(6 presets; **`market`** — verde/amarelo de catálogo — é o default, e cada
-preset traz o conjunto COMPLETO de tokens) e uma home montada por `starter.py`
-— faixa de aviso, cabeçalho com busca, capa promocional, categorias, ofertas,
-vitrine com selo/nota/preço antigo, horários e rodapé — já **publicada**, para
-o endereço público funcionar antes de alguém abrir o editor.
-
-**Biblioteca de seções.** As peças da home padrão não são um layout fechado:
-cada uma é uma função em `starter.py`, exportada em `SECTION_LIBRARY` e servida
-em `GET /api/v1/storefront/schema/` (campo `sections`). O editor as oferece no
-painel de blocos como "Seções prontas" — as MESMAS peças, não uma segunda cópia
-que divergiria na primeira correção. `theme` e `seo` são JSONField com **merge**
-no PATCH parcial (`_merge_with_instance`): um formulário que edita só a cor
-primária não apaga `mode`/`buttonStyle` que ele nem exibia. A home usa `var(--sf-*)` em
-vez de cor literal: trocar `theme_preset` repinta o site inteiro sem editar
-bloco nenhum. Quem ficou para trás (módulo habilitado depois do cadastro) sai
-por `POST /api/v1/storefront/sites/provision/` ou `manage.py
-provision_storefronts`; `GET /api/v1/storefront/themes/` lista os presets.
-
-**Permissões.** Códigos `storefront.view/edit/publish/assets/domains`, checados
-por `HasStorefrontPermission` (o administrador da conta tem bypass). Existe um
-Perfil de Acesso fixo **E-commerce** (`role_catalog.CODE_ECOMMERCE`) com
-view/edit/publish/assets + `menu.view`: é ele e o Administrador que editam o
-site — gerente, caixa e garçom não têm acesso ao builder. Domínio fica só com o
-administrador, porque um DNS errado tira o site do ar. O rank do perfil vem de
-`SYSTEM_ROLE_RANKS` (não da ordem da lista), então o E-commerce não herda nada
-da hierarquia do salão.
-
-**Comandos.** `manage.py sync_permissions` (catálogo de permissões) e
-`manage.py seed_storefront_templates` (modelos de página da plataforma) — ambos
-idempotentes.
 
 ## 10. Configuração / variáveis de ambiente
 
@@ -303,8 +221,7 @@ Documentadas na íntegra em `.env.example` (produção — é o que `docker-comp
 - **Banco**: `USE_SQLITE_DATABASE`, `POSTGRES_DB/USER/PASSWORD/HOST/PORT`, `POSTGRES_CONN_MAX_AGE`.
 - **Redis/Celery**: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_CONCURRENCY`.
 - **Gunicorn** (opcional): `GUNICORN_WORKERS/TIMEOUT/MAX_REQUESTS/LOG_LEVEL`.
-- **Throttling DRF** (opcional, tem defaults sensatos): `THROTTLE_RATE_{ANON,USER,LOGIN,TOKEN_REFRESH,PASSWORD_RESET,DEVICE_POLL,CASH_APPROVAL,PUBLIC_STOREFRONT,STOREFRONT_ASSETS}`.
-- **Storefront** (opcional): `STOREFRONT_PUBLIC_URL`, `STOREFRONT_EDITOR_URL`, `STOREFRONT_BASE_DOMAIN`, `STOREFRONT_RESERVED_HOSTNAMES`, `STOREFRONT_CACHE_TIMEOUT`, `STOREFRONT_DOMAIN_CACHE_TIMEOUT`, `STOREFRONT_MAX_{PROJECT_BYTES,NODES,DEPTH}`, `STOREFRONT_ASSET_MAX_BYTES`.
+- **Throttling DRF** (opcional, tem defaults sensatos): `THROTTLE_RATE_{ANON,USER,LOGIN,TOKEN_REFRESH,PASSWORD_RESET,DEVICE_POLL,CASH_APPROVAL}`.
 - **Imagens de cadastro** (opcional): `IMAGE_UPLOAD_MAX_BYTES` limita logos e fotos enviados nos formulários (8 MB por padrão).
 - **Storage de objetos** (opcional): `AWS_STORAGE_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_ENDPOINT_URL` (R2), `AWS_S3_REGION_NAME`, `AWS_S3_CUSTOM_DOMAIN`. Sem bucket, os uploads seguem em `MEDIA_ROOT`; com bucket, **todo** upload passa a ir para R2/S3.
 - **Sentry** (opcional): `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_SEND_PII`. Sem `SENTRY_DSN` em produção, o boot grava um `logger.warning` avisando que não há error tracking ativo (não falha o boot).

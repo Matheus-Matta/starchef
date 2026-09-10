@@ -211,23 +211,9 @@ Subir tudo: `docker compose pull && docker compose up -d` (baixa as imagens publ
 
 ---
 
-## Cardápio Digital (storefront)
+## Permissão por código
 
-O painel faz o **CRUD completo** dos modelos do storefront pela API, e o
-conteúdo em blocos é montado no editor visual (app Nuxt em `storefront/`),
-aberto pela ação "Abrir editor visual" na linha da página.
-
-Telas (todas declarativas em `config/resources.js`, sem código por tela):
-
-| Recurso | Endpoint | Permissão exigida |
-| --- | --- | --- |
-| Site | `/storefront/sites/` | `storefront.edit` |
-| Páginas | `/storefront/pages/` | `storefront.edit` (publicar: `storefront.publish`) |
-| Modelos | `/storefront/templates/` | `storefront.view` (somente leitura) |
-| Imagens | `/storefront/assets/` | `storefront.assets` |
-| Domínios | `/storefront/domains/` | `storefront.domains` |
-
-**Permissão por código.** Além do gate de módulo que já existia, o schema de
+Além do gate de módulo que já existia, o schema de
 recurso aceita `permission` (e colunas/campos/ações aceitam o mesmo). O
 `auth.hasPermission(code)` lê `user.permissions`, que o `/auth/me/` já devolve
 resolvido pelo backend. O router bloqueia acesso por URL direta e a Sidebar

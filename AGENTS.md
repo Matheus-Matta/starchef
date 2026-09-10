@@ -23,8 +23,7 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/FLUTTER_PDV_TECNICO.md`: módulos e implementação interna do PDV;
 - `docs/PDV_OFFLINE_SCALE_ARCHITECTURE.md`: offline, topologia e balanças;
 - `docs/BACKEND.md`: API e serviços do backend;
-- `docs/FRONTEND.md`: retaguarda web;
-- `storefront/README.md`: cardapio digital publico e editor de blocos (Nuxt + GrapesJS).
+- `docs/FRONTEND.md`: retaguarda web.
 
 ## Regras do release do PDV
 

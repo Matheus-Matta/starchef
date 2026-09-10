@@ -91,36 +91,6 @@ export const MENU_CHANNEL_LABELS = {
   digital: "Digital",
 };
 
-// ── Cardapio digital (storefront) ─────────────────────────────────────
-// Mesmas chaves/rotulos do catalogo em backend/apps/storefront/themes.py —
-// se um preset novo entrar la, repita a entrada aqui.
-export const STOREFRONT_PAGE_STATUS_LABELS = {
-  draft: "Rascunho",
-  published: "Publicada",
-  archived: "Arquivada",
-};
-
-export const STOREFRONT_THEME_OPTIONS = [
-  { label: "Personalizado (cores abaixo)", value: "" },
-  { label: "Mercado (padrao)", value: "market" },
-  { label: "Classico", value: "classic" },
-  { label: "Noturno", value: "dark" },
-  { label: "Aconchegante", value: "warm" },
-  { label: "Natural", value: "fresh" },
-  { label: "Minimalista", value: "mono" },
-];
-
-export const STOREFRONT_THEME_MODE_OPTIONS = [
-  { label: "Claro", value: "light" },
-  { label: "Escuro", value: "dark" },
-];
-
-export const STOREFRONT_BUTTON_STYLE_OPTIONS = [
-  { label: "Arredondado", value: "rounded" },
-  { label: "Pilula", value: "pill" },
-  { label: "Quadrado", value: "square" },
-];
-
 // Menus (estilo Shopify): proposito do menu, origem dos itens e tipo do item.
 export const MENU_TYPE_LABELS = {
   catalog: "Catalogo",
@@ -165,18 +135,6 @@ export const MENU_ITEM_TYPE_OPTIONS = [
   { label: "Imagem / banner", value: "image" },
   { label: "Link personalizado", value: "custom" },
 ];
-
-export const STOREFRONT_DOMAIN_TYPE_OPTIONS = [
-  { label: "Subdominio da plataforma", value: "subdomain" },
-  { label: "Dominio proprio", value: "custom" },
-];
-
-export const STOREFRONT_SSL_STATUS_LABELS = {
-  pending: "Pendente",
-  issuing: "Emitindo",
-  active: "Ativo",
-  error: "Erro",
-};
 
 export const CASH_STATUS_LABELS = { open: "Aberto", closed: "Fechado" };
 
