@@ -38,18 +38,28 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   `test` → `release-metadata` → builds Windows/Linux → `publish-release`.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
   `pubspec.yaml`.
-- Apagar e recriar uma tag existente (já foi preciso na v1.7.2 e na v1.8.1,
-  quando o pubspec não batia com a tag) é reconhecido pelos workflows, mas gera
-  DUAS execuções para o mesmo nome de tag — a que falhou e a corrigida.
-  `backend.yml`/`frontend.yml`/`flutter.yml` decidem se reconstroem a imagem
-  comparando o conteúdo com a tag anterior, achada pelo NOME (a mais recente
-  que não seja esta), nunca por commit ancestral do SHA anterior — a segunda
-  forma já produziu um "nada mudou" falso logo após uma tag recriada (a v1.8.1
-  ficou com `latest` apontando para o conteúdo da v1.8.0 até a v1.8.2
-  corrigir). Preferir sempre uma tag NOVA a apagar/recriar uma existente,
-  mesmo sabendo que os workflows já são seguros hoje: uma tag nova nunca
-  depende de nenhuma corrida entre a exclusão do ref antigo e a criação do
-  novo.
+- `backend.yml`/`frontend.yml` decidem se reconstroem a imagem comparando o
+  conteúdo com a tag anterior (achada pelo NOME — a mais recente que não seja
+  esta —, nunca por commit ancestral do SHA anterior, que fica confuso quando
+  uma tag é apagada e recriada, como já foi preciso na v1.7.2 e na v1.8.1).
+  Esse passo de "o que mudou" precisa rodar com `working-directory:
+  ${{ github.workspace }}` (a raiz do repo) — ele fica DENTRO de um job cujo
+  default é `working-directory: backend`/`frontend`, e `git diff -- backend
+  .github/workflows/backend.yml` executado de dentro de `backend/` vira
+  `backend/backend` e `backend/.github/workflows/backend.yml`: pathspecs que
+  não existem, diff sempre vazio, "nada mudou" sempre verdadeiro. Esse bug
+  esteve presente desde que o passo foi criado (`efddcb5`, ago/2026): toda
+  release com uma tag anterior — ou seja, a partir da segunda — só re-etiquetou
+  a imagem antiga, nunca reconstruiu de verdade, até a v1.8.3 corrigir (a
+  v1.8.2 tentou consertar só a comparação por nome e não pegou este bug — foi
+  preciso conferir o resultado real do Actions, não só simular o script
+  localmente sem o `working-directory` do job). Sempre que mexer nesse passo,
+  reproduza o `cd` do job antes de validar o comando localmente, e confirme
+  depois consultando as runs publicadas (a API do Actions é pública neste
+  repositório), não só a lógica isolada. Preferir uma tag NOVA a apagar/recriar
+  uma existente continua sendo mais seguro, mesmo com o achado por nome: uma
+  tag nova nunca depende de nenhuma corrida entre a exclusão do ref antigo e a
+  criação do novo.
 
 ## Contrato de atualização atual
 

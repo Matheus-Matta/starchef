@@ -84,6 +84,16 @@ jobs:
       - name: Decidir se a imagem precisa ser reconstruida
         id: changed
         shell: bash
+        # O workflow inteiro roda com `working-directory: backend` (o default la
+        # em cima) — MENOS aqui. `git diff -- backend .github/workflows/backend.yml`
+        # com o cwd dentro de `backend/` vira `backend/backend` e
+        # `backend/.github/workflows/backend.yml`, dois caminhos que nao existem: o
+        # pathspec nao casa com nada, o diff fica sempre vazio, e a imagem NUNCA
+        # e reconstruida (so re-etiquetada) — bug real desde que este passo foi
+        # criado, silencioso porque "nada mudou" e exatamente a saida de quando
+        # tudo ficou parado de proposito. `github.workspace` e a raiz do repo,
+        # onde os pathspecs batem com os arquivos de verdade.
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
           previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
