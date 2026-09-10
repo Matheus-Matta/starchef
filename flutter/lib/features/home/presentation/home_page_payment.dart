@@ -69,6 +69,7 @@ mixin _PaymentSection on _HomePageShared {
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured,
+    bool automatic,
   });
   bool _isOfflinePending(Map<String, dynamic>? value);
   Future<bool> _printReceiptLocally(
@@ -112,17 +113,26 @@ mixin _PaymentSection on _HomePageShared {
     // que o servidor tem agora — não uma cópia anterior à retirada da taxa de
     // serviço, que faria o caixa cobrar o valor cheio sem perceber. Uma falha
     // aqui não pode impedir o recebimento: seguimos com o que já está em mão.
-    try {
-      await _refreshOrder();
-    } catch (_) {}
-    paymentMethods = await _list(
-      '/payments/methods/',
-      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
-    );
-    // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
-    // pagamentos — tratar isso como falha impediria de receber offline, que é
-    // exatamente quando o operador mais precisa concluir a venda.
-    registeredPayments = await _loadRegisteredPayments();
+    //
+    // As três leituras são independentes entre si — o pedido, o catálogo de
+    // formas de pagamento e os recebimentos já lançados. Encadeá-las somava
+    // três idas ao armazenamento (e, no primeiro acesso de cada uma, três
+    // idas à rede) antes de a tela aparecer. O identificador do pedido não
+    // muda no meio, então lê-las juntas é seguro.
+    final resultados = await Future.wait([
+      _refreshOrder().then<Object?>((_) => null).catchError((Object _) => null),
+      _list('/payments/methods/', query: {
+        'restaurant': restaurantId,
+        'is_active': true,
+        'page_size': 100,
+      }),
+      // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
+      // pagamentos — tratar isso como falha impediria de receber offline, que
+      // é exatamente quando o operador mais precisa concluir a venda.
+      _loadRegisteredPayments(),
+    ]);
+    paymentMethods = resultados[1] as List<Map<String, dynamic>>;
+    registeredPayments = resultados[2] as List<Map<String, dynamic>>;
     selectedPaymentMethod = paymentMethods.isEmpty
         ? null
         : '${paymentMethods.first['id']}';
@@ -462,15 +472,17 @@ mixin _PaymentSection on _HomePageShared {
     // O recibo é um efeito colateral: uma falha de impressão não pode reabrir
     // uma venda concluída.
     await _printSaleReceipt(offline: awaitingSync);
-    // Emite a NFC-e assim que o pagamento fecha, em vez de depender do
-    // caixa lembrar de voltar no histórico do pedido para emitir manual.
-    // Sem rede isto grava o retrato fiscal na fila; o DANFE sai quando a
-    // nota for autorizada — documento fiscal não se imprime antes de existir.
-    if (mounted) {
-      await _emitFiscalInvoice(activeOrder!, silentIfUnconfigured: true);
-    }
-
     if (!mounted) return;
+    // A VENDA ESTÁ CONCLUÍDA AQUI. A NFC-e é consequência dela, não condição.
+    //
+    // Esperar a emissão para liberar a tela transformava cada problema fiscal
+    // — perfil sem NCM, provedor fora do ar, limite de requisições do servidor
+    // — em uma venda que não fecha, com o cliente parado no balcão. O
+    // documento é montado e enfileirado no gesto (o retrato fiscal precisa ser
+    // o desta venda, §16), mas quem espera pela autorização e pelo cupom é a
+    // fila, não o operador. Sem conexão, é a contingência: a nota sai quando
+    // der, e o pedido não fica preso a ela.
+    final orderForInvoice = activeOrder!;
     setState(() {
       activeOrder = null;
       selectedTable = null;
@@ -482,6 +494,13 @@ mixin _PaymentSection on _HomePageShared {
       flowStep = 'type';
     });
     unawaited(_load());
+    unawaited(
+      _emitFiscalInvoice(
+        orderForInvoice,
+        silentIfUnconfigured: true,
+        automatic: true,
+      ),
+    );
   }
 
   /// Imprime o recibo da venda no gesto de concluir o pedido.

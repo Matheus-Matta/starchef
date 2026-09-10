@@ -226,7 +226,7 @@ class SyncService {
     // volta do servidor.
     await push(force: true);
     await pushFiscal();
-    await pullAll();
+    await pullAll(force: true);
   }
 
   // ------------------------------------------------------------------ saída
@@ -454,10 +454,43 @@ class SyncService {
 
   // ---------------------------------------------------------------- entrada
 
+  /// Intervalo mínimo entre duas cargas completas do catálogo.
+  ///
+  /// Uma carga completa são ~20 leituras paginadas — o catálogo inteiro da
+  /// loja. Ela existe para o terminal nascer com tudo em mãos e para cobrir o
+  /// que o WebSocket possa ter perdido; nada nela precisa acontecer duas vezes
+  /// no mesmo minuto.
+  static const minimumFullPullInterval = Duration(minutes: 2);
+
+  DateTime? _lastFullPullAt;
+  String? _lastFullPullRestaurant;
+
   /// Baixa todos os tipos do catálogo, do mais essencial ao menos (§24).
-  Future<void> pullAll({String? restaurantId}) async {
+  ///
+  /// [force] ignora o intervalo mínimo — é o "sincronizar agora", em que
+  /// alguém está olhando e pediu.
+  ///
+  /// A recarga da tela (`_load`) termina disparando esta carga, e ela é
+  /// disparada de novo a cada sinal do WebSocket, a cada venda concluída, a
+  /// cada refresh manual. Sem freio, uma loja movimentada mandava o catálogo
+  /// inteiro à API várias vezes por minuto, estourava o limite de requisições
+  /// da conta e derrubava junto o que importava de verdade: o `/close/` e o
+  /// `/pay/` da venda seguinte, recusados com "Pedido foi limitado". Pior, o
+  /// 429 derrubava o WebSocket, cuja reconexão dispara os sinais que pedem
+  /// outra recarga — a espiral se alimentava sozinha.
+  Future<void> pullAll({String? restaurantId, bool force = false}) async {
     if (_disposed || _pulling || gateway.scope == null) return;
+    final last = _lastFullPullAt;
+    final sameRestaurant = _lastFullPullRestaurant == restaurantId;
+    if (!force &&
+        last != null &&
+        sameRestaurant &&
+        DateTime.now().difference(last) < minimumFullPullInterval) {
+      return;
+    }
     _pulling = true;
+    _lastFullPullAt = DateTime.now();
+    _lastFullPullRestaurant = restaurantId;
     try {
       for (final descriptor in gateway.pullOrder) {
         try {
@@ -471,6 +504,25 @@ class SyncService {
             data: {'entity_type': descriptor.type, 'causa': '$error'},
           );
         }
+      }
+      // A versão que acabou de chegar do servidor pode trazer de volta uma
+      // comanda ocupada por uma venda que este terminal já concluiu — o `pay`
+      // dela ainda está na fila, então lá ela segue aberta. Reaplicar a
+      // liberação aqui evita que a sincronização re-trave a comanda que o
+      // operador precisa entregar ao próximo cliente.
+      try {
+        final released = await gateway.releaseSettledCommands();
+        if (released > 0) {
+          AppLogger.instance.info(
+            'comandas_liberadas_localmente',
+            data: {'quantidade': released},
+          );
+        }
+      } catch (error) {
+        AppLogger.instance.warning(
+          'comandas_liberacao_falhou',
+          data: {'causa': '$error'},
+        );
       }
     } finally {
       _pulling = false;

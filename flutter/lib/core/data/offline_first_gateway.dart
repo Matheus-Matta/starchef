@@ -585,6 +585,7 @@ class OfflineFirstGateway {
       final method = context?['payment_method'] as Map<String, dynamic>?;
       final result = await orders.pay(orderId, body: body, method: method);
       await _mirrorCashSale(body, method, result);
+      await _mirrorCommandRelease(result);
       return result;
     }
     // Remover um recebimento que ainda não subiu é operação deste terminal: o
@@ -661,6 +662,85 @@ class OfflineFirstGateway {
       amount: ValueFormatters.number(payment['change_amount']),
       reason: 'Troco do pedido (${method?['name'] ?? 'outra forma'})',
     );
+  }
+
+  /// Libera a comanda deste terminal assim que a venda fica quitada.
+  ///
+  /// Espelha `free_command_for_order` do servidor (apps/orders/services.py),
+  /// que zera a comanda no pagamento total e no cancelamento. Aqui o efeito é
+  /// só local — quem sobe é o `pay` do pedido, e o servidor repete a mesma
+  /// liberação quando ele chegar lá.
+  ///
+  /// Sem isto, a comanda ficava presa ao pedido pago até a fila entregar e a
+  /// sincronização trazer a versão do servidor de volta. Sem rede, isso é
+  /// nunca: o pedido aparecia como pago e a comanda seguia ocupada, sem poder
+  /// receber o próximo cliente e sem nada na tela explicando por quê. Numa
+  /// loja que trabalha offline, a comanda é o recurso mais escasso que existe.
+  Future<void> _mirrorCommandRelease(Map<String, dynamic> order) async {
+    final commandId = '${order['command'] ?? ''}';
+    if (commandId.isEmpty) return;
+    if (!_isSettledOrder(order)) return;
+    await _releaseCommandLocally(commandId);
+  }
+
+  /// A venda acabou — paga, cancelada ou estornada. É o mesmo recorte que o
+  /// servidor usa para decidir que a comanda volta para o salão.
+  static bool _isSettledOrder(Map<String, dynamic> order) => const {
+    'paid',
+    'cancelled',
+    'refunded',
+  }.contains('${order['status'] ?? ''}');
+
+  /// Devolve ao salão as comandas presas a uma venda que já terminou.
+  ///
+  /// A liberação normal acontece no gesto do pagamento
+  /// ([_mirrorCommandRelease]). Este varredor existe para o que ficou para
+  /// trás: comandas que continuaram ocupadas porque a versão que as libera
+  /// mora no servidor e o `pay` nunca chegou lá — sem rede, "nunca" é o prazo.
+  /// O operador via o pedido pago e a comanda travada, sem nada na tela que
+  /// explicasse ou resolvesse.
+  ///
+  /// Só libera o que dá para provar aqui: existe pedido local para a comanda e
+  /// esse pedido está pago, cancelado ou estornado. Comanda apontando para um
+  /// pedido que este terminal não conhece fica como está — quem sabe é o
+  /// servidor. Se o servidor discordar, a sincronização seguinte reescreve.
+  ///
+  /// Devolve quantas foram liberadas.
+  Future<int> releaseSettledCommands() async {
+    if (_scope == null) return 0;
+    final repo = repository(EntityCatalog.command);
+    final page = await repo.list(query: {'page_size': 500});
+    var released = 0;
+    for (final command in page.results) {
+      final orderId = '${command['current_order_id'] ?? ''}';
+      if (orderId.isEmpty) continue;
+      final order = await orders.read(orderId);
+      if (order == null || !_isSettledOrder(order.payload)) continue;
+      await _releaseCommandLocally('${command['id'] ?? ''}');
+      released += 1;
+    }
+    return released;
+  }
+
+  /// A liberação em si, nos campos que o servidor devolve.
+  ///
+  /// `current_order_id` é um `UUIDField` simples no modelo (não uma FK), então
+  /// é esse o nome que chega e é esse que a tela lê.
+  Future<void> _releaseCommandLocally(String commandId) async {
+    final repo = repository(EntityCatalog.command);
+    final stored = await repo.read(commandId);
+    if (stored == null) return;
+    final alreadyFree =
+        '${stored.payload['status'] ?? ''}' == 'free' &&
+        '${stored.payload['current_order_id'] ?? ''}'.isEmpty;
+    if (alreadyFree) return;
+    await repo.saveLocalEffect({
+      ...stored.payload,
+      'status': 'free',
+      'current_order_id': null,
+      'customer_name': '',
+      'current_table': null,
+    }, id: commandId);
   }
 
   /// Apaga um pedido que só existe aqui: a fila dele e o registro local.

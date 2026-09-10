@@ -46,9 +46,17 @@ mixin _FiscalSection on _HomePageShared {
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured = false,
+    bool automatic = false,
   }) async {
-    if (emittingInvoice) return;
-    setState(() => emittingInvoice = true);
+    // A trava protege o BOTÃO de emissão manual contra duplo clique. A emissão
+    // automática da venda não pode passar por ela: a tela é liberada assim que
+    // a venda fecha, então a nota desta venda ainda pode estar sendo
+    // acompanhada quando o operador concluir a próxima — e engolir a segunda
+    // deixaria uma venda paga sem documento fiscal nenhum.
+    if (!automatic) {
+      if (emittingInvoice) return;
+      setState(() => emittingInvoice = true);
+    }
     try {
       // NÃO passa por `_work`: aquela trava serve para o operador não disparar
       // duas operações de venda ao mesmo tempo, e DESISTE quando já há uma em
@@ -122,7 +130,18 @@ mixin _FiscalSection on _HomePageShared {
         // reclamou de "venda sem recebimento" de uma venda paga. O backend já
         // trata cadastro incompleto do jeito certo: monta a nota, grava a falha
         // nela e deixa o operador corrigir e reenviar.
-        final settled = await _flushFiscalWithRetries('${order['id']}');
+        // NA VENDA, NÃO INSISTE. O documento já está na fila fiscal — que é o
+        // que garante que ele não se perca (§16) — e sai pelo ciclo de 30 s
+        // com a escada de backoff dele. Insistir aqui eram cinco `POST
+        // /invoices/emit/` em 6,5 segundos por venda (o `claimForOrder`
+        // ignora o backoff de propósito, para quem está esperando o papel),
+        // repetidos por cada terminal da loja. Numa nota que não tem como
+        // passar — perfil sem NCM, provedor fora — esse esforço só consumia o
+        // limite de requisições da conta, e quem pagava a conta era o
+        // `/close/` da venda seguinte, recusado com "Pedido foi limitado".
+        final settled = automatic
+            ? null
+            : await _flushFiscalWithRetries('${order['id']}');
         if (!mounted) return;
         AppLogger.instance.info(
           'fiscal_flush_resultado',
@@ -209,7 +228,7 @@ mixin _FiscalSection on _HomePageShared {
         automatic: true,
       );
     } finally {
-      if (mounted) setState(() => emittingInvoice = false);
+      if (!automatic && mounted) setState(() => emittingInvoice = false);
     }
   }
 
@@ -346,6 +365,12 @@ mixin _FiscalSection on _HomePageShared {
       if (!mounted) return null;
       final settled = await api.flushFiscalForOrder(orderId);
       if (settled != null) return settled;
+      // Sem conexão não há entrega para alcançar: `flushFiscalForOrder`
+      // devolve `null` na hora, e insistir só faz o operador (e o cliente no
+      // balcão) esperarem os 6,5 segundos inteiros da escada por um resultado
+      // que já se sabe. A nota fica na fila fiscal e sai pelo ciclo de 30s
+      // quando a rede voltar — que é o combinado de §16.
+      if (!api.syncStatus.hasConnection) return null;
     }
     return null;
   }

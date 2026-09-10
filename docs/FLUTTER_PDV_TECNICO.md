@@ -209,6 +209,59 @@ esperando o próximo tique do backoff para descobrir que o servidor voltou. O
 prova (`force: true`): quem pediu explicitamente já quer uma tentativa real,
 não um palpite sobre o WebSocket.
 
+"Caiu" e "não existe" são estados diferentes, e `ApiClient.serverReachable`
+separa os dois. O socket é do agente de impressão, que só roda no Caixa
+Principal e no terminal sozinho — e mesmo neles fica parado até a topologia
+resolver o restaurante. Com socket no ar e caído, a fila espera (ele reconecta
+sozinho e avisa). Sem socket nenhum, ela volta a perguntar por HTTP: tratar a
+ausência como "servidor fora" prendia a venda esperando por um aviso que
+ninguém produziria.
+
+**A venda não espera pela NFC-e.** O documento é montado e enfileirado no
+gesto do pagamento — o retrato fiscal precisa ser o desta venda (§16) —, mas a
+tela é liberada antes da emissão. Esperar por ela transformava cada problema
+fiscal (perfil sem NCM, provedor fora, limite de requisições) numa venda que
+não fecha, com o cliente parado no balcão. Na emissão automática,
+`_flushFiscalWithRetries` também não roda: eram cinco `POST /invoices/emit/`
+em 6,5 s por venda — `claimForOrder` ignora o backoff de propósito, para quem
+está esperando o papel — e numa nota que não tem como passar isso só consumia
+o limite da conta. A nota sai pelo ciclo de 30 s; o DANFE, quando ela for
+autorizada. A trava `emittingInvoice` passou a valer só para o botão manual:
+com a emissão em segundo plano, ela engoliria o documento da venda seguinte.
+
+**Carga completa tem intervalo mínimo.** `pullAll` são ~20 leituras paginadas.
+A recarga da tela termina disparando uma, e ela é disparada de novo a cada
+sinal do WebSocket, a cada venda e a cada refresh — o catálogo inteiro subindo
+várias vezes por minuto. `SyncService.minimumFullPullInterval` (2 min) freia
+isso; `force: true` é o "sincronizar agora", e trocar de restaurante recarrega
+na hora. Sem o freio, o 429 derrubava o WebSocket, cuja reconexão pede outra
+recarga: a espiral se alimentava sozinha.
+
+**Troco vale em qualquer forma de pagamento.** A restrição a dinheiro parava o
+caixa em situações reais (a maquininha cobrou um valor redondo, o cliente
+pediu parte em espécie de volta) e a única saída era refazer a venda. O troco
+de uma forma que não alimenta a gaveta entra nela como retirada — senão a
+conferência do fechamento acusaria uma falta que ninguém explicaria.
+
+**A comanda volta ao salão sem o servidor.** Quem zera a comanda no pagamento
+total é `free_command_for_order`, no servidor — e ele só roda quando o `pay`
+chega lá. Sem rede isso é "nunca": a venda aparecia paga e a comanda seguia
+ocupada, sem receber o próximo cliente e sem nada na tela explicando por quê.
+`OfflineFirstGateway._mirrorCommandRelease` espelha essa regra localmente no
+mesmo gesto do pagamento (via `saveLocalEffect`, sem gerar operação de saída —
+quem sobe é o `pay`), e `releaseSettledCommands`, rodado ao fim de cada
+`pullAll`, devolve as que já ficaram presas: comanda apontando para um pedido
+local pago, cancelado ou estornado. Comanda apontando para pedido que este
+terminal não conhece fica como está; se o servidor discordar, a sincronização
+seguinte reescreve.
+
+**Escada fiscal não roda offline.** `_flushFiscalWithRetries` insiste
+0/0,5/1/2/3 s para que o DANFE saia no mesmo gesto do recibo quando a entrega
+está só um instante atrás. Sem conexão, `flushFiscalForOrder` devolve `null`
+imediatamente — a escada inteira virava 6,5 segundos de espera morta em CADA
+venda offline, com o cliente parado no balcão. Agora ela para na primeira volta
+quando não há conexão; a nota fica na fila fiscal e sai pelo ciclo de 30 s.
+
 **Espera impossível na fila.** Uma operação que cita um identificador
 temporário (`offline-…`) só é entregue depois que a criação daquele id sobe e
 vira id real — é o que mantém a ordem. Mas a espera precisa ter fim: se a

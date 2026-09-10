@@ -114,8 +114,31 @@ class ApiClient {
   /// [notifyRealtimeConnected] e [notifyRealtimeDisconnected].
   bool _realtimeConnected = false;
 
+  /// Existe um WebSocket cuidando desta conexão?
+  ///
+  /// "Caiu" e "não existe" são coisas diferentes, e confundi-las trava a fila.
+  /// Quem mantém o socket é o agente de impressão, que só roda no Caixa
+  /// Principal e no terminal sozinho — e mesmo neles fica parado até a
+  /// topologia resolver o restaurante. Num Caixa Secundário ele nunca sobe.
+  /// Sem esta distinção, "o WS não está conectado" seria lido como "o
+  /// servidor está fora" justamente onde não há WS nenhum para conectar, e a
+  /// fila de vendas ficaria esperando para sempre por uma prova que ninguém
+  /// iria produzir.
+  bool _realtimeActive = false;
+
   /// Ver [_realtimeConnected].
   bool get isRealtimeConnected => _realtimeConnected;
+
+  /// O servidor responde agora?
+  ///
+  /// Com WebSocket no ar, ele é a resposta — de graça. Sem WebSocket nenhum,
+  /// não há como saber sem perguntar, e aí uma requisição de saúde é melhor do
+  /// que uma fila parada.
+  Future<bool> serverReachable() async {
+    if (_realtimeConnected) return true;
+    if (_realtimeActive) return false;
+    return ping();
+  }
 
   /// Armazenamento operacional local. Quando presente, ele — e não a rede —
   /// responde as rotas de entidade (§1). Continua opcional para que a janela
@@ -330,6 +353,7 @@ class ApiClient {
 
   void notifyRealtimeConnected() {
     _realtimeConnected = true;
+    _realtimeActive = true;
     for (final topic in DataSignals.realtimeSnapshotTopics) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
@@ -351,6 +375,15 @@ class ApiClient {
   /// adivinhando que o servidor responde.
   void notifyRealtimeDisconnected() {
     _realtimeConnected = false;
+    _realtimeActive = true;
+  }
+
+  /// Este terminal não tem WebSocket cuidando da conexão (o agente parou, ou
+  /// nunca subiu). A fila volta a perguntar por conta própria — ver
+  /// [serverReachable].
+  void notifyRealtimeUnavailable() {
+    _realtimeConnected = false;
+    _realtimeActive = false;
   }
 
   /// Requisição HTTP direta contra `/health/`.
@@ -1220,15 +1253,19 @@ class ApiClient {
       // ciclo com a rede caída consumiria o `attempt_count` de cada operação e
       // levaria o backoff ao teto sem nenhuma chance real de entrega.
       //
-      // A confirmação é o WebSocket ([isRealtimeConnected]), não mais uma
-      // requisição própria (`GET /health/`): ele já reconecta sozinho com o
-      // próprio backoff, e perguntar de novo por HTTP a cada ciclo era pedir
+      // A confirmação é o WebSocket ([serverReachable]), não mais uma
+      // requisição própria (`GET /health/`) a cada volta: ele já reconecta
+      // sozinho com o próprio backoff, e perguntar de novo por HTTP era pedir
       // duas vezes a mesma coisa. Assim que ele conecta,
       // [notifyRealtimeConnected] já dispara este flush na hora — este
       // `_scheduleRetry` abaixo é só a rede de segurança caso esse aviso se
-      // perca.
+      // perca. Onde não há WebSocket nenhum, a pergunta HTTP continua sendo
+      // feita: melhor uma requisição do que uma fila parada para sempre.
       final hasWork = summary.pending > 0 || summary.retrying > 0;
-      if (!force && hasWork && !_syncStatus.hasConnection && !isRealtimeConnected) {
+      if (!force &&
+          hasWork &&
+          !_syncStatus.hasConnection &&
+          !await serverReachable()) {
         // SILENCIOSO. Esta verificação roda a cada ciclo enquanto a rede está
         // fora: anunciar "o servidor não respondeu" a cada tentativa enche a
         // tela de um aviso que não muda nada e que o operador já lê no
@@ -1985,10 +2022,11 @@ class _ApiSyncTransport implements SyncTransport {
 
   final ApiClient _api;
 
-  // O WebSocket já prova isso sozinho (ver [ApiClient.isRealtimeConnected]);
-  // um `GET /health/` aqui seria a mesma pergunta feita duas vezes.
+  // Com WebSocket no ar ele já prova isso sozinho (ver
+  // [ApiClient.serverReachable]); um `GET /health/` a cada volta do backoff
+  // seria a mesma pergunta feita duas vezes.
   @override
-  Future<bool> ping() => Future.value(_api.isRealtimeConnected);
+  Future<bool> ping() => _api.serverReachable();
 
   @override
   Future<Map<String, dynamic>> send(

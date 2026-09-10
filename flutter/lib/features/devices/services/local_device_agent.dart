@@ -232,7 +232,10 @@ class LocalDeviceAgent {
         'print_agent_stop',
         data: {'restaurante': _restaurantId},
       );
-      api.notifyRealtimeDisconnected();
+      // Não é "o socket caiu": é "não existe mais socket aqui". A fila
+      // precisa voltar a perguntar por conta própria, senão ficaria esperando
+      // para sempre por um aviso que ninguém vai mandar.
+      api.notifyRealtimeUnavailable();
     }
     _stopRealtime();
     _availabilityTimer?.cancel();

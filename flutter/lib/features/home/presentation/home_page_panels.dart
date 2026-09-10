@@ -47,6 +47,7 @@ mixin _PanelsSection on _HomePageShared {
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured,
+    bool automatic,
   });
   Future<void> _reprintDanfe(Map<String, dynamic> order);
 

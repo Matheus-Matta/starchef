@@ -627,6 +627,119 @@ void main() {
     expect(unlinked.payload['current_table'], isNull);
   });
 
+  group('a comanda volta ao salão sem depender do servidor', () {
+    // O caso real: sem rede, a venda foi paga e a comanda continuou ocupada.
+    // Quem zera a comanda é `free_command_for_order` no servidor, e ele só
+    // roda quando o `pay` chega lá — offline isso é "nunca". O pedido
+    // aparecia como pago e a comanda travada, sem receber o próximo cliente e
+    // sem nada na tela explicando o motivo.
+
+    Future<String> comandaOcupadaComPedido() async {
+      await stack.gateway.repository(EntityCatalog.command).applyRemote({
+        'id': 'comanda-9',
+        'number': 9,
+        'restaurant': 'rest-1',
+        'status': 'free',
+      });
+      final opened = await stack.gateway.write(
+        'POST',
+        '/orders/open-command/',
+        body: {'command': 'comanda-9'},
+        context: {
+          'command': {'id': 'comanda-9', 'number': 9},
+        },
+      );
+      final orderId = '${opened.payload['id']}';
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+      // O servidor conhece a comanda como ocupada por esta venda.
+      await stack.gateway.repository(EntityCatalog.command).applyRemote({
+        'id': 'comanda-9',
+        'number': 9,
+        'restaurant': 'rest-1',
+        'status': 'occupied',
+        'current_order_id': orderId,
+      }, overwriteLocalChanges: true);
+      return orderId;
+    }
+
+    Future<Map<String, dynamic>> lerComanda() async =>
+        stack.gateway.read('/commands/comanda-9/');
+
+    test('o pagamento total libera a comanda na hora', () async {
+      final orderId = await comandaOcupadaComPedido();
+      final pedido = await stack.gateway.read('/orders/$orderId/');
+
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/pay/',
+        body: {
+          'payment_method': 'metodo-1',
+          'amount': '${pedido['total']}',
+        },
+        context: {
+          'payment_method': {'id': 'metodo-1', 'method_type': 'cash'},
+        },
+      );
+
+      final comanda = await lerComanda();
+      expect(comanda['status'], 'free');
+      expect(comanda['current_order_id'], isNull);
+      expect(comanda['customer_name'], '');
+    });
+
+    test('pagamento parcial NÃO libera a comanda', () async {
+      final orderId = await comandaOcupadaComPedido();
+
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/pay/',
+        body: {'payment_method': 'metodo-1', 'amount': '1.00'},
+        context: {
+          'payment_method': {'id': 'metodo-1', 'method_type': 'cash'},
+        },
+      );
+
+      final comanda = await lerComanda();
+      expect(comanda['status'], 'occupied');
+      expect(comanda['current_order_id'], isNotNull);
+    });
+
+    test(
+      'a varredura devolve a comanda que ficou presa numa venda já paga',
+      () async {
+        // O estado em que as lojas ficaram: comanda ocupada apontando para um
+        // pedido que este terminal já considera pago.
+        final orderId = await comandaOcupadaComPedido();
+        final pedido = await stack.gateway.read('/orders/$orderId/');
+        await stack.gateway.orders.applyRemote({
+          ...pedido,
+          'status': 'paid',
+          'payment_status': 'paid',
+        }, overwriteLocalChanges: true);
+
+        expect((await lerComanda())['status'], 'occupied');
+
+        final liberadas = await stack.gateway.releaseSettledCommands();
+
+        expect(liberadas, 1);
+        final comanda = await lerComanda();
+        expect(comanda['status'], 'free');
+        expect(comanda['current_order_id'], isNull);
+      },
+    );
+
+    test('a varredura não mexe em comanda de venda em aberto', () async {
+      await comandaOcupadaComPedido();
+
+      expect(await stack.gateway.releaseSettledCommands(), 0);
+      expect((await lerComanda())['status'], 'occupied');
+    });
+  });
+
   test('sem sessão vinculada o gateway não atende nada', () async {
     stack.gateway.clearSession();
 

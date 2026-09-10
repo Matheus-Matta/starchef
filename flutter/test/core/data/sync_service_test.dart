@@ -413,6 +413,58 @@ void main() {
     expect(query['include_deleted'], 1);
   });
 
+  group('a carga completa tem freio', () {
+    // O caso real, visto nos logs do servidor: `/roles/` e `/restaurants/`
+    // recebendo 429 logo depois de uma venda. A recarga da tela termina
+    // disparando uma carga completa (~20 leituras paginadas), e ela é
+    // disparada de novo a cada sinal do WebSocket, a cada venda concluída, a
+    // cada refresh. Sem freio, o catálogo inteiro subia várias vezes por
+    // minuto, estourava o limite de requisições da conta e derrubava junto o
+    // `/close/` e o `/pay/` da venda seguinte. Pior: o 429 derrubava o
+    // WebSocket, cuja reconexão pede outra recarga — a espiral se alimentava
+    // sozinha.
+
+    test('duas cargas seguidas não repetem o catálogo inteiro', () async {
+      await sync.pullAll();
+      final primeira = transport.requests.length;
+      expect(primeira, greaterThan(1));
+      transport.requests.clear();
+
+      await sync.pullAll();
+
+      expect(
+        transport.requests,
+        isEmpty,
+        reason: 'a segunda carga imediata não deveria ir à rede',
+      );
+      expect(primeira, greaterThan(1));
+    });
+
+    test('o "sincronizar agora" ignora o freio', () async {
+      await sync.pullAll();
+      transport.requests.clear();
+
+      await sync.pullAll(force: true);
+
+      expect(
+        transport.requests,
+        isNotEmpty,
+        reason: 'quem pediu explicitamente está olhando e espera a carga',
+      );
+    });
+
+    test('trocar de restaurante recarrega na hora', () async {
+      // O freio é por restaurante: entrar em outra unidade precisa do
+      // catálogo dela, não do que já estava em mãos.
+      await sync.pullAll(restaurantId: 'rest-1');
+      transport.requests.clear();
+
+      await sync.pullAll(restaurantId: 'rest-2');
+
+      expect(transport.requests, isNotEmpty);
+    });
+  });
+
   test('carga interrompida no teto de páginas não avança a marca de tempo', () async {
     // Gravar a marca aqui faria a próxima carga pedir `updated_after` a partir
     // de agora e pular para sempre tudo o que ficou para trás.

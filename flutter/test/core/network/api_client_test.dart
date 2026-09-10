@@ -312,6 +312,11 @@ void main() {
         }),
       );
 
+      // O agente de impressao deste terminal mantem um WebSocket; ele esta no
+      // ar, mas neste instante caido. Enquanto ele existe, e ELE quem responde
+      // "o servidor voltou?" — a fila nao pergunta por conta propria.
+      client.notifyRealtimeDisconnected();
+
       final queued = await client.post(
         '/customers/',
         body: const {'name': 'Cliente offline'},
@@ -349,6 +354,64 @@ void main() {
 
       expect(await client.pendingOperations(), 0);
       expect(requestedPaths.where((path) => path.contains('health')), isEmpty);
+      await client.dispose();
+      await directory.delete(recursive: true);
+    },
+  );
+
+  test(
+    'sem WebSocket nenhum, a fila volta a perguntar em vez de parar para sempre',
+    () async {
+      // "Caiu" e "nao existe" sao coisas diferentes. O WebSocket e mantido
+      // pelo agente de impressao, que so roda no Caixa Principal e no terminal
+      // sozinho — e mesmo neles fica parado ate a topologia resolver o
+      // restaurante. Tratar a ausencia dele como "o servidor esta fora"
+      // deixaria a venda parada na fila esperando por um aviso que ninguem
+      // iria mandar: exatamente o pedido que o operador nao consegue
+      // finalizar.
+      final directory = await Directory.systemTemp.createTemp(
+        'starchef-sem-ws-',
+      );
+      var online = false;
+      final requestedPaths = <String>[];
+      final client = ApiClient(
+        baseUrl: 'http://starchef.test/api/v1',
+        offlineStore: OfflineStore(
+          file: File('${directory.path}/offline.json'),
+        ),
+        client: MockClient((request) async {
+          requestedPaths.add(request.url.path);
+          if (!online) throw const SocketException('offline');
+          return http.Response('{"id":"server-1"}', 201);
+        }),
+      );
+
+      // Nenhum agente anunciou WebSocket: `notifyRealtimeConnected` e
+      // `notifyRealtimeDisconnected` nunca foram chamados.
+      final queued = await client.post(
+        '/customers/',
+        body: const {'name': 'Cliente offline'},
+        accessToken: 'token',
+      );
+      expect(queued['_offline_pending'], isTrue);
+
+      online = true;
+      await Future.doWhile(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        return await client.pendingOperations() > 0;
+      }).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => fail(
+          'a fila ficou parada sem WebSocket para avisar que a rede voltou',
+        ),
+      );
+
+      expect(await client.pendingOperations(), 0);
+      expect(
+        requestedPaths.any((path) => path.contains('health')),
+        isTrue,
+        reason: 'sem WS, perguntar por HTTP e o unico jeito de saber',
+      );
       await client.dispose();
       await directory.delete(recursive: true);
     },
