@@ -494,3 +494,79 @@ def test_sessao_sem_terminal_registrado_devolve_instalacao_vazia(station, branch
 
     assert atual.status_code == 200, atual.data
     assert atual.data["opened_terminal_installation_id"] == ""
+
+
+def test_deleting_the_terminal_does_not_free_the_session(station, manager_user, admin_user):
+    """Excluir o `PdvTerminal` não é a válvula de escape da regra de dono.
+
+    Reproduz o relato: admin abre no terminal desktop, EXCLUI o terminal
+    (delete lógico, como a tela de Terminais faz) e tenta fechar pela web
+    esperando que a sessão tenha ficado "livre" de amarra de máquina.
+    `opened_terminal_id` continua apontando para a mesma linha (soft delete não
+    mexe em FK), e o fechamento pela web — outra instalação — continua sendo
+    outra máquina, mesmo sendo a MESMA pessoa e ela sendo admin da conta: a
+    regra de dono não tem exceção para admin/superusuário.
+    """
+    station.operators.add(admin_user)
+    opened = open_via_api(client_for(admin_user, BALCAO_01), station).json()
+    terminal = PdvTerminal.all_objects.get(installation_id=BALCAO_01)
+
+    delete_response = client_for(admin_user).delete(f"/api/v1/pdv-terminals/{terminal.id}/")
+    assert delete_response.status_code == 204, delete_response.content
+    terminal.refresh_from_db()
+    assert terminal.deleted_at is not None
+
+    register = CashRegister.all_objects.get(pk=opened["id"])
+    assert register.opened_terminal_id == terminal.id, (
+        "a exclusao (soft delete) nao deveria alterar o FK, mas alterou"
+    )
+
+    web_client = client_for(admin_user)  # sem X-Terminal-Id: como o navegador, que manda o dele proprio
+    closed = web_client.post(
+        f"/api/v1/cash-register/{opened['id']}/close/",
+        {"actual_amount": "100.00"},
+        format="json",
+    )
+    assert closed.status_code == 403, closed.content
+    assert closed.json()["code"] == "cash_session_other_terminal"
+
+    # A saida correta e a transferencia, que segue funcionando mesmo com o
+    # terminal de origem excluido — inclusive sem senha, porque admin ja
+    # satisfaz `_require_manager` sozinho.
+    transferred = client_for(admin_user).post(
+        f"/api/v1/cash-register/{opened['id']}/transfer/",
+        {"reason": "terminal antigo foi excluido do cadastro"},
+        format="json",
+    )
+    assert transferred.status_code == 200, transferred.content
+
+
+def test_deleted_terminal_resurrects_itself_on_the_next_request(station, manager_user):
+    """`is_active`/exclusão como "revogação" não sobrevive ao próximo uso.
+
+    `resolve_terminal` limpa `deleted_at` sozinho assim que a MESMA instalação
+    faz qualquer requisição de novo — o comentário ao lado ("revogar é uma
+    decisão administrativa, e reaparecer não a desfaz") descreve o oposto do
+    que o código faz. Excluir (ou desativar) um terminal não impede, hoje, que
+    ele volte a abrir caixa: nada em `resolve_terminal`/`open_cash_register`
+    consulta `is_active`.
+    """
+    opened = open_via_api(client_for(manager_user, BALCAO_01), station).json()
+    client_for(manager_user, BALCAO_01).post(
+        f"/api/v1/cash-register/{opened['id']}/close/",
+        {"actual_amount": "100.00", "terminal_installation_id": BALCAO_01},
+        format="json",
+    )
+    terminal = PdvTerminal.all_objects.get(installation_id=BALCAO_01)
+
+    terminal.delete()
+    terminal.refresh_from_db()
+    assert terminal.deleted_at is not None
+
+    reopened = open_via_api(client_for(manager_user, BALCAO_01), station)
+    assert reopened.status_code == 201, reopened.content
+
+    terminal.refresh_from_db()
+    assert terminal.deleted_at is None, (
+        "o terminal excluido voltou a ficar ativo sozinho, so por ter sido usado de novo"
+    )

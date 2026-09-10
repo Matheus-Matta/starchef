@@ -511,6 +511,20 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
     }
   }
 
+  /// A identidade de quem pediu a leitura, já autenticada pela chave de
+  /// pareamento — é ela quem precisa valer para `RelayOrigin.current` durante
+  /// `_serveRead`, não a deste terminal.
+  ///
+  /// Sem token de verdade: esta leitura nunca sai para a rede (`_serveRead`
+  /// responde do SQLite local), então não há credencial nenhuma para levar —
+  /// só o par (operador, instalação) que decide DE QUEM é a sessão de caixa,
+  /// o pedido, o que quer que dependa de "quem está perguntando".
+  RelayOrigin _readOrigin(_AuthenticatedNode node) => RelayOrigin(
+    accessToken: 'relay-read',
+    actorId: node.actorId,
+    installationId: node.nodeId,
+  );
+
   /// Responde uma leitura pedida por um caixa secundário ou aplicativo.
   ///
   /// O principal serve do **próprio SQLite** (§8, §10): `api.get` é
@@ -518,6 +532,13 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
   /// reconciliação com a nuvem acontece em paralelo. É por isso que, com a
   /// internet fora e a rede local de pé, o garçom continua enxergando o mesmo
   /// pedido que o caixa.
+  ///
+  /// **Chamar sempre dentro de `RelayOrigin.runAs(_readOrigin(...), ...)`.**
+  /// Sem isso, `RelayOrigin.current` fica `null` aqui dentro e cada rota cai
+  /// para a identidade AMBIENTE deste terminal — que é exatamente o bug que
+  /// fazia o Caixa Secundário enxergar a sessão de caixa do Principal: a
+  /// leitura era servida com o operador/instalação de quem está atendendo
+  /// ESTE terminal, não de quem perguntou.
   Future<Map<String, dynamic>> _serveRead(RelayRead request) async {
     final path = normalizeLocalPath(request.path);
     if (!_validReadPath(path)) {
@@ -817,12 +838,21 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           throw const FormatException('Payload de leitura inválido.');
         }
         final payload = Map<String, dynamic>.from(decoded);
-        final result = await _serveRead(
-          RelayRead(
-            path: '${payload['path'] ?? ''}',
-            query: payload['query'] is Map
-                ? Map<String, dynamic>.from(payload['query'] as Map)
-                : null,
+        // Sem isto, a leitura era servida com a identidade AMBIENTE deste
+        // terminal (o principal) em vez da de quem perguntou: um secundário
+        // lendo `/cash-register/current/` recebia de volta o caixa aberto
+        // pelo PRÓPRIO principal, nunca o dele — a autenticação já sabia
+        // quem era (`authenticated`), mas essa identidade morria aqui antes
+        // de chegar em `_serveRead`.
+        final result = await RelayOrigin.runAs(
+          _readOrigin(authenticated),
+          () => _serveRead(
+            RelayRead(
+              path: '${payload['path'] ?? ''}',
+              query: payload['query'] is Map
+                  ? Map<String, dynamic>.from(payload['query'] as Map)
+                  : null,
+            ),
           ),
         );
         await _respond(request, HttpStatus.ok, {'ok': true, 'result': result});
@@ -835,12 +865,15 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       if (path.startsWith('/local/')) {
         final resourcePath = normalizeLocalPath(path);
         if (request.method == 'GET') {
-          final result = await _serveRead(
-            RelayRead(
-              path: resourcePath,
-              query: request.uri.queryParameters.isEmpty
-                  ? null
-                  : Map<String, dynamic>.from(request.uri.queryParameters),
+          final result = await RelayOrigin.runAs(
+            _readOrigin(authenticated),
+            () => _serveRead(
+              RelayRead(
+                path: resourcePath,
+                query: request.uri.queryParameters.isEmpty
+                    ? null
+                    : Map<String, dynamic>.from(request.uri.queryParameters),
+              ),
             ),
           );
           await _respond(request, HttpStatus.ok, {
