@@ -467,6 +467,44 @@ class CashRegisterRepository extends EntityRepository {
     await _saveWithBalance(session.payload, movements);
   }
 
+  /// Registra na gaveta o TROCO de um recebimento que não entrou nela.
+  ///
+  /// O troco sai sempre em espécie. Num recebimento em dinheiro isso já está
+  /// embutido: entram R$ 50, voltam R$ 9,32, e o lançamento de venda é o
+  /// líquido (R$ 40,68). Num cartão ou PIX com troco, porém, NADA entrou na
+  /// gaveta e mesmo assim R$ 9,32 saíram dela — sem este lançamento, a
+  /// conferência do fechamento acusaria uma falta que ninguém explicaria.
+  ///
+  /// Espelha o `CashMovement` de retirada que o servidor cria junto do
+  /// pagamento, e some do mesmo jeito que [registerLocalSale]: o id é o do
+  /// pagamento, então quando a fila entrega o recebimento a cópia do servidor
+  /// passa a valer sem contar o mesmo dinheiro duas vezes.
+  Future<void> registerLocalChange(
+    String sessionId, {
+    required String paymentId,
+    required double amount,
+    String reason = '',
+  }) async {
+    if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
+    final session = await read(sessionId);
+    if (session == null) return;
+    final movements = _movementsOf(session.payload);
+    if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
+    movements.add({
+      'id': paymentId,
+      'cash_register': sessionId,
+      'payment': paymentId,
+      // `_signedAmount` já lê `withdrawal` como saída.
+      'movement_type': 'withdrawal',
+      'amount': amount.toStringAsFixed(2),
+      'reason': reason,
+      'status': 'approved',
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      '_offline_pending': true,
+    });
+    await _saveWithBalance(session.payload, movements);
+  }
+
   /// Desfaz o lançamento de um recebimento removido antes de subir.
   Future<void> removeLocalSale(
     String sessionId, {

@@ -223,14 +223,10 @@ mixin _PaymentSection on _HomePageShared {
       (item) => '${item['id']}' == selectedPaymentMethod,
     );
     final isCash = method['method_type'] == 'cash';
-    if (!isCash && paymentValue > remainingTotal + .009) {
-      _error(
-        const ApiException(
-          'Somente dinheiro pode ter valor recebido maior que o restante.',
-        ),
-      );
-      return;
-    }
+    // Qualquer forma pode receber acima do restante e devolver troco. A
+    // restrição a dinheiro travava o caixa em situações reais — a maquininha
+    // cobrou um valor redondo, o cliente pediu parte em espécie de volta — e
+    // a única saída era refazer a venda inteira.
     stagedPaymentSequence += 1;
     final staged = <String, dynamic>{
       // Id local: é o que dá o botão de excluir à linha. Ele nunca vai ao
@@ -244,7 +240,11 @@ mixin _PaymentSection on _HomePageShared {
       '_staged_body': <String, dynamic>{
         'payment_method': selectedPaymentMethod,
         'amount': paymentValue.toStringAsFixed(2),
-        if (isCash && cashSession?['id'] != null)
+        // A gaveta entra na conta sempre que o dinheiro passa por ela: um
+        // recebimento em espécie, ou o TROCO de qualquer forma — ele sai em
+        // espécie mesmo quando o pagamento foi no cartão.
+        if (cashSession?['id'] != null &&
+            (isCash || paymentValue > remainingTotal + .009))
           'cash_register': cashSession!['id'],
         // A chave é gerada AGORA e viaja com a operação: um reenvio depois de
         // um erro de rede é reconhecido como repetição, não como um segundo

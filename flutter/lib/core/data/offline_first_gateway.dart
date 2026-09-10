@@ -635,17 +635,31 @@ class OfflineFirstGateway {
     Map<String, dynamic>? method,
     Map<String, dynamic> result,
   ) async {
-    if ('${method?['method_type'] ?? ''}' != 'cash') return;
     final payment = result['_created_payment'] as Map<String, dynamic>?;
     if (payment == null) return;
     final sessionId = '${body['cash_register'] ?? ''}';
     if (sessionId.isEmpty) return;
-    // Só o valor APLICADO entra na gaveta: o troco volta para o cliente.
-    await cashRegister.registerLocalSale(
+    final paymentId = '${payment['id'] ?? ''}';
+
+    if ('${method?['method_type'] ?? ''}' == 'cash') {
+      // Só o valor APLICADO entra na gaveta: o troco volta para o cliente, e
+      // o líquido já é a diferença entre o que entrou e o que saiu.
+      await cashRegister.registerLocalSale(
+        sessionId,
+        paymentId: paymentId,
+        amount: ValueFormatters.number(payment['amount']),
+        reason: 'Recebimento do pedido',
+      );
+      return;
+    }
+
+    // Cartão, PIX ou voucher com troco: NADA entrou na gaveta, e mesmo assim
+    // o troco saiu dela em espécie. Só a saída é lançada.
+    await cashRegister.registerLocalChange(
       sessionId,
-      paymentId: '${payment['id'] ?? ''}',
-      amount: ValueFormatters.number(payment['amount']),
-      reason: 'Recebimento do pedido',
+      paymentId: paymentId,
+      amount: ValueFormatters.number(payment['change_amount']),
+      reason: 'Troco do pedido (${method?['name'] ?? 'outra forma'})',
     );
   }
 

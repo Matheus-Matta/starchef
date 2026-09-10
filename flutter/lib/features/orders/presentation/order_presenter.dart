@@ -96,8 +96,8 @@ abstract final class OrderPresenter {
     required double received,
     required double remaining,
   }) {
-    final isCash = method['method_type'] == 'cash';
-    final applied = isCash && received > remaining ? remaining : received;
+    // Troco vale para qualquer forma de pagamento — ver `OrderRepository.pay`.
+    final applied = received > remaining ? remaining : received;
     return {
       '_staged': true,
       'id': localId,

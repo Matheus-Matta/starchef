@@ -3,11 +3,12 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, close_order, create_order, send_order_to_kitchen, update_order_item_status
-from apps.payments.models import PaymentMethod
+from apps.payments.models import CashMovement, PaymentMethod
 from apps.payments.services import cancel_payment, open_cash_register, register_payment
 from apps.restaurants.models import Table
 from apps.stock.models import StockMovement
@@ -401,9 +402,13 @@ def test_cancel_cash_payment_reopens_order_and_removes_cash_movement(
 
 
 @pytest.mark.django_db
-def test_non_cash_payment_cannot_exceed_remaining(
-    restaurant, branch, table, product, payment_method, manager_user
-):
+def test_non_cash_payment_accepts_change(restaurant, branch, table, product, payment_method, manager_user):
+    """Troco vale para qualquer forma de pagamento, nao so dinheiro.
+
+    A restricao anterior parava o caixa em situacoes reais — a maquininha
+    cobrou um valor redondo e o cliente pediu parte em especie de volta — e a
+    unica saida era refazer a venda inteira.
+    """
     order = create_order(
         restaurant=restaurant,
         branch=branch,
@@ -415,13 +420,57 @@ def test_non_cash_payment_cannot_exceed_remaining(
     order = close_order(order, manager_user)
     open_cash_register(branch=branch, user=manager_user)
 
-    with pytest.raises(ValidationError):
-        register_payment(
-            order=order,
-            user=manager_user,
-            payment_method_id=payment_method.id,
-            amount=order.total + Decimal("1.00"),
-        )
+    payment = register_payment(
+        order=order,
+        user=manager_user,
+        payment_method_id=payment_method.id,
+        amount=order.total + Decimal("1.00"),
+    )
+
+    order.refresh_from_db()
+    assert payment.change_amount == Decimal("1.00")
+    # So o que quita a venda entra como valor do pagamento; o excedente e troco.
+    assert payment.amount == order.total
+    assert order.status == Order.STATUS_PAID
+
+
+@pytest.mark.django_db
+def test_change_on_non_cash_payment_leaves_the_drawer(
+    restaurant, branch, table, product, payment_method, manager_user
+):
+    """O troco sai da gaveta mesmo quando o recebimento nao entrou nela.
+
+    Sem registrar a retirada, a conferencia do fechamento acusaria uma falta
+    que ninguem explicaria: o dinheiro simplesmente teria evaporado do caixa.
+    """
+    order = create_order(
+        restaurant=restaurant,
+        branch=branch,
+        order_type=Order.TYPE_TABLE,
+        table=table,
+        user=manager_user,
+    )
+    add_order_item(order=order, product=product, quantity=1, user=manager_user)
+    order = close_order(order, manager_user)
+    register = open_cash_register(branch=branch, user=manager_user)
+
+    payment = register_payment(
+        order=order,
+        user=manager_user,
+        payment_method_id=payment_method.id,
+        amount=order.total + Decimal("1.00"),
+    )
+
+    movements = payment.cash_movements.filter(cash_register=register)
+    assert movements.count() == 1
+    withdrawal = movements.get()
+    assert withdrawal.movement_type == CashMovement.TYPE_WITHDRAWAL
+    # Negativo, como toda retirada: o saldo esperado soma os movimentos direto.
+    assert withdrawal.amount == Decimal("-1.00")
+
+    register.refresh_from_db()
+    saldo = register.movements.filter(status="approved").aggregate(value=Sum("amount"))["value"]
+    assert saldo == register.opening_amount - Decimal("1.00")
 
 
 @pytest.mark.django_db

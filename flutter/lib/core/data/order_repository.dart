@@ -465,14 +465,18 @@ class OrderRepository extends EntityRepository {
           (sum, payment) => sum + ValueFormatters.number(payment['amount']),
         );
     final remainingBefore = (total - alreadyPaid).clamp(0, double.infinity);
-    final isCash = '${method?['method_type'] ?? ''}' == 'cash';
+    // O troco não depende mais da forma de pagamento: qualquer uma pode
+    // receber acima do restante e devolver a diferença (a maquininha cobrou um
+    // valor redondo, o cliente pediu parte em espécie de volta). Só o que
+    // ENTRA na gaveta continua sendo o dinheiro — quem decide isso é
+    // `_mirrorCashSale`, no gateway.
     final metadata = body['metadata'];
     final cardSubtype = metadata is Map
         ? '${metadata['card_subtype'] ?? ''}'
         : '';
-    final change = isCash
-        ? (amount - remainingBefore).clamp(0, double.infinity).toDouble()
-        : 0.0;
+    final change = (amount - remainingBefore)
+        .clamp(0, double.infinity)
+        .toDouble();
     final applied = amount - change;
 
     final payment = {

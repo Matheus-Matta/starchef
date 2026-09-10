@@ -548,8 +548,11 @@ def register_payment(
             "value"
         ] or Decimal("0.00")
         remaining = order.total - paid_before
-        if payment_method.method_type != PaymentMethod.TYPE_CASH and amount > remaining:
-            raise ValidationError("Somente pagamentos em dinheiro podem ter valor recebido maior que o restante.")
+        # Qualquer forma de pagamento pode receber acima do restante e devolver
+        # troco. A restricao a dinheiro parava o caixa em situacoes reais — a
+        # maquininha cobrou um valor redondo, o cliente pediu parte em especie
+        # de volta — e a unica saida era refazer a venda. O troco continua
+        # saindo da gaveta, entao ele e registrado como retirada abaixo.
         change_amount = max(amount - remaining, Decimal("0.00"))
         accepted_amount = amount - change_amount
         payment_metadata = {
@@ -585,6 +588,26 @@ def register_payment(
                 movement_type=CashMovement.TYPE_SALE,
                 amount=accepted_amount,
                 reason=f"Order {order.sequence} payment",
+                created_by=user,
+                updated_by=user,
+            )
+        elif cash_register and change_amount > 0:
+            # Troco de uma forma que NAO alimenta a gaveta: o dinheiro sai dela
+            # sem que nenhuma venda em especie tenha entrado. Sem registrar,
+            # a conferencia do fechamento acusaria uma falta que ninguem
+            # explicaria — o valor simplesmente teria evaporado do caixa.
+            CashMovement.objects.create(
+                account=order.account,
+                restaurant=order.restaurant,
+                branch=order.branch,
+                cash_register=cash_register,
+                payment=payment,
+                operator=user,
+                movement_type=CashMovement.TYPE_WITHDRAWAL,
+                # NEGATIVO, como toda retirada aqui (ver `register_cash_movement`):
+                # o saldo esperado e a soma direta dos movimentos aprovados.
+                amount=-change_amount,
+                reason=f"Troco do pedido {order.sequence} ({payment_method.name})",
                 created_by=user,
                 updated_by=user,
             )

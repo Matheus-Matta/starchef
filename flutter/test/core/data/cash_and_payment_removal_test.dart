@@ -128,6 +128,83 @@ void main() {
     expect(balanceOf(session), 100.0);
   });
 
+  test('troco vale em cartão, não só em dinheiro', () async {
+    // A restrição a dinheiro parava o caixa em situações reais: a maquininha
+    // cobrou um valor redondo e o cliente pediu parte em espécie de volta. A
+    // única saída era refazer a venda inteira.
+    final shift = await openShift();
+
+    final result = await stack.gateway.write(
+      'POST',
+      '/orders/${shift.orderId}/pay/',
+      body: {'payment_method': 'debito', 'amount': '50.00'},
+      context: {
+        'payment_method': {'id': 'debito', 'method_type': 'card'},
+      },
+    );
+
+    final payment = result.payload['_created_payment'] as Map<String, dynamic>;
+    expect(payment['change_amount'], '30.00');
+    // Só o que quita a venda entra como valor do recebimento.
+    expect(payment['amount'], '20.00');
+    // E a venda fica paga: o excedente é troco, não pagamento a maior.
+    final order = await stack.gateway.read('/orders/${shift.orderId}/');
+    expect(order['status'], 'paid');
+  });
+
+  test('troco de cartão SAI da gaveta: nada entrou, e o dinheiro saiu', () async {
+    // O troco é sempre em espécie. Num recebimento em dinheiro ele já está
+    // embutido no líquido (entram 50, voltam 30, a venda lança 20). Num
+    // cartão, NADA entrou na gaveta e mesmo assim os 30 saíram dela — sem
+    // lançar a saída, a conferência do fechamento acusaria uma falta que
+    // ninguém explicaria.
+    final shift = await openShift();
+
+    await stack.gateway.write(
+      'POST',
+      '/orders/${shift.orderId}/pay/',
+      body: {
+        'payment_method': 'debito',
+        'amount': '50.00',
+        'cash_register': shift.sessionId,
+      },
+      context: {
+        'payment_method': {
+          'id': 'debito',
+          'method_type': 'card',
+          'name': 'Débito',
+        },
+      },
+    );
+
+    final session = await stack.gateway.read('/cash-register/current/');
+    expect(
+      balanceOf(session),
+      70.0,
+      reason: 'abertura 100 − troco 30; o cartão não entra na gaveta',
+    );
+  });
+
+  test('cartão sem troco continua não mexendo na gaveta', () async {
+    final shift = await openShift();
+
+    await stack.gateway.write(
+      'POST',
+      '/orders/${shift.orderId}/pay/',
+      body: {
+        'payment_method': 'debito',
+        'amount': '20.00',
+        'cash_register': shift.sessionId,
+      },
+      context: {
+        'payment_method': {'id': 'debito', 'method_type': 'card'},
+      },
+    );
+
+    final session = await stack.gateway.read('/cash-register/current/');
+    expect(balanceOf(session), 100.0);
+  });
+
   test('remover um recebimento ainda na fila é operação local', () async {
     final shift = await openShift();
     final payment = await payCash(shift.orderId, shift.sessionId);
