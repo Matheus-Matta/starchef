@@ -1,4 +1,5 @@
 import { useAuthStore } from "../stores/auth";
+import { getBrowserValue } from "../services/browserPersistence";
 
 const RESTAURANT_SCOPE_KEY = "starchef-restaurant-scope";
 
@@ -32,7 +33,7 @@ export function applyTenantDefaults(payload, { skip = [] } = {}) {
   const setValue = (key, value) => (isFormData ? payload.append(key, value) : (payload[key] = value));
 
   if (!skipSet.has("restaurant") && !hasValue("restaurant")) {
-    const restaurantId = profile?.restaurant_id || localStorage.getItem(RESTAURANT_SCOPE_KEY);
+    const restaurantId = profile?.restaurant_id || getBrowserValue(RESTAURANT_SCOPE_KEY);
     if (restaurantId) setValue("restaurant", restaurantId);
   }
   if (!skipSet.has("branch") && !hasValue("branch") && profile?.branch_id) {

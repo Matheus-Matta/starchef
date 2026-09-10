@@ -58,6 +58,11 @@ import Topbar from "./Topbar.vue";
 import MobileBottomNav from "../components/MobileBottomNav.vue";
 import { resources } from "../config/resources";
 import { api } from "../services/api";
+import {
+  getBrowserValue,
+  removeBrowserValue,
+  setBrowserValue,
+} from "../services/browserPersistence";
 import { useAuthStore } from "../stores/auth";
 import { useNotificationsStore } from "../stores/notifications";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
@@ -73,7 +78,7 @@ let navMediaQuery = null;
 const theme = inject("theme");
 const dashboardSummary = ref(null);
 const restaurants = ref([]);
-const selectedRestaurantId = ref(localStorage.getItem("starchef-restaurant-scope") || "");
+const selectedRestaurantId = ref(getBrowserValue("starchef-restaurant-scope") || "");
 const scopeRefreshKey = ref(0);
 let summaryTimer = null;
 useRealtimeResource(
@@ -191,7 +196,7 @@ async function loadRestaurants() {
   if (!canSeeAllRestaurants.value) {
     restaurants.value = [];
     selectedRestaurantId.value = "";
-    localStorage.removeItem("starchef-restaurant-scope");
+    removeBrowserValue("starchef-restaurant-scope");
     return;
   }
 
@@ -209,9 +214,9 @@ async function loadRestaurants() {
 function setRestaurantScope(restaurantId) {
   selectedRestaurantId.value = restaurantId || "";
   if (selectedRestaurantId.value) {
-    localStorage.setItem("starchef-restaurant-scope", selectedRestaurantId.value);
+    setBrowserValue("starchef-restaurant-scope", selectedRestaurantId.value);
   } else {
-    localStorage.removeItem("starchef-restaurant-scope");
+    removeBrowserValue("starchef-restaurant-scope");
   }
   scopeRefreshKey.value += 1;
   loadDashboardSummary();

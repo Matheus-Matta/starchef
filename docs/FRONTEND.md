@@ -160,6 +160,15 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 Toggle claro/escuro no `Topbar.vue` (`toggle-theme`), estado via `provide/inject("theme")` em `AppLayout.vue`, aplicado como `data-theme` na raiz do app. Tokens em `src/styles/tokens/` (`colors.css` com blocos `[data-theme="light"|"dark"]`, `spacing.css`, `typography.css`, `density.css` — escala compacta) e `primevue-tokens.css` (mapeia variáveis de componente do PrimeVue para o sistema de tokens).
 
+Em produção, tema, restaurante selecionado e identidade/nome do terminal são
+persistidos por `services/browserPersistence.js` em cookies `Secure`,
+`SameSite=Lax` e `Path=/`; o frontend não grava esses valores no
+`localStorage`. Na primeira leitura, valores de versões antigas são migrados e
+removidos do armazenamento local. Em desenvolvimento, o `localStorage`
+continua habilitado porque o Vite normalmente roda em HTTP. Tokens de
+autenticação não passam por esse serviço: continuam nos cookies `HttpOnly`
+emitidos exclusivamente pelo backend.
+
 ## 10. Como rodar em desenvolvimento
 
 ```bash

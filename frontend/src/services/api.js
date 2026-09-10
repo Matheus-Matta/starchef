@@ -6,6 +6,7 @@ import {
   terminalNameHeader,
 } from "./terminalIdentity";
 import { prepareMultipartHeaders } from "./multipart";
+import { getBrowserValue } from "./browserPersistence";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -93,7 +94,7 @@ function applyRestaurantScope(config) {
     return;
   }
 
-  const restaurantId = localStorage.getItem("starchef-restaurant-scope");
+  const restaurantId = getBrowserValue("starchef-restaurant-scope");
   if (!restaurantId || isAuthRequest(config.url)) {
     return;
   }

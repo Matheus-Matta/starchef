@@ -15,10 +15,11 @@ import ConfirmDialog from "primevue/confirmdialog";
 import { useToast } from "primevue/usetoast";
 import { router } from "./router";
 import { useGlobalErrorHandler } from "./composables/useGlobalErrorHandler";
+import { getBrowserValue, setBrowserValue } from "./services/browserPersistence";
 
 useGlobalErrorHandler(useToast());
 
-const theme = ref(localStorage.getItem("starchef-theme") || "light");
+const theme = ref(getBrowserValue("starchef-theme") || "light");
 const routeLoading = ref(false);
 const removeBeforeHook = router.beforeEach(() => {
   routeLoading.value = true;
@@ -29,7 +30,7 @@ const removeAfterHook = router.afterEach(() => {
 
 watchEffect(() => {
   document.documentElement.dataset.theme = theme.value;
-  localStorage.setItem("starchef-theme", theme.value);
+  setBrowserValue("starchef-theme", theme.value);
 });
 
 provide("theme", theme);

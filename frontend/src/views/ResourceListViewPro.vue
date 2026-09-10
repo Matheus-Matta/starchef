@@ -470,6 +470,7 @@ import { useConfirm } from "primevue/useconfirm";
 
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
+import { getBrowserValue } from "../services/browserPersistence";
 import { ResourceService } from "../services/ResourceService";
 import { dataExchangeService } from "../services/dataExchangeService";
 import { formatDateTime, formatMoney, mapLabel } from "../utils/format";
@@ -1052,7 +1053,7 @@ async function openBulk(type) {
   bulkType.value = type || "commands";
   bulkRestaurants.value = [];
   bulkSectors.value = [];
-  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || null;
+  const scopedRestaurant = getBrowserValue("starchef-restaurant-scope") || null;
   // Se o topo já tem uma unidade, ela vem pré-selecionada. Em "Todos", o
   // restaurante fica obrigatório e explícito para mesas e comandas.
   bulkForm.value = createBulkForm(scopedRestaurant);

@@ -426,6 +426,7 @@ import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
 import { api } from "../services/api";
+import { getBrowserValue } from "../services/browserPersistence";
 import { normalizeApiError } from "../utils/apiError";
 import { cpfDigits } from "../utils/cpf";
 import { useToast } from "primevue/usetoast";
@@ -457,7 +458,7 @@ const baseName = computed(() => String(route.name).replace(/--(?:create|edit|vie
 // sempre exibimos um campo "Restaurante" para vincular o item. O valor padrão é o
 // restaurante selecionado no topo (ou o do perfil); vazio quando o escopo é "Todos".
 const RESTAURANT_SCOPE_KEY = "starchef-restaurant-scope";
-const scopedRestaurantId = localStorage.getItem(RESTAURANT_SCOPE_KEY) || auth.user?.restaurant_id || "";
+const scopedRestaurantId = getBrowserValue(RESTAURANT_SCOPE_KEY) || auth.user?.restaurant_id || "";
 
 const augmentedFormFields = computed(() => {
   const fields = props.formFields || [];

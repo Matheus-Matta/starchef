@@ -222,6 +222,7 @@ import { useRouter } from "vue-router";
 import AppIcon from "../components/AppIcon.vue";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import { api } from "../services/api";
+import { getBrowserValue } from "../services/browserPersistence";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { normalizeApiError } from "../utils/apiError";
 import { currentMonthRange } from "../utils/dateRange";
@@ -283,7 +284,7 @@ const stationMenuOpen = ref(false);
 const errorMsg = ref("");
 const refreshing = ref(false);
 const lastUpdated = ref(null);
-const isAllRestaurants = !localStorage.getItem("starchef-restaurant-scope");
+const isAllRestaurants = !getBrowserValue("starchef-restaurant-scope");
 
 const dragItem = ref(null);
 const dragOverColumnId = ref(null);

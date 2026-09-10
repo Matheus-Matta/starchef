@@ -204,6 +204,7 @@ import Card from "../components/display/Card.vue";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import { api, API_BASE_URL } from "../services/api";
+import { getBrowserValue } from "../services/browserPersistence";
 import { reportService } from "../services/reportService";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { currentMonthRange } from "../utils/dateRange";
@@ -234,7 +235,7 @@ const productFilters = reactive({
   product_type: "",
   production_sector: "",
 });
-const selectedRestaurantId = ref(localStorage.getItem("starchef-restaurant-scope") || "");
+const selectedRestaurantId = ref(getBrowserValue("starchef-restaurant-scope") || "");
 const activeTab = ref("payment");
 
 const tabs = [

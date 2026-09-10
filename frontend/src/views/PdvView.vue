@@ -824,6 +824,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
 import AppIcon from "../components/AppIcon.vue";
 import { api } from "../services/api";
+import { getBrowserValue } from "../services/browserPersistence";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
@@ -1327,7 +1328,7 @@ async function runPdvCashValidation() {
 async function resolveContext() {
   const profile = await loadProfile();
   isAdmin.value = Boolean(profile?.is_superuser || profile?.profile_type === "admin" || profile?.profile_type === "owner");
-  const scope = localStorage.getItem(RESTAURANT_SCOPE_KEY) || "";
+  const scope = getBrowserValue(RESTAURANT_SCOPE_KEY) || "";
   if (isAdmin.value) {
     // Admin: o contexto vem do seletor do topo. Sem seleção ("Todos") → pede num step.
     await loadRestaurants();
