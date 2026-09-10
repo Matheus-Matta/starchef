@@ -197,7 +197,7 @@ mixin _PaymentSection on _HomePageShared {
   /// Débito/crédito não é escolhido à parte: o próprio método de pagamento
   /// selecionado já diz qual é ("Cartão de Débito", "Cartão de Crédito"),
   /// como cadastrado em Formas de pagamento. Isso só preenche o metadado
-  /// para relatórios; nada no backend valida esse texto.
+  /// que o backend persiste no pagamento e envia como meio correto na NFC-e.
   String _cardSubtypeFor(Map<String, dynamic> method) {
     final name = '${method['name']}'.toLowerCase();
     if (name.contains('débito') || name.contains('debito')) return 'debit';
@@ -284,6 +284,7 @@ mixin _PaymentSection on _HomePageShared {
     final staged = stagedPayments;
     if (staged.isEmpty) return true;
     final pending = <Map<String, dynamic>>[];
+    final submittedOperationIds = <String>[];
     var touchedCash = false;
     var stop = false;
     for (final payment in staged) {
@@ -308,6 +309,8 @@ mixin _PaymentSection on _HomePageShared {
         stop = true;
         continue;
       }
+      final operationId = '${result['_sync_operation_id'] ?? ''}';
+      if (operationId.isNotEmpty) submittedOperationIds.add(operationId);
       touchedCash = touchedCash || _isCashPayment(payment);
     }
     // Os recebimentos são gravados local-first e sobem pela fila. Empurrar
@@ -316,6 +319,22 @@ mixin _PaymentSection on _HomePageShared {
     // nota emitida antes dos recebimentos sai com o DANFE sem as formas de
     // pagamento. Sem conexão isto não faz nada e a venda segue pela fila.
     await api.flushSalesQueue();
+    String? syncFailure;
+    for (final operationId in submittedOperationIds) {
+      syncFailure = await api.syncFailureForOperation(operationId);
+      if (syncFailure != null) break;
+    }
+    if (syncFailure != null) {
+      _error(
+        ApiException(
+          'O servidor não confirmou esta venda: $syncFailure',
+          statusCode: 422,
+        ),
+        title: 'Pagamento não confirmado',
+      );
+      await _refreshOrder();
+      return false;
+    }
     // O recebimento (valor aplicado, troco, situação de pagamento) é
     // registrado pelo `OrderRepository` na mesma transação da fila; aqui só se
     // relê o que ficou gravado, e o que não subiu volta para o fim da lista.

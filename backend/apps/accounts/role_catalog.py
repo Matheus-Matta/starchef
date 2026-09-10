@@ -18,6 +18,7 @@ CODE_WAITER = "waiter"
 CODE_CASHIER = "cashier"
 CODE_MANAGER = "manager"
 CODE_ADMIN = "admin"
+CODE_ECOMMERCE = "ecommerce"
 
 # Garçom: abrir, editar e acompanhar os próprios pedidos e as mesas/comandas.
 _WAITER_CODES = [
@@ -63,17 +64,33 @@ _MANAGER_CODES = _CASHIER_CODES + [
     "stock.manage",
 ]
 
+# E-commerce: o perfil de quem cuida do site/cardápio digital. Não é um degrau
+# da hierarquia do salão — é uma especialidade paralela. Ele monta, publica e
+# gerencia as imagens do storefront, e só enxerga do resto o cardápio (precisa
+# saber quais produtos existem para montar a vitrine). Domínio fica de fora de
+# propósito: apontar DNS errado tira o site do ar, então é do Administrador.
+_ECOMMERCE_CODES = [
+    "menu.view",
+    "storefront.view",
+    "storefront.edit",
+    "storefront.publish",
+    "storefront.assets",
+]
+
 
 def _dedupe(codes):
     return list(dict.fromkeys(codes))
 
 
-# Ordem = ordem de exibição/hierarquia. `permissions` é resolvido em
-# `ensure_system_roles` contra o catálogo real (códigos ausentes são ignorados).
+# Ordem da lista = ordem de exibição. O `rank` é separado de propósito: ele é a
+# hierarquia de autoridade lida por `has_role_at_least`, e nem todo perfil novo
+# entra nessa escada. O de E-commerce, por exemplo, edita o site mas não pode
+# herdar nada do caixa — daí um rank abaixo do garçom, e não a posição na lista.
 SYSTEM_ROLES = [
     {
         "code": CODE_WAITER,
         "name": "Garçom",
+        "rank": 10,
         "permissions": _dedupe(_WAITER_CODES),
         "max_discount_percent": 0,
         "is_account_admin": False,
@@ -81,6 +98,7 @@ SYSTEM_ROLES = [
     {
         "code": CODE_CASHIER,
         "name": "Caixa",
+        "rank": 20,
         "permissions": _dedupe(_CASHIER_CODES),
         "max_discount_percent": 0,
         "is_account_admin": False,
@@ -88,6 +106,7 @@ SYSTEM_ROLES = [
     {
         "code": CODE_MANAGER,
         "name": "Gerente",
+        "rank": 30,
         "permissions": _dedupe(_MANAGER_CODES),
         "max_discount_percent": 30,
         "is_account_admin": False,
@@ -95,14 +114,25 @@ SYSTEM_ROLES = [
     {
         "code": CODE_ADMIN,
         "name": "Administrador",
+        "rank": 40,
         # Sempre o catálogo inteiro — acesso total aos dados da conta.
         "permissions": list(ALL_CODES),
         "max_discount_percent": 100,
         "is_account_admin": True,
     },
+    {
+        "code": CODE_ECOMMERCE,
+        "name": "E-commerce",
+        "rank": 5,
+        "permissions": _dedupe(_ECOMMERCE_CODES),
+        "max_discount_percent": 0,
+        "is_account_admin": False,
+    },
 ]
 
 SYSTEM_ROLE_CODES = [spec["code"] for spec in SYSTEM_ROLES]
+# {código: nível de autoridade} — consumido por `apps.core.access`.
+SYSTEM_ROLE_RANKS = {spec["code"]: spec["rank"] for spec in SYSTEM_ROLES}
 
 
 def ensure_system_roles(account):

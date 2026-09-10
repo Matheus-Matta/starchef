@@ -5,11 +5,23 @@ from pathlib import Path
 from corsheaders.defaults import default_headers as _cors_default_headers
 from decouple import Csv, config
 
+from config.env import environment_is_explicit, resolve_environment
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 SECRET_KEY = config("DJANGO_SECRET_KEY", default="unsafe-dev-key")
 SETTINGS_MODULE = os.getenv("DJANGO_SETTINGS_MODULE", "")
-DEBUG = config("DJANGO_DEBUG", default=SETTINGS_MODULE.endswith(".development"), cast=bool)
+
+# `DJANGO_ENV` decide o DEBUG. Quando ela existe, um `DJANGO_DEBUG` divergente
+# é ignorado de propósito: manter as duas em sincronia era a origem de um bug
+# silencioso — ambiente "de desenvolvimento" com `DJANGO_DEBUG=False` ligava os
+# cookies `Secure`, e o login parava de funcionar em HTTP sem dizer por quê.
+# Sem `DJANGO_ENV`, `DJANGO_DEBUG` continua valendo (compatibilidade).
+ENVIRONMENT = resolve_environment()
+_ENVIRONMENT_DEBUG = ENVIRONMENT == "development"
+DEBUG = _ENVIRONMENT_DEBUG if environment_is_explicit() else config(
+    "DJANGO_DEBUG", default=_ENVIRONMENT_DEBUG, cast=bool
+)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 # O healthcheck do Docker roda dentro do próprio container e bate em
 # localhost:8000 — se o DJANGO_ALLOWED_HOSTS de produção só tiver o domínio
@@ -40,6 +52,7 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.accounts",
     "apps.restaurants",
+    "apps.images",
     "apps.customers",
     "apps.menu",
     "apps.orders",
@@ -159,6 +172,21 @@ def build_database_settings(use_sqlite):
                 "PORT": config("POSTGRES_PORT", default="5432"),
                 "CONN_MAX_AGE": config("POSTGRES_CONN_MAX_AGE", default=60, cast=int),
                 "CONN_HEALTH_CHECKS": config("POSTGRES_CONN_HEALTH_CHECKS", default=True, cast=bool),
+                "OPTIONS": {
+                    # Sem isto, um banco INALCANÇÁVEL (firewall/security group
+                    # que descarta o pacote em vez de recusar, VPN caída, host
+                    # errado) não devolve erro nenhum: o socket fica esperando
+                    # e o comando trava até alguém apertar Ctrl+C. Foi
+                    # exatamente esse o sintoma ao rodar `manage.py migrate`
+                    # apontando para o RDS a partir de uma máquina fora da
+                    # lista de liberação.
+                    #
+                    # Com o timeout, a falha aparece em segundos e diz qual é:
+                    # "connection timeout expired". Um banco realmente no ar
+                    # responde em milissegundos, então 5s não atrapalha
+                    # ninguém — nem o boot do container em produção.
+                    "connect_timeout": config("POSTGRES_CONNECT_TIMEOUT", default=5, cast=int),
+                },
             }
         }
     }
@@ -260,8 +288,8 @@ REST_FRAMEWORK = {
         "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
         "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
-        # Cardápio público: IP compartilhado por muitos clientes (WiFi do restaurante).
-        "public_menu": config("THROTTLE_RATE_PUBLIC_MENU", default="600/min"),
+        # Storefront público: dezenas de clientes de um restaurante saem pelo
+        # mesmo IP (WiFi/NAT), então o limite `anon` (60/min) os bloquearia.
     },
 }
 
@@ -292,7 +320,10 @@ CORS_ALLOW_CREDENTIALS = True
 # requisição — inclusive as de leitura, então precisa valer para qualquer rota,
 # não só para abertura de caixa. Sem isso o navegador falha no preflight antes
 # mesmo de a requisição chegar à view, e o axios só reporta "CORS error".
-CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name")
+# `x-auth-scope` diz de qual sessão a requisição é (painel ou editor do
+# storefront). Sem ele na allowlist o preflight falha e o editor não consegue
+# nem tentar autenticar — o navegador barra antes de a view rodar.
+CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name", "x-auth-scope")
 # Necessário para o Django aceitar mutações vindas do front (cookies) cross-origin.
 CSRF_TRUSTED_ORIGINS = config(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
@@ -306,6 +337,15 @@ CSRF_TRUSTED_ORIGINS = config(
 JWT_AUTH_COOKIE = config("DJANGO_JWT_AUTH_COOKIE", default="sc_access")
 JWT_AUTH_REFRESH_COOKIE = config("DJANGO_JWT_REFRESH_COOKIE", default="sc_refresh")
 AUTH_SESSION_COOKIE = "sc_session"
+
+# O editor do storefront usa nomes PRÓPRIOS de cookie. Os dois aplicativos
+# batem no mesmo backend, então os cookies chegam no mesmo domínio: com o mesmo
+# nome, entrar no editor derrubaria a sessão do painel aberta na outra aba (e
+# vice-versa). Nomes distintos deixam as duas sessões coexistirem — quem escolhe
+# qual usar é o header `X-Auth-Scope` (ver `apps/core/authentication.py`).
+STOREFRONT_JWT_AUTH_COOKIE = config("DJANGO_STOREFRONT_JWT_AUTH_COOKIE", default="sf_access")
+STOREFRONT_JWT_REFRESH_COOKIE = config("DJANGO_STOREFRONT_JWT_REFRESH_COOKIE", default="sf_refresh")
+STOREFRONT_AUTH_SESSION_COOKIE = "sf_session"
 AUTH_COOKIE_SECURE = config("DJANGO_AUTH_COOKIE_SECURE", default=not DEBUG, cast=bool)
 AUTH_COOKIE_SAMESITE = config("DJANGO_AUTH_COOKIE_SAMESITE", default="Lax")
 AUTH_COOKIE_DOMAIN = config("DJANGO_AUTH_COOKIE_DOMAIN", default="")  # "" -> host-only
@@ -340,6 +380,52 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ── Cardápio digital (storefront) ────────────────────────────────────────────
+# Endereços públicos do site e do editor. Servem para montar links absolutos
+# (preview, e-mail, instrução de DNS) sem o backend ter de adivinhar o host.
+STOREFRONT_PUBLIC_URL = config("STOREFRONT_PUBLIC_URL", default="").rstrip("/")
+STOREFRONT_EDITOR_URL = config("STOREFRONT_EDITOR_URL", default=FRONTEND_URL).rstrip("/")
+# Domínio da plataforma sob o qual cada site ganha `<slug>.<base>`. Vazio
+# desliga a resolução automática por subdomínio (só domínio próprio cadastrado).
+STOREFRONT_BASE_DOMAIN = config("STOREFRONT_BASE_DOMAIN", default="")
+# Hosts que ninguém pode reivindicar como domínio próprio (os da plataforma).
+STOREFRONT_RESERVED_HOSTNAMES = config("STOREFRONT_RESERVED_HOSTNAMES", default="")
+# Tempo de vida do payload público. A invalidação por publicação é o caminho
+# normal; o TTL é a rede de segurança para alteração feita fora da aplicação.
+STOREFRONT_CACHE_TIMEOUT = config("STOREFRONT_CACHE_TIMEOUT", default=300, cast=int)
+STOREFRONT_DOMAIN_CACHE_TIMEOUT = config("STOREFRONT_DOMAIN_CACHE_TIMEOUT", default=900, cast=int)
+# Tetos do JSON do editor (ver apps.storefront.builder_schema).
+STOREFRONT_MAX_PROJECT_BYTES = config("STOREFRONT_MAX_PROJECT_BYTES", default=2 * 1024 * 1024, cast=int)
+STOREFRONT_MAX_NODES = config("STOREFRONT_MAX_NODES", default=5000, cast=int)
+STOREFRONT_MAX_DEPTH = config("STOREFRONT_MAX_DEPTH", default=40, cast=int)
+STOREFRONT_ASSET_MAX_BYTES = config("STOREFRONT_ASSET_MAX_BYTES", default=8 * 1024 * 1024, cast=int)
+IMAGE_UPLOAD_MAX_BYTES = config("IMAGE_UPLOAD_MAX_BYTES", default=8 * 1024 * 1024, cast=int)
+
+# ── Armazenamento de mídia (uploads) ─────────────────────────────────────────
+# Quem decide o destino é `apps.core.storage.MediaStorageService`, e não estas
+# variáveis diretamente: bucket vazio mantém tudo em MEDIA_ROOT (o modo de
+# desenvolvimento); bucket preenchido usa S3/R2 via django-storages.
+#
+# Credencial faltando NÃO quebra o boot. O backend real só é construído na
+# primeira gravação, e é lá que o erro aparece — como resposta 503 com o nome
+# das variáveis que faltam. Um deploy com variável esquecida degrada o upload
+# de imagem; não tira o sistema do ar.
+AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME", default="")
+AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default="")
+AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY", default="")
+AWS_S3_ENDPOINT_URL = config("AWS_S3_ENDPOINT_URL", default="") or None
+AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="auto")
+AWS_S3_CUSTOM_DOMAIN = config("AWS_S3_CUSTOM_DOMAIN", default="") or None
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None
+AWS_QUERYSTRING_AUTH = config("AWS_QUERYSTRING_AUTH", default=False, cast=bool)
+AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "public, max-age=31536000, immutable"}
+
+STORAGES = {
+    "default": {"BACKEND": "apps.core.storage.MediaStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 
 UNFOLD = {
     "SITE_TITLE": "StarChef Admin",
@@ -428,8 +514,8 @@ UNFOLD = {
                 "separator": True,
                 "collapsible": True,
                 "items": [
-                    {"title": "Cardapios digitais", "icon": "book_online", "link": "/admin/menu/menu/"},
-                    {"title": "Itens do cardapio", "icon": "format_list_bulleted", "link": "/admin/menu/menuitem/"},
+                    {"title": "Catalogos (curadoria)", "icon": "book_online", "link": "/admin/menu/menu/"},
+                    {"title": "Itens do catalogo", "icon": "format_list_bulleted", "link": "/admin/menu/menuitem/"},
                 ],
             },
             {

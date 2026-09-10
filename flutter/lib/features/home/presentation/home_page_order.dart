@@ -146,13 +146,35 @@ mixin _OrderSection on _HomePageShared {
   /// Mas "pagar depois" era mandar para a cozinha, escondido atrás de um botão
   /// que fala de dinheiro, e o resumo repetia número por número o que o painel
   /// do pedido mostra ao lado. O envio à produção virou botão próprio, e o que
-  /// sobrou aqui é a única coisa que o operador precisa mesmo responder antes
-  /// de ir para o teclado: a taxa de serviço entra ou não.
+  /// sobrou aqui são as duas escolhas da nota: taxa de serviço e CPF.
   Future<void> _finishOrder() async {
     if (activeOrder == null || orderItems.isEmpty) return;
     if (!widget.controller.session!.user.canProcessPayments) return;
+    final orderId = '${activeOrder!['id']}';
+    final reconciliationError = await api.reconcileOrderForPayment(orderId);
+    if (!mounted) return;
+    if (reconciliationError != null) {
+      _error(
+        ApiException(
+          'Um item deste pedido precisa ser corrigido: $reconciliationError',
+          statusCode: 422,
+        ),
+        title: 'Revise o pedido antes de pagar',
+      );
+      return;
+    }
+    await _refreshOrder();
+    if (!mounted || activeOrder == null) return;
 
     var chargeService = activeOrder?['service_fee_enabled'] != false;
+    final savedCpf = cpfDigits(activeOrder?['fiscal_customer_cpf']);
+    final customerCpf = cpfDigits(selectedCustomer?['document']);
+    var includeCpf = savedCpf.isNotEmpty;
+    var fiscalCpf = savedCpf;
+    String? cpfError;
+    final cpfController = TextEditingController(
+      text: formatCpf(savedCpf.isNotEmpty ? savedCpf : customerCpf),
+    );
     final taxa = defaultServiceFeePercent > 0
         ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100
         : 0.0;
@@ -163,7 +185,7 @@ mixin _OrderSection on _HomePageShared {
         builder: (context, setDialogState) => AppDialog(
           title: const Text('Ir para o pagamento'),
           content: SizedBox(
-            width: 380,
+            width: 420,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -180,6 +202,39 @@ mixin _OrderSection on _HomePageShared {
                         : 'Desmarque para retirar a taxa deste pedido.',
                   ),
                 ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: includeCpf,
+                  onChanged: (value) => setDialogState(() {
+                    includeCpf = value ?? false;
+                    cpfError = null;
+                    if (includeCpf && cpfController.text.isEmpty) {
+                      cpfController.text = formatCpf(customerCpf);
+                    }
+                  }),
+                  title: const Text('Incluir CPF na NFC-e'),
+                  subtitle: const Text(
+                    'O CPF será enviado como destinatário da nota fiscal.',
+                  ),
+                ),
+                if (includeCpf)
+                  TextField(
+                    key: const Key('fiscal-cpf'),
+                    controller: cpfController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [CpfInputFormatter()],
+                    decoration: InputDecoration(
+                      labelText: 'CPF para a NFC-e',
+                      hintText: '000.000.000-00',
+                      errorText: cpfError,
+                      prefixIcon: const Icon(Icons.badge_outlined),
+                    ),
+                    onChanged: (_) {
+                      if (cpfError != null) {
+                        setDialogState(() => cpfError = null);
+                      }
+                    },
+                  ),
               ],
             ),
           ),
@@ -189,7 +244,14 @@ mixin _OrderSection on _HomePageShared {
               child: const Text('Voltar'),
             ),
             FilledButton.icon(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () {
+                if (includeCpf && !isValidCpf(cpfController.text)) {
+                  setDialogState(() => cpfError = 'Informe um CPF válido.');
+                  return;
+                }
+                fiscalCpf = includeCpf ? cpfDigits(cpfController.text) : '';
+                Navigator.pop(context, true);
+              },
               icon: const Icon(Icons.payments_outlined),
               label: const Text('Ir para pagamento'),
             ),
@@ -197,6 +259,7 @@ mixin _OrderSection on _HomePageShared {
         ),
       ),
     );
+    cpfController.dispose();
     if (seguir != true) return;
 
     final closed = await _work(() async {
@@ -212,14 +275,28 @@ mixin _OrderSection on _HomePageShared {
       // O fechamento (taxa de serviço, desconto, total) é aplicado pelo
       // `OrderRepository` com a MESMA conta usada aqui — `expected_total`
       // acompanha para o servidor conferir quando a operação subir.
-      activeOrder = await api.post(
+      final closeResult = await api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
           'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
+          'fiscal_customer_cpf': fiscalCpf,
         },
         accessToken: token,
       );
+      activeOrder = closeResult;
+      // Online, o fechamento precisa ser confirmado antes de abrir o teclado
+      // de pagamento. Offline ele permanece na fila e a venda pode continuar.
+      await api.flushSalesQueue();
+      final syncFailure = await api.syncFailureForOperation(
+        '${closeResult['_sync_operation_id'] ?? ''}',
+      );
+      if (syncFailure != null) {
+        throw ApiException(
+          'Não foi possível fechar o pedido: $syncFailure',
+          statusCode: 422,
+        );
+      }
       await _refreshOrder();
       return activeOrder!;
     });

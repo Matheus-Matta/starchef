@@ -38,7 +38,6 @@ from apps.menu.views import (
     ProductCategoryViewSet,
     ProductVariationViewSet,
     ProductViewSet,
-    PublicMenuView,
     RecipeItemViewSet,
     RecipeViewSet,
 )
@@ -187,7 +186,6 @@ urlpatterns = [
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
     path("api/v1/stock/positions/", StockPositionView.as_view(), name="stock-positions"),
     path("api/v1/stock/reports/expiry/", StockExpiryReportView.as_view(), name="stock-expiry-report"),
-    path("api/v1/public/menu/<slug:slug>/", PublicMenuView.as_view(), name="public-menu"),
     path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
     path("api/v1/integrations/cosmos/config/", CosmosConfigView.as_view(), name="cosmos-config"),
     path("api/v1/integrations/focus-nfe/webhook/", FocusNfeWebhookView.as_view(), name="focus-nfe-webhook"),

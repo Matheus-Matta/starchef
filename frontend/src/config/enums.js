@@ -91,6 +91,93 @@ export const MENU_CHANNEL_LABELS = {
   digital: "Digital",
 };
 
+// ── Cardapio digital (storefront) ─────────────────────────────────────
+// Mesmas chaves/rotulos do catalogo em backend/apps/storefront/themes.py —
+// se um preset novo entrar la, repita a entrada aqui.
+export const STOREFRONT_PAGE_STATUS_LABELS = {
+  draft: "Rascunho",
+  published: "Publicada",
+  archived: "Arquivada",
+};
+
+export const STOREFRONT_THEME_OPTIONS = [
+  { label: "Personalizado (cores abaixo)", value: "" },
+  { label: "Mercado (padrao)", value: "market" },
+  { label: "Classico", value: "classic" },
+  { label: "Noturno", value: "dark" },
+  { label: "Aconchegante", value: "warm" },
+  { label: "Natural", value: "fresh" },
+  { label: "Minimalista", value: "mono" },
+];
+
+export const STOREFRONT_THEME_MODE_OPTIONS = [
+  { label: "Claro", value: "light" },
+  { label: "Escuro", value: "dark" },
+];
+
+export const STOREFRONT_BUTTON_STYLE_OPTIONS = [
+  { label: "Arredondado", value: "rounded" },
+  { label: "Pilula", value: "pill" },
+  { label: "Quadrado", value: "square" },
+];
+
+// Menus (estilo Shopify): proposito do menu, origem dos itens e tipo do item.
+export const MENU_TYPE_LABELS = {
+  catalog: "Catalogo",
+  navigation: "Navegacao",
+  banner: "Banners",
+  showcase: "Vitrine",
+};
+
+export const MENU_TYPE_OPTIONS = [
+  { label: "Vitrine (categorias/produtos em destaque)", value: "showcase" },
+  { label: "Navegacao (cabecalho, rodape)", value: "navigation" },
+  { label: "Banners (carrossel)", value: "banner" },
+  { label: "Catalogo (curadoria de produtos)", value: "catalog" },
+];
+
+export const MENU_SOURCE_LABELS = {
+  manual: "Itens a mao",
+  all_categories: "Todas as categorias",
+  category_products: "Produtos de uma categoria",
+  best_sellers: "Mais vendidos",
+  promotions: "Em promocao",
+};
+
+export const MENU_SOURCE_OPTIONS = [
+  { label: "Itens escolhidos a mao", value: "manual" },
+  { label: "Todas as categorias ativas", value: "all_categories" },
+  { label: "Produtos de uma categoria", value: "category_products" },
+  { label: "Mais vendidos", value: "best_sellers" },
+  { label: "Em promocao", value: "promotions" },
+];
+
+export const MENU_ITEM_TYPE_LABELS = {
+  product: "Produto",
+  category: "Categoria",
+  image: "Imagem",
+  custom: "Link",
+};
+
+export const MENU_ITEM_TYPE_OPTIONS = [
+  { label: "Produto", value: "product" },
+  { label: "Categoria", value: "category" },
+  { label: "Imagem / banner", value: "image" },
+  { label: "Link personalizado", value: "custom" },
+];
+
+export const STOREFRONT_DOMAIN_TYPE_OPTIONS = [
+  { label: "Subdominio da plataforma", value: "subdomain" },
+  { label: "Dominio proprio", value: "custom" },
+];
+
+export const STOREFRONT_SSL_STATUS_LABELS = {
+  pending: "Pendente",
+  issuing: "Emitindo",
+  active: "Ativo",
+  error: "Erro",
+};
+
 export const CASH_STATUS_LABELS = { open: "Aberto", closed: "Fechado" };
 
 export const INVOICE_STATUS_LABELS = {

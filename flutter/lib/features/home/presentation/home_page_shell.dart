@@ -243,9 +243,9 @@ mixin _ShellSection on _HomePageShared {
                       // Clicar no badge abre a revisão da fila. Um item
                       // bloqueado não é resolvido por "sincronizar de novo":
                       // ele precisa ser inspecionado.
-                      onPressed: offlinePendingCount > 0
-                          ? () => unawaited(_openOutboxReview())
-                          : null,
+                      // A tela permanece acessível mesmo se um contador
+                      // transitório estiver atrasado em relação ao rótulo.
+                      onPressed: () => unawaited(_openOutboxReview()),
                     ),
                   ),
                   if (isSecondaryStation)

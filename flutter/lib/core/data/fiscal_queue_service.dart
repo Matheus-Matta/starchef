@@ -206,7 +206,8 @@ class FiscalQueueService {
     Duration(minutes: 15),
   ];
 
-  static const _retryableCodes = "('PENDING', 'PROCESSING', 'RECONCILIATION_REQUIRED')";
+  static const _retryableCodes =
+      "('PENDING', 'PROCESSING', 'RECONCILIATION_REQUIRED')";
 
   final PdvDatabase database;
 
@@ -271,12 +272,24 @@ class FiscalQueueService {
         SELECT * FROM fiscal_queue
         WHERE scope = ? AND status IN $_retryableCodes
           AND (next_retry_at IS NULL OR next_retry_at <= ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_queue
+            WHERE sync_queue.scope = fiscal_queue.scope
+              AND sync_queue.entity_type = 'order'
+              AND sync_queue.entity_id = fiscal_queue.order_id
+          )
         ORDER BY id
         LIMIT 1
         '''
             : '''
         SELECT * FROM fiscal_queue
         WHERE scope = ? AND status IN $_retryableCodes AND order_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM sync_queue
+            WHERE sync_queue.scope = fiscal_queue.scope
+              AND sync_queue.entity_type = 'order'
+              AND sync_queue.entity_id = fiscal_queue.order_id
+          )
         ORDER BY id DESC
         LIMIT 1
         ''',
@@ -380,12 +393,7 @@ class FiscalQueueService {
       SET status = ?, next_retry_at = NULL, last_error = ?, updated_at = ?
       WHERE id = ?
       ''',
-      [
-        status.code,
-        error,
-        DateTime.now().toUtc().toIso8601String(),
-        id,
-      ],
+      [status.code, error, DateTime.now().toUtc().toIso8601String(), id],
     );
   }
 

@@ -153,6 +153,14 @@ function hasModule(moduleName) {
   if (props.user?.is_superuser) return true;
   return enabledModules.value.includes(moduleName);
 }
+// Permissao por CODIGO (ex.: "storefront.publish"), a mesma lista que a API
+// exige. `user.permissions` ja vem resolvida do backend (perfil + permissoes
+// especificas; superusuario recebe "*"), entao aqui e so consultar.
+function hasPermission(code) {
+  if (!code) return true;
+  const codes = props.user?.permissions || [];
+  return codes.includes("*") || codes.includes(code);
+}
 const canUseCash = computed(() => ["admin", "owner", "manager", "cashier"].includes(props.user?.profile_type) || props.user?.is_superuser);
 const accountName = computed(() => props.user?.account_name || "StarChef");
 const restaurantName = computed(() => props.scope?.restaurantName || props.user?.restaurant_name || props.user?.account_name || "Restaurante");
@@ -198,9 +206,15 @@ const groups = computed(() =>
     },
     // ── Secoes de Modulos opcionais (ocultam por completo se o modulo estiver off) ──
     {
-      label: "E-commerce",
+      // Cardapio digital: o site publico e o que o alimenta. A visibilidade
+      // segue os codigos de permissao que a API exige, e nao o cargo — quem
+      // edita o site e o perfil E-commerce (e o administrador), nao o gerente.
+      label: "Cardapio Digital",
       module: "ecommerce",
-      items: [canManage.value ? { id: "cardapios", label: "Cardapios digitais", icon: "book-marked" } : null].filter(Boolean),
+      items: [
+        hasPermission("storefront.edit") ? { id: "menus", label: "Menus", icon: "list" } : null,
+        hasPermission("storefront.edit") ? { id: "menu-itens", label: "Itens de menu", icon: "book-marked" } : null,
+      ].filter(Boolean),
     },
     {
       label: "Entrega",

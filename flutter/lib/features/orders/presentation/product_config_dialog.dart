@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/widgets/app_dialog.dart';
+import '../../../core/widgets/product_image_url.dart';
 
 /// O que o operador escolheu para um produto: variação, adicionais,
 /// quantidade/peso e observação — antes de o item entrar no pedido.
@@ -120,8 +121,16 @@ Future<ProductConfigResult?> showProductConfigDialog(
                                   ? Icons.radio_button_checked
                                   : Icons.radio_button_off,
                             ),
-                            title: Text(
-                              '${item['name']}  + ${_money(item['price_delta'])}',
+                            title: Row(
+                              children: [
+                                ProductProfileThumbnail(product: item),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${item['name']}  + ${_money(item['price_delta'])}',
+                                  ),
+                                ),
+                              ],
                             ),
                             onTap: () => update(() => variation = id),
                           );

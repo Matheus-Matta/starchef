@@ -208,9 +208,14 @@ empilhava um cartão e enterrava a tela.
    a ordem de criação, mas **pula** o que não pode rodar agora (bloqueado, em
    backoff ou com lease de outra janela): antes, uma única operação travada na
    frente segurava a fila inteira, inclusive operações sem nenhuma relação com
-   ela. A ordem causal continua garantida pelo dado, não pela posição — quem
-   ainda cita um ID temporário (`offline-…`) não mapeado espera a sua vez, para
-   não enviar um item antes de o pedido que o contém existir no servidor.
+   ela. A ordem causal continua garantida pelo dado, não pela posição: uma
+   entidade nunca tem duas requisições simultaneamente em voo, mesmo com duas
+   janelas usando o SQLite. Uma operação em backoff cede a vez; itens seguintes
+   e entidades independentes continuam passando. Envio à cozinha, fechamento
+   e pagamento são barreiras e não ultrapassam as mutações das quais dependem.
+   Falha de conexão durante o envio e sessão expirada adiam só a operação
+   afetada, pois a próxima pode usar outro relay ou credencial. Quem ainda cita
+   um ID temporário (`offline-…`) não mapeado também espera.
 3. Envia no máximo 20 por ciclo, uma requisição por vez.
 4. Sucesso: mapeia ID temporário → real e remove da fila.
 5. Falha temporária (408/425/429/5xx, socket, timeout): `retry` com backoff
@@ -271,6 +276,14 @@ O que ele resolve, e que o cache não resolvia:
   quando a fila confirma, então a resposta seguinte reconhece o item como o
   mesmo em vez de somar um segundo.
 - **Total nunca negativo**, mesmo com desconto maior que o subtotal.
+- **Dinheiro usa arredondamento decimal.** Totais de linhas, subtotal e taxa
+  de serviço são calculados em unidades inteiras de centavo, com meio centavo
+  arredondado para cima como o `Decimal/ROUND_HALF_UP` do backend. Isso evita
+  divergências como `43,15 + 10% = 47,46` no Flutter contra `47,47` na API.
+- **CPF fiscal acompanha o fechamento.** `OrderRepository.close` incorpora
+  `fiscal_customer_cpf` ao retrato local antes de enfileirar a operação. Assim,
+  a chamada posterior de `/invoices/emit/` e o snapshot fiscal usam a escolha
+  feita no modal mesmo se o terminal estiver offline.
 
 Retenção: 200 pedidos por escopo, e pedidos com alterações locais pendentes
 nunca são descartados pela limpeza.
@@ -1028,8 +1041,10 @@ select e a grade de cards. É o que a Balança Rápida usa para os extras, com a
 categorias derivadas dos próprios produtos (`extraCategories`) para não custar
 outra chamada nem quebrar offline.
 
-Os cards **não têm foto**, como no frontend web: a imagem remota falhava com o
-terminal offline e ocupava espaço sem ajudar quem já sabe o que vai lançar.
+Os cards e opções de variante usam `productImageUrl`: primeiro `logo_p` e,
+para compatibilidade, `image`; o PDV não percorre `photo_list`. O carregamento usa
+o cache de imagens do Flutter e sempre conserva o ícone padrão como fallback;
+uma URL ausente ou indisponível nunca impede a venda offline.
 
 ### Adicionar uma preferência do terminal
 

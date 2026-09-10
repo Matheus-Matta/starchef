@@ -23,6 +23,23 @@ class LimitReached(APIException):
     default_code = "limit_reached"
 
 
+class MediaStorageUnavailable(APIException):
+    """Não há como gravar a imagem agora (storage sem credencial ou fora do ar).
+
+    503 e não 500: o servidor está de pé e o resto da API funciona — só o
+    destino do arquivo é que não está disponível, e o cliente pode tentar de
+    novo depois que a configuração for corrigida. O `default_code` permite ao
+    frontend reconhecer o caso e orientar quem administra a conta, em vez de
+    mostrar "erro inesperado" para um problema com solução conhecida.
+
+    Levantada pelo `apps.core.storage` no momento da gravação — nunca no boot.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "O armazenamento de imagens não está disponível."
+    default_code = "media_storage_unavailable"
+
+
 STANDARD_MESSAGES_PT_BR = {
     "Authentication credentials were not provided.": "As credenciais de autenticação não foram fornecidas.",
     "Invalid token.": "Token inválido.",

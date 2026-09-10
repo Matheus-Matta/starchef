@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import '../../../core/formatters/decimal_money.dart';
 import '../../../core/formatters/value_formatters.dart';
 
 typedef JsonMap = Map<String, dynamic>;
@@ -250,7 +251,9 @@ abstract final class OrderPresenter {
             'addon_name': value['name'],
             'quantity': 1,
             'unit_price': value['price'],
-            'total_price': ValueFormatters.number(value['price']) * quantity,
+            'total_price': DecimalMoney.asNumber(
+              DecimalMoney.multiplyToMinorUnits(value['price'], quantity),
+            ),
           },
         )
         .toList();
@@ -262,7 +265,9 @@ abstract final class OrderPresenter {
       'pricing_unit': product['pricing_unit'] ?? 'unit',
       'quantity': quantity,
       'unit_price': unitPrice,
-      'total_price': unitPrice * quantity,
+      'total_price': DecimalMoney.asNumber(
+        DecimalMoney.multiplyToMinorUnits(unitPrice, quantity),
+      ),
       'status': 'pending',
       'customer_note': customerNote,
       'variations': variations,
@@ -288,21 +293,21 @@ abstract final class OrderPresenter {
         (value) => value is Map ? '${value['id']}' : '$value',
       ),
     };
-    var total = ValueFormatters.number(
+    var totalInCents = DecimalMoney.minorUnits(
       product['current_price'] ?? product['sale_price'],
     );
     for (final variation in (product['variations'] as List? ?? const [])) {
       if (variation is Map &&
           selectedVariations.contains('${variation['id']}')) {
-        total += ValueFormatters.number(variation['price_delta']);
+        totalInCents += DecimalMoney.minorUnits(variation['price_delta']);
       }
     }
     for (final addon in (product['addons'] as List? ?? const [])) {
       if (addon is Map && selectedAddons.contains('${addon['id']}')) {
-        total += ValueFormatters.number(addon['price']);
+        totalInCents += DecimalMoney.minorUnits(addon['price']);
       }
     }
-    return total;
+    return DecimalMoney.asNumber(totalInCents);
   }
 
   static JsonMap sentToKitchen(JsonMap order) {
@@ -327,23 +332,21 @@ abstract final class OrderPresenter {
     required bool serviceFeeEnabled,
     required double serviceFeePercent,
   }) {
-    final subtotal = ValueFormatters.number(order['subtotal']);
-    // Arredonda a taxa isoladamente, como o backend faz ao gravar, para que o
-    // total previsto aqui bata com o total recalculado no fechamento — do
-    // contrário o servidor rejeitava o fechamento por divergência de total.
-    final rawFee = serviceFeeEnabled ? subtotal * serviceFeePercent / 100 : 0.0;
-    final fee = double.parse(rawFee.toStringAsFixed(2));
-    final discount = ValueFormatters.number(order['discount']);
-    final delivery = ValueFormatters.number(order['delivery_fee']);
-    final total = (subtotal + fee + delivery - discount).clamp(
-      0,
-      double.infinity,
-    );
+    final subtotal = DecimalMoney.minorUnits(order['subtotal']);
+    final fee = serviceFeeEnabled
+        ? DecimalMoney.percentageToMinorUnits(
+            order['subtotal'],
+            serviceFeePercent,
+          )
+        : 0;
+    final discount = DecimalMoney.minorUnits(order['discount']);
+    final delivery = DecimalMoney.minorUnits(order['delivery_fee']);
+    final total = max(0, subtotal + fee + delivery - discount);
     return {
       ...order,
       'service_fee_enabled': serviceFeeEnabled,
-      'service_fee': fee.toStringAsFixed(2),
-      'total': total.toStringAsFixed(2),
+      'service_fee': DecimalMoney.format(fee),
+      'total': DecimalMoney.format(total),
       'status': 'awaiting_payment',
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       '_offline_pending': true,
@@ -585,19 +588,21 @@ abstract final class OrderPresenter {
     // filtro o total ficava com o valor do item que o cliente desistiu.
     final subtotal = items
         .where((item) => item['status'] != 'voided')
-        .fold<double>(
+        .fold<int>(
           0,
-          (total, item) => total + ValueFormatters.number(item['total_price']),
+          (total, item) => total + DecimalMoney.minorUnits(item['total_price']),
         );
     final serviceFee = order['service_fee_enabled'] == false
-        ? 0.0
-        : ValueFormatters.number(order['service_fee']);
-    final delivery = ValueFormatters.number(order['delivery_fee']);
-    final discount = ValueFormatters.number(order['discount']);
-    final total = (subtotal + serviceFee + delivery - discount).clamp(
-      0,
-      double.infinity,
-    );
-    return {...order, 'items': items, 'subtotal': subtotal, 'total': total};
+        ? 0
+        : DecimalMoney.minorUnits(order['service_fee']);
+    final delivery = DecimalMoney.minorUnits(order['delivery_fee']);
+    final discount = DecimalMoney.minorUnits(order['discount']);
+    final total = max(0, subtotal + serviceFee + delivery - discount);
+    return {
+      ...order,
+      'items': items,
+      'subtotal': DecimalMoney.asNumber(subtotal),
+      'total': DecimalMoney.asNumber(total),
+    };
   }
 }

@@ -5,6 +5,7 @@ import {
   terminalInstallationId,
   terminalNameHeader,
 } from "./terminalIdentity";
+import { prepareMultipartHeaders } from "./multipart";
 
 // Base RELATIVA por padrão: o app chama a própria origem e o dev server (Vite)
 // faz proxy para o backend. Mantém tudo na mesma origem — essencial para os
@@ -32,6 +33,7 @@ export const api = axios.create({
 let refreshPromise = null;
 
 api.interceptors.request.use((config) => {
+  prepareMultipartHeaders(config);
   // O access token vai automaticamente pelo cookie httpOnly. Só mexemos no
   // Authorization quando o chamador o define explicitamente (sessão temporária).
   applyRestaurantScope(config);

@@ -119,6 +119,21 @@ PERMISSION_GROUPS = [
             ("stock.manage", "Gerenciar estoque", "Movimentar e ajustar o estoque."),
         ],
     ),
+    (
+        # Editar o site é um trabalho à parte da operação do salão: quem monta
+        # a vitrine não precisa abrir caixa, e quem opera o caixa não deve
+        # publicar página. Daí um grupo próprio, com códigos separados por
+        # consequência — editar (rascunho) ≠ publicar (o cliente final vê).
+        "Cardápio Digital (Site)",
+        "ecommerce",
+        [
+            ("storefront.view", "Ver o site", "Abrir o editor e consultar páginas, tema e modelos."),
+            ("storefront.edit", "Editar o site", "Salvar rascunho, tema, SEO, páginas e aplicar modelos."),
+            ("storefront.publish", "Publicar o site", "Colocar no ar, retirar do ar e restaurar versões publicadas."),
+            ("storefront.assets", "Gerenciar imagens do site", "Enviar e remover as imagens usadas no editor."),
+            ("storefront.domains", "Gerenciar domínios", "Cadastrar e verificar subdomínio ou domínio próprio."),
+        ],
+    ),
 ]
 
 

@@ -61,7 +61,7 @@ class ScannableCodesMixin:
 
 class RestaurantViewSet(BaseTenantViewSet):
     serializer_class = RestaurantSerializer
-    queryset = Restaurant.all_objects.all()
+    queryset = Restaurant.all_objects.select_related("logo_image").all()
     search_fields = ["trade_name", "legal_name", "cnpj"]
     ordering_fields = ["trade_name", "created_at"]
 

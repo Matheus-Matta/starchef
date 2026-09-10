@@ -694,6 +694,27 @@ void main() {
     expect(find.text('Online'), findsOneWidget);
   });
 
+  testWidgets('PdvConnectionBadge bloqueado permite abrir a revisão', (
+    tester,
+  ) async {
+    var opened = false;
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: PdvConnectionBadge(
+        status: const NetworkSyncStatus(
+          phase: NetworkSyncPhase.blocked,
+          blocked: 3,
+        ),
+        onPressed: () => opened = true,
+      ),
+    );
+
+    await tester.tap(find.text('Revisar 3'));
+    expect(opened, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   group('PdvPrincipalBadge', () {
     testWidgets('avisa que o caixa não grava sem o principal', (tester) async {
       var taps = 0;

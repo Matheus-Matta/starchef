@@ -4,6 +4,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../orders/presentation/order_formatters.dart';
 import '../domain/product_options.dart';
+import 'product_thumbnail.dart';
 
 /// Segunda etapa do lançamento: variação, adicionais, quantidade e observação.
 ///
@@ -142,6 +143,8 @@ class _ProductConfigViewState extends State<ProductConfigView> {
   Widget _header() => Row(
     children: [
       IconButton(onPressed: widget.onBack, icon: const Icon(Icons.arrow_back)),
+      ProductThumbnail(product: widget.product, size: 48),
+      const SizedBox(width: 10),
       Expanded(
         child: Text(
           '${widget.product['name'] ?? ''}',
@@ -163,10 +166,11 @@ class _ProductConfigViewState extends State<ProductConfigView> {
             dense: true,
             value: '${item['id']}',
             title: Text('${item['name']}'),
-            secondary: Text(
+            subtitle: Text(
               '+ ${money(item['price_delta'])}',
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
+            secondary: ProductThumbnail(product: item, size: 44),
           ),
       ],
     ),

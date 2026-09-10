@@ -1,12 +1,8 @@
 from django.db import transaction
-from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
-from rest_framework.views import APIView
 
 from apps.core.access import is_tenant_admin
 from apps.core.audit import record_audit
@@ -17,12 +13,12 @@ from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, 
 from apps.menu.serializers import (
     IngredientSerializer,
     MenuItemSerializer,
+    MenuResolvedSerializer,
     MenuSerializer,
     ProductAddonSerializer,
     ProductCategorySerializer,
     ProductSerializer,
     ProductVariationSerializer,
-    PublicMenuSerializer,
     RecipeItemSerializer,
     RecipeSerializer,
 )
@@ -30,7 +26,7 @@ from apps.menu.serializers import (
 
 class ProductCategoryViewSet(BaseTenantViewSet):
     serializer_class = ProductCategorySerializer
-    queryset = ProductCategory.objects.select_related("restaurant", "branch", "parent").all()
+    queryset = ProductCategory.objects.select_related("restaurant", "branch", "parent", "logo_image").all()
     filterset_fields = ["parent", "is_active"]
     search_fields = ["name"]
     ordering_fields = ["display_order", "name", "created_at"]
@@ -39,7 +35,9 @@ class ProductCategoryViewSet(BaseTenantViewSet):
 
 class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
-    queryset = Product.objects.select_related("restaurant", "branch", "category", "sector").prefetch_related("variations", "restaurants").all()
+    queryset = Product.objects.select_related(
+        "restaurant", "branch", "category", "sector", "logo_image"
+    ).prefetch_related("variations__logo_image", "restaurants", "product_images__image").all()
     filterset_fields = [
         "category",
         "product_type",
@@ -60,8 +58,8 @@ class ProductViewSet(BaseTenantViewSet):
         queryset = self.soft_delete_scope(
             Product.all_objects
             .filter(account=account)
-            .select_related("restaurant", "branch", "category", "sector")
-            .prefetch_related("variations", "restaurants")
+            .select_related("restaurant", "branch", "category", "sector", "logo_image")
+            .prefetch_related("variations__logo_image", "restaurants", "product_images__image")
         )
         profile = getattr(self.request.user, "profile", None)
         restaurant_id = self.request.query_params.get("restaurant")
@@ -116,7 +114,9 @@ class ProductAddonViewSet(BaseTenantViewSet):
 
 class ProductVariationViewSet(BaseTenantViewSet):
     serializer_class = ProductVariationSerializer
-    queryset = ProductVariation.objects.select_related("restaurant", "branch", "product").all()
+    queryset = ProductVariation.objects.select_related(
+        "restaurant", "branch", "product", "product__logo_image", "logo_image"
+    ).all()
     filterset_fields = ["product", "is_active"]
     search_fields = ["name", "product__name"]
 
@@ -215,42 +215,55 @@ class RecipeItemViewSet(BaseTenantViewSet):
 
 
 class MenuViewSet(BaseTenantViewSet):
-    required_module = MODULE_ECOMMERCE  # cardapio digital
+    """Menus no estilo Shopify: listas nomeadas que os blocos do site consomem.
+
+    Serve a navegacao do cabecalho, o carrossel de banners, a vitrine de
+    categorias/produtos e a curadoria de catalogo — o `menu_type` diz para que
+    aquele menu foi feito, e `source` diz se os itens sao escolhidos a mao ou
+    respondidos por consulta (todas as categorias, mais vendidos...).
+    """
+
+    required_module = MODULE_ECOMMERCE
     serializer_class = MenuSerializer
-    queryset = Menu.objects.select_related("restaurant", "branch").all()
-    filterset_fields = ["channel", "is_active"]
+    queryset = (
+        Menu.objects.select_related("restaurant", "branch", "source_category")
+        .prefetch_related("items__product", "items__category", "items__children")
+        .all()
+    )
+    filterset_fields = ["channel", "is_active", "menu_type", "source"]
     search_fields = ["name", "slug"]
+    ordering_fields = ["name", "menu_type", "created_at"]
+
+    @action(detail=True, methods=["get"], url_path="resolved")
+    def resolved(self, request, pk=None):
+        """O menu como o SITE o recebe, com as origens dinamicas ja resolvidas.
+
+        E o unico jeito de conferir um menu "mais vendidos" antes de publicar:
+        ele nao tem item cadastrado para olhar no formulario.
+        """
+        menu = self.get_object()
+        return Response(MenuResolvedSerializer(menu, context=self.get_serializer_context()).data)
 
 
 class MenuItemViewSet(BaseTenantViewSet):
-    required_module = MODULE_ECOMMERCE  # cardapio digital
+    """Entradas de um menu (produto, categoria, imagem ou link proprio)."""
+
+    required_module = MODULE_ECOMMERCE
     serializer_class = MenuItemSerializer
-    queryset = MenuItem.objects.select_related("restaurant", "branch", "menu", "product").all()
-    filterset_fields = ["menu", "product", "is_active"]
-    ordering_fields = ["display_order"]
+    queryset = MenuItem.objects.select_related(
+        "restaurant", "branch", "menu", "product", "category", "parent"
+    ).all()
+    filterset_fields = ["menu", "product", "category", "item_type", "parent", "is_active"]
+    search_fields = ["title", "url"]
+    ordering_fields = ["display_order", "created_at"]
 
-
-class PublicMenuView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-    # Cardápio público: dezenas de clientes de um restaurante saem pelo mesmo IP
-    # (WiFi/NAT), então o limite global `anon` (60/min) os bloquearia. Escopo
-    # próprio, bem mais generoso.
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "public_menu"
-
-    def get(self, request, slug):
-        try:
-            menu = Menu.objects.prefetch_related(
-                Prefetch(
-                    "items",
-                    queryset=MenuItem.objects.filter(is_active=True)
-                    .select_related("product__category")
-                    .prefetch_related("product__variations"),
-                    to_attr="active_items",
-                )
-            ).get(slug=slug, is_active=True)
-        except Menu.DoesNotExist:
-            return Response({"detail": "Cardápio não encontrado."}, status=404)
-        return Response(PublicMenuSerializer(menu).data)
-
+    def perform_create(self, serializer):
+        # Herda restaurante/filial do MENU: o item nao existe fora dele, e
+        # depender do escopo selecionado no topo faria o cadastro falhar com
+        # "restaurante obrigatorio" para quem esta com "todos" selecionado.
+        menu = serializer.validated_data.get("menu")
+        if menu is not None:
+            serializer.validated_data.setdefault("restaurant", menu.restaurant)
+            if menu.branch_id:
+                serializer.validated_data.setdefault("branch", menu.branch)
+        super().perform_create(serializer)

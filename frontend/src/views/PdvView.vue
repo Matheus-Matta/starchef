@@ -416,6 +416,25 @@
             <input v-model="serviceFeeEnabled" type="checkbox" />
             <span>Cobrar taxa de serviço</span>
           </label>
+          <div class="pdv__fiscal-cpf">
+            <label class="pdv__service-fee-toggle">
+              <input v-model="includeCpfOnInvoice" type="checkbox" @change="toggleInvoiceCpf" />
+              <span>Incluir CPF na NFC-e</span>
+            </label>
+            <input
+              v-if="includeCpfOnInvoice"
+              :value="invoiceCpf"
+              class="pdv__cpf-input"
+              inputmode="numeric"
+              maxlength="14"
+              autocomplete="off"
+              placeholder="000.000.000-00"
+              aria-label="CPF para a NFC-e"
+              :aria-invalid="Boolean(invoiceCpfError)"
+              @input="updateInvoiceCpf"
+            />
+            <small v-if="invoiceCpfError" class="pdv__cpf-error">{{ invoiceCpfError }}</small>
+          </div>
           <div class="pdv__total-row">
             <span>Subtotal</span>
             <strong>{{ money(currentOrder?.subtotal) }}</strong>
@@ -519,6 +538,7 @@
         <div class="pdv__pay-totals">
           <div class="pdv__pay-row"><span>Subtotal</span><span>{{ money(currentOrder?.subtotal) }}</span></div>
           <div v-if="currentOrder?.service_fee > 0" class="pdv__pay-row"><span>Taxa de serviço</span><span>{{ money(currentOrder?.service_fee) }}</span></div>
+          <div v-if="currentOrder?.fiscal_customer_cpf" class="pdv__pay-row"><span>CPF na NFC-e</span><span>{{ formatCpf(currentOrder.fiscal_customer_cpf) }}</span></div>
           <div class="pdv__pay-row pdv__pay-row--grand"><span>Total</span><strong>{{ money(finalTotal) }}</strong></div>
         </div>
 
@@ -807,6 +827,7 @@ import { api } from "../services/api";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
+import { cpfDigits, formatCpf, isValidCpf } from "../utils/cpf";
 
 const route = useRoute();
 const router = useRouter();
@@ -907,6 +928,9 @@ const padStr = ref("");
 const discount = ref(0);
 const discountInput = ref("0.00");
 const serviceFeeEnabled = ref(true);
+const includeCpfOnInvoice = ref(false);
+const invoiceCpf = ref("");
+const invoiceCpfError = ref("");
 const sendingKitchen = ref(false);
 const creatingOrder = ref(false);
 const showCancelModal = ref(false);
@@ -1070,6 +1094,19 @@ function selectType(type) {
   if (type === "command") Promise.all([loadCommands(), loadTables()]);
 }
 
+function toggleInvoiceCpf() {
+  invoiceCpfError.value = "";
+  if (!includeCpfOnInvoice.value || invoiceCpf.value) return;
+  invoiceCpf.value = formatCpf(
+    selectedCustomer.value?.document || currentOrder.value?.customer_document || "",
+  );
+}
+
+function updateInvoiceCpf(event) {
+  invoiceCpf.value = formatCpf(event.target.value);
+  invoiceCpfError.value = "";
+}
+
 function pickCommand(command) {
   if (creatingOrder.value) return;
   selectedCommand.value = command;
@@ -1123,6 +1160,9 @@ async function startOrder() {
     discount.value = 0;
     discountInput.value = "0.00";
     serviceFeeEnabled.value = true;
+    includeCpfOnInvoice.value = false;
+    invoiceCpf.value = "";
+    invoiceCpfError.value = "";
     navigateStep("order", { query: { order: currentOrder.value.id } });
   } catch (e) {
     pdvError(e, "Erro ao abrir pedido");
@@ -1418,6 +1458,9 @@ async function resumeTableOrder(order) {
   discount.value = Number(order.discount || 0);
   discountInput.value = discount.value.toFixed(2);
   serviceFeeEnabled.value = order.service_fee_enabled !== false;
+  invoiceCpf.value = formatCpf(order.fiscal_customer_cpf || "");
+  includeCpfOnInvoice.value = Boolean(invoiceCpf.value);
+  invoiceCpfError.value = "";
   await refreshCart();
   // Editar sempre abre a tela do PEDIDO (montar/editar itens) — inclusive quando
   // já está "aguardando pagamento". O caminho para o pagamento é o botão
@@ -1542,6 +1585,12 @@ async function refreshCart() {
 }
 
 async function goToClose() {
+  const fiscalCpf = cpfDigits(invoiceCpf.value);
+  if (includeCpfOnInvoice.value && !isValidCpf(fiscalCpf)) {
+    invoiceCpfError.value = "Informe um CPF válido.";
+    toast.add({ severity: "warn", summary: "CPF inválido", detail: invoiceCpfError.value, life: 3500 });
+    return;
+  }
   await loadPaymentMethods();
   try {
     if (pendingItems.value.length) {
@@ -1551,6 +1600,7 @@ async function goToClose() {
     const res = await api.post(`/orders/${currentOrder.value.id}/close/`, {
       discount: discount.value || 0,
       service_fee_enabled: serviceFeeEnabled.value,
+      fiscal_customer_cpf: includeCpfOnInvoice.value ? fiscalCpf : "",
       expected_total: orderPreviewTotal.value.toFixed(2),
     });
     currentOrder.value = res.data;
@@ -1578,6 +1628,12 @@ async function refreshPayments() {
   }
 }
 
+function paymentCardSubtype(method) {
+  if (method?.method_type !== "card") return "";
+  const name = String(method.name || "").toLocaleLowerCase("pt-BR");
+  return name.includes("débito") || name.includes("debito") ? "debit" : "credit";
+}
+
 async function addPayment() {
   if (!canAddPayment.value) return;
   paying.value = true;
@@ -1586,6 +1642,10 @@ async function addPayment() {
     await api.post(`/orders/${currentOrder.value.id}/pay/`, {
       payment_method: selectedPaymentMethod.value.id,
       amount: amountReceived.value,
+      metadata: {
+        card_subtype: paymentCardSubtype(selectedPaymentMethod.value),
+        source: "web_pdv",
+      },
     });
     await Promise.all([refreshPayments(), refreshCart()]);
     selectedPaymentMethod.value = null;
@@ -1694,6 +1754,9 @@ function newOrder() {
   discount.value = 0;
   discountInput.value = "0.00";
   serviceFeeEnabled.value = true;
+  includeCpfOnInvoice.value = false;
+  invoiceCpf.value = "";
+  invoiceCpfError.value = "";
   selectedPaymentMethod.value = null;
   amountReceived.value = 0;
   payError.value = "";
@@ -2264,6 +2327,15 @@ onBeforeUnmount(() => {
 .pdv__total-row--discount { color: var(--success-text, #065f46); }
 .pdv__service-fee-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
 .pdv__service-fee-toggle input { width: 17px; height: 17px; accent-color: var(--primary-color); }
+.pdv__fiscal-cpf { display: flex; flex-direction: column; margin-bottom: 8px; }
+.pdv__fiscal-cpf .pdv__service-fee-toggle { margin-bottom: 6px; }
+.pdv__cpf-input {
+  min-height: 38px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-strong);
+  font: var(--weight-medium) 14px/1 var(--font-sans);
+}
+.pdv__cpf-input[aria-invalid="true"] { border-color: var(--danger-color, #dc2626); }
+.pdv__cpf-error { margin-top: 5px; color: var(--danger-color, #dc2626); font-size: 12px; }
 .pdv__total-row--total {
   font: var(--weight-extra) 16px/1 var(--font-sans); color: var(--text-strong);
   padding-top: 5px; border-top: 1px solid var(--border-subtle);

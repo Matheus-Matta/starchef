@@ -381,6 +381,7 @@ class OrderDetailPresenter extends ChangeNotifier {
   Future<String?> pay({
     required String methodId,
     required String methodName,
+    required String cardSubtype,
     required String value,
     required String reference,
   }) => run(
@@ -388,6 +389,7 @@ class OrderDetailPresenter extends ChangeNotifier {
       orderId: _orderId,
       paymentMethodId: methodId,
       amount: value,
+      cardSubtype: cardSubtype,
       cashRegisterId: _cashRegisterId,
       reference: reference,
     ),

@@ -26,6 +26,13 @@ class Restaurant(TenantBaseModel):
     state = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=16, blank=True)
     logo = models.ImageField(upload_to="restaurants/logos/", blank=True)
+    logo_image = models.ForeignKey(
+        "images.Image",
+        null=True,
+        blank=True,
+        related_name="restaurant_logos",
+        on_delete=models.SET_NULL,
+    )
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     require_open_cash_register = models.BooleanField(default=True)
     # Senha de autorização de ações do caixa (ex.: aprovar sangria/divergência).

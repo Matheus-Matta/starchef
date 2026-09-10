@@ -124,6 +124,19 @@ def test_full_payment_issues_the_invoice(
     assert invoice.access_key
 
 
+def test_full_payment_uses_the_cpf_saved_when_the_order_was_closed(
+    django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
+):
+    order.fiscal_customer_cpf = "12345678909"
+    order.save(update_fields=["fiscal_customer_cpf"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _pay(order, cash_method, manager_user)
+
+    invoice = Invoice.all_objects.get(order=order)
+    assert invoice.recipient_cpf == "12345678909"
+
+
 def test_full_payment_prints_receipt_and_danfe_on_the_resolved_printer(
     django_capture_on_commit_callbacks, order, cash_method, manager_user, printer, fiscal_config
 ):

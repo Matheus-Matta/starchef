@@ -26,6 +26,11 @@ PUBLIC_URL_NAMES = {
     "password-reset",
     "password-reset-confirm",
     "focus-nfe-webhook",
+    # Login e refresh do editor do storefront: por definição chegam sem sessão
+    # (é justamente o que estão criando). O resto de /api/v1/storefront/**
+    # continua exigindo conta resolvida.
+    "storefront-auth-login",
+    "storefront-auth-refresh",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin
@@ -36,6 +41,13 @@ PUBLIC_PATH_PREFIXES = (
     "/admin/",
     settings.STATIC_URL,
     settings.MEDIA_URL,
+    # Tudo sob /api/v1/public/ é servido ao cliente final, sem login: cardápio
+    # digital, storefront por domínio. Aqui não há conta a resolver — quem
+    # identifica o restaurante é o slug/hostname da própria URL, e a view
+    # devolve exclusivamente conteúdo já publicado. Sem esta isenção o
+    # middleware responderia 401 antes de a view rodar, e o site público de
+    # todo cliente ficaria inacessível.
+    "/api/v1/public/",
 )
 
 

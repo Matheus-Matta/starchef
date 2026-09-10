@@ -79,7 +79,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 
 ## 4. Telas principais
 
-- **`PdvView.vue`** — o coração do sistema. Fluxo em passos (`restaurant → type → context → order`), com um gate de caixa aberto (`pdvGateLoading`/`pdvBlocked`) antes de liberar a venda. Painel de catálogo de produtos à esquerda, carrinho à direita (itens já enviados vs. pendentes, totais, ações de enviar/pagar). Aceita `editMode`/`orderId` para ser reaproveitada por `OrderEditView`.
+- **`PdvView.vue`** — o coração do sistema. Fluxo em passos (`restaurant → type → context → order`), com um gate de caixa aberto (`pdvGateLoading`/`pdvBlocked`) antes de liberar a venda. Painel de catálogo de produtos à esquerda, carrinho à direita (itens já enviados vs. pendentes, totais, ações de enviar/pagar). Junto da taxa de serviço, o operador pode marcar **Incluir CPF na NFC-e**; o campo aplica máscara, valida os dígitos e grava `fiscal_customer_cpf` ao fechar o pedido. Aceita `editMode`/`orderId` para ser reaproveitada por `OrderEditView`.
 - **`KdsView.vue`** — painel de cozinha: troca de estação, filtro por período, indicador "Ao vivo" com refresh manual (reforçado pelo WebSocket genérico, ver §6).
 - **`KdsStationsView.vue`** — cadastro de estações/colunas do KDS, master-detail, mão feita (não usa o CRUD genérico).
 - **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.
@@ -126,6 +126,15 @@ senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou
 cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
 deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
 payload do CRUD.
+
+Logos e fotos usam `ImageUploadField.vue`, um campo reutilizável baseado no
+`FileUpload` do PrimeVue. Restaurante, categoria e imagem principal do produto
+usam o modo avatar. A galeria aceita seleção e arrastar-e-soltar, mostra as
+fotos em cartões e permite excluir itens salvos ou pendentes. O envio usa
+`multipart/form-data` com boundary gerado pelo navegador. JPG, JPEG e PNG são
+aceitos. No editor de
+variações, a imagem principal é escolhida entre as fotos já vinculadas ao
+produto.
 
 ## 6. Tempo real
 
@@ -199,3 +208,34 @@ Subir tudo: `docker compose pull && docker compose up -d` (baixa as imagens publ
 
 - [`BACKEND.md`](BACKEND.md) — a API que este frontend consome.
 - [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md) — o outro cliente da mesma API (PDV desktop offline-first); não compartilha código com este frontend, mas compartilha o `.env` da raiz e os mesmos contratos de API.
+
+---
+
+## Cardápio Digital (storefront)
+
+O painel faz o **CRUD completo** dos modelos do storefront pela API, e o
+conteúdo em blocos é montado no editor visual (app Nuxt em `storefront/`),
+aberto pela ação "Abrir editor visual" na linha da página.
+
+Telas (todas declarativas em `config/resources.js`, sem código por tela):
+
+| Recurso | Endpoint | Permissão exigida |
+| --- | --- | --- |
+| Site | `/storefront/sites/` | `storefront.edit` |
+| Páginas | `/storefront/pages/` | `storefront.edit` (publicar: `storefront.publish`) |
+| Modelos | `/storefront/templates/` | `storefront.view` (somente leitura) |
+| Imagens | `/storefront/assets/` | `storefront.assets` |
+| Domínios | `/storefront/domains/` | `storefront.domains` |
+
+**Permissão por código.** Além do gate de módulo que já existia, o schema de
+recurso aceita `permission` (e colunas/campos/ações aceitam o mesmo). O
+`auth.hasPermission(code)` lê `user.permissions`, que o `/auth/me/` já devolve
+resolvido pelo backend. O router bloqueia acesso por URL direta e a Sidebar
+oculta o item — em vez de o usuário descobrir pelo 403 depois de preencher um
+formulário inteiro.
+
+**Tipos novos no CRUD genérico**, reaproveitáveis por qualquer recurso:
+`type: "file"` (upload multipart simples ou múltiplo com `multiple: true`, ver
+`useResourceForm.buildMultipartPayload`),
+colunas `image`/`bytes`, e as ações de linha `external`, `versions` (histórico
+com restaurar) e `apply-template`.

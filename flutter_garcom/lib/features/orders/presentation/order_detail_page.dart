@@ -107,6 +107,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       await _presenter.pay(
         methodId: request.methodId,
         methodName: request.methodName,
+        cardSubtype: request.cardSubtype,
         value: request.amount,
         reference: request.reference,
       ),

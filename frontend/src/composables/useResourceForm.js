@@ -38,6 +38,12 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       if (field.default !== undefined) data[field.name] = field.default;
       else if (field.type === "boolean") data[field.name] = true;
       else if (field.type === "remote-multiselect") data[field.name] = [];
+      // Sem arquivo selecionado (null, e não ""): um upload é opcional na
+      // edição (reenviar só quando o usuário escolhe outro arquivo).
+      else if (field.type === "file") {
+        data[field.name] = field.multiple ? [] : null;
+        if (field.removeField) data[field.removeField] = [];
+      }
       else data[field.name] = "";
     }
     return data;
@@ -107,7 +113,42 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
   }
 
   /** Converte o formulario no payload, aplicando os casts numericos declarados. */
+  // Formulário com upload de arquivo (ex.: imagem do storefront) precisa de
+  // multipart/form-data — JSON não carrega binário. Mantido à parte do
+  // caminho normal: um form com `type: "file"` não combina com campos
+  // aninhados por ponto (não há caso de uso hoje), só com nomes simples.
+  function buildMultipartPayload() {
+    const payload = new FormData();
+    for (const field of formFields) {
+      if (field.header) continue;
+      const value = formData[field.name];
+      if (field.type === "file") {
+        // Sem arquivo novo escolhido, omite a chave: no PATCH (parcial), a
+        // API mantém o arquivo já salvo. Reenviar exige escolher outro.
+        if (field.multiple && Array.isArray(value)) {
+          value.forEach((file) => {
+            if (file instanceof File) payload.append(field.name, file);
+          });
+        } else if (value instanceof File) payload.append(field.name, value);
+        if (field.removeField) {
+          const removed = formData[field.removeField] || [];
+          removed.forEach((id) => payload.append(field.removeField, id));
+        }
+        continue;
+      }
+      if (value === "" || value === null || value === undefined) continue;
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => payload.append(`${field.name}[${index}]`, item));
+      } else {
+        payload.append(field.name, typeof value === "boolean" ? String(value) : value);
+      }
+    }
+    return payload;
+  }
+
   function buildPayload() {
+    if (formFields.some((field) => field.type === "file")) return buildMultipartPayload();
+
     const payload = {};
     for (const field of formFields) {
       if (field.header) continue; // vira header (ver buildHeaders), não corpo.

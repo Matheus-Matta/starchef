@@ -11,12 +11,14 @@ class PaymentRequest {
   const PaymentRequest({
     required this.methodId,
     required this.methodName,
+    required this.cardSubtype,
     required this.amount,
     this.reference = '',
   });
 
   final String methodId;
   final String methodName;
+  final String cardSubtype;
 
   /// Valor em texto, com ponto decimal — o formato que a API aceita.
   final String amount;
@@ -101,11 +103,20 @@ class _PaymentSheetState extends State<_PaymentSheet> {
 
   void _confirm() {
     final method = _method!;
+    final methodName = '${method['name']}';
+    final normalizedName = methodName.toLowerCase();
+    final isCard = '${method['method_type']}' == 'card';
     Navigator.pop(
       context,
       PaymentRequest(
         methodId: '${method['id']}',
-        methodName: '${method['name']}',
+        methodName: methodName,
+        cardSubtype: !isCard
+            ? ''
+            : normalizedName.contains('débito') ||
+                  normalizedName.contains('debito')
+            ? 'debit'
+            : 'credit',
         // A API recebe decimal com ponto; o operador digita com vírgula.
         amount: _typed.toStringAsFixed(2),
         reference: _reference.text.trim(),

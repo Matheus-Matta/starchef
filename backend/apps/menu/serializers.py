@@ -1,6 +1,9 @@
+from django.utils.text import slugify
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.images.product_serializers import ProductImagesMixin, VariationImageMixin
+from apps.images.serializers import LogoImageMixin
 
 from apps.menu.barcodes import GTIN_LENGTHS, is_valid_gtin, normalize_barcode
 from apps.menu.units import IncompatibleUnitError, convert
@@ -17,7 +20,7 @@ from apps.menu.models import (
 )
 
 
-class ProductCategorySerializer(TenantModelSerializer):
+class ProductCategorySerializer(LogoImageMixin, TenantModelSerializer):
     # A UniqueConstraint (branch, name, parent) faz o DRF gerar um
     # UniqueTogetherValidator que, por padrão, exigiria `parent` no payload —
     # a causa do erro silencioso no cadastro de categoria (STC-023). Declarar o
@@ -55,7 +58,7 @@ class ProductCategorySerializer(TenantModelSerializer):
         return attrs
 
 
-class ProductVariationSerializer(TenantModelSerializer):
+class ProductVariationSerializer(VariationImageMixin, TenantModelSerializer):
     class Meta:
         model = ProductVariation
         fields = "__all__"
@@ -141,7 +144,7 @@ class RecipeSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
 
 
-class ProductSerializer(TenantModelSerializer):
+class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
     category_name = serializers.SerializerMethodField()
     sector_name = serializers.CharField(source="sector.name", read_only=True, default=None)
     current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -288,8 +291,13 @@ class IngredientSerializer(TenantModelSerializer):
 
 
 class MenuItemSerializer(TenantModelSerializer):
+    """Uma entrada de menu. O tipo decide qual alvo e obrigatorio."""
+
     product_name = serializers.CharField(source="product.name", read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    label = serializers.CharField(read_only=True)
     effective_price = serializers.SerializerMethodField()
+    children_count = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuItem
@@ -297,50 +305,143 @@ class MenuItemSerializer(TenantModelSerializer):
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
     def get_effective_price(self, obj):
+        if not obj.product_id:
+            return None
         return obj.override_price if obj.override_price is not None else obj.product.current_price
+
+    def get_children_count(self, obj):
+        return obj.children.count()
+
+    # Qual campo cada tipo exige. Sem isso, um item de produto sem produto
+    # entraria no banco e sumiria do site sem erro nenhum — o pior resultado
+    # possivel, porque o restaurante ve o item salvo no cadastro.
+    REQUIRED_BY_TYPE = {
+        MenuItem.TYPE_PRODUCT: ("product", "Escolha o produto deste item."),
+        MenuItem.TYPE_CATEGORY: ("category", "Escolha a categoria deste item."),
+        MenuItem.TYPE_IMAGE: ("image", "Envie a imagem deste item."),
+        MenuItem.TYPE_CUSTOM: ("url", "Informe o link deste item."),
+    }
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = self.instance
+
+        def value_of(field):
+            if field in attrs:
+                return attrs[field]
+            return getattr(instance, field, None)
+
+        item_type = value_of("item_type") or MenuItem.TYPE_PRODUCT
+        required_field, message = self.REQUIRED_BY_TYPE[item_type]
+        if not value_of(required_field):
+            raise serializers.ValidationError({required_field: message})
+
+        menu = value_of("menu")
+        parent = value_of("parent")
+        if parent is not None:
+            if instance is not None and parent.pk == instance.pk:
+                raise serializers.ValidationError({"parent": "Um item nao pode ser pai de si mesmo."})
+            if menu is not None and parent.menu_id != menu.id:
+                raise serializers.ValidationError({"parent": "O item pai pertence a outro menu."})
+            # Profundidade: o pai ja ocupa um nivel, entao o filho fica um
+            # abaixo. Tres niveis e o teto (ver `MenuItem.MAX_DEPTH`).
+            if parent.depth >= MenuItem.MAX_DEPTH:
+                raise serializers.ValidationError(
+                    {"parent": f"O menu aceita no maximo {MenuItem.MAX_DEPTH} niveis."}
+                )
+            if instance is not None and _is_descendant(parent, instance):
+                raise serializers.ValidationError({"parent": "Isso criaria um ciclo no menu."})
+
+        # Um item so faz sentido apontando para o alvo do proprio tipo; limpar
+        # os outros evita um produto "fantasma" preso num item que virou link.
+        for candidate_type, (field, _message) in self.REQUIRED_BY_TYPE.items():
+            if candidate_type != item_type and field in attrs and field != "url":
+                attrs[field] = None if field != "image" else attrs[field]
+        return attrs
+
+
+def _is_descendant(candidate, ancestor):
+    """`candidate` esta abaixo de `ancestor` na arvore?"""
+    node = candidate
+    depth = 0
+    while node is not None and depth <= MenuItem.MAX_DEPTH + 1:
+        if node.pk == ancestor.pk:
+            return True
+        node = node.parent
+        depth += 1
+    return False
+
+
+class MenuItemTreeSerializer(MenuItemSerializer):
+    """O item com os filhos aninhados — usado no detalhe do menu."""
+
+    children = serializers.SerializerMethodField()
+
+    def get_children(self, obj):
+        children = [child for child in obj.children.all() if child.deleted_at is None]
+        return MenuItemTreeSerializer(sorted(children, key=lambda c: c.display_order), many=True, context=self.context).data
 
 
 class MenuSerializer(TenantModelSerializer):
-    items = MenuItemSerializer(many=True, read_only=True)
+    """Menu no estilo Shopify: um handle, um proposito e uma lista ordenada."""
+
+    items = serializers.SerializerMethodField()
+    items_count = serializers.SerializerMethodField()
+    source_category_name = serializers.CharField(source="source_category.name", read_only=True)
 
     class Meta:
         model = Menu
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
-
-class PublicMenuProductSerializer(serializers.ModelSerializer):
-    category_name = serializers.CharField(source="category.name", read_only=True)
-    current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    variations = ProductVariationSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = Product
-        fields = ["id", "name", "description", "image", "category", "category_name", "current_price", "variations", "allows_addons", "allows_notes", "requires_variation"]
-
-
-class PublicMenuItemSerializer(serializers.ModelSerializer):
-    product = PublicMenuProductSerializer(read_only=True)
-    effective_price = serializers.SerializerMethodField()
-
-    class Meta:
-        model = MenuItem
-        fields = ["id", "product", "display_order", "effective_price", "is_active"]
-
-    def get_effective_price(self, obj):
-        return obj.override_price if obj.override_price is not None else obj.product.current_price
-
-
-class PublicMenuSerializer(serializers.ModelSerializer):
-    items = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Menu
-        fields = ["id", "name", "slug", "channel", "available_from", "available_until", "items"]
-
     def get_items(self, obj):
-        if hasattr(obj, "active_items"):
-            return PublicMenuItemSerializer(obj.active_items, many=True).data
-        active_items = obj.items.filter(is_active=True).select_related("product__category").prefetch_related("product__variations")
-        return PublicMenuItemSerializer(active_items, many=True).data
+        """So os itens de topo; os filhos vao aninhados dentro deles."""
+        roots = [item for item in obj.items.all() if item.parent_id is None and item.deleted_at is None]
+        return MenuItemTreeSerializer(
+            sorted(roots, key=lambda item: item.display_order), many=True, context=self.context
+        ).data
 
+    def get_items_count(self, obj):
+        return sum(1 for item in obj.items.all() if item.deleted_at is None)
+
+    def validate_slug(self, value):
+        slug = slugify(value or "")
+        if not slug:
+            raise serializers.ValidationError("Informe um apelido valido para o menu.")
+        return slug
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if not attrs.get("slug") and not self.instance:
+            attrs["slug"] = slugify(attrs.get("name", ""))[:140] or "menu"
+
+        source = attrs.get("source") or getattr(self.instance, "source", Menu.SOURCE_MANUAL)
+        category = attrs.get("source_category") or getattr(self.instance, "source_category", None)
+        if source == Menu.SOURCE_CATEGORY_PRODUCTS and not category:
+            raise serializers.ValidationError(
+                {"source_category": "Escolha a categoria cujos produtos este menu vai listar."}
+            )
+
+        slug = attrs.get("slug") or getattr(self.instance, "slug", None)
+        request = self.context.get("request")
+        account = getattr(request, "account", None) if request else None
+        if slug and account:
+            duplicates = Menu.all_objects.filter(account=account, slug=slug, deleted_at__isnull=True)
+            if self.instance:
+                duplicates = duplicates.exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                raise serializers.ValidationError({"slug": "Ja existe um menu com este apelido nesta conta."})
+        return attrs
+
+
+class MenuResolvedSerializer(serializers.Serializer):
+    """O menu ja RESOLVIDO — como o site o recebe.
+
+    Existe para o editor pre-visualizar exatamente o que o bloco vai desenhar,
+    inclusive nas origens dinamicas (onde nao ha item cadastrado para olhar).
+    """
+
+    def to_representation(self, instance):
+        from apps.menu.services.menu_resolver import serialize_menu
+
+        return serialize_menu(instance, request=self.context.get("request"))

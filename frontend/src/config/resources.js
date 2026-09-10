@@ -22,6 +22,12 @@ import {
   FISCAL_ORIGEM_OPTIONS,
   INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
+  MENU_ITEM_TYPE_LABELS,
+  MENU_ITEM_TYPE_OPTIONS,
+  MENU_SOURCE_LABELS,
+  MENU_SOURCE_OPTIONS,
+  MENU_TYPE_LABELS,
+  MENU_TYPE_OPTIONS,
   LABEL_CODE_TYPE_LABELS,
   LABEL_CODE_TYPE_OPTIONS,
   MOVEMENT_TYPE_LABELS,
@@ -48,6 +54,12 @@ import {
   SLA_PRIORITY_OPTIONS,
   SLA_TYPE_LABELS,
   SLA_TYPE_OPTIONS,
+  STOREFRONT_BUTTON_STYLE_OPTIONS,
+  STOREFRONT_DOMAIN_TYPE_OPTIONS,
+  STOREFRONT_PAGE_STATUS_LABELS,
+  STOREFRONT_SSL_STATUS_LABELS,
+  STOREFRONT_THEME_MODE_OPTIONS,
+  STOREFRONT_THEME_OPTIONS,
   SCALE_PROTOCOL_LABELS,
   SCALE_PROTOCOL_OPTIONS,
   SECTOR_OPTIONS,
@@ -238,6 +250,7 @@ export const resources = [
     title: "Produtos",
     endpoint: "/menu/products/",
     columns: [
+      { key: "logo_p", label: "Imagem", type: "image" },
       { key: "internal_code", label: "Codigo" },
       { key: "ean", label: "Cód. barras" },
       { key: "name", label: "Produto" },
@@ -256,6 +269,8 @@ export const resources = [
       // diferentes, e perder os zeros faria o leitor não achar o produto.
       { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
       { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
+      { name: "logo_p_upload", label: "Imagem principal", type: "file", uploadMode: "avatar", previewField: "logo_p", full: true, section: "Imagens", hint: "Usada como capa do produto na tela inicial e no cardapio." },
+      { name: "photo_uploads", label: "Galeria do produto", type: "file", uploadMode: "gallery", multiple: true, fileLimit: 20, removeField: "photo_remove_ids", previewField: "photo_list", full: true, section: "Imagens", hint: "Arraste ate 20 fotos. Use a lixeira para remover uma foto salva ou ainda pendente." },
       { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
       { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
       { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços" },
@@ -294,11 +309,13 @@ export const resources = [
     // Compartilhadas entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
     sharedAcrossRestaurants: true,
     columns: [
+      { key: "logo_url", label: "Logo", type: "image" },
       { key: "name", label: "Nome" },
       { key: "display_order", label: "Ordem" },
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
+      { name: "logo_upload", label: "Logo da categoria", type: "file", uploadMode: "avatar", previewField: "logo_url", full: true, section: "Imagem" },
       { name: "name", label: "Nome", type: "text", required: true },
       { name: "display_order", label: "Ordem de exibicao", type: "number", default: 0 },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
@@ -379,25 +396,90 @@ export const resources = [
     ],
   },
   {
-    name: "cardapios",
+    // Menus no estilo Shopify: listas nomeadas que os BLOCOS do site consomem
+    // (carrossel de banners, barra de navegacao, vitrine de categorias). O
+    // `menu_type` diz para que o menu foi feito; a `source` diz se os itens
+    // sao escolhidos a mao ou respondidos por consulta.
+    name: "menus",
     module: "ecommerce",
-    title: "Cardapios",
+    permission: "storefront.edit",
+    title: "Menus",
     endpoint: "/menu/menus/",
+    pro: {
+      rowActions: [
+        {
+          key: "resolved",
+          label: "Ver itens resolvidos",
+          icon: "pi pi-eye",
+          type: "resolved",
+          // Unico jeito de conferir um menu dinamico ("mais vendidos") antes
+          // de publicar: ele nao tem item cadastrado para olhar no formulario.
+          endpointSuffix: "resolved",
+        },
+      ],
+    },
     columns: [
-      { key: "name", label: "Nome" },
-      { key: "slug", label: "Slug" },
+      { key: "name", label: "Menu" },
+      { key: "slug", label: "Apelido" },
+      { key: "menu_type", label: "Tipo", type: "status", map: MENU_TYPE_LABELS },
+      { key: "source", label: "Origem", map: MENU_SOURCE_LABELS },
+      { key: "source_category_name", label: "Categoria de origem" },
+      { key: "items_count", label: "Itens", align: "right" },
       { key: "channel", label: "Canal", map: MENU_CHANNEL_LABELS },
-      { key: "available_from", label: "Disponivel de" },
-      { key: "available_until", label: "Disponivel ate" },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true },
-      { name: "slug", label: "Slug (URL)", type: "text", placeholder: "ex: almoco-segunda" },
-      { name: "channel", label: "Canal", type: "dropdown", options: CHANNEL_OPTIONS },
-      { name: "available_from", label: "Disponivel de (HH:MM)", type: "text", placeholder: "08:00" },
-      { name: "available_until", label: "Disponivel ate (HH:MM)", type: "text", placeholder: "22:00" },
-      { name: "is_active", label: "Ativo", type: "boolean", default: true },
+      { name: "name", label: "Nome do menu", type: "text", required: true, section: "Identificacao" },
+      { name: "slug", label: "Apelido (handle)", type: "text", section: "Identificacao", placeholder: "navegacao-principal", hint: "Como os blocos do site apontam para este menu. Vazio ao criar gera a partir do nome." },
+      { name: "menu_type", label: "Para que serve", type: "dropdown", options: MENU_TYPE_OPTIONS, default: "showcase", section: "Identificacao", hint: "Filtra o que o editor sugere em cada bloco. Nao impede usar o menu em outro lugar." },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificacao" },
+      { name: "source", label: "Origem dos itens", type: "dropdown", options: MENU_SOURCE_OPTIONS, default: "manual", section: "Conteudo", hint: "\"A mao\" usa os itens cadastrados. As demais respondem sozinhas e nunca ficam desatualizadas." },
+      { name: "source_category", label: "Categoria (para \"produtos de uma categoria\")", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma", section: "Conteudo" },
+      { name: "item_limit", label: "Maximo de itens (0 = todos)", type: "number", default: 0, section: "Conteudo", hint: "So vale para as origens automaticas." },
+      { name: "channel", label: "Canal", type: "dropdown", options: CHANNEL_OPTIONS, default: "all", section: "Disponibilidade" },
+      { name: "available_from", label: "Disponivel de (HH:MM)", type: "text", placeholder: "08:00", section: "Disponibilidade" },
+      { name: "available_until", label: "Disponivel ate (HH:MM)", type: "text", placeholder: "22:00", section: "Disponibilidade" },
+    ],
+  },
+  {
+    // Entradas de um menu. Cada uma aponta para um produto, uma categoria, uma
+    // imagem (banner) ou um link proprio — e pode ter um item pai, formando os
+    // submenus da barra de navegacao (ate 3 niveis, como no Shopify).
+    name: "menu-itens",
+    module: "ecommerce",
+    permission: "storefront.edit",
+    title: "Itens de Menu",
+    endpoint: "/menu/menu-items/",
+    columns: [
+      { key: "menu", label: "Menu", showInList: false },
+      { key: "label", label: "Item" },
+      { key: "image", label: "Foto", type: "image" },
+      { key: "item_type", label: "Tipo", type: "status", map: MENU_ITEM_TYPE_LABELS },
+      { key: "product_name", label: "Produto" },
+      { key: "category_name", label: "Categoria" },
+      { key: "url", label: "Link" },
+      { key: "display_order", label: "Ordem", align: "right" },
+      { key: "children_count", label: "Subitens", align: "right" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "menu", label: "Menu", type: "remote-dropdown", endpoint: "/menu/menus/", optionLabel: "name", optionValue: "id", required: true, section: "Onde entra" },
+      { name: "parent", label: "Item pai (submenu)", type: "remote-dropdown", endpoint: "/menu/menu-items/", optionLabel: "label", optionValue: "id", placeholder: "Nenhum (item de topo)", section: "Onde entra", hint: "Ate 3 niveis. Use para os submenus da barra de navegacao." },
+      { name: "display_order", label: "Ordem", type: "number", default: 0, section: "Onde entra" },
+      { name: "item_type", label: "Tipo do item", type: "dropdown", options: MENU_ITEM_TYPE_OPTIONS, default: "product", required: true, section: "Conteudo", hint: "Decide qual campo abaixo e obrigatorio." },
+      { name: "product", label: "Produto", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum", section: "Conteudo" },
+      { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma", section: "Conteudo" },
+      { name: "url", label: "Link", type: "text", full: true, placeholder: "/promocoes ou https://...", section: "Conteudo" },
+      // `previewField` é obrigatório aqui: sem ele a prévia cai no padrão
+      // `record.url` — que num item de menu é o LINK de destino, não a foto.
+      // O formulário mostrava um <img src="/combos"> quebrado no lugar da
+      // imagem salva, e a foto parecia nunca ter sido gravada.
+      { name: "image", label: "Imagem", type: "file", uploadMode: "avatar", previewField: "image", accept: "image/jpeg,image/png,image/webp,image/avif,image/gif", section: "Conteudo", hint: "Obrigatoria no tipo Imagem. Nos demais, substitui a foto padrao do produto/categoria." },
+      { name: "title", label: "Titulo exibido", type: "text", section: "Aparencia", hint: "Vazio herda o nome do produto/categoria." },
+      { name: "subtitle", label: "Subtitulo", type: "text", full: true, section: "Aparencia" },
+      { name: "opens_in_new_tab", label: "Abrir em nova aba", type: "boolean", default: false, section: "Aparencia" },
+      { name: "override_price", label: "Preco so neste menu (R$)", type: "decimal", section: "Aparencia", hint: "So para item de produto. Vazio usa o preco do cadastro." },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Aparencia" },
     ],
   },
   {
@@ -665,6 +747,11 @@ export const resources = [
           type: "post-detail",
           action: "resend",
           confirmMessage: "Reenviar somente esta nota para a Focus NFe?",
+          confirmAcceptLabel: "Reenviar",
+          successSummary: (data) => (data.status === "issued" ? "Nota autorizada" : "Nota reenviada"),
+          successDetail: (data) => (data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus."),
+          successSeverity: (data) => (data.status === "issued" ? "success" : "info"),
+          errorSummary: "Não foi possível reenviar a nota",
           visible: (row) => row.status === "error" || (row.status === "pending" && row.emission_type === "9"),
         },
       ],
@@ -805,6 +892,7 @@ export const resources = [
       ],
     },
     columns: [
+      { key: "logo_url", label: "Logo", type: "image" },
       { key: "trade_name", label: "Nome fantasia" },
       { key: "legal_name", label: "Razao social" },
       { key: "city", label: "Cidade" },
@@ -812,6 +900,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
+      { name: "logo_upload", label: "Logo da empresa", type: "file", uploadMode: "avatar", previewField: "logo_url", full: true, section: "Identidade visual" },
       { name: "trade_name", label: "Nome fantasia", type: "text", required: true },
       { name: "legal_name", label: "Razao social", type: "text" },
       { name: "cnpj", label: "CNPJ (opcional)", type: "text", placeholder: "00.000.000/0000-00" },

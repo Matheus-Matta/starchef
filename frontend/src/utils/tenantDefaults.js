@@ -23,12 +23,20 @@ export function applyTenantDefaults(payload, { skip = [] } = {}) {
   const skipSet = new Set(skip);
   const profile = useAuthStore().user;
 
-  if (!skipSet.has("restaurant") && payload.restaurant == null) {
+  // Upload de arquivo (ex.: imagem do storefront) manda o payload como
+  // FormData — `payload.restaurant = x` não funciona nela (só cria uma
+  // propriedade solta no objeto, sem entrar no corpo multipart); precisa de
+  // `.append()`, e o "já preenchido" se verifica com `.has()`.
+  const isFormData = typeof FormData !== "undefined" && payload instanceof FormData;
+  const hasValue = (key) => (isFormData ? payload.has(key) : payload[key] != null);
+  const setValue = (key, value) => (isFormData ? payload.append(key, value) : (payload[key] = value));
+
+  if (!skipSet.has("restaurant") && !hasValue("restaurant")) {
     const restaurantId = profile?.restaurant_id || localStorage.getItem(RESTAURANT_SCOPE_KEY);
-    if (restaurantId) payload.restaurant = restaurantId;
+    if (restaurantId) setValue("restaurant", restaurantId);
   }
-  if (!skipSet.has("branch") && payload.branch == null && profile?.branch_id) {
-    payload.branch = profile.branch_id;
+  if (!skipSet.has("branch") && !hasValue("branch") && profile?.branch_id) {
+    setValue("branch", profile.branch_id);
   }
   return payload;
 }

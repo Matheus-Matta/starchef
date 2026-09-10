@@ -2,13 +2,15 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import Account
 from apps.accounts.role_catalog import CODE_ADMIN, SYSTEM_ROLE_CODES, ensure_system_roles
-from apps.core.management.commands._demo_seed import (
+from apps.core.management.commands._demo_defaults import (
     DEFAULT_ACCOUNT_SLUG,
     DEFAULT_BRANCH_NAME,
     DEFAULT_EMAIL,
     DEFAULT_PASSWORD,
     DEFAULT_RESTAURANT_NAME,
     DEFAULT_USERNAME,
+)
+from apps.core.management.commands._demo_seed import (
     ensure_base_tenant,
     ensure_tenant_user,
 )

@@ -119,6 +119,18 @@ void main() {
       expect(body['cash_register'], 'sessao-1');
     });
 
+    test('recebimento em cartão envia o subtipo fiscal', () async {
+      await repository.pay(
+        orderId: 'pedido-1',
+        paymentMethodId: 'credito-1',
+        amount: '25.00',
+        cardSubtype: 'credit',
+      );
+
+      final body = principal.lastRelay['body'] as Map<String, dynamic>;
+      expect((body['metadata'] as Map)['card_subtype'], 'credit');
+    });
+
     test('formas de pagamento e caixa aberto vêm do principal', () async {
       principal.readPayload = {
         'results': [

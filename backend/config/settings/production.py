@@ -25,7 +25,11 @@ MIDDLEWARE.insert(  # noqa: F405
     "whitenoise.middleware.WhiteNoiseMiddleware",
 )
 STORAGES = {
-    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # O destino da mídia é resolvido em runtime pelo serviço (S3/R2 quando há
+    # bucket, disco local caso contrário) — ver `apps.core.storage`. Aqui só o
+    # estático muda em relação ao base: o WhiteNoise serve os arquivos
+    # coletados direto do app.
+    "default": {"BACKEND": "apps.core.storage.MediaStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 

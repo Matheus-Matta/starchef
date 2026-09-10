@@ -1,6 +1,8 @@
-from apps.accounts.role_catalog import SYSTEM_ROLE_CODES
+from apps.accounts.role_catalog import SYSTEM_ROLE_RANKS
 
-_ROLE_RANK = {code: rank for rank, code in enumerate(SYSTEM_ROLE_CODES)}
+# O nível vem do próprio catálogo, não da posição na lista: um perfil novo pode
+# ser exibido em qualquer lugar da tela sem que isso o promova na hierarquia.
+_ROLE_RANK = dict(SYSTEM_ROLE_RANKS)
 
 
 def is_tenant_admin(user):
@@ -17,8 +19,12 @@ def is_tenant_admin(user):
 
 
 def has_role_at_least(user, code):
-    """O cargo (Role) do usuário está no nível `code` ou acima, na hierarquia
-    waiter < cashier < manager < admin (apps.accounts.role_catalog.SYSTEM_ROLE_CODES)."""
+    """O cargo (Role) do usuário está no nível `code` ou acima.
+
+    Hierarquia: ecommerce < waiter < cashier < manager < admin (os níveis vêm
+    de ``role_catalog.SYSTEM_ROLE_RANKS``). O perfil de E-commerce fica no piso
+    porque não é um degrau do salão: ele edita o site e nada mais — não pode
+    herdar mesa, comanda nem caixa por estar "acima" de alguém."""
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:

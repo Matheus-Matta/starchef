@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
+from apps.images.serializers import LogoImageMixin
 
 from apps.restaurants.models import (
     Branch,
@@ -14,7 +15,7 @@ from apps.restaurants.models import (
 )
 
 
-class RestaurantSerializer(TenantModelSerializer):
+class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
     # CNPJ opcional (não obrigatório). Vazio vira null para não colidir no unique.
     cnpj = serializers.CharField(max_length=18, required=False, allow_null=True, allow_blank=True, default=None)
     # Senha de ações do caixa: entra em texto (write-only), sai só como booleano.

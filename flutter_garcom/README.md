@@ -112,6 +112,11 @@ lib/
     menu/                        busca de produto, quantidade, observação
 ```
 
+Na busca, na configuração do item e nas opções de variante, a miniatura
+quadrada usa `logo_p` e por fim o campo legado `image`; o app não percorre
+`photo_list`. Quando a foto não existe ou não pode ser carregada, o ícone
+padrão permanece no lugar sem bloquear o lançamento.
+
 ## Gerar o APK
 
 ```bash

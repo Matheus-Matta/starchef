@@ -508,6 +508,15 @@ def register_payment(
             raise ValidationError("O pedido já foi pago.")
 
         payment_method = PaymentMethod.objects.get(pk=payment_method_id, restaurant=order.restaurant, is_active=True)
+        payment_metadata = dict(metadata or {})
+        card_subtype = str(payment_metadata.get("card_subtype") or "").strip().lower()
+        if payment_method.method_type == PaymentMethod.TYPE_CARD:
+            if card_subtype not in {Payment.CARD_DEBIT, Payment.CARD_CREDIT}:
+                raise ValidationError("Selecione débito ou crédito para pagamento com cartão.")
+        else:
+            # Clientes antigos podem mandar a chave vazia para todos os meios.
+            # Para PIX/dinheiro/voucher ela nao pertence ao registro fiscal.
+            card_subtype = ""
         if cash_register_id:
             cash_register = (
                 CashRegister.objects.select_related("opened_by", "opened_terminal", "cash_station")
@@ -544,7 +553,7 @@ def register_payment(
         change_amount = max(amount - remaining, Decimal("0.00"))
         accepted_amount = amount - change_amount
         payment_metadata = {
-            **(metadata or {}),
+            **payment_metadata,
             "received_amount": str(amount),
             "applied_amount": str(accepted_amount),
             "change_amount": str(change_amount),
@@ -556,6 +565,7 @@ def register_payment(
             branch=order.branch,
             order=order,
             payment_method=payment_method,
+            card_subtype=card_subtype,
             amount=accepted_amount,
             change_amount=change_amount,
             idempotency_key=idempotency_key,

@@ -308,6 +308,16 @@ class TestFullEmissionFlow:
         assert resp.data["emission_type"] == Invoice.EMISSION_NORMAL
         assert resp.data["recipient_cpf"] == "12345678909"
 
+    def test_emit_rejects_an_invalid_cpf(self):
+        resp = self.client.post(
+            "/api/v1/invoices/emit/",
+            {"order": str(self.order.id), "cpf": "111.111.111-11"},
+            format="json",
+        )
+
+        assert resp.status_code == 400
+        assert not Invoice.all_objects.filter(order=self.order).exists()
+
     def test_emit_twice_for_same_order_returns_the_same_invoice(self):
         # Emitir e idempotente por pedido: com a emissao automatica do
         # pagamento, o PDV chega aqui com a nota do pedido ja criada, e

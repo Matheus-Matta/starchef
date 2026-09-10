@@ -57,13 +57,16 @@ mixin _FiscalSection on _HomePageShared {
       // sem erro, sem fila fiscal, sem cupom.
       Map<String, dynamic>? invoice;
       try {
+        final fiscalCpf = cpfDigits(order['fiscal_customer_cpf']);
+        final selectedCpf = cpfDigits(selectedCustomer?['document']);
         invoice = await api.post(
           '/invoices/emit/',
           body: {
             'order': order['id'],
-            if (selectedCustomer?['document'] != null)
-              'cpf': selectedCustomer!['document'],
-            if (selectedCustomer?['name'] != null)
+            if (fiscalCpf.isNotEmpty) 'cpf': fiscalCpf,
+            if (fiscalCpf.isNotEmpty &&
+                fiscalCpf == selectedCpf &&
+                selectedCustomer?['name'] != null)
               'cpf_name': selectedCustomer!['name'],
           },
           accessToken: token,

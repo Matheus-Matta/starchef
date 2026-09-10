@@ -7,17 +7,15 @@ from django.utils import timezone
 
 from apps.accounts.models import Account, Permission, Plan, Role, Subscription, UserProfile
 from apps.accounts.permission_catalog import iter_permissions
+from apps.core.management.commands._demo_defaults import (
+    DEFAULT_ACCOUNT_NAME,
+    DEFAULT_ACCOUNT_SLUG,
+    DEFAULT_BRANCH_NAME,
+    DEFAULT_RESTAURANT_NAME,
+)
 from apps.core.modules import OPTIONAL_MODULES
 from apps.core.tenant import tenant_context
 from apps.restaurants.models import Branch, Restaurant
-
-DEFAULT_ACCOUNT_SLUG = "starchef-demo"
-DEFAULT_ACCOUNT_NAME = "StarChef Demo"
-DEFAULT_RESTAURANT_NAME = "Burger Palace"
-DEFAULT_BRANCH_NAME = "Copacabana"
-DEFAULT_USERNAME = "admin"
-DEFAULT_EMAIL = "admin@starchef.test"
-DEFAULT_PASSWORD = "admin12345"
 
 
 def ensure_demo_plan():

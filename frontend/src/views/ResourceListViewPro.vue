@@ -162,6 +162,15 @@
             <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
             <span v-else-if="column.type === 'date'" class="rpro-muted">{{ dateTime(value(data, column)) }}</span>
             <span v-else-if="column.type === 'boolean'" class="rpro-chip" :data-tone="value(data, column) ? 'success' : 'danger'">{{ value(data, column) ? "Ativo" : "Inativo" }}</span>
+            <img
+              v-else-if="column.type === 'image' && value(data, column)"
+              :src="value(data, column)"
+              :alt="rowLabel(data)"
+              class="rpro-thumb"
+              loading="lazy"
+            />
+            <span v-else-if="column.type === 'image'" class="rpro-muted">—</span>
+            <span v-else-if="column.type === 'bytes'" class="rpro-num">{{ bytes(value(data, column)) }}</span>
             <span v-else class="rpro-cell">{{ label(value(data, column), column.map) }}</span>
           </template>
         </Column>
@@ -198,6 +207,93 @@
           <div v-if="!codesData.barcode_uri && !codesData.qr_uri" class="rpro-muted">Sem código definido.</div>
           <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="printCodes">
             <i class="pi pi-print" /> Imprimir
+          </button>
+        </div>
+      </Dialog>
+
+      <Dialog v-model:visible="versionsVisible" modal header="Histórico de versões" :style="{ width: '520px' }">
+        <div v-if="versionsLoading" class="rpro__codes rpro__codes--loading">
+          <i class="pi pi-spin pi-spinner" /> Carregando versões…
+        </div>
+        <div v-else-if="!versionsData.length" class="rpro-muted">Nenhuma versão anterior registrada ainda.</div>
+        <ul v-else class="rpro__versions">
+          <li v-for="version in versionsData" :key="version.id" class="rpro__versions-row">
+            <div class="rpro__versions-info">
+              <strong>Versão v{{ version.number }}</strong>
+              <span>{{ version.label || (version.origin === "publish" ? "Publicação anterior" : version.origin === "restore" ? "Antes de restaurar" : "Manual") }}</span>
+              <small>{{ formatDateTime(version.created_at) }}{{ version.created_by_name ? ` · ${version.created_by_name}` : "" }}</small>
+            </div>
+            <div class="rpro__versions-actions">
+              <button
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+                type="button"
+                :disabled="restoringVersionId === version.id"
+                @click="restoreVersion(version)"
+              >
+                Restaurar no rascunho
+              </button>
+              <button
+                v-if="versionsRowAction?.allowPublishOnRestore"
+                class="rpro-btn rpro-btn--primary rpro-btn--sm"
+                type="button"
+                :disabled="restoringVersionId === version.id"
+                @click="restoreVersion(version, { publish: true })"
+              >
+                Restaurar e publicar
+              </button>
+            </div>
+          </li>
+        </ul>
+      </Dialog>
+
+      <Dialog v-model:visible="resolvedVisible" modal :header="`Itens de ${resolvedTitle}`" :style="{ width: '480px' }">
+        <div v-if="resolvedLoading" class="rpro__codes rpro__codes--loading">
+          <i class="pi pi-spin pi-spinner" /> Resolvendo o menu…
+        </div>
+        <template v-else-if="resolvedData">
+          <p class="rpro-muted">
+            {{ resolvedData.items.length }} {{ resolvedData.items.length === 1 ? "item" : "itens" }}
+            — é exatamente isto que o site vai desenhar.
+          </p>
+          <ul v-if="resolvedData.items.length" class="rpro__versions">
+            <li v-for="(item, index) in resolvedData.items" :key="item.id || index" class="rpro__versions-row">
+              <div class="rpro__versions-info">
+                <strong>{{ item.title }}</strong>
+                <small>{{ item.type }}{{ item.url ? ` · ${item.url}` : "" }}</small>
+                <small v-if="item.children?.length">{{ item.children.length }} subitem(ns)</small>
+              </div>
+              <div v-if="item.price" class="rpro-num">{{ money(item.price) }}</div>
+            </li>
+          </ul>
+          <p v-else class="rpro-muted">
+            Nenhum item. Menus automáticos ficam vazios enquanto não houver dado
+            de origem (venda, promoção ou categoria).
+          </p>
+        </template>
+      </Dialog>
+
+      <Dialog v-model:visible="templateVisible" modal header="Aplicar modelo pronto" :style="{ width: '440px' }">
+        <p class="rpro-muted">Substitui o rascunho atual pelo conteúdo do modelo escolhido. O que já está publicado só muda quando você publicar de novo.</p>
+        <Dropdown
+          v-model="templateSelected"
+          :options="templateOptions"
+          option-label="label"
+          option-value="value"
+          placeholder="Selecione um modelo"
+          :loading="templateLoading"
+          class="rpro__bulk-field"
+          fluid
+        />
+        <p v-if="templateSelectedDescription" class="rpro-muted">{{ templateSelectedDescription }}</p>
+        <div class="rpro__dialog-actions">
+          <button class="rpro-btn rpro-btn--ghost" type="button" @click="templateVisible = false">Cancelar</button>
+          <button
+            class="rpro-btn rpro-btn--primary"
+            type="button"
+            :disabled="!templateSelected || applyingTemplate"
+            @click="confirmApplyTemplate"
+          >
+            {{ applyingTemplate ? "Aplicando…" : "Aplicar modelo" }}
           </button>
         </div>
       </Dialog>
@@ -411,9 +507,10 @@ const primaryAction = computed(() => {
   return null;
 });
 
-// Colunas atreladas a um módulo só aparecem se a conta tem o módulo.
+// Colunas atreladas a um módulo/permissão só aparecem se a conta tem o módulo
+// e o usuário tem o código de permissão declarado.
 const visibleColumns = computed(() => props.columns.filter(
-  (column) => column.showInList !== false && auth.hasModule(column.module),
+  (column) => column.showInList !== false && auth.hasModule(column.module) && auth.hasPermission(column.permission),
 ));
 
 // ── Estado local dos filtros "pro" ──────────────────────────────────
@@ -1025,7 +1122,7 @@ const rowMenuItems = computed(() => {
   // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos",
   // "Configuração fiscal". `module` esconde a ação em contas sem o módulo.
   for (const rowAction of proCfg.value.rowActions || []) {
-    if (!auth.hasModule(rowAction.module)) continue;
+    if (!auth.hasModule(rowAction.module) || !auth.hasPermission(rowAction.permission)) continue;
     if (rowAction.visible && !rowAction.visible(menuRow.value)) continue;
     items.push({ label: rowAction.label, icon: rowAction.icon, command: () => runRowAction(rowAction, menuRow.value) });
   }
@@ -1043,6 +1140,130 @@ const codesLoading = ref(false);
 const codesData = ref(null);
 const codesTitle = ref("");
 
+// ── Diálogo "Versões" (histórico + restaurar) ──────────────────────────
+// Genérico: qualquer recurso pode declarar `rowActions: [{ type: "versions" }]`
+// desde que a API exponha `{endpoint}{id}/versions/` (GET, lista) e
+// `{endpoint}{id}/versions/{versionId}/restore/` (POST) — hoje só as páginas
+// do storefront usam, mas nada aqui é específico delas.
+const versionsVisible = ref(false);
+const versionsLoading = ref(false);
+const versionsData = ref([]);
+const versionsRow = ref(null);
+const versionsRowAction = ref(null);
+const restoringVersionId = ref("");
+
+async function openVersions(rowAction, row) {
+  versionsRowAction.value = rowAction;
+  versionsRow.value = row;
+  versionsData.value = [];
+  versionsVisible.value = true;
+  versionsLoading.value = true;
+  try {
+    const data = await service.detailAction(row.id, "versions");
+    versionsData.value = data.results || data || [];
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar as versões", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    versionsLoading.value = false;
+  }
+}
+
+async function restoreVersion(version, { publish = false } = {}) {
+  if (!versionsRow.value?.id) return;
+  restoringVersionId.value = version.id;
+  try {
+    await api.post(`${props.endpoint}${versionsRow.value.id}/versions/${version.id}/restore/`, { publish });
+    toast.add({
+      severity: "success",
+      summary: publish ? "Versão restaurada e publicada" : "Versão restaurada no rascunho",
+      detail: `Versão v${version.number} de ${formatDateTime(version.created_at)}.`,
+      life: 4500,
+    });
+    versionsVisible.value = false;
+    await reload();
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível restaurar esta versão", detail: normalizeApiError(error).message, life: 6000 });
+  } finally {
+    restoringVersionId.value = "";
+  }
+}
+
+// ── Diálogo "Itens resolvidos" ──────────────────────────────────────────
+// Genérico: qualquer recurso cujo detalhe exponha uma sub-rota que devolva
+// `{ items: [...] }` pode declarar `rowActions: [{ type: "resolved" }]`. Hoje
+// serve aos menus, cujo conteúdo pode vir de uma consulta (mais vendidos, todas
+// as categorias) — e nesse caso não há item cadastrado para olhar no formulário.
+const resolvedVisible = ref(false);
+const resolvedLoading = ref(false);
+const resolvedData = ref(null);
+const resolvedTitle = ref("");
+
+async function openResolved(rowAction, row) {
+  resolvedTitle.value = rowLabel(row);
+  resolvedData.value = null;
+  resolvedVisible.value = true;
+  resolvedLoading.value = true;
+  try {
+    resolvedData.value = await service.detailAction(row.id, rowAction.endpointSuffix || "resolved");
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar os itens", detail: normalizeApiError(error).message, life: 5000 });
+    resolvedVisible.value = false;
+  } finally {
+    resolvedLoading.value = false;
+  }
+}
+
+// ── Diálogo "Aplicar modelo" ────────────────────────────────────────────
+// Também genérico: `rowActions: [{ type: "apply-template", templatesEndpoint }]`.
+// Busca os modelos de outro endpoint (o catálogo é um recurso à parte) e
+// aplica em `{endpoint}{id}/apply-template/{templateId}/`.
+const templateVisible = ref(false);
+const templateLoading = ref(false);
+const templateOptions = ref([]);
+const templateSelected = ref("");
+const templateRow = ref(null);
+const templateRowAction = ref(null);
+const applyingTemplate = ref(false);
+
+async function openApplyTemplate(rowAction, row) {
+  templateRowAction.value = rowAction;
+  templateRow.value = row;
+  templateSelected.value = "";
+  templateVisible.value = true;
+  templateLoading.value = true;
+  try {
+    const { data } = await api.get(rowAction.templatesEndpoint);
+    templateOptions.value = (data.results || data || []).map((template) => ({
+      label: template.name,
+      value: template.id,
+      description: template.description,
+    }));
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível carregar os modelos", detail: normalizeApiError(error).message, life: 5000 });
+  } finally {
+    templateLoading.value = false;
+  }
+}
+
+const templateSelectedDescription = computed(
+  () => templateOptions.value.find((option) => option.value === templateSelected.value)?.description || "",
+);
+
+async function confirmApplyTemplate() {
+  if (!templateRow.value?.id || !templateSelected.value) return;
+  applyingTemplate.value = true;
+  try {
+    await api.post(`${props.endpoint}${templateRow.value.id}/apply-template/${templateSelected.value}/`);
+    toast.add({ severity: "success", summary: "Modelo aplicado ao rascunho", life: 4000 });
+    templateVisible.value = false;
+    await reload();
+  } catch (error) {
+    toast.add({ severity: "error", summary: "Não foi possível aplicar o modelo", detail: normalizeApiError(error).message, life: 6000 });
+  } finally {
+    applyingTemplate.value = false;
+  }
+}
+
 async function runRowAction(rowAction, row) {
   if (rowAction.type === "codes") return openCodes(row);
   // Duplicar: abre a tela de NOVO documento pedindo a copia deste registro.
@@ -1053,25 +1274,40 @@ async function runRowAction(rowAction, row) {
   if (rowAction.type === "route" && row?.id) {
     return router.push({ name: rowAction.routeName, params: { id: row.id } });
   }
+  // Link externo (ex.: abrir o editor visual do storefront, outra aplicação).
+  if (rowAction.type === "external" && row?.id) {
+    const href = rowAction.href?.(row);
+    if (href) window.open(href, "_blank", "noopener");
+    return;
+  }
+  if (rowAction.type === "versions" && row?.id) return openVersions(rowAction, row);
+  if (rowAction.type === "resolved" && row?.id) return openResolved(rowAction, row);
+  if (rowAction.type === "apply-template" && row?.id) return openApplyTemplate(rowAction, row);
+  // Ação genérica: POST numa sub-rota de detalhe (`{endpoint}{id}/{action}/`),
+  // com confirmação antes e toast depois. O rótulo/mensagem de sucesso e o
+  // payload são declarados no recurso (`rowAction.*`); os defaults abaixo
+  // preservam o comportamento original (pensado para o reenvio de notas fiscais).
   if (rowAction.type === "post-detail" && row?.id) {
     confirm.require({
       header: rowAction.label,
       message: rowAction.confirmMessage || `Executar esta ação em "${rowLabel(row)}"?`,
       icon: "pi pi-exclamation-triangle",
-      acceptLabel: "Reenviar",
+      acceptLabel: rowAction.confirmAcceptLabel || "Confirmar",
       rejectLabel: "Cancelar",
       accept: async () => {
         try {
           const { data } = await api.post(`${props.endpoint}${row.id}/${rowAction.action}/`, rowAction.payload || {});
-          toast.add({
-            severity: data.status === "issued" ? "success" : "info",
-            summary: data.status === "issued" ? "Nota autorizada" : "Nota reenviada",
-            detail: data.status === "issued" ? "A Focus autorizou a nota." : "A nota continua em processamento na Focus.",
-            life: 4500,
-          });
+          const summary = rowAction.successSummary ? rowAction.successSummary(data, row) : "Ação concluída";
+          const detail = rowAction.successDetail ? rowAction.successDetail(data, row) : "";
+          toast.add({ severity: rowAction.successSeverity?.(data) || "success", summary, detail, life: 4500 });
           await reload();
         } catch (error) {
-          toast.add({ severity: "error", summary: "Não foi possível reenviar a nota", detail: normalizeApiError(error).message, life: 7000 });
+          toast.add({
+            severity: "error",
+            summary: rowAction.errorSummary || "Não foi possível concluir a ação",
+            detail: normalizeApiError(error).message,
+            life: 7000,
+          });
           await reload();
         }
       },
@@ -1149,6 +1385,14 @@ const value = resolveColumnValue;
 const label = mapLabel;
 const money = formatMoney;
 const dateTime = formatDateTime;
+/** Tamanho de arquivo legível — a API devolve bytes crus. */
+function bytes(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return "—";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function columnBodyStyle(column) {
   return {
@@ -1369,6 +1613,13 @@ onMounted(loadRows);
 .rpro__codes--loading { flex-direction: row; color: var(--text-muted); padding: 20px; }
 .rpro__codes-value { font: var(--weight-semibold) 14px/1 var(--font-mono, monospace); color: var(--text-strong); letter-spacing: 1px; }
 .rpro__codes-barcode { max-width: 100%; height: auto; }
+.rpro-thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.rpro__versions { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; max-height: 420px; overflow-y: auto; }
+.rpro__versions-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.rpro__versions-info { display: flex; flex-direction: column; gap: 2px; }
+.rpro__versions-info small { color: var(--text-muted); }
+.rpro__versions-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.rpro__dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 /* ── Barra de ações em massa ────────────────────────────────────────── */
 .rpro__bulkbar {

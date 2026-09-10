@@ -47,7 +47,11 @@ function buildResourceRoutes(resource) {
     sharedAcrossRestaurants: !!resource.sharedAcrossRestaurants,
   };
   const module = resource.module || "base";
-  const meta = (title) => ({ requiresAuth: true, title, nav: resource.name, module });
+  // Codigo de permissao (opcional) que a API tambem exige nesse recurso — ex.:
+  // "storefront.edit". Sem isso, um usuario sem o codigo so descobriria pelo
+  // 403 da API depois de já ter navegado ate a tela.
+  const permission = resource.permission || "";
+  const meta = (title) => ({ requiresAuth: true, title, nav: resource.name, module, permission });
 
   const routes = [
     {
@@ -178,6 +182,14 @@ router.beforeEach(async (to) => {
     // Bloqueia acesso forcado via URL a rotas de modulos desabilitados.
     const routeModule = to.matched.map((record) => record.meta.module).filter(Boolean).pop();
     if (routeModule && !auth.hasModule(routeModule)) {
+      return { name: "painel" };
+    }
+
+    // Idem para rotas que exigem um codigo de permissao especifico (ex.:
+    // paginas do storefront exigem "storefront.edit" — nem todo mundo com o
+    // modulo E-commerce habilitado pode editar o site).
+    const routePermission = to.matched.map((record) => record.meta.permission).filter(Boolean).pop();
+    if (routePermission && !auth.hasPermission(routePermission)) {
       return { name: "painel" };
     }
   }

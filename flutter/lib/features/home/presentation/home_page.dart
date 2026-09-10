@@ -20,6 +20,7 @@ import '../../../core/errors/app_error_host.dart';
 import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/formatters/cpf_formatter.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
@@ -529,6 +530,10 @@ class _HomePageState extends State<HomePage>
     updateService = PdvUpdateService();
     unawaited(_checkPdvVersion());
     networkStatus = api.syncStatus;
+    // O serviço pode ter restaurado uma fila bloqueada antes de a Home ser
+    // criada. Nesse caso não haverá um novo evento só para repetir o estado
+    // atual, portanto o contador inicial precisa vir do snapshot.
+    offlinePendingCount = networkStatus.total;
     syncStatusSubscription = api.syncStatusChanges.listen((status) {
       if (!mounted) return;
       final online = status.hasConnection;

@@ -44,6 +44,13 @@ bool requiresVariation(Map<String, dynamic> product) =>
     product['requires_variation'] == true &&
     activeVariations(product).isNotEmpty;
 
+/// Foto de perfil do produto/variante, com fallback de compatibilidade.
+String productImageUrl(Map<String, dynamic> product) {
+  final direct = '${product['logo_p'] ?? ''}'.trim();
+  if (direct.isNotEmpty) return direct;
+  return '${product['image'] ?? ''}'.trim();
+}
+
 List<Map<String, dynamic>> _active(Object? list) => (list as List? ?? const [])
     .whereType<Map>()
     .map(Map<String, dynamic>.from)

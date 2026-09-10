@@ -15,6 +15,12 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
 ]
 
+# Mídia sempre em disco durante os testes, mesmo que o .env da máquina aponte
+# para um bucket de verdade — nenhum teste deve subir arquivo para o S3.
+AWS_STORAGE_BUCKET_NAME = ""
+AWS_ACCESS_KEY_ID = ""
+AWS_SECRET_ACCESS_KEY = ""
+
 # Testes nunca herdam credenciais Focus do .env real da maquina.
 FOCUS_NFE_MASTER_TOKEN = ""
 FOCUS_NFE_PRODUCTION_URL = ""

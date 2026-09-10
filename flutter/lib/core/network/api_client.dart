@@ -231,9 +231,7 @@ class ApiClient {
   /// nuvem.
   SyncTransport get syncTransport {
     final relay = _mutationRelay;
-    return relay == null
-        ? _ApiSyncTransport(this)
-        : RelaySyncTransport(relay);
+    return relay == null ? _ApiSyncTransport(this) : RelaySyncTransport(relay);
   }
 
   /// Registra quem sabe trocar o refresh token por um novo access token.
@@ -410,8 +408,7 @@ class ApiClient {
       if (method == 'GET' && gateway.handlesRead(path)) {
         final local = await _readLocalFirst(gateway, path, query: query);
         if (local != null) return local;
-      } else if (method != 'GET' &&
-          gateway.handlesWrite(method, path, body)) {
+      } else if (method != 'GET' && gateway.handlesWrite(method, path, body)) {
         final result = await gateway.write(
           method,
           path,
@@ -1633,6 +1630,97 @@ class ApiClient {
   Future<void> flushSalesQueue() async {
     if (!syncStatus.hasConnection) return;
     await _syncService?.push();
+  }
+
+  /// Motivo que impede novas etapas de uma venda, se alguma mutação anterior
+  /// do mesmo pedido foi recusada pelo servidor.
+  Future<String?> orderSyncFailure(String orderId) async {
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null || orderId.isEmpty) return null;
+    final failure = await gateway.queue.failureForEntity(
+      scope: scope,
+      entityType: EntityCatalog.order,
+      entityId: orderId,
+    );
+    return failure?.lastError ??
+        (failure == null
+            ? null
+            : 'Existe uma alteração deste pedido para revisar.');
+  }
+
+  /// Prepara a venda para uma nova tentativa de fechamento/pagamento.
+  ///
+  /// Primeiro entrega tudo que ainda puder subir. Depois substitui somente as
+  /// finalizações que o servidor recusou e remove seus efeitos otimistas; os
+  /// itens permanecem na fila. Online, relê o pedido real antes de recalcular
+  /// o fechamento. Offline, a nova sequência fica apenas enfileirada.
+  Future<String?> reconcileOrderForPayment(String orderId) async {
+    final gateway = _gateway;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null || orderId.isEmpty) return null;
+
+    await _syncService?.push();
+    final superseded = await gateway.queue.supersedeRejectedOrderFinalization(
+      scope: scope,
+      orderId: orderId,
+    );
+    final rejectedPaymentIds = superseded
+        .where((entry) => entry.path.endsWith('/pay/'))
+        .map((entry) => '${entry.payload?['client_payment_id'] ?? ''}')
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    await gateway.orders.removeRejectedPayments(orderId, rejectedPaymentIds);
+    if (superseded.isNotEmpty) {
+      AppLogger.instance.info(
+        'sync_finalizacao_substituida',
+        data: {'pedido': orderId, 'operacoes': superseded.length},
+      );
+    }
+
+    final blocking = await gateway.queue.orderMutationFailure(
+      scope: scope,
+      orderId: orderId,
+    );
+    if (blocking != null) {
+      await _publishStatus(NetworkSyncPhase.blocked);
+      return blocking.lastError ??
+          'Uma alteração dos itens deste pedido precisa ser revisada.';
+    }
+
+    final stillPending = await gateway.queue.hasActiveForEntity(
+      scope: scope,
+      entityType: EntityCatalog.order,
+      entityId: orderId,
+    );
+    if (syncStatus.hasConnection && !stillPending) {
+      try {
+        final remote = await syncTransport.send('GET', '/orders/$orderId/');
+        await gateway.orders.applyRemote(remote, overwriteLocalChanges: true);
+      } on TransientSyncFailure catch (error) {
+        await _publishStatus(
+          error.offline ? NetworkSyncPhase.offline : NetworkSyncPhase.degraded,
+          error: error.message,
+        );
+      } on ApiException catch (error) {
+        return error.message;
+      }
+    }
+    final currentPhase = syncStatus.phase;
+    await _publishStatus(
+      currentPhase == NetworkSyncPhase.blocked
+          ? NetworkSyncPhase.online
+          : currentPhase,
+    );
+    return null;
+  }
+
+  /// Erro definitivo de uma operação criada neste gesto da interface.
+  Future<String?> syncFailureForOperation(String operationId) async {
+    if (operationId.isEmpty) return null;
+    final entry = await _findQueueEntry(operationId);
+    if (entry?.status != SyncQueueStatus.failed) return null;
+    return entry?.lastError ?? 'O servidor recusou esta operação.';
   }
 
   /// Entrega AGORA a nota fiscal deste pedido e devolve o que o servidor

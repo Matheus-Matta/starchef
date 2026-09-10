@@ -70,6 +70,8 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
     product = _make_product(account, restaurant, branch)
     _make_fiscal_config(account, restaurant, branch)
     order = _order_with_item(restaurant, branch, product, manager_user)
+    order.fiscal_customer_cpf = "12345678909"
+    order.save(update_fields=["fiscal_customer_cpf"])
 
     invoice = emit_fiscal_invoice(order, user=manager_user)
 
@@ -86,6 +88,7 @@ def test_authorized_response_marks_issued(mock_post, account, restaurant, branch
     assert sent_payload["consumidor_final"] == "1"
     assert sent_payload["finalidade_emissao"] == "1"
     assert sent_payload["presenca_comprador"] == "1"
+    assert sent_payload["cpf_destinatario"] == "12345678909"
     assert sent_payload["formas_pagamento"] == [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
     assert len(sent_payload["items"]) == 1
     assert sent_payload["items"][0]["descricao"] == "X-Burger"

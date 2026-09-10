@@ -12,10 +12,15 @@
         @click="openCreate"
       />
     </div>
-
     <DataTable :value="rows" data-key="id" class="variations__table" :row-hover="false" responsive-layout="scroll">
       <Column field="name" header="Variação">
         <template #body="{ data }"><strong class="variations__name">{{ data.name }}</strong></template>
+      </Column>
+      <Column header="Imagem" :body-style="{ width: '76px' }" :style="{ width: '76px' }">
+        <template #body="{ data }">
+          <img v-if="data.logo_p" :src="data.logo_p" :alt="data.name" class="variations__image" />
+          <span v-else class="variations__no-image">—</span>
+        </template>
       </Column>
       <Column header="Ajuste" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }" :style="{ width: '130px' }">
         <template #body="{ data }">{{ formatDelta(data.price_delta) }}</template>
@@ -39,63 +44,30 @@
         </div>
       </template>
     </DataTable>
-
-    <!-- Modal reutilizável de criação/edição (STC-024 / STC-025) -->
-    <AppEntityDialog
+    <ProductVariationDialog
       v-model:visible="dialogOpen"
-      entity="variação"
-      :mode="editing.id ? 'edit' : 'create'"
+      v-model:editing="editing"
       :saving="saving"
       :dirty="dirty"
-      width="480px"
+      :form-error="formError"
+      :field-errors="fieldErrors"
+      :image-options="imageOptions"
+      @dirty="dirty = true"
       @save="save"
-    >
-      <AppErrorSummary :message="formError" />
-      <AppFormGrid :columns="2">
-        <AppFormField label="Nome" name="name" :error="fieldErrors.name" required full>
-          <template #default="{ fieldId, invalid }">
-            <InputText :id="fieldId" v-model="editing.name" :class="{ 'p-invalid': invalid }" placeholder="Ex.: Grande, Sem cebola" @update:model-value="dirty = true" />
-          </template>
-        </AppFormField>
-        <AppFormField label="Ajuste de preço (R$)" name="price_delta" :error="fieldErrors.price_delta" help="Use valores negativos para desconto.">
-          <template #default="{ fieldId, invalid }">
-            <InputNumber :id="fieldId" v-model="editing.price_delta" :class="{ 'p-invalid': invalid }" mode="currency" currency="BRL" locale="pt-BR" :min-fraction-digits="2" @update:model-value="dirty = true" />
-          </template>
-        </AppFormField>
-        <AppFormField label="Ativa">
-          <div class="variations__switch">
-            <InputSwitch v-model="editing.is_active" @update:model-value="dirty = true" />
-            <span>{{ editing.is_active ? "Ativa" : "Inativa" }}</span>
-          </div>
-        </AppFormField>
-      </AppFormGrid>
-    </AppEntityDialog>
+    />
   </section>
 </template>
 
 <script setup>
-/**
- * Gerencia (lista/cria/edita/remove) as variações de um produto na própria
- * página de edição, agora via modal reutilizável (Sprint 2 · STC-024/025/026).
- *
- * Uso: :key="productId" no componente pai para reiniciar o estado ao trocar
- * de produto (evita sincronizar props via watch).
- */
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import Button from "primevue/button";
-import InputSwitch from "primevue/inputswitch";
-import InputText from "primevue/inputtext";
-import InputNumber from "primevue/inputnumber";
 import Tag from "primevue/tag";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import { useConfirm } from "primevue/useconfirm";
 import { useToast } from "primevue/usetoast";
 
-import AppEntityDialog from "../form/AppEntityDialog.vue";
-import AppFormGrid from "../form/AppFormGrid.vue";
-import AppFormField from "../form/AppFormField.vue";
-import AppErrorSummary from "../form/AppErrorSummary.vue";
+import ProductVariationDialog from "./ProductVariationDialog.vue";
 import { ResourceService } from "../../services/ResourceService";
 import { normalizeApiError } from "../../utils/apiError";
 import { formatMoney } from "../../utils/format";
@@ -103,6 +75,7 @@ import { formatMoney } from "../../utils/format";
 const props = defineProps({
   productId: { type: String, required: true },
   initialVariations: { type: Array, default: () => [] },
+  productImages: { type: Array, default: () => [] },
   readonly: { type: Boolean, default: false },
 });
 
@@ -116,6 +89,8 @@ function toRow(variation) {
     name: variation.name ?? "",
     price_delta: Number(variation.price_delta ?? 0),
     is_active: variation.is_active ?? true,
+    logo_image: variation.logo_image ?? null,
+    logo_p: variation.logo_p ?? "",
   };
 }
 
@@ -129,8 +104,14 @@ const fieldErrors = ref({});
 const editing = ref(emptyForm());
 
 function emptyForm() {
-  return { id: null, name: "", price_delta: 0, is_active: true };
+  return { id: null, name: "", price_delta: 0, is_active: true, logo_image: null, logo_p: "" };
 }
+
+const imageOptions = computed(() => props.productImages.map((image, index) => ({
+  label: image.original_name || `Foto ${index + 1}`,
+  value: image.id,
+  url: image.url,
+})));
 
 function resetForm(data) {
   editing.value = data ? { ...data } : emptyForm();
@@ -154,6 +135,7 @@ function buildPayload() {
     name: editing.value.name,
     price_delta: Number(editing.value.price_delta) || 0,
     is_active: !!editing.value.is_active,
+    logo_image: editing.value.logo_image || null,
   };
 }
 
@@ -215,50 +197,4 @@ const formatDelta = (value) => {
 };
 </script>
 
-<style scoped>
-.variations {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-sunken); /* card mais escuro para contraste */
-  box-shadow: var(--shadow-sm);
-}
-
-.variations__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.variations__head h3 { display: flex; align-items: center; gap: 8px; color: var(--text-strong); font: var(--weight-extra) 14px/1.2 var(--font-sans); }
-.variations__head small { color: var(--text-muted); font: var(--weight-semibold) 12px/1 var(--font-sans); }
-.variations__empty { color: var(--text-muted); font: var(--weight-medium) 13px/1.5 var(--font-sans); text-align: center; padding: 8px 0; }
-.variations__switch { display: flex; align-items: center; gap: 10px; height: var(--control-h); color: var(--text-body); font: var(--weight-semibold) 13px/1 var(--font-sans); }
-
-/* DataTable com linhas mais claras que o card (contraste) */
-.variations__name { color: var(--text-strong); font: var(--weight-bold) 13.5px/1.2 var(--font-table); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.variations__badges { display: inline-flex; gap: 6px; flex-shrink: 0; }
-
-.variations__table :deep(.p-datatable-thead > tr > th) {
-  padding: 7px 10px;
-  background: transparent;
-  color: var(--text-subtle);
-  border-color: var(--border);
-  font: var(--weight-bold) 10.5px/1 var(--font-table);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-caps);
-}
-.variations__table :deep(.p-datatable-thead > tr > th.dt-col-right .p-column-header-content) {
-  justify-content: flex-end;
-}
-/* Linhas como "cartões" separados: gap entre elas + cantos arredondados */
-.variations__table :deep(.p-datatable-table) { border-collapse: separate; border-spacing: 0 6px; }
-.variations__table :deep(.p-datatable-tbody > tr > td) {
-  padding: 9px 12px;
-  border: none;
-  background: var(--surface-card); /* célula mais clara que o card escuro */
-  font: var(--weight-medium) 13.5px/1.3 var(--font-table);
-  color: var(--text-body);
-}
-.variations__table :deep(.p-datatable-tbody > tr > td:first-child) { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-.variations__table :deep(.p-datatable-tbody > tr > td:last-child) { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
-.variations__table :deep(.p-datatable-emptymessage > td) { border: none; background: transparent; }
-</style>
+<style scoped src="./ProductVariationsEditor.css"></style>

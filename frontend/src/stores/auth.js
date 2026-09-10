@@ -26,6 +26,19 @@ export const useAuthStore = defineStore("auth", {
       if (state.user?.is_superuser) return true;
       return (state.user?.enabled_modules || []).includes(moduleName);
     },
+    /**
+     * Testa se o usuario tem um codigo de permissao (ex.: "storefront.publish").
+     *
+     * `user.permissions` ja vem do backend com os codigos EFETIVOS resolvidos
+     * (perfil + permissoes especificas — ver `/api/v1/auth/me/`): admin da
+     * conta ja recebe o catalogo inteiro, e superusuario recebe `"*"`. Por
+     * isso basta olhar a lista, sem repetir aqui a logica de quem e admin.
+     */
+    hasPermission: (state) => (code) => {
+      if (!code) return true;
+      const codes = state.user?.permissions || [];
+      return codes.includes("*") || codes.includes(code);
+    },
   },
 
   actions: {

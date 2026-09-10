@@ -20,6 +20,7 @@ from django.utils.dateparse import parse_datetime
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
+from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.invoices.fiscal import (
     build_access_key,
     build_nfce_qrcode,
@@ -27,7 +28,6 @@ from apps.invoices.fiscal import (
     fiscal_invoice_issues,
     fiscal_profile_issues,
     format_access_key,
-    only_digits,
 )
 from apps.invoices.models import FiscalConfig, Invoice, InvoiceItem
 from apps.invoices.providers import (
@@ -466,6 +466,15 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
             base_url=config.qr_base_url,
         )
 
+        recipient_cpf = strip_cpf(cpf) if cpf not in (None, "") else order.fiscal_customer_cpf
+        if recipient_cpf and not is_valid_cpf(recipient_cpf):
+            raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
+        recipient_name = cpf_name or ""
+        if recipient_cpf and not recipient_name and order.customer_id:
+            customer_cpf = strip_cpf(order.customer.document)
+            if customer_cpf == recipient_cpf:
+                recipient_name = order.customer.name
+
         invoice = existing or Invoice(order=order)
         invoice.account = order.account
         invoice.restaurant = order.restaurant
@@ -479,8 +488,8 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
         invoice.access_key = access_key
         invoice.emitter_cnpj = config.cnpj
         invoice.emitter_name = config.corporate_name or config.trade_name
-        invoice.recipient_cpf = only_digits(cpf) if cpf else ""
-        invoice.recipient_name = cpf_name or ""
+        invoice.recipient_cpf = recipient_cpf
+        invoice.recipient_name = recipient_name
         invoice.qr_code_data = qr_data
         invoice.consult_url = config.portal_url
         invoice.created_by = getattr(invoice, "created_by", None) or user

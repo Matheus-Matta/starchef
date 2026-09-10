@@ -211,6 +211,21 @@ void main() {
     expect(ValueFormatters.number(stored!.payload['total']), 0);
   });
 
+  test('o fechamento offline conserva o CPF escolhido para a nota', () async {
+    final orderId = await abrirPedido();
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/close/',
+      body: {
+        'service_fee_enabled': false,
+        'fiscal_customer_cpf': '12345678909',
+      },
+    );
+
+    final stored = await stack.gateway.orders.read(orderId);
+    expect(stored!.payload['fiscal_customer_cpf'], '12345678909');
+  });
+
   test('pagamento offline some depois que o servidor confirma o pedido', () async {
     final orderId = await abrirPedido();
     await stack.gateway.write(

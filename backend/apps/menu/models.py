@@ -34,6 +34,13 @@ class ProductCategory(TenantModel):
     name = models.CharField(max_length=120)
     parent = models.ForeignKey("self", null=True, blank=True, related_name="children", on_delete=models.SET_NULL)
     display_order = models.PositiveIntegerField(default=0)
+    logo_image = models.ForeignKey(
+        "images.Image",
+        null=True,
+        blank=True,
+        related_name="category_logos",
+        on_delete=models.SET_NULL,
+    )
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:
@@ -113,6 +120,13 @@ class Product(TenantModel):
         on_delete=models.SET_NULL,
     )
     image = models.ImageField(upload_to="products/", blank=True)
+    logo_image = models.ForeignKey(
+        "images.Image",
+        null=True,
+        blank=True,
+        related_name="product_logos",
+        on_delete=models.SET_NULL,
+    )
     sale_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Por unidade, ou por kg quando pricing_unit=kg.")
     promotional_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     pricing_unit = models.CharField(max_length=8, choices=PRICING_CHOICES, default=PRICING_UNIT)
@@ -198,6 +212,13 @@ class ProductVariation(TenantModel):
     product = models.ForeignKey(Product, related_name="variations", on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
     price_delta = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    logo_image = models.ForeignKey(
+        "images.Image",
+        null=True,
+        blank=True,
+        related_name="variation_logos",
+        on_delete=models.SET_NULL,
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -335,6 +356,29 @@ class RecipeItem(TenantModel):
 
 
 class Menu(TenantModel):
+    """Uma lista ordenada de itens — no mesmo espirito dos menus do Shopify.
+
+    Um menu nao e "o cardapio": e uma **colecao nomeada** que o restaurante
+    monta e o site consome. O mesmo modelo serve a quatro coisas que antes
+    exigiriam quatro cadastros:
+
+    - a barra de navegacao do cabecalho (com submenus);
+    - o carrossel de banners da home;
+    - uma vitrine de categorias ou de produtos escolhidos a dedo;
+    - a curadoria de catalogo (quais produtos entram em cada canal), que e o
+      uso que `MenuSite.catalog` ja fazia.
+
+    O bloco do storefront aponta para um menu pelo id; quem decide o conteudo
+    e a ordem e o restaurante, aqui, sem abrir o editor visual. E o que da ao
+    cliente controle sobre o que aparece no banner e no menu do topo.
+
+    `menu_type` e uma DICA de proposito, nao uma trava: filtra o que o editor
+    sugere em cada bloco (nao faz sentido oferecer um menu de banners para a
+    barra de navegacao), mas qualquer menu continua utilizavel em qualquer
+    bloco — uma regra rigida aqui so criaria um cadastro duplicado no dia em
+    que alguem quisesse reaproveitar uma lista.
+    """
+
     CHANNEL_ALL = "all"
     CHANNEL_TABLE = "table"
     CHANNEL_DELIVERY = "delivery"
@@ -349,8 +393,52 @@ class Menu(TenantModel):
         (CHANNEL_DIGITAL, "Digital / QR Code"),
     ]
 
+    TYPE_CATALOG = "catalog"
+    TYPE_NAVIGATION = "navigation"
+    TYPE_BANNER = "banner"
+    TYPE_SHOWCASE = "showcase"
+
+    TYPE_CHOICES = [
+        (TYPE_CATALOG, "Catalogo (curadoria de produtos)"),
+        (TYPE_NAVIGATION, "Navegacao (cabecalho, rodape)"),
+        (TYPE_BANNER, "Banners (carrossel)"),
+        (TYPE_SHOWCASE, "Vitrine (categorias ou produtos em destaque)"),
+    ]
+
+    # De onde saem os itens. `manual` é a lista que o restaurante monta à mão;
+    # as demais são consultas resolvidas na hora de renderizar.
+    SOURCE_MANUAL = "manual"
+    SOURCE_ALL_CATEGORIES = "all_categories"
+    SOURCE_CATEGORY_PRODUCTS = "category_products"
+    SOURCE_BEST_SELLERS = "best_sellers"
+    SOURCE_PROMOTIONS = "promotions"
+
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL, "Itens escolhidos a mao"),
+        (SOURCE_ALL_CATEGORIES, "Todas as categorias ativas"),
+        (SOURCE_CATEGORY_PRODUCTS, "Produtos de uma categoria"),
+        (SOURCE_BEST_SELLERS, "Mais vendidos"),
+        (SOURCE_PROMOTIONS, "Em promocao"),
+    ]
+
     name = models.CharField(max_length=120)
-    slug = models.SlugField(max_length=140, unique=True)
+    # "Handle", no vocabulário do Shopify: o apelido estável do menu, usado
+    # pelos blocos para apontar para ele. Único por CONTA, e não globalmente —
+    # duas contas podem ter, cada uma, o seu menu "principal", e antes a
+    # primeira que criasse travava o nome para toda a plataforma.
+    slug = models.SlugField(max_length=140)
+    menu_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_CATALOG, db_index=True)
+    source = models.CharField(max_length=24, choices=SOURCE_CHOICES, default=SOURCE_MANUAL)
+    # Só para `source = category_products`.
+    source_category = models.ForeignKey(
+        "menu.ProductCategory",
+        null=True,
+        blank=True,
+        related_name="source_of_menus",
+        on_delete=models.CASCADE,
+    )
+    # Teto de itens das origens dinâmicas (0 = sem limite).
+    item_limit = models.PositiveIntegerField(default=0)
     channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default=CHANNEL_ALL)
     is_active = models.BooleanField(default=True, db_index=True)
     available_from = models.TimeField(null=True, blank=True)
@@ -360,25 +448,125 @@ class Menu(TenantModel):
         ordering = ["name"]
         constraints = [
             models.UniqueConstraint(fields=["branch", "name"], name="unique_menu_name_by_branch"),
+            models.UniqueConstraint(
+                fields=["account", "slug"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_menu_slug_by_account",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["account", "menu_type", "is_active"]),
         ]
 
     def __str__(self):
         return self.name
 
+    @property
+    def is_dynamic(self):
+        return self.source != self.SOURCE_MANUAL
+
 
 class MenuItem(TenantModel):
+    """Uma entrada de menu: o que mostrar e para onde levar.
+
+    O tipo diz o que a entrada **é**; o destino diz para onde ela **leva**, e
+    os dois nem sempre coincidem — um banner é uma imagem que leva a uma
+    categoria. Por isso `image` e `url` existem em todos os tipos, em vez de
+    quatro modelos separados:
+
+    | tipo       | mostra                        | leva para                    |
+    | ---------- | ----------------------------- | ---------------------------- |
+    | `product`  | o produto (nome, foto, preco) | a pagina do produto          |
+    | `category` | a categoria                   | a listagem daquela categoria |
+    | `image`    | a imagem enviada aqui         | o `url` informado (ou nada)  |
+    | `custom`   | so o titulo                   | o `url` informado            |
+
+    `image` preenchida num item de produto/categoria **substitui** a foto
+    padrão: é assim que o restaurante põe uma arte de campanha no carrossel
+    sem trocar a foto do produto no cardápio.
+
+    Aninhamento (`parent`) existe para os submenus da barra de navegação, e
+    para no terceiro nível — o mesmo teto do Shopify. Não é limitação técnica:
+    menu com quatro níveis não cabe em tela de celular, e quem monta um só
+    descobre isso depois de publicado.
+    """
+
+    TYPE_PRODUCT = "product"
+    TYPE_CATEGORY = "category"
+    TYPE_IMAGE = "image"
+    TYPE_CUSTOM = "custom"
+
+    TYPE_CHOICES = [
+        (TYPE_PRODUCT, "Produto"),
+        (TYPE_CATEGORY, "Categoria"),
+        (TYPE_IMAGE, "Imagem / banner"),
+        (TYPE_CUSTOM, "Link personalizado"),
+    ]
+
+    MAX_DEPTH = 3
+
     menu = models.ForeignKey(Menu, related_name="items", on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, related_name="menu_items", on_delete=models.CASCADE)
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="children",
+        on_delete=models.CASCADE,
+        help_text="Item pai, para submenus da barra de navegacao.",
+    )
+    item_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_PRODUCT, db_index=True)
+
+    # Rótulo. Vazio herda o nome do produto/categoria — assim, renomear o
+    # produto renomeia a entrada do menu, que é o que espera quem nunca
+    # digitou um título aqui.
+    title = models.CharField(max_length=180, blank=True, default="")
+    subtitle = models.CharField(max_length=255, blank=True, default="")
+
+    product = models.ForeignKey(
+        Product, null=True, blank=True, related_name="menu_items", on_delete=models.CASCADE
+    )
+    category = models.ForeignKey(
+        "menu.ProductCategory", null=True, blank=True, related_name="menu_items", on_delete=models.CASCADE
+    )
+    image = models.ImageField(upload_to="menu/items/", blank=True)
+    url = models.CharField(max_length=500, blank=True, default="")
+    opens_in_new_tab = models.BooleanField(default=False)
+
     display_order = models.PositiveIntegerField(default=0)
+    # Preço só deste menu (uso de catálogo: a mesma pizza mais cara no
+    # delivery). Vale apenas para item de produto.
     override_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["display_order"]
-        constraints = [
-            models.UniqueConstraint(fields=["menu", "product"], name="unique_product_per_menu"),
+        ordering = ["display_order", "created_at"]
+        indexes = [
+            models.Index(fields=["menu", "parent", "display_order"]),
+            models.Index(fields=["menu", "item_type"]),
         ]
 
     def __str__(self):
-        return f"{self.menu} → {self.product}"
+        return f"{self.menu} -> {self.label}"
+
+    @property
+    def label(self):
+        """O texto exibido: o título informado, ou o nome do alvo."""
+        if self.title:
+            return self.title
+        if self.item_type == self.TYPE_PRODUCT and self.product_id:
+            return self.product.name
+        if self.item_type == self.TYPE_CATEGORY and self.category_id:
+            return self.category.name
+        return self.url or "Item"
+
+    @property
+    def depth(self):
+        """1 para item de topo. Sobe pelos pais, com teto para não travar
+        num ciclo que tenha escapado da validação."""
+        level = 1
+        node = self.parent
+        while node is not None and level <= self.MAX_DEPTH + 1:
+            level += 1
+            node = node.parent
+        return level
 

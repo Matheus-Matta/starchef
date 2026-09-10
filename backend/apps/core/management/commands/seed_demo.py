@@ -10,7 +10,7 @@ from django.db import connection
 from django.db.migrations.exceptions import InconsistentMigrationHistory
 from django.utils import timezone
 
-from apps.core.management.commands._demo_seed import (
+from apps.core.management.commands._demo_defaults import (
     DEFAULT_ACCOUNT_NAME,
     DEFAULT_ACCOUNT_SLUG,
     DEFAULT_BRANCH_NAME,
@@ -18,6 +18,8 @@ from apps.core.management.commands._demo_seed import (
     DEFAULT_PASSWORD,
     DEFAULT_RESTAURANT_NAME,
     DEFAULT_USERNAME,
+)
+from apps.core.management.commands._demo_seed import (
     ensure_base_tenant,
     ensure_demo_roles,
     ensure_restaurant_in_account,

@@ -23,7 +23,8 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/FLUTTER_PDV_TECNICO.md`: módulos e implementação interna do PDV;
 - `docs/PDV_OFFLINE_SCALE_ARCHITECTURE.md`: offline, topologia e balanças;
 - `docs/BACKEND.md`: API e serviços do backend;
-- `docs/FRONTEND.md`: retaguarda web.
+- `docs/FRONTEND.md`: retaguarda web;
+- `storefront/README.md`: cardapio digital publico e editor de blocos (Nuxt + GrapesJS).
 
 ## Regras do release do PDV
 
@@ -88,6 +89,9 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 
 Ao alterar o schema do manifesto, atualize na mesma mudança o gerador do
 Actions, o parser Flutter, os testes e o exemplo JSON da documentação.
+
+
+Sempre obrigatoriamente tente manter no maximo 200 linhas por arquivo se for passar crie outro e arquiteture para ter um classe ou funções separadas para organização e ter um projeto limpo
 
 ## Validação mínima
 

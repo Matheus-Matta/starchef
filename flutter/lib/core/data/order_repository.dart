@@ -1,4 +1,5 @@
 import '../../features/orders/presentation/order_presenter.dart';
+import '../formatters/decimal_money.dart';
 import '../formatters/value_formatters.dart';
 import 'conflict_resolver.dart';
 import 'entity_catalog.dart';
@@ -130,7 +131,9 @@ class OrderRepository extends EntityRepository {
     items[existingIndex] = {
       ...existing,
       'quantity': merged,
-      'total_price': unitPrice * merged,
+      'total_price': DecimalMoney.asNumber(
+        DecimalMoney.multiplyToMinorUnits(unitPrice, merged),
+      ),
     };
     return OrderPresenter.withItems(order, items);
   }
@@ -310,14 +313,20 @@ class OrderRepository extends EntityRepository {
     items[index] = {
       ...item,
       'quantity': quantity,
-      'total_price': unitPrice * quantity,
+      'total_price': DecimalMoney.asNumber(
+        DecimalMoney.multiplyToMinorUnits(unitPrice, quantity),
+      ),
       'addons': (item['addons'] as List? ?? const [])
           .whereType<Map>()
           .map(
             (addon) => {
               ...Map<String, dynamic>.from(addon),
-              'total_price':
-                  ValueFormatters.number(addon['unit_price']) * quantity,
+              'total_price': DecimalMoney.asNumber(
+                DecimalMoney.multiplyToMinorUnits(
+                  addon['unit_price'],
+                  quantity,
+                ),
+              ),
             },
           )
           .toList(),
@@ -400,6 +409,10 @@ class OrderRepository extends EntityRepository {
       {
         ...order.payload,
         'discount': body['discount'] ?? order.payload['discount'],
+        'fiscal_customer_cpf':
+            body['fiscal_customer_cpf'] ??
+            order.payload['fiscal_customer_cpf'] ??
+            '',
       },
       serviceFeeEnabled: body['service_fee_enabled'] != false,
       serviceFeePercent: serviceFeePercent,
@@ -444,6 +457,10 @@ class OrderRepository extends EntityRepository {
         );
     final remainingBefore = (total - alreadyPaid).clamp(0, double.infinity);
     final isCash = '${method?['method_type'] ?? ''}' == 'cash';
+    final metadata = body['metadata'];
+    final cardSubtype = metadata is Map
+        ? '${metadata['card_subtype'] ?? ''}'
+        : '';
     final change = isCash
         ? (amount - remainingBefore).clamp(0, double.infinity).toDouble()
         : 0.0;
@@ -455,6 +472,7 @@ class OrderRepository extends EntityRepository {
       'payment_method': body['payment_method'],
       'payment_method_name': method?['name'],
       'method_type': method?['method_type'],
+      'card_subtype': cardSubtype,
       'amount': applied.toStringAsFixed(2),
       'received_amount': amount.toStringAsFixed(2),
       'change_amount': change.toStringAsFixed(2),
@@ -519,6 +537,37 @@ class OrderRepository extends EntityRepository {
       'status': paid >= total - 0.009 ? 'paid' : 'awaiting_payment',
     }, id: orderId);
     return record.toApiJson();
+  }
+
+  /// Remove apenas os recebimentos locais de tentativas recusadas.
+  ///
+  /// Usado quando o operador entra novamente no pagamento: o servidor
+  /// confirmou que aquelas requisições não foram aplicadas, portanto manter
+  /// o efeito otimista faria a tela considerar a venda quitada para sempre.
+  Future<void> removeRejectedPayments(
+    String orderId,
+    Set<String> paymentIds,
+  ) async {
+    if (paymentIds.isEmpty) return;
+    final order = await read(orderId);
+    if (order == null) return;
+    final remaining = _paymentsOf(
+      order.payload,
+    ).where((payment) => !paymentIds.contains('${payment['id']}')).toList();
+    final total = ValueFormatters.number(order.payload['total']);
+    final paid = [..._serverPaymentsOf(order.payload), ...remaining]
+        .fold<double>(
+          0,
+          (sum, payment) => sum + ValueFormatters.number(payment['amount']),
+        );
+    await saveLocalEffect({
+      ...order.payload,
+      'offline_payments': remaining,
+      'payment_status': paid <= 0
+          ? 'pending'
+          : (paid >= total - 0.009 ? 'paid' : 'partial'),
+      'status': paid >= total - 0.009 ? 'paid' : 'open',
+    }, id: orderId);
   }
 
   /// Recebimentos conhecidos localmente, no formato de `/orders/<id>/payments/`.

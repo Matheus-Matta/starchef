@@ -410,6 +410,7 @@ class OrdersRepository {
     required String orderId,
     required String paymentMethodId,
     required String amount,
+    String cardSubtype = '',
     String? cashRegisterId,
     String reference = '',
   }) => _mutate(
@@ -422,7 +423,11 @@ class OrdersRepository {
       'amount': amount,
       'cash_register': ?cashRegisterId,
       'client_payment_id': 'offline-${RelaySignature.randomId()}',
-      'metadata': {'reference': reference, 'source': 'flutter_garcom'},
+      'metadata': {
+        'card_subtype': cardSubtype,
+        'reference': reference,
+        'source': 'flutter_garcom',
+      },
     },
   );
 

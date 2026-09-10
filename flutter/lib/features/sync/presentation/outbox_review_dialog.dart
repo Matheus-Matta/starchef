@@ -33,6 +33,7 @@ class OutboxReviewDialog extends StatefulWidget {
 class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
   List<Map<String, dynamic>> operations = const [];
   bool loading = true;
+  String? loadError;
   String? busyQueueId;
 
   @override
@@ -42,13 +43,31 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
   }
 
   Future<void> _load() async {
-    setState(() => loading = true);
-    final items = await widget.api.outboxOperations();
-    if (!mounted) return;
-    setState(() {
-      operations = items;
-      loading = false;
-    });
+    if (mounted) {
+      setState(() {
+        loading = true;
+        loadError = null;
+      });
+    }
+    try {
+      final items = await widget.api.outboxOperations();
+      if (!mounted) return;
+      setState(() {
+        operations = items;
+        loading = false;
+      });
+    } catch (error, stackTrace) {
+      AppLogger.instance.error(
+        'outbox_review_load_failed',
+        cause: error,
+        stackTrace: stackTrace,
+      );
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        loadError = 'Não foi possível ler a fila local: $error';
+      });
+    }
   }
 
   Future<void> _retry(Map<String, dynamic> operation) async {
@@ -115,9 +134,9 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
                 const Text(
                   'Use isto apenas quando a venda já tiver sido lançada de '
                   'outra forma ou quando ela realmente não deve existir. '
-                  'Se ela criou um pedido ou item local, as operações que '
-                  'dependem dele também serão descartadas. O descarte fica '
-                  'registrado no log.',
+                  'Uma criação local leva seus dependentes; ao descartar uma '
+                  'finalização, os itens corretivos são preservados. O '
+                  'descarte fica registrado no log.',
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
               ],
@@ -158,6 +177,12 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
         height: 440,
         child: loading
             ? const Center(child: CircularProgressIndicator())
+            : loadError != null
+            ? AppEmptyState(
+                icon: Icons.error_outline,
+                title: 'Falha ao abrir a fila',
+                description: loadError!,
+              )
             : operations.isEmpty
             ? const AppEmptyState(
                 icon: Icons.cloud_done_outlined,
@@ -300,9 +325,7 @@ class _OutboxReviewDialogState extends State<OutboxReviewDialog> {
       context: context,
       builder: (dialogContext) => AppDialog(
         title: Row(
-          children: [
-            const Expanded(child: Text('Dados da operação')),
-          ],
+          children: [const Expanded(child: Text('Dados da operação'))],
         ),
         content: SizedBox(
           width: 620,

@@ -82,6 +82,15 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`OfflineStore`** (`core/network/offline_store.dart`, `sqlite_async`): cache de respostas GET (até 300 entradas, sem TTL — offline sempre entrega a última resposta conhecida) + uma **outbox transacional** de mutações pendentes, com retry, lease e mapeamento de ID temporário→real. Escopado por `origem-da-API | conta | usuário` (com fallback se claims do JWT faltarem).
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
+- **CPF na NFC-e**: no diálogo que antecede o pagamento, ao lado da escolha da
+  taxa de serviço, o operador pode informar um CPF. O PDV valida os dígitos,
+  envia `fiscal_customer_cpf` no fechamento e preserva o valor no pedido local
+  para que a emissão fiscal continue correta quando a venda começou offline.
+- **Fotos do catálogo**: cards de produto e opções de variante resolvem
+  `logo_p`, com fallback para o campo legado `image`. O PDV não percorre
+  `photo_list`. Sem URL, sem rede ou com
+  falha de decodificação, o ícone padrão continua aparecendo e a venda não é
+  bloqueada.
 - **Idempotência**: toda mutação da outbox carrega um `Idempotency-Key`, consumido pelo `IdempotencyMiddleware` do backend ([`BACKEND.md`](BACKEND.md#4-appscore--infraestrutura-transversal)) — reenviar uma operação da fila offline não duplica venda.
 - **`MutationRelay`** (`core/network/mutation_relay.dart`): usado por terminais "Caixa Cliente" (secundários) para encaminhar mutações ao "Caixa Principal" pela rede local, assinado HMAC-SHA256 (método, rota, timestamp, nonce, conta, operador, filial, corpo), protegido contra replay, só aceita origem LAN. Três desfechos: sucesso; `MutationRelayUnavailable` (nunca chegou a sair — seguro enfileirar localmente); `MutationRelayUncertain` (pode ter sido entregue — **nunca** reenfileira localmente, pra não duplicar venda; tenta confirmar via `GET /v1/operations/<id>` antes de desistir).
 - **Topologia (Caixa Principal / Caixa Cliente)** (`features/topology/`): só dois papéis existem. Uma instalação nova sobe como secundária sem principal configurado e fica **bloqueada para escrita** até um humano atribuir os papéis — evita dois principais por acidente. Leituras também passam pelo principal (preferência: principal → nuvem → cache local); **escritas nunca caem para a nuvem direto** — se o principal está inalcançável, o secundário recusa a escrita em vez de arriscar divergência.

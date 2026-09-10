@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/product_image_url.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import 'product_card_metrics.dart';
 
@@ -245,7 +246,7 @@ class _ProductCard extends StatelessWidget {
     final weighed =
         product['pricing_unit'] == 'kg' || product['is_weighed'] == true;
     final code = '${product['internal_code'] ?? ''}'.trim();
-    final imageUrl = '${product['image'] ?? ''}'.trim();
+    final imageUrl = productImageUrl(product);
 
     return ShadCard(
       padding: EdgeInsets.zero,

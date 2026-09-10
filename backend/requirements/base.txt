@@ -17,3 +17,7 @@ Pillow>=10.0,<11.0
 qrcode>=7.4,<8.0
 python-barcode>=0.15,<1.0
 requests>=2.31,<3.0
+# Storage de objetos (Cloudflare R2 / Amazon S3) para as imagens do storefront.
+# Só entram em uso quando AWS_STORAGE_BUCKET_NAME está configurado.
+django-storages>=1.14,<2.0
+boto3>=1.34,<2.0

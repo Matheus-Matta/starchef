@@ -140,7 +140,7 @@
             :key="field.name"
             class="rpage__field"
             :class="{
-              'rpage__field--full': field.full || field.type === 'textarea' || field.type === 'remote-multiselect' || (field.type === 'boolean' && field.name === 'is_active'),
+              'rpage__field--full': field.full || field.type === 'textarea' || field.type === 'remote-multiselect' || field.type === 'file' || (field.type === 'boolean' && field.name === 'is_active'),
               'rpage__field--error': !!fieldErrors[field.name],
             }"
           >
@@ -290,6 +290,21 @@
               :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
             />
 
+            <ImageUploadField
+              v-else-if="field.type === 'file'"
+              v-model="formData[field.name]"
+              :name="field.name"
+              :label="field.label"
+              :variant="field.uploadMode || (field.multiple ? 'gallery' : 'avatar')"
+              :existing="existingImages(field)"
+              :removed-ids="formData[field.removeField] || []"
+              :readonly="isView"
+              :accept="field.accept"
+              :max-file-size="field.maxFileSize"
+              :file-limit="field.fileLimit"
+              @update:removed-ids="formData[field.removeField] = $event"
+            />
+
             <InputText
               v-else
               :id="`f-${field.name}`"
@@ -316,6 +331,7 @@
           :key="`var-${recordId}-${record ? 'loaded' : 'new'}`"
           :product-id="recordId"
           :initial-variations="record?.variations || []"
+          :product-images="record?.photo_list || []"
           :readonly="isView"
         />
         <ProductAddonsEditor
@@ -405,11 +421,13 @@ import RecipeItemsEditor from "../components/product/RecipeItemsEditor.vue";
 import FiscalProfileDialog from "../components/restaurant/FiscalProfileDialog.vue";
 import CosmosFiscalAssist from "../components/fiscal/CosmosFiscalAssist.vue";
 import PermissionAccordion from "../components/form/PermissionAccordion.vue";
+import ImageUploadField from "../components/form/ImageUploadField.vue";
 import { useResourceForm } from "../composables/useResourceForm";
 import { useAuthStore } from "../stores/auth";
 import { ResourceService } from "../services/ResourceService";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
+import { cpfDigits } from "../utils/cpf";
 import { useToast } from "primevue/usetoast";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
 import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel } from "../utils/format";
@@ -481,7 +499,10 @@ const augmentedFormFields = computed(() => {
 // a conta ao criar um usuário) de qualquer outro perfil.
 const visibleFormFields = computed(() =>
   augmentedFormFields.value.filter(
-    (field) => auth.hasModule(field.module) && (!field.superuserOnly || auth.user?.is_superuser),
+    (field) =>
+      auth.hasModule(field.module) &&
+      auth.hasPermission(field.permission) &&
+      (!field.superuserOnly || auth.user?.is_superuser),
   ),
 );
 
@@ -707,10 +728,15 @@ async function emitOrderInvoice() {
   if (!recordId.value || emittingInvoice.value) return;
   emittingInvoice.value = true;
   try {
+    const fiscalCpf = cpfDigits(record.value?.fiscal_customer_cpf);
+    const cpfName =
+      fiscalCpf && cpfDigits(record.value?.customer_document) === fiscalCpf
+        ? record.value?.customer_name
+        : "";
     const { data: invoice } = await api.post("/invoices/emit/", {
       order: recordId.value,
-      ...(record.value?.customer_document ? { cpf: record.value.customer_document } : {}),
-      ...(record.value?.customer_name ? { cpf_name: record.value.customer_name } : {}),
+      ...(fiscalCpf ? { cpf: fiscalCpf } : {}),
+      ...(cpfName ? { cpf_name: cpfName } : {}),
     });
     if (invoice.emitted === false) {
       toast.add({
@@ -825,6 +851,10 @@ function fieldPlaceholder(field, fallback) {
     return "••••••••";
   }
   return field.placeholder || fallback;
+}
+
+function existingImages(field) {
+  return record.value?.[field.previewField || "url"] || null;
 }
 
 /* Agrupa as opções remotas (que já vêm com `group`) no formato que o MultiSelect
@@ -1000,6 +1030,8 @@ watch(() => [recordId.value, props.mode], async () => {
 .rpage__field-row .rpage__select { flex: 1; }
 
 .rpage__switch-row { display: flex; align-items: center; gap: 12px; height: var(--control-h); }
+.rpage__file-field { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.rpage__file-preview { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--border); object-fit: cover; }
 .rpage__switch-label { color: var(--text-body); font: var(--weight-semibold) 13.5px/1 var(--font-sans); }
 
 .rpage__field-err { display: flex; align-items: center; gap: 6px; color: #ef4444; font: var(--weight-medium) 12px/1.3 var(--font-sans); }

@@ -61,13 +61,15 @@ class RecipeAdmin(TenantModelAdmin):
 
 class MenuItemInline(TenantTabularInline):
     model = MenuItem
+    fk_name = "menu"
     extra = 0
+    fields = ("item_type", "title", "product", "category", "url", "parent", "display_order", "is_active")
 
 
 @admin.register(Menu)
 class MenuAdmin(TenantModelAdmin):
-    list_display = ("name", "account", "branch", "channel", "available_from", "available_until", "is_active")
-    list_filter = ("account", "restaurant", "branch", "channel", "is_active")
+    list_display = ("name", "slug", "menu_type", "source", "account", "branch", "channel", "is_active")
+    list_filter = ("account", "restaurant", "branch", "menu_type", "source", "channel", "is_active")
     search_fields = ("name", "slug")
     prepopulated_fields = {"slug": ("name",)}
     inlines = [MenuItemInline]
@@ -75,5 +77,6 @@ class MenuAdmin(TenantModelAdmin):
 
 @admin.register(MenuItem)
 class MenuItemAdmin(TenantModelAdmin):
-    list_display = ("menu", "account", "product", "display_order", "override_price", "is_active")
-    list_filter = ("account", "restaurant", "branch", "menu", "is_active")
+    list_display = ("menu", "item_type", "label", "parent", "display_order", "is_active")
+    list_filter = ("account", "restaurant", "branch", "menu", "item_type", "is_active")
+    search_fields = ("title", "url", "product__name", "category__name")
