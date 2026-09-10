@@ -281,6 +281,14 @@ def test_menu_de_categorias_padrao_ja_lista_as_categorias(ecommerce_account, res
     assert "Pizzas" in titles and "Bebidas" in titles
 
 
+def test_site_novo_nasce_com_os_menus_padrao(ecommerce_account, restaurant):
+    from apps.storefront.services.provisioning import ensure_site
+
+    ensure_site(restaurant)
+
+    assert Menu.all_objects.filter(account=ecommerce_account, slug="destaques").exists()
+
+
 # ── Handle (slug) ────────────────────────────────────────────────────────────
 
 

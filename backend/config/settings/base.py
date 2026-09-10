@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "apps.sla",
     "apps.notifications",
     "apps.realtime",
+    "apps.storefront",
 ]
 
 MIDDLEWARE = [
@@ -290,6 +291,12 @@ REST_FRAMEWORK = {
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
         # Storefront público: dezenas de clientes de um restaurante saem pelo
         # mesmo IP (WiFi/NAT), então o limite `anon` (60/min) os bloquearia.
+        # Escopo próprio, bem mais generoso. (Substituiu `public_menu`, do
+        # endpoint de cardápio que o storefront aposentou.)
+        "public_storefront": config("THROTTLE_RATE_PUBLIC_STOREFRONT", default="600/min"),
+        # Upload de imagem do editor: caro em banda e storage, e o endpoint
+        # mais fácil de abusar de dentro de uma conta legítima.
+        "storefront_assets": config("THROTTLE_RATE_STOREFRONT_ASSETS", default="60/min"),
     },
 }
 
@@ -514,6 +521,12 @@ UNFOLD = {
                 "separator": True,
                 "collapsible": True,
                 "items": [
+                    {"title": "Sites do cardapio", "icon": "language", "link": "/admin/storefront/menusite/"},
+                    {"title": "Paginas do site", "icon": "wysiwyg", "link": "/admin/storefront/menupage/"},
+                    {"title": "Versoes de pagina", "icon": "history", "link": "/admin/storefront/menupageversion/"},
+                    {"title": "Modelos de pagina", "icon": "dashboard_customize", "link": "/admin/storefront/menutemplate/"},
+                    {"title": "Imagens do site", "icon": "image", "link": "/admin/storefront/menuasset/"},
+                    {"title": "Dominios", "icon": "dns", "link": "/admin/storefront/menudomain/"},
                     {"title": "Catalogos (curadoria)", "icon": "book_online", "link": "/admin/menu/menu/"},
                     {"title": "Itens do catalogo", "icon": "format_list_bulleted", "link": "/admin/menu/menuitem/"},
                 ],

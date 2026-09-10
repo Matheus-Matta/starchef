@@ -1,0 +1,11 @@
+/*
+ * Folha de estilo do cardápio público.
+ *
+ * Só duas linhas de propósito: o reset do Tailwind e a aparência dos blocos.
+ * As regras moram em `blocks.css` porque aquele arquivo precisa ser CSS puro —
+ * o editor o lê como TEXTO e injeta dentro do iframe do canvas, e um
+ * `@import 'tailwindcss'` ali quebraria a injeção.
+ */
+
+@import 'tailwindcss';
+@import './blocks.css';

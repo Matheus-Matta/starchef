@@ -69,6 +69,23 @@ from apps.restaurants.views import (
     TableSectorViewSet,
     TableViewSet,
 )
+from apps.storefront.auth_views import (
+    StorefrontLoginView,
+    StorefrontLogoutView,
+    StorefrontRefreshView,
+    StorefrontSessionView,
+)
+from apps.storefront.views import (
+    MenuAssetViewSet,
+    MenuDomainViewSet,
+    MenuPageViewSet,
+    MenuSiteViewSet,
+    MenuTemplateViewSet,
+    PublicStorefrontByHostView,
+    PublicStorefrontView,
+    StorefrontBuilderSchemaView,
+    StorefrontThemesView,
+)
 from apps.stock.views import (
     StockAlertView,
     StockEntryViewSet,
@@ -153,6 +170,11 @@ router.register("stock/lots", StockLotViewSet, basename="stock-lots")
 router.register("stock/entries", StockEntryViewSet, basename="stock-entries")
 router.register("stock/exits", StockExitViewSet, basename="stock-exits")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
+router.register("storefront/sites", MenuSiteViewSet, basename="storefront-sites")
+router.register("storefront/pages", MenuPageViewSet, basename="storefront-pages")
+router.register("storefront/templates", MenuTemplateViewSet, basename="storefront-templates")
+router.register("storefront/assets", MenuAssetViewSet, basename="storefront-assets")
+router.register("storefront/domains", MenuDomainViewSet, basename="storefront-domains")
 router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
@@ -186,6 +208,21 @@ urlpatterns = [
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),
     path("api/v1/stock/positions/", StockPositionView.as_view(), name="stock-positions"),
     path("api/v1/stock/reports/expiry/", StockExpiryReportView.as_view(), name="stock-expiry-report"),
+    # Sessão do EDITOR do storefront. Cookies próprios (`sf_*`) para não
+    # colidir com os do painel, e o slug do site é conferido contra o que o
+    # usuário realmente pode editar (ver apps/storefront/auth_views.py).
+    path("api/v1/storefront/auth/login/", StorefrontLoginView.as_view(), name="storefront-auth-login"),
+    path("api/v1/storefront/auth/refresh/", StorefrontRefreshView.as_view(), name="storefront-auth-refresh"),
+    path("api/v1/storefront/auth/logout/", StorefrontLogoutView.as_view(), name="storefront-auth-logout"),
+    path("api/v1/storefront/auth/session/", StorefrontSessionView.as_view(), name="storefront-auth-session"),
+    path("api/v1/storefront/schema/", StorefrontBuilderSchemaView.as_view(), name="storefront-builder-schema"),
+    path("api/v1/storefront/themes/", StorefrontThemesView.as_view(), name="storefront-themes"),
+    # Cardápio público consolidado: por slug do site, ou resolvido pelo domínio
+    # da requisição (é o caminho usado pelo site em produção). Substituiu o
+    # antigo /api/v1/public/menu/<slug>/, que devolvia só a lista de itens de
+    # um `menu.Menu` e não tinha tema, página, horário nem entrega.
+    path("api/v1/public/storefront/by-host/", PublicStorefrontByHostView.as_view(), name="public-storefront-by-host"),
+    path("api/v1/public/storefront/<slug:slug>/", PublicStorefrontView.as_view(), name="public-storefront"),
     path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
     path("api/v1/integrations/cosmos/config/", CosmosConfigView.as_view(), name="cosmos-config"),
     path("api/v1/integrations/focus-nfe/webhook/", FocusNfeWebhookView.as_view(), name="focus-nfe-webhook"),

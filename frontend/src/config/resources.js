@@ -68,6 +68,7 @@ import {
   VEHICLE_OPTIONS,
   VEHICLE_TYPE_LABELS,
 } from "./enums";
+import { storefrontEditorUrl } from "./storefront";
 
 export const resources = [
   // ── Operacional ────────────────────────────────────────────────────
@@ -393,6 +394,220 @@ export const resources = [
       // Baixa automática de estoque é comportamento do Módulo Logística.
       { name: "auto_deduct_stock", label: "Baixa automática de estoque", type: "boolean", default: true, module: "logistica", section: "Receita" },
       { name: "is_active", label: "Ativa", type: "boolean", default: true, section: "Receita" },
+    ],
+  },
+  // ── Cardapio digital (storefront) ──────────────────────────────────
+  // O painel cuida dos METADADOS (site, paginas, SEO, tema, imagens, dominios)
+  // e do fluxo de publicacao. O conteudo em blocos e montado no editor visual
+  // (app Nuxt em `storefront/`), aberto pela acao "Abrir editor visual".
+  //
+  // As permissoes abaixo sao as mesmas que a API exige (ver
+  // backend/apps/storefront/permissions.py): sem o codigo, a rota nao existe
+  // no menu nem responde por URL direta — em vez de o usuario descobrir pelo
+  // 403 depois de preencher um formulario inteiro.
+  {
+    name: "storefront-sites",
+    module: "ecommerce",
+    permission: "storefront.edit",
+    title: "Site do Cardapio",
+    endpoint: "/storefront/sites/",
+    columns: [
+      { key: "restaurant_name", label: "Restaurante" },
+      { key: "name", label: "Nome do site" },
+      { key: "slug", label: "Endereco" },
+      { key: "primary_domain", label: "Dominio" },
+      { key: "pages_count", label: "Paginas", align: "right" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+      { key: "published_at", label: "Publicado em", type: "date" },
+    ],
+    formFields: [
+      { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, section: "Identificacao" },
+      { name: "name", label: "Nome do site", type: "text", section: "Identificacao", placeholder: "Ex.: Pizzaria Italia" },
+      { name: "slug", label: "Endereco (slug)", type: "text", section: "Identificacao", placeholder: "pizzaria-italia", hint: "Vai na URL publica do cardapio e no subdominio. Deixe vazio ao criar para gerar a partir do nome fantasia." },
+      { name: "is_active", label: "Site no ar", type: "boolean", default: true, section: "Identificacao" },
+      { name: "catalog", label: "Catalogo publicado", type: "remote-dropdown", endpoint: "/menu/menus/", optionLabel: "name", optionValue: "id", placeholder: "Todo o cardapio ativo do restaurante", section: "Identificacao", hint: "Restringe o site a um recorte de produtos. Vazio publica o cardapio inteiro." },
+
+      { name: "theme_preset", label: "Tema pronto", type: "dropdown", options: STOREFRONT_THEME_OPTIONS, section: "Tema", hint: "Escolher um tema aqui substitui TODAS as cores abaixo pelo conjunto do preset. Mexer nas cores depois deixa o tema como \"Personalizado\"." },
+      { name: "theme.mode", label: "Modo", type: "dropdown", options: STOREFRONT_THEME_MODE_OPTIONS, section: "Tema" },
+      { name: "theme.primaryColor", label: "Cor principal", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.secondaryColor", label: "Cor secundaria", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.accentColor", label: "Cor de destaque", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.backgroundColor", label: "Fundo da pagina", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.surfaceColor", label: "Fundo dos blocos", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.textColor", label: "Cor do texto", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.mutedTextColor", label: "Texto secundario", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.borderColor", label: "Cor das bordas", type: "text", inputType: "color", section: "Tema" },
+      { name: "theme.fontFamily", label: "Fonte do texto", type: "text", section: "Tema", placeholder: "Inter, system-ui, sans-serif" },
+      { name: "theme.headingFontFamily", label: "Fonte dos titulos", type: "text", section: "Tema", placeholder: "Inter, system-ui, sans-serif" },
+      { name: "theme.borderRadius", label: "Arredondamento", type: "text", section: "Tema", placeholder: "12px" },
+      { name: "theme.containerWidth", label: "Largura do conteudo", type: "text", section: "Tema", placeholder: "1200px" },
+      { name: "theme.spacing", label: "Espacamento padrao", type: "text", section: "Tema", placeholder: "24px" },
+      { name: "theme.buttonStyle", label: "Estilo dos botoes", type: "dropdown", options: STOREFRONT_BUTTON_STYLE_OPTIONS, section: "Tema" },
+      { name: "theme.logoUrl", label: "Logo (URL)", type: "text", full: true, section: "Tema", hint: "Envie a imagem em Cardapio Digital > Imagens e cole aqui o endereco gerado." },
+      { name: "theme.faviconUrl", label: "Favicon (URL)", type: "text", full: true, section: "Tema" },
+
+      { name: "seo.title", label: "Titulo no Google", type: "text", full: true, section: "SEO" },
+      { name: "seo.description", label: "Descricao no Google", type: "textarea", full: true, rows: 2, section: "SEO" },
+      { name: "seo.og_image", label: "Imagem ao compartilhar (URL)", type: "text", full: true, section: "SEO" },
+      { name: "seo.index", label: "Aparecer em buscadores", type: "boolean", default: true, section: "SEO", hint: "Desligue enquanto o site ainda esta sendo montado." },
+    ],
+  },
+  {
+    name: "storefront-paginas",
+    module: "ecommerce",
+    permission: "storefront.edit",
+    title: "Paginas do Site",
+    endpoint: "/storefront/pages/",
+    pro: {
+      rowActions: [
+        {
+          key: "editor",
+          label: "Abrir editor visual",
+          icon: "pi pi-palette",
+          type: "external",
+          href: (row) => storefrontEditorUrl(row.id),
+        },
+        {
+          key: "publish",
+          label: "Publicar pagina",
+          icon: "pi pi-cloud-upload",
+          type: "post-detail",
+          action: "publish",
+          // Publicar e uma permissao a parte de editar: quem escreve o
+          // rascunho nao necessariamente decide o que vai ao ar.
+          permission: "storefront.publish",
+          confirmMessage: "Publicar o rascunho atual? O cardapio publico passa a mostrar esta versao.",
+          confirmAcceptLabel: "Publicar",
+          successSummary: () => "Pagina publicada",
+          successDetail: () => "O conteudo do rascunho esta no ar.",
+          errorSummary: "Nao foi possivel publicar a pagina",
+        },
+        {
+          key: "unpublish",
+          label: "Tirar do ar",
+          icon: "pi pi-eye-slash",
+          type: "post-detail",
+          action: "unpublish",
+          permission: "storefront.publish",
+          confirmMessage: "Tirar esta pagina do ar? O rascunho e o historico continuam salvos.",
+          confirmAcceptLabel: "Tirar do ar",
+          successSummary: () => "Pagina retirada do ar",
+          errorSummary: "Nao foi possivel tirar a pagina do ar",
+          visible: (row) => row.status === "published",
+        },
+        {
+          key: "versions",
+          label: "Historico de versoes",
+          icon: "pi pi-history",
+          type: "versions",
+          allowPublishOnRestore: true,
+        },
+        {
+          key: "apply-template",
+          label: "Aplicar modelo pronto",
+          icon: "pi pi-th-large",
+          type: "apply-template",
+          templatesEndpoint: "/storefront/templates/",
+        },
+      ],
+    },
+    columns: [
+      { key: "title", label: "Pagina" },
+      { key: "slug", label: "Endereco" },
+      { key: "status", label: "Situacao", type: "status", map: STOREFRONT_PAGE_STATUS_LABELS },
+      { key: "is_home", label: "Inicial", type: "boolean" },
+      { key: "has_unpublished_changes", label: "Alteracoes nao publicadas", type: "boolean" },
+      { key: "display_order", label: "Ordem", align: "right" },
+      { key: "published_at", label: "Publicada em", type: "date" },
+    ],
+    formFields: [
+      { name: "site", label: "Site", type: "remote-dropdown", endpoint: "/storefront/sites/", optionLabel: "slug", optionValue: "id", required: true, section: "Identificacao" },
+      { name: "title", label: "Titulo da pagina", type: "text", required: true, section: "Identificacao" },
+      { name: "slug", label: "Endereco (slug)", type: "text", section: "Identificacao", placeholder: "promocoes", hint: "Vazio ao criar gera a partir do titulo. A pagina inicial responde na raiz do site." },
+      { name: "is_home", label: "E a pagina inicial", type: "boolean", default: false, section: "Identificacao", hint: "So uma pagina por site pode ser a inicial." },
+      { name: "display_order", label: "Ordem no menu", type: "number", default: 0, section: "Identificacao" },
+      { name: "seo.title", label: "Titulo no Google", type: "text", full: true, section: "SEO" },
+      { name: "seo.description", label: "Descricao no Google", type: "textarea", full: true, rows: 2, section: "SEO" },
+      { name: "seo.og_image", label: "Imagem ao compartilhar (URL)", type: "text", full: true, section: "SEO" },
+      { name: "seo.index", label: "Aparecer em buscadores", type: "boolean", default: true, section: "SEO" },
+    ],
+  },
+  {
+    // Catalogo da PLATAFORMA: somente leitura (a API e um ReadOnlyModelViewSet).
+    // Sem `formFields` a tela nao oferece criar/editar/remover.
+    name: "storefront-modelos",
+    module: "ecommerce",
+    permission: "storefront.view",
+    title: "Modelos de Pagina",
+    endpoint: "/storefront/templates/",
+    globalScope: true,
+    columns: [
+      { key: "name", label: "Modelo" },
+      { key: "category", label: "Categoria" },
+      { key: "description", label: "Descricao" },
+      { key: "sort_order", label: "Ordem", align: "right" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+  },
+  {
+    name: "storefront-imagens",
+    module: "ecommerce",
+    permission: "storefront.assets",
+    title: "Imagens do Site",
+    endpoint: "/storefront/assets/",
+    columns: [
+      { key: "url", label: "Imagem", type: "image" },
+      { key: "original_name", label: "Arquivo" },
+      { key: "content_type", label: "Tipo" },
+      { key: "size", label: "Tamanho", type: "bytes", align: "right" },
+      { key: "created_at", label: "Enviada em", type: "date" },
+    ],
+    formFields: [
+      // Unico campo gravavel: o proprio arquivo. Dimensoes, tamanho, tipo e
+      // checksum sao calculados no servidor ao abrir a imagem — nao ha o que
+      // o usuario digitar aqui.
+      { name: "file", label: "Arquivo de imagem", type: "file", required: true, accept: "image/jpeg,image/png,image/webp,image/avif,image/gif", hint: "JPEG, PNG, WEBP, AVIF ou GIF, ate 8 MB. SVG nao e aceito por seguranca." },
+    ],
+  },
+  {
+    name: "storefront-dominios",
+    module: "ecommerce",
+    // Dominio mexe em DNS/TLS e pode tirar o site do ar: por padrao so o
+    // administrador tem esse codigo (o perfil E-commerce nao tem).
+    permission: "storefront.domains",
+    title: "Dominios do Site",
+    endpoint: "/storefront/domains/",
+    pro: {
+      rowActions: [
+        {
+          key: "verify",
+          label: "Verificar DNS agora",
+          icon: "pi pi-check-circle",
+          type: "post-detail",
+          action: "verify",
+          confirmMessage: "Consultar o DNS e confirmar a posse deste dominio?",
+          confirmAcceptLabel: "Verificar",
+          successSummary: () => "Dominio verificado",
+          successDetail: () => "O certificado TLS entra em emissao.",
+          errorSummary: "Dominio ainda nao verificado",
+          visible: (row) => !row.verified,
+        },
+      ],
+    },
+    columns: [
+      { key: "hostname", label: "Dominio" },
+      { key: "site_slug", label: "Site" },
+      { key: "domain_type", label: "Tipo", type: "status", map: { subdomain: "Subdominio", custom: "Proprio" } },
+      { key: "is_primary", label: "Principal", type: "boolean" },
+      { key: "verified", label: "Verificado", type: "boolean" },
+      { key: "ssl_status", label: "TLS", type: "status", map: STOREFRONT_SSL_STATUS_LABELS },
+      { key: "verification_token", label: "Token de verificacao (TXT)", showInList: false },
+    ],
+    formFields: [
+      { name: "site", label: "Site", type: "remote-dropdown", endpoint: "/storefront/sites/", optionLabel: "slug", optionValue: "id", required: true },
+      { name: "hostname", label: "Dominio", type: "text", required: true, full: true, placeholder: "cardapio.seurestaurante.com.br", hint: "Depois de salvar, use \"Verificar DNS agora\" no menu da linha. O registro TXT esperado aparece no detalhe." },
+      { name: "domain_type", label: "Tipo", type: "dropdown", options: STOREFRONT_DOMAIN_TYPE_OPTIONS, default: "custom" },
+      { name: "is_primary", label: "Dominio principal do site", type: "boolean", default: false, hint: "So um por site. E o endereco usado nos links compartilhados." },
     ],
   },
   {

@@ -1,0 +1,900 @@
+/*
+ * Moldura do editor.
+ *
+ * Só a UI ao redor do canvas. O CSS do próprio storefront (como o cardápio
+ * fica) mora em `blocks.css` e é injetado dentro do iframe do canvas —
+ * misturar os dois faria o editor herdar o tema do restaurante e o restaurante
+ * herdar o cinza do editor.
+ *
+ * As cores da moldura saem dos tokens abaixo, nomeados como no tema do Studio
+ * SDK do GrapesJS: cada categoria (`global`, `primary`) tem três fundos por
+ * ordem de ênfase, um de hover, uma cor de texto, e ainda borda e foco. Antes
+ * eram dezenas de `#dfe3e8` espalhados, e mudar o cinza do editor exigia achar
+ * todos — foi assim que a aba ativa acabou branca sobre branca.
+ */
+.sf-builder {
+  /* global — a interface em si */
+  --sfe-global-bg1: #ffffff;
+  --sfe-global-bg2: #f4f5f7;
+  --sfe-global-bg3: #eceef1;
+  --sfe-global-bg-hover: #e6e9ed;
+  --sfe-global-text: #1f2933;
+  --sfe-global-text-muted: #6b7280;
+  --sfe-global-border: #dfe3e8;
+  --sfe-global-focus: #2563eb;
+  --sfe-global-placeholder: #9ca3af;
+
+  /* primary — as ações que importam (publicar, salvar, criar) */
+  --sfe-primary-bg1: #0b5b34;
+  --sfe-primary-bg-hover: #094a2b;
+  --sfe-primary-text: #ffffff;
+
+  /* danger — apagar */
+  --sfe-danger-bg: #fef2f2;
+  --sfe-danger-text: #b42318;
+
+  --sfe-radius: 8px;
+  --sfe-radius-lg: 12px;
+  --sfe-sidebar-width: 288px;
+  --sfe-shadow: 0 16px 36px rgb(17 24 39 / 14%);
+
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--sfe-global-bg2);
+  color: var(--sfe-global-text);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.sf-builder__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sfe-global-border);
+  background: #fff;
+}
+
+.sf-builder__title {
+  display: flex;
+  flex-direction: column;
+}
+
+.sf-builder__status {
+  font-size: 12px;
+  color: var(--sfe-global-text-muted);
+}
+
+.sf-builder__devices,
+.sf-builder__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-builder button,
+.sf-builder__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--sfe-global-text);
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sf-builder button:hover,
+.sf-builder__link:hover {
+  border-color: var(--sfe-global-bg-hover);
+}
+
+.sf-builder button.is-active {
+  border-color: var(--sfe-global-text);
+  background: var(--sfe-global-text);
+  color: #fff;
+}
+
+.sf-builder button.is-primary {
+  border-color: var(--sfe-primary-bg1);
+  background: var(--sfe-primary-bg1);
+  color: #fff;
+}
+
+.sf-builder button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sf-builder__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sf-builder__sidebar {
+  /* Coluna com as abas FIXAS no topo e só o conteúdo rolando. Antes tudo
+     rolava junto: descer até o painel de estilo escondia as abas, e voltar
+     exigia rolar de volta ao topo. */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: var(--sfe-sidebar-width);
+  border-right: 1px solid var(--sfe-global-border);
+  background: var(--sfe-global-bg1);
+}
+
+.sf-builder__sidebar--right {
+  border-right: 0;
+  border-left: 1px solid var(--sfe-global-border);
+}
+
+/* Recolhida: some da tela e deixa o canvas ocupar a largura toda. Só a
+   alcinha de reabrir continua visível. */
+.sf-builder__sidebar.is-collapsed {
+  width: 0;
+  border: 0;
+}
+
+.sf-builder__panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 14px 16px;
+}
+
+.sf-builder__panel h2 {
+  margin: 14px 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sfe-global-text-muted);
+}
+
+/* Alcinha de recolher, grudada na borda interna do canvas. */
+.sf-builder__collapse {
+  position: absolute;
+  top: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--sfe-global-border);
+  background: var(--sfe-global-bg1);
+  color: var(--sfe-global-text-muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.sf-builder__collapse--left {
+  right: -19px;
+  border-radius: 0 var(--sfe-radius) var(--sfe-radius) 0;
+}
+
+.sf-builder__collapse--right {
+  left: -19px;
+  border-radius: var(--sfe-radius) 0 0 var(--sfe-radius);
+}
+
+.sf-builder__collapse:hover {
+  background: var(--sfe-global-bg-hover);
+  color: var(--sfe-global-text);
+}
+
+
+.sf-builder__sidebar h2 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sfe-global-text-muted);
+}
+
+.sf-builder__sidebar h2:first-child {
+  margin-top: 0;
+}
+
+.sf-builder__canvas {
+  flex: 1;
+  min-width: 0;
+  background: var(--sfe-global-bg-hover);
+}
+
+/* O GrapesJS reserva por padrão 15% de largura à direita e 40px de altura no
+   topo para o painel e a barra de ferramentas PADRÃO dele — que não existem
+   aqui, porque `panels: { defaults: [] }` tira os painéis nativos e a UI é
+   toda Vue. Sem este ajuste, o canvas ficava com uma faixa cinza vazia de
+   ~200px na direita e 40px no topo: espaço reservado para um painel que nunca
+   é desenhado. As duas variáveis controlam só isso (conferido na folha da
+   biblioteca); zerá-las faz o iframe ocupar o retângulo inteiro. */
+.sf-builder .gjs-cv-canvas {
+  --gjs-left-width: 0px;
+  --gjs-canvas-top: 0px;
+}
+
+/* O GrapesJS traz o próprio tema escuro; aqui ele é clareado para combinar
+   com a moldura, sem reescrever a folha de estilo inteira da biblioteca. */
+.sf-builder .gjs-one-bg { background-color: var(--sfe-global-bg1); }
+.sf-builder .gjs-two-color { color: var(--sfe-global-text); }
+.sf-builder .gjs-three-bg { background-color: var(--sfe-primary-bg1); color: var(--sfe-primary-text); }
+.sf-builder .gjs-four-color,
+.sf-builder .gjs-four-color-h:hover { color: var(--sfe-primary-bg1); }
+
+/* ── Abas e formulários da lateral direita ──────────────────────────────── */
+.sf-builder__tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin: 12px 14px;
+  padding: 3px;
+  border-radius: var(--sfe-radius);
+  background: var(--sfe-global-bg3);
+}
+
+.sf-builder__tabs button {
+  flex: 1;
+  min-width: 0;
+  /* Ícone em cima, rótulo embaixo — e não lado a lado. Lado a lado é o que
+     cortava "Cabeçalho" em "Cabeça…": são quatro abas espremidas em 288px, e
+     sobra pouca largura por aba. Empilhado, cada aba só precisa da largura do
+     texto sozinho. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 44px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sfe-global-text-muted);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-builder__tabs button.is-active {
+  background: #fff;
+  /* A COR precisa vir junto. `.sf-builder button.is-active` (a pílula escura
+     da topbar) tem a mesma especificidade e pinta o texto de branco; esta
+     regra só trocava o fundo por branco, e a aba ativa ficava branco no
+     branco — invisível. */
+  color: var(--sfe-global-text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(15 26 20 / 12%);
+}
+
+.sf-panel { display: flex; flex-direction: column; gap: 18px; }
+.sf-panel__section { display: flex; flex-direction: column; gap: 10px; }
+
+.sf-panel__section h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sfe-global-text-muted);
+}
+
+/* Subtítulo dentro de uma seção longa (o cabeçalho tem quatro grupos). Mais
+   discreto que o h3 de propósito: agrupa sem parecer outra seção. */
+.sf-panel__section h4 {
+  margin: 8px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sfe-global-placeholder);
+}
+
+.sf-panel__hint { margin: 0; font-size: 12px; color: var(--sfe-global-text-muted); }
+.sf-panel__error { margin: 0; font-size: 13px; color: var(--sfe-danger-text); }
+
+.sf-panel__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sfe-global-border);
+}
+
+.sf-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.sf-field > span { color: var(--sfe-global-text-muted); }
+
+.sf-field input[type="text"],
+.sf-field input[type="number"],
+.sf-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 6px;
+  font: inherit;
+  color: var(--sfe-global-text);
+}
+
+.sf-field--inline { flex-direction: row; align-items: center; gap: 8px; }
+.sf-field--inline > span { color: var(--sfe-global-text); }
+
+/* Cor: rótulo à esquerda, amostra clicável à direita — a mudança já aparece
+   no canvas, então o seletor precisa estar perto do que ele repinta. */
+.sf-field--color { flex-direction: row; align-items: center; justify-content: space-between; }
+.sf-field--color input[type="color"] {
+  width: 40px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.sf-presets { display: flex; flex-direction: column; gap: 6px; }
+
+.sf-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-preset.is-active { border-color: var(--sfe-global-text); box-shadow: inset 0 0 0 1px var(--sfe-global-text); }
+.sf-preset small { margin-left: auto; color: var(--sfe-global-text-muted); font-size: 11px; }
+.sf-preset__swatches { display: inline-flex; gap: 2px; }
+.sf-preset__swatches i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgb(15 26 20 / 12%);
+}
+
+.sf-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  color: var(--sfe-global-text);
+  cursor: pointer;
+}
+
+/* ── Porta de entrada do editor ───────────────────────────────────────────
+ *
+ * Tela de login e telas de recusa (site de outro restaurante, sessão
+ * expirada). Vive no CSS do builder, e não no do cardápio público, porque
+ * nenhum visitante do site chega a ver isto — e o que o visitante não vê não
+ * deve pesar no bundle dele.
+ */
+.sf-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--sfe-global-bg3);
+}
+
+.sf-gate__card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 360px;
+  padding: 28px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgb(17 24 39 / 8%);
+}
+
+.sf-gate__card h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--sfe-global-text);
+}
+
+.sf-gate__hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--sfe-global-text-muted);
+}
+
+.sf-gate__hint a {
+  display: inline-block;
+  margin-right: 10px;
+  color: var(--sfe-primary-bg1);
+  font-weight: 600;
+}
+
+.sf-gate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sf-gate__field span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sfe-global-text);
+}
+
+.sf-gate__field input {
+  padding: 10px 12px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 8px;
+  font: inherit;
+  color: var(--sfe-global-text);
+}
+
+.sf-gate__field input:focus {
+  outline: 2px solid var(--sfe-primary-bg1);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.sf-gate__error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--sfe-danger-bg);
+  color: var(--sfe-danger-text);
+  font-size: 13px;
+}
+
+.sf-gate__submit {
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--sfe-primary-bg1);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sf-gate__submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sf-gate__ghost {
+  padding: 9px 14px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--sfe-global-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ── Seletor de páginas da topbar ─────────────────────────────────────────
+ *
+ * Antes dele o editor só abria a página que veio na URL: para mexer na página
+ * de contato o cliente teria de descobrir um UUID. É um menu, e não uma lista
+ * fixa na lateral, porque a topbar é estreita e a lista de páginas de um
+ * cardápio raramente passa de meia dúzia.
+ */
+.sf-pages {
+  position: relative;
+}
+
+.sf-pages__current {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sf-pages__current:hover {
+  border-color: var(--sfe-global-border);
+  background: var(--sfe-global-bg2);
+}
+
+.sf-pages__current small {
+  color: var(--sfe-global-text-muted);
+  font-weight: 400;
+}
+
+.sf-pages__chevron {
+  color: var(--sfe-global-placeholder);
+  font-size: 11px;
+}
+
+.sf-pages__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  width: 280px;
+  padding: 6px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgb(17 24 39 / 14%);
+}
+
+.sf-pages__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sf-pages__list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+}
+
+.sf-pages__list li.is-current {
+  background: var(--sfe-global-bg3);
+}
+
+.sf-pages__item {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--sfe-global-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-pages__item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-pages__item small {
+  flex-shrink: 0;
+  color: var(--sfe-global-placeholder);
+  font-size: 11px;
+}
+
+.sf-pages__remove {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sfe-global-placeholder);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sf-pages__remove:hover {
+  background: var(--sfe-danger-bg);
+  color: var(--sfe-danger-text);
+}
+
+.sf-pages__add {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px dashed var(--sfe-global-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sfe-global-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sf-pages__add:hover {
+  border-color: var(--sfe-global-placeholder);
+  background: var(--sfe-global-bg2);
+}
+
+.sf-pages__new {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--sfe-global-border);
+}
+
+.sf-pages__new input {
+  padding: 8px 10px;
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 7px;
+  font: inherit;
+}
+
+.sf-pages__new small {
+  color: var(--sfe-global-text-muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.sf-pages__new-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sf-pages__error {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--sfe-danger-bg);
+  color: var(--sfe-danger-text);
+  font-size: 12px;
+}
+
+/* ── Responsivo ───────────────────────────────────────────────────────────
+ *
+ * O editor é uma ferramenta de tela larga, mas "larga" é relativo: num laptop
+ * de 1366px as duas laterais de 288px deixam menos de 800px de canvas, e a
+ * página fica menor no editor do que ficará no navegador do visitante. As
+ * quebras abaixo devolvem espaço ao canvas antes disso incomodar.
+ */
+@media (max-width: 1400px) {
+  .sf-builder {
+    --sfe-sidebar-width: 258px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .sf-builder {
+    --sfe-sidebar-width: 236px;
+  }
+
+  /* A topbar deixa de distribuir em três colunas e passa a envolver: com esta
+     largura, os botões de ação começavam a espremer o seletor de páginas. */
+  .sf-builder__topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Aqui as duas laterais somadas passariam da metade da tela. As laterais
+     viram sobreposições: continuam alcançáveis pela alcinha, mas param de
+     roubar largura do canvas. */
+  .sf-builder__sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: var(--sfe-shadow);
+  }
+
+  .sf-builder__sidebar { left: 0; }
+  .sf-builder__sidebar--right { left: auto; right: 0; }
+
+  .sf-builder__sidebar.is-collapsed {
+    box-shadow: none;
+  }
+
+  .sf-builder__body {
+    position: relative;
+  }
+}
+
+/* ── Traits: o mesmo visual dos formulários (Cabeçalho, Site, Página) ────────
+ *
+ * O GrapesJS traz o formulário PRÓPRIO dele para os traits: campo escuro
+ * translúcido sem rótulo separado, setas de seta customizadas na cor do tema
+ * escuro (invisíveis sobre fundo branco), marca de seleção também branca sobre
+ * branco. Ficava com cara de outra ferramenta bem ao lado dos formulários Vue
+ * que construímos — e a seta do <select> e o "check" do checkbox literalmente
+ * desapareciam contra o nosso fundo claro.
+ *
+ * Aqui ele é reconduzido ao MESMO padrão: rótulo pequeno em cima, campo branco
+ * com borda fina embaixo — exceto o checkbox, que continua em linha (rótulo à
+ * esquerda, caixa à direita), pois é a leitura natural de uma opção liga/desliga.
+ * Escopado a `#sf-panel-traits` para não mexer no Style Manager, que tem
+ * necessidades bem diferentes (grade densa de propriedades de CSS).
+ */
+#sf-panel-traits .gjs-trt-trait {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--sfe-global-border);
+}
+
+#sf-panel-traits .gjs-trt-trait__wrp:last-child .gjs-trt-trait {
+  border-bottom: 0;
+}
+
+#sf-panel-traits .gjs-label-wrp {
+  width: auto;
+  min-width: 0;
+}
+
+#sf-panel-traits .gjs-label {
+  font-size: 12px;
+  color: var(--sfe-global-text-muted);
+  text-align: left;
+  white-space: normal;
+}
+
+#sf-panel-traits .gjs-field-wrp {
+  width: 100%;
+}
+
+#sf-panel-traits .gjs-field {
+  width: 100%;
+  background: var(--sfe-global-bg1);
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 6px;
+  color: var(--sfe-global-text);
+  box-sizing: border-box;
+}
+
+#sf-panel-traits .gjs-field:focus-within {
+  border-color: var(--sfe-global-focus);
+}
+
+#sf-panel-traits .gjs-field input,
+#sf-panel-traits .gjs-field select,
+#sf-panel-traits .gjs-field textarea {
+  padding: 8px 10px;
+  font: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  /* O <select> tem a seta nativa suprimida pela biblioteca (`appearance:
+     none`) em favor de um triângulo customizado que some no fundo claro. Traz
+     de volta a seta do navegador — a mesma que os <select> do resto do editor
+     usam. */
+  -webkit-appearance: auto;
+  -moz-appearance: auto;
+  appearance: auto;
+}
+
+/* Campo numérico: a biblioteca desenha setas de incrementar/decrementar na
+   cor do tema escuro (também invisíveis aqui) por cima do spinner nativo, que
+   ela mesma desliga. Sem nenhuma das duas, um número ainda se edita — basta
+   digitar, o mesmo gesto usado em todo o resto do editor. */
+#sf-panel-traits .gjs-field-arrows,
+#sf-panel-traits .gjs-sel-arrow {
+  display: none;
+}
+
+/* Checkbox: continua em linha — rótulo à esquerda, caixa à direita — porque é
+   assim que se lê uma opção liga/desliga. A marca de seleção ("check") também
+   era branca sobre branco; agora usa a cor primária do editor. */
+#sf-panel-traits .gjs-trt-trait--checkbox {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#sf-panel-traits .gjs-trt-trait--checkbox .gjs-label-wrp {
+  flex: 1;
+}
+
+#sf-panel-traits .gjs-trt-trait--checkbox .gjs-field-wrp {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+#sf-panel-traits .gjs-field-checkbox {
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 4px;
+  background: var(--sfe-global-bg1);
+}
+
+#sf-panel-traits .gjs-field-checkbox input:checked + .gjs-chk-icon {
+  border-color: var(--sfe-primary-bg1);
+}
+
+/* ── Itens de menu dentro do editor ───────────────────────────────────────
+ *
+ * Um menu pode ter uma dúzia de itens, cada um com foto, título, subtítulo,
+ * link e ordem. Tudo aberto ao mesmo tempo daria um painel de dois metros
+ * numa coluna de 300px, então a linha fechada mostra só o que identifica o
+ * item — a miniatura e o rótulo — e abre sob demanda.
+ */
+.sf-menuitem {
+  border: 1px solid var(--sfe-global-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.sf-menuitem__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-menuitem__head.is-open { border-bottom: 1px solid var(--sfe-global-border); }
+
+/* A miniatura reserva o espaço mesmo sem foto: é o vazio dela que diz ao
+   cliente que aquele banner ainda não tem imagem. */
+.sf-menuitem__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: var(--sfe-global-bg3);
+  color: var(--sfe-global-placeholder);
+  overflow: hidden;
+}
+
+.sf-menuitem__thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.sf-menuitem__label {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--sfe-global-text);
+}
+
+.sf-menuitem__label small { color: var(--sfe-global-text-muted); font-size: 11px; }
+
+.sf-menuitem__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.sf-menuitem__body input[type="file"] { font-size: 12px; }
+
+.sf-menuitem__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+.sf-menuitem__remove {
+  border-color: transparent;
+  background: none;
+  color: var(--sfe-danger-text);
+}

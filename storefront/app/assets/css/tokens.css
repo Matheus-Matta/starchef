@@ -1,0 +1,63 @@
+/*
+ * Design tokens do storefront.
+ *
+ * Os valores aqui são o piso, não a verdade: o tema do restaurante sobrescreve
+ * cada `--sf-*` no elemento raiz do site (ver `useStorefrontTheme`). Eles
+ * existem para que a página continue legível antes de o tema chegar — no
+ * primeiro paint do SSR, num payload em cache sem tema, ou dentro do canvas do
+ * editor.
+ *
+ * Os valores batem com o preset PADRÃO do backend — `market`, em
+ * `apps/storefront/themes.py`. Se um mudar, mude o outro: a diferença
+ * apareceria como um piscar de cor ao carregar.
+ */
+:root {
+  --sf-primary: #004d38;
+  --sf-secondary: #17231f;
+  --sf-accent: #f6c928;
+
+  /* Fundo creme e superfície BRANCA — é a inversão que dá o ar premium da
+     referência: o branco vira destaque em vez de base, e os cartões saltam
+     sem precisar de sombra nem borda. */
+  --sf-background: #faf7e8;
+  --sf-surface: #ffffff;
+
+  --sf-text: #17231f;
+  --sf-muted-text: #777f7b;
+  --sf-border: #eceeea;
+
+  /* Cores de PAPEL, não de enfeite. Antes viviam fixas no CSS dos blocos e
+     escapavam do tema: trocar de preset repintava o site e deixava o selo de
+     promoção vermelho num tema azul. Agora saem da paleta como as demais. */
+  --sf-sale: #d92d20;
+  --sf-on-primary: #ffffff;
+  --sf-on-accent: #17231f;
+  --sf-whatsapp: #25d366;
+
+  /* O cabeçalho e a faixa de aviso têm fundo próprio para contrastar com o
+     corpo da página — mas da MESMA paleta, não de valores soltos. */
+  --sf-header-bg: #ffffff;
+  --sf-announce-bg: #17231f;
+  --sf-announce-text: #ffffff;
+
+  /* Sombra derivada do texto: acompanha o tema em vez de ser um preto fixo
+     que fica sujo sobre fundo escuro. */
+  --sf-shadow-color: 23 35 31;
+
+  --sf-font: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sf-heading-font: var(--sf-font);
+
+  --sf-radius: 10px;
+  --sf-radius-sm: 6px;
+  --sf-radius-lg: 14px;
+
+  --sf-container-width: 1360px;
+  --sf-spacing: 24px;
+
+  /* Derivados do tema, não configuráveis: um verde mais escuro para estados
+     de hover e um cinza levemente esverdeado para o fundo da busca. O cliente
+     escolhe a cor principal; estes acompanham sozinhos. */
+  --sf-primary-dark: color-mix(in srgb, var(--sf-primary) 85%, black);
+  --sf-input-bg: #f6f6f4;
+  --sf-header-height: 64px;
+}

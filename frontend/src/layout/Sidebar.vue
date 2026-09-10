@@ -212,6 +212,11 @@ const groups = computed(() =>
       label: "Cardapio Digital",
       module: "ecommerce",
       items: [
+        hasPermission("storefront.edit") ? { id: "storefront-sites", label: "Site", icon: "layout-template" } : null,
+        hasPermission("storefront.edit") ? { id: "storefront-paginas", label: "Paginas", icon: "file-text" } : null,
+        hasPermission("storefront.view") ? { id: "storefront-modelos", label: "Modelos", icon: "layout-grid" } : null,
+        hasPermission("storefront.assets") ? { id: "storefront-imagens", label: "Imagens", icon: "image" } : null,
+        hasPermission("storefront.domains") ? { id: "storefront-dominios", label: "Dominios", icon: "globe" } : null,
         hasPermission("storefront.edit") ? { id: "menus", label: "Menus", icon: "list" } : null,
         hasPermission("storefront.edit") ? { id: "menu-itens", label: "Itens de menu", icon: "book-marked" } : null,
       ].filter(Boolean),
