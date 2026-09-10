@@ -65,7 +65,7 @@ class RelaySyncTransport implements SyncTransport {
       // O principal alcançou o servidor (ou a própria regra dele) e recusou.
       // Repetir daria o mesmo resultado; isto é uma pendência para revisão.
       if (error.isConnectivity) {
-        throw TransientSyncFailure(error.message);
+        throw TransientSyncFailure(error.message, retryAfter: error.retryAfter);
       }
       rethrow;
     }

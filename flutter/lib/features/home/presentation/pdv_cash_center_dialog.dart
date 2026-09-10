@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/data/cash_register_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/shadcn_layout.dart';
@@ -78,7 +79,10 @@ class PdvCashCenterDialog extends StatelessWidget {
                   ),
                   if (opened)
                     Text(
-                      '${cashSession!['station'] ?? 'Estação atual'}',
+                      CashRegisterRepository.stationLabelOf(
+                        cashSession!,
+                        fallback: 'Estação atual',
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: scheme.onSurfaceVariant),

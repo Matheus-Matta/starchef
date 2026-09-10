@@ -355,13 +355,24 @@ class FiscalQueueService {
 
   /// Falha de transporte: nada se sabe sobre o documento, só que a chamada não
   /// completou. Volta para `PENDING` e tenta de novo mais tarde.
+  ///
+  /// `serverDelay` é o prazo que o PRÓPRIO servidor pediu (um 429/503, com o
+  /// `Retry-After` reconstruído em `retryAfter` na travessia
+  /// nuvem → principal → secundário). Ele prevalece sobre a escada interna:
+  /// sem isto, um "espere 25 segundos" da nuvem era descartado e a fila
+  /// reinsistia aos 15 segundos (o primeiro degrau), caindo na MESMA janela
+  /// de limite de novo — foi assim que uma nota com perfil fiscal inválido
+  /// travou o caixa secundário inteiro em um loop de 429 que nunca esvaziava.
   Future<DateTime> markRetry(
     int id, {
     required int attempts,
     required String error,
+    Duration? serverDelay,
   }) async {
     final delay =
-        retryLadder[min(max(attempts - 1, 0), retryLadder.length - 1)];
+        (serverDelay != null && serverDelay > Duration.zero)
+            ? serverDelay
+            : retryLadder[min(max(attempts - 1, 0), retryLadder.length - 1)];
     final nextRetryAt = DateTime.now().toUtc().add(delay);
     await database.execute(
       '''

@@ -120,9 +120,28 @@ class CashRegisterRepository extends EntityRepository {
     return terminal == (installationId ?? '');
   }
 
+  /// O nome do caixa desta sessão, para mostrar ao operador.
+  ///
+  /// `cash_station_name` PRIMEIRO, sempre. `station` é um campo de texto
+  /// livre herdado, cujo padrão — no model do backend e no payload local — é
+  /// a string literal `"PDV principal"`, e NINGUÉM nunca a preenche com outra
+  /// coisa: nenhum cliente envia `station` ao abrir o caixa. Ler esse campo na
+  /// tela fazia todo terminal exibir "PDV principal" no lugar do nome do
+  /// caixa de verdade — o que, num Caixa Secundário, se parecia exatamente
+  /// com "estou vendo o caixa do Principal".
+  static String stationLabelOf(
+    Map<String, dynamic> session, {
+    String fallback = 'caixa',
+  }) {
+    final name = '${session['cash_station_name'] ?? ''}'.trim();
+    if (name.isNotEmpty) return name;
+    final legacy = '${session['station'] ?? ''}'.trim();
+    return legacy.isNotEmpty ? legacy : fallback;
+  }
+
   /// Mensagem de bloqueio, no mesmo formato do backend.
   static String occupiedMessage(Map<String, dynamic> session) {
-    final station = '${session['cash_station_name'] ?? session['station'] ?? 'caixa'}';
+    final station = stationLabelOf(session);
     final operator = '${session['opened_by_name'] ?? ''}';
     final terminal = '${session['opened_terminal_label'] ?? ''}';
     final openedAt = DateTime.tryParse('${session['opened_at'] ?? ''}')?.toLocal();
@@ -176,7 +195,10 @@ class CashRegisterRepository extends EntityRepository {
         'expected_amount': opening.toStringAsFixed(2),
         'current_balance': opening.toStringAsFixed(2),
         'notes': body['notes'] ?? '',
-        'station': body['station'] ?? 'PDV principal',
+        // Espelha o campo herdado do backend, mas com o nome REAL quando ele
+        // é conhecido: o padrão `"PDV principal"` do model não descreve nada
+        // e só confunde quem o lê.
+        'station': body['station'] ?? station?['name'] ?? 'PDV principal',
         'device_identifier': installationId ?? body['device_identifier'] ?? '',
         // Dono da sessao: operador + instalacao. E o par que `current` e as
         // movimentacoes conferem depois.

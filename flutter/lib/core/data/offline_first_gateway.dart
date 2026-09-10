@@ -286,6 +286,25 @@ class OfflineFirstGateway {
   static bool requiresServer(String path) =>
       _serverOnlyFragments.any(path.contains);
 
+  /// A resposta desta leitura depende de QUEM está perguntando?
+  ///
+  /// `/cash-register/current/` não é resolvida por id: ela é resolvida por
+  /// REGRA — a sessão do operador que está na frente DESTE terminal, naquela
+  /// instalação. A mesma URL responde coisas diferentes para terminais
+  /// diferentes.
+  ///
+  /// Isso muda tudo quando este terminal responde POR OUTRO (o Principal
+  /// servindo um Secundário pela rede local): a cópia local sabe responder
+  /// pela identidade certa, mas a nuvem só saberia responder pela identidade
+  /// DESTE terminal — o token e o `X-Terminal-Id` que sairiam na requisição
+  /// são os daqui. Perguntar lá, nesse caso, devolve a sessão da máquina
+  /// errada com cara de resposta legítima.
+  static bool isIdentityScopedRead(String path) {
+    final route = EntityCatalog.resolve(path);
+    if (route == null) return false;
+    return route.type == EntityCatalog.cashSession && route.action == 'current';
+  }
+
   /// O gateway sabe responder esta leitura pelo SQLite?
   bool handlesRead(String path) {
     if (_scope == null || requiresServer(path)) return false;

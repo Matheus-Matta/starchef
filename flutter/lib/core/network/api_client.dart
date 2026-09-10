@@ -614,10 +614,38 @@ class ApiClient {
     final neverSynced =
         entityType == null || await gateway.lastSyncAt(entityType) == null;
 
+    // ATENDENDO POR OUTRO TERMINAL, numa leitura cuja resposta depende de QUEM
+    // pergunta. A cópia local já respondeu pela identidade certa (a origem
+    // viaja na zona e o gateway a usou). A nuvem, porém, só saberia responder
+    // pela identidade DESTE terminal — o token e o `X-Terminal-Id` que sairiam
+    // na requisição são os daqui, porque a reconciliação não leva origem.
+    //
+    // Era exatamente isso que fazia um Caixa Secundário enxergar o caixa
+    // aberto no Principal: a leitura local acertava "não há sessão sua", esse
+    // "não há" era tratado como motivo para confirmar com o servidor, e o
+    // servidor respondia sobre o PRINCIPAL — com cara de resposta legítima.
+    final servingAnotherTerminal =
+        RelayOrigin.current != null &&
+        OfflineFirstGateway.isIdentityScopedRead(path);
+
     if (!(missing || (emptyPage && neverSynced))) {
-      unawaited(_refreshFromServer(gateway, path, query: query));
+      // Mesmo com resposta local, a reconciliação de fundo perguntaria a mesma
+      // coisa com a identidade errada.
+      if (!servingAnotherTerminal) {
+        unawaited(_refreshFromServer(gateway, path, query: query));
+      }
       _syncService?.schedulePush();
       return {...local, '_local_first': true};
+    }
+
+    // Sem sessão é uma resposta COMPLETA, não uma lacuna a preencher com a
+    // nuvem. Sai como 404 — o mesmo contrato do backend, que a tela já lê
+    // como "nenhum caixa aberto".
+    if (servingAnotherTerminal) {
+      throw ApiException(
+        '${local['detail'] ?? 'Nenhuma sessão de caixa aberta neste terminal.'}',
+        statusCode: 404,
+      );
     }
 
     try {
@@ -1116,6 +1144,10 @@ class ApiClient {
           // novo, em vez de tratar como recusa de negócio.
           statusCode: 503,
           isConnectivity: true,
+          // Sem isto, um 429 da nuvem ("espere 25s") virava um 503 sem prazo
+          // nenhum: o secundário reinsistia pela própria escada de backoff —
+          // mais curta — e caía na MESMA janela de limite de novo.
+          retryAfter: error.retryAfter,
         );
       }
       final queued = await _queueMutation(

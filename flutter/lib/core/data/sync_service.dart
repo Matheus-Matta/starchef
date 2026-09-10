@@ -609,6 +609,7 @@ class SyncService {
         document.id,
         attempts: attempts,
         error: error.message,
+        serverDelay: error.retryAfter,
       );
     } on ApiException catch (error) {
       // Um 5xx ou um 429 não dizem nada sobre a nota: são o servidor fora do
@@ -616,10 +617,15 @@ class SyncService {
       // sempre. Só uma recusa do próprio servidor encerra a tentativa.
       final code = error.statusCode ?? 0;
       if (error.isConnectivity || code == 429 || code >= 500) {
+        // O prazo do PRÓPRIO 429/503 (`Retry-After`, reconstruído na
+        // travessia do relay) prevalece sobre a escada interna — repetir
+        // antes do prazo pedido é o que mantinha a janela de limite sempre
+        // quente, inclusive para outros terminais da mesma conta.
         await gateway.fiscalQueue.markRetry(
           document.id,
           attempts: attempts,
           error: error.message,
+          serverDelay: error.retryAfter,
         );
         return;
       }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -47,6 +48,17 @@ void main() {
   late ApiClient principalApi;
   late LocalTopologyService principal;
 
+  // ── Nuvem de mentira ──────────────────────────────────────────────────
+  //
+  // Sem ela, este arquivo escondia o bug: com a nuvem inalcançável, a
+  // reconciliação remota de `_readLocalFirst` falhava e a resposta LOCAL
+  // (correta) prevalecia. Em produção a nuvem responde — e é ela que devolve
+  // a sessão do terminal ERRADO. A nuvem falsa responde exatamente como o
+  // backend: pelo `X-Terminal-Id` que chegou na requisição.
+  late HttpServer fakeCloud;
+  final cloudTerminalHeaders = <String>[];
+  Map<String, dynamic>? cloudSessionForPrincipal;
+
   // Serviços-cliente abertos durante um teste, para fechar todos no tearDown
   // mesmo quando o teste cria mais de um secundário.
   final clients = <LocalTopologyService>[];
@@ -77,7 +89,52 @@ void main() {
       queue: SyncQueueService(database: principalDatabase),
       fiscalQueue: FiscalQueueService(database: principalDatabase),
     );
-    principalApi = ApiClient(baseUrl: 'http://127.0.0.1:9/api/v1');
+    // A nuvem falsa responde `/cash-register/current/` de acordo com o
+    // `X-Terminal-Id` recebido — é assim que o backend de verdade resolve a
+    // sessão (`installation_id_from_request`). Guardar os cabeçalhos permite
+    // afirmar DE QUEM o principal se identificou ao perguntar.
+    fakeCloud = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    unawaited(
+      fakeCloud.forEach((request) async {
+        final terminal = request.headers.value('x-terminal-id') ?? '';
+        await request.drain<void>();
+        if (request.uri.path.endsWith('/cash-register/current/')) {
+          cloudTerminalHeaders.add(terminal);
+          final session = terminal == cx1Node ? cloudSessionForPrincipal : null;
+          if (session != null) {
+            request.response
+              ..statusCode = HttpStatus.ok
+              ..headers.contentType = ContentType.json
+              ..write(jsonEncode(session));
+          } else {
+            request.response
+              ..statusCode = HttpStatus.notFound
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode(const {
+                  'detail': 'O operador não possui uma sessão de caixa em '
+                      'andamento.',
+                }),
+              );
+          }
+          await request.response.close();
+          return;
+        }
+        // Todo o RESTO continua como antes deste arquivo ganhar nuvem: fora
+        // do ar. Assim os outros testes seguem exercitando exatamente o mesmo
+        // caminho de sempre, e só `current/` passa a ter uma nuvem que
+        // responde — que é onde vive o defeito.
+        request.response
+          ..statusCode = HttpStatus.serviceUnavailable
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode(const {'detail': 'nuvem fora do ar no teste'}));
+        await request.response.close();
+      }),
+    );
+
+    principalApi = ApiClient(
+      baseUrl: 'http://127.0.0.1:${fakeCloud.port}/api/v1',
+    );
     principalApi.attachLocalStore(gateway: principalGateway);
     // O mesmo token (formatado como JWT, com o payload batendo o escopo) tem
     // de ir tanto para o bind manual abaixo quanto para o `accessToken` do
@@ -88,8 +145,12 @@ void main() {
     // meio do teste, e os dados do CX1 — gravados sob o escopo antigo — somem
     // de baixo dos pés da leitura seguinte.
     final cx1Token = _fakeJwt(accountId: accountId, userId: cx1Operator);
+    // O escopo TEM de sair da mesma authority do `baseUrl`: qualquer chamada
+    // com token recalcula o escopo a partir dele (`_rememberSession`), e um
+    // valor fixo aqui faria o gateway trocar de escopo no meio do teste —
+    // levando junto tudo o que já estava gravado no escopo anterior.
     principalGateway.bindSession(
-      scope: '127.0.0.1:9|$accountId:$cx1Operator',
+      scope: '127.0.0.1:${fakeCloud.port}|$accountId:$cx1Operator',
       restaurantId: restaurantId,
     );
     // A identidade do PRÓPRIO terminal: é o que o gateway usa quando NINGUÉM
@@ -241,6 +302,9 @@ void main() {
     await principal.shutdown();
     await principalApi.dispose();
     await principalDatabase.close();
+    await fakeCloud.close(force: true);
+    cloudTerminalHeaders.clear();
+    cloudSessionForPrincipal = null;
     for (var attempt = 0; attempt < 5; attempt++) {
       try {
         if (await temporaryDirectory.exists()) {
@@ -363,6 +427,116 @@ void main() {
         final leituraCx3 = await currentFor(cx3);
 
         expect(leituraCx3, isNull);
+      },
+    );
+
+    test(
+      'com a nuvem ALCANÇÁVEL, o CX2 ainda não recebe a sessão do CX1',
+      () async {
+        // O caso de produção que os outros testes deste arquivo escondiam.
+        //
+        // Quando a leitura local do CX2 responde "sem sessão" (a correção da
+        // v1.8.4 funcionando), `_readLocalFirst` NÃO devolve isso: ele trata
+        // "não achei" como motivo para confirmar com o servidor. O principal
+        // repete o mesmo raciocínio e pergunta à nuvem — só que se
+        // identificando com o `X-Terminal-Id` DELE, porque a reconciliação não
+        // leva a origem. A nuvem responde sobre o PRINCIPAL, e essa resposta
+        // volta como se fosse a resposta para o CX2.
+        //
+        // Com a nuvem inalcançável (como estava neste arquivo antes), a
+        // reconciliação falhava e a resposta local correta prevalecia — o bug
+        // ficava invisível no teste e vivo em produção.
+        final doCx1 = await openCx1Session();
+        cloudSessionForPrincipal = {
+          'id': '${doCx1['id']}',
+          'restaurant': restaurantId,
+          'cash_station': 'estacao-cx1',
+          'cash_station_name': 'Caixa 1',
+          'status': 'open',
+          'station': 'PDV principal',
+          'opening_amount': '100.00',
+          'current_balance': '100.00',
+          'opened_by': 'operador-cx1',
+          'opened_terminal_installation_id': 'no-cx1',
+          'movements': const <Map<String, dynamic>>[],
+        };
+
+        final cx2 = await startClient(actorId: 'operador-cx2', nodeId: 'no-cx2');
+        final resposta = await currentFor(cx2);
+
+        expect(
+          resposta,
+          isNull,
+          reason: 'o CX2 recebeu a sessão do CX1 vinda da nuvem',
+        );
+        // E o motivo de raiz: se o principal foi à nuvem enquanto atendia o
+        // CX2, ele não pode ter se identificado como ELE MESMO.
+        expect(
+          cloudTerminalHeaders,
+          isNot(contains('no-cx1')),
+          reason: 'o principal perguntou à nuvem com a identidade dele '
+              'enquanto respondia pelo CX2',
+        );
+      },
+    );
+
+    test(
+      'com caixa PRÓPRIO aberto, o CX2 não perde a sessão para a nuvem',
+      () async {
+        // O caminho IRMÃO do teste acima. Lá a leitura local do CX2 vinha
+        // vazia e a nuvem era consultada na frente de quem esperava. Aqui a
+        // leitura local ACERTA — o CX2 tem caixa dele — e `_readLocalFirst`
+        // responde na hora; mas dispara `_refreshFromServer` por trás, sem
+        // ninguém esperando, com a mesma identidade errada. A nuvem devolve a
+        // sessão do PRINCIPAL, e `_storeRemote` a grava por cima da do CX2:
+        // a tela abre certa e troca de caixa sozinha um instante depois.
+        final doCx1 = await openCx1Session();
+        cloudSessionForPrincipal = {
+          'id': '${doCx1['id']}',
+          'restaurant': restaurantId,
+          'cash_station': 'estacao-cx1',
+          'cash_station_name': 'Caixa 1',
+          'status': 'open',
+          'station': 'PDV principal',
+          'opening_amount': '100.00',
+          'current_balance': '100.00',
+          'opened_by': 'operador-cx1',
+          'opened_terminal_installation_id': 'no-cx1',
+          'movements': const <Map<String, dynamic>>[],
+        };
+
+        final cx2 = await startClient(actorId: 'operador-cx2', nodeId: 'no-cx2');
+        final aberturaCx2 = await cx2.relay(
+          const RelayMutation(
+            method: 'POST',
+            path: '/cash-register/open/',
+            operationId: 'cx2-abre-caixa-0009',
+            body: {'cash_station': 'estacao-cx2', 'opening_amount': '50.00'},
+          ),
+        );
+
+        final primeira = await currentFor(cx2);
+        expect(primeira?['id'], aberturaCx2['id']);
+
+        // Tempo de sobra para a reconciliação de fundo terminar — é
+        // justamente por não ser esperada por ninguém que ela passaria
+        // despercebida.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        final segunda = await currentFor(cx2);
+        expect(
+          segunda?['id'],
+          aberturaCx2['id'],
+          reason: 'a sessão do CX1 sobrescreveu a do CX2 pela reconciliação '
+              'de fundo',
+        );
+        expect(segunda?['cash_station'], 'estacao-cx2');
+        expect(
+          cloudTerminalHeaders,
+          isNot(contains('no-cx1')),
+          reason: 'o principal perguntou à nuvem com a identidade dele '
+              'enquanto respondia pelo CX2',
+        );
       },
     );
 

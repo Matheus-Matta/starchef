@@ -601,6 +601,66 @@ void main() {
     );
   });
 
+  test(
+    'um 429 com prazo do servidor usa ESSE prazo, não a escada interna',
+    () async {
+      // O incidente que deu origem a este teste: uma nota com perfil fiscal
+      // inválido levou a nuvem a recusar por limite ("espere 25 segundos"). A
+      // fila descartava o prazo e reinsistia aos 15 segundos (o primeiro
+      // degrau da escada interna) — caindo na MESMA janela de limite de novo,
+      // e travando (via o mesmo bucket por conta) endpoints sem nenhuma
+      // relação, num Caixa Secundário, "mesmo quando volta a ficar online".
+      await stack.gateway.write(
+        'POST',
+        '/invoices/emit/',
+        body: {'order': 'pedido-1'},
+      );
+      transport.handlers['POST /invoices/emit/'] = (_) => const ApiException(
+        'Pedido foi limitado. Expected available in 25 seconds.',
+        statusCode: 429,
+        retryAfter: Duration(seconds: 25),
+      );
+
+      final antes = DateTime.now().toUtc();
+      await sync.pushFiscal();
+
+      final documento = (await stack.fiscalQueue.documents(
+        scope: TestPdvStack.scope,
+      )).single;
+      expect(documento.status, FiscalStatus.pending);
+      final espera = documento.nextRetryAt!.difference(antes);
+      // Perto dos 25s pedidos, nunca dos 15s do primeiro degrau da escada.
+      expect(espera.inSeconds, greaterThanOrEqualTo(24));
+      expect(espera.inSeconds, lessThan(20 + 25));
+    },
+  );
+
+  test(
+    'falha de transporte (sem HTTP) também respeita o prazo do servidor',
+    () async {
+      await stack.gateway.write(
+        'POST',
+        '/invoices/emit/',
+        body: {'order': 'pedido-1'},
+      );
+      transport.handlers['POST /invoices/emit/'] = (_) =>
+          const TransientSyncFailure(
+            'Servidor fora do ar.',
+            retryAfter: Duration(seconds: 40),
+          );
+
+      final antes = DateTime.now().toUtc();
+      await sync.pushFiscal();
+
+      final documento = (await stack.fiscalQueue.documents(
+        scope: TestPdvStack.scope,
+      )).single;
+      final espera = documento.nextRetryAt!.difference(antes);
+      expect(espera.inSeconds, greaterThanOrEqualTo(39));
+      expect(espera.inSeconds, lessThan(30 + 25));
+    },
+  );
+
   test('resposta dizendo que a nota NÃO saiu não vira autorizada', () async {
     // O caso mais caro do comportamento antigo: `emitted: false` chega em um
     // HTTP 200, e qualquer 200 era gravado como AUTHORIZED. O caixa via "nota

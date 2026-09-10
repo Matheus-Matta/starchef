@@ -179,7 +179,7 @@ mixin _SidebarSection on _HomePageShared {
                           ),
                         ),
                         Text(
-                          '${cashSession!['station']}',
+                          CashRegisterRepository.stationLabelOf(cashSession!),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

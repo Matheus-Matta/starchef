@@ -218,6 +218,47 @@ void main() {
     expect(atual['id'], aberta['id']);
   });
 
+  group('o nome do caixa que a tela mostra', () {
+    test('é o nome REAL da estação, não o rótulo herdado', () async {
+      final aberta = await abrir();
+
+      // O campo `station` é texto livre herdado cujo padrão, no model do
+      // backend e no payload local, é a string "PDV principal" — ninguém
+      // nunca o preenche, porque nenhum cliente envia `station` ao abrir o
+      // caixa. Lê-lo na tela fazia QUALQUER terminal exibir "PDV principal"
+      // no lugar do caixa de verdade: num Caixa Secundário isso se parecia
+      // exatamente com "estou vendo o caixa do Principal".
+      expect(
+        CashRegisterRepository.stationLabelOf(aberta),
+        'Caixa Principal',
+      );
+    });
+
+    test('cai para o rótulo herdado só quando não há nome de estação', () {
+      expect(
+        CashRegisterRepository.stationLabelOf(const {
+          'station': 'Balcão da padaria',
+        }),
+        'Balcão da padaria',
+      );
+      expect(
+        CashRegisterRepository.stationLabelOf(
+          const {},
+          fallback: 'Estação atual',
+        ),
+        'Estação atual',
+      );
+      // Nome vazio não conta como nome.
+      expect(
+        CashRegisterRepository.stationLabelOf(const {
+          'cash_station_name': '   ',
+          'station': 'Caixa 2',
+        }),
+        'Caixa 2',
+      );
+    });
+  });
+
   test('outra máquina não fecha nem movimenta a sessão', () async {
     final aberta = await abrir();
     stack.gateway.installationId = balcao02;

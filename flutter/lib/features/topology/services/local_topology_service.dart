@@ -729,9 +729,18 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
           ? Map<String, dynamic>.from(decoded)
           : <String, dynamic>{};
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        // O prazo (429/503) atravessa o relay dentro do corpo, não de um
+        // cabeçalho HTTP: sem reconstruir `retryAfter` aqui, quem entrega
+        // (`SyncService`/`pushFiscal`) reinsistia pela própria escada de
+        // backoff — mais curta que o prazo real — e caía na mesma janela de
+        // limite de novo.
+        final retrySeconds = result['retry_after_seconds'];
         throw ApiException(
           '${result['detail'] ?? 'O Caixa Principal recusou a operação.'}',
           statusCode: response.statusCode,
+          retryAfter: retrySeconds is num
+              ? Duration(seconds: retrySeconds.round())
+              : null,
         );
       }
       return result;
@@ -953,7 +962,14 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
       await _respond(
         request,
         error.statusCode ?? HttpStatus.badRequest,
-        {'detail': error.message},
+        {
+          'detail': error.message,
+          // O prazo de um 429/503 precisa atravessar o `/v1/relay` também —
+          // sem isto, o secundário reinsistia pela própria escada de backoff
+          // (mais curta que o prazo real) e caia na mesma janela de limite.
+          if (error.retryAfter != null)
+            'retry_after_seconds': error.retryAfter!.inSeconds,
+        },
       );
     } on FormatException catch (error) {
       await _respond(
