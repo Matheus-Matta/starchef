@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../../../core/data/order_item_status.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 
@@ -96,7 +97,7 @@ class OrderCartPanel extends StatelessWidget {
   /// Item que já saiu da conta e não aceita mais cancelamento — o backend
   /// recusa com "Este item já foi cancelado ou retirado da conta."
   static bool _settled(Map<String, dynamic> item) =>
-      const {'cancelled', 'comped'}.contains('${item['status']}');
+      OrderItemStatus.isOutOfBill(item);
 
   @override
   Widget build(BuildContext context) {
@@ -653,7 +654,11 @@ class _CartItem extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final note = '${item['customer_note'] ?? ''}'.trim();
     final extras = _extras();
-    final comped = item['status'] == 'comped';
+    // Riscado = fora da conta. Valia só para a cortesia; o item CANCELADO
+    // aparecia com o preço em negrito igual aos que somam, e a única pista de
+    // que ele saiu era a etiqueta de status. Quem confere a conta na tela lê o
+    // valor, não a etiqueta.
+    final outOfBill = OrderItemStatus.isOutOfBill(item);
 
     final card = ShadCard(
       padding: const EdgeInsets.fromLTRB(11, 9, 7, 9),
@@ -743,8 +748,8 @@ class _CartItem extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w900,
-                  decoration: comped ? TextDecoration.lineThrough : null,
-                  color: comped ? scheme.onSurfaceVariant : null,
+                  decoration: outOfBill ? TextDecoration.lineThrough : null,
+                  color: outOfBill ? scheme.onSurfaceVariant : null,
                 ),
               ),
             ],

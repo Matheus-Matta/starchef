@@ -1,3 +1,4 @@
+import 'order_item_status.dart';
 import 'entity_catalog.dart';
 import 'entity_repository.dart';
 
@@ -51,9 +52,8 @@ class FiscalSnapshotBuilder {
     var approxTotal = 0.0;
 
     for (final raw in _listOf(order, 'items')) {
-      final status = '${raw['status'] ?? ''}';
-      // Item cancelado ou cortesia não é faturável — mesmo recorte do servidor.
-      if (status == 'cancelled' || status == 'comped') continue;
+      // Item fora da conta não é faturável — mesmo recorte do servidor.
+      if (OrderItemStatus.isOutOfBill(raw)) continue;
       line += 1;
       final product =
           (await products.read('${raw['product'] ?? ''}'))?.payload ??

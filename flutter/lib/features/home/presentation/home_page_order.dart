@@ -113,7 +113,7 @@ mixin _OrderSection on _HomePageShared {
     final items = activeOrder!['items'] as List? ?? [];
     orderItems = items
         .cast<Map<String, dynamic>>()
-        .where((item) => item['status'] != 'voided')
+        .where((item) => item['status'] != OrderItemStatus.legacyVoided)
         .toList();
     // O total pode ter mudado aqui — a taxa de serviço do fechamento chega
     // pela sincronização, e é depois desta leitura que ela aparece.

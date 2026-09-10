@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import '../../../core/data/order_item_status.dart';
 import '../../../core/formatters/decimal_money.dart';
 import '../../../core/formatters/value_formatters.dart';
 
@@ -582,12 +583,17 @@ abstract final class OrderPresenter {
   }
 
   static JsonMap withItems(JsonMap order, List<JsonMap> items) {
-    // Item cancelado continua na lista (a tela mostra o histórico e o servidor
-    // precisa saber do cancelamento), mas não entra na conta. A tela já
-    // passava só os ativos; o repositório passa a lista inteira, e sem este
-    // filtro o total ficava com o valor do item que o cliente desistiu.
+    // Item cancelado ou em cortesia continua na lista (a tela mostra o
+    // histórico e o servidor precisa saber do cancelamento), mas não entra na
+    // conta — mesmo recorte de `recalculate_order` no servidor.
+    //
+    // O filtro daqui olhava só o `voided`, que é o nome que o cancelamento
+    // ganhava ANTES de sincronizar. Assim que a operação subia, ou o pedido
+    // era relido do servidor, o item voltava como `cancelled` e passava a
+    // somar de novo: o total do PDV ficava maior que o do servidor e o
+    // fechamento era recusado.
     final subtotal = items
-        .where((item) => item['status'] != 'voided')
+        .where(OrderItemStatus.countsTowardBill)
         .fold<int>(
           0,
           (total, item) => total + DecimalMoney.minorUnits(item['total_price']),

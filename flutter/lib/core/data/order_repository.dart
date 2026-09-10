@@ -1,3 +1,4 @@
+import 'order_item_status.dart';
 import '../../features/orders/presentation/order_presenter.dart';
 import '../formatters/decimal_money.dart';
 import '../formatters/value_formatters.dart';
@@ -355,7 +356,15 @@ class OrderRepository extends EntityRepository {
     final items = _itemsOf(order.payload)
         .map(
           (item) => '${item['id']}' == itemId
-              ? {...item, 'status': 'voided', 'void_reason': body['reason']}
+              ? {
+                  ...item,
+                  // O MESMO nome que o servidor vai gravar. Enquanto o
+                  // cancelamento offline inventava um status só dele, o item
+                  // trocava de nome ao sincronizar — e quem filtrasse por um
+                  // dos dois nomes errava metade das vezes.
+                  'status': OrderItemStatus.cancelled,
+                  'void_reason': body['reason'],
+                }
               : item,
         )
         .toList();

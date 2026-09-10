@@ -113,9 +113,94 @@ void main() {
 
     final stored = await stack.gateway.orders.read(orderId);
     final items = (stored!.payload['items'] as List).cast<Map>();
-    expect(items.single['status'], 'voided');
+    expect(items.single['status'], 'cancelled');
     expect(items.single['void_reason'], 'Desistiu');
     expect(ValueFormatters.number(stored.payload['total']), 0);
+  });
+
+  test(
+    'item cancelado não volta a somar quando o PDV lança o próximo',
+    () async {
+      // O caminho que o operador percorre de verdade: cancela um item, o
+      // cancelamento sobe, e depois ele lança outra coisa na mesma conta.
+      //
+      // Toda gravação local reprojeta o total a partir da lista de itens. O
+      // filtro dessa reprojeção olhava só o `voided` — o nome que o
+      // cancelamento tem ANTES de sincronizar. Depois de subir, o item volta
+      // do servidor como `cancelled`, escapa do filtro, e o próximo item
+      // lançado traz o valor cancelado junto: o PDV fecha com um total maior
+      // que o do servidor e o pagamento é recusado.
+      final orderId = await abrirPedido();
+      final added = await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+      final itemId = '${(added.payload['_created_item'] as Map)['id']}';
+      await stack.gateway.write(
+        'DELETE',
+        '/orders/$orderId/items/$itemId/void/',
+        body: {'reason': 'Desistiu'},
+      );
+
+      // O item cancelado agora tem o MESMO nome dos dois lados.
+      final cancelado = await stack.gateway.orders.read(orderId);
+      expect(
+        ((cancelado!.payload['items'] as List).single as Map)['status'],
+        'cancelled',
+      );
+
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+
+      final stored = await stack.gateway.orders.read(orderId);
+      expect(
+        ValueFormatters.number(stored!.payload['total']),
+        6.0,
+        reason: 'o item cancelado voltou a somar no total',
+      );
+      expect((stored.payload['items'] as List), hasLength(2));
+    },
+  );
+
+  test('cortesia fica na lista mas sai da conta', () async {
+    final orderId = await abrirPedido();
+    final added = await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    final itemId = '${(added.payload['_created_item'] as Map)['id']}';
+
+    // Cortesia é decisão do gerente e só existe no servidor; ela chega ao PDV
+    // pela sincronização, já com o status aplicado.
+    await stack.gateway.orders.applyRemote({
+      ...added.payload,
+      'items': [
+        {
+          ...Map<String, dynamic>.from(
+            (added.payload['items'] as List).single as Map,
+          ),
+          'id': itemId,
+          'status': 'comped',
+        },
+      ],
+    }, overwriteLocalChanges: true);
+
+    // Uma gravação local qualquer reprojeta o total — é aqui que a cortesia
+    // voltava a ser cobrada.
+    await stack.gateway.write(
+      'PATCH',
+      '/orders/$orderId/',
+      body: {'discount': '0.00'},
+    );
+
+    final stored = await stack.gateway.orders.read(orderId);
+    expect(ValueFormatters.number(stored!.payload['total']), 0);
+    expect((stored.payload['items'] as List), hasLength(1));
   });
 
   test('a versão do servidor não apaga o item que ainda está na fila', () async {

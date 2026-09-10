@@ -17,6 +17,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/data/cash_register_repository.dart';
 import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
@@ -36,6 +37,7 @@ import '../../devices/presentation/print_queue_dialog.dart';
 import '../../devices/presentation/printer_selection_dialog.dart';
 import '../../devices/services/local_device_agent.dart';
 import '../../orders/data/local_order_store.dart';
+import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/orders_table_metrics.dart';
@@ -622,6 +624,12 @@ class _HomePageState extends State<HomePage>
           }.contains,
         );
         if (reloadCatalog) await _load();
+        if (topics.contains('cash_auth')) {
+          await widget.controller.syncSupervisorPassword(
+            restaurantId: restaurantId,
+            force: true,
+          );
+        }
 
         if (topics.contains('customers') && restaurantId != null) {
           await api.get(
@@ -709,7 +717,11 @@ class _HomePageState extends State<HomePage>
       activeOrder = stored;
       orderItems = (stored['items'] as List? ?? const [])
           .cast<Map<String, dynamic>>()
-          .where((item) => item['status'] != 'voided')
+          // Só o status legado sai da tela: pedidos gravados por versões
+          // antigas deste PDV têm itens `voided`, que era o cancelamento
+          // sumindo da lista. Cancelamento novo fica visível e riscado, do
+          // mesmo jeito que já ficava quando vinha do servidor.
+          .where((item) => item['status'] != OrderItemStatus.legacyVoided)
           .toList();
     });
   }
@@ -831,8 +843,7 @@ class _HomePageState extends State<HomePage>
       api.localStore
         ?..bindRestaurant(selectedRestaurantId)
         ..serviceFeePercent = defaultServiceFeePercent;
-      await widget.controller.repository.cashAuth?.trySync(
-        widget.controller.session!,
+      await widget.controller.syncSupervisorPassword(
         restaurantId: selectedRestaurantId,
       );
       final catalog = bootstrap.catalog;
@@ -1220,13 +1231,7 @@ class _HomePageState extends State<HomePage>
     }.contains('${activeOrder?['status']}')) {
       return false;
     }
-    final hasItems = orderItems.any(
-      (item) => !const {
-        'cancelled',
-        'comped',
-        'voided',
-      }.contains('${item['status'] ?? ''}'),
-    );
+    final hasItems = orderItems.any(OrderItemStatus.countsTowardBill);
     return !hasItems && registeredPayments.isEmpty;
   }
 

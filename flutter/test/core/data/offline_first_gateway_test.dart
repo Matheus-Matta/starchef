@@ -212,7 +212,7 @@ void main() {
     );
 
     final items = (voided.payload['items'] as List).cast<Map>();
-    expect(items.single['status'], 'voided');
+    expect(items.single['status'], 'cancelled');
     expect(ValueFormatters.number(voided.payload['subtotal']), 0);
   });
 

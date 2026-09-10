@@ -23,6 +23,66 @@ void main() {
     expect((updated['items'] as List), hasLength(1));
   });
 
+  group('item fora da conta não soma no total', () {
+    Map<String, dynamic> itemDe(String status) => {
+      'id': 'item-$status',
+      'product': 'product-1',
+      'product_name': 'Pizza',
+      'quantity': 1,
+      'unit_price': '25.50',
+      'total_price': '25.50',
+      'status': status,
+    };
+
+    // O pedido como o servidor o devolve: valores zerados, porque lá o item
+    // cancelado já saiu da conta (`recalculate_order`).
+    final pedido = <String, dynamic>{
+      'id': 'order-1',
+      'status': 'open',
+      'service_fee': '0.00',
+      'delivery_fee': '0.00',
+      'discount': '0.00',
+    };
+
+    // `cancelled` é o nome que o servidor usa — e o que o item passa a ter
+    // assim que o cancelamento sincroniza. Era exatamente esse o furo: o PDV
+    // filtrava só pelo `voided` local, então o item voltava a somar depois de
+    // subir, e o fechamento era recusado por total maior que o do servidor.
+    for (final status in const ['cancelled', 'comped', 'voided']) {
+      test('status "$status"', () {
+        final projetado = OrderPresenter.withItems(pedido, [itemDe(status)]);
+
+        expect(projetado['subtotal'], 0);
+        expect(projetado['total'], 0);
+        // Sai da conta, mas não da lista: a tela mostra o histórico e o
+        // servidor precisa saber do cancelamento.
+        expect((projetado['items'] as List), hasLength(1));
+      });
+    }
+
+    test('só o item ativo entra, ao lado dos que saíram', () {
+      final projetado = OrderPresenter.withItems(pedido, [
+        itemDe('cancelled'),
+        itemDe('comped'),
+        itemDe('voided'),
+        itemDe('delivered'),
+      ]);
+
+      expect(projetado['subtotal'], 25.5);
+      expect(projetado['total'], 25.5);
+    });
+
+    test('a taxa de serviço acompanha o subtotal sem o item cancelado', () {
+      final projetado = OrderPresenter.withItems(
+        {...pedido, 'service_fee': '2.55'},
+        [itemDe('delivered'), itemDe('cancelled')],
+      );
+
+      expect(projetado['subtotal'], 25.5);
+      expect(projetado['total'], 28.05);
+    });
+  });
+
   test('pedido offline por comanda carrega qual comanda foi aberta', () {
     final order = OrderPresenter.completeOfflineOrder(
       {'id': 'offline-2', '_offline_pending': true},

@@ -1,4 +1,5 @@
 import '../../../core/formatters/value_formatters.dart';
+import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
 
 typedef JsonMap = Map<String, dynamic>;
@@ -406,7 +407,7 @@ abstract final class LocalPrintRenderer {
       (order['items'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
-          .where((item) => !{'cancelled', 'voided'}.contains('${item['status']}'))
+          .where(OrderItemStatus.countsTowardBill)
           .toList();
 
   static bool _isWeighed(JsonMap item) =>
