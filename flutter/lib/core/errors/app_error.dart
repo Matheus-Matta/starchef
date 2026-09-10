@@ -87,11 +87,26 @@ class AppError {
         dedupeKey: 'connectivity',
       );
     }
+    // Sem status HTTP e sem ser falta de conexão, a recusa não veio de
+    // servidor nenhum: é uma regra do próprio PDV, validada na tela ou no
+    // banco local ("somente dinheiro pode ter valor recebido maior que o
+    // restante", por exemplo). Chamar isso de "Servidor indisponível" e
+    // mandar "verifique a rede" manda o operador atrás de um problema que
+    // não existe — e o desvia da correção que estava a um clique.
+    if (status == null) {
+      return AppError(
+        title: title ?? 'Não foi possível concluir',
+        message: exception.message,
+        origin: AppErrorOrigin.application,
+        recommendedAction: recommendedAction,
+        technicalDetails: 'ApiException(local)',
+      );
+    }
     return AppError(
       title: title ?? _titleForStatus(status),
       message: exception.message,
-      code: status == null ? null : 'HTTP $status',
-      origin: status == null ? AppErrorOrigin.network : AppErrorOrigin.api,
+      code: 'HTTP $status',
+      origin: AppErrorOrigin.api,
       recommendedAction: recommendedAction ?? _actionForStatus(status),
       technicalDetails: 'ApiException(statusCode: $status)',
     );
@@ -135,8 +150,7 @@ class AppError {
     if (technicalDetails != null) 'Detalhes: $technicalDetails',
   ].join('\n');
 
-  static String _titleForStatus(int? status) => switch (status) {
-    null => 'Servidor indisponível',
+  static String _titleForStatus(int status) => switch (status) {
     401 => 'Sessão inválida',
     403 => 'Permissão insuficiente',
     404 => 'Registro não encontrado',
@@ -147,8 +161,7 @@ class AppError {
     _ => 'Não foi possível concluir',
   };
 
-  static String? _actionForStatus(int? status) => switch (status) {
-    null => 'Verifique a rede e tente novamente.',
+  static String? _actionForStatus(int status) => switch (status) {
     401 => 'Entre novamente com seu usuário.',
     403 => 'Solicite a permissão ao responsável pelo restaurante.',
     409 => 'Atualize a tela para ver o estado atual antes de repetir.',

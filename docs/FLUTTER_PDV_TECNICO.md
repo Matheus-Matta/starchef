@@ -192,6 +192,46 @@ em pedidos gravados por versões antigas. Enquanto cada ponto tinha o seu
 próprio recorte, o item cancelado voltava a somar assim que sincronizava e o
 fechamento era recusado por total maior que o do servidor.
 
+**Conectividade provada pelo WebSocket, não por polling.** A fila de vendas
+(`ApiClient._flushPending`, `SyncService._pushOnce`) precisa saber se o
+servidor responde antes de gastar uma tentativa de cada operação pendente —
+sem isso, um ciclo automático com a rede caída empurraria o backoff de cada
+item ao teto mesmo quando o problema era só falta de rede. Essa prova costumava
+ser um `GET /health/` disparado pelo próprio ciclo de retry a cada volta do
+backoff, enquanto a rede estivesse fora. Agora é o WebSocket do agente de
+impressão (`RealtimeClient`, ligado no Caixa Principal e no terminal sozinho —
+nunca no Secundário, que fala com a nuvem através do Principal) quem prova
+isso: `ApiClient.isRealtimeConnected` reflete `onConnected`/`onDisconnected`
+dessa conexão, sem nenhuma requisição própria. Ao reconectar,
+`notifyRealtimeConnected` já dispara o flush na hora — a fila não fica
+esperando o próximo tique do backoff para descobrir que o servidor voltou. O
+"tentar agora" do diálogo de revisão da fila (`syncPendingNow`) pula essa
+prova (`force: true`): quem pediu explicitamente já quer uma tentativa real,
+não um palpite sobre o WebSocket.
+
+**Espera impossível na fila.** Uma operação que cita um identificador
+temporário (`offline-…`) só é entregue depois que a criação daquele id sobe e
+vira id real — é o que mantém a ordem. Mas a espera precisa ter fim: se a
+criação não está mais na fila, ninguém pode traduzir o id, e `claimNext`
+pularia a operação para sempre. Como ela nunca era tentada, nunca tinha erro,
+nunca saía de `PENDING` — e a tela de revisão, que só oferece "tentar" e
+"descartar" para operações recusadas, não dava saída nenhuma; o fechamento e o
+pagamento, barrados pelo antecessor, congelavam junto. Quando um ciclo tem
+trabalho e não consegue mover nada, `SyncQueueService.failStrandedDependencies`
+recusa o que depende de um id que ninguém mais produz, com a causa no
+`last_error`. Continua produzível tudo o que ainda está na fila, **inclusive
+`FAILED`**: uma criação recusada pode ser reenviada pelo operador. Na origem,
+`discardFailed` leva junto quem dependia do `client_*_id` que a operação
+descartada criaria — sem isso, descartar a inclusão de um item deixava o
+cancelamento dele órfão.
+
+**Recusa local não é falha de rede.** `ApiException` sem `statusCode` e sem
+`isConnectivity` nasceu aqui dentro (regra de tela ou do banco local), não em
+servidor nenhum. `AppError.fromApi` a classifica como `application`; tratá-la
+como rede fazia "somente dinheiro pode ter valor recebido maior que o
+restante" aparecer como "Servidor indisponível — verifique a rede", mandando o
+operador atrás de um problema inexistente.
+
 **Escopo.** Cache e outbox são namespaced por
 `autoridade-da-URL | account_id|user_id|sub do JWT`. Isso impede que a sessão de
 uma conta consuma a fila de outra no mesmo terminal. Sem essas claims o escopo

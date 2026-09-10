@@ -292,9 +292,15 @@ class SyncService {
 
     await _publish(SyncPhase.syncing);
     var processed = 0;
+    // A fila tem trabalho e não conseguiu mover NADA? Isso é diferente de
+    // "acabou": alguma operação está esperando por algo que talvez não venha.
+    var starved = false;
     while (processed < _maxOperationsPerCycle) {
       final claimed = await gateway.queue.claimNext(scope: scope);
-      if (claimed == null) break;
+      if (claimed == null) {
+        starved = processed == 0;
+        break;
+      }
       final entry = await gateway.queue.resolveReferences(
         claimed,
         scope: scope,
@@ -302,6 +308,27 @@ class SyncService {
       final delivered = await _deliver(entry, scope: scope);
       if (!delivered) break;
       processed += 1;
+    }
+
+    // Uma espera legítima (a criação ainda vai subir) se resolve sozinha na
+    // próxima volta. Uma espera por um lançamento que não está mais na fila
+    // não se resolve nunca — e ficava assim, invisível: sem tentativa, sem
+    // erro, sem botão na tela de revisão, segurando o fechamento e o
+    // pagamento atrás dela.
+    if (starved) {
+      final stranded = await gateway.queue.failStrandedDependencies(
+        scope: scope,
+      );
+      for (final entry in stranded) {
+        AppLogger.instance.warning(
+          'sync_operacao_encalhada',
+          data: {
+            'operation_id': entry.operationId,
+            'path': entry.path,
+            'causa': entry.lastError,
+          },
+        );
+      }
     }
 
     summary = await gateway.queue.summary(scope: scope);

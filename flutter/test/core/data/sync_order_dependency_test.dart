@@ -195,4 +195,146 @@ void main() {
     final remaining = await stack.queue.entries(scope: TestPdvStack.scope);
     expect(remaining.single.path, '/orders/pedido-1/items/');
   });
+
+  group('espera por um lançamento que não existe mais', () {
+    // O caso real: sem rede, o operador cancelou um item e fechou o pedido.
+    // O cancelamento citava o id temporário de um item cuja criação não está
+    // mais na fila, então NADA no mundo pode traduzi-lo. `claimNext` pulava a
+    // operação toda vez, para sempre: ela nunca era tentada, então nunca tinha
+    // erro, nunca mudava de estado, e a tela de revisão — que só oferece
+    // "tentar" e "descartar" para operações recusadas — não dava saída
+    // nenhuma. O fechamento, barrado pelo antecessor, congelava junto, e o
+    // operador ficava sem conseguir receber.
+
+    test(
+      'vira pendência visível em vez de esperar para sempre',
+      () async {
+        await enqueue(
+          'pedido-1',
+          '/orders/pedido-1/items/offline-item-orfao/void/',
+        );
+        await enqueue('pedido-1', '/orders/pedido-1/close/');
+
+        await sync.syncNow();
+
+        final entries = await stack.queue.entries(scope: TestPdvStack.scope);
+        final encalhada = entries.first;
+        expect(
+          encalhada.status,
+          SyncQueueStatus.failed,
+          reason: 'sem isso ela fica PENDING e invisível para sempre',
+        );
+        expect(encalhada.lastError, contains('offline-item-orfao'));
+        // Nenhuma tentativa saiu: o problema não é o servidor.
+        expect(
+          transport.requests.where((request) => request.method != 'GET'),
+          isEmpty,
+        );
+      },
+    );
+
+    test('descartar a encalhada libera o fechamento preso atrás', () async {
+      await enqueue(
+        'pedido-1',
+        '/orders/pedido-1/items/offline-item-orfao/void/',
+      );
+      await enqueue('pedido-1', '/orders/pedido-1/close/');
+      await sync.syncNow();
+
+      final encalhadas = await stack.queue.entries(
+        scope: TestPdvStack.scope,
+        onlyFailed: true,
+      );
+      expect(await stack.queue.discardFailed(encalhadas.single.id), isTrue);
+      await sync.syncNow();
+
+      expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+      expect(
+        transport.requests.map((request) => request.path),
+        contains('/orders/pedido-1/close/'),
+      );
+    });
+
+    test(
+      'esperar por uma criação que AINDA está na fila continua valendo',
+      () async {
+        // A distinção que importa: aqui a criação do item está logo acima na
+        // fila. A espera é legítima e se resolve sozinha — derrubá-la seria
+        // transformar o funcionamento normal em pendência manual.
+        await stack.queue.enqueue(
+          scope: TestPdvStack.scope,
+          entityType: EntityCatalog.order,
+          entityId: 'pedido-1',
+          operation: SyncOperation.update,
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          payload: {'client_item_id': 'offline-item-1'},
+        );
+        await enqueue('pedido-1', '/orders/pedido-1/items/offline-item-1/void/');
+
+        await stack.queue.failStrandedDependencies(scope: TestPdvStack.scope);
+
+        final entries = await stack.queue.entries(scope: TestPdvStack.scope);
+        expect(entries.every((e) => e.status == SyncQueueStatus.pending), isTrue);
+      },
+    );
+
+    test(
+      'uma criação RECUSADA ainda pode ressuscitar quem depende dela',
+      () async {
+        // A criação do item foi recusada, mas o operador pode reenviá-la pela
+        // tela de revisão. Enquanto ela existir na fila, quem depende do id
+        // dela continua esperando — não é uma espera impossível.
+        await stack.queue.enqueue(
+          scope: TestPdvStack.scope,
+          entityType: EntityCatalog.order,
+          entityId: 'pedido-1',
+          operation: SyncOperation.update,
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          payload: {'client_item_id': 'offline-item-1'},
+        );
+        await enqueue('pedido-1', '/orders/pedido-1/items/offline-item-1/void/');
+        final criacao = await stack.queue.claimNext(scope: TestPdvStack.scope);
+        await stack.queue.markFailed(criacao!.id, error: 'Produto inativo.');
+
+        await stack.queue.failStrandedDependencies(scope: TestPdvStack.scope);
+
+        final entries = await stack.queue.entries(scope: TestPdvStack.scope);
+        final void_ = entries.firstWhere((e) => e.path.endsWith('/void/'));
+        expect(void_.status, SyncQueueStatus.pending);
+      },
+    );
+
+    test(
+      'descartar a criação recusada leva junto quem dependia dela',
+      () async {
+        // Fecha a porta pela qual o encalhe entra: sem isto, descartar a
+        // criação do item deixava o cancelamento dele órfão na fila, citando
+        // um id que ninguém mais pode resolver.
+        await stack.queue.enqueue(
+          scope: TestPdvStack.scope,
+          entityType: EntityCatalog.order,
+          entityId: 'pedido-1',
+          operation: SyncOperation.update,
+          method: 'POST',
+          path: '/orders/pedido-1/items/',
+          payload: {'client_item_id': 'offline-item-1'},
+        );
+        await enqueue('pedido-1', '/orders/pedido-1/items/offline-item-1/void/');
+        await enqueue('pedido-1', '/orders/pedido-1/close/');
+        final criacao = await stack.queue.claimNext(scope: TestPdvStack.scope);
+        await stack.queue.markFailed(criacao!.id, error: 'Produto inativo.');
+
+        expect(await stack.queue.discardFailed(criacao.id), isTrue);
+
+        final restantes = await stack.queue.entries(scope: TestPdvStack.scope);
+        expect(
+          restantes.map((entry) => entry.path),
+          ['/orders/pedido-1/close/'],
+          reason: 'o cancelamento do item descartado não pode sobrar órfão',
+        );
+      },
+    );
+  });
 }

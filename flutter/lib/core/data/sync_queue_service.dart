@@ -39,6 +39,17 @@ class SyncQueueService {
   /// `"client_item_id":"offline-..."` e afins.
   static final _clientIdField = RegExp(r'"client_[a-z_]*id"\s*:\s*"[^"]*"');
 
+  /// O valor de um `client_*_id` — o identificador que uma operação está
+  /// CRIANDO, e portanto pode resolver para quem depende dele.
+  static final _clientIdValue = RegExp(
+    r'"client_[a-z_]*id"\s*:\s*"([^"]*)"',
+  );
+
+  /// Uma referência a identificador temporário em qualquer lugar da operação.
+  static final _temporaryReference = RegExp(
+    '${LocalId.temporaryPrefix}[A-Za-z0-9._-]+',
+  );
+
   final PdvDatabase database;
   final String _leaseOwner;
 
@@ -432,6 +443,111 @@ class SyncQueueService {
     );
   }
 
+  /// Marca como recusada toda operação que espera por um identificador que
+  /// NINGUÉM mais pode produzir.
+  ///
+  /// Esperar por uma criação que ainda não subiu é correto — é o que mantém a
+  /// ordem. Esperar por uma criação que não está mais na fila é uma armadilha:
+  /// a operação nunca é sequer tentada, então nunca tem erro, nunca muda de
+  /// estado, e a tela de revisão (que só oferece "tentar" e "descartar" para
+  /// operações recusadas) não dá saída nenhuma ao operador. Pior: uma barreira
+  /// atrás dela — o fechamento, o pagamento — fica presa junto, em silêncio.
+  /// Foi assim que um cancelamento de item e o fechamento do pedido ficaram
+  /// parados indefinidamente, sem erro e sem como descartar, enquanto o
+  /// operador tentava receber.
+  ///
+  /// O identificador temporário citado ainda é produzível enquanto existir na
+  /// fila quem o crie: a entidade cujo `entity_id` é ele, ou a operação que o
+  /// leva no corpo como `client_*_id`. Vale para qualquer estado, inclusive
+  /// `FAILED` — uma criação recusada ainda pode ser reenviada pelo operador, e
+  /// aí quem depende dela volta a andar. Sem nenhum desses, e sem tradução em
+  /// `id_map`, a espera é infinita e a operação vira pendência visível.
+  ///
+  /// Devolve o que foi recusado, para quem chamou registrar e avisar a tela.
+  Future<List<SyncQueueEntry>> failStrandedDependencies({
+    required String scope,
+  }) async {
+    final mappings = await resolvedIds(scope: scope);
+    return database.write((tx) async {
+      final rows = await tx.getAll(
+        'SELECT * FROM sync_queue WHERE scope = ? ORDER BY id',
+        [scope],
+      );
+      if (rows.isEmpty) return const <SyncQueueEntry>[];
+
+      // Tudo o que a fila ainda sabe criar. A própria entidade temporária de
+      // uma criação e os `client_*_id` que ela carrega.
+      final producible = <String>{};
+      for (final row in rows) {
+        final entityId = '${row['entity_id'] ?? ''}';
+        if (LocalId.isTemporary(entityId)) producible.add(entityId);
+        final payload = '${row['payload'] ?? ''}';
+        for (final match in _clientIdValue.allMatches(payload)) {
+          final value = match.group(1) ?? '';
+          if (LocalId.isTemporary(value)) producible.add(value);
+        }
+      }
+
+      final stranded = <SyncQueueEntry>[];
+      for (final row in rows) {
+        if ('${row['status']}' == 'PROCESSING') continue;
+        final missing = _unresolvableReferences(row, mappings, producible);
+        if (missing.isEmpty) continue;
+        final error =
+            'Depende de um lançamento que não está mais na fila '
+            '(${missing.join(', ')}). Descarte esta operação para liberar as '
+            'seguintes.';
+        await tx.execute(
+          '''
+          UPDATE sync_queue
+          SET status = 'FAILED', next_retry_at = NULL, last_error = ?,
+              lease_owner = NULL, lease_until = NULL, updated_at = ?
+          WHERE id = ?
+          ''',
+          [error, DateTime.now().toUtc().toIso8601String(), row['id']],
+        );
+        stranded.add(
+          SyncQueueEntry.fromRow({
+            ...row,
+            'status': 'FAILED',
+            'last_error': error,
+          }),
+        );
+      }
+      return stranded;
+    });
+  }
+
+  /// Identificadores temporários citados por [row] que ninguém pode resolver.
+  static Set<String> _unresolvableReferences(
+    Map<String, Object?> row,
+    Map<String, String> mappings,
+    Set<String> producible,
+  ) {
+    var remaining = [
+      '${row['path'] ?? ''}',
+      '${row['query_json'] ?? ''}',
+      '${row['payload'] ?? ''}',
+    ].join(' ');
+    if (!remaining.contains(LocalId.temporaryPrefix)) return const {};
+    // Mesmas isenções de [_hasUnresolvedDependency]: o que a própria operação
+    // cria não é dependência dela.
+    remaining = remaining.replaceAll(_clientIdField, '');
+    if (SyncOperation.parse(row['operation']) == SyncOperation.create) {
+      final own = '${row['entity_id'] ?? ''}';
+      if (own.isNotEmpty) remaining = remaining.replaceAll(own, '');
+    }
+    return _temporaryReference
+        .allMatches(remaining)
+        .map((match) => match.group(0)!)
+        .where(
+          (reference) =>
+              !mappings.containsKey(reference) &&
+              !producible.contains(reference),
+        )
+        .toSet();
+  }
+
   /// Antecipa todos os backoffs — usado pelo botão "sincronizar agora" e
   /// quando a conectividade volta.
   Future<void> retryAllNow({required String scope}) async {
@@ -453,7 +569,8 @@ class SyncQueueService {
   Future<bool> discardFailed(int id) async {
     return database.write((tx) async {
       final row = await tx.getOptional(
-        'SELECT scope, status, entity_type, entity_id, path FROM sync_queue WHERE id = ?',
+        'SELECT scope, status, entity_type, entity_id, path, payload '
+        'FROM sync_queue WHERE id = ?',
         [id],
       );
       if (row == null || '${row['status']}' != 'FAILED') return false;
@@ -462,6 +579,28 @@ class SyncQueueService {
         "DELETE FROM sync_queue WHERE id = ? AND status = 'FAILED'",
         [id],
       );
+      // O identificador que ESTA operação criaria e agora nunca vai existir.
+      // O do item lançado offline mora no corpo (`client_item_id`), não em
+      // `entity_id` — este é o pedido, que existe. Sem levar os dependentes
+      // junto, o cancelamento daquele item ficava na fila citando um id que
+      // ninguém mais pode resolver: nunca era tentado, nunca dava erro, e
+      // segurava o fechamento e o pagamento atrás dele.
+      final orphanedChildIds = _clientIdValue
+          .allMatches('${row['payload'] ?? ''}')
+          .map((match) => match.group(1) ?? '')
+          .where(LocalId.isTemporary)
+          .toList();
+      for (final childId in orphanedChildIds) {
+        await tx.execute(
+          '''
+          DELETE FROM sync_queue
+          WHERE scope = ? AND id > ? AND (
+            instr(path, ?) > 0 OR instr(COALESCE(payload, ''), ?) > 0
+          )
+          ''',
+          ['${row['scope']}', id, childId, childId],
+        );
+      }
       if (LocalId.isTemporary(entityId)) {
         // Sem isto, as operações seguintes ficariam para sempre tentando
         // alterar um pedido que nunca existirá no servidor.

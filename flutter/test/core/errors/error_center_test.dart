@@ -111,9 +111,36 @@ void main() {
     test('uma falha de transporte é classificada como conexão', () {
       final center = ErrorCenter();
 
-      center.reportApi(const ApiException('Sem rota para o servidor.'));
+      center.reportApi(
+        const ApiException('Sem rota para o servidor.', isConnectivity: true),
+      );
 
       expect(center.visible.single.origin, AppErrorOrigin.network);
+    });
+
+    test('recusa local não é apresentada como falha de rede', () {
+      // Sem status HTTP e sem `isConnectivity`, a recusa nasceu aqui dentro —
+      // uma regra da tela ou do banco local. Um caso real: "somente dinheiro
+      // pode ter valor recebido maior que o restante" aparecia como "Servidor
+      // indisponível / Origem: Conexão / Verifique a rede e tente novamente",
+      // mandando o operador atrás de um problema de rede inexistente enquanto
+      // a correção estava na própria tela.
+      final center = ErrorCenter();
+
+      center.reportApi(
+        const ApiException(
+          'Somente dinheiro pode ter valor recebido maior que o restante.',
+        ),
+      );
+
+      final error = center.visible.single;
+      expect(error.origin, AppErrorOrigin.application);
+      expect(error.title, isNot('Servidor indisponível'));
+      expect(error.recommendedAction, isNot(contains('rede')));
+      expect(
+        error.message,
+        'Somente dinheiro pode ter valor recebido maior que o restante.',
+      );
     });
 
     group('falhas de conexão', () {
