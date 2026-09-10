@@ -75,6 +75,9 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`features/auth/`** (`AuthRepository` + `AuthController`) — login, guarda o par access/refresh via `SecureSessionStore`. Windows usa o cofre do SO. No Linux, o Secret Service continua sendo a primeira opção, mas os valores também são espelhados em arquivos acessíveis somente ao usuário do PDV dentro de `~/.local/share/StarChef/secure`; isso evita perder a sessão quando GNOME Keyring/KWallet não está disponível no autostart.
 - **Restauração no boot**: tenta `GET /auth/me/` com o token salvo; em 401, tenta `POST /auth/refresh/`; se o refresh for explicitamente recusado, limpa o cofre e volta ao login. Se **não houver resposta nenhuma** (sem rede), devolve a sessão salva como está — decisão deliberada para o terminal continuar operando offline em vez de deslogar por falta de conexão.
 - **Autorização de caixa é separada da autenticação de usuário**: `features/cash/data/cash_auth_repository.dart` sincroniza (quando online) um hash PBKDF2 (formato Django) via `GET /restaurants/<id>/cash-auth/`, guardado localmente. `core/security/cash_password.dart` verifica a senha **offline**, sem round-trip ao servidor — é o que autoriza ações de caixa (cancelamento, desconto) mesmo sem internet.
+- O hash é buscado uma vez depois da autenticação. Depois disso, o WebSocket
+  envia somente uma invalidação segura quando a senha muda; o PDV relê o
+  endpoint uma vez nesse evento ou numa reconexão, sem polling por tempo.
 
 ## 5. Arquitetura offline-first
 

@@ -168,6 +168,30 @@ ao responsável" quando na verdade sua sessão apenas tinha vencido.
 está pronto. O PDV não tenta imprimir nesse caso; no acionamento manual mostra a
 mensagem e, na tentativa automática após o pagamento, permanece silencioso.
 
+**Senha de caixa orientada a evento.** O hash de autorização é baixado uma vez
+após autenticar. Mudanças posteriores chegam como invalidação
+`restaurants.cashauth` pelo WebSocket; o payload nunca leva a hash. O PDV relê
+`cash-auth` apenas nesse evento ou ao reconectar, sem polling por recarga de tela.
+
+**Leitura identificada pela origem.** Quando o Caixa Principal atende uma
+leitura pela rede local, ele responde pela identidade de QUEM perguntou
+(`RelayOrigin`), não pela dele. Existem rotas cuja resposta depende disso —
+hoje `/cash-register/current/`. Nelas, "não há sessão para este terminal" é uma
+resposta completa: o Principal não pode consultar a nuvem para "confirmar",
+porque na nuvem ele só sabe se identificar como ele mesmo e receberia de volta o
+caixa da máquina errada. Valem as duas portas: a leitura que alguém espera e a
+reconciliação de fundo, que não tem ninguém esperando e por isso passava
+despercebida.
+
+**Item fora da conta.** `core/data/order_item_status.dart` é o único lugar que
+responde "este item entra no total?" — `cancelled`, `comped` e o legado
+`voided` ficam de fora, o mesmo recorte de `recalculate_order` no servidor.
+Total, snapshot fiscal, recibo impresso e a tela consultam essa lista. O
+cancelamento offline grava `cancelled`, o nome do servidor; `voided` só existe
+em pedidos gravados por versões antigas. Enquanto cada ponto tinha o seu
+próprio recorte, o item cancelado voltava a somar assim que sincronizava e o
+fechamento era recusado por total maior que o do servidor.
+
 **Escopo.** Cache e outbox são namespaced por
 `autoridade-da-URL | account_id|user_id|sub do JWT`. Isso impede que a sessão de
 uma conta consuma a fila de outra no mesmo terminal. Sem essas claims o escopo

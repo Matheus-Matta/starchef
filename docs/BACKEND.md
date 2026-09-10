@@ -138,6 +138,10 @@ Outras peças centrais:
 
 O protocolo do PDV usa mensagens `{"event":"model.created|model.updated|model.deleted","payload":{...}}`. O payload contém somente metadados de invalidação (`resource`, `id`, `restaurant_id`, `branch_id`, `changed_fields`, `occurred_at` e `protocol_version`), nunca senhas ou dados completos. Ao receber o evento, o desktop relê pela API REST autenticada apenas o conjunto afetado e atualiza seu cache. A conexão mantém heartbeat, reconecta com backoff e faz uma única reconciliação ao reconectar; não há polling periódico de dados.
 
+A troca da senha de ações do caixa publica a invalidação dedicada
+`restaurants.cashauth`, restrita ao restaurante. A hash não viaja no evento; o
+PDV consulta `cash-auth` uma vez ao recebê-lo ou ao reconectar.
+
 Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusão lógica/física e relações N:N de todos os `TenantBaseModel`. Operações em lote de mesas/comandas, que não executam signals do Django, publicam um evento compacto de coleção explicitamente.
 
 ## 7. Pedidos, pagamento e impressão
