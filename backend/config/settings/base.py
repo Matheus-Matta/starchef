@@ -288,8 +288,6 @@ REST_FRAMEWORK = {
         "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
         "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
-        # Storefront público: dezenas de clientes de um restaurante saem pelo
-        # mesmo IP (WiFi/NAT), então o limite `anon` (60/min) os bloquearia.
     },
 }
 

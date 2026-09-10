@@ -26,11 +26,6 @@ PUBLIC_URL_NAMES = {
     "password-reset",
     "password-reset-confirm",
     "focus-nfe-webhook",
-    # Login e refresh do editor do storefront: por definição chegam sem sessão
-    # (é justamente o que estão criando). O resto de /api/v1/storefront/**
-    # continua exigindo conta resolvida.
-    "storefront-auth-login",
-    "storefront-auth-refresh",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin
