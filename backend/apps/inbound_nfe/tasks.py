@@ -45,12 +45,12 @@ def _resolve_uf_code(uf: str) -> str:
 @shared_task
 def sync_all_inbound_nfe():
     """
-    Agendador principal (Celery Beat, ~1h).
+    Agendador principal (Celery Beat, ~5h).
     Busca todos os FiscalConfig com certificado e enfileira sync por estado.
     """
     from apps.invoices.models import FiscalConfig
 
-    for config in FiscalConfig.objects.filter(is_active=True):
+    for config in FiscalConfig.all_objects.filter(is_active=True, deleted_at__isnull=True):
         if not (config.certificate_file or config.certificate_ref):
             continue
 
@@ -64,7 +64,7 @@ def sync_all_inbound_nfe():
             else "production"
         )
 
-        state, _ = DFeSyncState.objects.get_or_create(
+        state, _ = DFeSyncState.all_objects.get_or_create(
             account=config.account,
             branch=config.branch,
             restaurant=config.restaurant,
@@ -89,7 +89,7 @@ def sync_branch_inbound_nfe(state_id):
     """
     try:
         with transaction.atomic():
-            state = DFeSyncState.objects.select_for_update(nowait=True).get(
+            state = DFeSyncState.all_objects.select_for_update(nowait=True).get(
                 id=state_id
             )
 
@@ -484,14 +484,8 @@ def _process_single_document(doc: DFeDistributionDocument):
         DFeDistributionDocument.DOC_RES_EVENTO,
         DFeDistributionDocument.DOC_PROC_EVENTO,
     ):
-        # Eventos: logar e marcar como skipped por enquanto
-        logger.info(
-            f"Documento de evento NSU={doc.nsu} "
-            f"(type={doc.document_type}). Skipping."
-        )
-        doc.processing_status = DFeDistributionDocument.PROCESSING_SKIPPED
-        doc.processed_at = timezone.now()
-        doc.save(update_fields=['processing_status', 'processed_at'])
+        from apps.inbound_nfe.services.event_processor import process_distribution_event
+        process_distribution_event(doc)
 
     else:
         logger.warning(
@@ -526,6 +520,8 @@ def _process_res_nfe(doc: DFeDistributionDocument):
             f"InboundNFe {parsed.access_key} já existe "
             f"(status={existing.status}). Pulando resNFe."
         )
+        from apps.inbound_nfe.services.event_processor import apply_pending_events
+        apply_pending_events(existing)
     else:
         inv_created = InboundNFe.all_objects.create(
             account=doc.account,
@@ -550,6 +546,9 @@ def _process_res_nfe(doc: DFeDistributionDocument):
             notify_new_inbound_nfe(inv_created)
         except Exception as e:
             logger.error(f"Erro ao notificar resNFe: {e}")
+
+        from apps.inbound_nfe.services.event_processor import apply_pending_events
+        apply_pending_events(inv_created)
 
     # Marcar documento como processado
     doc.processing_status = DFeDistributionDocument.PROCESSING_OK
@@ -673,6 +672,10 @@ def _process_proc_nfe(doc: DFeDistributionDocument):
         else:
             invoice.status = InboundNFe.STATUS_PENDING_MAPPING
         invoice.save(update_fields=['status'])
+
+    # Aplicar eventos que tenham chegado previamente (ex: cancelamentos)
+    from apps.inbound_nfe.services.event_processor import apply_pending_events
+    apply_pending_events(invoice)
 
     # Marcar documento como processado com sucesso
     doc.access_key = parsed.access_key or doc.access_key

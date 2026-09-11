@@ -105,6 +105,19 @@ class Asset(TenantModel):
     installation_date = models.DateField(null=True, blank=True)
     useful_life_months = models.PositiveIntegerField(null=True, blank=True)
     qr_code_token = models.CharField(max_length=64, blank=True, unique=True)
+    source_nfe_cancelled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Indica se a NF-e de compra que originou este ativo foi cancelada na SEFAZ."
+    )
+    source_nfe_cancellation_event = models.ForeignKey(
+        "inbound_nfe.NFeEvent",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="affected_assets",
+        help_text="Evento de cancelamento da NF-e que gerou esta inconsistência patrimonial."
+    )
     notes = models.TextField(blank=True)
 
     class Meta:

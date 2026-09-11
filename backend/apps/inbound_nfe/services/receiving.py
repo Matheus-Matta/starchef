@@ -34,26 +34,42 @@ def calculate_stock_unit_cost(item: InboundNFeItem, stock_quantity: Decimal) -> 
 def update_product_average_cost(product: Product, new_qty: Decimal, new_cost: Decimal):
     """
     Atualiza o custo médio ponderado e o último custo de compra do produto.
+    O preço de venda (sale_price) NÃO é alterado pelo recebimento fiscal;
+    permanece o valor cobrado definido pelo gerente.
     """
     if not product or new_qty <= 0 or new_cost <= 0:
         return
 
-    current_balance = (
+    total_balance = (
         StockMovement.all_objects.filter(product=product)
         .aggregate(models.Sum("quantity"))["quantity__sum"]
         or Decimal("0")
     )
 
+    # O movimento da entrada recém-criado já consta no total_balance.
+    # Subtraímos new_qty para obter o saldo anterior real em estoque.
+    previous_balance = max(Decimal("0"), total_balance - new_qty)
     current_avg = product.current_average_cost or Decimal("0")
-    current_total_val = max(Decimal("0"), current_balance) * current_avg
 
-    new_total_qty = max(Decimal("0"), current_balance) + new_qty
-    new_total_val = current_total_val + (new_qty * new_cost)
-
-    if new_total_qty > 0:
+    if previous_balance > Decimal("0") and current_avg > Decimal("0"):
+        new_total_qty = previous_balance + new_qty
+        new_total_val = (previous_balance * current_avg) + (new_qty * new_cost)
         product.current_average_cost = round(new_total_val / new_total_qty, 4)
-        product.last_purchase_cost = round(new_cost, 4)
-        product.save(update_fields=["current_average_cost", "last_purchase_cost"])
+    else:
+        product.current_average_cost = round(new_cost, 4)
+
+    product.last_purchase_cost = round(new_cost, 4)
+    product.estimated_cost = round(product.current_average_cost, 2)
+
+    # Recalcula margem percentual caso o gerente já tenha definido sale_price
+    if product.sale_price and product.sale_price > 0:
+        product.margin_percent = round(
+            ((product.sale_price - product.estimated_cost) / product.sale_price) * 100, 2
+        )
+    else:
+        product.margin_percent = Decimal("0.00")
+
+    product.save(update_fields=["current_average_cost", "last_purchase_cost", "estimated_cost", "margin_percent"])
 
 
 @transaction.atomic
@@ -220,6 +236,22 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
                 )
         else:
             # Item de estoque normal / lote / consumo / reutilizável
+            target_location = location
+            if product and product.item_type == Product.ITEM_REUSABLE:
+                from apps.stock.models import StockLocation
+                general_loc = (
+                    StockLocation.all_objects
+                    .filter(account=invoice.account, restaurant=invoice.restaurant)
+                    .filter(name__icontains="GERAL")
+                    .first()
+                    or StockLocation.all_objects
+                    .filter(account=invoice.account, restaurant=invoice.restaurant)
+                    .filter(name__icontains="DEPÓSITO")
+                    .first()
+                )
+                if general_loc:
+                    target_location = general_loc
+
             lot_obj = None
             if accepted_quantity > 0:
                 if lot_number or exp_date_raw or (product and (product.requires_lot_control or product.requires_expiration_control)):
@@ -234,7 +266,7 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
                         nfe=invoice,
                         receipt=receipt,
                         receipt_item=receipt_item,
-                        location=location,
+                        location=target_location,
                         manufacturing_date=mfg_date_raw,
                         expiration_date=exp_date_raw,
                         initial_quantity=accepted_quantity,
@@ -250,7 +282,7 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
                     branch=invoice.branch,
                     product=product,
                     ingredient=item.ingredient,
-                    location=location,
+                    location=target_location,
                     operator=user,
                     movement_type=StockMovement.TYPE_PURCHASE_ENTRY,
                     quantity=accepted_quantity,

@@ -43,11 +43,12 @@
             :key="headerAction.key"
             class="rpro-btn rpro-btn--ghost"
             type="button"
-            :disabled="syncingSefaz"
+            :disabled="syncingSefaz || (headerAction.type === 'sync-sefaz' && isDfeBlocked)"
+            :title="headerAction.type === 'sync-sefaz' && isDfeBlocked ? (dfeSyncInfo?.blocked_reason || `Aguarde a janela de segurança da SEFAZ até ${formatDfeDate(dfeSyncInfo?.next_allowed_at)} (~${dfeMinutesRemaining} min restantes)`) : undefined"
             @click="runHeaderAction(headerAction)"
           >
             <i :class="[headerAction.icon || 'pi pi-bolt', { 'pi-spin': syncingSefaz && headerAction.type === 'sync-sefaz' }]" />
-            {{ syncingSefaz && headerAction.type === 'sync-sefaz' ? 'Sincronizando...' : headerAction.label }}
+            {{ syncingSefaz && headerAction.type === 'sync-sefaz' ? 'Sincronizando...' : (headerAction.type === 'sync-sefaz' && isDfeBlocked) ? `Aguarde (~${dfeMinutesRemaining}m)` : headerAction.label }}
           </button>
           <button v-if="primaryAction" class="rpro-btn rpro-btn--primary" type="button" @click="runPrimary">
             <i :class="primaryAction.icon || 'pi pi-plus'" /> {{ primaryAction.label }}
@@ -66,7 +67,7 @@
                 <span class="rpro__dfe-pill">Multilojas</span>
               </div>
               <p>
-                Você está visualizando as notas de compras de todas as empresas cadastradas. A rotina automática de consulta na SEFAZ roda em segundo plano a cada <strong>{{ dfeSyncInfo.sync_interval_hours || 3 }} horas</strong> para todos os restaurantes com certificado A1 ativo.
+                Você está visualizando as notas de compras de todas as empresas cadastradas. A rotina automática de consulta na SEFAZ roda em segundo plano a cada <strong>{{ dfeSyncInfo.sync_interval_hours || 5 }} horas</strong> para todos os restaurantes com certificado A1 ativo.
               </p>
               <div v-if="dfeSyncInfo.last_sync_at" class="mt-2 text-xs font-semibold text-neutral-300 flex items-center gap-2">
                 <i class="pi pi-history text-xs text-primary" />
@@ -118,23 +119,23 @@
                   <span v-if="dfeSyncInfo.cstat" :class="['rpro__dfe-tag', `rpro__dfe-tag--${dfeSyncInfo.cstat === '138' ? 'success' : dfeSyncInfo.cstat === '656' ? 'danger' : 'info'}`]">
                     cStat {{ dfeSyncInfo.cstat }}
                   </span>
-                  <span>{{ dfeSyncInfo.cstat === '656' ? 'Consumo Indevido' : dfeSyncInfo.cstat === '138' ? 'Notas localizadas' : dfeSyncInfo.cstat === '137' ? 'Sem novas notas' : 'Automático a cada 3h' }}</span>
+                  <span>{{ dfeSyncInfo.cstat === '656' ? 'Consumo Indevido' : dfeSyncInfo.cstat === '138' ? 'Notas localizadas' : dfeSyncInfo.cstat === '137' ? 'Sem novas notas' : 'Automático a cada 5h' }}</span>
                 </small>
               </div>
             </div>
 
-            <div class="rpro__dfe-card" :class="{ 'rpro__dfe-card--blocked': dfeSyncInfo.is_blocked }">
-              <div class="rpro__dfe-card-icon" :class="dfeSyncInfo.is_blocked ? 'rpro__dfe-card-icon--blocked' : 'rpro__dfe-card-icon--ready'">
-                <i :class="dfeSyncInfo.is_blocked ? 'pi pi-lock' : 'pi pi-check-circle'" />
+            <div class="rpro__dfe-card" :class="{ 'rpro__dfe-card--blocked': isDfeBlocked }">
+              <div class="rpro__dfe-card-icon" :class="isDfeBlocked ? 'rpro__dfe-card-icon--blocked' : 'rpro__dfe-card-icon--ready'">
+                <i :class="isDfeBlocked ? 'pi pi-lock' : 'pi pi-check-circle'" />
               </div>
               <div class="rpro__dfe-card-info">
                 <span class="rpro__dfe-card-label">Próxima Consulta Permitida</span>
-                <strong class="rpro__dfe-card-value" :class="dfeSyncInfo.is_blocked ? 'text-amber-600' : 'text-emerald-600'">
-                  {{ dfeSyncInfo.is_blocked ? formatDfeDate(dfeSyncInfo.next_allowed_at) : 'Pronta para sincronizar' }}
+                <strong class="rpro__dfe-card-value" :class="isDfeBlocked ? 'text-amber-600' : 'text-emerald-600'">
+                  {{ isDfeBlocked ? formatDfeDate(dfeSyncInfo.next_allowed_at) : 'Pronta para sincronizar' }}
                 </strong>
                 <small class="rpro__dfe-card-hint">
-                  <span v-if="dfeSyncInfo.is_blocked" class="text-amber-700 font-semibold flex items-center gap-1">
-                    <i class="pi pi-hourglass" /> Bloqueio ativo (~{{ dfeSyncInfo.minutes_remaining }} min restantes)
+                  <span v-if="isDfeBlocked" class="text-amber-700 font-semibold flex items-center gap-1">
+                    <i class="pi pi-hourglass" /> Bloqueio ativo (~{{ dfeMinutesRemaining }} min restantes)
                   </span>
                   <span v-else class="text-emerald-700 font-semibold flex items-center gap-1">
                     <i class="pi pi-shield" /> Intervalo seguro liberado
@@ -294,6 +295,15 @@
             <i class="pi pi-file-export" /> Exportar XML ({{ selection.length }})
           </button>
           <button
+            v-if="props.endpoint === '/inbound-nfe/'"
+            class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+            type="button"
+            :disabled="reconcileLoading"
+            @click="reconcileSelectedSefaz"
+          >
+            <i :class="reconcileLoading ? 'pi pi-spin pi-spinner' : 'pi pi-shield'" /> Verificar Situação SEFAZ ({{ selection.length }})
+          </button>
+          <button
             v-for="bulkAction in bulkActions"
             :key="bulkAction.key"
             class="rpro-btn rpro-btn--ghost rpro-btn--sm"
@@ -365,37 +375,54 @@
             <span v-else-if="props.endpoint === '/inbound-nfe/' && column.key === 'status'" class="rpro-nfe-status-cell">
               <span
                 class="rpro-chip font-bold"
-                :data-tone="data.status === 'received' ? 'success' : data.status === 'pending_receipt' ? 'info' : (data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'info' : data.status === 'pending_mapping' ? 'warning' : data.status === 'cancelled' ? 'danger' : 'neutral'"
+                :data-tone="(data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? 'danger' : (data.status === 'received' ? 'success' : data.status === 'pending_receipt' ? 'info' : (data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'info' : data.status === 'pending_mapping' ? 'warning' : 'neutral')"
+                :title="(data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? (data.cancellation_reason || 'Nota Fiscal Cancelada na SEFAZ') : undefined"
               >
-                <i v-if="data.status === 'received'" class="pi pi-check-circle text-xs mr-1" />
+                <i v-if="data.fiscal_status === 'CANCELLED' || data.status === 'cancelled'" class="pi pi-ban text-xs mr-1" />
+                <i v-else-if="data.status === 'received'" class="pi pi-check-circle text-xs mr-1" />
                 <i v-else-if="data.status === 'pending_receipt'" class="pi pi-box text-xs mr-1" />
                 <i v-else-if="data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending'" class="pi pi-spin pi-spinner text-xs mr-1" />
                 <i v-else-if="data.status === 'pending_mapping'" class="pi pi-exclamation-triangle text-xs mr-1" />
-                <i v-else-if="data.status === 'cancelled'" class="pi pi-ban text-xs mr-1" />
                 <i v-else class="pi pi-file text-xs mr-1" />
-                {{ (data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'Aguardando XML (SEFAZ)' : (data.status === 'pending_mapping' ? 'Pendente de Vínculo' : data.status === 'pending_receipt' ? 'Pronta p/ Entrada' : data.status === 'received' ? 'Entrada Concluída' : data.status === 'summary' ? 'Resumo SEFAZ' : label(value(data, column), column.map)) }}
+                {{ (data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? 'CANCELADA' : ((data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'Aguardando XML (SEFAZ)' : (data.status === 'pending_mapping' ? 'Pendente de Vínculo' : data.status === 'pending_receipt' ? 'Pronta p/ Entrada' : data.status === 'received' ? 'Entrada Concluída' : data.status === 'summary' ? 'Resumo SEFAZ' : label(value(data, column), column.map))) }}
               </span>
-              <span v-if="data.status === 'pending_mapping' && data.unmapped_items_count" class="rpro-nfe-pending-pill" title="Itens que ainda precisam ser associados ao cadastro interno">
+              <span v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled' && data.status === 'pending_mapping' && data.unmapped_items_count" class="rpro-nfe-pending-pill" title="Itens que ainda precisam ser associados ao cadastro interno">
                 {{ data.unmapped_items_count }} item(ns) pendente(s)
               </span>
-              <button
-                v-if="data.status === 'summary' && data.manifestation_status !== 'science_registered'"
-                type="button"
-                class="rpro-btn rpro-btn--primary rpro-btn--xs ml-1"
-                title="Dar Ciência da Operação (210210) e baixar XML completo da SEFAZ"
-                @click.stop="openScienceConfirmDialog(data)"
+              <template v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled'">
+                <button
+                  v-if="data.status === 'summary' && data.manifestation_status !== 'science_registered'"
+                  type="button"
+                  class="rpro-btn rpro-btn--primary rpro-btn--xs ml-1"
+                  title="Dar Ciência da Operação (210210) e baixar XML completo da SEFAZ"
+                  @click.stop="openScienceConfirmDialog(data)"
+                >
+                  <i class="pi pi-bolt mr-1" /> Dar Ciência
+                </button>
+                <button
+                  v-else-if="data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending'"
+                  type="button"
+                  class="rpro-btn rpro-btn--ghost rpro-btn--xs ml-1"
+                  title="Reconsultar XML completo na SEFAZ (consChNFe)"
+                  @click.stop="retryFetchFullXmlDirect(data)"
+                >
+                  <i class="pi pi-cloud-download text-indigo-400 mr-1" /> Baixar XML
+                </button>
+              </template>
+            </span>
+            <span v-else-if="column.key === 'stock_status'">
+              <span
+                v-if="data.minimum_stock != null && Number(data.minimum_stock) > 0"
+                class="rpro-chip font-bold"
+                :data-tone="data.is_below_minimum ? 'danger' : 'success'"
               >
-                <i class="pi pi-bolt mr-1" /> Dar Ciência
-              </button>
-              <button
-                v-else-if="data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending'"
-                type="button"
-                class="rpro-btn rpro-btn--ghost rpro-btn--xs ml-1"
-                title="Reconsultar XML completo na SEFAZ (consChNFe)"
-                @click.stop="retryFetchFullXmlDirect(data)"
-              >
-                <i class="pi pi-cloud-download text-indigo-400 mr-1" /> Baixar XML
-              </button>
+                <i :class="data.is_below_minimum ? 'pi pi-exclamation-triangle mr-1' : 'pi pi-check mr-1'" />
+                {{ data.is_below_minimum ? 'Abaixo do Mínimo' : 'Normal' }}
+              </span>
+              <span v-else class="rpro-muted text-xs">Sem limite mín.</span>
+            </span>
+            <span v-else-if="props.endpoint === '/assets/reusables/' && column.key === 'current_stock_display'" class="rpro-num font-bold" :class="{ 'text-rose-400': data.is_below_minimum, 'text-emerald-400': !data.is_below_minimum }">
+              {{ value(data, column) }}
             </span>
             <span v-else-if="column.type === 'status'" class="rpro-chip" :data-tone="statusTone(value(data, column), column.map)">{{ label(value(data, column), column.map) }}</span>
             <span v-else-if="column.type === 'money'" class="rpro-num">{{ money(value(data, column)) }}</span>
@@ -405,9 +432,27 @@
           </template>
         </Column>
 
-        <Column :header-style="{ width: '64px' }" :body-style="{ width: '64px', textAlign: 'right' }" :sortable="false">
+        <Column :header-style="{ width: props.endpoint === '/assets/reusables/' ? '112px' : '64px' }" :body-style="{ width: props.endpoint === '/assets/reusables/' ? '112px' : '64px', textAlign: 'right' }" :sortable="false">
           <template #body="{ data }">
             <div class="rpro__row-actions">
+              <template v-if="props.endpoint === '/assets/reusables/'">
+                <button
+                  class="rpro__row-btn rpro__row-btn--danger"
+                  type="button"
+                  title="Registrar Quebra / Baixa de Vasilhame"
+                  @click.stop="openReusableLossDialog(data)"
+                >
+                  <i class="pi pi-minus-circle" />
+                </button>
+                <button
+                  class="rpro__row-btn rpro__row-btn--info"
+                  type="button"
+                  title="Histórico de Movimentações"
+                  @click.stop="openReusableHistoryDialog(data)"
+                >
+                  <i class="pi pi-history" />
+                </button>
+              </template>
               <button class="rpro__row-btn" type="button" aria-label="Ações" aria-haspopup="true" @click.stop="openRowMenu($event, data)">
                 <i class="pi pi-ellipsis-h" />
               </button>
@@ -613,6 +658,153 @@
         </template>
       </Dialog>
 
+      <!-- Modal: Registrar Quebra / Baixa de Vasilhame & Reutilizável -->
+      <Dialog
+        v-model:visible="reusableLossVisible"
+        modal
+        :header="`Registrar Baixa: ${reusableLossTarget?.name || ''}`"
+        :style="{ width: 'min(500px, 94vw)' }"
+      >
+        <div class="rpro__reusable-dialog-body">
+          <div class="rpro__reusable-info-card">
+            <div class="rpro__reusable-info-item">
+              <span>Saldo Atual</span>
+              <strong>{{ reusableLossTarget?.current_stock_display || '0 UN' }}</strong>
+            </div>
+            <div class="rpro__reusable-info-item" style="text-align: right;">
+              <span>Local Atual</span>
+              <strong>{{ reusableLossTarget?.location_name || 'Geral' }}</strong>
+            </div>
+          </div>
+
+          <div class="rpro__reusable-field">
+            <label>Tipo de Baixa / Ocorrência *</label>
+            <Dropdown
+              v-model="reusableLossForm.movement_type"
+              :options="reusableLossTypes"
+              option-label="label"
+              option-value="value"
+              class="w-full"
+            />
+          </div>
+
+          <div class="rpro__reusable-field">
+            <label>Quantidade de Baixa ({{ reusableLossTarget?.stock_unit || 'UN' }}) *</label>
+            <InputNumber
+              v-model="reusableLossForm.quantity"
+              :min="1"
+              :max="reusableLossTarget?.current_stock ? Number(reusableLossTarget.current_stock) : undefined"
+              placeholder="Ex.: 1"
+              class="w-full"
+            />
+            <small>Informe a quantidade que quebrou, estragou ou foi extraviada.</small>
+          </div>
+
+          <div class="rpro__reusable-field">
+            <label>Motivo / Justificativa detalhada</label>
+            <Textarea
+              v-model="reusableLossForm.notes"
+              rows="3"
+              placeholder="Ex.: Vasilhame trincado na entrega; Quebrou durante lavagem; Garrafa arranhada e gasta..."
+              class="w-full"
+            />
+          </div>
+        </div>
+
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="reusableLossLoading" @click="reusableLossVisible = false">
+            Cancelar
+          </button>
+          <button
+            class="rpro-btn rpro-btn--primary"
+            style="background: #e11d48; border-color: #e11d48;"
+            type="button"
+            :disabled="reusableLossLoading || !reusableLossForm.quantity || reusableLossForm.quantity <= 0"
+            @click="submitReusableLoss"
+          >
+            <i :class="reusableLossLoading ? 'pi pi-spin pi-spinner' : 'pi pi-check'" />
+            {{ reusableLossLoading ? "Registrando..." : "Confirmar Baixa" }}
+          </button>
+        </template>
+      </Dialog>
+
+      <!-- Modal: Histórico de Movimentações de Vasilhames & Reutilizáveis -->
+      <Dialog
+        v-model:visible="reusableHistoryVisible"
+        modal
+        :header="`Histórico de Movimentações: ${reusableHistoryTarget?.name || ''}`"
+        :style="{ width: 'min(860px, 95vw)' }"
+      >
+        <div>
+          <div class="rpro__reusable-history-summary">
+            <div class="rpro__reusable-history-card">
+              <span>Saldo Atual</span>
+              <strong style="color: #10b981;">{{ reusableHistoryTarget?.current_stock_display || '0 UN' }}</strong>
+            </div>
+            <div class="rpro__reusable-history-card">
+              <span>Total Entradas (Compras/NF-e)</span>
+              <strong style="color: #3b82f6;">+{{ reusableHistoryTarget?.total_entries || 0 }} {{ reusableHistoryTarget?.stock_unit || 'UN' }}</strong>
+            </div>
+            <div class="rpro__reusable-history-card">
+              <span>Total Perdas / Quebras</span>
+              <strong style="color: #f43f5e;">-{{ reusableHistoryTarget?.total_losses || 0 }} {{ reusableHistoryTarget?.stock_unit || 'UN' }}</strong>
+            </div>
+          </div>
+
+          <div v-if="reusableHistoryLoading" style="padding: 32px; text-align: center; color: var(--text-muted);">
+            <i class="pi pi-spin pi-spinner" style="font-size: 24px;" />
+            <p style="margin-top: 8px; font-size: 13px;">Carregando histórico...</p>
+          </div>
+          <div v-else-if="!reusableHistoryMovements.length" style="padding: 32px; text-align: center; color: var(--text-muted);">
+            <i class="pi pi-inbox" style="font-size: 24px;" />
+            <p style="margin-top: 8px; font-size: 13px;">Nenhuma movimentação registrada para este item.</p>
+          </div>
+          <div v-else class="rpro__reusable-table-wrap">
+            <table class="rpro__reusable-table">
+              <thead>
+                <tr>
+                  <th>Data / Hora</th>
+                  <th>Operação</th>
+                  <th style="text-align: right;">Qtd.</th>
+                  <th>Local</th>
+                  <th>Responsável / NF-e</th>
+                  <th>Motivo / Justificativa</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in reusableHistoryMovements" :key="m.id">
+                  <td style="white-space: nowrap;">{{ dateTime(m.created_at) }}</td>
+                  <td>
+                    <span
+                      class="rpro-chip"
+                      :data-tone="Number(m.quantity) > 0 ? 'success' : 'danger'"
+                    >
+                      {{ m.movement_type_display || m.movement_type }}
+                    </span>
+                  </td>
+                  <td style="text-align: right; font-weight: bold; white-space: nowrap;" :style="{ color: Number(m.quantity) > 0 ? '#10b981' : '#f43f5e' }">
+                    {{ Number(m.quantity) > 0 ? `+${m.quantity}` : m.quantity }} {{ m.stock_unit }}
+                  </td>
+                  <td>{{ m.location_name || '—' }}</td>
+                  <td>
+                    <div v-if="m.nfe_number" style="font-weight: 600; color: #60a5fa;">NF-e {{ m.nfe_number }}</div>
+                    <div v-if="m.operator_name" style="font-size: 11px; color: var(--text-muted);">{{ m.operator_name }}</div>
+                    <div v-if="!m.nfe_number && !m.operator_name">—</div>
+                  </td>
+                  <td :title="m.reason" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ m.reason || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <template #footer>
+          <button class="rpro-btn rpro-btn--ghost" type="button" @click="reusableHistoryVisible = false">
+            Fechar
+          </button>
+        </template>
+      </Dialog>
+
       <!-- Paginação enxuta (Anterior · Página X de Y · Próxima + Seletor de 10, 20 ou 50) -->
       <div class="rpro__pager">
         <div class="rpro__pager-nav">
@@ -691,6 +883,36 @@
       </div>
 
       <div v-else-if="inboundDetailData" class="rpro__inbound-body">
+        <!-- Alerta de NF-e Cancelada -->
+        <div
+          v-if="inboundDetailData.fiscal_status === 'CANCELLED' || inboundDetailData.status === 'cancelled'"
+          class="rpro__inbound-cancelled-banner"
+        >
+          <div class="rpro__inbound-cancelled-icon">
+            <i class="pi pi-ban text-2xl" />
+          </div>
+          <div class="rpro__inbound-cancelled-info">
+            <strong>NF-E CANCELADA NA SEFAZ</strong>
+            <p>
+              Esta nota fiscal foi cancelada pelo emitente. O recebimento físico e a movimentação de estoque estão bloqueados.
+            </p>
+            <div
+              v-if="inboundDetailData.cancellation_protocol || inboundDetailData.cancelled_at || inboundDetailData.cancellation_reason"
+              class="rpro__inbound-cancelled-meta"
+            >
+              <span v-if="inboundDetailData.cancelled_at">
+                <strong>Data/Hora do Cancelamento:</strong> {{ formatDfeDate(inboundDetailData.cancelled_at) }}
+              </span>
+              <span v-if="inboundDetailData.cancellation_protocol">
+                <strong>Protocolo:</strong> {{ inboundDetailData.cancellation_protocol }}
+              </span>
+              <span v-if="inboundDetailData.cancellation_reason">
+                <strong>Justificativa:</strong> {{ inboundDetailData.cancellation_reason }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- Cabeçalho / Sumário da NF-e -->
         <div class="rpro__inbound-summary">
           <div class="rpro__inbound-summary-grid">
@@ -735,13 +957,35 @@
             <h3>Produtos da Nota ({{ (inboundDetailData.items || []).length }} itens)</h3>
             <div class="flex items-center gap-2">
               <button
-                v-if="inboundDetailData.status !== 'received' && inboundDetailData.status !== 'cancelled'"
+                type="button"
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+                title="Consultar situação em tempo real na SEFAZ"
+                :disabled="checkingSefazId === inboundDetailData.id"
+                @click="checkSefazStatusDirect(inboundDetailData)"
+              >
+                <i :class="checkingSefazId === inboundDetailData.id ? 'pi pi-spin pi-spinner' : 'pi pi-shield'" />
+                Verificar Situação SEFAZ
+              </button>
+              <button
+                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'received' && inboundDetailData.status !== 'cancelled'"
                 type="button"
                 class="rpro-btn rpro-btn--primary rpro-btn--sm"
                 @click="openReceiveModalFromDetail"
               >
                 <i class="pi pi-box" /> Dar Entrada no Estoque
               </button>
+              <button
+                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                type="button"
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm text-red-500 hover:text-red-600"
+                title="Marcar esta nota fiscal como cancelada manualmente no sistema"
+                @click="openManualCancelDialog(inboundDetailData)"
+              >
+                <i class="pi pi-ban text-xs mr-1" /> Cancelar / Substituir
+              </button>
+              <div v-else-if="inboundDetailData.fiscal_status === 'CANCELLED' || inboundDetailData.status === 'cancelled'" class="rpro__inbound-cancelled-badge">
+                <i class="pi pi-ban" /> Cancelada
+              </div>
               <div v-else-if="inboundDetailData.status === 'received'" class="rpro__inbound-received-badge">
                 <i class="pi pi-check-circle" /> Estocada
               </div>
@@ -807,7 +1051,7 @@
                           </small>
                         </div>
                         <button
-                          v-if="inboundDetailData.status !== 'received'"
+                          v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
                           type="button"
                           class="rpro-btn rpro-btn--ghost rpro-btn--xs"
                           title="Alterar vínculo"
@@ -820,7 +1064,7 @@
                         <button
                           type="button"
                           class="rpro-btn rpro-btn--ghost rpro-btn--sm w-full"
-                          :disabled="inboundDetailData.status === 'received'"
+                          :disabled="inboundDetailData.status === 'received' || inboundDetailData.fiscal_status === 'CANCELLED' || inboundDetailData.status === 'cancelled'"
                           @click="openMapModal(item)"
                         >
                           <i class="pi pi-link" /> Vincular Produto
@@ -863,6 +1107,55 @@
       <template #footer>
         <button class="rpro-btn rpro-btn--ghost" type="button" @click="inboundDetailVisible = false">
           Fechar
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Diálogo Marcar NF-e como Cancelada / Substituída ── -->
+    <Dialog
+      v-model:visible="manualCancelDialogVisible"
+      modal
+      header="Marcar NF-e como Cancelada / Substituída"
+      :style="{ width: 'min(480px, 94vw)' }"
+    >
+      <div v-if="manualCancelInvoice" class="flex flex-col gap-3 py-1">
+        <p class="text-sm text-gray-400">
+          Você está prestes a invalidar a NF-e <strong>#{{ manualCancelInvoice.number }}</strong> ({{ manualCancelInvoice.supplier_name }}).
+          O estoque e recebimento físico serão bloqueados.
+        </p>
+
+        <div class="p-3 bg-red-950/20 border border-red-500/30 rounded text-xs text-red-300">
+          <i class="pi pi-info-circle mr-1" /> Use esta ação quando o fornecedor tiver substituído o pedido por outra nota fiscal ou cancelado a entrega fora do prazo legal da SEFAZ.
+        </div>
+
+        <div class="flex flex-col gap-1 mt-1">
+          <label class="text-xs font-semibold text-gray-300">Justificativa do Cancelamento *</label>
+          <textarea
+            v-model="manualCancelReason"
+            rows="3"
+            class="rpro__manual-cancel-textarea"
+            placeholder="Ex: Nota substituída pela NF-e nº 282063; entrega cancelada pelo fornecedor."
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          :disabled="manualCancelLoading"
+          @click="manualCancelDialogVisible = false"
+        >
+          Voltar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary bg-red-600 border-red-600 hover:bg-red-700"
+          type="button"
+          :disabled="manualCancelLoading"
+          @click="confirmManualCancel"
+        >
+          <i :class="manualCancelLoading ? 'pi pi-spin pi-spinner' : 'pi pi-check'" />
+          Confirmar Cancelamento
         </button>
       </template>
     </Dialog>
@@ -1069,12 +1362,16 @@
               />
             </div>
             <div class="inbound-map__field">
-              <label class="inbound-map__label">Preço de Venda / Cardápio (R$)</label>
+              <label class="inbound-map__label">
+                Preço de Venda / Cardápio (R$)
+                <small class="inbound-map__sublabel">Definido pelo gerente (não utiliza o custo da nota)</small>
+              </label>
               <InputNumber
                 v-model="quickCreateForm.sale_price"
                 mode="currency"
                 currency="BRL"
                 locale="pt-BR"
+                placeholder="R$ 0,00"
                 class="inbound-map__input-number"
                 input-class="inbound-map__input"
               />
@@ -1216,7 +1513,7 @@
                 type="button"
                 class="rpro-btn text-xs py-2 px-2 flex items-center justify-center gap-1.5 cursor-pointer"
                 :class="mappingForm.conversion_mode === 'multiply' ? 'rpro-btn--primary font-bold shadow' : 'rpro-btn--ghost text-muted border border-neutral-700'"
-                @click="mappingForm.conversion_mode = 'multiply'"
+                @click="onSelectMultiplyMode"
               >
                 <i class="pi pi-times text-xs" /> Multiplicador
               </button>
@@ -1276,6 +1573,7 @@
                   :min="0.000001"
                   :min-fraction-digits="0"
                   :max-fraction-digits="6"
+                  placeholder="Ex: 12"
                   class="inbound-map__factor-input"
                   input-class="inbound-map__factor-inner"
                 />
@@ -1290,6 +1588,7 @@
                   :min="0.000001"
                   :min-fraction-digits="0"
                   :max-fraction-digits="6"
+                  placeholder="Ex: 1000"
                   class="inbound-map__factor-input"
                   input-class="inbound-map__factor-inner"
                 />
@@ -1442,7 +1741,13 @@
                       :min="0.0001"
                       :max-fraction-digits="4"
                       input-class="text-center w-16 p-1 text-xs font-mono font-bold"
-                      @update:model-value="it.received_quantity = Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))"
+                      @update:model-value="(val) => {
+                        const f = Number(val || 1);
+                        it.received_quantity = Number((Number(it.commercial_quantity) * f).toFixed(4));
+                        if (f !== 1 && it.stock_unit === it.commercial_unit) {
+                          it.stock_unit = it.product_stock_unit || 'UN';
+                        }
+                      }"
                     />
                   </div>
                 </td>
@@ -1757,16 +2062,20 @@
  * apresentação: cabeçalho com ações, cartões de resumo, filtro de período,
  * seleção em massa, filtros avançados, importação/exportação e paginação enxuta.
  */
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import Checkbox from "primevue/checkbox";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 import Dialog from "primevue/dialog";
 import Dropdown from "primevue/dropdown";
 import IconField from "primevue/iconfield";
 import InputIcon from "primevue/inputicon";
+import InputNumber from "primevue/inputnumber";
 import InputText from "primevue/inputtext";
 import Menu from "primevue/menu";
+import Tag from "primevue/tag";
+import Textarea from "primevue/textarea";
 import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
 
@@ -1774,14 +2083,14 @@ import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
 import { dataExchangeService } from "../services/dataExchangeService";
-import { formatDateTime, formatMoney, mapLabel } from "../utils/format";
+import { formatDateTime, formatMoney, mapLabel, roundUpToCent } from "../utils/format";
 import { resolveColumnValue } from "../utils/object";
 import { normalizeApiError } from "../utils/apiError";
 import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bulkCreate";
 import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
-import { ASSET_STATUS_OPTIONS, ASSET_STATUS_LABELS } from "../config/enums";
+import { ASSET_STATUS_OPTIONS } from "../config/enums";
 
 const route = useRoute();
 const router = useRouter();
@@ -1859,6 +2168,7 @@ const INBOUND_FILTER_OPTIONS = [
   { value: "ready", label: "Pronta p/ Entrada", icon: "pi pi-box", tone: "info" },
   { value: "received", label: "Entrada Concluída", icon: "pi pi-check-circle", tone: "success" },
   { value: "summary", label: "Resumo SEFAZ", icon: "pi pi-file", tone: "neutral" },
+  { value: "cancelled", label: "Canceladas", icon: "pi pi-ban", tone: "danger" },
 ];
 
 async function fetchInboundStatusCounts() {
@@ -2059,6 +2369,24 @@ const headerActions = computed(() => proCfg.value.headerActions || []);
 const syncingSefaz = ref(false);
 const dfeSyncInfo = ref(null);
 const dfeSyncLoading = ref(false);
+const nowTick = ref(Date.now());
+let dfeTimerInterval = null;
+
+const dfeMinutesRemaining = computed(() => {
+  if (!dfeSyncInfo.value?.next_allowed_at) {
+    return dfeSyncInfo.value?.minutes_remaining || 0;
+  }
+  const target = new Date(dfeSyncInfo.value.next_allowed_at).getTime();
+  if (isNaN(target)) return dfeSyncInfo.value?.minutes_remaining || 0;
+  const diffMs = target - nowTick.value;
+  return diffMs > 0 ? Math.max(1, Math.ceil(diffMs / 60000)) : 0;
+});
+
+const isDfeBlocked = computed(() => {
+  if (!dfeSyncInfo.value) return false;
+  if (dfeMinutesRemaining.value > 0) return true;
+  return Boolean(dfeSyncInfo.value.is_blocked && (!dfeSyncInfo.value.next_allowed_at || dfeMinutesRemaining.value > 0));
+});
 
 async function loadDfeSyncInfo() {
   if (props.endpoint !== "/inbound-nfe/") return;
@@ -2068,6 +2396,7 @@ async function loadDfeSyncInfo() {
     const params = scopedRestaurant ? { restaurant: scopedRestaurant } : {};
     const { data } = await api.get("/inbound-nfe/sync/", { params });
     dfeSyncInfo.value = data;
+    nowTick.value = Date.now();
   } catch (err) {
     console.error("Erro ao carregar status do DF-e:", err);
   } finally {
@@ -2113,11 +2442,11 @@ async function triggerSefazSync() {
     });
     return;
   }
-  if (dfeSyncInfo.value?.is_blocked) {
+  if (isDfeBlocked.value) {
     toast.add({
       severity: "warn",
       summary: "Sincronização Bloqueada",
-      detail: dfeSyncInfo.value.blocked_reason || `Aguarde a janela de segurança da SEFAZ até ${formatDfeDate(dfeSyncInfo.value.next_allowed_at)}.`,
+      detail: dfeSyncInfo.value?.blocked_reason || `Aguarde a janela de segurança da SEFAZ até ${formatDfeDate(dfeSyncInfo.value?.next_allowed_at)} (~${dfeMinutesRemaining.value} min restantes).`,
       life: 8000,
     });
     return;
@@ -2218,6 +2547,13 @@ const effectiveConversionFactor = computed(() => {
   return Number(mappingForm.conversion_factor) || 1;
 });
 
+watch(effectiveConversionFactor, (factor) => {
+  const rawCost = Number(mappingItem.value?.commercial_unit_value) || 0;
+  if (rawCost > 0 && factor > 0) {
+    quickCreateForm.estimated_cost = roundUpToCent(rawCost / factor);
+  }
+});
+
 const quickCreateForm = reactive({
   name: "",
   item_type: "INGREDIENT",
@@ -2315,6 +2651,7 @@ function getItemTypeLabel(type) {
   return map[type] || type || "Item";
 }
 
+// eslint-disable-next-line no-unused-vars
 function getItemTypeBadgeClass(type) {
   const map = {
     INGREDIENT: "bg-emerald-950 text-emerald-300 border border-emerald-800",
@@ -2405,7 +2742,7 @@ const calculatedUnitCostInStock = computed(() => {
   const total = Number(mappingItem.value.product_total) || 0;
   const finalQty = calculatedStockQty.value;
   if (!finalQty || finalQty <= 0) return 0;
-  return total / finalQty;
+  return roundUpToCent(total / finalQty);
 });
 
 async function loadMappingOptions() {
@@ -2447,14 +2784,31 @@ function onQuickCreateItemTypeChange(ev) {
   }
 }
 
+function onSelectMultiplyMode() {
+  mappingForm.conversion_mode = "multiply";
+  const commU = (mappingItem.value?.commercial_unit || "").toUpperCase().trim();
+  if (!mappingForm.stock_unit || mappingForm.stock_unit.toUpperCase().trim() === commU) {
+    mappingForm.stock_unit = "UN";
+    quickCreateForm.stock_unit = "UN";
+  }
+}
+
 function switchToQuickCreate() {
   mappingMode.value = "create";
   quickCreateForm.name = (mappingSearch.value || mappingItem.value?.description || "").trim();
   quickCreateForm.item_type = "INGREDIENT";
   quickCreateForm.category = null;
-  quickCreateForm.stock_unit = (mappingItem.value?.commercial_unit || "UN").toUpperCase().slice(0, 8);
-  quickCreateForm.estimated_cost = Number(mappingItem.value?.commercial_unit_value) || 0;
-  quickCreateForm.sale_price = Number(mappingItem.value?.commercial_unit_value) || 0;
+  const factor = effectiveConversionFactor.value || 1;
+  const commU = (mappingItem.value?.commercial_unit || "UN").toUpperCase().trim();
+  const isPackage = ["CX", "FD", "DZ", "PCT", "CXA", "FARDO", "PACOTE", "ROLO"].includes(commU);
+  if (mappingForm.stock_unit && mappingForm.stock_unit !== commU) {
+    quickCreateForm.stock_unit = mappingForm.stock_unit.toUpperCase().slice(0, 8);
+  } else {
+    quickCreateForm.stock_unit = (factor !== 1 || isPackage ? "UN" : commU).slice(0, 8);
+  }
+  const unitCost = Number(mappingItem.value?.commercial_unit_value) || 0;
+  quickCreateForm.estimated_cost = factor > 0 ? roundUpToCent(unitCost / factor) : roundUpToCent(unitCost);
+  quickCreateForm.sale_price = 0;
   quickCreateForm.requires_lot_control = false;
   quickCreateForm.requires_serial_number = false;
 }
@@ -2465,7 +2819,7 @@ function switchToQuickAsset() {
   quickAssetForm.item_type = "EQUIPMENT";
   quickAssetForm.brand = "";
   quickAssetForm.model = "";
-  quickAssetForm.purchase_price = Number(mappingItem.value?.commercial_unit_value) || 0;
+  quickAssetForm.purchase_price = roundUpToCent(Number(mappingItem.value?.commercial_unit_value) || 0);
   quickAssetForm.warranty_months = 12;
   quickAssetForm.requires_serial_number = true;
   quickAssetForm.stock_unit = (mappingItem.value?.commercial_unit || "UN").toUpperCase().slice(0, 8);
@@ -2482,9 +2836,15 @@ async function openMapModal(item) {
   mappingForm.targetType = item.product ? "product" : (item.ingredient ? "ingredient" : "product");
   mappingForm.ingredient_id = item.ingredient || null;
   mappingForm.product_id = item.product || null;
-  mappingForm.stock_unit = (item.product_stock_unit || item.ingredient_unit || item.commercial_unit || "UN").toUpperCase();
-
   const factor = Number(item.conversion_factor) || 1;
+  let rawStockUnit = item.product_stock_unit || (item.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : item.ingredient_unit);
+  const commU = (item.commercial_unit || "UN").toUpperCase().trim();
+  const isPackage = ["CX", "FD", "DZ", "PCT", "CXA", "FARDO", "PACOTE", "ROLO"].includes(commU);
+  if (factor !== 1 && rawStockUnit && rawStockUnit.toUpperCase().trim() === commU) {
+    rawStockUnit = "UN";
+  }
+  const resolvedStockU = (rawStockUnit || (factor !== 1 || isPackage ? "UN" : commU) || "UN").toUpperCase();
+  mappingForm.stock_unit = resolvedStockU;
   if (factor === 1) {
     mappingForm.conversion_mode = "direct";
     mappingForm.conversion_factor = 1;
@@ -2503,9 +2863,10 @@ async function openMapModal(item) {
   quickCreateForm.name = (item.description || "").trim();
   quickCreateForm.item_type = "INGREDIENT";
   quickCreateForm.category = null;
-  quickCreateForm.stock_unit = (item.commercial_unit || "UN").toUpperCase().slice(0, 8);
-  quickCreateForm.estimated_cost = Number(item.commercial_unit_value) || 0;
-  quickCreateForm.sale_price = Number(item.commercial_unit_value) || 0;
+  quickCreateForm.stock_unit = resolvedStockU.slice(0, 8);
+  const unitCost = Number(item.commercial_unit_value) || 0;
+  quickCreateForm.estimated_cost = factor > 0 ? roundUpToCent(unitCost / factor) : roundUpToCent(unitCost);
+  quickCreateForm.sale_price = 0;
   quickCreateForm.requires_lot_control = false;
   quickCreateForm.requires_serial_number = false;
 
@@ -2551,7 +2912,9 @@ async function submitItemMapping() {
         } else if (selectedTargetProduct.value.type === "ingredient") {
           await api.patch(`/menu/ingredients/${selectedTargetProduct.value.id}/`, { unit: chosenUnit.toLowerCase() });
         }
-      } catch (_) {}
+      } catch (err) {
+        void err;
+      }
     }
 
     await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
@@ -2596,13 +2959,62 @@ async function submitQuickCreateAndMap() {
     const targetRestaurant = inboundDetailData.value?.restaurant || localStorage.getItem("starchef-restaurant-scope");
     const stockUnit = (mappingForm.stock_unit || quickCreateForm.stock_unit || "UN").toUpperCase();
 
+    if (quickCreateForm.item_type === "INGREDIENT") {
+      let chosenUnit = stockUnit.toLowerCase();
+      if (chosenUnit === "un") chosenUnit = "unit";
+      if (!["unit", "kg", "g", "l", "ml"].includes(chosenUnit)) {
+        chosenUnit = "unit";
+      }
+      const ingredientPayload = {
+        name: quickCreateForm.name.trim(),
+        unit: chosenUnit,
+        average_cost: roundUpToCent(quickCreateForm.estimated_cost || 0),
+        is_active: true,
+      };
+      if (targetRestaurant) {
+        ingredientPayload.restaurant = targetRestaurant;
+      }
+      let newIng;
+      try {
+        const resp = await api.post("/menu/ingredients/", ingredientPayload);
+        newIng = resp.data;
+      } catch (createErr) {
+        const findResp = await api.get(`/menu/ingredients/?search=${encodeURIComponent(quickCreateForm.name.trim())}&page_size=10`);
+        const foundList = findResp.data?.results || findResp.data || [];
+        newIng = foundList.find((it) => it.name.toLowerCase() === quickCreateForm.name.trim().toLowerCase());
+        if (!newIng) throw createErr;
+      }
+
+      await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
+        product_id: null,
+        ingredient_id: newIng.id,
+        conversion_factor: effectiveConversionFactor.value,
+        save_supplier_mapping: mappingForm.save_supplier_mapping,
+      });
+
+      toast.add({
+        severity: "success",
+        summary: "Ingrediente Criado e Vinculado!",
+        detail: `'${newIng.name}' cadastrado como ingrediente e associado ao item da nota fiscal.`,
+        life: 4000,
+      });
+
+      mapItemDialogVisible.value = false;
+      await loadMappingOptions();
+      if (inboundDetailData.value?.id) {
+        await openInboundDetail(inboundDetailData.value);
+      }
+      await reload();
+      return;
+    }
+
     const productPayload = {
       name: quickCreateForm.name.trim(),
-      item_type: quickCreateForm.item_type || "INGREDIENT",
+      item_type: quickCreateForm.item_type || "PRODUCT",
       category: quickCreateForm.category || null,
       gtin: gtinVal,
       stock_unit: stockUnit,
-      estimated_cost: quickCreateForm.estimated_cost || 0,
+      estimated_cost: roundUpToCent(quickCreateForm.estimated_cost || 0),
       sale_price: quickCreateForm.sale_price || 0,
       tracking_mode,
       requires_lot_control: quickCreateForm.requires_lot_control,
@@ -2629,7 +3041,9 @@ async function submitQuickCreateAndMap() {
             const findResp = await api.get(`/menu/products/?search=${encodeURIComponent(gtinVal)}&page_size=10`);
             const foundList = findResp.data?.results || findResp.data || [];
             existing = foundList.find((it) => it.gtin && it.gtin.trim() === gtinVal);
-          } catch (_) {}
+          } catch (err) {
+            void err;
+          }
         }
         if (existing) {
           toast.add({
@@ -2695,7 +3109,7 @@ async function submitQuickAssetAndMap() {
       brand: (quickAssetForm.brand || "").trim(),
       model: (quickAssetForm.model || "").trim(),
       stock_unit: (mappingForm.stock_unit || quickAssetForm.stock_unit || "UN").toUpperCase(),
-      estimated_cost: quickAssetForm.purchase_price || 0,
+      estimated_cost: roundUpToCent(quickAssetForm.purchase_price || 0),
       sale_price: 0,
       pricing_unit: "unit",
       product_type: "input",
@@ -2706,7 +3120,10 @@ async function submitQuickAssetAndMap() {
       requires_expiration_control: false,
       default_useful_life_months: quickAssetForm.warranty_months || 12,
       controls_stock: true,
-      is_active: true,
+      is_active: false,
+      available_for_table: false,
+      available_for_counter: false,
+      available_for_delivery: false,
     };
     if (targetRestaurant) {
       payload.restaurant = targetRestaurant;
@@ -2759,6 +3176,16 @@ const receiveForm = reactive({
 });
 
 async function openReceiveModalFromDetail() {
+  if (inboundDetailData.value?.fiscal_status === "CANCELLED" || inboundDetailData.value?.status === "cancelled") {
+    toast.add({
+      severity: "error",
+      summary: "Nota Fiscal Cancelada",
+      detail: "Esta nota fiscal foi cancelada na SEFAZ e não pode ser recebida no estoque.",
+      life: 6000,
+    });
+    return;
+  }
+
   const items = inboundDetailData.value?.items || [];
   const unmapped = items.filter((it) => !it.ingredient && !it.product);
   if (unmapped.length > 0) {
@@ -2774,6 +3201,15 @@ async function openReceiveModalFromDetail() {
   receiveForm.items = items.map((it) => {
     const factor = Number(it.conversion_factor) || 1;
     const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
+    let rawStockUnit = it.product_stock_unit || (it.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : it.ingredient_unit);
+    if (factor !== 1 && rawStockUnit && it.commercial_unit && rawStockUnit.toUpperCase().trim() === it.commercial_unit.toUpperCase().trim()) {
+      rawStockUnit = "UN";
+    }
+    const resolvedStockUnit = (
+      rawStockUnit ||
+      (factor !== 1 ? "UN" : it.commercial_unit) ||
+      "UN"
+    ).toUpperCase();
     return {
       item_id: it.id,
       description: it.description,
@@ -2784,7 +3220,8 @@ async function openReceiveModalFromDetail() {
       requires_serial: it.product_requires_serial_number || false,
       commercial_quantity: it.commercial_quantity,
       commercial_unit: it.commercial_unit,
-      stock_unit: it.product_stock_unit || it.ingredient_unit || it.commercial_unit || "UN",
+      product_stock_unit: it.product_stock_unit,
+      stock_unit: resolvedStockUnit,
       conversion_factor: factor,
       received_quantity: stockQty,
       accepted_quantity: stockQty,
@@ -2989,6 +3426,157 @@ async function retryFetchFullXmlDirect(invoice) {
       detail: norm.message,
       life: 7000,
     });
+  }
+}
+
+// ── Consulta Pontual e Reconciliação de Situação na SEFAZ (consSitNFe) ──
+const checkingSefazId = ref(null);
+const reconcileLoading = ref(false);
+
+async function checkSefazStatusDirect(invoice) {
+  if (!invoice?.id) return;
+  checkingSefazId.value = invoice.id;
+  try {
+    const { data } = await api.post(`/inbound-nfe/${invoice.id}/check-status/`);
+    const res = data.result || data;
+    const isCancelled = data.fiscal_status === "CANCELLED" || data.status === "cancelled" || res.fiscal_status === "CANCELLED" || res.is_cancelled;
+    const isSuccess = data.success ?? res.success;
+    const cstat = data.cstat || res.cstat || data.invoice?.last_status_cstat;
+    const reason = data.reason || res.reason || data.invoice?.last_status_reason;
+    const message = data.message || res.message;
+
+    if (isCancelled) {
+      toast.add({
+        severity: "warn",
+        summary: "NF-e Cancelada na SEFAZ",
+        detail: data.cancellation_reason ? `Nota CANCELADA na SEFAZ. Justificativa: ${data.cancellation_reason}` : (message || `A nota fiscal está CANCELADA na SEFAZ (cStat ${cstat || '101'} - ${reason || 'Cancelamento homologado'}).`),
+        life: 8000,
+      });
+    } else if (isSuccess && (cstat === "100" || res.is_authorized)) {
+      toast.add({
+        severity: "success",
+        summary: "Situação SEFAZ",
+        detail: `NF-e regular e autorizada na SEFAZ (cStat 100 - ${reason || 'Autorizado o uso da NF-e'}).`,
+        life: 5000,
+      });
+    } else {
+      toast.add({
+        severity: "info",
+        summary: "Situação SEFAZ",
+        detail: message || `Retorno SEFAZ: cStat ${cstat || '---'} - ${reason || 'Sem mensagem adicional'}`,
+        life: 6000,
+      });
+    }
+    await reload();
+    await fetchInboundStatusCounts();
+    if (inboundDetailVisible.value && inboundDetailData.value?.id === invoice.id) {
+      await openInboundDetail(invoice);
+    }
+  } catch (err) {
+    const norm = normalizeApiError(err);
+    toast.add({
+      severity: "error",
+      summary: "Falha ao consultar situação na SEFAZ",
+      detail: norm.message,
+      life: 7000,
+    });
+  } finally {
+    checkingSefazId.value = null;
+  }
+}
+
+async function reconcileSelectedSefaz() {
+  if (!selection.value.length) return;
+  reconcileLoading.value = true;
+  const nfeIds = selection.value.map((r) => r.id);
+  try {
+    const { data } = await api.post("/inbound-nfe/reconcile-status/", {
+      nfe_ids: nfeIds,
+    });
+    const { queried = 0, cancelled = 0, authorized = 0, errors = 0 } = data;
+    let detailMsg = `${queried} nota(s) consultada(s): ${authorized} autorizada(s)`;
+    if (cancelled > 0) {
+      detailMsg += `, ${cancelled} cancelada(s) identificada(s)`;
+    }
+    if (errors > 0) {
+      detailMsg += `, ${errors} com erro`;
+    }
+    toast.add({
+      severity: cancelled > 0 ? "warn" : "success",
+      summary: "Reconciliação SEFAZ Concluída",
+      detail: detailMsg,
+      life: 7000,
+    });
+    selection.value = [];
+    await reload();
+    await fetchInboundStatusCounts();
+  } catch (err) {
+    const norm = normalizeApiError(err);
+    toast.add({
+      severity: "error",
+      summary: "Falha na Reconciliação SEFAZ",
+      detail: norm.message,
+      life: 7000,
+    });
+  } finally {
+    reconcileLoading.value = false;
+  }
+}
+
+// ── Cancelamento / Invalidação Manual de NF-e ──────────────────────────
+const manualCancelDialogVisible = ref(false);
+const manualCancelInvoice = ref(null);
+const manualCancelReason = ref("");
+const manualCancelLoading = ref(false);
+
+function openManualCancelDialog(invoice) {
+  if (!invoice) return;
+  manualCancelInvoice.value = invoice;
+  manualCancelReason.value = "";
+  manualCancelDialogVisible.value = true;
+}
+
+async function confirmManualCancel() {
+  if (!manualCancelInvoice.value?.id) return;
+  const reason = (manualCancelReason.value || "").trim();
+  if (!reason) {
+    toast.add({
+      severity: "warn",
+      summary: "Informe a justificativa",
+      detail: "Descreva o motivo do cancelamento manual da nota fiscal.",
+      life: 5000,
+    });
+    return;
+  }
+
+  manualCancelLoading.value = true;
+  try {
+    const { data } = await api.post(`/inbound-nfe/${manualCancelInvoice.value.id}/cancel-manual/`, {
+      reason,
+      protocol: "MANUAL",
+    });
+    toast.add({
+      severity: "success",
+      summary: "NF-e Cancelada",
+      detail: data.message || "A nota fiscal foi marcada como cancelada e o recebimento de estoque bloqueado.",
+      life: 7000,
+    });
+    manualCancelDialogVisible.value = false;
+    await reload();
+    await fetchInboundStatusCounts();
+    if (inboundDetailVisible.value && inboundDetailData.value?.id === manualCancelInvoice.value.id) {
+      await openInboundDetail(manualCancelInvoice.value);
+    }
+  } catch (err) {
+    const norm = normalizeApiError(err);
+    toast.add({
+      severity: "error",
+      summary: "Falha ao cancelar nota fiscal",
+      detail: norm.message,
+      life: 7000,
+    });
+  } finally {
+    manualCancelLoading.value = false;
   }
 }
 
@@ -3654,27 +4242,56 @@ const rowMenuItems = computed(() => {
   if (props.endpoint === "/inbound-nfe/") {
     const row = menuRow.value;
     if (row) {
-      if (row.status === "summary" && row.manifestation_status !== "science_registered") {
+      items.push({
+        label: "Verificar Situação SEFAZ",
+        icon: "pi pi-shield",
+        command: () => checkSefazStatusDirect(row),
+      });
+      if (row.fiscal_status !== "CANCELLED" && row.status !== "cancelled") {
         items.push({
-          label: "Dar ciência e obter XML",
-          icon: "pi pi-bolt",
-          command: () => openScienceConfirmDialog(row),
+          label: "Marcar como Cancelada / Substituída",
+          icon: "pi pi-ban",
+          class: "rpro-menu-danger",
+          command: () => openManualCancelDialog(row),
         });
+        if (row.status === "summary" && row.manifestation_status !== "science_registered") {
+          items.push({
+            label: "Dar ciência e obter XML",
+            icon: "pi pi-bolt",
+            command: () => openScienceConfirmDialog(row),
+          });
+        }
+        if (row.manifestation_status === "science_registered" && row.xml_status === "full_xml_pending") {
+          items.push({
+            label: "Buscar XML Completo (SEFAZ)",
+            icon: "pi pi-cloud-download",
+            command: () => retryFetchFullXmlDirect(row),
+          });
+        }
+        if (row.nsu) {
+          items.push({
+            label: `Buscar XML Completo (NSU ${Number(row.nsu)})`,
+            icon: "pi pi-search",
+            command: () => fetchSpecificNsuDirect(row.nsu),
+          });
+        }
       }
-      if (row.manifestation_status === "science_registered" && row.xml_status === "full_xml_pending") {
-        items.push({
-          label: "Buscar XML Completo (SEFAZ)",
-          icon: "pi pi-cloud-download",
-          command: () => retryFetchFullXmlDirect(row),
-        });
-      }
-      if (row.nsu) {
-        items.push({
-          label: `Buscar XML Completo (NSU ${Number(row.nsu)})`,
-          icon: "pi pi-search",
-          command: () => fetchSpecificNsuDirect(row.nsu),
-        });
-      }
+    }
+  }
+  if (props.endpoint === "/assets/reusables/") {
+    const row = menuRow.value;
+    if (row) {
+      items.push({
+        label: "Registrar Quebra / Baixa",
+        icon: "pi pi-minus-circle",
+        command: () => openReusableLossDialog(row),
+      });
+      items.push({
+        label: "Histórico de Movimentações",
+        icon: "pi pi-history",
+        command: () => openReusableHistoryDialog(row),
+      });
+      items.push({ separator: true });
     }
   }
   // Ações extras declaradas no config (`pro.rowActions`) — ex.: "Ver códigos".
@@ -3764,6 +4381,85 @@ async function removeRow(row) {
   }
 }
 
+// ── Vasilhames & Reutilizáveis (Perdas, Quebras e Histórico) ───────
+const reusableLossVisible = ref(false);
+const reusableLossLoading = ref(false);
+const reusableLossTarget = ref(null);
+const reusableLossTypes = [
+  { label: "Quebra / Avaria (Garrafa trincada/quebrada, copo quebrado)", value: "BREAKAGE" },
+  { label: "Extravio / Sumiço (Vasilhame não devolvido / perda)", value: "LOSS" },
+  { label: "Desgaste / Fim de Vida Útil (Descarte por velhice)", value: "ASSET_DISPOSAL" },
+];
+const reusableLossForm = ref({
+  movement_type: "BREAKAGE",
+  quantity: 1,
+  notes: "",
+});
+
+function openReusableLossDialog(row) {
+  reusableLossTarget.value = row;
+  reusableLossForm.value = {
+    movement_type: "BREAKAGE",
+    quantity: 1,
+    notes: "",
+  };
+  reusableLossVisible.value = true;
+}
+
+async function submitReusableLoss() {
+  if (!reusableLossTarget.value?.id) return;
+  reusableLossLoading.value = true;
+  try {
+    const res = await api.post(`/assets/reusables/${reusableLossTarget.value.id}/record-loss/`, {
+      movement_type: reusableLossForm.value.movement_type,
+      quantity: reusableLossForm.value.quantity,
+      notes: reusableLossForm.value.notes,
+    });
+    toast.add({
+      severity: "success",
+      summary: "Baixa registrada",
+      detail: res?.data?.message || "Movimentação registrada com sucesso.",
+      life: 3500,
+    });
+    reusableLossVisible.value = false;
+    reload();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao registrar baixa",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    reusableLossLoading.value = false;
+  }
+}
+
+const reusableHistoryVisible = ref(false);
+const reusableHistoryLoading = ref(false);
+const reusableHistoryTarget = ref(null);
+const reusableHistoryMovements = ref([]);
+
+async function openReusableHistoryDialog(row) {
+  reusableHistoryTarget.value = row;
+  reusableHistoryMovements.value = [];
+  reusableHistoryVisible.value = true;
+  reusableHistoryLoading.value = true;
+  try {
+    const res = await api.get(`/assets/reusables/${row.id}/history/`);
+    reusableHistoryMovements.value = Array.isArray(res.data) ? res.data : (res.data?.results || []);
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao obter histórico",
+      detail: normalizeApiError(err).message,
+      life: 4000,
+    });
+  } finally {
+    reusableHistoryLoading.value = false;
+  }
+}
+
 /* ── Helpers de exibição ───────────────────────────────────────────── */
 const value = resolveColumnValue;
 const label = mapLabel;
@@ -3826,6 +4522,24 @@ onMounted(() => {
   if (props.endpoint === "/inbound-nfe/") {
     loadDfeSyncInfo();
     fetchInboundStatusCounts();
+    if (!dfeTimerInterval) {
+      dfeTimerInterval = setInterval(() => {
+        nowTick.value = Date.now();
+        if (dfeSyncInfo.value?.next_allowed_at) {
+          const target = new Date(dfeSyncInfo.value.next_allowed_at).getTime();
+          if (target && Date.now() >= target && dfeSyncInfo.value.is_blocked) {
+            loadDfeSyncInfo();
+          }
+        }
+      }, 10000);
+    }
+  }
+});
+
+onBeforeUnmount(() => {
+  if (dfeTimerInterval) {
+    clearInterval(dfeTimerInterval);
+    dfeTimerInterval = null;
   }
 });
 </script>
@@ -4846,21 +5560,45 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.inbound-map__factor-input {
+:deep(.inbound-map__factor-input) {
+  display: inline-flex;
   flex: 1;
   min-width: 90px;
 }
 
-.inbound-map__factor-inner {
+:deep(.inbound-map__factor-inner),
+:deep(.inbound-map__factor-input .p-inputnumber-input) {
   text-align: center !important;
   font-weight: bold !important;
-  font-size: 14px !important;
+  font-size: 15px !important;
   height: 38px !important;
   width: 100% !important;
   background: var(--surface-card) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius-md) !important;
   color: var(--text-strong) !important;
+}
+
+:deep(.inbound-map__factor-inner:focus),
+:deep(.inbound-map__factor-input .p-inputnumber-input:focus) {
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 1px var(--brand) !important;
+  outline: none !important;
+}
+
+:deep(.inbound-map__input-number) {
+  width: 100%;
+  display: inline-flex;
+}
+
+:deep(.inbound-map__input-number .p-inputnumber-input) {
+  width: 100% !important;
+  height: 38px !important;
+  background: var(--surface-card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  color: var(--text-strong) !important;
+  padding: 0 12px !important;
 }
 
 .inbound-map__preview-box {
@@ -4967,6 +5705,99 @@ onMounted(() => {
   background: rgba(16, 185, 129, 0.15);
   border-color: #10b981;
   color: #34d399;
+}
+
+.rpro__inbound-filter-pill--danger.rpro__inbound-filter-pill--active {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.rpro__inbound-cancelled-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  margin-bottom: 16px;
+}
+
+.rpro__inbound-cancelled-icon {
+  color: #ef4444;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.rpro__inbound-cancelled-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.rpro__inbound-cancelled-info strong {
+  color: #ef4444;
+  font-size: 13.5px;
+  letter-spacing: 0.04em;
+}
+
+.rpro__inbound-cancelled-info p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-body);
+  line-height: 1.4;
+}
+
+.rpro__inbound-cancelled-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(239, 68, 68, 0.25);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.rpro__inbound-cancelled-meta strong {
+  color: var(--text-strong);
+  font-size: 11.5px;
+}
+
+.rpro__inbound-cancelled-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  font-weight: var(--weight-bold);
+  font-size: 12px;
+}
+
+.rpro__manual-cancel-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.rpro__manual-cancel-textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
 }
 
 .rpro__inbound-filter-count {
@@ -5108,5 +5939,108 @@ onMounted(() => {
 
 .rpro__pager-size-select:focus {
   border-color: var(--brand);
+}
+
+/* ── Estilos Vasilhames & Reutilizáveis ────────────────────────────── */
+.rpro__row-btn--danger {
+  color: #f43f5e;
+}
+.rpro__row-btn--danger:hover {
+  background: color-mix(in srgb, #f43f5e 14%, transparent);
+  color: #fb7185;
+}
+.rpro__row-btn--info {
+  color: #6366f1;
+}
+.rpro__row-btn--info:hover {
+  background: color-mix(in srgb, #6366f1 14%, transparent);
+  color: #818cf8;
+}
+
+.rpro__reusable-info-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+.rpro__reusable-info-item span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.rpro__reusable-info-item strong {
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.rpro__reusable-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.rpro__reusable-field label {
+  font-size: 12.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+.rpro__reusable-field small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.rpro__reusable-history-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  text-align: center;
+}
+.rpro__reusable-history-card span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.rpro__reusable-history-card strong {
+  font-size: 16px;
+  font-weight: var(--weight-bold);
+}
+.rpro__reusable-table-wrap {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.rpro__reusable-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.rpro__reusable-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-card);
+  padding: 10px 12px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  z-index: 1;
+}
+.rpro__reusable-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-body);
+}
+.rpro__reusable-table tr:hover td {
+  background: var(--surface-hover);
 }
 </style>

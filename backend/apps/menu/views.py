@@ -91,6 +91,10 @@ class ProductViewSet(BaseTenantViewSet):
                 return queryset.none()
         if restaurant_id:
             queryset = queryset.filter(restaurants__id=restaurant_id)
+        exclude_item_types = self.request.query_params.get("exclude_item_types")
+        if exclude_item_types:
+            types = [t.strip() for t in exclude_item_types.split(",") if t.strip()]
+            queryset = queryset.exclude(item_type__in=types)
         return queryset.distinct()
 
     def create(self, request, *args, **kwargs):

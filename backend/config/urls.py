@@ -24,7 +24,7 @@ from apps.accounts.views import (
 )
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
-from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet
+from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet, ReusableAssetViewSet
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
@@ -139,6 +139,7 @@ router.register("stock/receipts", GoodsReceiptViewSet, basename="goods-receipts"
 router.register("stock/lots", InventoryLotViewSet, basename="inventory-lots")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
 router.register("assets/location-history", AssetLocationHistoryViewSet, basename="asset-location-history")
+router.register("assets/reusables", ReusableAssetViewSet, basename="reusable-assets")
 router.register("assets", AssetViewSet, basename="assets")
 router.register("notifications", NotificationViewSet, basename="notifications")
 

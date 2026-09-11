@@ -328,6 +328,7 @@ class StockMovement(TenantModel):
     TYPE_INVENTORY_ADJUSTMENT_NEGATIVE = "INVENTORY_ADJUSTMENT_NEGATIVE"
     TYPE_INITIAL_BALANCE = "INITIAL_BALANCE"
     TYPE_ASSET_DISPOSAL = "ASSET_DISPOSAL"
+    TYPE_NFE_CANCELLATION_REVERSAL = "NFE_CANCELLATION_REVERSAL"
 
     # Retrocompatibilidade
     TYPE_IN = "in"
@@ -338,6 +339,7 @@ class StockMovement(TenantModel):
 
     TYPE_CHOICES = [
         (TYPE_PURCHASE_ENTRY, "Entrada por Compra (NF-e)"),
+        (TYPE_NFE_CANCELLATION_REVERSAL, "Estorno por Cancelamento de NF-e"),
         (TYPE_SALE_OUTPUT, "Saída por Venda"),
         (TYPE_PRODUCTION_CONSUMPTION, "Consumo em Ficha Técnica"),
         (TYPE_TRANSFER_IN, "Transferência (Entrada)"),
@@ -462,6 +464,14 @@ class StockMovement(TenantModel):
         blank=True,
         related_name="transfers_in",
         on_delete=models.SET_NULL
+    )
+    original_movement = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        related_name="reversals",
+        on_delete=models.PROTECT,
+        help_text="Movimento original de entrada que foi objeto deste estorno/reversão."
     )
     reason = models.TextField(blank=True)
 

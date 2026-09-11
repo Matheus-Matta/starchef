@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 
 from rest_framework import serializers
 
@@ -103,6 +103,24 @@ class RecipeSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
 
 
+class CeilDecimalField(serializers.DecimalField):
+    """
+    Campo decimal que arredonda 1 centavo para cima caso o valor enviado
+    possua mais de 2 casas decimais (fração de centavo) usando ROUND_CEILING.
+    Garante que payloads com frações decimais sejam aceitos e arredondados
+    corretamente ao cadastrar produto a partir de notas fiscais.
+    """
+
+    def to_internal_value(self, data):
+        if data is not None and data != "":
+            try:
+                val = Decimal(str(data))
+                data = val.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+            except Exception:
+                pass
+        return super().to_internal_value(data)
+
+
 class ProductSerializer(TenantModelSerializer):
     category_name = serializers.SerializerMethodField()
     sector_name = serializers.CharField(source="sector.name", read_only=True, default=None)
@@ -111,9 +129,25 @@ class ProductSerializer(TenantModelSerializer):
     recipe = RecipeSerializer(read_only=True)
     internal_code = serializers.CharField(required=False, allow_blank=True, default="")
     sale_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, default=Decimal("0.00"))
+    estimated_cost = CeilDecimalField(max_digits=12, decimal_places=2, required=False, default=Decimal("0.00"))
     # Adicionais vinculados a este produto (gerenciados na edição do produto).
     addons = serializers.SerializerMethodField()
     restaurant_names = serializers.SerializerMethodField()
+    current_stock = serializers.SerializerMethodField()
+    current_stock_display = serializers.SerializerMethodField()
+
+    def get_current_stock(self, obj):
+        from apps.stock.models import StockMovement
+        from django.db.models import Sum
+        val = StockMovement.all_objects.filter(product=obj, deleted_at__isnull=True).aggregate(total=Sum("quantity"))["total"]
+        return float(val) if val is not None else 0.0
+
+    def get_current_stock_display(self, obj):
+        qty = self.get_current_stock(obj)
+        unit = (obj.stock_unit or "UN").upper()
+        if qty == int(qty):
+            return f"{int(qty)} {unit}"
+        return f"{qty:.2f} {unit}"
 
     def get_addons(self, obj):
         return [
@@ -204,6 +238,24 @@ class ProductSerializer(TenantModelSerializer):
 
 
 class IngredientSerializer(TenantModelSerializer):
+    current_stock = serializers.SerializerMethodField()
+    current_stock_display = serializers.SerializerMethodField()
+
+    def get_current_stock(self, obj):
+        from apps.stock.models import StockMovement
+        from django.db.models import Sum
+        val = StockMovement.all_objects.filter(ingredient=obj, deleted_at__isnull=True).aggregate(total=Sum("quantity"))["total"]
+        return float(val) if val is not None else 0.0
+
+    def get_current_stock_display(self, obj):
+        qty = self.get_current_stock(obj)
+        unit = (obj.unit or "UN").upper()
+        if unit == "UNIT":
+            unit = "UN"
+        if qty == int(qty):
+            return f"{int(qty)} {unit}"
+        return f"{qty:.2f} {unit}"
+
     class Meta:
         model = Ingredient
         fields = "__all__"

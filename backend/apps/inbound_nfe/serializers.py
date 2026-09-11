@@ -45,7 +45,9 @@ class DFeSyncStateSerializer(TenantModelSerializer):
 
 class InboundNFeItemSerializer(TenantModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True, default=None)
+    ingredient_unit = serializers.CharField(source="ingredient.unit", read_only=True, default=None)
     product_name = serializers.CharField(source="product.name", read_only=True, default=None)
+    product_stock_unit = serializers.CharField(source="product.stock_unit", read_only=True, default=None)
     product_item_type = serializers.CharField(source="product.item_type", read_only=True, default=None)
     product_tracking_mode = serializers.CharField(source="product.tracking_mode", read_only=True, default=None)
     product_requires_lot_control = serializers.BooleanField(source="product.requires_lot_control", read_only=True, default=False)
@@ -61,7 +63,8 @@ class InboundNFeItemSerializer(TenantModelSerializer):
             "description", "ncm", "cest", "cfop", "commercial_unit",
             "commercial_quantity", "commercial_unit_value", "product_total",
             "discount", "freight", "insurance", "other_expenses",
-            "tax_data", "ingredient", "ingredient_name", "product", "product_name",
+            "tax_data", "ingredient", "ingredient_name", "ingredient_unit",
+            "product", "product_name", "product_stock_unit",
             "product_item_type", "product_tracking_mode", "product_requires_lot_control", "product_requires_serial_number",
             "product_brand", "product_model", "is_asset",
             "conversion_factor", "received_quantity", "stock_movement"
@@ -83,6 +86,7 @@ class InboundNFeSerializer(TenantModelSerializer):
     unmapped_items_count = serializers.SerializerMethodField()
     has_unmapped_items = serializers.SerializerMethodField()
     latest_manifestation = serializers.SerializerMethodField()
+    fiscal_status_display = serializers.CharField(source="get_fiscal_status_display", read_only=True)
 
     class Meta:
         model = InboundNFe
@@ -91,6 +95,9 @@ class InboundNFeSerializer(TenantModelSerializer):
             "supplier_cnpj", "supplier_name", "total_products",
             "total_invoice", "status", "distribution_type", "xml_status",
             "manifestation_status", "receiving_status",
+            "fiscal_status", "fiscal_status_display", "cancelled_at",
+            "cancellation_protocol", "cancellation_reason",
+            "last_status_check_at", "last_status_cstat", "last_status_reason",
             "stock_applied_at", "items", "items_count",
             "unmapped_items_count", "has_unmapped_items", "latest_manifestation"
         ]

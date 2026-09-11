@@ -11,8 +11,11 @@ from apps.assets.serializers import (
     AssetDisposalSerializer,
     AssetLocationHistorySerializer,
     AssetSerializer,
+    ReusableAssetMovementSerializer,
+    ReusableAssetSerializer,
 )
-from apps.stock.models import StockLocation
+from apps.menu.models import Product
+from apps.stock.models import StockLocation, StockMovement
 
 
 class AssetViewSet(BaseTenantViewSet):
@@ -226,3 +229,112 @@ class AssetLocationHistoryViewSet(BaseTenantViewSet):
     filterset_fields = ["asset", "to_location"]
     ordering_fields = ["moved_at"]
     ordering = ["-moved_at"]
+
+
+class ReusableAssetViewSet(BaseTenantViewSet):
+    serializer_class = ReusableAssetSerializer
+    queryset = Product.objects.none()
+    search_fields = ["name", "internal_code", "brand", "model"]
+    ordering_fields = ["name", "internal_code", "created_at"]
+    ordering = ["name"]
+
+    def get_queryset(self):
+        account = getattr(self.request, "account", None)
+        if account is None or not self.request.user.is_authenticated:
+            return Product.all_objects.none()
+        return (
+            Product.all_objects
+            .filter(account=account, item_type=Product.ITEM_REUSABLE, deleted_at__isnull=True)
+            .distinct()
+        )
+
+    def perform_create(self, serializer):
+        account = getattr(self.request, "account", None)
+        profile = getattr(self.request.user, "profile", None)
+        restaurant = getattr(profile, "restaurant", None)
+        branch = getattr(profile, "branch", None)
+        serializer.save(
+            account=account,
+            restaurant=restaurant,
+            branch=branch,
+            item_type=Product.ITEM_REUSABLE,
+            tracking_mode=Product.TRACKING_QUANTITY,
+            is_active=False,
+            available_for_table=False,
+            available_for_counter=False,
+            available_for_delivery=False,
+            controls_stock=True,
+            created_by=self.request.user,
+            updated_by=self.request.user,
+        )
+
+    @action(detail=True, methods=["post"], url_path="record-loss")
+    def record_loss(self, request, pk=None):
+        from decimal import Decimal
+        product = self.get_object()
+        raw_qty = request.data.get("quantity")
+        if not raw_qty:
+            return Response({"error": "Informe a quantidade."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            qty = Decimal(str(raw_qty))
+            if qty <= 0:
+                raise ValueError()
+        except Exception:
+            return Response({"error": "A quantidade deve ser um número positivo maior que zero."}, status=status.HTTP_400_BAD_REQUEST)
+
+        movement_type = request.data.get("movement_type", StockMovement.TYPE_BREAKAGE)
+        if movement_type not in [StockMovement.TYPE_BREAKAGE, StockMovement.TYPE_LOSS, StockMovement.TYPE_ASSET_DISPOSAL]:
+            movement_type = StockMovement.TYPE_BREAKAGE
+
+        location_id = request.data.get("location")
+        location = None
+        if location_id:
+            location = StockLocation.all_objects.filter(account=request.account, id=location_id).first()
+        if not location:
+            last_move = StockMovement.all_objects.filter(product=product, location__isnull=False).order_by("-created_at").first()
+            if last_move:
+                location = last_move.location
+            else:
+                location = StockLocation.all_objects.filter(account=request.account, is_active=True).first()
+
+        if not location:
+            return Response({"error": "Nenhum local de estoque encontrado para registrar a perda."}, status=status.HTTP_400_BAD_REQUEST)
+
+        notes = (request.data.get("notes") or "").strip()
+
+        with transaction.atomic():
+            movement = StockMovement.objects.create(
+                account=request.account,
+                restaurant=product.restaurant,
+                branch=product.branch,
+                product=product,
+                location=location,
+                operator=request.user,
+                movement_type=movement_type,
+                quantity=-abs(qty),
+                stock_unit=(product.stock_unit or "UN").upper(),
+                unit_cost=product.estimated_cost or Decimal("0.00"),
+                total_cost=(product.estimated_cost or Decimal("0.00")) * qty,
+                reason=notes or ("Quebra de vasilhame/material" if movement_type == StockMovement.TYPE_BREAKAGE else "Perda/extravio de vasilhame/material"),
+            )
+
+        serializer = self.get_serializer(product)
+        return Response({
+            "success": True,
+            "message": f"Baixa de {qty} {product.stock_unit or 'UN'} registrada com sucesso!",
+            "movement_id": str(movement.id),
+            "item": serializer.data,
+        })
+
+    @action(detail=True, methods=["get"], url_path="history")
+    def history(self, request, pk=None):
+        product = self.get_object()
+        moves = (
+            StockMovement.all_objects
+            .filter(product=product, deleted_at__isnull=True)
+            .select_related("operator", "location", "nfe")
+            .order_by("-created_at")
+        )
+        data = ReusableAssetMovementSerializer(moves, many=True).data
+        return Response(data)
+

@@ -45,3 +45,15 @@ export function mapLabel(value, map) {
   }
   return mapped;
 }
+
+/**
+ * Arredonda para 2 casas decimais, sempre arredondando 1 centavo para cima
+ * caso o valor possua mais de 2 casas decimais (fração de centavo).
+ * Ex.: 4.16 -> 4.16 | 4.1601 -> 4.17 | 4.1667 -> 4.17 | 10.00 -> 10.00
+ */
+export function roundUpToCent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return 0;
+  const scaled = Math.round(num * 1e6) / 1e4;
+  return Math.ceil(scaled) / 100;
+}

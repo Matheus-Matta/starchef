@@ -357,3 +357,103 @@ class InboundNFeCompleteFlowTestCase(TestCase):
         )
         self.assertTrue(hasattr(asset2, "disposal"))
         self.assertEqual(asset2.disposal.disposal_type, AssetDisposal.DISPOSAL_SCRAPPED)
+
+    def test_weighted_average_cost_and_manager_sale_price(self):
+        """
+        Garante que:
+        1. Compras sucessivas (1 un @ 10 e 1 un @ 12) resultam em custo médio ponderado exato de 11.
+        2. O sale_price definido pelo gerente NÃO é sobrescrito pelo custo de compra.
+        """
+        water = Product.objects.create(
+            account=self.account,
+            restaurant=self.restaurant,
+            branch=self.branch,
+            name="Agua Mineral Crystal 500ml",
+            internal_code="AGUA-01",
+            stock_unit="UN",
+            item_type=Product.ITEM_RESALE,
+            sale_price=Decimal("6.00"),  # Definido pelo gerente
+            estimated_cost=Decimal("0.00"),
+            current_average_cost=Decimal("0.0000"),
+        )
+
+        # 1ª NF-e: 1 UN a 10.00
+        nfe1 = InboundNFe.objects.create(
+            account=self.account,
+            restaurant=self.restaurant,
+            branch=self.branch,
+            number="1001",
+            series="1",
+            access_key="33260803521835000185550000000010011000000001",
+            supplier_name="Distribuidora de Bebidas",
+            supplier_cnpj="12345678000190",
+            total_invoice=Decimal("10.00"),
+            total_products=Decimal("10.00"),
+            status=InboundNFe.STATUS_PENDING_RECEIPT,
+        )
+        item1 = InboundNFeItem.objects.create(
+            account=self.account,
+            restaurant=self.restaurant,
+            branch=self.branch,
+            invoice=nfe1,
+            item_number=1,
+            description="AGUA MINERAL 500ML",
+            commercial_unit="UN",
+            commercial_quantity=Decimal("1.000"),
+            commercial_unit_value=Decimal("10.00"),
+            product_total=Decimal("10.00"),
+            product=water,
+            conversion_factor=Decimal("1"),
+        )
+        receive_invoice(
+            invoice_id=nfe1.id,
+            user=self.user,
+            location=self.storage_location,
+            items_data=[{"item_id": str(item1.id), "accepted_quantity": Decimal("1.000")}],
+        )
+
+        water.refresh_from_db()
+        self.assertEqual(water.current_average_cost, Decimal("10.0000"))
+        self.assertEqual(water.last_purchase_cost, Decimal("10.0000"))
+        self.assertEqual(water.sale_price, Decimal("6.00"))  # Mantém valor do gerente
+
+        # 2ª NF-e: 1 UN a 12.00
+        nfe2 = InboundNFe.objects.create(
+            account=self.account,
+            restaurant=self.restaurant,
+            branch=self.branch,
+            number="1002",
+            series="1",
+            access_key="33260803521835000185550000000010021000000002",
+            supplier_name="Distribuidora de Bebidas",
+            supplier_cnpj="12345678000190",
+            total_invoice=Decimal("12.00"),
+            total_products=Decimal("12.00"),
+            status=InboundNFe.STATUS_PENDING_RECEIPT,
+        )
+        item2 = InboundNFeItem.objects.create(
+            account=self.account,
+            restaurant=self.restaurant,
+            branch=self.branch,
+            invoice=nfe2,
+            item_number=1,
+            description="AGUA MINERAL 500ML",
+            commercial_unit="UN",
+            commercial_quantity=Decimal("1.000"),
+            commercial_unit_value=Decimal("12.00"),
+            product_total=Decimal("12.00"),
+            product=water,
+            conversion_factor=Decimal("1"),
+        )
+        receive_invoice(
+            invoice_id=nfe2.id,
+            user=self.user,
+            location=self.storage_location,
+            items_data=[{"item_id": str(item2.id), "accepted_quantity": Decimal("1.000")}],
+        )
+
+        water.refresh_from_db()
+        # (1 * 10 + 1 * 12) / 2 = 11.0000
+        self.assertEqual(water.current_average_cost, Decimal("11.0000"))
+        self.assertEqual(water.last_purchase_cost, Decimal("12.0000"))
+        self.assertEqual(water.sale_price, Decimal("6.00"))  # Permanece o valor do gerente!

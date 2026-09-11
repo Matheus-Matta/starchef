@@ -228,8 +228,68 @@ class InboundNFe(TenantModel):
         default=0
     )
 
+    FISCAL_UNKNOWN = "UNKNOWN"
+    FISCAL_AUTHORIZED = "AUTHORIZED"
+    FISCAL_CANCELLED = "CANCELLED"
+    FISCAL_DENIED = "DENIED"
+
+    FISCAL_STATUS_CHOICES = [
+        (FISCAL_UNKNOWN, "Desconhecido"),
+        (FISCAL_AUTHORIZED, "Autorizada"),
+        (FISCAL_CANCELLED, "Cancelada"),
+        (FISCAL_DENIED, "Denegada"),
+    ]
+
     status = models.CharField(
         max_length=30
+    )
+
+    fiscal_status = models.CharField(
+        max_length=20,
+        choices=FISCAL_STATUS_CHOICES,
+        default=FISCAL_AUTHORIZED,
+        db_index=True,
+        help_text="Situação fiscal da NF-e perante a SEFAZ."
+    )
+
+    cancelled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data e hora em que o cancelamento foi homologado pela SEFAZ."
+    )
+
+    cancellation_protocol = models.CharField(
+        max_length=60,
+        blank=True,
+        help_text="Protocolo de homologação do evento de cancelamento."
+    )
+
+    cancellation_reason = models.TextField(
+        blank=True,
+        help_text="Justificativa ou motivo do cancelamento registrado na SEFAZ."
+    )
+
+    cancellation_event_nsu = models.CharField(
+        max_length=15,
+        blank=True,
+        help_text="NSU do evento de cancelamento distribuído pela SEFAZ."
+    )
+
+    last_status_check_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data e hora da última consulta de situação pontual realizada na SEFAZ."
+    )
+
+    last_status_cstat = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Último cStat retornado pela consulta de situação da SEFAZ."
+    )
+
+    last_status_reason = models.TextField(
+        blank=True,
+        help_text="Último xMotivo retornado pela consulta de situação da SEFAZ."
     )
 
     distribution_type = models.CharField(
@@ -284,6 +344,191 @@ class InboundNFe(TenantModel):
                 name="unique_inbound_nfe_by_account"
             )
         ]
+
+
+class NFeEvent(TenantModel):
+    """
+    Armazena todos os eventos fiscais vinculados a uma chave de acesso (NF-e).
+    Especialmente:
+    - 110111: Cancelamento da NF-e
+    - 110110: Carta de Correção Eletrônica (CC-e)
+    - 210210: Ciência da Operação
+    - 210200: Confirmação da Operação
+    - etc.
+    """
+    EVENT_CANCEL = "110111"
+    EVENT_CCE = "110110"
+    EVENT_SCIENCE = "210210"
+    EVENT_CONFIRMATION = "210200"
+
+    PROCESSING_PENDING = "PENDING"
+    PROCESSING_PROCESSED = "PROCESSED"
+    PROCESSING_IGNORED = "IGNORED"
+    PROCESSING_ERROR = "ERROR"
+    PROCESSING_CHOICES = [
+        (PROCESSING_PENDING, "Pendente"),
+        (PROCESSING_PROCESSED, "Processado"),
+        (PROCESSING_IGNORED, "Ignorado"),
+        (PROCESSING_ERROR, "Erro"),
+    ]
+
+    nfe = models.ForeignKey(
+        "inbound_nfe.InboundNFe",
+        null=True,
+        blank=True,
+        related_name="events",
+        on_delete=models.SET_NULL,
+        help_text="NF-e associada a este evento (pode ser nula se o evento chegar antes da nota)."
+    )
+    access_key = models.CharField(
+        max_length=44,
+        db_index=True,
+        help_text="Chave de acesso da NF-e à qual o evento pertence."
+    )
+    nsu = models.CharField(
+        max_length=15,
+        blank=True,
+        help_text="NSU do evento recebido no DFe."
+    )
+    schema = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Schema do evento (ex: procEventoNFe_v1.00.xsd, resEvento_v1.01.xsd)."
+    )
+    event_code = models.CharField(
+        max_length=10,
+        db_index=True,
+        help_text="Código do tipo de evento (tpEvento) - Ex: 110111."
+    )
+    event_description = models.CharField(
+        max_length=120,
+        blank=True,
+        help_text="Descrição do evento (descEvento ou xEvento)."
+    )
+    sequence = models.PositiveIntegerField(
+        default=1,
+        help_text="Número sequencial do evento para a chave (nSeqEvento)."
+    )
+    event_datetime = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data e hora do evento (dhEvento)."
+    )
+    protocol = models.CharField(
+        max_length=60,
+        blank=True,
+        help_text="Número do protocolo de homologação do evento (nProt)."
+    )
+    sefaz_cstat = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Código de status retornado pela SEFAZ para o evento (cStat)."
+    )
+    sefaz_reason = models.TextField(
+        blank=True,
+        help_text="Motivo retornado pela SEFAZ (xMotivo)."
+    )
+    xml = models.TextField(
+        help_text="XML bruto do evento recebido."
+    )
+    processed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data/hora em que as consequências operacionais foram aplicadas."
+    )
+    processing_status = models.CharField(
+        max_length=20,
+        choices=PROCESSING_CHOICES,
+        default=PROCESSING_PENDING,
+        db_index=True
+    )
+    processing_error = models.TextField(
+        blank=True
+    )
+
+    class Meta:
+        verbose_name = "Evento de NF-e"
+        verbose_name_plural = "Eventos de NF-e"
+        ordering = ["-event_datetime", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "access_key", "event_code", "sequence"],
+                name="unique_nfe_event_by_account_key_code_seq"
+            )
+        ]
+
+    def __str__(self):
+        return f"Evento {self.event_code} ({self.event_description}) - Chave {self.access_key[:8]}... (Seq: {self.sequence})"
+
+
+class NFeIssue(TenantModel):
+    """
+    Armazena pendências operacionais críticas decorrentes de eventos fiscais.
+    Exemplo: NF-e cancelada após o estoque já ter sido consumido ou após patrimônio ter sido tombado.
+    """
+    TYPE_CANCELLED_AFTER_RECEIPT = "CANCELLED_AFTER_RECEIPT"
+    TYPE_CANCELLED_AFTER_STOCK_MOVEMENT = "CANCELLED_AFTER_STOCK_MOVEMENT"
+    TYPE_CANCELLED_WITH_ASSETS = "CANCELLED_WITH_ASSETS"
+    TYPE_STATUS_INCONSISTENCY = "STATUS_INCONSISTENCY"
+
+    TYPE_CHOICES = [
+        (TYPE_CANCELLED_AFTER_RECEIPT, "NF-e Cancelada Após Recebimento"),
+        (TYPE_CANCELLED_AFTER_STOCK_MOVEMENT, "NF-e Cancelada com Estoque Já Movimentado/Consumido"),
+        (TYPE_CANCELLED_WITH_ASSETS, "NF-e Cancelada com Bens Patrimoniais Criados"),
+        (TYPE_STATUS_INCONSISTENCY, "Inconsistência de Situação Fiscal"),
+    ]
+
+    STATUS_OPEN = "OPEN"
+    STATUS_RESOLVED = "RESOLVED"
+    STATUS_IGNORED = "IGNORED"
+    STATUS_CHOICES = [
+        (STATUS_OPEN, "Em Aberto"),
+        (STATUS_RESOLVED, "Resolvido"),
+        (STATUS_IGNORED, "Ignorado / Justificado"),
+    ]
+
+    nfe = models.ForeignKey(
+        "inbound_nfe.InboundNFe",
+        related_name="issues",
+        on_delete=models.CASCADE
+    )
+    issue_type = models.CharField(
+        max_length=40,
+        choices=TYPE_CHOICES,
+        db_index=True
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_OPEN,
+        db_index=True
+    )
+    description = models.TextField(
+        help_text="Detalhamento da pendência e instruções de resolução para o gerente."
+    )
+    resolved_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+"
+    )
+    resolution_notes = models.TextField(
+        blank=True,
+        help_text="Justificativa ou nota explicativa de resolução da ocorrência."
+    )
+
+    class Meta:
+        verbose_name = "Pendência Operacional de NF-e"
+        verbose_name_plural = "Pendências Operacionais de NF-e"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Pendência {self.issue_type} - NF-e {self.nfe.number} ({self.status})"
 
 
 class NFeManifestation(TenantModel):

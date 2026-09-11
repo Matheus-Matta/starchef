@@ -277,6 +277,7 @@ const groups = computed(() =>
         canManage.value ? { id: "estoque", label: "Movimentações", icon: "package" } : null,
         canManage.value ? { id: "lotes-estoque", label: "Lotes & Validades (FEFO)", icon: "layers" } : null,
         canManage.value ? { id: "patrimonio", label: "Patrimônio & Ativos", icon: "cpu" } : null,
+        canManage.value ? { id: "reutilizaveis", label: "Vasilhames & Reutilizáveis", icon: "recycle" } : null,
         canManage.value ? { id: "locais-estoque", label: "Locais de estoque", icon: "clipboard-list" } : null,
       ].filter(Boolean),
     },

@@ -208,7 +208,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "sync-inbound-nfe-sefaz": {
         "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",
-        "schedule": 3 * 3600.0,  # Consulta automática na SEFAZ a cada 3 horas
+        "schedule": 5 * 3600.0,  # Consulta automática na SEFAZ a cada 5 horas
     },
 }
 

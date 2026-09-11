@@ -541,7 +541,16 @@
 
           <!-- Seleção de Ingrediente -->
           <div v-if="mappingForm.targetType === 'ingredient'" class="rpage__field rpage__field--full">
-            <label class="rpage__label">Ingrediente de Estoque</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="rpage__label mb-0">Ingrediente de Estoque</label>
+              <button
+                type="button"
+                class="text-xs text-emerald-400 hover:text-emerald-300 underline font-medium cursor-pointer"
+                @click="openQuickCreateIngredient"
+              >
+                + Cadastrar Novo Ingrediente
+              </button>
+            </div>
             <Dropdown
               v-model="mappingForm.ingredient_id"
               :options="mappingIngredients"
@@ -589,7 +598,7 @@
                 type="button"
                 class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
                 :class="mappingForm.conversion_mode === 'multiply' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
-                @click="mappingForm.conversion_mode = 'multiply'"
+                @click="onSelectMultiplyMode"
               >
                 <i class="pi pi-times text-xs" /> Multiplicador
               </button>
@@ -685,6 +694,50 @@
       </template>
     </Dialog>
 
+    <!-- Modal Cadastro Rápido de Ingrediente -->
+    <Dialog
+      v-model:visible="showQuickCreateIngDialog"
+      header="Cadastrar Novo Ingrediente"
+      :modal="true"
+      :style="{ width: '420px' }"
+    >
+      <div class="flex flex-col gap-3 py-2">
+        <div>
+          <label class="rpage__label">Nome do Ingrediente *</label>
+          <InputText v-model="quickIngName" class="w-full" placeholder="Ex: Massa de Pastel" />
+        </div>
+        <div>
+          <label class="rpage__label">Unidade de Medida</label>
+          <Dropdown
+            v-model="quickIngUnit"
+            :options="[
+              { label: 'Gramas (g)', value: 'g' },
+              { label: 'Quilos (kg)', value: 'kg' },
+              { label: 'Unidades (unit)', value: 'unit' },
+              { label: 'Litros (l)', value: 'l' },
+              { label: 'Mililitros (ml)', value: 'ml' },
+            ]"
+            option-label="label"
+            option-value="value"
+            class="w-full"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="quickIngSubmitting" @click="showQuickCreateIngDialog = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="quickIngSubmitting || !quickIngName.trim()"
+          @click="submitQuickCreateIngredient"
+        >
+          <i :class="quickIngSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Salvar Ingrediente
+        </button>
+      </template>
+    </Dialog>
+
     <!-- ── Modal de Confirmação de Entrada no Estoque / Recebimento Físico ── -->
     <Dialog
       v-model:visible="receiveDialogVisible"
@@ -757,7 +810,13 @@
                       :min="0.0001"
                       :max-fraction-digits="4"
                       input-class="text-center w-16 p-1 text-xs font-mono font-bold"
-                      @update:model-value="it.received_quantity = Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))"
+                      @update:model-value="(val) => {
+                        const f = Number(val || 1);
+                        it.received_quantity = Number((Number(it.commercial_quantity) * f).toFixed(4));
+                        if (f !== 1 && it.stock_unit === it.commercial_unit) {
+                          it.stock_unit = it.product_stock_unit || 'UN';
+                        }
+                      }"
                     />
                   </div>
                 </td>
@@ -858,7 +917,7 @@ import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 import { useToast } from "primevue/usetoast";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
-import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel } from "../utils/format";
+import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel, roundUpToCent } from "../utils/format";
 import { getByPath, resolveColumnValue } from "../utils/object";
 
 const props = defineProps({
@@ -1055,7 +1114,7 @@ const calculatedUnitCostInStock = computed(() => {
   const total = Number(mappingItem.value.product_total) || 0;
   const finalQty = calculatedStockQty.value;
   if (!finalQty || finalQty <= 0) return 0;
-  return total / finalQty;
+  return roundUpToCent(total / finalQty);
 });
 
 const mappingIngredients = ref([]);
@@ -1063,8 +1122,65 @@ const mappingProducts = ref([]);
 const mappingLoading = ref(false);
 const mappingSubmitting = ref(false);
 
-async function loadMappingOptions() {
-  if (mappingIngredients.value.length) return;
+const showQuickCreateIngDialog = ref(false);
+const quickIngName = ref("");
+const quickIngUnit = ref("g");
+const quickIngSubmitting = ref(false);
+
+function openQuickCreateIngredient() {
+  quickIngName.value = (mappingItem.value?.description || "").trim();
+  const commU = (mappingItem.value?.commercial_unit || "").toUpperCase().trim();
+  if (commU === "KG") {
+    quickIngUnit.value = "g";
+  } else if (commU === "L") {
+    quickIngUnit.value = "ml";
+  } else {
+    quickIngUnit.value = "unit";
+  }
+  showQuickCreateIngDialog.value = true;
+}
+
+async function submitQuickCreateIngredient() {
+  if (!quickIngName.value.trim()) return;
+  quickIngSubmitting.value = true;
+  try {
+    const payload = {
+      name: quickIngName.value.trim(),
+      unit: quickIngUnit.value,
+      average_cost: calculatedUnitCostInStock.value || 0,
+      is_active: true,
+    };
+    const res = await api.post("/menu/ingredients/", payload);
+    const newIng = res.data;
+    await loadMappingOptions(true);
+    mappingForm.targetType = "ingredient";
+    mappingForm.ingredient_id = newIng.id;
+    mappingForm.stock_unit = quickIngUnit.value.toUpperCase();
+    if (mappingItem.value?.commercial_unit?.toUpperCase() === "KG" && quickIngUnit.value === "g") {
+      mappingForm.conversion_mode = "multiply";
+      mappingForm.conversion_factor = 1000;
+    }
+    showQuickCreateIngDialog.value = false;
+    toast.add({
+      severity: "success",
+      summary: "Ingrediente Criado",
+      detail: `'${newIng.name}' cadastrado e selecionado com sucesso!`,
+      life: 3000,
+    });
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Erro ao criar ingrediente",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    quickIngSubmitting.value = false;
+  }
+}
+
+async function loadMappingOptions(force = false) {
+  if (!force && mappingIngredients.value.length && mappingProducts.value.length) return;
   mappingLoading.value = true;
   try {
     const [ingRes, prodRes] = await Promise.all([
@@ -1080,14 +1196,27 @@ async function loadMappingOptions() {
   }
 }
 
+function onSelectMultiplyMode() {
+  mappingForm.conversion_mode = "multiply";
+  const commU = (mappingItem.value?.commercial_unit || "").toUpperCase().trim();
+  if (!mappingForm.stock_unit || mappingForm.stock_unit.toUpperCase().trim() === commU) {
+    mappingForm.stock_unit = "UN";
+  }
+}
+
 async function openMapModal(item) {
   mappingItem.value = item;
-  mappingForm.targetType = item.product ? "product" : "ingredient";
+  mappingForm.targetType = item.product ? "product" : (item.ingredient ? "ingredient" : "product");
   mappingForm.ingredient_id = item.ingredient || null;
   mappingForm.product_id = item.product || null;
-  mappingForm.stock_unit = (item.product_stock_unit || item.ingredient_unit || item.commercial_unit || "UN").toUpperCase();
-
   const factor = Number(item.conversion_factor) || 1;
+  let rawStockUnit = item.product_stock_unit || (item.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : item.ingredient_unit);
+  const commU = (item.commercial_unit || "UN").toUpperCase().trim();
+  const isPackage = ["CX", "FD", "DZ", "PCT", "CXA", "FARDO", "PACOTE", "ROLO"].includes(commU);
+  if (factor !== 1 && rawStockUnit && rawStockUnit.toUpperCase().trim() === commU) {
+    rawStockUnit = "UN";
+  }
+  mappingForm.stock_unit = (rawStockUnit || (factor !== 1 || isPackage ? "UN" : commU) || "UN").toUpperCase();
   if (factor === 1) {
     mappingForm.conversion_mode = "direct";
     mappingForm.conversion_factor = 1;
@@ -1173,6 +1302,15 @@ async function openReceiveModal() {
   receiveForm.items = (record.value?.items || []).map((it) => {
     const factor = Number(it.conversion_factor) || 1;
     const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
+    let rawStockUnit = it.product_stock_unit || (it.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : it.ingredient_unit);
+    if (factor !== 1 && rawStockUnit && it.commercial_unit && rawStockUnit.toUpperCase().trim() === it.commercial_unit.toUpperCase().trim()) {
+      rawStockUnit = "UN";
+    }
+    const resolvedStockUnit = (
+      rawStockUnit ||
+      (factor !== 1 ? "UN" : it.commercial_unit) ||
+      "UN"
+    ).toUpperCase();
     return {
       item_id: it.id,
       description: it.description,
@@ -1183,7 +1321,8 @@ async function openReceiveModal() {
       requires_serial: it.product_requires_serial_number || false,
       commercial_quantity: it.commercial_quantity,
       commercial_unit: it.commercial_unit,
-      stock_unit: it.product_stock_unit || it.ingredient_unit || it.commercial_unit || "UN",
+      product_stock_unit: it.product_stock_unit,
+      stock_unit: resolvedStockUnit,
       conversion_factor: factor,
       received_quantity: stockQty,
       accepted_quantity: stockQty,

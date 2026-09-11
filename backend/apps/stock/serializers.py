@@ -76,6 +76,7 @@ class InventoryLotSerializer(TenantModelSerializer):
 class StockMovementSerializer(TenantModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
+    item_name = serializers.SerializerMethodField()
     location_name = serializers.CharField(source="location.name", read_only=True)
     operator_name = serializers.CharField(source="operator.get_full_name", read_only=True)
     lot_number = serializers.CharField(source="inventory_lot.lot_number", read_only=True)
@@ -85,4 +86,11 @@ class StockMovementSerializer(TenantModelSerializer):
         model = StockMovement
         fields = "__all__"
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
+
+    def get_item_name(self, obj):
+        if obj.ingredient_id and obj.ingredient:
+            return obj.ingredient.name
+        if obj.product_id and obj.product:
+            return obj.product.name
+        return "-"
 

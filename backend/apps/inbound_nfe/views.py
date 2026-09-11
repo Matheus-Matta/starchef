@@ -36,6 +36,7 @@ class InboundNFeFilterSet(django_filters.FilterSet):
     supplier_name = django_filters.CharFilter(field_name="supplier_name", lookup_expr="icontains")
     supplier_cnpj = django_filters.CharFilter(field_name="supplier_cnpj", lookup_expr="icontains")
     status = django_filters.CharFilter(field_name="status", lookup_expr="exact")
+    fiscal_status = django_filters.CharFilter(field_name="fiscal_status", lookup_expr="exact")
     nsu = django_filters.CharFilter(field_name="nsu", lookup_expr="exact")
     restaurant = django_filters.UUIDFilter(field_name="restaurant", lookup_expr="exact")
     mapping_filter = django_filters.CharFilter(method="filter_by_mapping")
@@ -44,6 +45,7 @@ class InboundNFeFilterSet(django_filters.FilterSet):
         model = InboundNFe
         fields = [
             "status",
+            "fiscal_status",
             "supplier_cnpj",
             "supplier_name",
             "number",
@@ -58,14 +60,17 @@ class InboundNFeFilterSet(django_filters.FilterSet):
         ]
 
     def filter_by_mapping(self, queryset, name, value):
+        from django.db.models import Q
         if value == "unmapped":
-            return queryset.filter(status=InboundNFe.STATUS_PENDING_MAPPING)
+            return queryset.filter(status=InboundNFe.STATUS_PENDING_MAPPING).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif value == "ready":
-            return queryset.filter(status=InboundNFe.STATUS_PENDING_RECEIPT)
+            return queryset.filter(status=InboundNFe.STATUS_PENDING_RECEIPT).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif value in ("received", "finalized"):
             return queryset.filter(status=InboundNFe.STATUS_RECEIVED)
         elif value == "summary":
             return queryset.filter(status=InboundNFe.STATUS_SUMMARY)
+        elif value == "cancelled":
+            return queryset.filter(Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED))
         return queryset
 
 
@@ -95,19 +100,22 @@ class InboundNFeViewSet(BaseTenantViewSet):
             or self.request.query_params.get("filter")
         )
         if mapping_filter == "unmapped":
-            qs = qs.filter(status=InboundNFe.STATUS_PENDING_MAPPING)
+            qs = qs.filter(status=InboundNFe.STATUS_PENDING_MAPPING).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif mapping_filter == "ready":
-            qs = qs.filter(status=InboundNFe.STATUS_PENDING_RECEIPT)
+            qs = qs.filter(status=InboundNFe.STATUS_PENDING_RECEIPT).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif mapping_filter in ("received", "finalized"):
             qs = qs.filter(status=InboundNFe.STATUS_RECEIVED)
         elif mapping_filter == "summary":
             qs = qs.filter(status=InboundNFe.STATUS_SUMMARY)
+        elif mapping_filter == "cancelled":
+            from django.db.models import Q
+            qs = qs.filter(Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED))
         return qs.distinct()
 
     @action(detail=False, methods=["get"], url_path="status-counts")
     def status_counts(self, request, *args, **kwargs):
         """Retorna a contagem de notas por status para alimentar os filtros."""
-        from django.db.models import Count
+        from django.db.models import Count, Q
         base_qs = super().get_queryset()
         restaurant_id = request.query_params.get("restaurant")
         if restaurant_id:
@@ -120,16 +128,24 @@ class InboundNFeViewSet(BaseTenantViewSet):
         if issue_before:
             base_qs = base_qs.filter(issue_date__date__lte=issue_before)
 
+        cancelled_count = base_qs.filter(
+            Q(fiscal_status=InboundNFe.FISCAL_CANCELLED) | Q(status=InboundNFe.STATUS_CANCELLED)
+        ).count()
+
         counts = dict(
-            base_qs.values("status").annotate(total=Count("id")).values_list("status", "total")
+            base_qs.exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
+            .values("status")
+            .annotate(total=Count("id"))
+            .values_list("status", "total")
         )
-        total_all = sum(counts.values())
+        total_all = sum(counts.values()) + cancelled_count
         return Response({
             "all": total_all,
             "unmapped": counts.get(InboundNFe.STATUS_PENDING_MAPPING, 0),
             "ready": counts.get(InboundNFe.STATUS_PENDING_RECEIPT, 0),
             "received": counts.get(InboundNFe.STATUS_RECEIVED, 0),
             "summary": counts.get(InboundNFe.STATUS_SUMMARY, 0),
+            "cancelled": cancelled_count,
         })
 
     @action(detail=False, methods=["post", "get"])
@@ -166,7 +182,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
                 "is_all_restaurants": True,
                 "restaurant_name": "Todos os Restaurantes",
                 "last_sync_at": latest_state.last_sync_at if latest_state else None,
-                "sync_interval_hours": 3,
+                "sync_interval_hours": 5,
                 "message": "Visualizando todas as unidades. Cada restaurante possui seu próprio controle de NSU e certificado digital.",
                 "invoices_count": InboundNFe.objects.filter(account=request.account).count(),
             })
@@ -263,20 +279,26 @@ class InboundNFeViewSet(BaseTenantViewSet):
                     blocked_reason = f"Consulta bloqueada temporariamente. Próxima requisição permitida após às {dh_str} (faltam {minutes_remaining} min)."
 
             # Regra 2: Intervalo mínimo configurável desde a última sincronização bem-sucedida na SEFAZ
-            elif state.last_sync_at and (now - state.last_sync_at) < timedelta(minutes=global_cfg.cooldown_interval_minutes):
-                if state.last_cstat in ("137", "138") and (state.ult_nsu == state.max_nsu or state.last_cstat == "137"):
-                    is_blocked = True
-                    allowed_time = state.last_sync_at + timedelta(minutes=global_cfg.cooldown_interval_minutes)
-                    minutes_remaining = max(1, int((allowed_time - now).total_seconds() // 60))
-                    dh_str = allowed_time.strftime("%H:%M:%S (%d/%m/%Y)")
-                    try:
-                        blocked_reason = global_cfg.blocked_message_template.format(
-                            time=dh_str,
-                            minutes=minutes_remaining,
-                            interval=global_cfg.cooldown_interval_minutes,
-                        )
-                    except Exception:
-                        blocked_reason = f"A última consulta foi realizada recentemente. Para proteger seu CNPJ contra penalidades da SEFAZ, aguarde até {dh_str} (faltam {minutes_remaining} min)."
+            elif state.last_sync_at:
+                min_interval = (
+                    global_cfg.cooldown_no_docs_minutes
+                    if state.last_cstat == "137"
+                    else global_cfg.cooldown_interval_minutes
+                )
+                if (now - state.last_sync_at) < timedelta(minutes=min_interval):
+                    if state.last_cstat in ("137", "138") and (state.ult_nsu == state.max_nsu or state.last_cstat == "137"):
+                        is_blocked = True
+                        allowed_time = state.last_sync_at + timedelta(minutes=min_interval)
+                        minutes_remaining = max(1, int((allowed_time - now).total_seconds() // 60))
+                        dh_str = allowed_time.strftime("%H:%M:%S (%d/%m/%Y)")
+                        try:
+                            blocked_reason = global_cfg.blocked_message_template.format(
+                                time=dh_str,
+                                minutes=minutes_remaining,
+                                interval=min_interval,
+                            )
+                        except Exception:
+                            blocked_reason = f"A última consulta foi realizada recentemente. Para proteger seu CNPJ contra penalidades da SEFAZ, aguarde até {dh_str} (faltam {minutes_remaining} min)."
 
         if request.method == "POST":
             if is_blocked:
@@ -325,7 +347,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
             "is_blocked": is_blocked,
             "blocked_reason": blocked_reason,
             "minutes_remaining": minutes_remaining,
-            "sync_interval_hours": 3,
+            "sync_interval_hours": 5,
             "invoices_count": InboundNFe.objects.filter(account=request.account, restaurant_id=restaurant_id).count(),
         })
 
@@ -590,6 +612,13 @@ class InboundNFeViewSet(BaseTenantViewSet):
     def receive(self, request, pk=None, *args, **kwargs):
         """Conclui a nota, gerando o movimento de estoque."""
         invoice = self.get_object()
+
+        if invoice.fiscal_status == InboundNFe.FISCAL_CANCELLED or invoice.status == InboundNFe.STATUS_CANCELLED:
+            return Response(
+                {"error": "Esta NF-e foi cancelada na SEFAZ e não pode ser recebida nem dar entrada em estoque."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = ReceiveInvoiceRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -617,6 +646,103 @@ class InboundNFeViewSet(BaseTenantViewSet):
             })
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="check-status")
+    def check_status(self, request, pk=None, *args, **kwargs):
+        """Consulta a situação atual da NF-e diretamente na SEFAZ."""
+        from apps.inbound_nfe.services.status_query import query_nfe_status_sefaz
+
+        invoice = self.get_object()
+        result = query_nfe_status_sefaz(invoice, actor=request.user)
+
+        invoice.refresh_from_db()
+        serializer = self.get_serializer(invoice)
+        return Response({
+            "success": result.get("success", False),
+            "fiscal_status": invoice.fiscal_status,
+            "status": invoice.status,
+            "cstat": result.get("cstat") or invoice.last_status_cstat,
+            "reason": result.get("reason") or invoice.last_status_reason,
+            "protocol": result.get("protocol") or invoice.cancellation_protocol,
+            "cancellation_protocol": invoice.cancellation_protocol,
+            "cancellation_reason": invoice.cancellation_reason,
+            "cancelled_at": invoice.cancelled_at,
+            "message": result.get("reason") or invoice.last_status_reason or "Consulta realizada com sucesso.",
+            "result": result,
+            "invoice": serializer.data,
+        })
+
+    @action(detail=False, methods=["post"], url_path="reconcile-status")
+    def reconcile_status(self, request, *args, **kwargs):
+        """
+        Reconcilia a situação de um lote de notas fiscais na SEFAZ.
+        Pode receber 'ids' ou 'nfe_ids': list[str]. Se omitido, consulta até 20 notas pendentes.
+        """
+        from apps.inbound_nfe.services.status_query import query_nfe_status_sefaz
+
+        ids = request.data.get("ids") or request.data.get("nfe_ids", [])
+        qs = self.get_queryset()
+        if ids:
+            qs = qs.filter(id__in=ids)
+        else:
+            qs = qs.exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED).filter(status__in=[
+                InboundNFe.STATUS_PENDING_MAPPING,
+                InboundNFe.STATUS_PENDING_RECEIPT,
+                InboundNFe.STATUS_SUMMARY,
+            ])[:20]
+
+        results = []
+        for inv in qs:
+            if inv.access_key and len(inv.access_key) == 44:
+                res = query_nfe_status_sefaz(inv, actor=request.user)
+                results.append({
+                    "id": str(inv.id),
+                    "access_key": inv.access_key,
+                    "number": inv.number,
+                    "cstat": res.get("cstat"),
+                    "is_cancelled": res.get("is_cancelled", False),
+                    "fiscal_status": res.get("fiscal_status"),
+                    "reason": res.get("reason"),
+                })
+
+        return Response({
+            "total_checked": len(results),
+            "results": results,
+        })
+
+    @action(detail=True, methods=["post"], url_path="cancel-manual")
+    def cancel_manual(self, request, pk=None, *args, **kwargs):
+        """
+        Permite ao operador cancelar/invalidar manualmente uma NF-e no sistema
+        (ex: cancelada comercialmente pelo emitente fora do prazo regulamentar de 24h da SEFAZ).
+        Aplica bloqueio de estoque, estorno compensatório e auditoria completa.
+        """
+        from apps.inbound_nfe.services.cancellation import apply_cancellation
+
+        invoice = self.get_object()
+        reason = (request.data.get("reason") or "Cancelada manualmente pelo operador").strip()
+        protocol = (request.data.get("protocol") or "MANUAL").strip()
+
+        result = apply_cancellation(
+            invoice=invoice,
+            protocol=protocol,
+            reason=reason,
+            actor=request.user,
+        )
+
+        invoice.refresh_from_db()
+        serializer = self.get_serializer(invoice)
+        return Response({
+            "success": True,
+            "message": "Nota fiscal marcada como cancelada com sucesso.",
+            "fiscal_status": invoice.fiscal_status,
+            "status": invoice.status,
+            "cancellation_protocol": invoice.cancellation_protocol,
+            "cancellation_reason": invoice.cancellation_reason,
+            "cancelled_at": invoice.cancelled_at,
+            "cancellation_result": result,
+            "invoice": serializer.data,
+        })
 
     @action(detail=False, methods=["get", "post"], url_path="export-xml")
     def export_xml(self, request, *args, **kwargs):

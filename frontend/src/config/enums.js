@@ -279,6 +279,7 @@ export const INBOUND_NFE_STATUS_LABELS = {
   MANIFESTED: { label: "Manifestada", tone: "info" },
   STOCKED: { label: "Entrada Concluída", tone: "success" },
   CANCELED: { label: "Cancelada", tone: "danger" },
+  CANCELLED: { label: "Cancelada", tone: "danger" },
 };
 
 export const ASSET_STATUS_LABELS = {
