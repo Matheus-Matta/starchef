@@ -3,6 +3,7 @@ import { computed, reactive, ref, unref } from "vue";
 import { api } from "../services/api";
 import { applyTenantDefaults } from "../utils/tenantDefaults";
 import { normalizeApiError } from "../utils/apiError";
+import { validateForm } from "../utils/formValidation";
 
 /**
  * Presenter (MVP) da pagina unica de recurso, nos tres modos: ver / criar / editar.
@@ -184,6 +185,16 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     saving.value = true;
     saveError.value = "";
     fieldErrors.value = {};
+    // Regras que o servidor aplicaria de qualquer jeito (obrigatorio, inteiro,
+    // nao-negativo, CPF/CNPJ, campo <= outro): barrar aqui poupa o round-trip e
+    // aponta o campo certo em vez de um erro solto.
+    const clientErrors = validateForm(formFields, formData);
+    if (Object.keys(clientErrors).length) {
+      fieldErrors.value = clientErrors;
+      saveError.value = "Corrija os campos destacados antes de salvar.";
+      saving.value = false;
+      return null;
+    }
     try {
       let payload;
       try {

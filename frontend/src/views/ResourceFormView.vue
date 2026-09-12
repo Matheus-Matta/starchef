@@ -324,7 +324,7 @@
         </div>
       </div>
 
-      <!-- Secoes especificas de produto: variacoes (editaveis) e ficha tecnica (leitura) -->
+      <!-- Seções específicas do produto. A ficha técnica é editada separadamente. -->
       <div v-if="isProduct" class="rpage__extra">
         <ProductVariationsEditor
           v-if="recordId"
@@ -343,17 +343,22 @@
         />
         <p v-else class="rpage__hint">Salve o produto para poder adicionar variacoes e adicionais.</p>
 
-        <!-- Ficha técnica (leitura) — mesmo layout das variações/adicionais -->
-        <RecipeItemsEditor
-          v-if="record?.recipe?.id"
-          :key="`ptech-${record.recipe.id}`"
-          :recipe-id="record.recipe.id"
-          :initial-items="record.recipe.items || []"
-          readonly
-        />
+        <div v-if="recordId" class="rpage__link-card">
+          <div>
+            <h3>Ficha técnica de preparo</h3>
+            <p>Modo de preparo, rendimento, insumos e quantidades ficam em um cadastro próprio.</p>
+          </div>
+          <Button
+            :label="record?.recipe?.id ? 'Abrir ficha técnica' : 'Criar ficha técnica'"
+            icon="pi pi-book"
+            severity="secondary"
+            outlined
+            @click="goToPreparationSheet"
+          />
+        </div>
       </div>
 
-      <!-- Ficha tecnica editavel da receita (Sprint 3 · STC-034/035) -->
+      <!-- Insumos editáveis da ficha técnica (Sprint 3 · STC-034/035) -->
       <div v-else-if="isRecipe" class="rpage__extra">
         <RecipeItemsEditor
           v-if="recordId"
@@ -362,7 +367,7 @@
           :initial-items="record?.items || []"
           :readonly="isView"
         />
-        <p v-else class="rpage__hint">Salve a receita para poder adicionar ingredientes.</p>
+        <p v-else class="rpage__hint">Salve a ficha técnica para poder adicionar insumos.</p>
       </div>
 
       <!-- Configuração fiscal: tela própria (emitente, CSC, certificado, Focus
@@ -535,6 +540,10 @@ const service = new ResourceService({ endpoint: props.endpoint, globalScope: pro
 const { isCreate, isEdit, isView, record, formData, fetching, fetchError, saving, saveError, fieldErrors, remoteOptions, reset, fetchRecord, save, loadRemoteOptions } =
   useResourceForm({ service, formFields: visibleFormFields.value, mode: effectiveMode, recordId, sharedAcrossRestaurants: props.sharedAcrossRestaurants });
 
+if (props.mode === "create" && props.endpoint === "/menu/recipes/" && route.query.product) {
+  formData.product = String(route.query.product);
+}
+
 const modeLabel = computed(() => (isCreate.value ? "Novo" : isEdit.value ? "Editar" : "Detalhe"));
 const skeletonCount = computed(() => visibleFormFields.value.length || props.columns.length || 6);
 
@@ -593,6 +602,12 @@ const isProduct = computed(() => resolveDetailType(props.endpoint) === "product"
 const isRecipe = computed(() => props.endpoint.includes("/menu/recipes"));
 const isRestaurant = computed(() => props.endpoint === "/restaurants/");
 const hasFinanceiro = computed(() => auth.hasModule("financeiro"));
+function goToPreparationSheet() {
+  const recipeId = record.value?.recipe?.id;
+  router.push(recipeId
+    ? { name: "receitas--edit", params: { id: recipeId } }
+    : { name: "receitas--create", query: { product: recordId.value } });
+}
 function goToFiscalConfig() {
   router.push({ name: "restaurante-fiscal", params: { id: recordId.value } });
 }

@@ -83,11 +83,28 @@ describe("ações de notas fiscais", () => {
 });
 
 describe("configuração do produto", () => {
+  const products = resources.find((resource) => resource.name === "cardapio");
+
   it("escolhe o perfil fiscal do catálogo compartilhado (relação 1:N)", () => {
-    const products = resources.find((resource) => resource.name === "cardapio");
     const fiscal = products.formFields.find((field) => field.name === "fiscal_profile");
 
     expect(fiscal).toMatchObject({ type: "remote-dropdown", endpoint: "/fiscal/profiles/" });
+  });
+
+  it("mantém no produto somente o setor e a minutagem de produção", () => {
+    const productionFields = products.formFields
+      .filter((field) => field.section === "Produção")
+      .map((field) => field.name);
+
+    expect(productionFields).toEqual(["production_sector", "average_preparation_time"]);
+    expect(products.formFields.map((field) => field.name)).not.toEqual(
+      expect.arrayContaining([
+        "controls_stock",
+        "stock_ingredient",
+        "stock_consumption_quantity",
+        "stock_consumption_unit",
+      ]),
+    );
   });
 });
 
@@ -190,16 +207,13 @@ describe("vinculo de consumo de insumo (Fase 0 do plano de estoque)", () => {
     }
   });
 
-  it("o produto vendido direto declara o insumo que baixa", () => {
-    // O recurso de produtos se chama "cardapio" no config.
-    const product = byName("cardapio");
-    const names = product.formFields.map((field) => field.name);
+  it("a ficha técnica concentra preparo, insumos e baixa de estoque", () => {
+    const recipe = byName("receitas");
+    const names = recipe.formFields.map((field) => field.name);
+
+    expect(recipe.title).toBe("Fichas técnicas de preparo");
     expect(names).toEqual(
-      expect.arrayContaining([
-        "stock_ingredient",
-        "stock_consumption_quantity",
-        "stock_consumption_unit",
-      ]),
+      expect.arrayContaining(["product", "yield_quantity", "preparation_instructions", "auto_deduct_stock"]),
     );
   });
 });

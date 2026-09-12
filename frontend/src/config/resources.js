@@ -112,11 +112,11 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do SLA", type: "text", required: true, full: true, section: "SLA" },
+      { name: "name", label: "Nome do SLA", type: "text", maxlength: 120, required: true, full: true, section: "SLA" },
       { name: "sla_type", label: "Tipo", type: "dropdown", options: SLA_TYPE_OPTIONS, default: "prep", section: "SLA" },
       { name: "priority", label: "Prioridade", type: "dropdown", options: SLA_PRIORITY_OPTIONS, default: "normal", section: "SLA" },
       { name: "target_minutes", label: "Tempo-alvo (min)", type: "number", default: 15, section: "Tempos" },
-      { name: "alert_minutes", label: "Limite de alerta (min)", type: "number", default: 10, section: "Tempos" },
+      { name: "alert_minutes", label: "Limite de alerta (min)", type: "number", default: 10, section: "Tempos", notGreaterThan: { field: "target_minutes", message: "O limite de alerta deve ser menor ou igual ao tempo-alvo." } },
       // Vincula o SLA a vários restaurantes via MultiSelect do PrimeVue (STC-066).
       { name: "restaurants", label: "Restaurantes vinculados", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", full: true, section: "Abrangência" },
       // Um SLA é reutilizável: pode ser aplicado a vários quadros (estações) e/ou colunas.
@@ -136,7 +136,7 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome da estacao", type: "text", required: true },
+      { name: "name", label: "Nome da estacao", type: "text", maxlength: 100, required: true },
       { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", required: true, globalScope: true },
       { name: "sla_minutes", label: "SLA em minutos", type: "number", default: 15 },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
@@ -161,8 +161,8 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "number", label: "Numero da mesa", type: "text", required: true },
-      { name: "code", label: "Código de barras/QR (opcional)", type: "text", placeholder: "Auto = número da mesa" },
+      { name: "number", label: "Numero da mesa", type: "text", maxlength: 20, required: true },
+      { name: "code", label: "Código de barras/QR (opcional)", type: "text", maxlength: 40, placeholder: "Auto = número da mesa" },
       { name: "sector", label: "Setor", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", required: true },
       { name: "capacity", label: "Capacidade (lugares)", type: "number", default: 4 },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
@@ -190,9 +190,9 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "number", label: "Número da comanda (opcional)", type: "number", placeholder: "Auto = próximo número do restaurante" },
-      { name: "code", label: "Código de barras/QR (opcional)", type: "text", placeholder: "Auto a partir do número" },
-      { name: "customer_name", label: "Cliente (opcional)", type: "text" },
+      { name: "number", label: "Número da comanda (opcional)", type: "number", min: 1, placeholder: "Auto = próximo número do restaurante" },
+      { name: "code", label: "Código de barras/QR (opcional)", type: "text", maxlength: 40, placeholder: "Auto a partir do número" },
+      { name: "customer_name", label: "Cliente (opcional)", type: "text", maxlength: 120 },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
     ],
   },
@@ -207,11 +207,11 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome completo", type: "text", required: true, full: true, section: "Dados pessoais" },
-      { name: "document", label: "CPF", type: "text", placeholder: "000.000.000-00", section: "Dados pessoais" },
+      { name: "name", label: "Nome completo", type: "text", maxlength: 180, required: true, full: true, section: "Dados pessoais" },
+      { name: "document", label: "CPF", type: "text", maxlength: 20, document: "cpf", placeholder: "000.000.000-00", section: "Dados pessoais" },
       { name: "birth_date", label: "Data de nascimento", type: "text", inputType: "date", section: "Dados pessoais" },
-      { name: "phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Contato" },
-      { name: "email", label: "Email", type: "text", inputType: "email", section: "Contato" },
+      { name: "phone", label: "Telefone", type: "text", required: true, maxlength: 32, placeholder: "(11) 90000-0000", section: "Contato" },
+      { name: "email", label: "Email", type: "text", maxlength: 254, inputType: "email", section: "Contato" },
       { name: "internal_notes", label: "Observacoes", type: "textarea", full: true, section: "Contato" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Contato" },
       { name: "address.label", label: "Identificacao", type: "text", default: "Principal", placeholder: "Casa, trabalho...", section: "Endereco principal" },
@@ -256,12 +256,12 @@ export const resources = [
     ],
     formFields: [
       // Seções (STC-021): informações básicas, preços, classificação, disponibilidade, produção.
-      { name: "name", label: "Nome do produto", type: "text", required: true, full: true, section: "Informações básicas" },
+      { name: "name", label: "Nome do produto", type: "text", maxlength: 180, required: true, full: true, section: "Informações básicas" },
       { name: "restaurants", label: "Restaurantes que utilizam o produto", type: "remote-multiselect", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", globalScope: true, required: true, full: true, section: "Informações básicas", hint: "Disponibilize o mesmo produto em vários restaurantes da franquia." },
-      { name: "internal_code", label: "Codigo interno", type: "text", section: "Informações básicas" },
+      { name: "internal_code", label: "Codigo interno", type: "text", required: true, maxlength: 60, section: "Informações básicas" },
       // Texto, nunca número: `0000012345670` e `12345670` são códigos
       // diferentes, e perder os zeros faria o leitor não achar o produto.
-      { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
+      { name: "ean", label: "Código de barras (EAN/GTIN)", type: "text", maxlength: 32, placeholder: "7891000100103", section: "Informações básicas", hint: "Opcional e único na conta. O PDV usa este código na leitura do scanner; o dígito verificador é conferido no salvamento." },
       { name: "description", label: "Descricao", type: "textarea", full: true, section: "Informações básicas" },
       { name: "logo_p_upload", label: "Imagem principal", type: "file", uploadMode: "avatar", previewField: "logo_p", full: true, section: "Imagens", hint: "Usada como capa do produto na tela inicial e no cardapio." },
       { name: "photo_uploads", label: "Galeria do produto", type: "file", uploadMode: "gallery", multiple: true, fileLimit: 20, removeField: "photo_remove_ids", previewField: "photo_list", full: true, section: "Imagens", hint: "Arraste ate 20 fotos. Use a lixeira para remover uma foto salva ou ainda pendente." },
@@ -275,14 +275,8 @@ export const resources = [
       // Perfil fiscal (NCM/CFOP/CSOSN/aliquotas) usado ao emitir NFC-e. O mesmo
       // perfil serve vários produtos (1:N) e é cadastrado em Financeiro › Perfis fiscais.
       { name: "fiscal_profile", label: "Perfil fiscal", type: "remote-dropdown", endpoint: "/fiscal/profiles/", optionLabel: "name", optionValue: "id", placeholder: "Sem perfil (item sai sem tributação)", module: "financeiro", section: "Classificação", quickCreate: "fiscal-profile", hint: "Grupo tributário reutilizável. Cadastre em Financeiro › Perfis fiscais ou crie um novo no \"+\"." },
-      { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção e logística" },
-      // Campo do Modulo Logistica: controle de estoque so faz sentido com o modulo.
-      { name: "controls_stock", label: "Controla estoque", type: "boolean", default: false, module: "logistica", section: "Produção e logística" },
-      // Produto vendido direto da prateleira (refrigerante em lata): não tem
-      // ficha técnica, mas move saldo. Produto COM receita ignora este vínculo.
-      { name: "stock_ingredient", label: "Insumo consumido (venda direta)", type: "remote-dropdown", endpoint: "/menu/ingredients/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum (usa a ficha técnica)", module: "logistica", section: "Produção e logística", hint: "Só para produtos sem receita. Com ficha técnica, ela é que manda." },
-      { name: "stock_consumption_quantity", label: "Quantidade por unidade vendida", type: "decimal", module: "logistica", section: "Produção e logística" },
-      { name: "stock_consumption_unit", label: "Unidade do consumo", type: "dropdown", options: UNIT_OPTIONS, module: "logistica", section: "Produção e logística" },
+      { name: "production_sector", label: "Produção", type: "dropdown", options: SECTOR_OPTIONS, default: "kitchen", section: "Produção" },
+      { name: "average_preparation_time", label: "Tempo de preparo (min)", type: "number", default: 15, section: "Produção" },
       // Switches de disponibilidade — alinhados em grid na seção "Disponibilidade".
       { name: "available_for_table", label: "Disponivel para mesa", type: "boolean", default: true, section: "Disponibilidade" },
       { name: "available_for_counter", label: "Disponivel para balcao", type: "boolean", default: true, section: "Disponibilidade" },
@@ -310,7 +304,7 @@ export const resources = [
     ],
     formFields: [
       { name: "logo_upload", label: "Logo da categoria", type: "file", uploadMode: "avatar", previewField: "logo_url", full: true, section: "Imagem" },
-      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "name", label: "Nome", type: "text", maxlength: 120, required: true },
       { name: "display_order", label: "Ordem de exibicao", type: "number", default: 0 },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
     ],
@@ -337,7 +331,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
+      { name: "name", label: "Nome", type: "text", maxlength: 160, required: true, section: "Identificação" },
       { name: "unit", label: "Unidade de medida", type: "dropdown", options: UNIT_OPTIONS, section: "Identificação" },
       { name: "supplier", label: "Fornecedor padrão", type: "remote-dropdown", endpoint: "/stock/suppliers/", optionLabel: "name", optionValue: "id", placeholder: "Sem fornecedor padrão", module: "logistica", section: "Logística" },
       // Estoque mínimo (STC-031/032): opcional e só aparece com o Módulo Logística.
@@ -360,19 +354,19 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true, section: "Identificação" },
-      { name: "legal_name", label: "Razão social", type: "text", section: "Identificação" },
-      { name: "tax_id", label: "CPF / CNPJ", type: "text", section: "Identificação" },
-      { name: "contact_name", label: "Pessoa de contato", type: "text", section: "Contato" },
-      { name: "phone", label: "Telefone", type: "text", section: "Contato" },
-      { name: "email", label: "E-mail", type: "text", inputType: "email", section: "Contato" },
+      { name: "name", label: "Nome", type: "text", maxlength: 160, required: true, section: "Identificação" },
+      { name: "legal_name", label: "Razão social", type: "text", maxlength: 180, section: "Identificação" },
+      { name: "tax_id", label: "CPF / CNPJ", type: "text", maxlength: 18, section: "Identificação" },
+      { name: "contact_name", label: "Pessoa de contato", type: "text", maxlength: 120, section: "Contato" },
+      { name: "phone", label: "Telefone", type: "text", maxlength: 30, section: "Contato" },
+      { name: "email", label: "E-mail", type: "text", maxlength: 254, inputType: "email", section: "Contato" },
       { name: "notes", label: "Observações", type: "textarea", full: true, section: "Observações" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
     ],
   },
   {
     name: "receitas",
-    title: "Receitas",
+    title: "Fichas técnicas de preparo",
     endpoint: "/menu/recipes/",
     columns: [
       { key: "product.name", label: "Produto" },
@@ -382,11 +376,12 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "product", label: "Produto", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", required: true, section: "Receita" },
-      { name: "yield_quantity", label: "Rendimento (porções)", type: "decimal", default: 1, section: "Receita" },
-      // Baixa automática de estoque é comportamento do Módulo Logística.
-      { name: "auto_deduct_stock", label: "Baixa automática de estoque", type: "boolean", default: true, module: "logistica", section: "Receita" },
-      { name: "is_active", label: "Ativa", type: "boolean", default: true, section: "Receita" },
+      { name: "product", label: "Produto", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", required: true, section: "Identificação" },
+      { name: "yield_quantity", label: "Rendimento (porções)", type: "decimal", default: 1, section: "Identificação" },
+      { name: "preparation_instructions", label: "Modo de preparo (passo a passo)", type: "textarea", rows: 8, full: true, section: "Preparo", placeholder: "Descreva cada etapa do preparo, na ordem de execução." },
+      // Todo consumo de estoque do produto é definido pelos insumos da ficha.
+      { name: "auto_deduct_stock", label: "Baixar insumos automaticamente", type: "boolean", default: true, module: "logistica", section: "Logística" },
+      { name: "is_active", label: "Ativa", type: "boolean", default: true, section: "Status" },
     ],
   },
   {
@@ -423,8 +418,8 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do menu", type: "text", required: true, section: "Identificacao" },
-      { name: "slug", label: "Apelido (handle)", type: "text", section: "Identificacao", placeholder: "navegacao-principal", hint: "Como os blocos do site apontam para este menu. Vazio ao criar gera a partir do nome." },
+      { name: "name", label: "Nome do menu", type: "text", maxlength: 120, required: true, section: "Identificacao" },
+      { name: "slug", label: "Apelido (handle)", type: "text", maxlength: 140, section: "Identificacao", placeholder: "navegacao-principal", hint: "Como os blocos do site apontam para este menu. Vazio ao criar gera a partir do nome." },
       { name: "menu_type", label: "Para que serve", type: "dropdown", options: MENU_TYPE_OPTIONS, default: "showcase", section: "Identificacao", hint: "Filtra o que o editor sugere em cada bloco. Nao impede usar o menu em outro lugar." },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificacao" },
       { name: "source", label: "Origem dos itens", type: "dropdown", options: MENU_SOURCE_OPTIONS, default: "manual", section: "Conteudo", hint: "\"A mao\" usa os itens cadastrados. As demais respondem sozinhas e nunca ficam desatualizadas." },
@@ -463,14 +458,14 @@ export const resources = [
       { name: "item_type", label: "Tipo do item", type: "dropdown", options: MENU_ITEM_TYPE_OPTIONS, default: "product", required: true, section: "Conteudo", hint: "Decide qual campo abaixo e obrigatorio." },
       { name: "product", label: "Produto", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum", section: "Conteudo" },
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma", section: "Conteudo" },
-      { name: "url", label: "Link", type: "text", full: true, placeholder: "/promocoes ou https://...", section: "Conteudo" },
+      { name: "url", label: "Link", type: "text", maxlength: 500, full: true, placeholder: "/promocoes ou https://...", section: "Conteudo" },
       // `previewField` é obrigatório aqui: sem ele a prévia cai no padrão
       // `record.url` — que num item de menu é o LINK de destino, não a foto.
       // O formulário mostrava um <img src="/combos"> quebrado no lugar da
       // imagem salva, e a foto parecia nunca ter sido gravada.
       { name: "image", label: "Imagem", type: "file", uploadMode: "avatar", previewField: "image", accept: "image/jpeg,image/png,image/webp,image/avif,image/gif", section: "Conteudo", hint: "Obrigatoria no tipo Imagem. Nos demais, substitui a foto padrao do produto/categoria." },
-      { name: "title", label: "Titulo exibido", type: "text", section: "Aparencia", hint: "Vazio herda o nome do produto/categoria." },
-      { name: "subtitle", label: "Subtitulo", type: "text", full: true, section: "Aparencia" },
+      { name: "title", label: "Titulo exibido", type: "text", maxlength: 180, section: "Aparencia", hint: "Vazio herda o nome do produto/categoria." },
+      { name: "subtitle", label: "Subtitulo", type: "text", maxlength: 255, full: true, section: "Aparencia" },
       { name: "opens_in_new_tab", label: "Abrir em nova aba", type: "boolean", default: false, section: "Aparencia" },
       { name: "override_price", label: "Preco so neste menu (R$)", type: "decimal", section: "Aparencia", hint: "So para item de produto. Vazio usa o preco do cadastro." },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Aparencia" },
@@ -489,7 +484,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "name", label: "Nome", type: "text", maxlength: 120, required: true },
       { name: "price", label: "Preco (R$)", type: "decimal", required: true },
       { name: "production_sector", label: "Setor", type: "dropdown", options: SECTOR_OPTIONS },
       // O vínculo com produtos é gerenciado na edição do PRODUTO (não aqui).
@@ -534,7 +529,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do local", type: "text", required: true },
+      { name: "name", label: "Nome do local", type: "text", maxlength: 120, required: true },
       { name: "description", label: "Descricao", type: "textarea", full: true },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
@@ -622,7 +617,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do modelo", type: "text", required: true, section: "Identificação" },
+      { name: "name", label: "Nome do modelo", type: "text", maxlength: 120, required: true, section: "Identificação" },
       { name: "code_type", label: "Tipo de codigo", type: "dropdown", options: LABEL_CODE_TYPE_OPTIONS, section: "Identificação" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Identificação" },
       { name: "width_mm", label: "Largura (mm)", type: "decimal", default: 60, required: true, section: "Papel" },
@@ -637,7 +632,7 @@ export const resources = [
       { name: "show_expires_at", label: "Mostrar validade", type: "boolean", default: true, section: "Campos impressos" },
       { name: "show_quantity", label: "Mostrar quantidade", type: "boolean", default: true, section: "Campos impressos" },
       { name: "show_location", label: "Mostrar local", type: "boolean", default: true, section: "Campos impressos" },
-      { name: "custom_text", label: "Texto livre", type: "text", full: true, section: "Campos impressos" },
+      { name: "custom_text", label: "Texto livre", type: "text", maxlength: 200, full: true, section: "Campos impressos" },
     ],
   },
 
@@ -656,9 +651,9 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome da zona", type: "text", required: true },
+      { name: "name", label: "Nome da zona", type: "text", maxlength: 120, required: true },
       { name: "min_radius_km", label: "Raio minimo (km)", type: "decimal" },
-      { name: "max_radius_km", label: "Raio maximo (km)", type: "decimal" },
+      { name: "max_radius_km", label: "Raio maximo (km)", type: "decimal", required: true },
       { name: "delivery_fee", label: "Taxa de entrega (R$)", type: "decimal" },
       { name: "estimated_minutes", label: "Tempo estimado (min)", type: "number" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
@@ -677,10 +672,10 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome completo", type: "text", required: true },
-      { name: "phone", label: "Telefone", type: "text" },
+      { name: "name", label: "Nome completo", type: "text", maxlength: 160, required: true },
+      { name: "phone", label: "Telefone", type: "text", maxlength: 32 },
       { name: "vehicle_type", label: "Tipo de veiculo", type: "dropdown", options: VEHICLE_OPTIONS },
-      { name: "vehicle_plate", label: "Placa", type: "text" },
+      { name: "vehicle_plate", label: "Placa", type: "text", maxlength: 20 },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
   },
@@ -704,7 +699,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "name", label: "Nome", type: "text", maxlength: 80, required: true },
       { name: "method_type", label: "Tipo", type: "dropdown", required: true, options: PAYMENT_TYPE_OPTIONS },
       { name: "requires_reference", label: "Exige referencia", type: "boolean", default: false },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
@@ -778,10 +773,10 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do perfil", type: "text", required: true, full: true, placeholder: "Ex.: Bebida, Prato padrao", section: "Identificacao", hint: "Como voce vai reconhecer este grupo tributario ao cadastrar um produto." },
-      { name: "ncm", label: "NCM", type: "text", placeholder: "22021000", section: "Classificacao", hint: "8 digitos. Obrigatorio na NF-e/NFC-e." },
-      { name: "cest", label: "CEST", type: "text", placeholder: "0300100", section: "Classificacao", hint: "Somente para produtos sujeitos a substituicao tributaria." },
-      { name: "cfop", label: "CFOP de venda", type: "text", default: "5102", placeholder: "5102", section: "Classificacao", hint: "5102 = venda dentro do estado. 6102 = fora do estado." },
+      { name: "name", label: "Nome do perfil", type: "text", maxlength: 120, required: true, full: true, placeholder: "Ex.: Bebida, Prato padrao", section: "Identificacao", hint: "Como voce vai reconhecer este grupo tributario ao cadastrar um produto." },
+      { name: "ncm", label: "NCM", type: "text", maxlength: 8, placeholder: "22021000", section: "Classificacao", hint: "8 digitos. Obrigatorio na NF-e/NFC-e." },
+      { name: "cest", label: "CEST", type: "text", maxlength: 7, placeholder: "0300100", section: "Classificacao", hint: "Somente para produtos sujeitos a substituicao tributaria." },
+      { name: "cfop", label: "CFOP de venda", type: "text", maxlength: 4, default: "5102", placeholder: "5102", section: "Classificacao", hint: "5102 = venda dentro do estado. 6102 = fora do estado." },
       { name: "origem", label: "Origem da mercadoria", type: "dropdown", options: FISCAL_ORIGEM_OPTIONS, default: "0", section: "Classificacao" },
       { name: "csosn", label: "CSOSN (Simples Nacional)", type: "dropdown", options: FISCAL_CSOSN_OPTIONS, placeholder: "Selecione se a empresa e do Simples", section: "ICMS", hint: "Use este campo quando o CRT da empresa for Simples Nacional." },
       { name: "cst_icms", label: "CST ICMS (Regime Normal)", type: "dropdown", options: FISCAL_CST_ICMS_OPTIONS, placeholder: "Selecione se a empresa e do Regime Normal", section: "ICMS", hint: "Preencha CSOSN ou CST ICMS — o que valer para o enquadramento da empresa." },
@@ -810,11 +805,11 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "name", label: "Nome", type: "text", maxlength: 120, required: true },
       { name: "driver_type", label: "Driver", type: "dropdown", options: PRINTER_DRIVER_OPTIONS, default: "browser" },
       { name: "connection_type", label: "Tipo de conexao", type: "dropdown", options: PRINTER_CONNECTION_OPTIONS, default: "windows", required: true },
       { name: "sector", label: "Setor (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", placeholder: "Todos os setores" },
-      { name: "endpoint", label: "Impressora do Windows ou porta serial", type: "text", placeholder: "Ex.: EPSON TM-T20 ou COM3", hint: "Obrigatorio para conexao Windows/USB ou serial." },
+      { name: "endpoint", label: "Impressora do Windows ou porta serial", type: "text", maxlength: 255, placeholder: "Ex.: EPSON TM-T20 ou COM3", hint: "Obrigatorio para conexao Windows/USB ou serial." },
       { name: "host", label: "Endereco IP", type: "text", placeholder: "192.168.1.100", hint: "Obrigatorio para conexao TCP/IP." },
       { name: "port", label: "Porta TCP", type: "number", default: 9100, min: 1 },
       { name: "timeout_seconds", label: "Timeout (segundos)", type: "number", default: 10, min: 1 },
@@ -836,10 +831,10 @@ export const resources = [
       { key: "is_active", label: "Ativa", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome", type: "text", required: true },
+      { name: "name", label: "Nome", type: "text", maxlength: 120, required: true },
       { name: "sector", label: "Setor (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", placeholder: "Todos os setores" },
       { name: "protocol", label: "Protocolo", type: "dropdown", options: SCALE_PROTOCOL_OPTIONS, default: "generic" },
-      { name: "port", label: "Porta serial (agente local)", type: "text", placeholder: "COM3 ou /dev/ttyUSB0" },
+      { name: "port", label: "Porta serial (agente local)", type: "text", maxlength: 64, placeholder: "COM3 ou /dev/ttyUSB0" },
       { name: "product", label: "Produto por kilo", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum produto vinculado" },
       { name: "printer", label: "Impressora da nota de pesagem", type: "remote-dropdown", endpoint: "/printers/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma impressora vinculada" },
       { name: "reading_max_age_seconds", label: "Validade da leitura (segundos)", type: "number", default: 120 },
@@ -860,7 +855,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do setor", type: "text", required: true },
+      { name: "name", label: "Nome do setor", type: "text", maxlength: 80, required: true },
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
   },
@@ -895,16 +890,16 @@ export const resources = [
     ],
     formFields: [
       { name: "logo_upload", label: "Logo da empresa", type: "file", uploadMode: "avatar", previewField: "logo_url", full: true, section: "Identidade visual" },
-      { name: "trade_name", label: "Nome fantasia", type: "text", required: true },
-      { name: "legal_name", label: "Razao social", type: "text" },
-      { name: "cnpj", label: "CNPJ (opcional)", type: "text", placeholder: "00.000.000/0000-00" },
-      { name: "phone", label: "Telefone", type: "text" },
-      { name: "email", label: "Email", type: "text", inputType: "email" },
-      { name: "address", label: "Endereco", type: "text", full: true },
-      { name: "district", label: "Bairro", type: "text" },
-      { name: "city", label: "Cidade", type: "text" },
-      { name: "state", label: "UF", type: "text", placeholder: "SP" },
-      { name: "zip_code", label: "CEP", type: "text", placeholder: "00000-000" },
+      { name: "trade_name", label: "Nome fantasia", type: "text", maxlength: 180, required: true },
+      { name: "legal_name", label: "Razao social", type: "text", required: true, maxlength: 180 },
+      { name: "cnpj", label: "CNPJ (opcional)", type: "text", maxlength: 18, document: "cnpj", placeholder: "00.000.000/0000-00" },
+      { name: "phone", label: "Telefone", type: "text", maxlength: 32 },
+      { name: "email", label: "Email", type: "text", maxlength: 254, inputType: "email" },
+      { name: "address", label: "Endereco", type: "text", maxlength: 255, full: true },
+      { name: "district", label: "Bairro", type: "text", maxlength: 120 },
+      { name: "city", label: "Cidade", type: "text", maxlength: 120 },
+      { name: "state", label: "UF", type: "text", maxlength: 2, placeholder: "SP" },
+      { name: "zip_code", label: "CEP", type: "text", maxlength: 16, placeholder: "00000-000" },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
       // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
@@ -932,7 +927,7 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "name", label: "Nome do terminal", type: "text", required: true, placeholder: "Balcao 01", full: true, hint: "É este nome que aparece em \"o caixa já está aberto por João no terminal ...\"." },
+      { name: "name", label: "Nome do terminal", type: "text", maxlength: 120, required: true, placeholder: "Balcao 01", full: true, hint: "É este nome que aparece em \"o caixa já está aberto por João no terminal ...\"." },
       { name: "device_type", label: "Tipo", type: "dropdown", options: TERMINAL_TYPE_OPTIONS },
       { name: "role", label: "Papel na rede local", type: "dropdown", options: TERMINAL_ROLE_OPTIONS },
       { name: "restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true },
@@ -953,11 +948,11 @@ export const resources = [
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
-      { name: "username", label: "Nome de usuario", type: "text", required: true, section: "Acesso" },
-      { name: "email", label: "Email", type: "text", inputType: "email", required: true, section: "Acesso" },
+      { name: "username", label: "Nome de usuario", type: "text", maxlength: 150, required: true, section: "Acesso" },
+      { name: "email", label: "Email", type: "text", maxlength: 254, inputType: "email", required: true, section: "Acesso" },
       { name: "password", label: "Senha", type: "password", section: "Acesso" },
-      { name: "first_name", label: "Nome", type: "text", section: "Identificação" },
-      { name: "last_name", label: "Sobrenome", type: "text", section: "Identificação" },
+      { name: "first_name", label: "Nome", type: "text", maxlength: 150, section: "Identificação" },
+      { name: "last_name", label: "Sobrenome", type: "text", maxlength: 150, section: "Identificação" },
       { name: "profile.phone", label: "Telefone", type: "text", placeholder: "(11) 90000-0000", section: "Identificação" },
       // Perfil (UserProfile) — enviado aninhado como `profile.*`.
       { name: "profile.restaurant", label: "Restaurante", type: "remote-dropdown", endpoint: "/restaurants/", optionLabel: "trade_name", optionValue: "id", placeholder: "Todos os restaurantes", globalScope: true, section: "Perfil de acesso" },

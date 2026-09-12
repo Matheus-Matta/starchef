@@ -1490,7 +1490,9 @@ async function readScale() {
     manualWeight.value = "";
   } catch (e) {
     scaleReading.value = null;
-    weighError.value = e.response?.data?.detail || "Falha ao ler a balanca.";
+    // A API envelopa o erro em `{ error: { code, message } }` — `data.detail`
+    // nunca existe, e a razão real da recusa era trocada por um texto genérico.
+    weighError.value = normalizeApiError(e).message || "Falha ao ler a balanca.";
   } finally {
     readingScale.value = false;
   }
@@ -1519,8 +1521,7 @@ async function confirmWeigh() {
     weighingProduct.value = null;
     await refreshCart();
   } catch (e) {
-    const data = e.response?.data;
-    weighError.value = data?.detail || (Array.isArray(data) ? data.join(" ") : "Erro ao lancar item pesado.");
+    weighError.value = normalizeApiError(e).message || "Erro ao lancar item pesado.";
   } finally {
     confirmingWeigh.value = false;
   }
@@ -1652,7 +1653,7 @@ async function addPayment() {
     selectedPaymentMethod.value = null;
     amountReceived.value = remainingAmount.value;
   } catch (e) {
-    payError.value = e.response?.data?.detail?.[0] || e.response?.data?.detail || "Erro ao registrar pagamento.";
+    payError.value = normalizeApiError(e).message || "Erro ao registrar pagamento.";
   } finally {
     paying.value = false;
   }
@@ -1741,7 +1742,29 @@ async function cancelOrder() {
   }
 }
 
+// O pedido aberto não tem nada dentro? Item cancelado não conta.
+function currentOrderIsEmpty() {
+  const order = currentOrder.value;
+  if (!order || ["paid", "cancelled", "refunded"].includes(order.status)) return false;
+  const hasItems = cartItems.value.some((item) => item.status !== "cancelled" && item.status !== "voided");
+  return !hasItems && registeredPayments.value.length === 0;
+}
+
+// Descarta o pedido que foi aberto e não virou nada.
+//
+// Abrir uma comanda cria o pedido no servidor na hora — é ele que ocupa a
+// comanda. Se o operador sai sem lançar item, esse pedido vazio fica segurando
+// a comanda e aparece na lista de Pedidos como venda de R$ 0,00. O backend
+// cancela pedido vazio sem senha nem motivo (`order_is_empty`). Melhor
+// esforço: sair da tela não espera a rede.
+function discardEmptyOrder() {
+  if (!currentOrderIsEmpty()) return;
+  const id = currentOrder.value.id;
+  api.post(`/orders/${id}/cancel/`, {}).catch(() => {});
+}
+
 function newOrder() {
+  discardEmptyOrder();
   navigateStep("type", { query: { order: null } });
   orderType.value = null;
   selectedTable.value = null;
@@ -1782,7 +1805,7 @@ async function deletePayment(payment) {
     amountReceived.value = remainingAmount.value;
     toast.add({ severity: "success", summary: "Pagamento excluído", detail: "O saldo do pedido e do caixa foi atualizado.", life: 3000 });
   } catch (e) {
-    payError.value = e.response?.data?.detail?.[0] || e.response?.data?.detail || "Erro ao excluir pagamento.";
+    payError.value = normalizeApiError(e).message || "Erro ao excluir pagamento.";
   } finally {
     deletingPaymentId.value = null;
   }
@@ -1889,6 +1912,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  discardEmptyOrder();
   window.removeEventListener("online", updateBrowserConnection);
   window.removeEventListener("offline", updateBrowserConnection);
 });

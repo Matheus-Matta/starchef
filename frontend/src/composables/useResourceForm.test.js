@@ -38,3 +38,45 @@ describe("useResourceForm multipart", () => {
     expect(payload.getAll("photo_remove_ids")).toEqual(form.formData.photo_remove_ids);
   });
 });
+
+describe("useResourceForm validacao no cliente", () => {
+  it("barra antes de chamar a API e aponta o campo", async () => {
+    const service = { create: vi.fn(async () => ({ id: "sla-1" })) };
+    const fields = [
+      { name: "name", type: "text", required: true },
+      { name: "target_minutes", type: "number" },
+      {
+        name: "alert_minutes",
+        type: "number",
+        notGreaterThan: { field: "target_minutes", message: "alerta > alvo" },
+      },
+    ];
+    const form = useResourceForm({
+      service,
+      formFields: fields,
+      mode: ref("create"),
+      recordId: ref(null),
+      sharedAcrossRestaurants: true,
+    });
+    form.formData.name = "";
+    form.formData.target_minutes = "10";
+    form.formData.alert_minutes = "-5";
+
+    expect(await form.save()).toBeNull();
+    expect(service.create).not.toHaveBeenCalled();
+    expect(form.fieldErrors.value).toEqual({
+      name: "Este campo é obrigatório.",
+      alert_minutes: "Não pode ser negativo.",
+    });
+    expect(form.saveError.value).toMatch(/Corrija os campos/);
+
+    form.formData.name = "Cozinha";
+    form.formData.alert_minutes = "12";
+    expect(await form.save()).toBeNull();
+    expect(form.fieldErrors.value).toEqual({ alert_minutes: "alerta > alvo" });
+
+    form.formData.alert_minutes = "8";
+    expect(await form.save()).toEqual({ id: "sla-1" });
+    expect(service.create).toHaveBeenCalledTimes(1);
+  });
+});

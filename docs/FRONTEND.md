@@ -88,7 +88,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 
 ## 5. O sistema de CRUD genérico
 
-`src/config/resources.js` declara ~24 recursos (produtos, categorias, clientes, ingredientes, receitas, mesas, comandas, papéis, permissões, SLA etc.) como schema:
+`src/config/resources.js` declara ~24 recursos (produtos, categorias, clientes, insumos, fichas técnicas, mesas, comandas, papéis, permissões, SLA etc.) como schema:
 
 ```js
 {
@@ -107,6 +107,12 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 Dois composables sustentam isso:
 - **`useResourceList.js`** — paginação/ordenação/busca server-side para `ResourceListViewPro`.
 - **`useResourceForm.js`** — carrega o registro, monta o form a partir de `formFields`, faz POST/PATCH, mapeia erros de validação do backend para os campos.
+  Antes do POST/PATCH, `utils/formValidation.js` aplica no cliente as regras que
+  o servidor aplicaria de qualquer jeito, com o erro no campo: `required`,
+  `type: "number"` (inteiro) / `"decimal"`, piso `min` (padrão 0; `allowNegative:
+  true` libera valor assinado), `maxlength`, `document: "cpf" | "cnpj"` e a regra
+  cruzada `notGreaterThan: { field, message }` (ex.: `alert_minutes` ≤
+  `target_minutes` no SLA). Declare a regra em `formFields` — nunca no componente.
 
 Em **Ingredientes**, a ação “Cadastrar em lote” abre um formulário repetível e
 salva todas as linhas numa única operação atômica. A Logística também oferece o
@@ -126,6 +132,13 @@ senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou
 cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
 deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
 payload do CRUD.
+
+No cadastro de **Produtos**, a seção Produção contém somente o setor que
+recebe o item (cozinha, bar ou sobremesa) e o tempo estimado em minutos. A
+composição não é cadastrada no produto. **Fichas técnicas de preparo**
+concentram o rendimento, o modo de preparo passo a passo, a baixa automática e
+os insumos com quantidade e unidade. Para um produto vendido pronto, como uma
+lata, a ficha pode ter rendimento 1 e um único insumo de 1 unidade.
 
 Logos e fotos usam `ImageUploadField.vue`, um campo reutilizável baseado no
 `FileUpload` do PrimeVue. Restaurante, categoria e imagem principal do produto
