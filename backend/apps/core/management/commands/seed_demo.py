@@ -651,10 +651,26 @@ class Command(BaseCommand):
             pm = pms.get(pm_name)
             if pm is None:
                 pm = next(iter(pms.values()))
-            payment = register_payment(order=order, user=caixa, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-burger-{idx}", metadata={"source": "seed_demo"})
+            payment = register_payment(order=order, user=caixa, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-burger-{idx}", metadata=self._payment_metadata(pm))
             opened_at = self._dt(today - timedelta(days=days_ago), hour, minute)
             closed_at = opened_at + timedelta(minutes=25 + (idx % 20))
             self._backfill_order(order, payment, opened_at, closed_at)
+
+    @staticmethod
+    def _payment_metadata(payment_method):
+        """Metadados do recebimento, com o subtipo que o cartao exige.
+
+        `register_payment` recusa cartao sem `card_subtype` desde que a NFC-e
+        passou a precisar do meio de pagamento correto. O seed nao mandava, e
+        `seed_demo` quebrava no meio da primeira conta — a unica saida era
+        `--skip-orders`, que deixava a base de demonstracao sem venda nenhuma.
+        """
+        from apps.payments.models import PaymentMethod
+
+        metadata = {"source": "seed_demo"}
+        if payment_method.method_type == PaymentMethod.TYPE_CARD:
+            metadata["card_subtype"] = "credit"
+        return metadata
 
     # ═══════════════════════════════════════════════════════════════════════════
     # TENANT 1 — Restaurante 2: Pizza Rustica (Botafogo)
@@ -840,7 +856,7 @@ class Command(BaseCommand):
             order = close_order(order, gerente)
             pm_name = method_map.get(method_label, method_label)
             pm = pms.get(pm_name, pm_list[0])
-            payment = register_payment(order=order, user=gerente, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-pizza-{idx}", metadata={"source": "seed_demo"})
+            payment = register_payment(order=order, user=gerente, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-pizza-{idx}", metadata=self._payment_metadata(pm))
             opened_at = self._dt(today - timedelta(days=days_ago), hour, minute)
             closed_at = opened_at + timedelta(minutes=30 + (idx % 25))
             self._backfill_order(order, payment, opened_at, closed_at)
@@ -972,7 +988,7 @@ class Command(BaseCommand):
             order = close_order(order, owner)
             pm_name = method_map.get(method_label, method_label)
             pm = pms.get(pm_name, pm_list[0])
-            payment = register_payment(order=order, user=owner, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-trattoria-{idx}", metadata={"source": "seed_demo"})
+            payment = register_payment(order=order, user=owner, payment_method_id=pm.id, amount=order.total, idempotency_key=f"seed-trattoria-{idx}", metadata=self._payment_metadata(pm))
             opened_at = self._dt(today - timedelta(days=days_ago), hour, minute)
             closed_at = opened_at + timedelta(minutes=40 + (idx % 30))
             self._backfill_order(order, payment, opened_at, closed_at)

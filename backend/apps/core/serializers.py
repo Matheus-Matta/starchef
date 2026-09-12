@@ -1,4 +1,7 @@
+from django.core.validators import MaxValueValidator, MinValueValidator
 from rest_framework import serializers
+
+from apps.core.numbers import MAX_SAFE_INTEGER, MIN_SAFE_INTEGER
 
 # Campos que o cliente nunca define — sempre read-only nos serializers.
 # Fonte unica de verdade para evitar repetir a mesma lista em cada Meta.
@@ -25,6 +28,49 @@ class TenantModelSerializer(serializers.ModelSerializer):
 
     def get_fields(self):
         fields = super().get_fields()
+        # TETO DOS INTEIROS. O SQLite não declara faixa para
+        # `PositiveIntegerField`, então o Django não anexa `MaxValueValidator` e
+        # o DRF não tem o que herdar: `{"number": 1e30}` atravessava a
+        # validação inteira e só estourava no driver, como `OverflowError` —
+        # 500 para um erro de digitação. O limite é o do inteiro de 64 bits, o
+        # que qualquer banco suportado aceita; campos com faixa própria já
+        # declarada não são tocados.
+        assinados = set(getattr(self.Meta, "signed_fields", ()))
+        for nome, field in fields.items():
+            if not isinstance(field, serializers.IntegerField) or field.read_only:
+                continue
+            if field.max_value is None:
+                field.max_value = MAX_SAFE_INTEGER
+                field.validators.append(
+                    MaxValueValidator(
+                        MAX_SAFE_INTEGER, message="O número informado é grande demais."
+                    )
+                )
+            if field.min_value is None:
+                # Inteiro gravável (ordem, capacidade, minutos) não tem
+                # negativo que faça sentido; quem tem, declara em `signed_fields`.
+                piso = MIN_SAFE_INTEGER if nome in assinados else 0
+                mensagem = "O número informado é pequeno demais." if nome in assinados else "O valor não pode ser negativo."
+                field.min_value = piso
+                field.validators.append(MinValueValidator(piso, message=mensagem))
+        # VALOR NEGATIVO. Preço, custo e quantidade negativos eram aceitos e
+        # gravados: um insumo com custo -999,99 puxa a ficha técnica inteira
+        # para baixo e o relatório de margem passa a mentir. O padrão é barrar
+        # TODO numérico gravável; o que existe negativo de propósito
+        # (`price_delta` de variação, `margin_percent`, a quantidade assinada
+        # de um movimento de estoque) se declara em `Meta.signed_fields`. Era
+        # opt-in (`non_negative_fields`) e 49 campos ficaram de fora — entre
+        # eles `amount` de pagamento e `quantity` de item do pedido.
+        for nome, campo in fields.items():
+            if nome in assinados or campo.read_only:
+                continue
+            if not isinstance(campo, (serializers.DecimalField, serializers.FloatField)):
+                continue
+            if getattr(campo, "min_value", None) is not None:
+                continue
+            campo.validators.append(
+                MinValueValidator(0, message="O valor não pode ser negativo.")
+            )
         # `restaurant` e `branch` são preenchidos no servidor (perform_create os
         # herda do perfil quando omitidos). Constraints de unicidade por filial
         # fazem o DRF marcá-los como obrigatórios indevidamente — o que gera um

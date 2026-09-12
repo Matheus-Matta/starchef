@@ -362,7 +362,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if old_table_id:
             from apps.orders.services import free_table_if_empty
 
-            free_table_if_empty(Table.objects.get(pk=old_table_id))
+            free_table_if_empty(Table.objects.filter(pk=old_table_id).first())
 
         return Response(self.get_serializer(command).data)
 
@@ -404,7 +404,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
 
         from apps.orders.services import free_table_if_empty
 
-        free_table_if_empty(Table.objects.get(pk=old_table_id))
+        free_table_if_empty(Table.objects.filter(pk=old_table_id).first())
 
         return Response(self.get_serializer(command).data)
 

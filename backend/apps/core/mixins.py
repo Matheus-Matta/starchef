@@ -4,6 +4,7 @@ Mixins de viewset que implementam o isolamento multi-tenant e a auditoria.
 Preferencialmente use as classes-base de `apps.core.viewsets` (que ja combinam
 estes mixins). Eles ficam aqui separados para permitir composicoes especiais.
 """
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -206,6 +207,13 @@ class AuditCreateUpdateMixin:
     contra o perfil (exceto para admin) e, se omitidos, herdados do perfil.
     """
 
+    # O registro e sua entrada de auditoria numa transacao so.
+    #
+    # Eram duas gravacoes independentes: `serializer.save()` e, depois,
+    # `record_audit()`. Uma falha na segunda deixava o registro criado SEM
+    # rastro na auditoria — e a auditoria so vale se for completa. "Quem criou
+    # este produto?" nao pode ter resposta em branco por causa de um lock.
+    @transaction.atomic
     def perform_create(self, serializer):
         model_fields = {field.name for field in serializer.Meta.model._meta.fields}
         user = self.request.user
@@ -272,6 +280,7 @@ class AuditCreateUpdateMixin:
         instance = serializer.save(**{k: v for k, v in extra.items() if v is not None})
         record_audit(action=AuditLog.ACTION_CREATED, instance=instance, actor=user, request=self.request)
 
+    @transaction.atomic
     def perform_update(self, serializer):
         model_fields = {field.name for field in serializer.Meta.model._meta.fields}
         serializer.validated_data.pop("account", None)

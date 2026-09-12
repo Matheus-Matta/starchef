@@ -30,7 +30,7 @@ backend/
     accounts/             conta (tenant raiz), planos, usuários, perfis, papéis/permissões, login
     restaurants/          Restaurant/Branch, mesas, setores, comandas, zonas/entregadores de delivery
     customers/             clientes e endereços
-    menu/                  categorias, produtos, variações, adicionais, ingredientes, receitas, catálogos (Menu/MenuItem)
+    menu/                  categorias, produtos, variações, adicionais, insumos, fichas técnicas, catálogos (Menu/MenuItem)
     orders/                pedidos, itens, lotes de produção, WebSocket de cozinha (KitchenConsumer)
     kitchen/               telas/config do KDS (estações e colunas)
     payments/              formas de pagamento, pagamentos, caixa (CashRegister/CashMovement)
@@ -111,6 +111,8 @@ Todo modelo de domínio herda de classes base em `apps/core/models.py`:
 Outras peças centrais:
 
 - **`apps/core/idempotency.py`** — `IdempotencyMiddleware`, registrado globalmente no `MIDDLEWARE`. Aplica-se a **todo** `POST/PUT/PATCH/DELETE` da API (exceto `/api/v1/auth/` e `/admin/`) que enviar o header `Idempotency-Key`: a primeira execução grava a resposta junto da chave; repetições devolvem a resposta gravada sem reexecutar nada. Existe justamente para o PDV Flutter poder reenviar operações da fila offline sem duplicar venda.
+- **`apps/core/serializers.py`** — `TenantModelSerializer`, base de todo serializer de domínio. Além do escopo por conta, aplica **piso zero em todo numérico gravável** (`DecimalField`/`FloatField`/`IntegerField`), teto de inteiro de 64 bits e `restaurant`/`branch` opcionais no input. Campo que existe negativo de propósito se declara em `Meta.signed_fields` (`price_delta`, `margin_percent`, `quantity` de movimento de estoque). Não existe mais lista opt-in de não-negativos.
+- **`apps/core/envelope.py`** — `ApiErrorEnvelopeMiddleware`, o mais externo do `MIDDLEWARE`. **Todo erro (>= 400) sob `/api/` sai em `{success: false, status_code, error: {code, message}}`**, venha de onde vier: exceção do DRF (já tratada em `apps/core/exceptions.py`), `Response({"detail": ...}, 400)` direto na view, `JsonResponse` dos middlewares de tenant/idempotência, ou a página HTML de 404/405 do Django numa rota que não existe. `{"detail": "x"}` vira `message: "x"`; `{"campo": [...]}` fica inteiro em `message`; um corpo já estruturado com `code` + `message` + extras (o 409 de caixa ocupado, com `session`) entra inteiro em `error`. Nas views, `response.data` continua o que era — só os bytes mudam; testes que leem `resp.json()` leem `["error"]["message"]`.
 - **`apps/core/permissions.py`** — `HasTenantAccess` (usuário precisa pertencer a um tenant) e `HasModulePermission` (bloqueia endpoints de módulos opcionais não contratados pela conta — ver módulos abaixo).
 - **`apps/core/modules.py`** — sistema de módulos: `MODULE_BASE` (sempre liberado) + opcionais `financeiro`, `logistica`, `ecommerce`, `entrega`, habilitados por conta em `Account.enabled_modules` (JSON field). Views declaram `required_module = MODULE_FINANCEIRO` (por exemplo `invoices` e `stock`); sem o módulo, a API responde 403.
 - **`apps/core/admin_mixins.py`** — `TenantAdminMixin`/`TenantModelAdmin` (base do Unfold) filtram automaticamente queryset e FKs por tenant no admin, preenchem `account` ao salvar e ignoram soft-deleted.
@@ -222,7 +224,7 @@ Documentadas na íntegra em `.env.example` (produção — é o que `docker-comp
 
 - **Django core**: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CORS_ALLOWED_ORIGINS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_FIRST_ACCESS_TOKEN`.
 - **Cookies/TLS**: `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_AUTH_COOKIE_SECURE`, `DJANGO_AUTH_COOKIE_SAMESITE`, `DJANGO_AUTH_COOKIE_DOMAIN`.
-- **Banco**: `USE_SQLITE_DATABASE`, `POSTGRES_DB/USER/PASSWORD/HOST/PORT`, `POSTGRES_CONN_MAX_AGE`.
+- **Banco**: `USE_SQLITE_DATABASE`, `SQLITE_DB_NAME`, `SQLITE_LOCK_TIMEOUT`, `POSTGRES_DB/USER/PASSWORD/HOST/PORT`, `POSTGRES_POOL` (padrão ligado) com `POSTGRES_POOL_MIN/MAX/TIMEOUT` — pool nativo Django 5.1 + psycopg 3, obrigatório sob ASGI: sem ele a conexão persistente vaza por thread e o Postgres estoura `max_connections` (achado do teste de carga em modo produção). `POSTGRES_CONN_MAX_AGE` só vale com o pool desligado.
 - **Redis/Celery**: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_CONCURRENCY`.
 - **Gunicorn** (opcional): `GUNICORN_WORKERS/TIMEOUT/MAX_REQUESTS/LOG_LEVEL`.
 - **Throttling DRF** (opcional, tem defaults sensatos): `THROTTLE_RATE_{ANON,USER,LOGIN,TOKEN_REFRESH,PASSWORD_RESET,DEVICE_POLL,CASH_APPROVAL}`.
@@ -348,6 +350,32 @@ Precedência (`backend/config/env.py`):
 O que está exportado no processo vence o arquivo `.env` por inteiro: um `.env`
 esquecido não derruba uma variável que o deploy definiu de propósito.
 
+### SQLite não trava mais com dois terminais vendendo
+
+O SQLite na configuração padrão do Django devolvia `500 database is locked`
+assim que dois clientes escreviam ao mesmo tempo — e no StarChef isso é rotina:
+o PDV, a janela da Balança Rápida e o painel batem no mesmo processo. O teste de
+carga ([`TESTE_CARGA.md`](TESTE_CARGA.md)) transformava isso em milhares de 5xx
+que escondiam os defeitos de verdade.
+
+`build_database_settings` agora abre o SQLite assim:
+
+| Ajuste | Por que |
+| --- | --- |
+| `PRAGMA journal_mode=WAL` | leitor deixa de bloquear escritor. No modo padrão (rollback journal), qualquer `SELECT` em andamento derruba um `INSERT` concorrente na hora |
+| `transaction_mode="IMMEDIATE"` | pega o lock de escrita ao **abrir** a transação. Em `DEFERRED` (padrão), uma transação que lê e depois escreve tenta se promover a escritora no meio — e essa promoção falha imediatamente, **sem respeitar o `timeout`**. É a causa mais comum de "database is locked" em Django, e o motivo de a opção existir desde o 5.1 |
+| `timeout` (`SQLITE_LOCK_TIMEOUT`, padrão 30s) | quanto esperar por um lock. O padrão do Django é 5s, curto para o replay da fila offline do PDV, que sobe dezenas de operações em rajada |
+| `PRAGMA synchronous=NORMAL` | par recomendado do WAL: mesma durabilidade contra queda de processo, sem `fsync` a cada commit |
+| `temp_store=MEMORY`, `mmap_size`, `cache_size` | ordenação e leitura fora do disco |
+
+O `journal_mode` fica gravado no próprio arquivo, então bancos já existentes
+passam para WAL na primeira conexão. Isso vale para desenvolvimento e para os
+testes; **produção continua em Postgres**, onde nada disso se aplica.
+
+Não é bala de prata: SQLite continua tendo **um escritor por vez**. O que muda é
+que o segundo escritor espera a vez em vez de receber 500. Para carga de
+verdade, aponte para Postgres.
+
 ### Mídia: local em dev, S3/R2 em produção
 
 Quem decide o destino é `apps/core/storage.py` — `MediaStorageService`, um
@@ -370,6 +398,19 @@ metade — um **Warning**, nunca um Error, para o `runserver` continuar subindo.
 Quando o S3 está configurado mas indisponível, a gravação falha em vez de cair no
 disco local: em produção o container é efêmero, o upload "daria certo" e o arquivo
 sumiria no próximo deploy.
+
+---
+
+## Fichas técnicas de preparo
+
+`menu.Recipe` é a ficha técnica de um produto. Ela guarda rendimento, modo de
+preparo em `preparation_instructions`, custo calculado e a decisão de baixa
+automática. Cada `RecipeItem` informa o insumo, a quantidade e a unidade; o
+motor de estoque rateia o consumo pelo rendimento. O cadastro de produto
+mantém apenas setor e minutagem de produção. Os campos de consumo direto do
+produto permanecem temporariamente na API para compatibilidade com dados
+antigos, mas novos cadastros devem representar inclusive produtos prontos com
+uma ficha de rendimento 1 e um único insumo.
 
 ---
 

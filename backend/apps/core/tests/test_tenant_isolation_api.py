@@ -112,7 +112,7 @@ def test_superuser_sem_conta_vinculada_e_barrado_com_mensagem_clara(superuser_wi
     resp = _client_for(superuser_without_profile).get("/api/v1/menu/products/")
 
     assert resp.status_code == 403
-    assert "não está vinculado a nenhuma conta" in resp.json()["detail"]
+    assert "não está vinculado a nenhuma conta" in resp.json()["error"]["message"]
 
 
 def test_superuser_sem_conta_nao_lista_usuarios_de_outras_contas(
@@ -129,7 +129,7 @@ def test_header_de_conta_inexistente_devolve_404_explicito(superuser_with_profil
     )
 
     assert resp.status_code == 404
-    assert "X-Account-ID" in resp.json()["detail"]
+    assert "X-Account-ID" in resp.json()["error"]["message"]
 
 
 def test_login_recusa_superusuario_sem_conta_vinculada(superuser_without_profile):

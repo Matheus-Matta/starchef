@@ -118,3 +118,27 @@ def test_cancel_frees_command(restaurant, branch, command, product, manager_user
 
     assert command.status == Command.STATUS_FREE
     assert command.current_order_id is None
+
+
+@pytest.mark.django_db
+def test_api_cria_comanda_sem_numero_e_recusa_numero_repetido(api_client, restaurant, manager_user):
+    """`number` e opcional na API: o model atribui o proximo sequencial.
+
+    O UniqueConstraint(restaurant, number) fazia o DRF exigir o campo e a
+    numeracao automatica nunca era alcancada pelo painel ("Auto = proximo").
+    """
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
+    payload = {"restaurant": str(restaurant.id), "is_active": True}
+
+    first = api_client.post("/api/v1/commands/", payload, format="json")
+    assert first.status_code == 201, first.data
+    assert first.data["number"] == 1
+    assert first.data["code"]
+
+    second = api_client.post("/api/v1/commands/", payload, format="json")
+    assert second.status_code == 201
+    assert second.data["number"] == 2
+
+    duplicate = api_client.post("/api/v1/commands/", {**payload, "number": 1}, format="json")
+    assert duplicate.status_code == 400
+    assert "number" in duplicate.data["error"]["message"]

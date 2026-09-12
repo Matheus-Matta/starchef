@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
@@ -90,6 +91,8 @@ class StockMovementSerializer(TenantModelSerializer):
         model = StockMovement
         fields = "__all__"
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
+        # O sinal da quantidade e a direcao do movimento (saida = negativa).
+        signed_fields = ["quantity"]
 
 
 class StockLotSerializer(TenantModelSerializer):
@@ -281,12 +284,17 @@ class StockEntrySerializer(TenantModelSerializer):
             entry.supplier = summary if len(summary) <= 160 else "Varios fornecedores"
             entry.save(update_fields=["supplier", "updated_at"])
 
+    # Entrada e linhas numa transação só. Metade das linhas gravadas é pior do
+    # que nenhuma: o estoque passa a existir sem lastro no documento, e a
+    # conferência do inventário nunca mais fecha.
+    @transaction.atomic
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
         entry = super().create(validated_data)
         self._write_items(entry, items_data)
         return entry
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         items_data = validated_data.pop("items", None)
         if not instance.is_editable:
@@ -364,12 +372,14 @@ class StockExitSerializer(TenantModelSerializer):
                 **row,
             )
 
+    @transaction.atomic
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
         exit_document = super().create(validated_data)
         self._write_items(exit_document, items_data)
         return exit_document
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         items_data = validated_data.pop("items", None)
         if not instance.is_editable:

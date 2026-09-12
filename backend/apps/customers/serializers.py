@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
@@ -83,12 +84,17 @@ class CustomerSerializer(TenantModelSerializer):
         else:
             CustomerAddress.objects.create(customer=customer, **defaults)
 
+    # Cliente e endereço principal nascem juntos ou não nascem. Sem a
+    # transação, um endereço recusado (cidade em branco, UF inválida) deixava o
+    # cliente criado e devolvia 400: quem tentasse de novo criava o segundo.
+    @transaction.atomic
     def create(self, validated_data):
         address = validated_data.pop("address", None)
         customer = super().create(validated_data)
         self._save_primary_address(customer, address)
         return customer
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         address = validated_data.pop("address", None)
         customer = super().update(instance, validated_data)

@@ -77,7 +77,7 @@ def test_mesma_chave_para_outra_operacao_e_recusada(authenticated, restaurant, t
 
     # Devolver a resposta antiga aqui esconderia um erro do cliente.
     assert conflicting.status_code == 409
-    assert "idempot" in conflicting.json()["detail"].lower()
+    assert "idempot" in conflicting.json()["error"]["message"].lower()
 
 
 @pytest.mark.django_db

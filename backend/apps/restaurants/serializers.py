@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
@@ -104,7 +105,17 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
             enqueue_focus_company_sync(config)
         return config
 
+    @transaction.atomic
     def create(self, validated_data):
+        """Restaurante e configuracao fiscal nascem juntos ou nao nascem.
+
+        Sem a transacao eram duas gravacoes independentes: o restaurante era
+        criado, e uma falha no `ensure_fiscal_config` (ou no signal que provisiona
+        filial, papeis e menus padrao) deixava um cadastro pela metade — visivel
+        na lista, sem config fiscal, e sem nada avisando. Sob concorrencia isso
+        tambem era a rota que mais disputava lock, porque segurava o banco em
+        varias transacoes curtas seguidas em vez de uma.
+        """
         provider = validated_data.pop("fiscal_provider", "manual")
         restaurant = super().create(self._hash_cash_password(validated_data))
         self._sync_fiscal_config(restaurant, provider, overwrite=True, sync_focus=True)
@@ -155,8 +166,21 @@ class CommandSerializer(TenantModelSerializer):
         # status, current_order_id e current_table sao geridos pelo ciclo de vida
         # (pedido/pagamento e endpoints de mesa), nunca definidos direto pelo CRUD cliente.
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id", "current_table"]
+        # O UniqueConstraint(restaurant, number) faria o DRF gerar um
+        # UniqueTogetherValidator, que exige `number` presente — e anulava o
+        # `required=False` acima: a API nunca conseguia deixar o model numerar.
+        # A unicidade e conferida em `validate` so quando o numero foi informado.
+        validators = []
 
     def validate(self, attrs):
+        number = attrs.get("number")
+        restaurant = attrs.get("restaurant") or getattr(self.instance, "restaurant", None)
+        if number and restaurant is not None:
+            duplicates = Command.objects.filter(restaurant=restaurant, number=number)
+            if self.instance is not None:
+                duplicates = duplicates.exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                raise serializers.ValidationError({"number": "Já existe uma comanda com este número neste restaurante."})
         if (
             attrs.get("is_active") is False
             and self.instance is not None

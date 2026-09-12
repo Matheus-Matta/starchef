@@ -67,7 +67,7 @@ def test_token_expirado_responde_401_para_o_cliente_renovar(api_client, manager_
 
     assert response.status_code == 401, response.content
     assert "WWW-Authenticate" in response
-    assert "expirada" in response.json()["detail"].lower()
+    assert "expirada" in response.json()["error"]["message"].lower()
 
 
 @pytest.mark.django_db
@@ -102,7 +102,7 @@ def test_usuario_sem_perfil_recebe_403_explicando_o_cadastro(api_client, db):
     response = api_client.get("/api/v1/auth/me/", HTTP_AUTHORIZATION=f"Bearer {token}")
 
     assert response.status_code == 403, response.content
-    detail = response.json()["detail"].lower()
+    detail = response.json()["error"]["message"].lower()
     assert "vinculado" in detail and "conta" in detail
 
 

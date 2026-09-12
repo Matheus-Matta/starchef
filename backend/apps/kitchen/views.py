@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.requests import required_field
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
 from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
@@ -95,7 +96,7 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
         try:
             item = update_order_item_status(
                 self.get_object(),
-                request.data["status"],
+                required_field(request, "status", "Informe o novo status do item."),
                 request.user,
                 reason=request.data.get("reason", ""),
             )

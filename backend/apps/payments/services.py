@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.core.access import has_role_at_least, is_tenant_admin
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
+from apps.core.numbers import parse_money
 from apps.core.tenant import tenant_context
 from apps.orders.models import Order
 from apps.orders.signals import order_fully_paid
@@ -98,7 +99,9 @@ def open_cash_register(
                 session=operator_session,
             )
 
-        counted = Decimal(str(opening_amount))
+        # Abertura com "cem reais" digitado no campo virava `InvalidOperation`;
+        # com o campo vazio, `Decimal("None")`. Os dois eram 500.
+        counted = parse_money(opening_amount, field="opening_amount", default=0)
         previous = (
             CashRegister.objects.filter(
                 restaurant=restaurant,
@@ -177,7 +180,9 @@ def close_cash_register(*, cash_register, user, actual_amount, notes="", termina
         expected = cash_register.movements.filter(status="approved").aggregate(value=Sum("amount"))["value"] or Decimal(
             "0.00"
         )
-        actual_amount = Decimal(str(actual_amount))
+        # O valor conferido na gaveta é o que fecha o dia: texto ou campo
+        # ausente aqui derrubava o fechamento com 500 em vez de pedir o valor.
+        actual_amount = parse_money(actual_amount, field="actual_amount")
         cash_register.expected_amount = expected
         cash_register.actual_amount = actual_amount
         cash_register.difference_amount = actual_amount - expected
@@ -245,8 +250,12 @@ def create_cash_movement(
         # Sangria e suprimento mexem no dinheiro da sessão: mesma regra do
         # fechamento. Travar só o botão de abrir não impediria a chamada direta.
         assert_session_owner(cash_register, user=user, terminal=terminal, installation_id=installation_id)
-        amount = Decimal(str(amount))
-        if amount <= 0 or not reason.strip():
+        # Sangria sem valor, com texto no lugar do número ou negativa chegavam
+        # aqui e estouravam `InvalidOperation` (500) antes desta checagem — ou,
+        # com valor ausente, viravam `Decimal("None")`. Erro de preenchimento é
+        # 400 com a razão.
+        amount = parse_money(amount, field="amount")
+        if amount <= 0 or not str(reason or "").strip():
             raise ValidationError("Informe um valor maior que zero e o motivo.")
         needs_approval = movement_type in {CashMovement.TYPE_WITHDRAWAL, CashMovement.TYPE_SUPPLY}
         movement = CashMovement.objects.create(
@@ -507,7 +516,23 @@ def register_payment(
         if order.payment_status == Order.PAYMENT_PAID:
             raise ValidationError("O pedido já foi pago.")
 
-        payment_method = PaymentMethod.objects.get(pk=payment_method_id, restaurant=order.restaurant, is_active=True)
+        # `.get()` aqui transformava um id inválido — forma inativa, de outro
+        # restaurante ou que nunca existiu — em `DoesNotExist` e 500. O id vem
+        # do cliente (o PDV monta o recebimento com o cadastro que ele tem em
+        # cache, que pode estar velho), então é erro de entrada: 400 com a
+        # razão, para o operador escolher outra forma.
+        try:
+            payment_method = PaymentMethod.objects.filter(
+                pk=payment_method_id,
+                restaurant=order.restaurant,
+                is_active=True,
+            ).first()
+        except (ValueError, ValidationError):
+            payment_method = None
+        if payment_method is None:
+            raise ValidationError(
+                "Forma de pagamento inválida, inativa ou de outro restaurante."
+            )
         payment_metadata = dict(metadata or {})
         card_subtype = str(payment_metadata.get("card_subtype") or "").strip().lower()
         if payment_method.method_type == PaymentMethod.TYPE_CARD:
@@ -541,7 +566,9 @@ def register_payment(
         if order.restaurant.require_open_cash_register and not cash_register:
             raise ValidationError("É necessário ter um caixa aberto para receber o pagamento.")
 
-        amount = Decimal(str(amount))
+        # Valor do recebimento vindo do corpo: "vinte reais" estourava
+        # `InvalidOperation` (500) antes de chegar na checagem abaixo.
+        amount = parse_money(amount, field="amount")
         if amount <= 0:
             raise ValidationError("Informe um valor de pagamento maior que zero.")
         paid_before = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[

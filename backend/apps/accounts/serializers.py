@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
@@ -255,6 +256,12 @@ class UserSerializer(serializers.ModelSerializer):
         profile = getattr(request.user, "profile", None)
         return profile.account if profile and profile.account_id else None
 
+    # Usuário e perfil nascem juntos ou não nascem. Sem a transação, um perfil
+    # recusado (papel de outra conta, restaurante que não é do tenant) deixava
+    # o usuário criado SEM perfil — e um usuário sem conta vinculada não
+    # consegue entrar, não aparece na lista com escopo de tenant e só é
+    # encontrado pelo /admin. Um órfão invisível.
+    @transaction.atomic
     def create(self, validated_data):
         profile_data = validated_data.pop("profile", {})
         password = validated_data.pop("password", "")
@@ -269,6 +276,7 @@ class UserSerializer(serializers.ModelSerializer):
         UserProfile.objects.create(user=user, **profile_data)
         return user
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         profile_data = validated_data.pop("profile", None)
         password = validated_data.pop("password", None)

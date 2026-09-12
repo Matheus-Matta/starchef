@@ -1,30 +1,71 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
+
+from apps.core.numbers import fits_decimal
 
 
 @transaction.atomic
 def recalculate_recipe_costs(recipe):
     """Recalculate RecipeItem costs from Ingredient.average_cost, then propagate to Recipe and Product."""
+    # Um recalculo por ficha de cada vez. Dois itens lancados ao mesmo tempo na
+    # mesma ficha (dois terminais, ou o painel com clique duplo) recalculavam
+    # em paralelo e atualizavam as mesmas linhas em ordens diferentes —
+    # `deadlock detected` no Postgres, 500 para o usuario. A trava e na linha
+    # da receita, e `_base_manager` porque o manager padrao filtra por conta e
+    # este servico tambem roda fora de request (Celery, manage.py).
+    recipe = type(recipe)._base_manager.select_for_update().get(pk=recipe.pk)
     total = Decimal("0.00")
-    for item in recipe.items.select_related("ingredient").all():
+    for item in recipe.items.select_related("ingredient").order_by("pk"):
         cost = item.ingredient.average_cost
         item.ingredient_cost = cost
-        item.total_cost = (Decimal(str(item.quantity)) * cost).quantize(Decimal("0.01"))
+        # Quantidade e custo cabem cada um na sua coluna, mas o PRODUTO dos dois
+        # pode não caber em `total_cost` (12 dígitos). Django converte o Decimal
+        # com precisão igual a `max_digits` no momento de gravar, e um valor
+        # maior levantava `InvalidOperation` lá dentro — 500 sem nenhuma pista
+        # de qual insumo causou. Perguntar aqui deixa o erro nomear o culpado.
+        computed = (Decimal(str(item.quantity)) * cost).quantize(Decimal("0.01"))
+        if not fits_decimal(computed, max_digits=12, decimal_places=2):
+            raise ValidationError(
+                f"O custo de '{item.ingredient}' fica grande demais nesta ficha "
+                f"({item.quantity} x {cost}). Revise a quantidade ou o custo médio do insumo."
+            )
+        item.total_cost = computed
         item.save(update_fields=["ingredient_cost", "total_cost", "updated_at"])
         total += item.total_cost
 
+    if not fits_decimal(total, max_digits=12, decimal_places=2):
+        raise ValidationError(
+            "O custo total desta ficha técnica ultrapassa o limite. Revise as quantidades."
+        )
     recipe.total_cost = total
     recipe.save(update_fields=["total_cost", "updated_at"])
 
     product = recipe.product
+    # Rendimento minúsculo (0,001) transforma um custo normal num número que
+    # não cabe em `estimated_cost`: a divisão multiplica por mil. O guard do
+    # total acima não pega este caso, porque o estouro nasce aqui.
     yield_qty = recipe.yield_quantity or Decimal("1")
-    product.estimated_cost = (total / Decimal(str(yield_qty))).quantize(Decimal("0.01"))
+    if yield_qty <= 0:
+        raise ValidationError("O rendimento da ficha técnica precisa ser maior que zero.")
+    estimated = (total / Decimal(str(yield_qty))).quantize(Decimal("0.01"))
+    if not fits_decimal(estimated, max_digits=12, decimal_places=2):
+        raise ValidationError(
+            "O custo por unidade fica grande demais com este rendimento. "
+            "Revise o rendimento ou as quantidades da ficha."
+        )
+    product.estimated_cost = estimated
     if product.sale_price and product.sale_price > 0:
-        product.margin_percent = (
+        margem = (
             (product.sale_price - product.estimated_cost) / product.sale_price * 100
         ).quantize(Decimal("0.01"))
+        # `margin_percent` tem só 6 dígitos: um custo muito acima do preço
+        # produz percentual de milhares e estoura a coluna na gravação.
+        product.margin_percent = (
+            margem if fits_decimal(margem, max_digits=6, decimal_places=2) else Decimal("-9999.99")
+        )
     else:
         product.margin_percent = Decimal("0.00")
     product.save(update_fields=["estimated_cost", "margin_percent", "updated_at"])

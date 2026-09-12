@@ -10,6 +10,7 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.requests import required_field
 from apps.core.viewsets import BaseTenantViewSet
 from apps.core.access import is_tenant_admin
 from apps.core.permissions import effective_permission_codes
@@ -40,17 +41,30 @@ def _can_authorize_order_cancellation(request, order):
 
     A senha nunca entra na fila offline: cancelamento exige resposta imediata
     do servidor, evitando guardar credenciais em texto puro no terminal.
+
+    Validar AQUI, e nao emitir um token para usar depois, e o que torna a
+    autorizacao naturalmente de uso unico e presa a esta operacao: nao existe
+    janela em que ela possa ser reaproveitada para outra coisa, nem estado a
+    expirar. Quem autoriza tambem nao vira administrador da sessao — a
+    permissao dele vale para este request e acaba com ele.
+
+    Devolve `(autorizado, quem_autorizou)`. O segundo valor alimenta a
+    auditoria: sem ele, o registro dizia apenas que o operador cancelou, e a
+    pergunta "quem liberou?" ficava sem resposta.
     """
 
     cash_password = str(request.data.get("cash_password") or "")
     if cash_password:
         stored = order.restaurant.cash_action_password or ""
-        return check_password(cash_password, stored) if stored else cash_password == "12345678"
+        approved = check_password(cash_password, stored) if stored else cash_password == "12345678"
+        # A senha e do restaurante, nao de uma pessoa: quem autorizou e a
+        # propria operacao da loja.
+        return approved, None
 
     login = str(request.data.get("authorization_username") or "").strip()
     password = str(request.data.get("authorization_password") or "")
     if not login or not password:
-        return False
+        return False, None
 
     username = login
     if "@" in login:
@@ -66,12 +80,13 @@ def _can_authorize_order_cancellation(request, order):
             username = matched.get_username()
     authorizer = authenticate(request=request, username=username, password=password)
     if authorizer is None:
-        return False
+        return False, None
     profile = getattr(authorizer, "profile", None)
     if not profile or not profile.is_active or profile.account_id != order.account_id:
-        return False
+        return False, None
     codes = effective_permission_codes(authorizer)
-    return is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
+    approved = is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
+    return approved, (authorizer if approved else None)
 
 
 class OrderFilterSet(django_filters.FilterSet):
@@ -354,10 +369,32 @@ class OrderViewSet(BaseTenantViewSet):
             serializer = OrderItemSerializer(order.items.all(), many=True)
             return Response(serializer.data)
 
-        product = Product.objects.get(
-            Q(restaurants=order.restaurant),
-            pk=request.data["product"],
-        )
+        # Ler o corpo com `[]` e resolver o produto com `.get()` transformava
+        # dois erros de CLIENTE em 500: item sem `product` virava `KeyError`, e
+        # produto inexistente (ou de outro restaurante) virava `DoesNotExist`.
+        # Os dois são 400 — o operador precisa da mensagem, não de "erro
+        # interno". O app do garçom e a fila offline do PDV chegam aqui com
+        # payload montado em outro aparelho: assumir que o campo veio é o mesmo
+        # que confiar no cliente.
+        product_id = request.data.get("product")
+        if not product_id:
+            return Response(
+                {"detail": "Informe o produto do item."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            product = Product.objects.filter(
+                Q(restaurants=order.restaurant),
+                pk=product_id,
+            ).first()
+        except (ValueError, ValidationError):
+            # `pk` que nem é UUID: o filtro estoura antes de consultar.
+            product = None
+        if product is None:
+            return Response(
+                {"detail": "O produto informado não existe ou não pertence a este restaurante."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         scale_reading = None
         if request.data.get("scale_reading"):
             try:
@@ -500,6 +537,20 @@ class OrderViewSet(BaseTenantViewSet):
         payment_metadata = dict(payment_metadata) if isinstance(payment_metadata, dict) else {}
         if request.data.get("card_subtype"):
             payment_metadata["card_subtype"] = request.data["card_subtype"]
+        # Recebimento sem forma ou sem valor é erro de preenchimento, não falha
+        # do servidor. Lidos com `[]`, os dois viravam `KeyError` e 500 — e o
+        # PDV tratava 500 como falha temporária, devolvendo a operação à fila
+        # para tentar de novo para sempre em vez de mandá-la para revisão.
+        if not request.data.get("payment_method"):
+            return Response(
+                {"detail": "Selecione a forma de pagamento."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.data.get("amount") in (None, ""):
+            return Response(
+                {"detail": "Informe o valor recebido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             payment = register_payment(
                 order=order,
@@ -559,7 +610,8 @@ class OrderViewSet(BaseTenantViewSet):
         # do supervisor existe para impedir que alguem apague consumo ja
         # lancado. Exigi-la aqui deixava a comanda ocupada por um pedido que
         # nunca virou nada — e travava o proximo cliente que fosse usa-la.
-        if not order_is_empty(order) and not _can_authorize_order_cancellation(request, order):
+        authorized, authorizer = _can_authorize_order_cancellation(request, order)
+        if not order_is_empty(order) and not authorized:
             return Response(
                 {
                     "detail": (
@@ -570,7 +622,12 @@ class OrderViewSet(BaseTenantViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            order = cancel_order(order, request.user, request.data.get("reason", ""))
+            order = cancel_order(
+                order,
+                request.user,
+                request.data.get("reason", ""),
+                authorized_by=authorizer,
+            )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)
@@ -637,7 +694,7 @@ class OrderItemViewSet(BaseTenantViewSet):
         try:
             item = update_order_item_status(
                 self.get_object(),
-                request.data["status"],
+                required_field(request, "status", "Informe o novo status do item."),
                 request.user,
                 reason=request.data.get("reason", ""),
             )

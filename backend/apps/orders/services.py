@@ -10,6 +10,13 @@ from django.utils import timezone
 from apps.core.access import has_role_at_least
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
+from apps.core.numbers import (
+    MAX_QUANTITY,
+    MAX_WEIGHT,
+    parse_decimal,
+    parse_money,
+    parse_quantity,
+)
 from apps.core.tenant import tenant_context
 from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
@@ -130,10 +137,18 @@ def free_command_for_order(order):
 
 
 def free_table_if_empty(table):
-    """Libera a mesa quando nenhuma comanda está vinculada a ela."""
+    """Libera a mesa quando nenhuma comanda está vinculada a ela.
+
+    A mesa pode ter sido excluída entre a leitura e esta chamada — o gerente
+    reorganiza o salão enquanto o garçom fecha a conta. `.get()` aqui levantava
+    `DoesNotExist` e derrubava a operação inteira (500) por causa de uma mesa
+    que já não existe e, justamente por isso, não precisa ser liberada.
+    """
     if not table:
         return
-    table = Table.objects.select_for_update().get(pk=table.pk)
+    table = Table.objects.select_for_update().filter(pk=table.pk).first()
+    if table is None:
+        return
     active_commands = table.active_commands.exists()
 
     if not active_commands:
@@ -162,7 +177,11 @@ def _resolve_weighed_quantity(*, order, product, scale_reading=None, weight_kg=N
         return Decimal(net).quantize(THREE_PLACES), scale_reading
 
     if weight_kg is not None:
-        weight_kg = Decimal(str(weight_kg)).quantize(THREE_PLACES)
+        # Peso vem do corpo (o PDV manda o peso bruto no replay offline da
+        # balança): texto ou número absurdo aqui não pode virar 500.
+        weight_kg = parse_decimal(
+            weight_kg, field="weight_kg", maximum=MAX_WEIGHT
+        ).quantize(THREE_PLACES)
         if weight_kg <= 0:
             raise ValidationError("Peso deve ser maior que zero.")
         # Registra leitura manual para auditoria da pesagem.
@@ -219,9 +238,9 @@ def add_order_item(
         else:
             if scale_reading is not None or weight_kg is not None:
                 raise ValidationError(f"Produto '{product.name}' e vendido por unidade e nao aceita peso.")
-            quantity = Decimal(str(quantity if quantity is not None else 1))
-            if quantity <= 0:
-                raise ValidationError("Quantidade deve ser maior que zero.")
+            # `Decimal(str(...))` cru estourava `InvalidOperation` (500) com
+            # "duas" no campo, e deixava passar 10^30 para morrer no INSERT.
+            quantity = parse_quantity(quantity, default=1)
 
         variation_ids = [entry.get("id") if isinstance(entry, dict) else entry for entry in (variations or [])]
         variation_ids = [value for value in variation_ids if value]
@@ -246,7 +265,9 @@ def add_order_item(
         extras_price += sum((a.price for a in selected_addons), Decimal("0.00"))
         unit_price = product.current_price + extras_price
         if expected_unit_price not in (None, ""):
-            expected = Decimal(str(expected_unit_price)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            expected = parse_money(
+                expected_unit_price, field="expected_unit_price"
+            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             actual = unit_price.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
             if expected != actual:
                 raise ValidationError(
@@ -493,7 +514,7 @@ def create_order_with_item(
                 waiter=user,
             )
             if old_table_id and old_table_id != table.id:
-                free_table_if_empty(Table.objects.get(pk=old_table_id))
+                free_table_if_empty(Table.objects.filter(pk=old_table_id).first())
 
         order = create_order(
             restaurant=restaurant,
@@ -618,7 +639,7 @@ def set_order_item_quantity(item, user, quantity):
     Quantidade zero seria um item invisivel com preco; quem quer remover usa
     `void_order_item`, que exige motivo e deixa registro.
     """
-    quantity = Decimal(str(quantity))
+    quantity = parse_decimal(quantity, field="quantity", maximum=MAX_QUANTITY)
     if quantity <= 0:
         raise ValidationError("Para remover o item, cancele-o informando o motivo.")
 
@@ -822,11 +843,21 @@ def close_order(
         if order.is_locked:
             raise ValidationError("Pedidos bloqueados não podem ser fechados.")
         # O valor pode chegar como str/float/int (corpo da requisição) — normaliza
-        # para Decimal antes de comparar/gravar.
-        discount = Decimal(str(discount or 0))
+        # para Decimal antes de comparar/gravar. Negativo fica de fora: a guarda
+        # era `> 0`, então um desconto de -50 passava direto e AUMENTAVA o total
+        # do pedido, sem exigir gerente e sem aparecer em lugar nenhum.
+        discount = parse_money(discount, field="discount", default=0)
         if discount > Decimal("0.00"):
             if not has_role_at_least(user, "manager"):
                 raise ValidationError("Aplicar desconto exige permissão de gerente.")
+        # Desconto maior que a mercadoria era aceito e o total ia a zero pelo
+        # `max(0)` do recálculo: a venda ficava registrada com um desconto que
+        # nunca existiu, e o relatório de descontos deixava de fechar com o
+        # faturamento. Dar a mercadoria inteira é o teto.
+        if discount > order.subtotal:
+            raise ValidationError(
+                {"discount": "O desconto não pode ser maior que o subtotal do pedido."}
+            )
 
         order.discount = discount
         if fiscal_customer_cpf is not None:
@@ -849,7 +880,9 @@ def close_order(
             # Valor digitado: nao e derivado de percentual nenhum e nao pode ser
             # reescrito pelo recalculo.
             order.service_fee_percent = None
-            order.service_fee = Decimal(str(service_fee)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            order.service_fee = parse_money(
+                service_fee, field="service_fee", default=0
+            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         else:
             order.service_fee_percent = order.restaurant.default_service_fee_percent or Decimal("0.00")
             order.service_fee = service_fee_for(order)
@@ -873,7 +906,11 @@ def close_order(
         order = recalculate_order(order)
         expected = None
         if expected_total not in (None, ""):
-            expected = Decimal(str(expected_total)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            # Conferência de concorrência, não autoridade sobre o preço — mas o
+            # valor vem do corpo, então texto aqui também derrubava o fechamento.
+            expected = parse_money(
+                expected_total, field="expected_total", allow_negative=True
+            ).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         actual_total = order.total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         # `expected_total` é diagnóstico de concorrência, não autoridade sobre
         # o preço. Todas as mutações anteriores já passaram pelas próprias
@@ -949,7 +986,7 @@ def order_is_empty(order):
         return not has_items and not has_payments
 
 
-def cancel_order(order, user, reason):
+def cancel_order(order, user, reason, authorized_by=None):
     # Pedido vazio dispensa motivo: nao e um cancelamento comercial, e o
     # descarte de uma comanda que foi aberta e nao virou venda. Exigir uma
     # justificativa ali so ensina o operador a escrever qualquer coisa.
@@ -971,7 +1008,25 @@ def cancel_order(order, user, reason):
         if order.table_id:
             free_table_if_empty(order.table)
         free_command_for_order(order)
-        record_audit(action=AuditLog.ACTION_CANCELLED, instance=order, actor=user, reason=reason)
+        record_audit(
+            action=AuditLog.ACTION_CANCELLED,
+            instance=order,
+            actor=user,
+            reason=reason,
+            # QUEM PEDIU e QUEM LIBEROU. Sem o segundo, o registro dizia apenas
+            # que o operador cancelou — e a pergunta que a auditoria existe
+            # para responder ("quem autorizou isso?") ficava sem resposta
+            # justamente no caso em que ela importa: o operador nao tinha a
+            # permissao e alguem a emprestou para aquela operacao.
+            metadata={
+                "event": "order_cancelled",
+                "requested_by": str(getattr(user, "id", "") or ""),
+                "requested_by_username": getattr(user, "username", "") or "",
+                "authorized_by": str(getattr(authorized_by, "id", "") or ""),
+                "authorized_by_username": getattr(authorized_by, "username", "") or "",
+                "authorization": "delegated" if authorized_by is not None else "own",
+            },
+        )
         return order
 
 

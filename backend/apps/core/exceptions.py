@@ -1,7 +1,7 @@
 import logging
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, OperationalError
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.response import Response
@@ -109,6 +109,18 @@ def api_exception_handler(exc, context):
     # Serviços de domínio levantam django.core.exceptions.ValidationError (ex.:
     # "Table already has an open order."). O handler padrão do DRF não trata isso
     # e viraria um 500. Convertemos em 400 com mensagem clara.
+    # Banco inalcançável ou pool de conexões esgotado durante a view: é
+    # sobrecarga/indisponibilidade, não defeito — 503 com Retry-After, para o
+    # PDV reenfileirar e o monitoramento não contar como 500 de código.
+    if response is None and isinstance(exc, OperationalError):
+        logger.warning("Banco indisponivel na view", extra={"path": getattr(context.get("request"), "path", "?")})
+        response = Response(
+            {"detail": "Serviço temporariamente indisponível. Tente novamente."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "2"},
+        )
+        setattr(exc, "default_code", "service_unavailable")
+
     if response is None and isinstance(exc, DjangoValidationError):
         response = Response(_django_validation_detail(exc), status=status.HTTP_400_BAD_REQUEST)
         setattr(exc, "default_code", "invalid")

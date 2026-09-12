@@ -63,6 +63,8 @@ class ProductVariationSerializer(VariationImageMixin, TenantModelSerializer):
         model = ProductVariation
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+        # Diferenca de preco da variacao: "sem queijo" custa menos.
+        signed_fields = ["price_delta"]
 
 
 def _validate_consumption(serializer, attrs, *, ingredient_field, quantity_field, unit_field):
@@ -167,6 +169,9 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
         model = Product
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+        # `margin_percent` e assinado: vender abaixo do custo e uma decisao
+        # possivel, e a margem negativa e o retrato dela.
+        signed_fields = ["margin_percent"]
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category_id else "Sem categoria"
@@ -393,6 +398,9 @@ class MenuSerializer(TenantModelSerializer):
         model = Menu
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+        # O handle e derivado do nome quando omitido (ver `validate`). Sem isto
+        # o DRF exigia o campo antes de `validate` rodar e o fallback era morto.
+        extra_kwargs = {"slug": {"required": False}}
 
     def get_items(self, obj):
         """So os itens de topo; os filhos vao aninhados dentro deles."""

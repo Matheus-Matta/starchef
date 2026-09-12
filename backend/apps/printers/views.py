@@ -13,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from apps.core.numbers import MAX_WEIGHT, parse_decimal
 from apps.core.viewsets import BaseTenantViewSet
 from apps.core.permissions import CanOperateScale, CanUseOrManageDevices
 from apps.orders.serializers import OrderItemSerializer
@@ -332,7 +333,16 @@ class ScaleViewSet(BaseTenantViewSet):
                         branch=scale.branch,
                         scale=scale,
                         weight_kg=peso,
-                        tare_kg=Decimal(str(request.data.get("tare_kg") or "0")),
+                        # A tara vem do corpo junto do peso; ela escapava da
+                        # checagem acima e estourava `InvalidOperation` com
+                        # texto no campo — 500 no meio de uma pesagem.
+                        tare_kg=parse_decimal(
+                            request.data.get("tare_kg"),
+                            field="tare_kg",
+                            default=0,
+                            minimum=Decimal("0"),
+                            maximum=MAX_WEIGHT,
+                        ),
                         is_stable=True,
                         source="agent",
                         created_by=request.user,

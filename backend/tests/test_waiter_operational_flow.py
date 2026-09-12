@@ -311,7 +311,7 @@ def test_another_assigned_operator_cannot_take_over_the_session(
     response = client.get("/api/v1/cash-register/current/")
 
     assert response.status_code == 409, response.content
-    body = response.json()
+    body = response.json()["error"]
     assert body["code"] == "cash_session_conflict"
     # A mensagem precisa dizer quem esta com o caixa e o que fazer.
     assert "PDV 1" in body["message"]

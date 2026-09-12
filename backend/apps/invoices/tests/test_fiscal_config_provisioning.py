@@ -224,3 +224,19 @@ def test_second_fiscal_config_for_the_same_branch_is_rejected_with_a_message(adm
     assert response.status_code == 400, response.data
     assert "branch" in field_errors(response)
     assert FiscalConfig.all_objects.filter(pk=config.pk).count() == 1
+
+
+def test_espelho_do_restaurante_cabe_nas_colunas_fiscais(restaurant):
+    """`state_registration` (40) e `zip_code` (16) do restaurante sao mais largos
+    que `ie` (20) e `zip_code` (9) da configuracao fiscal. No Postgres o
+    excesso era DataError (500) ao salvar o restaurante; o SQLite nao acusa."""
+    restaurant.state_registration = "X" * 40
+    restaurant.zip_code = "1" * 16
+    restaurant.save(update_fields=["state_registration", "zip_code"])
+
+    config = ensure_fiscal_config(restaurant, overwrite=True)
+
+    assert len(config.ie) == FiscalConfig._meta.get_field("ie").max_length
+    assert len(config.zip_code) == FiscalConfig._meta.get_field("zip_code").max_length
+    for field in ("cnpj", "ie", "corporate_name", "trade_name", "address_line", "district", "city", "uf", "zip_code"):
+        assert len(getattr(config, field)) <= FiscalConfig._meta.get_field(field).max_length

@@ -3,6 +3,7 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
+from django.db import OperationalError
 from django.http import Http404, JsonResponse
 from django.urls import resolve
 from rest_framework.exceptions import AuthenticationFailed
@@ -55,7 +56,21 @@ class TenantMiddleware:
     def __call__(self, request):
         try:
             if self.requires_tenant(request):
-                if self.authenticate_jwt(request):
+                try:
+                    recusada = self.authenticate_jwt(request)
+                except OperationalError:
+                    # Banco fora ou pool esgotado: sobrecarga, nao erro do
+                    # cliente nem do codigo. 503 com Retry-After diz ao PDV
+                    # (e ao monitoramento) exatamente isso; seguir como
+                    # anonimo daria um 401 mentiroso.
+                    logger.warning("Banco indisponivel ao autenticar", extra={"path": request.path})
+                    response = JsonResponse(
+                        {"detail": "Serviço temporariamente indisponível. Tente novamente."},
+                        status=503,
+                    )
+                    response["Retry-After"] = "2"
+                    return response
+                if recusada:
                     # A credencial foi apresentada e recusada (tipicamente um
                     # access token expirado). Isso é 401, não 403: o cliente
                     # precisa saber que deve renovar o token em vez de exibir
@@ -147,9 +162,11 @@ class TenantMiddleware:
             authenticated = self.jwt_authentication.authenticate(request)
         except (InvalidToken, TokenError, AuthenticationFailed):
             return True
+        except OperationalError:
+            raise  # quem chama responde 503
         except Exception:
-            # Falha inesperada (banco fora, por exemplo) não deve virar 401:
-            # o pedido segue como anônimo e a camada seguinte decide.
+            # Falha inesperada não deve virar 401: o pedido segue como
+            # anônimo e a camada seguinte decide.
             logger.exception("Falha inesperada ao autenticar o JWT")
             return False
 

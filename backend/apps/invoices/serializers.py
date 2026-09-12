@@ -149,6 +149,9 @@ class InvoiceSerializer(TenantModelSerializer):
             "status",
             "issued_at",
         ]
+        # Nota fiscal com total negativo nao existe: devolucao e outro
+        # documento, com natureza propria. Aceitar o sinal invertido aqui
+        # gravava um valor que a SEFAZ recusaria depois.
 
     def get_access_key_formatted(self, obj):
         return format_access_key(obj.access_key)

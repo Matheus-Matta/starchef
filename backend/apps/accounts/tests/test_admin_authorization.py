@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 
 from apps.accounts.models import Account, Permission, UserProfile
 from apps.accounts.role_catalog import ensure_system_roles
+from apps.core.models import AuditLog
 
 pytestmark = pytest.mark.django_db
 
@@ -118,3 +119,60 @@ def test_admin_de_outra_conta_nao_autoriza(api_client):
     )
 
     assert response.status_code == 403
+
+
+def test_a_autorizacao_concedida_fica_na_auditoria(api_client, admin_user):
+    """Quem pediu, quem liberou e para quê.
+
+    E a pergunta que a auditoria existe para responder justamente no caso em
+    que ela importa: um operador sem a permissao fez algo que a permissao dele
+    nao permite, porque alguem a emprestou para aquela operacao.
+    """
+    response = api_client.post(
+        "/api/v1/auth/authorize-admin/",
+        {
+            "username": admin_user.username,
+            "password": "x",
+            "permission": "orders.cancel",
+            "reason": "Cliente desistiu do pedido",
+        },
+        format="json",
+        HTTP_X_TERMINAL_ID="balcao-02",
+    )
+
+    assert response.status_code == 200
+    registro = AuditLog.all_objects.filter(metadata__event="authorization_granted").latest("created_at")
+    assert registro.metadata["permission"] == "orders.cancel"
+    assert registro.metadata["authorized_by_username"] == admin_user.username
+    assert registro.metadata["requested_by_username"]
+    assert registro.metadata["terminal"] == "balcao-02"
+    assert registro.reason == "Cliente desistiu do pedido"
+
+
+def test_permissao_fora_do_catalogo_nao_pode_ser_emprestada(api_client, admin_user):
+    """A autorizacao empresta poder para UMA operacao conhecida.
+
+    Aceitar qualquer codigo transformaria a senha do administrador numa
+    chave-mestra para qualquer coisa que alguem pensasse em pedir daqui.
+    """
+    response = api_client.post(
+        "/api/v1/auth/authorize-admin/",
+        {
+            "username": admin_user.username,
+            "password": "x",
+            "permission": "users.delete",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
+def test_o_catalogo_cobre_as_operacoes_da_sprint(api_client, admin_user):
+    for permissao in ("orders.cancel", "orders.discount", "cash.manage", "settings.manage"):
+        response = api_client.post(
+            "/api/v1/auth/authorize-admin/",
+            {"username": admin_user.username, "password": "x", "permission": permissao},
+            format="json",
+        )
+        assert response.status_code == 200, permissao

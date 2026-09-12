@@ -244,6 +244,23 @@ _EMITTER_FIELDS_FROM_RESTAURANT = {
 }
 
 
+def _emitter_values(restaurant):
+    """Valores do emitente que CABEM na coluna de destino.
+
+    O cadastro do restaurante e mais largo que a configuracao fiscal
+    (`state_registration` 40 x `ie` 20; `zip_code` 16 x 9). O SQLite nao
+    impoe tamanho de varchar e o desvio passava em dev; no Postgres virava
+    `DataError` — 500 ao salvar um restaurante. O que nao cabe e cortado:
+    e um espelho inicial, a pagina fiscal avancada e quem manda depois.
+    """
+    valores = {}
+    for field, resolve in _EMITTER_FIELDS_FROM_RESTAURANT.items():
+        value = resolve(restaurant)
+        limit = FiscalConfig._meta.get_field(field).max_length
+        valores[field] = value[:limit] if (value and limit) else value
+    return valores
+
+
 def restaurant_fiscal_branch(restaurant):
     """A filial que sustenta a configuracao fiscal deste restaurante.
 
@@ -278,7 +295,7 @@ def ensure_fiscal_config(restaurant, *, user=None, provider=None, overwrite=Fals
             provider=provider or FiscalConfig.PROVIDER_MANUAL,
             created_by=user,
             updated_by=user,
-            **{field: resolve(restaurant) for field, resolve in _EMITTER_FIELDS_FROM_RESTAURANT.items()},
+            **_emitter_values(restaurant),
         )
         config.save()
         return config
@@ -293,8 +310,7 @@ def ensure_fiscal_config(restaurant, *, user=None, provider=None, overwrite=Fals
     if provider is not None and config.provider != provider:
         config.provider = provider
         changed.append("provider")
-    for field, resolve in _EMITTER_FIELDS_FROM_RESTAURANT.items():
-        value = resolve(restaurant)
+    for field, value in _emitter_values(restaurant).items():
         if not value:
             continue
         if overwrite or not getattr(config, field):

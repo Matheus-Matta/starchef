@@ -115,7 +115,7 @@ def test_second_user_cannot_open_the_same_station(station, manager_user, waiter_
     )
 
     assert response.status_code == 409, response.content
-    body = response.json()
+    body = response.json()["error"]
     assert body["code"] == "cash_session_conflict"
     assert "Caixa Principal" in body["message"]
     assert "Balcão 01" in body["message"]
@@ -158,7 +158,7 @@ def test_a_race_that_escapes_the_lock_becomes_409_not_500(station, manager_user,
         )
 
     assert response.status_code == 409, response.content
-    assert "Caixa Principal" in response.json()["message"]
+    assert "Caixa Principal" in response.json()["error"]["message"]
 
 
 def test_operator_cannot_hold_two_stations(account, restaurant, station, manager_user):
@@ -173,7 +173,7 @@ def test_operator_cannot_hold_two_stations(account, restaurant, station, manager
     )
 
     assert response.status_code == 409, response.content
-    assert "já possui uma sessão" in response.json()["message"]
+    assert "já possui uma sessão" in response.json()["error"]["message"]
 
 
 # ── 3: outro usuario nao assume, nao movimenta e nao fecha ──────────────
@@ -250,8 +250,8 @@ def test_same_user_on_another_machine_is_blocked(station, manager_user):
 
     resumed = elsewhere.get("/api/v1/cash-register/current/")
     assert resumed.status_code == 403, resumed.content
-    assert resumed.json()["code"] == "cash_session_other_terminal"
-    assert "Balcão 01" in resumed.json()["message"]
+    assert resumed.json()["error"]["code"] == "cash_session_other_terminal"
+    assert "Balcão 01" in resumed.json()["error"]["message"]
 
     closed = elsewhere.post(
         f"/api/v1/cash-register/{opened['id']}/close/",
@@ -528,7 +528,7 @@ def test_deleting_the_terminal_does_not_free_the_session(station, manager_user, 
         format="json",
     )
     assert closed.status_code == 403, closed.content
-    assert closed.json()["code"] == "cash_session_other_terminal"
+    assert closed.json()["error"]["code"] == "cash_session_other_terminal"
 
     # A saida correta e a transferencia, que segue funcionando mesmo com o
     # terminal de origem excluido — inclusive sem senha, porque admin ja

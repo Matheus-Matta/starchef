@@ -43,9 +43,17 @@ class PrinterSerializer(TenantModelSerializer):
                 errors["port"] = "Informe uma porta entre 1 e 65535."
         if not timeout or timeout > 120:
             errors["timeout_seconds"] = "Informe um timeout entre 1 e 120 segundos."
+        # `settings` e um JSONField: o cliente pode mandar lista, numero ou
+        # texto. `dict(["a"])` levanta ValueError, que virava 500 — e o campo
+        # aceita qualquer JSON, entao nao ha validacao de tipo antes daqui.
+        raw_settings = attrs.get("settings", getattr(instance, "settings", {}) or {})
+        if raw_settings in (None, ""):
+            raw_settings = {}
+        if not isinstance(raw_settings, dict):
+            errors["settings"] = "As configurações da impressora precisam ser um objeto."
         if errors:
             raise serializers.ValidationError(errors)
-        settings = dict(attrs.get("settings", getattr(instance, "settings", {}) or {}))
+        settings = dict(raw_settings)
         settings.update(
             {
                 "connection_type": connection_type,

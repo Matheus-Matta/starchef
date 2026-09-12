@@ -7,6 +7,7 @@ from django.contrib.auth.hashers import make_password
 from apps.accounts.models import Permission
 from apps.menu.models import Product
 from apps.orders.models import Order
+from apps.core.models import AuditLog
 from apps.orders.services import add_order_item, create_order
 
 pytestmark = pytest.mark.django_db
@@ -130,3 +131,66 @@ def test_cancelamento_continua_exigindo_motivo_com_senha_valida(
     assert response.status_code == 400
     order.refresh_from_db()
     assert order.status == Order.STATUS_OPEN
+
+
+def test_a_auditoria_registra_quem_pediu_e_quem_autorizou(
+    api_client,
+    restaurant,
+    branch,
+    manager_user,
+):
+    """A pergunta que a auditoria existe para responder.
+
+    Quando o operador NAO tem a permissao e alguem a empresta para aquela
+    operacao, o registro precisa dizer as duas pessoas. Antes ele dizia apenas
+    que o operador cancelou — e "quem liberou isso?" ficava sem resposta.
+    """
+    permission, _ = Permission.objects.get_or_create(
+        code="orders.cancel",
+        defaults={"name": "Cancelar pedidos"},
+    )
+    manager_user.profile.specific_permissions.add(permission)
+    order = _order(restaurant, branch, manager_user)
+
+    response = api_client.post(
+        f"/api/v1/orders/{order.id}/cancel/",
+        {
+            "reason": "Lançamento incorreto",
+            "authorization_username": manager_user.username,
+            "authorization_password": "x",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    registro = AuditLog.all_objects.filter(metadata__event="order_cancelled").latest("created_at")
+    assert registro.metadata["authorization"] == "delegated"
+    assert registro.metadata["authorized_by_username"] == manager_user.username
+    assert registro.metadata["requested_by_username"]
+
+
+def test_senha_do_restaurante_nao_atribui_autorizacao_a_uma_pessoa(
+    api_client,
+    restaurant,
+    branch,
+    manager_user,
+):
+    """A senha de operacao e da LOJA, nao de alguem.
+
+    Registra-la como se um usuario tivesse autorizado inventaria um
+    responsavel que ninguem pode confirmar depois.
+    """
+    restaurant.cash_action_password = make_password("senha-operacao")
+    restaurant.save(update_fields=["cash_action_password"])
+    order = _order(restaurant, branch, manager_user)
+
+    response = api_client.post(
+        f"/api/v1/orders/{order.id}/cancel/",
+        {"reason": "Cliente desistiu", "cash_password": "senha-operacao"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    registro = AuditLog.all_objects.filter(metadata__event="order_cancelled").latest("created_at")
+    assert registro.metadata["authorization"] == "own"
+    assert registro.metadata["authorized_by_username"] == ""

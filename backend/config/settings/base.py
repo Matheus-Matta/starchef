@@ -70,6 +70,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # O mais externo: qualquer erro sob /api/ (view, middleware ou 404 HTML do
+    # Django) sai no envelope {success, status_code, error}.
+    "apps.core.envelope.ApiErrorEnvelopeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -157,9 +160,63 @@ def build_database_settings(use_sqlite):
                 "default": {
                     "ENGINE": "django.db.backends.sqlite3",
                     "NAME": str(sqlite_path),
+                    # SQLite fora da configuracao padrao devolve
+                    # "database is locked" (500) com dois PDVs vendendo ao mesmo
+                    # tempo — e o PDV, a Balanca Rapida e o painel batem no
+                    # mesmo processo o tempo todo. Tres ajustes resolvem:
+                    #
+                    # - WAL: leitor nao bloqueia escritor. No modo padrao
+                    #   (rollback journal) qualquer SELECT em andamento derruba
+                    #   um INSERT concorrente na hora.
+                    # - timeout: quanto esperar por um lock antes de desistir.
+                    #   O padrao do Django e 5s, curto para o replay da fila
+                    #   offline, que sobe dezenas de operacoes em rajada.
+                    # - transaction_mode IMMEDIATE: pega o lock de escrita ao
+                    #   ABRIR a transacao. Em DEFERRED (padrao), uma transacao
+                    #   que le e depois escreve tenta subir para escritora no
+                    #   meio — e essa promocao falha na hora, sem respeitar o
+                    #   `timeout`. E a causa mais comum de "database is locked"
+                    #   em Django, e o motivo de a opcao existir desde o 5.1.
+                    #
+                    # `synchronous=NORMAL` e o par recomendado do WAL: durabilidade
+                    # equivalente para queda de processo, sem fsync a cada commit.
+                    "OPTIONS": {
+                        "timeout": config("SQLITE_LOCK_TIMEOUT", default=30, cast=int),
+                        "transaction_mode": "IMMEDIATE",
+                        "init_command": (
+                            "PRAGMA journal_mode=WAL;"
+                            "PRAGMA synchronous=NORMAL;"
+                            "PRAGMA temp_store=MEMORY;"
+                            "PRAGMA mmap_size=134217728;"
+                            "PRAGMA cache_size=-32000;"
+                        ),
+                    },
                 }
             }
         }
+
+    # POOL DE CONEXÕES. O app roda em ASGI (gunicorn + UvicornWorker): cada
+    # request sincrona vai para uma thread NOVA, e uma conexão persistente
+    # (`CONN_MAX_AGE` > 0) fica presa nessa thread quando ela é descartada.
+    # Sob carga, 4 workers estouraram os 100 `max_connections` do Postgres em
+    # minutos ("sorry, too many clients already") e até o login virou 500 —
+    # o banco continuou saturado depois que a carga parou. Com o pool nativo
+    # (Django 5.1 + psycopg 3), cada worker mantém no máximo POSTGRES_POOL_MAX
+    # conexões e devolve ao pool no fim da request; `CONN_MAX_AGE` tem de ser
+    # 0 nesse modo. Dimensione: workers × POSTGRES_POOL_MAX < max_connections.
+    usar_pool = config("POSTGRES_POOL", default=True, cast=bool)
+    if usar_pool:
+        pool = {
+            "min_size": config("POSTGRES_POOL_MIN", default=2, cast=int),
+            "max_size": config("POSTGRES_POOL_MAX", default=10, cast=int),
+            # Espera por uma conexão livre antes de falhar: pico curto vira
+            # fila, não erro.
+            "timeout": config("POSTGRES_POOL_TIMEOUT", default=10, cast=int),
+        }
+        conn_max_age = 0
+    else:
+        pool = None
+        conn_max_age = config("POSTGRES_CONN_MAX_AGE", default=60, cast=int)
 
     return {
         "DATABASES": {
@@ -170,9 +227,10 @@ def build_database_settings(use_sqlite):
                 "PASSWORD": config("POSTGRES_PASSWORD", default="starchef"),
                 "HOST": config("POSTGRES_HOST", default="localhost"),
                 "PORT": config("POSTGRES_PORT", default="5432"),
-                "CONN_MAX_AGE": config("POSTGRES_CONN_MAX_AGE", default=60, cast=int),
-                "CONN_HEALTH_CHECKS": config("POSTGRES_CONN_HEALTH_CHECKS", default=True, cast=bool),
+                "CONN_MAX_AGE": conn_max_age,
+                "CONN_HEALTH_CHECKS": config("POSTGRES_CONN_HEALTH_CHECKS", default=not usar_pool, cast=bool),
                 "OPTIONS": {
+                    **({"pool": pool} if pool else {}),
                     # Sem isto, um banco INALCANÇÁVEL (firewall/security group
                     # que descarta o pacote em vez de recusar, VPN caída, host
                     # errado) não devolve erro nenhum: o socket fica esperando

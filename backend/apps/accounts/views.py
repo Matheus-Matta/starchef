@@ -6,6 +6,9 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
+from apps.core.viewsets import JsonObjectBodyMixin
+from apps.core.audit import record_audit
+from apps.core.models import AuditLog
 from apps.core.permissions import effective_permission_codes
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
@@ -35,7 +38,7 @@ from apps.core.viewsets import ReadOnlyTenantViewSet
 User = get_user_model()
 
 
-class FocusNfeConfigView(APIView):
+class FocusNfeConfigView(JsonObjectBodyMixin, APIView):
     """Consulta e edita a configuracao Focus da conta autenticada."""
 
     required_module = "financeiro"
@@ -64,7 +67,7 @@ class FocusNfeConfigView(APIView):
         return Response(serializer.data)
 
 
-class CosmosConfigView(APIView):
+class CosmosConfigView(JsonObjectBodyMixin, APIView):
     """Consulta e edita a credencial Cosmos da conta autenticada."""
 
     required_module = "financeiro"
@@ -93,7 +96,7 @@ class CosmosConfigView(APIView):
         return Response(serializer.data)
 
 
-class LoginView(TokenObtainPairView):
+class LoginView(JsonObjectBodyMixin, TokenObtainPairView):
     serializer_class = StarChefTokenObtainPairSerializer
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
@@ -107,7 +110,7 @@ class LoginView(TokenObtainPairView):
         return response
 
 
-class CookieTokenRefreshView(TokenRefreshView):
+class CookieTokenRefreshView(JsonObjectBodyMixin, TokenRefreshView):
     """Renova o access token lendo o refresh do cookie (fallback: corpo)."""
 
     # O refresh é anônimo (sem access válido), então o UserRateThrottle global não
@@ -133,7 +136,7 @@ class CookieTokenRefreshView(TokenRefreshView):
         return response
 
 
-class LogoutView(APIView):
+class LogoutView(JsonObjectBodyMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -176,7 +179,27 @@ class MeView(APIView):
         )
 
 
-class AdminAuthorizationView(APIView):
+#: Permissões que podem ser emprestadas por autorização de outro usuário.
+#:
+#: Uma lista fechada, e não "qualquer permissão": a autorização empresta poder
+#: para UMA operação, e abrir isso para o catálogo inteiro transformaria a
+#: senha de um administrador numa chave-mestra para qualquer coisa que alguém
+#: pensasse em pedir daqui. Entrar aqui é uma decisão deliberada.
+#:
+#: `""` (vazio) é o fluxo herdado do fechamento de caixa: exige administrador
+#: da conta, sem permissão específica.
+AUTHORIZABLE_PERMISSIONS = frozenset(
+    {
+        "",
+        "orders.cancel",
+        "orders.discount",
+        "cash.manage",
+        "settings.manage",
+    }
+)
+
+
+class AdminAuthorizationView(JsonObjectBodyMixin, APIView):
     """Confirma credenciais autorizadas sem trocar a sessão do operador.
 
     Sem ``permission`` preserva o fluxo de fechamento do aplicativo, exclusivo
@@ -192,7 +215,7 @@ class AdminAuthorizationView(APIView):
         login = str(request.data.get("username") or "").strip()
         password = str(request.data.get("password") or "")
         required_permission = str(request.data.get("permission") or "").strip()
-        if required_permission not in {"", "orders.cancel"}:
+        if required_permission not in AUTHORIZABLE_PERMISSIONS:
             return Response(
                 {"detail": "Operação de autorização inválida."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -242,10 +265,31 @@ class AdminAuthorizationView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # QUEM PEDIU, QUEM LIBEROU e PARA QUÊ. A operação em si é auditada por
+        # quem a executa (o cancelamento registra o próprio); este registro
+        # cobre a concessão, que é o que explica um operador sem permissão
+        # tendo feito algo que a permissão dele não permite.
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=administrator.profile,
+            actor=request.user,
+            reason=str(request.data.get("reason") or ""),
+            metadata={
+                "event": "authorization_granted",
+                "permission": required_permission or "tenant_admin",
+                "requested_by": str(getattr(request.user, "id", "") or ""),
+                "requested_by_username": getattr(request.user, "username", "") or "",
+                "authorized_by": str(administrator.id),
+                "authorized_by_username": administrator.get_username(),
+                "terminal": request.headers.get("X-Terminal-Id", ""),
+                "terminal_name": request.headers.get("X-Terminal-Name", ""),
+            },
+            request=request,
+        )
         return Response({"authorized": True, "user_id": str(administrator.id)})
 
 
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(JsonObjectBodyMixin, viewsets.ModelViewSet):
     serializer_class = UserSerializer
     search_fields = ["username", "email", "first_name", "last_name"]
     ordering_fields = ["username", "email", "last_login"]
@@ -324,7 +368,7 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = None  # catálogo pequeno: retorna todas de uma vez
 
 
-class PlanViewSet(viewsets.ModelViewSet):
+class PlanViewSet(JsonObjectBodyMixin, viewsets.ModelViewSet):
     serializer_class = PlanSerializer
     queryset = Plan.objects.all()
     search_fields = ["code", "name"]
@@ -340,7 +384,7 @@ class PlanViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class AccountViewSet(viewsets.ModelViewSet):
+class AccountViewSet(JsonObjectBodyMixin, viewsets.ModelViewSet):
     serializer_class = AccountSerializer
     queryset = Account.objects.select_related("plan").all()
     search_fields = ["name", "slug", "document", "email"]
@@ -357,7 +401,7 @@ class AccountViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class SubscriptionViewSet(viewsets.ModelViewSet):
+class SubscriptionViewSet(JsonObjectBodyMixin, viewsets.ModelViewSet):
     serializer_class = SubscriptionSerializer
     queryset = Subscription.objects.select_related("account", "plan").all()
 
@@ -373,7 +417,7 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class GlobalSystemConfigViewSet(viewsets.ModelViewSet):
+class GlobalSystemConfigViewSet(JsonObjectBodyMixin, viewsets.ModelViewSet):
     serializer_class = GlobalSystemConfigSerializer
     queryset = GlobalSystemConfig.objects.all()
     search_fields = ["key", "description"]

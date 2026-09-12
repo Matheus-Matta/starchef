@@ -93,4 +93,4 @@ def test_superuser_sem_conta_vinculada_nao_acessa_a_api(api_client, db):
     _auth(api_client, root)
     response = api_client.get("/api/v1/stock/locations/")
     assert response.status_code == 403
-    assert "não está vinculado a nenhuma conta" in response.json()["detail"]
+    assert "não está vinculado a nenhuma conta" in response.json()["error"]["message"]

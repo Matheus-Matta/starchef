@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from apps.core.requests import required_field
 from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
@@ -213,7 +214,11 @@ class CashRegisterViewSet(BaseTenantViewSet):
             cash_register = close_cash_register(
                 cash_register=cash_register,
                 user=request.user,
-                actual_amount=request.data["actual_amount"],
+                actual_amount=required_field(
+                    request,
+                    "actual_amount",
+                    "Informe o valor conferido na gaveta para fechar o caixa.",
+                ),
                 notes=request.data.get("notes", ""),
                 terminal=terminal_from_request(request, restaurant=cash_register.restaurant),
                 installation_id=installation_id_from_request(request),

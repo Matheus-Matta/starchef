@@ -294,6 +294,17 @@ def test_handle_e_unico_por_conta(admin_client, ecommerce_account, menu):
     assert "slug" in _errors(response)
 
 
+def test_handle_omitido_e_derivado_do_nome(admin_client, ecommerce_account):
+    """O painel deixa o apelido em branco; o servidor deriva do nome."""
+    response = admin_client.post(
+        "/api/v1/menu/menus/",
+        {"name": "Navegação Principal", "menu_type": "navigation"},
+        format="json",
+    )
+    assert response.status_code == 201, response.data
+    assert response.data["slug"] == "navegacao-principal"
+
+
 def test_contas_diferentes_podem_usar_o_mesmo_handle(ecommerce_account, restaurant, branch):
     """O handle é da conta, não da plataforma — antes era único globalmente."""
     from apps.accounts.models import Account
