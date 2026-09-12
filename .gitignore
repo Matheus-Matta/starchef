@@ -19,6 +19,12 @@ backend/db.sqlite3
 backend/db*.sqlite3
 backend/test.sqlite3
 test.sqlite3
+# Arquivos-irmaos do modo WAL do SQLite (ver docs/BACKEND.md). Aparecem ao lado
+# de todo banco local desde que o WAL foi ligado; versiona-los corromperia a
+# copia de quem clonasse.
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 frontend/node_modules/
 frontend/dist/

@@ -23,7 +23,10 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/FLUTTER_PDV_TECNICO.md`: módulos e implementação interna do PDV;
 - `docs/PDV_OFFLINE_SCALE_ARCHITECTURE.md`: offline, topologia e balanças;
 - `docs/BACKEND.md`: API e serviços do backend;
-- `docs/FRONTEND.md`: retaguarda web.
+- `docs/FRONTEND.md`: retaguarda web;
+- `docs/TESTE_CARGA.md`: teste de carga manual das quatro frentes (`loadtest/`);
+- `docs/TESTE_CARGA_PDV.md`: teste de carga do nucleo do PDV Flutter (`flutter/loadtest/`);
+- `docs/ANALISE_DE_RISCOS.md`: os defeitos que a carga achou, o que foi corrigido e o que segue aberto.
 
 ## Regras do release do PDV
 

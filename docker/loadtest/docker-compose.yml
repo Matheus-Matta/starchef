@@ -1,0 +1,85 @@
+# Alvo da carga em modo PRODUÇÃO, só na máquina local: a mesma imagem
+# (Dockerfile do backend, requirements/production), o mesmo comando
+# (migrate + collectstatic + gunicorn/UvicornWorker) e os mesmos settings
+# (`config.settings.production`) do docker-compose.yml da raiz.
+#
+# O Postgres fica FORA deste arquivo, de propósito: sobe antes, sozinho, com
+# `scripts/start_prod_target.sh`, na rede externa `starchef-loadtest`. Assim o
+# banco sobrevive a `docker compose down` e pode ser inspecionado à parte.
+#
+# O docker-compose.yml da RAIZ é o de produção e não muda por causa disto.
+# Nunca aponte este arquivo para o `.env` da raiz nem para um banco real.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - starchef-loadtest
+
+  backend:
+    build:
+      context: ../../backend
+      args:
+        REQUIREMENTS: production
+        # Rede corporativa com TLS interceptado: o pip do container não tem a
+        # CA do proxy. Só para este build local; em produção fica vazio.
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    image: starchef-backend:loadtest
+    user: "1000:1000"
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.asgi:application -c gunicorn.conf.py"
+    environment:
+      DJANGO_ENV: production
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_DEBUG: "False"
+      DJANGO_SECRET_KEY: loadtest-only-secret-key-with-enough-length-and-entropy-0123456789
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend,host.docker.internal
+      DJANGO_CORS_ALLOWED_ORIGINS: http://127.0.0.1:5199,http://localhost:5199
+      DJANGO_CSRF_TRUSTED_ORIGINS: http://127.0.0.1:5199,http://localhost:5199
+      # HTTP puro (sem proxy TLS na frente): igual ao que o .env de prod
+      # desliga enquanto o proxy reverso não existe.
+      DJANGO_SECURE_SSL_REDIRECT: "False"
+      DJANGO_SESSION_COOKIE_SECURE: "False"
+      DJANGO_CSRF_COOKIE_SECURE: "False"
+      DJANGO_AUTH_COOKIE_SECURE: "False"
+      POSTGRES_HOST: starchef-pg-loadtest
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: starchef_loadtest
+      POSTGRES_USER: starchef
+      POSTGRES_PASSWORD: loadtest-only-password
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
+      # O teste mede o sistema, não o throttle do DRF.
+      THROTTLE_RATE_ANON: 1000000/min
+      THROTTLE_RATE_USER: 10000000/hour
+      THROTTLE_RATE_LOGIN: 100000/min
+      THROTTLE_RATE_TOKEN_REFRESH: 100000/min
+      THROTTLE_RATE_DEVICE_POLL: 1000000/min
+      THROTTLE_RATE_CASH_APPROVAL: 1000000/min
+      THROTTLE_RATE_PASSWORD_RESET: 100000/min
+    volumes:
+      - loadtest_media:/app/media
+      - loadtest_static:/app/staticfiles
+    ports:
+      - "127.0.0.1:${LOADTEST_PORT:-8012}:8000"
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - starchef-loadtest
+
+volumes:
+  loadtest_media:
+  loadtest_static:
+
+networks:
+  starchef-loadtest:
+    external: true

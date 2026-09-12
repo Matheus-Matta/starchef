@@ -13,8 +13,12 @@ RUN apt-get update \
 # Seleciona o conjunto de dependências: development (default) ou production.
 # O docker-compose.prod.yml passa REQUIREMENTS=production.
 ARG REQUIREMENTS=development
+# Opcional: hosts em que o pip confia sem verificar TLS (ex.: "pypi.org
+# files.pythonhosted.org" atrás de proxy corporativo que intercepta HTTPS).
+# Vazio por padrão — o build de produção não muda.
+ARG PIP_TRUSTED_HOST=""
 COPY requirements /app/requirements
-RUN pip install -r requirements/${REQUIREMENTS}.txt
+RUN PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}" pip install -r requirements/${REQUIREMENTS}.txt
 
 COPY . /app
 
