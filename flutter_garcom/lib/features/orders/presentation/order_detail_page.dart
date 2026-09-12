@@ -58,14 +58,44 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     initialOrder: widget.initialOrder,
   );
 
+  /// A sugestão de mesa já apareceu nesta abertura do pedido.
+  ///
+  /// Por ABERTURA, de propósito: vinculada a mesa, o pedido deixa de estar sem
+  /// mesa e a sugestão não tem mais motivo; se o garçom dispensou e voltar
+  /// depois com o pedido ainda sem mesa, ela aparece de novo — que é
+  /// exatamente quando ela ainda é útil.
+  bool _suggestedTable = false;
+
   @override
   void initState() {
     super.initState();
+    _presenter.addListener(_maybeSuggestTable);
     _presenter.start();
+  }
+
+  /// Pedido sem mesa: oferece vincular assim que a tela abre.
+  ///
+  /// A mesa é o que liga a comanda ao salão — sem ela ninguém sabe para onde
+  /// levar o pedido. Entrar no pedido e não ser lembrado disso fazia a
+  /// correção depender de o garçom lembrar sozinho, no meio do atendimento.
+  ///
+  /// Não bloqueia: dá para seguir sem mesa (o cliente pode estar em pé), e a
+  /// vinculação continua disponível no mesmo botão de sempre.
+  void _maybeSuggestTable() {
+    if (_suggestedTable || !mounted) return;
+    if (!shouldSuggestTable(_presenter.order)) return;
+    _suggestedTable = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final vincular = await confirmLinkTableSuggestion(context);
+      if (vincular != true || !mounted) return;
+      _report(await manageOrderTable(context, _presenter, skipAsk: true));
+    });
   }
 
   @override
   void dispose() {
+    _presenter.removeListener(_maybeSuggestTable);
     _presenter.dispose();
     super.dispose();
   }

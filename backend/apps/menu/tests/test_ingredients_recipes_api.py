@@ -72,10 +72,17 @@ def test_create_recipe_and_add_items_updates_cost(api_client, account, restauran
 
     recipe_resp = api_client.post(
         "/api/v1/menu/recipes/",
-        {"product": str(product.id), "yield_quantity": "1", "restaurant": str(restaurant.id), "branch": str(branch.id)},
+        {
+            "product": str(product.id),
+            "yield_quantity": "1",
+            "preparation_instructions": "1. Misture os insumos.\n2. Asse por 30 minutos.",
+            "restaurant": str(restaurant.id),
+            "branch": str(branch.id),
+        },
         format="json",
     )
     assert recipe_resp.status_code == 201, recipe_resp.data
+    assert recipe_resp.data["preparation_instructions"].startswith("1. Misture")
     recipe_id = recipe_resp.data["id"]
 
     item_resp = api_client.post(

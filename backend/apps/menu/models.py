@@ -330,6 +330,7 @@ class Ingredient(TenantModel):
 class Recipe(TenantModel):
     product = models.OneToOneField(Product, related_name="recipe", on_delete=models.CASCADE)
     yield_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=1)
+    preparation_instructions = models.TextField(blank=True, default="")
     total_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     auto_deduct_stock = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)

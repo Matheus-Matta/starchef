@@ -70,8 +70,8 @@ const groups = computed(() => [
     { route: "cardapio", label: "Produtos", icon: "book-open" },
     { route: "categorias", label: "Categorias", icon: "tag" },
     { route: "adicionais", label: "Adicionais", icon: "plus" },
-    canManage.value && { route: "ingredientes", label: "Ingredientes", icon: "flask" },
-    canManage.value && { route: "receitas", label: "Receitas", icon: "salad" },
+    canManage.value && { route: "ingredientes", label: "Insumos", icon: "flask" },
+    canManage.value && { route: "receitas", label: "Fichas técnicas", icon: "salad" },
   ].filter(Boolean) },
   { label: "Gestão", items: [
     canManage.value && { route: "relatorios", label: "Relatórios avançados", icon: "bar-chart-3" },

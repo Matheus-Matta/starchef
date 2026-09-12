@@ -201,7 +201,7 @@ const groups = computed(() =>
         { id: "categorias", label: "Categorias", icon: "tag" },
         { id: "adicionais", label: "Adicionais", icon: "plus" },
         canManage.value ? { id: "ingredientes", label: "Insumos", icon: "flask" } : null,
-        canManage.value ? { id: "receitas", label: "Receitas", icon: "salad" } : null,
+        canManage.value ? { id: "receitas", label: "Fichas técnicas", icon: "salad" } : null,
       ].filter(Boolean),
     },
     // ── Secoes de Modulos opcionais (ocultam por completo se o modulo estiver off) ──

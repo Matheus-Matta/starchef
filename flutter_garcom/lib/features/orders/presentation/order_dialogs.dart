@@ -86,20 +86,26 @@ Future<bool> confirmDiscardFailed(
 /// gerencia aqui dentro, e não na hora de abrir o pedido.
 ///
 /// Devolve o recado a mostrar ao garçom, ou `null` se ele desistiu.
+/// [skipAsk] entra direto na escolha da mesa, sem perguntar o que fazer.
+/// É o caminho da sugestão automática: o garçom já respondeu "quero vincular"
+/// ao aceitar a sugestão, e repetir a pergunta seria um toque a mais para a
+/// mesma decisão.
 Future<String?> manageOrderTable(
   BuildContext context,
-  OrderDetailPresenter presenter,
-) async {
+  OrderDetailPresenter presenter, {
+  bool skipAsk = false,
+}) async {
   final order = presenter.order;
   if (order == null) return null;
   final commandId = fieldText(order['command']);
   if (commandId.isEmpty) return null;
   final hasTable = fieldText(order['table']).isNotEmpty;
 
-  final action = await _askTableAction(context, hasTable: hasTable);
-  if (action == null || !context.mounted) return null;
-  if (action == _TableAction.unlink) return presenter.unlinkTable(commandId);
-
+  if (!skipAsk) {
+    final action = await _askTableAction(context, hasTable: hasTable);
+    if (action == null || !context.mounted) return null;
+    if (action == _TableAction.unlink) return presenter.unlinkTable(commandId);
+  }
   final List<Map<String, dynamic>> tables;
   try {
     tables = await presenter.repository.tables();
@@ -121,6 +127,49 @@ Future<String?> manageOrderTable(
         : 'Comanda vinculada à mesa.',
   );
 }
+
+/// Este pedido merece a sugestão de mesa ao ser aberto?
+///
+/// Só comanda tem mesa para vincular (é o contrato de [manageOrderTable]), e
+/// só faz sentido sugerir para quem ainda não tem uma.
+bool shouldSuggestTable(Map<String, dynamic>? order) {
+  if (order == null) return false;
+  if (fieldText(order['command']).isEmpty) return false;
+  return fieldText(order['table']).isEmpty;
+}
+
+/// "Este pedido está sem mesa. Quer vincular uma agora?"
+///
+/// Sugestão, não bloqueio: o cliente pode estar em pé, e o pedido segue
+/// utilizável de qualquer forma. O que não pode é o garçom entrar no pedido,
+/// não ser lembrado, e a comanda passar o atendimento inteiro sem ninguém
+/// saber para onde levar o que foi pedido.
+Future<bool?> confirmLinkTableSuggestion(BuildContext context) =>
+    showAppSheet<bool>(
+      context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AppSheetHeader(title: 'Pedido sem mesa'),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text('Deseja vincular uma mesa a este pedido?'),
+          ),
+          const SizedBox(height: 12),
+          AppSheetOption(
+            icon: Icons.table_restaurant_outlined,
+            label: 'Selecionar mesa',
+            onTap: () => Navigator.pop(context, true),
+          ),
+          AppSheetOption(
+            icon: Icons.schedule_outlined,
+            label: 'Agora não',
+            onTap: () => Navigator.pop(context, false),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
 
 enum _TableAction { link, unlink }
 

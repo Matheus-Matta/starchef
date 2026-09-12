@@ -258,21 +258,16 @@ nome. O operador deverá revisar unidade e quantidade antes de ativar a baixa.
 
 ## 9. Produtos vendidos diretamente
 
-Produtos que representam uma unidade física, como refrigerante em lata, podem
-ser vendidos sem receita e ainda assim baixar estoque.
+Todo consumo novo é configurado na ficha técnica de preparo, inclusive para
+uma unidade física pronta, como refrigerante em lata. Nesse caso, a ficha usa
+rendimento `1` e contém um único insumo com quantidade `1 unit`. Assim produto
+produzido e produto direto seguem o mesmo fluxo de composição, custo e baixa.
 
-Adicionar ao produto:
-
-- `stock_ingredient`: insumo correspondente;
-- `stock_consumption_quantity`: quantidade consumida por unidade vendida.
-
-Exemplo:
-
-```text
-Produto: Refrigerante lata 350 ml
-Insumo: Refrigerante lata 350 ml
-Consumo por venda: 1 unidade
-```
+Os campos legados `Product.stock_ingredient`,
+`stock_consumption_quantity` e `stock_consumption_unit` continuam no backend
+temporariamente para que cadastros antigos não deixem de baixar estoque, mas
+não aparecem mais no cadastro web de produto. Cadastros novos devem usar
+sempre `Recipe` e `RecipeItem`.
 
 O tipo de produto `input` existente deve ser revisado. Não se deve usar
 simultaneamente um produto do tipo insumo e um `Ingredient` independente para o
@@ -838,9 +833,9 @@ um inventário assistido antes de serem liberados para consumo.
   (`sale:{item}:{componente}:{id}`) com constraint única por conta;
 - adicionais — `ProductAddon.ingredient` / `consumption_quantity` /
   `consumption_unit`;
-- produtos diretos — `Product.stock_ingredient` /
-  `stock_consumption_quantity` / `stock_consumption_unit`; ignorados quando o
-  produto tem ficha técnica ativa, para não baixar o mesmo saldo duas vezes;
+- produtos diretos legados — `Product.stock_ingredient` /
+  `stock_consumption_quantity` / `stock_consumption_unit`; continuam como
+  compatibilidade, mas novos vínculos são feitos por ficha técnica;
 - reversões — `revert_order_stock` cria movimentos inversos (tipo `reversal`,
   ligados por `reversal_of`), sem apagar a baixa original. Não é chamada
   automaticamente no cancelamento: com baixa no envio à cozinha o prato já foi

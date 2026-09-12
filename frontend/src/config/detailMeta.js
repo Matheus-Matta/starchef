@@ -129,7 +129,7 @@ export const DETAIL_META = {
   branch: { icon: "pi-sitemap", accent: "blue", eyebrow: "Filial", title: (r) => r.name || "Filial", subtitle: (r) => r.restaurant_name || "-" },
   restaurant: { icon: "pi-building", accent: "violet", eyebrow: "Restaurante", title: (r) => r.trade_name || "Restaurante", subtitle: (r) => r.city || r.legal_name || "-" },
   category: { icon: "pi-tags", accent: "indigo", eyebrow: "Categoria", title: (r) => r.name || "Categoria" },
-  recipe: { icon: "pi-book", accent: "amber", eyebrow: "Receita", title: (r) => r.product?.name || "Receita" },
+  recipe: { icon: "pi-book", accent: "amber", eyebrow: "Ficha técnica", title: (r) => r.product?.name || "Ficha técnica" },
   menu: { icon: "pi-bookmark", accent: "indigo", eyebrow: "Cardapio", title: (r) => r.name || "Cardapio" },
   addon: { icon: "pi-plus-circle", accent: "teal", eyebrow: "Adicional", title: (r) => r.name || "Adicional" },
   stock: { icon: "pi-database", accent: "amber", eyebrow: "Movimentacao", title: (r) => r.ingredient_name || "Movimentacao" },

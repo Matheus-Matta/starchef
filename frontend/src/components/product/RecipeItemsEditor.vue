@@ -1,10 +1,10 @@
 <template>
   <section class="ritems">
     <div class="ritems__head">
-      <h3>Ficha técnica <small>{{ rows.length }} ingredientes</small></h3>
+      <h3>Insumos da ficha técnica <small>{{ rows.length }} insumos</small></h3>
       <Button
         v-if="!readonly"
-        label="Adicionar ingrediente"
+        label="Adicionar insumo"
         icon="pi pi-plus"
         size="small"
         severity="secondary"
@@ -14,7 +14,7 @@
     </div>
 
     <DataTable :value="rows" data-key="id" class="ritems__table" :row-hover="false" responsive-layout="scroll">
-      <Column field="ingredient" header="Ingrediente">
+      <Column field="ingredient" header="Insumo">
         <template #body="{ data }"><strong class="ritems__name">{{ data.ingredient_name || ingredientLabel(data.ingredient) }}</strong></template>
       </Column>
       <Column header="Quantidade" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }" :style="{ width: '130px' }">
@@ -31,7 +31,7 @@
       </Column>
       <template #empty>
         <div class="ritems__empty">
-          {{ readonly ? "Nenhum ingrediente cadastrado." : "Nenhum ingrediente ainda. Clique em \"Adicionar ingrediente\"." }}
+          {{ readonly ? "Nenhum insumo cadastrado." : "Nenhum insumo ainda. Clique em \"Adicionar insumo\"." }}
         </div>
       </template>
     </DataTable>
@@ -43,7 +43,7 @@
 
     <AppEntityDialog
       v-model:visible="dialogOpen"
-      entity="ingrediente"
+      entity="insumo"
       :mode="editing.id ? 'edit' : 'create'"
       :saving="saving"
       :dirty="dirty"
@@ -52,7 +52,7 @@
     >
       <AppErrorSummary :message="formError" />
       <AppFormGrid :columns="2">
-        <AppFormField label="Ingrediente" name="ingredient" :error="fieldErrors.ingredient" required full>
+        <AppFormField label="Insumo" name="ingredient" :error="fieldErrors.ingredient" required full>
           <template #default="{ fieldId, invalid }">
             <Dropdown
               :id="fieldId"
@@ -62,7 +62,7 @@
               option-value="value"
               :class="{ 'p-invalid': invalid }"
               :loading="loadingIngredients"
-              placeholder="Buscar ingrediente..."
+              placeholder="Buscar insumo..."
               filter
               fluid
               @change="onIngredientChange"
@@ -153,7 +153,7 @@ async function loadIngredients() {
   }
 }
 function ingredientLabel(id) {
-  return ingredientOptions.value.find((o) => o.value === id)?.label || "Ingrediente";
+  return ingredientOptions.value.find((o) => o.value === id)?.label || "Insumo";
 }
 
 /* ── Modal ────────────────────────────────────────────────────────────── */
@@ -191,7 +191,7 @@ function onIngredientChange() {
 
 function validateForm() {
   const errors = {};
-  if (!editing.value.ingredient) errors.ingredient = "Selecione um ingrediente.";
+  if (!editing.value.ingredient) errors.ingredient = "Selecione um insumo.";
   if (!editing.value.quantity || Number(editing.value.quantity) <= 0) errors.quantity = "A quantidade deve ser maior que zero.";
   if (!editing.value.unit) errors.unit = "Selecione a unidade.";
   fieldErrors.value = errors;
@@ -215,7 +215,7 @@ async function save() {
     if (!row.ingredient_name) row.ingredient_name = ingredientLabel(row.ingredient);
     upsertRow(row);
     dialogOpen.value = false;
-    toast.add({ severity: "success", summary: editing.value.id ? "Ingrediente atualizado" : "Ingrediente adicionado", life: 2000 });
+    toast.add({ severity: "success", summary: editing.value.id ? "Insumo atualizado" : "Insumo adicionado", life: 2000 });
   } catch (err) {
     const normalized = normalizeApiError(err);
     fieldErrors.value = { ...fieldErrors.value, ...normalized.fieldErrors };
@@ -233,7 +233,7 @@ function upsertRow(row) {
 
 function confirmRemove(row) {
   confirm.require({
-    header: "Remover ingrediente?",
+    header: "Remover insumo?",
     message: `Remover "${row.ingredient_name || ingredientLabel(row.ingredient)}" da ficha técnica?`,
     icon: "pi pi-exclamation-triangle",
     acceptLabel: "Remover",
@@ -246,7 +246,7 @@ async function remove(row) {
   try {
     if (row.id) await service.remove(row.id);
     rows.value = rows.value.filter((r) => r.id !== row.id);
-    toast.add({ severity: "success", summary: "Ingrediente removido", life: 2000 });
+    toast.add({ severity: "success", summary: "Insumo removido", life: 2000 });
   } catch (err) {
     toast.add({ severity: "error", summary: "Não foi possível remover", detail: normalizeApiError(err).message, life: 4000 });
   }
