@@ -679,22 +679,27 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  /// A impressora caiu — registra, mas NÃO interrompe o operador.
+  ///
+  /// A disponibilidade é reavaliada de 15 em 15 segundos e a fila reimprime
+  /// sozinha. Com uma impressora desligada, cada oscilação virava um aviso
+  /// novo por cima da tela de venda: uma fila de Toasts que o operador não
+  /// tinha como resolver no meio do atendimento, sobre algo que o sistema já
+  /// está tentando resolver por conta própria.
+  ///
+  /// Silencioso não é ignorado. A causa vai para o log, o trabalho continua na
+  /// fila com o estado dele, e a Fila de impressão (menu do PDV) mostra o que
+  /// está pendente, o motivo e o botão de tentar agora.
   void _onPrinterStatusChanged() {
     final status = deviceAgent.printerAvailability.value;
     final disconnectedAfterUse =
         status.phase == PrinterAvailabilityPhase.unavailable &&
         lastPrinterPhase == PrinterAvailabilityPhase.available;
     lastPrinterPhase = status.phase;
-    if (!mounted || !disconnectedAfterUse) return;
-    // O aviso carrega a causa vinda do agente (qual impressora e por quê): o
-    // texto genérico anterior mandava conferir cabo e porta mesmo quando o
-    // problema era outro — impressora do sistema com nome errado, por
-    // exemplo — e não dizia qual das impressoras do terminal falhou.
-    showAppToast(
-      context,
-      '${status.message} O PDV continua disponível.',
-      title: 'Impressora desconectada',
-      severity: AppErrorSeverity.warning,
+    if (!disconnectedAfterUse) return;
+    AppLogger.instance.warning(
+      'impressora_indisponivel',
+      data: {'motivo': status.message},
     );
   }
 
@@ -940,6 +945,9 @@ class _HomePageState extends State<HomePage>
         // de rede depois não impeça de reabrir um pedido lançado em outro
         // caixa. Fora do caminho crítico: o operador não espera por isso.
         unawaited(_warmOrdersCache());
+        // Rascunho que sobrou de uma sessão anterior (app fechado com a
+        // comanda aberta e vazia) não é venda: some antes de alguém o ver.
+        unawaited(_sweepStaleDrafts());
         // Carga completa do catálogo operacional em segundo plano (§24): a
         // tela já está utilizável e não espera por ela.
         final restaurantForSync = restaurantId;
@@ -962,6 +970,7 @@ class _HomePageState extends State<HomePage>
   @override
   Future<void> _changeRestaurant(String value) async {
     if (value == selectedRestaurantId) return;
+    _leaveActiveOrder();
     setState(() {
       selectedRestaurantId = value;
       activeOrder = null;
@@ -1057,6 +1066,7 @@ class _HomePageState extends State<HomePage>
         }
         return;
       case PdvDestination.tables:
+        _leaveActiveOrder();
         setState(() {
           activeOrder = null;
           selectedTable = null;
@@ -1270,14 +1280,56 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  /// Sai do pedido ativo: se ele ficou vazio, descarta.
+  ///
+  /// TODA saída passa por aqui — voltar ao início, abrir a lista de Pedidos,
+  /// ir para Mesas, trocar de restaurante, abrir outra comanda por cima. Só
+  /// o `_goHome` descartava, e cada outra saída deixava um pedido vazio para
+  /// trás: reabrir a mesma comanda criava mais um, e a tela de Pedidos
+  /// enchia de `#LOCAL-…` com R$ 0,00 que ninguém abriu de propósito.
+  ///
+  /// O pedido é capturado ANTES do `setState` de quem chama (depois dele não
+  /// há mais o que descartar) e o descarte segue em segundo plano: navegar
+  /// não pode esperar a rede. [except] preserva o pedido que está sendo
+  /// reaberto — retomar a própria comanda não é sair dela.
+  @override
+  void _leaveActiveOrder({String? except}) {
+    final current = activeOrder;
+    if (current == null || !_activeOrderIsEmpty) return;
+    if (except != null && '${current['id']}' == except) return;
+    unawaited(_discardEmptyOrder(current));
+  }
+
+  /// Apaga os rascunhos que ficaram órfãos neste terminal.
+  ///
+  /// Ver `OfflineFirstGateway.discardStaleDrafts`: quem sai do pedido pela
+  /// tela descarta na hora ([_leaveActiveOrder]); isto cobre o que não passou
+  /// por lá (app fechado com a comanda aberta e vazia).
+  @override
+  Future<void> _sweepStaleDrafts() async {
+    final store = api.localStore;
+    if (store == null) return;
+    try {
+      final removed = await store.discardStaleDrafts(
+        except: '${activeOrder?['id'] ?? ''}',
+      );
+      if (removed > 0) {
+        AppLogger.instance.info(
+          'rascunhos_orfaos_descartados',
+          data: {'quantidade': removed},
+        );
+      }
+    } catch (error) {
+      AppLogger.instance.warning(
+        'rascunhos_orfaos_nao_descartados',
+        data: {'causa': '$error'},
+      );
+    }
+  }
+
   @override
   Future<void> _goHome() async {
-    // O pedido é capturado ANTES do `setState` (depois dele não há mais o que
-    // descartar) e o descarte segue em segundo plano: voltar para o início é
-    // um gesto de navegação e não pode esperar a rede — sem conexão, a espera
-    // seria o tempo inteiro do timeout com a tela parada.
-    final discardable = _activeOrderIsEmpty ? activeOrder : null;
-    if (discardable != null) unawaited(_discardEmptyOrder(discardable));
+    _leaveActiveOrder();
     setState(() {
       activeOrder = null;
       selectedTable = null;
@@ -1448,17 +1500,23 @@ class _HomePageState extends State<HomePage>
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String reason,
     required String password,
+    // Com `movementId`, autoriza UMA sangria/suprimento pendente; sem ele,
+    // a divergência da própria sessão. É o mesmo endpoint nos dois casos.
+    String? movementId,
   }) async {
     final sessionId = '${cashSession!['id']}';
     final cashAuth = widget.controller.repository.cashAuth;
     final restaurant = restaurantId;
+    final alvo = movementId == null || movementId.isEmpty
+        ? const <String, dynamic>{}
+        : {'movement': movementId};
 
     if (api.syncStatus.hasConnection ||
         cashAuth == null ||
         restaurant == null) {
       return api.post(
         '/cash-register/$sessionId/approve/',
-        body: {'reason': reason, 'cash_password': password},
+        body: {'reason': reason, 'cash_password': password, ...alvo},
         accessToken: token,
       );
     }
@@ -1484,6 +1542,7 @@ class _HomePageState extends State<HomePage>
         'reason': reason,
         'cash_password_proof': proof,
         'proof_nonce': nonce,
+        ...alvo,
       },
       accessToken: token,
       localContext: {'approver_name': widget.controller.session?.user.name},

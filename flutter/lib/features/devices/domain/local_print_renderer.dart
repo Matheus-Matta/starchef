@@ -80,10 +80,10 @@ abstract final class LocalPrintRenderer {
       // Produto por peso resolve tudo em uma linha só: repetir a quantidade
       // numa segunda linha mostraria o mesmo peso duas vezes.
       final description = _isWeighed(item)
-          ? '${_quantity(item['quantity'])} x ${item['product_name']}'
+          ? '${OrderPresenter.quantityLabel(item)} ${item['product_name']}'
                 '${OrderPresenter.variationSuffix(item)} '
                 '${_money(item['unit_price'])}/kg'
-          : '${_quantity(item['quantity'])} x ${item['product_name']}'
+          : '${OrderPresenter.quantityLabel(item)} ${item['product_name']}'
                 '${OrderPresenter.variationSuffix(item)}';
       lines.add(_amountLine(description, item['total_price']));
       // O adicional é uma composição da linha acima, não outro item: entra
@@ -174,8 +174,8 @@ abstract final class LocalPrintRenderer {
     }
     lines.add(
       _clip(
-        'CANCELAR ${_quantity(item['quantity'])}x ${item['product_name']}'
-        '${OrderPresenter.variationSuffix(item)}',
+        'CANCELAR ${OrderPresenter.quantityLabel(item)} '
+        '${item['product_name']}${OrderPresenter.variationSuffix(item)}',
         ticketWidth,
       ),
     );
@@ -410,8 +410,9 @@ abstract final class LocalPrintRenderer {
           .where(OrderItemStatus.countsTowardBill)
           .toList();
 
-  static bool _isWeighed(JsonMap item) =>
-      item['product_is_weighed'] == true || '${item['pricing_unit']}' == 'kg';
+  // Uma regra só para "este item é vendido por peso?", em `OrderPresenter`:
+  // duas cópias divergiam no dia em que o cadastro ganhasse outro campo.
+  static bool _isWeighed(JsonMap item) => OrderPresenter.isWeighedItem(item);
 
   /// Rótulo à esquerda, valor em reais à direita — espelha `_linha_valor`.
   static String _amountLine(String label, Object? value) {

@@ -23,6 +23,67 @@ void main() {
     expect((updated['items'] as List), hasLength(1));
   });
 
+  group('produto por peso é lido em kg, não em unidades', () {
+    // "3x Picanha" passa a ideia de três peças. O que o açougue vendeu foram
+    // três quilos — e é o cadastro que diz isso, nunca o nome do produto.
+
+    test('unidade continua em x', () {
+      expect(
+        OrderPresenter.quantityLabel(const {
+          'quantity': 3,
+          'pricing_unit': 'unit',
+        }),
+        '3x',
+      );
+    });
+
+    test('peso vira kg', () {
+      expect(
+        OrderPresenter.quantityLabel(const {
+          'quantity': 3,
+          'pricing_unit': 'kg',
+        }),
+        '3,000kg',
+      );
+    });
+
+    test('fração de quilo mantém as três casas', () {
+      expect(
+        OrderPresenter.quantityLabel(const {
+          'quantity': 0.5,
+          'pricing_unit': 'kg',
+        }),
+        '0,500kg',
+      );
+      expect(
+        OrderPresenter.quantityLabel(const {
+          'quantity': 0.35,
+          'product_is_weighed': true,
+        }),
+        '0,350kg',
+      );
+    });
+
+    test('a decisão vem do cadastro, não do nome', () {
+      // Um produto chamado "Picanha" vendido por unidade (a peça inteira)
+      // continua sendo unidade.
+      expect(
+        OrderPresenter.quantityLabel(const {
+          'quantity': 2,
+          'product_name': 'Picanha',
+          'pricing_unit': 'unit',
+        }),
+        '2x',
+      );
+      expect(OrderPresenter.isWeighedItem(const {'pricing_unit': 'kg'}), isTrue);
+      expect(
+        OrderPresenter.isWeighedItem(const {'product_is_weighed': true}),
+        isTrue,
+      );
+      expect(OrderPresenter.isWeighedItem(const {}), isFalse);
+    });
+  });
+
   group('item fora da conta não soma no total', () {
     Map<String, dynamic> itemDe(String status) => {
       'id': 'item-$status',

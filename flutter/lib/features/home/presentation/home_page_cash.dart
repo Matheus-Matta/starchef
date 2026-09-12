@@ -38,6 +38,7 @@ mixin _CashSection on _HomePageShared {
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String password,
     required String reason,
+    String? movementId,
   });
   Future<void> _toggleCashBalanceVisibility();
   Future<void> _goHome();

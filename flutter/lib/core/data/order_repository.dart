@@ -1,7 +1,11 @@
+import 'package:sqlite_async/sqlite_async.dart';
+
 import 'order_item_status.dart';
 import '../../features/orders/presentation/order_presenter.dart';
 import '../formatters/decimal_money.dart';
+import '../formatters/input_values.dart';
 import '../formatters/value_formatters.dart';
+import '../network/api_exception.dart';
 import 'conflict_resolver.dart';
 import 'entity_catalog.dart';
 import 'entity_record.dart';
@@ -35,6 +39,42 @@ class OrderRepository extends EntityRepository {
 
   /// Catálogo local, usado para resolver nome e preço do item sem rede.
   final EntityRepository products;
+
+  /// Ponto único onde um rascunho vira pedido de verdade.
+  ///
+  /// Toda mutação de pedido passa por aqui, e toda mutação parte do payload
+  /// guardado — então a marca de rascunho chega junto. Se a operação não for a
+  /// promoção atômica do primeiro item, a criação é enfileirada ANTES dela.
+  /// Concentrar a regra neste lugar evita ter de lembrar dela em cada método
+  /// novo (fechar, pagar, mandar para a cozinha, pesar…).
+  @override
+  Future<EntityWrite> saveLocal(
+    Map<String, dynamic> payload, {
+    required SyncOperation operation,
+    required String method,
+    required String path,
+    Map<String, dynamic>? query,
+    String? id,
+    Map<String, dynamic>? requestBody,
+    Future<void> Function(SqliteWriteContext tx)? guard,
+  }) async {
+    var body = payload;
+    if (isDraft(body) && path != _createWithItemPath) {
+      body = await _materializeDraft(body, id ?? '${body['id'] ?? ''}');
+    }
+    return super.saveLocal(
+      body,
+      operation: operation,
+      method: method,
+      path: path,
+      query: query,
+      id: id,
+      requestBody: requestBody,
+      guard: guard,
+    );
+  }
+
+  static const _createWithItemPath = '/orders/create-with-item/';
 
   // ------------------------------------------------------------- abertura
 
@@ -74,6 +114,41 @@ class OrderRepository extends EntityRepository {
         payload,
         Map<String, dynamic>.from(firstItem),
       );
+      final record = await saveLocal(
+        payload,
+        operation: SyncOperation.create,
+        method: 'POST',
+        path: path,
+        // O corpo enviado ao servidor carrega o UUID local: é ele que o backend
+        // usa como chave de idempotência do pedido.
+        requestBody: {...body, 'client_order_id': orderId},
+        id: orderId,
+      );
+      return record.toApiJson();
+    }
+
+    // SEM item, o pedido ainda NÃO existe para o servidor.
+    //
+    // Escolher a comanda e a mesa é o operador montando a venda, não a venda
+    // acontecendo. Enfileirar a criação aqui enchia o banco de pedidos vazios
+    // — bastava entrar numa comanda, olhar e sair — e obrigava a inventar um
+    // cancelamento para desfazer algo que nunca deveria ter nascido.
+    //
+    // O rascunho fica só neste terminal (`saveLocalEffect` não gera operação
+    // de saída) e a tela trabalha com ele exatamente como trabalhava com o
+    // pedido criado: mesmo id, mesmos campos. Quem o promove é o primeiro
+    // item, em [addItem], por `/orders/create-with-item/` — pedido e item
+    // nascem juntos, numa transação só.
+    if (_promotableTypes.contains(type)) {
+      final record = await saveLocalEffect({
+        ...payload,
+        draftMarker: true,
+        // Como este pedido teria nascido, se o primeiro item não vier antes de
+        // outra coisa. Ver [_materializeDraft].
+        _draftPath: path,
+        _draftBody: {...body, 'client_order_id': orderId},
+      }, id: orderId);
+      return record.toApiJson();
     }
 
     final record = await saveLocal(
@@ -81,12 +156,73 @@ class OrderRepository extends EntityRepository {
       operation: SyncOperation.create,
       method: 'POST',
       path: path,
-      // O corpo enviado ao servidor carrega o UUID local: é ele que o backend
-      // usa como chave de idempotência do pedido.
       requestBody: {...body, 'client_order_id': orderId},
       id: orderId,
     );
     return record.toApiJson();
+  }
+
+  /// Marca de rascunho: o pedido existe só neste terminal.
+  ///
+  /// Sai do payload no instante em que o primeiro item o promove — e nunca é
+  /// enviada ao servidor, que não conhece este conceito.
+  ///
+  /// SEM sublinhado na frente de propósito: `EntityRepository.sanitize` apaga
+  /// toda chave assim antes de gravar, justamente para que marcas efêmeras não
+  /// persistam. Esta precisa persistir — é ela que distingue, na próxima
+  /// abertura da tela, um pedido que existe de um que ainda é intenção.
+  static const draftMarker = 'local_draft';
+
+  /// Tipos que `/orders/create-with-item/` sabe criar junto com o item.
+  ///
+  /// Um tipo fora desta lista (mesa, criada só por importação e base demo)
+  /// segue o caminho antigo: não há endpoint atômico para ele, e adiar a
+  /// criação deixaria o item sem pedido para entrar.
+  static const _promotableTypes = {
+    'command',
+    'counter',
+    'delivery',
+    'takeaway',
+  };
+
+  static const _draftPath = 'local_draft_path';
+  static const _draftBody = 'local_draft_body';
+
+  /// O pedido ainda é um rascunho deste terminal?
+  static bool isDraft(Map<String, dynamic> order) =>
+      order[draftMarker] == true;
+
+  static Map<String, dynamic> _withoutDraftMarks(Map<String, dynamic> order) =>
+      Map<String, dynamic>.from(order)
+        ..remove(draftMarker)
+        ..remove(_draftPath)
+        ..remove(_draftBody);
+
+  /// Faz o rascunho existir para o servidor, do jeito antigo.
+  ///
+  /// O primeiro item promove o rascunho de um jeito melhor — pedido e item
+  /// numa transação só ([addItem]). Mas QUALQUER outra operação sobre ele
+  /// (mandar para a cozinha, fechar, receber) precisa de um pedido que o
+  /// servidor conheça, senão ela subiria citando um identificador temporário
+  /// que ninguém pode resolver. Nesse caso a criação vai primeiro, pelo mesmo
+  /// caminho de sempre, e a operação segue atrás dela na fila.
+  Future<Map<String, dynamic>> _materializeDraft(
+    Map<String, dynamic> order,
+    String orderId,
+  ) async {
+    final clean = _withoutDraftMarks(order);
+    final body = order[_draftBody];
+    await saveLocal(
+      clean,
+      operation: SyncOperation.create,
+      method: 'POST',
+      path: '${order[_draftPath] ?? '/orders/'}',
+      requestBody: body is Map
+          ? Map<String, dynamic>.from(body)
+          : {'client_order_id': orderId},
+      id: orderId,
+    );
+    return clean;
   }
 
   /// Monta o item a partir do catálogo local e devolve o pedido recalculado.
@@ -98,17 +234,32 @@ class OrderRepository extends EntityRepository {
   }) async {
     // `knownProduct` é o que a tela já tem na mão. Sem ele, um produto ausente
     // do catálogo local viraria um item sem nome e sem preço no pedido.
+    // Produto ausente do catálogo local virava um item SEM NOME e SEM PREÇO no
+    // pedido — de graça, e sem nada na tela dizendo o que aconteceu. O guard
+    // `knownProduct` cobria só a tela; pelo relay (garçom, caixa secundário) o
+    // item entrava assim. O backend recusa; aqui passa a recusar também.
+    final productId = '${body['product'] ?? ''}'.trim();
     final product =
-        knownProduct ??
-        (await products.read('${body['product'] ?? ''}'))?.payload ??
-        <String, dynamic>{};
-    final quantity = ValueFormatters.number(
-      body['quantity'] ?? body['weight_kg'] ?? 1,
+        knownProduct ?? (await products.read(productId))?.payload;
+    if (product == null || product.isEmpty) {
+      throw ApiException(
+        productId.isEmpty
+            ? 'Informe o produto do item.'
+            : 'O produto do item não está no catálogo deste terminal.',
+        statusCode: 400,
+      );
+    }
+    // `quantity <= 0 ? 1 : quantity` era um silêncio caro: zero, negativo e
+    // "duas" viravam UM item cobrado do cliente, e o backend recusava o mesmo
+    // lançamento depois — a venda já impressa voltava `FAILED` na fila.
+    final quantity = requireQuantity(
+      body['quantity'] ?? body['weight_kg'],
+      padrao: 1,
     );
     final item = OrderPresenter.offlineItem(
       response: {...body, 'id': itemId ?? LocalId.temporary()},
       product: product,
-      quantity: quantity <= 0 ? 1 : quantity,
+      quantity: quantity,
       customerNote: '${body['customer_note'] ?? ''}',
     );
 
@@ -241,6 +392,28 @@ class OrderRepository extends EntityRepository {
     return record.toApiJson();
   }
 
+  /// Atualiza a mesa do RASCUNHO ligado a esta comanda.
+  ///
+  /// Só mexe em rascunho: um pedido que o servidor já conhece tem o vínculo
+  /// resolvido lá, com as regras de lá (ocupação da mesa, histórico de
+  /// movimentação). E usa [saveLocalEffect] de propósito — trocar de mesa
+  /// antes do primeiro item não é motivo para o pedido passar a existir.
+  Future<void> refreshDraftTable({
+    required String commandId,
+    required String? tableId,
+  }) async {
+    if (commandId.isEmpty) return;
+    final page = await list(query: {'command': commandId, 'page_size': 50});
+    for (final order in page.results) {
+      if (!isDraft(order)) continue;
+      await saveLocalEffect({
+        ...order,
+        'table': tableId,
+        if (tableId == null) 'table_number': null,
+      }, id: '${order['id'] ?? ''}');
+    }
+  }
+
   // ------------------------------------------------------------------ itens
 
   /// Lança um item no pedido e recalcula os totais.
@@ -260,6 +433,34 @@ class OrderRepository extends EntityRepository {
       (candidate) => '${candidate['id']}' == itemId,
       orElse: () => _itemsOf(updated).last,
     );
+    // PRIMEIRO ITEM DE UM RASCUNHO: é ele que faz o pedido existir.
+    //
+    // Em vez de duas operações na fila (criar o pedido, depois lançar o item),
+    // sobe UMA — `/orders/create-with-item/`, que o backend já executa numa
+    // transação só. É o mesmo caminho do app do garçom, e ele também resolve o
+    // caso de a comanda já ter sido aberta por outro terminal enquanto isto
+    // esperava na fila: lá o item entra no pedido que existe, em vez de
+    // recusar.
+    if (isDraft(order.payload)) {
+      final promoted = Map<String, dynamic>.from(updated)
+        ..remove(draftMarker);
+      final record = await saveLocal(
+        promoted,
+        operation: SyncOperation.create,
+        method: 'POST',
+        path: _createWithItemPath,
+        requestBody: {
+          'order_type': '${promoted['order_type'] ?? 'counter'}',
+          if (promoted['command'] != null) 'command': promoted['command'],
+          if (promoted['table'] != null) 'table': promoted['table'],
+          'client_order_id': orderId,
+          'item': {...body, 'client_item_id': itemId},
+        },
+        id: orderId,
+      );
+      return {...record.toApiJson(), '_created_item': item};
+    }
+
     final record = await saveLocal(
       updated,
       operation: SyncOperation.update,
@@ -414,10 +615,27 @@ class OrderRepository extends EntityRepository {
     if (order == null) {
       throw StateError('Pedido $orderId não existe no armazenamento local.');
     }
+    // Desconto vinha direto do corpo para o cálculo: texto virava zero em
+    // silêncio, negativo AUMENTAVA o total e um valor maior que a mercadoria
+    // zerava a venda. O backend recusa os três — sem a mesma regra aqui, a
+    // venda era impressa e cobrada antes de a fila descobrir.
+    final subtotal = ValueFormatters.number(order.payload['subtotal']);
+    final discount = requireMoney(
+      body['discount'] ?? order.payload['discount'],
+      field: 'discount',
+      label: 'o desconto',
+      padrao: 0,
+    );
+    if (discount > subtotal) {
+      throw const ApiException(
+        'O desconto não pode ser maior que o subtotal do pedido.',
+        statusCode: 400,
+      );
+    }
     final closed = OrderPresenter.closeOfflineOrder(
       {
         ...order.payload,
-        'discount': body['discount'] ?? order.payload['discount'],
+        'discount': discount,
         'fiscal_customer_cpf':
             body['fiscal_customer_cpf'] ??
             order.payload['fiscal_customer_cpf'] ??
@@ -454,7 +672,9 @@ class OrderRepository extends EntityRepository {
     final paymentId = LocalId.temporary();
     final total = ValueFormatters.number(order.payload['total']);
     final payments = _paymentsOf(order.payload);
-    final amount = ValueFormatters.number(body['amount']);
+    // Recebimento sem valor registrava R$ 0,00 como pagamento válido e dava a
+    // venda por quitada; com texto no campo, o mesmo.
+    final amount = requireMoney(body['amount'], field: 'amount', label: 'o valor recebido');
     // Conta os recebimentos JÁ CONFIRMADOS pelo servidor junto com os que
     // ainda estão na fila. Olhando só a fila, uma venda paga metade online e
     // metade offline calculava o troco sobre o valor cheio e devolvia dinheiro

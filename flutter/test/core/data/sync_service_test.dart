@@ -25,6 +25,22 @@ void main() {
     sync = SyncService(gateway: stack.gateway, transport: transport);
   });
 
+  /// O catalogo precisa existir antes da venda: lancar item de um produto que
+  /// nao esta na copia local passou a ser recusado, para nao gravar item sem
+  /// nome e sem preco. Estes testes falam de FILA, nao de cadastro — o produto
+  /// e so o pre-requisito, e por isso ele nao entra no `setUp` (a carga
+  /// paginada conta os registros do banco e um produto a mais mudaria o total).
+  Future<void> semearProduto() =>
+      stack.gateway.repository(EntityCatalog.product).applyRemoteList([
+        {
+          'id': 'prod-1',
+          'name': 'Pastel de queijo',
+          'restaurant': 'rest-1',
+          'current_price': '6.00',
+          'pricing_unit': 'unit',
+        },
+      ]);
+
   tearDown(() async {
     await sync.dispose();
     await stack.dispose();
@@ -33,6 +49,7 @@ void main() {
   test(
     'push() concorrente não devolve antes de entregar o que já estava na fila',
     () async {
+      await semearProduto();
       // O caso real: um ciclo periódico (do debounce de 450ms de uma escrita
       // anterior) já está conversando com o servidor quando o gesto de
       // concluir o pedido chama `flushSalesQueue` esperando a GARANTIA de que
@@ -42,7 +59,9 @@ void main() {
       final release = Completer<void>();
       transport.gate = release.future;
       final delivered = <String>[];
-      transport.handlers['POST /orders/'] = (request) {
+      // O pedido sobe junto com o primeiro item: sem item ele nao existe para
+      // o servidor, e nao ha o que entregar.
+      transport.handlers['POST /orders/create-with-item/'] = (request) {
         delivered.add('${request.body?['client_order_id']}');
         return {
           'id': 'pedido-real-${delivered.length}',
@@ -58,6 +77,11 @@ void main() {
         body: {'restaurant': 'rest-1', 'order_type': 'counter'},
       );
       final localA = '${orderA.payload['id']}';
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localA/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
 
       final periodicPush = sync.push();
       // Dá a volta no loop de eventos para o ciclo periódico reservar o
@@ -70,6 +94,11 @@ void main() {
         body: {'restaurant': 'rest-1', 'order_type': 'counter'},
       );
       final localB = '${orderB.payload['id']}';
+      await stack.gateway.write(
+        'POST',
+        '/orders/$localB/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
 
       final guaranteedPush = sync.push();
       var guaranteedResolved = false;
@@ -91,13 +120,19 @@ void main() {
   );
 
   test('entrega a fila e reconcilia o ID temporário com o real (§7)', () async {
+    await semearProduto();
     final created = await stack.gateway.write(
       'POST',
       '/orders/',
       body: {'restaurant': 'rest-1', 'order_type': 'counter'},
     );
     final localId = '${created.payload['id']}';
-    transport.handlers['POST /orders/'] = (_) => {
+    await stack.gateway.write(
+      'POST',
+      '/orders/$localId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    transport.handlers['POST /orders/create-with-item/'] = (_) => {
       'id': 'pedido-real',
       'sequence': 42,
       'status': 'open',
@@ -107,7 +142,8 @@ void main() {
     await sync.push();
 
     final delivered = transport.requests.single;
-    expect(delivered.path, '/orders/');
+    // Pedido e primeiro item numa operação só.
+    expect(delivered.path, '/orders/create-with-item/');
     // A chave de idempotência acompanha a requisição: um reenvio por timeout
     // devolve a resposta original em vez de criar uma segunda venda.
     expect(delivered.idempotencyKey, isNotNull);
@@ -247,7 +283,7 @@ void main() {
         },
       ]);
       stack.gateway.serviceFeePercent = 10;
-      transport.handlers['POST /orders/'] = (request) => {
+      transport.handlers['POST /orders/create-with-item/'] = (request) => {
         'id': realId,
         'sequence': 1,
         'status': 'open',
@@ -316,8 +352,9 @@ void main() {
   test(
     'fechamento recusado por outro motivo continua indo para a revisão',
     () async {
+      await semearProduto();
       const realId = 'pedido-real-2';
-      transport.handlers['POST /orders/'] = (request) => {
+      transport.handlers['POST /orders/create-with-item/'] = (request) => {
         'id': realId,
         'sequence': 1,
         'status': 'open',
@@ -346,7 +383,10 @@ void main() {
       await stack.gateway.write(
         'POST',
         '/orders/$localId/close/',
-        body: {'discount': '10.00', 'service_fee_enabled': true},
+        // Menor que o subtotal (6,00): o desconto maior que a mercadoria passou
+        // a ser recusado localmente, e aqui o assunto e outro — a recusa do
+        // SERVIDOR por falta de permissao de gerente.
+        body: {'discount': '1.00', 'service_fee_enabled': true},
       );
 
       await sync.push();

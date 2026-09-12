@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/data/order_item_status.dart';
+import 'order_presenter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 
@@ -877,12 +878,14 @@ class _CartItem extends StatelessWidget {
         ),
       );
 
+  /// A mesma regra da comanda e do recibo — ver `OrderPresenter.quantityLabel`.
+  ///
+  /// O `×` no fim liga a quantidade ao preço unitário que vem logo depois
+  /// ("3x R$ 5,00", "0,350kg × R$ 79,90/kg"), então ele fica aqui e não na
+  /// regra compartilhada.
   String _quantityLabel() {
-    final quantity = OrderCartPanel._number(item['quantity']);
-    if (item['pricing_unit'] == 'kg') {
-      return '${quantity.toStringAsFixed(3).replaceAll('.', ',')} kg ×';
-    }
-    return '${quantity.toStringAsFixed(0)}×';
+    final label = OrderPresenter.quantityLabel(item);
+    return OrderPresenter.isWeighedItem(item) ? '$label ×' : label;
   }
 
   /// Variações e adicionais em uma linha, como o frontend web faz.

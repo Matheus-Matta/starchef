@@ -125,13 +125,33 @@ void main() {
       body: {'restaurant': 'rest-1', 'order_type': 'counter'},
       accessToken: _token,
     );
+    // Um terminal real chega na venda com o catalogo sincronizado: produto fora
+    // da copia local passou a ser recusado, para nao gravar item sem nome nem
+    // preco. A semeadura vem depois da primeira chamada, quando o escopo do
+    // banco ja esta definido.
+    await stack.gateway.repository(EntityCatalog.product).applyRemoteList([
+      {
+        'id': 'prod-1',
+        'name': 'Pastel de queijo',
+        'restaurant': 'rest-1',
+        'current_price': '7.50',
+        'pricing_unit': 'unit',
+      },
+    ]);
+    // O primeiro item e o que faz a venda existir para o servidor.
+    await stack.api.post(
+      '/orders/${created['id']}/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+      accessToken: _token,
+    );
 
     expect(created['id'], startsWith('offline-'));
     expect(created['_local_first'], isTrue);
     // A venda existe no banco antes de qualquer resposta do servidor.
     final scope = stack.gateway.scope!;
     final queued = await stack.gateway.queue.entries(scope: scope);
-    expect(queued.single.path, '/orders/');
+    // UMA operação: pedido e primeiro item nascem juntos no servidor.
+    expect(queued.single.path, '/orders/create-with-item/');
 
     await stack.api.dispose();
     await stack.database.close();

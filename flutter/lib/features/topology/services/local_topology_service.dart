@@ -547,7 +547,47 @@ class LocalTopologyService extends ChangeNotifier implements MutationRelay {
         statusCode: 400,
       );
     }
-    return api.get(path, query: request.query, accessToken: accessToken);
+    final response = await api.get(
+      path,
+      query: request.query,
+      accessToken: accessToken,
+    );
+    return _withClientIds(response);
+  }
+
+  /// Anexa a cada registro servido os temporários que este terminal promoveu
+  /// àquele id (`_client_ids`).
+  ///
+  /// É a ponta que faltava na cadeia secundário → principal → nuvem SEM
+  /// internet: o secundário entregou a venda, este terminal respondeu com o
+  /// temporário DELE (a nuvem ainda não tinha numerado nada), e só depois o
+  /// servidor deu o id definitivo. O secundário ficou com o temporário; sem
+  /// esta lista, a próxima leitura trazia a mesma venda como um segundo pedido
+  /// na tela dele.
+  Future<Map<String, dynamic>> _withClientIds(
+    Map<String, dynamic> response,
+  ) async {
+    final gateway = api.localStore;
+    final scope = gateway?.scope;
+    if (gateway == null || scope == null) return response;
+    final registros = <Map<String, dynamic>>[];
+    final results = response['results'];
+    if (results is List) {
+      registros.addAll(results.whereType<Map<String, dynamic>>());
+    } else if (response['id'] != null) {
+      registros.add(response);
+    }
+    if (registros.isEmpty) return response;
+    final aliases = await gateway.queue.localIdsResolvedTo(
+      scope: scope,
+      remoteIds: registros.map((r) => '${r['id'] ?? ''}'),
+    );
+    if (aliases.isEmpty) return response;
+    for (final registro in registros) {
+      final lista = aliases['${registro['id'] ?? ''}'];
+      if (lista != null && lista.isNotEmpty) registro['_client_ids'] = lista;
+    }
+    return response;
   }
 
   /// Traduz o prefixo `/local/...` da API local (§10) para a rota de recurso

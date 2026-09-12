@@ -84,10 +84,14 @@ class EntityRepository {
   Future<LocalPage> list({Map<String, dynamic>? query}) async {
     final parameters = Map<String, dynamic>.from(query ?? const {});
     final page = _positiveInt(parameters['page'], fallback: 1);
+    // Sem teto, `?page_size=100000` fazia o terminal decodificar o catálogo
+    // inteiro numa única leitura — 5.000 payloads decifrados e convertidos para
+    // devolver uma tela. E é um pedido que chega de fora: o app do garçom e o
+    // caixa secundário leem por aqui, pela rede local.
     final pageSize = _positiveInt(
       parameters['page_size'] ?? parameters['limit'],
       fallback: defaultPageSize,
-    );
+    ).clamp(1, maxPageSize);
     final includeDeleted = const {
       '1',
       'true',
@@ -143,9 +147,24 @@ class EntityRepository {
       );
     }
 
+    // PRÉ-FILTRO DA BUSCA, no SQL.
+    //
+    // O caminho abaixo decodifica cada registro (JSON + decifra) para comparar
+    // em Dart. Num catálogo de 5.000 produtos isso são 5.000 decodificações a
+    // cada tecla digitada na busca — 225 ms de p95 medidos, com a tela parada.
+    //
+    // O `LIKE` sobre o payload cru não SUBSTITUI a comparação em Dart: ele só
+    // encolhe o conjunto que precisa ser decodificado. Falso positivo aqui é
+    // inofensivo (o Dart descarta depois); falso negativo não seria — por isso
+    // ele só entra quando o payload está em texto puro e o termo é ASCII. O
+    // `LIKE` do SQLite ignora caixa apenas em A-Z, então "AÇAÍ" não casaria
+    // com "Açaí" e o resultado sumiria.
+    final prefiltravel =
+        search.isNotEmpty && !_cipher.enabled && _isAscii(search);
     final rows = await database.query(
-      'SELECT * FROM entities $where $order LIMIT $_scanLimit',
-      values,
+      'SELECT * FROM entities $where'
+      '${prefiltravel ? ' AND payload LIKE ?' : ''} $order LIMIT $_scanLimit',
+      [...values, if (prefiltravel) '%$search%'],
     );
     final decoded = await _decodeAll(rows);
     // Um parâmetro que NENHUM registro deste tipo possui é ignorado, como o
@@ -173,6 +192,15 @@ class EntityRepository {
 
   /// Tamanho de página padrão da sincronização e das listagens locais (§13).
   static const defaultPageSize = 20;
+
+  /// Teto de registros por página de uma leitura local.
+  ///
+  /// NÃO é o `max_page_size` do backend (100). O propósito aqui é outro: impedir
+  /// que uma leitura só faça o terminal decodificar o catálogo inteiro. O valor
+  /// cobre o maior pedido interno legítimo (a carga do catálogo e o retrato
+  /// fiscal pedem 300 e 500) — baixá-lo para 100 truncaria essas cargas em
+  /// silêncio, que é o tipo de defeito que este limite existe para evitar.
+  static const maxPageSize = 500;
 
   /// Registros alterados localmente e ainda não confirmados.
   Future<List<EntityRecord>> pendingRecords() async {
@@ -342,6 +370,13 @@ class EntityRepository {
   }) async {
     final entityId = '${payload['id'] ?? ''}';
     if (entityId.isEmpty) return null;
+    // O registro pode ser a promoção de um temporário que ESTE terminal ainda
+    // segura. Acontece no Caixa Secundário: o Principal sem nuvem respondeu à
+    // criação com o temporário DELE, e só depois — quando a internet voltou —
+    // o servidor numerou a venda. O Principal anexa em `_client_ids` os
+    // temporários que promoveu a este id; quem tiver um deles gravado troca
+    // ANTES de gravar, senão a mesma venda vira duas linhas na tela.
+    await _promoteClientIds(payload, entityId);
     final now = DateTime.now().toUtc();
     final serverVersion = '${payload['updated_at'] ?? ''}';
     final clean = sanitize(payload);
@@ -548,11 +583,36 @@ class EntityRepository {
     );
   }
 
+  /// Promove os temporários listados em `_client_ids` para [entityId].
+  ///
+  /// Só temporários (`offline-…`) e só os que existem aqui: um id
+  /// desconhecido é ignorado, e um id definitivo nunca é "promovido" — a lista
+  /// vem de outro terminal e não é autoridade sobre registros definitivos.
+  Future<void> _promoteClientIds(
+    Map<String, dynamic> payload,
+    String entityId,
+  ) async {
+    final raw = payload['_client_ids'];
+    if (raw is! List) return;
+    for (final candidate in raw) {
+      final temporaryId = '$candidate';
+      if (!LocalId.isTemporary(temporaryId) || temporaryId == entityId) {
+        continue;
+      }
+      await replaceId(temporaryId, entityId);
+    }
+  }
+
   /// Troca o ID temporário pelo definitivo depois que a criação subiu.
   Future<void> replaceId(String temporaryId, String realId) async {
     if (temporaryId.isEmpty || realId.isEmpty || temporaryId == realId) return;
     final record = await read(temporaryId, includeDeleted: true);
     if (record == null) return;
+    // O definitivo já está aqui (chegou por outra leitura antes desta
+    // promoção)? Então a cópia temporária é só um duplicado: sai, e o mapa
+    // passa a apontar para o que existe. Sobrescrever o definitivo com o
+    // retrato temporário regrediria o que o servidor já confirmou.
+    final definitive = await read(realId, includeDeleted: true);
     final payload = {...record.payload, 'id': realId};
     final encoded = await _cipher.encrypt(jsonEncode(payload));
     await database.write((tx) async {
@@ -560,6 +620,10 @@ class EntityRepository {
         'DELETE FROM entities WHERE scope = ? AND entity_type = ? AND entity_id = ?',
         [scope, type, temporaryId],
       );
+      if (definitive != null) {
+        await _rememberAlias(tx, temporaryId, realId);
+        return;
+      }
       await _upsert(
         tx,
         entityId: realId,
@@ -572,20 +636,23 @@ class EntityRepository {
         updatedAt: DateTime.now().toUtc().toIso8601String(),
         deletedAt: record.deletedAt?.toIso8601String(),
       );
-      await tx.execute(
-        '''
-        INSERT INTO id_map(scope, local_id, remote_id, created_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(scope, local_id) DO UPDATE SET remote_id = excluded.remote_id
-        ''',
-        [
-          scope,
-          temporaryId,
-          realId,
-          DateTime.now().toUtc().toIso8601String(),
-        ],
-      );
+      await _rememberAlias(tx, temporaryId, realId);
     });
+  }
+
+  Future<void> _rememberAlias(
+    SqliteWriteContext tx,
+    String temporaryId,
+    String realId,
+  ) {
+    return tx.execute(
+      '''
+      INSERT INTO id_map(scope, local_id, remote_id, created_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(scope, local_id) DO UPDATE SET remote_id = excluded.remote_id
+      ''',
+      [scope, temporaryId, realId, DateTime.now().toUtc().toIso8601String()],
+    );
   }
 
   // ------------------------------------------------------------- internals
@@ -837,6 +904,11 @@ class EntityRepository {
     _ when key == descriptor.statusField => 'status',
     _ => null,
   };
+
+  /// Só caracteres ASCII? É a condição para o `LIKE` do SQLite ignorar caixa
+  /// da mesma forma que o `toLowerCase()` do Dart.
+  static bool _isAscii(String value) =>
+      value.codeUnits.every((unit) => unit < 128);
 
   static bool _matchesResidual(
     Map<String, dynamic> item,

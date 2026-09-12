@@ -1,6 +1,7 @@
 import 'package:sqlite_async/sqlite_async.dart';
 
-import '../formatters/value_formatters.dart';
+import '../formatters/input_values.dart';
+import '../formatters/decimal_money.dart';
 import '../network/api_exception.dart';
 import 'cash_session_status.dart';
 import 'entity_catalog.dart';
@@ -136,8 +137,17 @@ class CashRegisterRepository extends EntityRepository {
     final name = '${session['cash_station_name'] ?? ''}'.trim();
     if (name.isNotEmpty) return name;
     final legacy = '${session['station'] ?? ''}'.trim();
-    return legacy.isNotEmpty ? legacy : fallback;
+    // O literal herdado não descreve terminal nenhum: exibi-lo num Caixa
+    // Secundário se parece exatamente com "estou vendo o caixa do Principal",
+    // que é o defeito que este método existe para não repetir.
+    if (legacy.isNotEmpty && legacy != _misleadingLegacyStation) return legacy;
+    // Sem caixa cadastrado, o nome honesto é o do próprio terminal.
+    final terminal = '${session['opened_terminal_label'] ?? ''}'.trim();
+    return terminal.isNotEmpty ? terminal : fallback;
   }
+
+  /// O padrão do model no backend, que nenhum cliente preenche.
+  static const _misleadingLegacyStation = 'PDV principal';
 
   /// Mensagem de bloqueio, no mesmo formato do backend.
   static String occupiedMessage(Map<String, dynamic> session) {
@@ -173,6 +183,15 @@ class CashRegisterRepository extends EntityRepository {
     String? terminalLabel,
   }) async {
     final stationId = '${body['cash_station'] ?? ''}';
+    // Abrir caixa sem estação criava a sessão com `cash_station: null`: ela
+    // não pertencia a gaveta nenhuma, e a próxima abertura legítima era
+    // recusada por conflito com essa sessão fantasma.
+    if (stationId.isEmpty) {
+      throw const ApiException(
+        'Selecione o caixa que será aberto.',
+        statusCode: 400,
+      );
+    }
 
     // Pre-checagem so para produzir a mensagem certa (quem, de onde, desde
     // quando). Quem realmente decide e o guard, dentro da transacao.
@@ -183,7 +202,14 @@ class CashRegisterRepository extends EntityRepository {
 
     final id = LocalId.temporary();
     final now = DateTime.now().toUtc().toIso8601String();
-    final opening = ValueFormatters.number(body['opening_amount']);
+    // "cem reais" no campo virava 0,00 em silêncio, e o fechamento do dia
+    // acusava uma diferença que ninguém causou.
+    final opening = requireMoney(
+      body['opening_amount'],
+      field: 'opening_amount',
+      label: 'o valor de abertura',
+      padrao: 0,
+    );
     final record = await saveLocal(
       {
         'id': id,
@@ -196,9 +222,11 @@ class CashRegisterRepository extends EntityRepository {
         'current_balance': opening.toStringAsFixed(2),
         'notes': body['notes'] ?? '',
         // Espelha o campo herdado do backend, mas com o nome REAL quando ele
-        // é conhecido: o padrão `"PDV principal"` do model não descreve nada
-        // e só confunde quem o lê.
-        'station': body['station'] ?? station?['name'] ?? 'PDV principal',
+        // é conhecido. VAZIO quando não é: repetir aqui o padrão do model
+        // (`"PDV principal"`) plantava, no próprio terminal, o nome que a tela
+        // depois exibiria como se fosse o caixa dele. Quem resolve o rótulo é
+        // [stationLabelOf], que sabe cair para o nome do terminal.
+        'station': body['station'] ?? station?['name'] ?? '',
         'device_identifier': installationId ?? body['device_identifier'] ?? '',
         // Dono da sessao: operador + instalacao. E o par que `current` e as
         // movimentacoes conferem depois.
@@ -283,18 +311,29 @@ class CashRegisterRepository extends EntityRepository {
       operatorId: operatorId,
       installationId: installationId,
     );
-    final actual = ValueFormatters.number(body['actual_amount']);
-    final expected = _drawerAmount(session.payload);
-    final difference = actual - expected;
+    // O valor conferido na gaveta é o que fecha o dia: ausente ou ilegível,
+    // ele registrava zero e transformava o caixa inteiro em diferença.
+    final actual = requireMoney(
+      body['actual_amount'],
+      field: 'actual_amount',
+      label: 'o valor conferido na gaveta',
+    );
+    // Tudo em centavos inteiros, como o backend (`Decimal`) e como o
+    // fechamento do pedido já faziam. Era o único lugar com dinheiro em
+    // `double`: a tolerância de meio centavo escondia o erro de arredondamento
+    // da soma, e o "bateu" daqui podia divergir do servidor por um centavo.
+    final actualCents = DecimalMoney.minorUnits(actual.toStringAsFixed(2));
+    final expectedCents = _drawerCents(session.payload);
+    final differenceCents = actualCents - expectedCents;
     final record = await saveLocal(
       {
         ...session.payload,
-        'status': difference.abs() < 0.005
+        'status': differenceCents == 0
             ? CashSessionStatus.closed
             : CashSessionStatus.closedWithDifference,
-        'actual_amount': actual.toStringAsFixed(2),
-        'expected_amount': expected.toStringAsFixed(2),
-        'difference_amount': difference.toStringAsFixed(2),
+        'actual_amount': DecimalMoney.format(actualCents),
+        'expected_amount': DecimalMoney.format(expectedCents),
+        'difference_amount': DecimalMoney.format(differenceCents),
         'closing_notes': body['notes'] ?? '',
         'closed_at': DateTime.now().toUtc().toIso8601String(),
       },
@@ -325,7 +364,17 @@ class CashRegisterRepository extends EntityRepository {
       installationId: installationId,
     );
     final movementId = LocalId.temporary();
-    final amount = ValueFormatters.number(body['amount']);
+    final amount = requireMoney(
+      body['amount'],
+      field: 'amount',
+      label: 'o valor da movimentação',
+    );
+    // Nasce PENDENTE, como no servidor (`create_cash_movement` exige aprovação
+    // para sangria e suprimento). Antes nascia sem situação — e "sem situação"
+    // contava como aprovado no saldo local: a gaveta da tela descia na hora,
+    // enquanto o servidor, no replay, só a desceria depois da aprovação. Um
+    // fechamento feito offline batia certinho aqui e chegava lá com uma
+    // diferença fantasma do valor da sangria, sem ninguém entender de onde.
     final movement = {
       'id': movementId,
       'cash_register': id,
@@ -333,6 +382,7 @@ class CashRegisterRepository extends EntityRepository {
       'amount': amount.toStringAsFixed(2),
       'reason': body['reason'] ?? '',
       'destination': body['destination'] ?? body['source'] ?? '',
+      'status': 'pending',
       'created_at': DateTime.now().toUtc().toIso8601String(),
       '_offline_pending': true,
     };
@@ -344,8 +394,8 @@ class CashRegisterRepository extends EntityRepository {
     final record = await saveLocal(
       {
         ...updated,
-        'current_balance': _drawerAmount(updated).toStringAsFixed(2),
-        'expected_amount': _drawerAmount(updated).toStringAsFixed(2),
+        'current_balance': _drawerAmountText(updated),
+        'expected_amount': _drawerAmountText(updated),
       },
       operation: SyncOperation.update,
       method: 'POST',
@@ -353,7 +403,12 @@ class CashRegisterRepository extends EntityRepository {
       requestBody: {...body, 'client_movement_id': movementId},
       id: id,
     );
-    return {...record.toApiJson(), '_created_movement': movement};
+    // A resposta é o MOVIMENTO, não a sessão: é o que o servidor devolve
+    // (`CashMovementSerializer`), e é o `status == 'pending'` dele que faz a
+    // tela abrir a autorização. Devolvendo a sessão, a tela lia `status` da
+    // sessão ("open"), nunca pedia autorização, e o `approve` — se viesse —
+    // apontaria para o id errado.
+    return {...movement, '_session': record.toApiJson()};
   }
 
   /// Autoriza uma divergência de caixa ou uma movimentação pendente.
@@ -395,8 +450,17 @@ class CashRegisterRepository extends EntityRepository {
                 : movement,
           )
           .toList();
+      // Aprovado, o movimento passa a contar: o saldo esperado e o da gaveta
+      // são refeitos aqui, como na criação. Sem isto a aprovação mudava a
+      // situação do movimento e deixava `expected_amount` congelado no valor
+      // de antes — o fechamento apontava diferença num turno certo.
+      final updated = {...session.payload, 'movements': movements};
       final record = await saveLocal(
-        {...session.payload, 'movements': movements},
+        {
+          ...updated,
+          'current_balance': _drawerAmountText(updated),
+          'expected_amount': _drawerAmountText(updated),
+        },
         operation: SyncOperation.update,
         method: 'POST',
         path: '/cash-register/$id/approve/',
@@ -494,7 +558,7 @@ class CashRegisterRepository extends EntityRepository {
       'id': paymentId,
       'cash_register': sessionId,
       'payment': paymentId,
-      // `_signedAmount` já lê `withdrawal` como saída.
+      // `_signedCents` já lê `withdrawal` como saída.
       'movement_type': 'withdrawal',
       'amount': amount.toStringAsFixed(2),
       'reason': reason,
@@ -530,8 +594,8 @@ class CashRegisterRepository extends EntityRepository {
     final updated = {...session, 'movements': movements};
     await saveLocalEffect({
       ...updated,
-      'current_balance': _drawerAmount(updated).toStringAsFixed(2),
-      'expected_amount': _drawerAmount(updated).toStringAsFixed(2),
+      'current_balance': _drawerAmountText(updated),
+      'expected_amount': _drawerAmountText(updated),
     });
   }
 
@@ -566,8 +630,8 @@ class CashRegisterRepository extends EntityRepository {
     return super.applyRemote(
       {
         ...merged,
-        'current_balance': _drawerAmount(merged).toStringAsFixed(2),
-        'expected_amount': _drawerAmount(merged).toStringAsFixed(2),
+        'current_balance': _drawerAmountText(merged),
+        'expected_amount': _drawerAmountText(merged),
       },
       overwriteLocalChanges: overwriteLocalChanges,
       ignoreQueuedOperationId: ignoreQueuedOperationId,
@@ -581,10 +645,10 @@ class CashRegisterRepository extends EntityRepository {
   /// cada movimento carrega. A conta anterior somava um `cash_sales_amount`
   /// que a API nunca enviou e ainda invertia o sinal de tudo que não fosse
   /// suprimento — um recebimento em dinheiro DIMINUÍA o esperado do caixa.
-  static double _drawerAmount(Map<String, dynamic> session) {
-    var total = _approvedMovements(session).fold<double>(
+  static int _drawerCents(Map<String, dynamic> session) {
+    var total = _approvedMovements(session).fold<int>(
       0,
-      (sum, movement) => sum + _signedAmount(movement),
+      (sum, movement) => sum + _signedCents(movement),
     );
     // Enquanto a sessão só existe aqui não há movimento de abertura — o valor
     // contado está em `opening_amount`. Depois de subir ele vira um movimento
@@ -592,30 +656,34 @@ class CashRegisterRepository extends EntityRepository {
     final hasOpening = _approvedMovements(
       session,
     ).any((movement) => '${movement['movement_type']}' == 'opening');
-    if (!hasOpening) total += ValueFormatters.number(session['opening_amount']);
+    if (!hasOpening) total += DecimalMoney.minorUnits(session['opening_amount']);
     return total;
   }
+
+  /// O saldo já formatado com duas casas — o que os campos da sessão guardam.
+  static String _drawerAmountText(Map<String, dynamic> session) =>
+      DecimalMoney.format(_drawerCents(session));
 
   /// Sangria e estorno saem da gaveta.
   ///
   /// O backend já grava a sangria negativa (`register_cash_movement`); um
   /// movimento criado aqui nasce positivo. Normalizar na leitura aceita as
   /// duas origens sem reescrever o que já está gravado.
-  static double _signedAmount(Map<String, dynamic> movement) {
-    final amount = ValueFormatters.number(movement['amount']).abs();
+  static int _signedCents(Map<String, dynamic> movement) {
+    final amount = DecimalMoney.minorUnits(movement['amount']).abs();
     return switch ('${movement['movement_type']}') {
       'withdrawal' || 'refund' => -amount,
       _ => amount,
     };
   }
 
-  /// Só o que ainda conta como dinheiro.
+  /// Só o que ainda conta como dinheiro — a MESMA regra do servidor.
   ///
-  /// O backend filtra `status = 'approved'`; um movimento criado aqui não traz
-  /// situação nenhuma, e para ele a ausência é o próprio "aprovado" — a
-  /// sangria offline entra no saldo no instante em que o dinheiro sai da
-  /// gaveta (§30). O que este filtro tira é o que o servidor já recusou ou
-  /// cancelou.
+  /// O backend filtra `status = 'approved'`. Sangria e suprimento nascem
+  /// pendentes nos dois lados e só entram no saldo depois da autorização
+  /// (gerente ou senha de ações do caixa, que funciona sem internet). Um
+  /// movimento sem situação nenhuma é o da abertura ou o que veio de uma
+  /// versão anterior, e continua contando.
   static List<Map<String, dynamic>> _approvedMovements(
     Map<String, dynamic> session,
   ) => _movementsOf(session).where((movement) {

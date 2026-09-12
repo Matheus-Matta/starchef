@@ -219,8 +219,11 @@ operação, ou não existem sem o servidor por natureza:
 Saíram da lista, e agora funcionam sem internet:
 
 - **abrir, fechar e movimentar caixa**;
-- **autorizar divergência de caixa** — a senha de ações é conferida contra o
-  hash já sincronizado, e o que sobe é uma *prova* HMAC, não a senha;
+- **autorizar divergência de caixa e sangria/suprimento** — a senha de ações é
+  conferida contra o hash já sincronizado, e o que sobe é uma *prova* HMAC, não
+  a senha. Sangria e suprimento nascem **pendentes** nos dois lados e só entram
+  no saldo depois de autorizados — é a mesma regra do servidor, e é o que faz o
+  fechamento feito offline chegar lá com a mesma diferença que a tela mostrou;
 - **fechar a pesagem na comanda** (`checkout-command`);
 - **emitir NFC-e**, que passou a ter fila própria;
 - **imprimir** recibo, comanda de cozinha, cancelamento, nota de pesagem e
@@ -324,6 +327,17 @@ corta o laço `backend → WS → SQLite → fila → backend`.
 
 Um evento fora de ordem (WebSocket e sincronização periódica correndo juntos) é
 descartado pelo `ConflictResolver`, comparando `updated_at`.
+
+### O temporário do principal
+
+Quando o principal está na rede mas **sem nuvem**, ele responde à criação
+relayada de um secundário com o temporário DELE (`offline-…`) — não há id do
+servidor para dar. Quando a internet volta e a venda é numerada, o principal
+anexa `_client_ids` a cada registro que serve pela rede local: a lista dos
+temporários que já promoveu àquele id. O secundário que ainda segura um deles
+troca antes de gravar (`EntityRepository.applyRemote`). Sem isso, a mesma venda
+aparecia duas vezes na tela do secundário — o backend não persiste
+`client_order_id`, então não havia outro jeito de correlacionar.
 
 ### Conflitos
 
@@ -806,7 +820,12 @@ computador. Agora:
 - **leitura**: sai do SQLite do próprio terminal, que é alimentado pelo
   principal — com o principal fora, o secundário continua consultando o
   cardápio, as mesas, as comandas e os pedidos que já tinha recebido;
-- **retentativa**: mesma escada (5s, 15s, 30s, 1min, 5min);
+- **retentativa**: mesma escada (5s, 15s, 30s, 1min, 5min). Um 429 (principal
+  ocupado), 503 (principal sem nuvem) ou 5xx do principal é falha temporária e
+  volta para a fila — não pendência para revisão;
+- **atualização**: o secundário não tem WebSocket; ele reconcilia com o
+  principal a cada **30 s** (`SyncService.secondaryPullInterval`), em vez dos
+  5 min do principal com a nuvem;
 - **entrega ambígua** ([`MutationRelayUncertain`]): volta para a fila. O
   principal guarda um recibo por `operation_id`, então repetir devolve a
   resposta original em vez de criar uma segunda venda;
@@ -814,8 +833,13 @@ computador. Agora:
   retentativa infinita.
 
 O secundário só aceita gravar o que o principal sabe executar
-(`OfflineMutations.isRelayable`). Abrir caixa, por exemplo, não entra: aceitar
-deixaria o operador com uma operação salva que nunca teria como ser entregue.
+(`OfflineMutations.isRelayable`). **O turno de caixa inteiro entra**: abrir,
+sangrar, suprir, autorizar (com a senha de ações, conferida localmente) e
+fechar são gravados no SQLite do secundário e entregues ao principal quando
+ele responder — que os executa em nome do operador e do terminal de origem
+(`RelayOrigin`). O guard de estação do principal, no replay, é o que impede
+duas sessões na mesma gaveta. Só **transferir** a posse da sessão continua
+exigindo quem esteja no ar, porque valida gerente ou senha na hora.
 
 O principal também **não entrega tudo**: configuração fiscal, perfis fiscais,
 usuários, papéis e filiais ficam de fora (`sharedWithSecondary: false`). Um
@@ -945,7 +969,7 @@ Entre no PDV com rede disponível e carregue o restaurante/cardápio ao menos um
 | Sintoma | Verificação |
 | --- | --- |
 | `Offline` | API, DNS/rede e timeout; operações físicas não têm fallback local |
-| "O Caixa Principal está indisponível" em um secundário | rede local, IP do principal e se o terminal principal está aberto. O secundário lê da cópia local, mas por decisão de projeto não grava sem ele |
+| "O Caixa Principal está indisponível" em um secundário | rede local, IP do principal e se o terminal principal está aberto. Vendas e caixa continuam funcionando na fila do secundário; só a transferência de sessão e o que exige servidor esperam por ele |
 | `Permissão insuficiente` logo ao abrir | era o sintoma de token expirado tratado como 403; hoje o servidor responde 401 e o terminal renova sozinho. Se persistir, o usuário realmente não tem conta/perfil vinculado |
 | `Instável` | HTTP 408/425/429/5xx; aguarde o `Retry-After`/backoff automático |
 | `Revisar` | clique no badge para abrir a fila, ver o motivo da recusa e decidir entre reenviar ou descartar |

@@ -160,16 +160,21 @@ mixin _ReceiptSection on _HomePageShared {
         barcode: LocalPrintRenderer.commandBarcode(order, selectedCommand),
       ),
     );
-    // Quem pediu o recibo está olhando a impressora: o silêncio faria o
-    // operador achar que o papel vem e mandar o cliente embora.
-    if (!result.printed && mounted) {
+    // ACEITO NA FILA é silêncio. A impressora não respondeu agora, mas o
+    // cupom está guardado e a fila reimprime sozinha assim que ela voltar —
+    // avisar a cada tentativa enchia a tela de venda de alertas sobre algo
+    // que o sistema já está resolvendo e que o operador não tem como acelerar.
+    // O estado fica no log e na Fila de impressão, com o motivo e o "tentar
+    // agora".
+    //
+    // RECUSADO é outra coisa: nenhuma repetição resolve (impressora sem
+    // endereço, configuração impossível), o cliente está com a mão estendida
+    // esperando o comprovante, e só o operador pode agir.
+    if (!result.accepted && mounted) {
       showAppToast(
         context,
-        result.accepted
-            ? 'A impressora não respondeu agora. O recibo está na fila e '
-                  'sai assim que ela voltar.'
-            : 'O recibo não pôde ser impresso. Confira a configuração '
-                  'da impressora.',
+        'O recibo não pôde ser impresso. Confira a configuração '
+        'da impressora.',
         severity: AppErrorSeverity.warning,
       );
     }

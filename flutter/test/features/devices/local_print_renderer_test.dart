@@ -74,7 +74,8 @@ void main() {
     expect(text, contains('Comanda: CMD-7'));
     expect(text, contains('Operador: Ana'));
     // Valor alinhado à direita, na mesma coluna do backend.
-    expect(text, contains('2 x X-Burger'));
+    // Produto unitário: `2x`. Ver `OrderPresenter.quantityLabel`.
+    expect(text, contains('2x X-Burger'));
     final total = lines.firstWhere((line) => line.startsWith('TOTAL'));
     expect(total.length, LocalPrintRenderer.receiptWidth);
     expect(total.trimRight(), endsWith('R\$ 27.50'));
@@ -218,6 +219,8 @@ void main() {
       payments: const [],
     );
 
-    expect(text, contains('0.412 x Buffet 59.90/kg'));
+    // Produto por peso é lido em kg — "0,412 x Buffet" passava a ideia de
+    // uma fração de unidade, não de 412 gramas.
+    expect(text, contains('0,412kg Buffet 59.90/kg'));
   });
 }

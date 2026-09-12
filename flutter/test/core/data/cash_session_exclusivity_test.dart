@@ -257,6 +257,33 @@ void main() {
         'Caixa 2',
       );
     });
+
+    test('o literal herdado nunca é exibido como se fosse um caixa', () {
+      // "PDV principal" é o padrão do model no backend — não descreve terminal
+      // nenhum. Exibi-lo num Caixa Secundário se parece exatamente com "estou
+      // vendo o caixa do Principal", que é o defeito relatado pela loja.
+      expect(
+        CashRegisterRepository.stationLabelOf(const {
+          'station': 'PDV principal',
+          'opened_terminal_label': 'Balcão 02',
+        }),
+        'Balcão 02',
+      );
+      // Sem nada melhor, um rótulo genérico — mas nunca o literal enganoso.
+      expect(
+        CashRegisterRepository.stationLabelOf(const {
+          'station': 'PDV principal',
+        }, fallback: 'Caixa'),
+        'Caixa',
+      );
+    });
+
+    test('abrir o caixa não planta o literal herdado no terminal', () async {
+      final aberta = await abrir();
+      // Sem caixa cadastrado o campo fica VAZIO; gravar o padrão do model aqui
+      // era o que fazia a própria sessão carregar o nome enganoso adiante.
+      expect('${aberta['station'] ?? ''}', isNot('PDV principal'));
+    });
   });
 
   test('outra máquina não fecha nem movimenta a sessão', () async {

@@ -188,7 +188,19 @@ class ApiClient {
     _mutationRelay = relay;
     _gateway?.relayOnly = relay != null;
     _syncService?.useTransport(syncTransport);
+    // O secundário não tem WebSocket: a cadência do pull é o único jeito de
+    // ele enxergar o que os outros terminais fizeram. Ver
+    // [SyncService.secondaryPullInterval].
+    _syncService?.usePullInterval(
+      relay != null
+          ? SyncService.secondaryPullInterval
+          : _defaultPullInterval ?? _syncService!.pullInterval,
+    );
   }
+
+  /// A cadência com que o serviço nasceu, para restaurar ao deixar de ser
+  /// secundário.
+  Duration? _defaultPullInterval;
 
   /// Liga o cliente ao banco operacional e ao serviço de sincronização.
   ///
@@ -205,6 +217,12 @@ class ApiClient {
     unawaited(_syncSnapshotSubscription?.cancel());
     _syncSnapshotSubscription = null;
     _syncService = syncService;
+    _defaultPullInterval = syncService?.pullInterval;
+    // Um relay já anexado antes do serviço existir (a ordem de inicialização
+    // varia entre login e boot): o papel de secundário vale desde já.
+    if (_mutationRelay != null) {
+      syncService?.usePullInterval(SyncService.secondaryPullInterval);
+    }
     // Quem descobre que a rede caiu passou a ser o `SyncService`, ao tentar
     // entregar a fila. Sem trazer esse resultado de volta para cá, o
     // `syncStatus` ficava congelado em "sincronizando" com a internet fora — e

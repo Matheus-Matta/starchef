@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../formatters/input_values.dart';
 import '../formatters/value_formatters.dart';
 import '../network/api_exception.dart';
 import '../network/offline_mutations.dart';
@@ -348,10 +349,15 @@ class OfflineFirstGateway {
     }
     // Pedido que nunca subiu: o descarte é aqui, e não vira requisição.
     if (discardableOrderId(path) != null) return true;
-    // A autorização do supervisor continua sendo do servidor: online ela
-    // aceita o login de um gerente, algo que só ele sabe validar.
+    // A autorização do supervisor prefere quem esteja no ar: online ela
+    // aceita o login de um gerente, algo que só o servidor sabe validar. Sem
+    // conexão — com a nuvem, no principal; com o principal, num secundário —
+    // ela é aplicada aqui com a prova HMAC da senha de ações. Antes um
+    // secundário nunca aprovava localmente, e uma sangria feita com o
+    // principal desligado ficava pendente até ele voltar: o saldo esperado
+    // não descia e o turno fechava com diferença à vista.
     if (path.endsWith('/approve/')) {
-      return !relayOnly && !(connectivity?.call() ?? false);
+      return !(connectivity?.call() ?? false);
     }
     if (requiresServer(path)) return false;
     // SÓ A EMISSÃO. `refresh-status`, `resend` e `cancel` também começam com
@@ -373,13 +379,15 @@ class OfflineFirstGateway {
     if (!EntityCatalog.isLocalAction(route.type, route.action)) return false;
     // Num secundário, a fila só pode aceitar o que o principal sabe receber.
     if (relayOnly && !OfflineMutations.isRelayable(method, path)) return false;
-    // E a sessão de caixa nunca é gravada aqui num secundário: quem manda na
-    // sessão é o Caixa Principal, e uma cópia local criada por conta própria
-    // seria uma segunda sessão esperando para nascer. O secundário encaminha
-    // e usa a resposta do principal.
-    if (relayOnly && OfflineMutations.ownsCashSession(method, path)) {
-      return false;
-    }
+    // A sessão de caixa de um secundário também nasce e fecha AQUI. Antes ela
+    // era encaminhada ao principal na hora, e com o principal desligado o
+    // operador não abria nem fechava o próprio turno — o caixa "não
+    // funcionava sem rede" justamente na gaveta. A operação entra na fila
+    // como qualquer venda e o principal a executa em nome deste terminal
+    // (`RelayOrigin`); o guard de estação dele, no replay, é o que impede
+    // duas sessões na mesma gaveta. Transferir sessão continua sendo do
+    // principal/servidor: exige gerente ou senha na hora, e não está em
+    // `localActions`.
     return true;
   }
 
@@ -568,7 +576,9 @@ class OfflineFirstGateway {
       return orders.setItemQuantity(
         orderId,
         itemId: action.split('/')[1],
-        quantity: ValueFormatters.number(body['quantity']),
+        // Teclas + e - do PDV: valor ausente ou ilegível virava zero, e zero
+        // é um item invisível com preço. Quem quer remover usa o cancelamento.
+        quantity: requireQuantity(body['quantity']),
       );
     }
     if (action == 'send-to-kitchen') {
@@ -582,7 +592,14 @@ class OfflineFirstGateway {
       );
     }
     if (action == 'pay') {
-      final method = context?['payment_method'] as Map<String, dynamic>?;
+      // A forma vem do contexto quando a TELA já a tem na mão; pelo relay (app
+      // do garçom, caixa secundário) vem só o id, e ele precisa existir na
+      // cópia local. Sem esta resolução, recebimento sem forma ou com uma forma
+      // que não existe era gravado assim mesmo — a venda ficava quitada com um
+      // meio de pagamento em branco, e o fechamento do caixa não batia.
+      final method =
+          context?['payment_method'] as Map<String, dynamic>? ??
+          await _findPaymentMethod('${body['payment_method'] ?? ''}');
       final result = await orders.pay(orderId, body: body, method: method);
       await _mirrorCashSale(body, method, result);
       await _mirrorCommandRelease(result);
@@ -773,6 +790,31 @@ class OfflineFirstGateway {
     };
   }
 
+  /// Apaga os rascunhos de pedido que ficaram órfãos neste terminal.
+  ///
+  /// Rascunho é pedido que só existe aqui (`OrderRepository.draftMarker`):
+  /// comanda aberta sem nenhum item lançado. Quem sai do pedido pela tela o
+  /// descarta na hora; este varredor cobre o que não passou por lá — app
+  /// fechado com a comanda aberta, tela que caiu, versão anterior — e que
+  /// aparecia na lista de Pedidos como venda de R$ 0,00. Todo rascunho que
+  /// não é o pedido aberto agora ([except]) é lixo por definição.
+  ///
+  /// Devolve quantos foram apagados.
+  Future<int> discardStaleDrafts({String? except}) async {
+    if (_scope == null) return 0;
+    final page = await orders.list(query: {'page_size': 500});
+    var discarded = 0;
+    for (final order in page.results) {
+      final id = '${order['id'] ?? ''}';
+      if (id.isEmpty || id == except || !OrderRepository.isDraft(order)) {
+        continue;
+      }
+      await _discardLocalOrder(id);
+      discarded += 1;
+    }
+    return discarded;
+  }
+
   /// Desfaz um recebimento que ainda não saiu deste terminal.
   ///
   /// A ordem importa: a operação sai da fila ANTES de o pedido ser reescrito.
@@ -820,9 +862,22 @@ class OfflineFirstGateway {
     Map<String, dynamic>? context,
   ) async {
     final scaleId = _scaleCheckout.firstMatch(path.split('?').first)!.group(1)!;
-    final product = context?['weighed_product'] as Map<String, dynamic>?;
+    // A janela da balança manda o produto no contexto, com o preço congelado
+    // no instante da estabilização. Pela REDE LOCAL o contexto não viaja: a
+    // pesagem de um Caixa Secundário chega aqui só com o corpo — e, com este
+    // terminal sem nuvem, caía num `ArgumentError` (500 no relay) que o
+    // secundário reinsistia a cada cinco minutos até a internet voltar. O
+    // cadastro da balança diz qual é o produto por quilo; é o mesmo caminho
+    // que o backend usa (`scale.product`) no replay.
+    final product =
+        context?['weighed_product'] as Map<String, dynamic>? ??
+        await _weighedProductOf(scaleId);
     if (product == null) {
-      throw ArgumentError('A pesagem local precisa do produto pesado.');
+      throw const ApiException(
+        'A balança não tem um produto por quilo cadastrado. Configure o '
+        'produto da balança antes de fechar a pesagem.',
+        statusCode: 400,
+      );
     }
     final code = '${body['command_code'] ?? ''}'.trim();
     final command =
@@ -838,7 +893,13 @@ class OfflineFirstGateway {
       scaleId: scaleId,
       command: command,
       weighedProduct: product,
-      weightKg: double.tryParse('${body['weight_kg'] ?? 0}') ?? 0,
+      // Peso ilegível ou ausente virava 0 e o buffet lançava um item de graça;
+      // negativo passava e virava crédito. `tryParse` mudo era o problema.
+      weightKg: requireQuantity(
+        body['weight_kg'],
+        field: 'weight_kg',
+        label: 'o peso',
+      ),
       extras: (body['extras'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
@@ -848,20 +909,49 @@ class OfflineFirstGateway {
     );
   }
 
+  /// A forma de pagamento do cadastro local, ou recusa dizendo o motivo.
+  Future<Map<String, dynamic>> _findPaymentMethod(String methodId) async {
+    final id = methodId.trim();
+    if (id.isEmpty) {
+      throw const ApiException(
+        'Selecione a forma de pagamento.',
+        statusCode: 400,
+      );
+    }
+    final record = await repository(EntityCatalog.paymentMethod).read(id);
+    if (record == null) {
+      throw const ApiException(
+        'A forma de pagamento não está no cadastro deste terminal.',
+        statusCode: 400,
+      );
+    }
+    return record.payload;
+  }
+
+  /// O produto por quilo da balança, pela cópia local do cadastro.
+  Future<Map<String, dynamic>?> _weighedProductOf(String scaleId) async {
+    final scale = await repository(EntityCatalog.scale).read(scaleId);
+    final productId = '${scale?.payload['product'] ?? ''}';
+    if (productId.isEmpty) return null;
+    return (await repository(EntityCatalog.product).read(productId))?.payload;
+  }
+
   /// Acha a comanda pelo código ou pelo número, como o backend faz.
+  ///
+  /// Pelo ÍNDICE de códigos, não por varredura. A versão anterior lia uma
+  /// página de 500 comandas e procurava em Dart: num restaurante com mais de
+  /// 500 cartões cadastrados, qualquer comanda fora daquela página respondia
+  /// "não encontrada na cópia local" — existindo. O buffet simplesmente não
+  /// fechava a pesagem na maioria dos cartões, e qual metade funcionava
+  /// dependia da ordem da consulta.
+  ///
+  /// `entity_codes` já indexa `code` e `number` da comanda (o mesmo índice que
+  /// o leitor de produto usa), então a busca é por chave e não cresce com o
+  /// tamanho do salão.
   Future<Map<String, dynamic>?> _findCommandByCode(String code) async {
     if (code.isEmpty) return null;
-    final repo = repository(EntityCatalog.command);
-    final page = await repo.list(query: {'page_size': 500});
-    for (final command in page.results) {
-      if ('${command['code'] ?? ''}' == code) return command;
-    }
-    final asNumber = int.tryParse(code);
-    if (asNumber == null) return null;
-    for (final command in page.results) {
-      if (command['number'] == asNumber) return command;
-    }
-    return null;
+    final match = await repository(EntityCatalog.command).findByCode(code);
+    return match?.payload;
   }
 
   /// Vincula ou desvincula a mesa da comanda (§30: abrir e transferir mesa).
@@ -884,6 +974,15 @@ class OfflineFirstGateway {
     // O contrato do backend é `table_id` (ver `CommandViewSet.link_table`);
     // `table` é aceito só por tolerância a chamadas antigas.
     final tableId = body['table_id'] ?? body['table'];
+    // O pedido que ainda é rascunho guarda um RETRATO da mesa, tirado quando a
+    // comanda foi aberta. Trocar de mesa antes do primeiro item deixaria esse
+    // retrato velho, e a criação atômica levaria a mesa errada ao servidor —
+    // que, para pedido de comanda, é quem manda no vínculo. Atualizar aqui
+    // mantém as duas pontas coerentes sem tirar o pedido do rascunho.
+    await orders.refreshDraftTable(
+      commandId: commandId,
+      tableId: linking ? '$tableId' : null,
+    );
     final record = await repo.saveLocal(
       {...stored.payload, 'current_table': linking ? tableId : null},
       operation: SyncOperation.update,

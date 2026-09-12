@@ -135,9 +135,11 @@ void main() {
   });
 
   test('pedido que nunca subiu e descartado sem virar requisição', () async {
-    // Abrir uma comanda cria o pedido na hora. Sem rede, sair sem lançar nada
-    // deixava esse pedido vazio na fila — ele subiria depois e ocuparia a
-    // comanda no servidor, exatamente o que se quis evitar.
+    // Abrir uma comanda e sair sem lançar nada nao pode deixar rastro. Hoje
+    // isso e ainda mais direto: sem item, o pedido nem chega a virar operação
+    // — ele é um rascunho deste terminal. O descarte continua existindo para o
+    // caso de já haver algo enfileirado (um item lançado e removido em
+    // seguida, por exemplo).
     final created = await stack.gateway.write(
       'POST',
       '/orders/',
@@ -145,7 +147,7 @@ void main() {
     );
     final orderId = '${created.payload['id']}';
     expect(LocalId.isTemporary(orderId), isTrue);
-    expect(await stack.queue.entries(scope: TestPdvStack.scope), hasLength(1));
+    expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
 
     final path = '/orders/$orderId/cancel/';
     // A rota não sai do terminal: o servidor não conhece este pedido.
@@ -159,6 +161,42 @@ void main() {
     expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
     // E nada no armazenamento: a comanda volta a ficar livre aqui.
     expect(await stack.gateway.orders.read(orderId), isNull);
+  });
+
+  test('rascunhos orfaos sao varridos; o aberto e os com item ficam', () async {
+    // Comanda aberta e abandonada sem passar pela saida da tela (app fechado,
+    // tela que caiu) deixava um `#LOCAL-…` de R$ 0,00 na lista de Pedidos — e
+    // como rascunho nao ocupa a comanda, reabri-la criava mais um.
+    Future<String> draft() async {
+      final created = await stack.gateway.write(
+        'POST',
+        '/orders/',
+        body: {'restaurant': 'rest-1', 'order_type': 'command'},
+      );
+      return '${created.payload['id']}';
+    }
+
+    final orphan1 = await draft();
+    final orphan2 = await draft();
+    final open = await draft();
+    final withItem = await draft();
+    await stack.gateway.write(
+      'POST',
+      '/orders/$withItem/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    final promoted = await stack.gateway.read('/orders/$withItem/');
+    final promotedId = '${promoted['id']}';
+
+    final removed = await stack.gateway.discardStaleDrafts(except: open);
+
+    expect(removed, 2);
+    expect(await stack.gateway.orders.read(orphan1), isNull);
+    expect(await stack.gateway.orders.read(orphan2), isNull);
+    expect(await stack.gateway.orders.read(open), isNotNull);
+    expect(await stack.gateway.orders.read(promotedId), isNotNull);
+    // Segunda passada nao tem o que fazer.
+    expect(await stack.gateway.discardStaleDrafts(except: open), 0);
   });
 
   test('pedido com id do servidor continua sendo cancelado por ele', () async {
@@ -176,6 +214,13 @@ void main() {
       body: {'restaurant': 'rest-1', 'order_type': 'command'},
     );
     final orderId = '${created.payload['id']}';
+    // Com o primeiro item o pedido deixa de ser rascunho e vira operação na
+    // fila — que é o que pode estar em entrega neste instante.
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
     // A fila já reservou a operação: o servidor pode estar gravando a venda
     // neste instante.
     await stack.database.execute(
@@ -315,20 +360,41 @@ void main() {
     final current = await stack.gateway.read('/cash-register/current/');
     expect(current['id'], sessionId);
 
-    await stack.gateway.write(
+    // Sangria e suprimento nascem PENDENTES, como no servidor: a resposta é
+    // o movimento (não a sessão), e é o `status` dele que faz a tela pedir a
+    // autorização. Até lá, nada muda no saldo — em nenhum dos dois lados.
+    final sangria = await stack.gateway.write(
       'POST',
       '/cash-register/$sessionId/withdrawal/',
       body: {'amount': '50.00', 'reason': 'Sangria do turno'},
     );
-    final afterSupply = await stack.gateway.write(
+    expect(sangria.payload['status'], 'pending');
+    expect(sangria.payload['movement_type'], 'withdrawal');
+    final suprimento = await stack.gateway.write(
       'POST',
       '/cash-register/$sessionId/supply/',
       body: {'amount': '20.00', 'reason': 'Troco'},
     );
-    expect(
-      ValueFormatters.number(afterSupply.payload['expected_amount']),
-      120.0,
-    );
+    expect(suprimento.payload['status'], 'pending');
+    final antesDeAprovar = await stack.gateway.read('/cash-register/current/');
+    expect(ValueFormatters.number(antesDeAprovar['expected_amount']), 150.0);
+
+    // A autorização (senha de ações, conferida sem internet) é o que faz o
+    // dinheiro entrar no saldo — aqui e no replay do servidor.
+    for (final movimento in [sangria, suprimento]) {
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/$sessionId/approve/',
+        body: {
+          'movement': movimento.payload['id'],
+          'reason': 'ok',
+          'cash_password_proof': 'prova',
+          'proof_nonce': 'nonce',
+        },
+      );
+    }
+    final aprovado = await stack.gateway.read('/cash-register/current/');
+    expect(ValueFormatters.number(aprovado['expected_amount']), 120.0);
 
     final closed = await stack.gateway.write(
       'POST',
@@ -338,14 +404,82 @@ void main() {
     expect(closed.payload['status'], 'closed');
     expect(ValueFormatters.number(closed.payload['difference_amount']), 0);
 
-    // Nenhuma dessas operações se perdeu: todas estão na fila para subir.
+    // Nenhuma dessas operações se perdeu: todas estão na fila para subir, na
+    // ordem — e as aprovações antes do fechamento, que depende delas.
     final queued = await stack.queue.entries(scope: TestPdvStack.scope);
     expect(queued.map((entry) => entry.path), [
       '/cash-register/open/',
       '/cash-register/$sessionId/withdrawal/',
       '/cash-register/$sessionId/supply/',
+      '/cash-register/$sessionId/approve/',
+      '/cash-register/$sessionId/approve/',
       '/cash-register/$sessionId/close/',
     ]);
+  });
+
+  test('a gaveta soma em centavos inteiros, sem erro de ponto flutuante', () async {
+    // Sete suprimentos de R$ 0,15 são exatamente R$ 1,05. Em `double`, a soma
+    // dá 1.0499999999999998 e o fechamento só "batia" por causa de uma
+    // tolerância de meio centavo — que também escondia divergência real.
+    final opened = await stack.gateway.write(
+      'POST',
+      '/cash-register/open/',
+      body: {'cash_station': 'caixa-1', 'opening_amount': '0.00'},
+      context: {
+        'cash_station': {'id': 'caixa-1', 'name': 'Caixa 1'},
+      },
+    );
+    final sessionId = '${opened.payload['id']}';
+    for (var i = 0; i < 7; i++) {
+      final suprimento = await stack.gateway.write(
+        'POST',
+        '/cash-register/$sessionId/supply/',
+        body: {'amount': '0.15', 'reason': 'moedas'},
+      );
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/$sessionId/approve/',
+        body: {'movement': suprimento.payload['id'], 'reason': 'ok'},
+      );
+    }
+    final atual = await stack.gateway.read('/cash-register/current/');
+    expect(atual['expected_amount'], '1.05');
+
+    final closed = await stack.gateway.write(
+      'POST',
+      '/cash-register/$sessionId/close/',
+      body: {'actual_amount': '1.05'},
+    );
+    expect(closed.payload['status'], 'closed');
+    expect(closed.payload['difference_amount'], '0.00');
+  });
+
+  test('sangria offline SEM autorização fecha com a diferença à vista', () async {
+    // O dinheiro saiu da gaveta mas ninguém autorizou: o saldo esperado não
+    // desce, e o fechamento mostra a diferença — a mesma que o servidor vai
+    // registrar. Antes o terminal descontava por conta própria e o servidor
+    // não; o turno "batia" aqui e chegava lá com uma diferença fantasma.
+    final opened = await stack.gateway.write(
+      'POST',
+      '/cash-register/open/',
+      body: {'cash_station': 'caixa-1', 'opening_amount': '100.00'},
+      context: {
+        'cash_station': {'id': 'caixa-1', 'name': 'Caixa 1'},
+      },
+    );
+    final sessionId = '${opened.payload['id']}';
+    await stack.gateway.write(
+      'POST',
+      '/cash-register/$sessionId/withdrawal/',
+      body: {'amount': '30.00', 'reason': 'troco'},
+    );
+    final closed = await stack.gateway.write(
+      'POST',
+      '/cash-register/$sessionId/close/',
+      body: {'actual_amount': '70.00'},
+    );
+    expect(closed.payload['status'], 'closed_with_difference');
+    expect(ValueFormatters.number(closed.payload['difference_amount']), -30.0);
   });
 
   test('pesagem fecha na comanda sem servidor (§30)', () async {
@@ -401,6 +535,61 @@ void main() {
     // operação e o backend materializa a leitura no replay.
     expect(queued.single.payload!['weight_kg'], '0.400');
     expect(queued.single.payload!['command_code'], 'CMD-7');
+  });
+
+  test(
+    'pesagem RELAYADA (sem contexto) resolve o produto pelo cadastro da balança',
+    () async {
+      // Pela rede local o contexto da janela da balança não viaja: a pesagem
+      // de um Caixa Secundário chega ao Principal só com o corpo. Com este
+      // terminal sem nuvem, isso estourava `ArgumentError` — 500 no relay,
+      // reinsistido a cada cinco minutos até a internet voltar.
+      stack.gateway.connectivity = () => false;
+      await stack.gateway.repository(EntityCatalog.command).applyRemote({
+        'id': 'comanda-9',
+        'code': 'CMD-9',
+        'number': 9,
+        'restaurant': 'rest-1',
+      });
+      await stack.gateway.repository(EntityCatalog.scale).applyRemote({
+        'id': 'balanca-1',
+        'name': 'Buffet',
+        'restaurant': 'rest-1',
+        'product': 'prod-2',
+      });
+
+      final result = await stack.gateway.write(
+        'POST',
+        '/scales/balanca-1/checkout-command/',
+        body: {'command_code': 'CMD-9', 'weight_kg': '0.500'},
+      );
+
+      final items = (result.payload['items'] as List).cast<Map>();
+      expect(items.single['product_name'], 'Buffet por quilo');
+      expect(items.single['quantity'], 0.5);
+      expect(
+        ValueFormatters.number(result.payload['subtotal']),
+        closeTo(29.95, 0.001),
+      );
+    },
+  );
+
+  test('balança sem produto por quilo recusa com o motivo, não com 500', () async {
+    stack.gateway.connectivity = () => false;
+    await stack.gateway.repository(EntityCatalog.scale).applyRemote({
+      'id': 'balanca-sem-produto',
+      'name': 'Sem produto',
+      'restaurant': 'rest-1',
+    });
+
+    await expectLater(
+      stack.gateway.write(
+        'POST',
+        '/scales/balanca-sem-produto/checkout-command/',
+        body: {'command_code': 'CMD-7', 'weight_kg': '0.400'},
+      ),
+      throwsA(isA<ApiException>()),
+    );
   });
 
   test('pesagem com comanda desconhecida falha com o motivo', () async {
@@ -627,6 +816,115 @@ void main() {
     expect(unlinked.payload['current_table'], isNull);
   });
 
+  group('o pedido nasce com o primeiro item, não antes', () {
+    // Entrar numa comanda e escolher a mesa é o operador MONTANDO a venda, não
+    // a venda acontecendo. Criar o pedido aí enchia o banco de pedidos vazios
+    // — bastava entrar, olhar e sair — e obrigava a inventar um cancelamento
+    // para desfazer algo que nunca deveria ter nascido.
+
+    Future<String> abrirComanda({String? mesa}) async {
+      await stack.gateway.repository(EntityCatalog.command).applyRemote({
+        'id': 'comanda-5',
+        'number': 5,
+        'restaurant': 'rest-1',
+        'status': 'free',
+      });
+      final opened = await stack.gateway.write(
+        'POST',
+        '/orders/open-command/',
+        body: {'command': 'comanda-5'},
+        context: {
+          'command': {'id': 'comanda-5', 'number': 5},
+          if (mesa != null) 'table': {'id': mesa, 'number': 12},
+        },
+      );
+      return '${opened.payload['id']}';
+    }
+
+    test('CASO 1: abrir comanda e sair não deixa nada para o servidor', () async {
+      await abrirComanda(mesa: 'mesa-1');
+
+      expect(
+        await stack.queue.entries(scope: TestPdvStack.scope),
+        isEmpty,
+        reason: 'sem item, não há venda — e não há o que sincronizar',
+      );
+    });
+
+    test('CASO 2: o primeiro item cria o pedido, com mesa e item juntos', () async {
+      final orderId = await abrirComanda(mesa: 'mesa-1');
+
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+
+      final queued = await stack.queue.entries(scope: TestPdvStack.scope);
+      expect(queued.single.path, '/orders/create-with-item/');
+      final body = queued.single.payload!;
+      expect(body['order_type'], 'command');
+      expect(body['command'], 'comanda-5');
+      expect(body['table'], 'mesa-1');
+      expect((body['item'] as Map)['product'], 'prod-1');
+    });
+
+    test('CASO 3: trocar de mesa antes do item vale a ÚLTIMA escolhida', () async {
+      final orderId = await abrirComanda(mesa: 'mesa-1');
+
+      await stack.gateway.write(
+        'POST',
+        '/commands/comanda-5/link-table/',
+        body: {'table_id': 'mesa-9'},
+      );
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/items/',
+        body: {'product': 'prod-1', 'quantity': 1},
+      );
+
+      final criacao = (await stack.queue.entries(scope: TestPdvStack.scope))
+          .firstWhere((entry) => entry.path == '/orders/create-with-item/');
+      expect(
+        criacao.payload!['table'],
+        'mesa-9',
+        reason: 'a criação levaria a mesa velha ao servidor',
+      );
+    });
+
+    test('CASO 4: reabrir a tela sem item não gera pedido fantasma', () async {
+      final orderId = await abrirComanda(mesa: 'mesa-1');
+
+      // A tela relê o pedido do armazenamento local, como faz ao voltar.
+      final relido = await stack.gateway.read('/orders/$orderId/');
+      expect(relido['id'], orderId);
+
+      expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
+    });
+
+    test(
+      'qualquer outra operação faz o rascunho existir antes de si',
+      () async {
+        // Nem tudo é o primeiro item. Mandar para a cozinha, fechar, receber —
+        // qualquer uma dessas precisa de um pedido que o servidor conheça,
+        // senão subiria citando um identificador que ninguém pode resolver.
+        final orderId = await abrirComanda();
+
+        await stack.gateway.write(
+          'POST',
+          '/orders/$orderId/send-to-kitchen/',
+          body: const {},
+        );
+
+        final paths = (await stack.queue.entries(scope: TestPdvStack.scope))
+            .map((entry) => entry.path)
+            .toList();
+        expect(paths.first, '/orders/open-command/');
+        expect(paths.last, '/orders/$orderId/send-to-kitchen/');
+      },
+    );
+  });
+
   group('a comanda volta ao salão sem depender do servidor', () {
     // O caso real: sem rede, a venda foi paga e a comanda continuou ocupada.
     // Quem zera a comanda é `free_command_for_order` no servidor, e ele só
@@ -748,10 +1046,17 @@ void main() {
   });
 
   test('diagnóstico resume fila, fila fiscal e o que existe no banco', () async {
-    await stack.gateway.write(
+    final aberto = await stack.gateway.write(
       'POST',
       '/orders/',
       body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+    );
+    // O item é o que faz a venda existir para o servidor — e, portanto, o que
+    // aparece na fila.
+    await stack.gateway.write(
+      'POST',
+      '/orders/${aberto.payload['id']}/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
     );
     await stack.gateway.write(
       'POST',

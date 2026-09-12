@@ -14,6 +14,7 @@ part of 'home_page.dart';
 ///
 /// Os métodos foram MOVIDOS, não reescritos.
 mixin _OrderSection on _HomePageShared {
+  void _leaveActiveOrder({String? except});
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
   LocalOrderStore get orderStore;
@@ -77,6 +78,7 @@ mixin _OrderSection on _HomePageShared {
   }
 
   Future<void> _startOrder(String type) async {
+    _leaveActiveOrder();
     await _work(() async {
       selectedTable = null;
       activeOrder = await api.post(

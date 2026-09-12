@@ -139,10 +139,38 @@ class SyncService {
   SyncTransport transport;
 
   final int pageSize;
-  final Duration pullInterval;
+
+  /// Com que frequência a cópia local é reconciliada com a origem.
+  ///
+  /// Não é `final` porque o intervalo certo depende do PAPEL do terminal, e o
+  /// papel muda em Configurações sem reiniciar o app. Ver [usePullInterval].
+  Duration pullInterval;
 
   /// Troca o destino da fila sem perder o que já está enfileirado.
   void useTransport(SyncTransport next) => transport = next;
+
+  /// Cadência de reconciliação de um Caixa Secundário.
+  ///
+  /// O principal recebe as mudanças do salão pelo WebSocket da nuvem e as
+  /// grava no SQLite dele na hora. O secundário não tem WebSocket nenhum —
+  /// ele não fala com a nuvem — e nenhum canal do principal o avisa: tudo o
+  /// que ele sabe vem do `pullAll` periódico. Com os 5 minutos padrão, a
+  /// comanda que o garçom acabou de lançar levava até 5 minutos para
+  /// aparecer no segundo caixa, e quem fechasse a conta nesse intervalo
+  /// fechava sem os últimos itens na tela. Trinta segundos numa chamada de
+  /// rede local, incremental e paginada, é barato.
+  static const secondaryPullInterval = Duration(seconds: 30);
+
+  /// Troca a cadência do `pullAll` e, se o serviço já estiver rodando,
+  /// reprograma o temporizador na hora.
+  void usePullInterval(Duration next) {
+    if (next == pullInterval) return;
+    pullInterval = next;
+    if (_pullTimer != null && !_disposed) {
+      _pullTimer?.cancel();
+      _pullTimer = Timer.periodic(pullInterval, (_) => unawaited(pullAll()));
+    }
+  }
 
   final _snapshotController = StreamController<SyncSnapshot>.broadcast();
   Stream<SyncSnapshot> get snapshots => _snapshotController.stream;
@@ -435,6 +463,42 @@ class SyncService {
         },
       );
       await _publish(SyncPhase.blocked, error: error.message);
+      return true;
+    } catch (error, stack) {
+      // QUALQUER outra exceção. Sem este ramo, uma só operação derrubava o
+      // ciclo inteiro: `FormatException` do `jsonDecode` quando um proxy
+      // reverso caído devolve HTML no lugar do JSON, `TypeError` de um payload
+      // com formato inesperado, ou um erro dentro de `confirmDelivery` — e a
+      // exceção subia por `push()`, parando a sincronização do terminal com a
+      // fila cheia e nenhum aviso na tela.
+      //
+      // Tratada como falha TEMPORÁRIA de propósito: a causa provável é do
+      // outro lado (proxy, deploy no meio, resposta truncada) e some sozinha.
+      // A escada de retentativa não desiste (o teto de 5 min se repete): uma
+      // venda não pode ser descartada porque o servidor respondeu lixo. O
+      // que insiste fica visível no badge como "Instável", com o motivo na
+      // tela de revisão — e o `last_error` diz exatamente o que veio.
+      final attempts = entry.attempts + 1;
+      final nextRetryAt = await gateway.queue.markRetry(
+        entry.id,
+        attempts: attempts,
+        error: 'Resposta inesperada do servidor: $error',
+      );
+      AppLogger.instance.error(
+        'sync_resposta_inesperada',
+        data: {
+          'operation_id': entry.operationId,
+          'path': entry.path,
+          'erro': '$error',
+        },
+        stackTrace: stack,
+      );
+      await _publish(
+        SyncPhase.degraded,
+        error: 'O servidor respondeu de forma inesperada. Tentando de novo.',
+        nextRetryAt: nextRetryAt,
+      );
+      _scheduleRetryAfter(nextRetryAt.difference(DateTime.now().toUtc()));
       return true;
     }
   }

@@ -928,6 +928,32 @@ class SyncQueueService {
     };
   }
 
+  /// Todos os temporários que já foram promovidos aos ids informados.
+  ///
+  /// É o que o Caixa Principal anexa em `_client_ids` ao servir leituras para
+  /// a rede local: um secundário que ainda segura um desses temporários
+  /// descobre, por ele, que o registro definitivo é a mesma venda.
+  Future<Map<String, List<String>>> localIdsResolvedTo({
+    required String scope,
+    required Iterable<String> remoteIds,
+  }) async {
+    final alvos = remoteIds.where((id) => id.isNotEmpty).toSet().toList();
+    if (alvos.isEmpty) return const {};
+    final marcadores = List.filled(alvos.length, '?').join(',');
+    final rows = await database.query(
+      'SELECT local_id, remote_id FROM id_map '
+      'WHERE scope = ? AND remote_id IN ($marcadores)',
+      [scope, ...alvos],
+    );
+    final resultado = <String, List<String>>{};
+    for (final row in rows) {
+      resultado
+          .putIfAbsent('${row['remote_id']}', () => [])
+          .add('${row['local_id']}');
+    }
+    return resultado;
+  }
+
   /// Degrau de backoff da tentativa informada (1-based).
   static Duration backoffFor(int attempts) {
     final index = min(max(attempts - 1, 0), retryLadder.length - 1);

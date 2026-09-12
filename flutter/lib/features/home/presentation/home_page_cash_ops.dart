@@ -34,6 +34,7 @@ mixin _CashOpsSection on _HomePageShared {
   Future<Map<String, dynamic>> _approveWithCashPassword({
     required String password,
     required String reason,
+    String? movementId,
   });
   Future<void> _toggleCashBalanceVisibility();
   Future<void> _goHome();
@@ -273,17 +274,20 @@ mixin _CashOpsSection on _HomePageShared {
                       if ('${movement['destination'] ?? ''}'.isNotEmpty)
                         Text('Destino: ${movement['destination']}'),
                       const Divider(height: 30),
+                      // O usuário é opcional de propósito: em branco, a senha
+                      // abaixo é a SENHA DE AÇÕES DO CAIXA do restaurante, que
+                      // este terminal confere sem internet. Era o único jeito
+                      // de autorizar uma sangria offline — e sem autorização a
+                      // sangria não entrava no saldo aqui nem no servidor.
                       TextFormField(
                         controller: username,
                         autofocus: true,
                         decoration: const InputDecoration(
-                          labelText: 'Usuário autorizador',
-                          helperText: 'Gerente, administrador ou proprietário.',
+                          labelText: 'Usuário autorizador (opcional)',
+                          helperText:
+                              'Gerente, administrador ou proprietário. Em '
+                              'branco, use a senha de ações do caixa.',
                         ),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Informe o usuário.'
-                            : null,
                       ),
                       const SizedBox(height: 14),
                       TextFormField(
@@ -328,6 +332,19 @@ mixin _CashOpsSection on _HomePageShared {
                         String? temporaryAccess;
                         String? temporaryRefresh;
                         try {
+                          if (username.text.trim().isEmpty) {
+                            await _approveWithCashPassword(
+                              password: password.text,
+                              reason: managerReason.text.trim(),
+                              movementId: '${movement['id']}',
+                            );
+                            pendingCashMovement = null;
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                            await _load();
+                            return;
+                          }
                           final login = await api.post(
                             '/auth/login/',
                             body: {

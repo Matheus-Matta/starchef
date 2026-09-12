@@ -520,9 +520,11 @@ abstract final class OrderPresenter {
     var totalItems = 0.0;
     for (final item in items) {
       totalItems += ValueFormatters.number(item['quantity']);
-      final quantity = _formatQuantity(item['quantity']);
       lines.add(
-        clip('${quantity}x ${item['product_name']}${variationSuffix(item)}'),
+        clip(
+          '${quantityLabel(item)} ${item['product_name']}'
+          '${variationSuffix(item)}',
+        ),
       );
       for (final addon in (item['addons'] as List? ?? const [])) {
         if (addon is! Map) continue;
@@ -570,6 +572,30 @@ abstract final class OrderPresenter {
     final padding = width - text.length;
     final left = padding ~/ 2;
     return '${' ' * left}$text${' ' * (padding - left)}';
+  }
+
+  /// O item é vendido por peso?
+  ///
+  /// Pelo CADASTRO, nunca pelo nome: `pricing_unit` é o campo real, e
+  /// `product_is_weighed` é a forma que o payload do pedido usa.
+  static bool isWeighedItem(Map<String, dynamic> item) =>
+      item['product_is_weighed'] == true ||
+      '${item['pricing_unit'] ?? ''}' == 'kg';
+
+  /// Como a quantidade deste item é lida por uma pessoa.
+  ///
+  /// `3x Coca-Cola` para unidade, `0,350kg Picanha` para peso. Escrever "3x"
+  /// num produto pesado passa a ideia de três peças — e é o que aparecia em
+  /// toda comanda e recibo de açougue e buffet.
+  ///
+  /// Só a APRESENTAÇÃO muda: quantidade, preço e subtotal continuam saindo do
+  /// mesmo número.
+  static String quantityLabel(Map<String, dynamic> item) {
+    final quantity = ValueFormatters.number(item['quantity']);
+    if (isWeighedItem(item)) {
+      return '${quantity.toStringAsFixed(3).replaceAll('.', ',')}kg';
+    }
+    return '${_formatQuantity(item['quantity'])}x';
   }
 
   static String _formatQuantity(dynamic value) {

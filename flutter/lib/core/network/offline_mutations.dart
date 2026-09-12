@@ -89,13 +89,14 @@ abstract final class OfflineMutations {
   /// A operação decide o DONO de uma sessão de caixa.
   ///
   /// Abrir, fechar e transferir são as três que definem "esta gaveta é de
-  /// fulano, neste terminal". Elas ficam de fora do relay de propósito: o
-  /// Caixa Principal executa o que recebe com as credenciais DELE, então uma
-  /// abertura relayada seria registrada no nome do principal e do terminal
-  /// dele — o oposto da regra. Um Caixa Secundário fala direto com o servidor
-  /// nestas três, com o próprio operador e a própria instalação; sem servidor,
-  /// ele simplesmente não abre nem fecha caixa (indisponibilidade controlada:
-  /// aceitar aqui e no principal ao mesmo tempo é como duas sessões nascem).
+  /// fulano, neste terminal". Já foram mantidas fora do relay porque o
+  /// principal executava o que recebia com as credenciais DELE; desde o
+  /// `RelayOrigin` ele executa em nome de quem originou — operador e
+  /// instalação do secundário —, e a razão deixou de existir. Hoje abrir e
+  /// fechar seguem o caminho de qualquer venda num secundário: SQLite local,
+  /// fila, principal. Só transferir continua exigindo quem esteja no ar,
+  /// porque valida gerente ou senha na hora. Quem usa este predicado é a
+  /// tela, para saber que a operação mexe na posse da gaveta.
   static bool ownsCashSession(String method, String path) =>
       method == 'POST' &&
       RegExp(

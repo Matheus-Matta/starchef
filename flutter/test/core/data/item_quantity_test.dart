@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv/core/data/entity_catalog.dart';
+import 'package:starchef_pdv/core/network/api_exception.dart';
 
 import 'pdv_test_support.dart';
 
@@ -109,9 +110,22 @@ void main() {
   });
 
   test('zero é recusado: remover exige o cancelamento', () async {
+    // A recusa virou `ApiException` 400 em vez de `ArgumentError`: o valor vem
+    // do operador (teclas + e - do PDV, ou o corpo que um secundário mandou),
+    // então é erro de ENTRADA, e a tela sabe mostrar a mensagem de um
+    // `ApiException`. `ArgumentError` descreve erro de programação e chegava na
+    // interface como falha inesperada.
     await expectLater(
       setQuantity('item-pendente', 0),
-      throwsA(isA<ArgumentError>()),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 400)
+            .having(
+              (error) => error.message.toLowerCase(),
+              'message',
+              contains('maior que zero'),
+            ),
+      ),
     );
   });
 

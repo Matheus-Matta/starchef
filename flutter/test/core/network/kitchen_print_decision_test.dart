@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:starchef_pdv/core/data/fiscal_queue_service.dart';
+import 'package:starchef_pdv/core/data/entity_catalog.dart';
 import 'package:starchef_pdv/core/data/offline_first_gateway.dart';
 import 'package:starchef_pdv/core/data/pdv_database.dart';
 import 'package:starchef_pdv/core/data/sync_queue_service.dart';
@@ -77,20 +78,42 @@ void main() {
     return (api: api, gateway: gateway, database: database);
   }
 
-  Future<String> abrirPedido(ApiClient api) async {
+  Future<String> abrirPedido(ApiClient api, OfflineFirstGateway gateway) async {
     final created = await api.post(
       '/orders/',
       body: {'restaurant': 'rest-1', 'order_type': 'counter'},
       accessToken: _token,
     );
-    return '${created['id']}';
+    final orderId = '${created['id']}';
+    // Um terminal real chega na venda com o catalogo ja sincronizado. Sem o
+    // produto gravado, lancar item e recusado — regra nova e certa: item de
+    // produto desconhecido entrava no pedido sem nome e sem preco. A semeadura
+    // vem DEPOIS da primeira chamada autenticada, quando o escopo do banco
+    // local ja esta definido.
+    await gateway.repository(EntityCatalog.product).applyRemoteList([
+      {
+        'id': 'prod-1',
+        'name': 'Pastel de queijo',
+        'restaurant': 'rest-1',
+        'current_price': '7.50',
+        'pricing_unit': 'unit',
+      },
+    ]);
+    // O primeiro item e o que faz o pedido existir para o servidor — sem ele
+    // a venda e so um rascunho deste terminal, e nao ha o que sincronizar.
+    await api.post(
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+      accessToken: _token,
+    );
+    return orderId;
   }
 
   test('com a rede de pé a operação sobe e o backend imprime', () async {
     final stack = await build(
       MockClient((request) async => json({'id': 'pedido-real', 'items': []})),
     );
-    final orderId = await abrirPedido(stack.api);
+    final orderId = await abrirPedido(stack.api, stack.gateway);
 
     final response = await stack.api.post(
       '/orders/$orderId/send-to-kitchen/',
@@ -125,7 +148,7 @@ void main() {
     final stack = await build(
       MockClient((request) async => throw const SocketException('sem rede')),
     );
-    final orderId = await abrirPedido(stack.api);
+    final orderId = await abrirPedido(stack.api, stack.gateway);
 
     final response = await stack.api.post(
       '/orders/$orderId/send-to-kitchen/',
@@ -166,7 +189,7 @@ void main() {
     final stack = await build(
       MockClient((request) async => throw const SocketException('sem rede')),
     );
-    final orderId = await abrirPedido(stack.api);
+    final orderId = await abrirPedido(stack.api, stack.gateway);
     final response = await stack.api.post(
       '/orders/$orderId/send-to-kitchen/',
       body: {'client_batch_serial': 'lote-1'},
@@ -197,7 +220,7 @@ void main() {
     final stack = await build(
       MockClient((request) async => throw const SocketException('sem rede')),
     );
-    await abrirPedido(stack.api);
+    await abrirPedido(stack.api, stack.gateway);
 
     await stack.api.syncService!.push();
     await Future<void>.delayed(const Duration(milliseconds: 50));

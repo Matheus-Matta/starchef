@@ -16,6 +16,8 @@ part of 'home_page.dart';
 mixin _OrdersSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalOrderStore get orderStore;
+  void _leaveActiveOrder({String? except});
+  Future<void> _sweepStaleDrafts();
 
   List<Map<String, dynamic>> get orders;
   set orders(List<Map<String, dynamic>> value);
@@ -190,6 +192,8 @@ mixin _OrdersSection on _HomePageShared {
   }
 
   Future<void> _openOrders() async {
+    _leaveActiveOrder();
+    await _sweepStaleDrafts();
     final scope = api.sessionScope;
     // Abre já com o que está guardado: a lista aparece na hora e a versão do
     // servidor entra por cima quando chegar. Só mostra "carregando" quem

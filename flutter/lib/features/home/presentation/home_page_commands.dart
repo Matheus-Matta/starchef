@@ -14,6 +14,7 @@ part of 'home_page.dart';
 ///
 /// Os métodos foram MOVIDOS, não reescritos.
 mixin _CommandSection on _HomePageShared {
+  void _leaveActiveOrder({String? except});
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   Map<String, dynamic>? get activeOrder;
   set activeOrder(Map<String, dynamic>? value);
@@ -287,6 +288,8 @@ mixin _CommandSection on _HomePageShared {
           );
 
     final tableForCommand = table;
+    // Abrir uma comanda por cima de outra é sair da anterior.
+    _leaveActiveOrder(except: '${command['current_order_id'] ?? ''}');
     await _work(() async {
       selectedCommand = command;
       selectedTable = tableForCommand;

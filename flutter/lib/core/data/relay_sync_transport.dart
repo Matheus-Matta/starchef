@@ -62,12 +62,27 @@ class RelaySyncTransport implements SyncTransport {
         offline: false,
       );
     } on ApiException catch (error) {
+      // Passageiro ou definitivo? O principal responde 429 quando está
+      // processando muitas operações locais, 503 quando não alcançou a nuvem
+      // por uma rota que só ela atende, 5xx quando algo nele falhou. Nenhum
+      // deles é recusa de negócio — e `isConnectivity` não atravessa o relay:
+      // o `_signedRequest` reconstrói a exceção só com status e prazo. Sem
+      // esta regra, um pico no principal mandava a venda do secundário para
+      // revisão manual, e ela só voltava se alguém reenviasse na mão.
+      if (error.isConnectivity || _isTransientStatus(error.statusCode)) {
+        throw TransientSyncFailure(
+          error.message,
+          retryAfter: error.retryAfter,
+          offline: false,
+        );
+      }
       // O principal alcançou o servidor (ou a própria regra dele) e recusou.
       // Repetir daria o mesmo resultado; isto é uma pendência para revisão.
-      if (error.isConnectivity) {
-        throw TransientSyncFailure(error.message, retryAfter: error.retryAfter);
-      }
       rethrow;
     }
   }
+
+  /// A mesma tabela que o `ApiClient` usa para a nuvem: espera e tenta de novo.
+  static bool _isTransientStatus(int? status) =>
+      status == 408 || status == 425 || status == 429 || (status ?? 0) >= 500;
 }

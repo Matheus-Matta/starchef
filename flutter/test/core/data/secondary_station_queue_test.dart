@@ -72,6 +72,25 @@ void main() {
     await stack.dispose();
   });
 
+  /// Uma venda de verdade: pedido + primeiro item.
+  ///
+  /// Só o pedido não vai a lugar nenhum — sem item ele é um rascunho deste
+  /// terminal, e é justamente isso que evita pedido vazio no servidor.
+  Future<String> abrirVendaComItem() async {
+    final created = await stack.gateway.write(
+      'POST',
+      '/orders/',
+      body: {'restaurant': 'rest-1', 'order_type': 'counter'},
+    );
+    final orderId = '${created.payload['id']}';
+    await stack.gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
+    return orderId;
+  }
+
   test('com o principal fora, a venda é salva e fica na fila', () async {
     principal.reachable = false;
 
@@ -92,10 +111,10 @@ void main() {
     final stored = await stack.gateway.orders.read(orderId);
     expect((stored!.payload['items'] as List), hasLength(1));
     final queued = await stack.queue.entries(scope: TestPdvStack.scope);
-    expect(queued.map((entry) => entry.path), [
-      '/orders/',
-      '/orders/$orderId/items/',
-    ]);
+    // UMA operação, não duas: o pedido nasce junto com o primeiro item
+    // (`/orders/create-with-item/`). Enquanto não havia item, ele era só um
+    // rascunho deste terminal e não tinha o que entregar.
+    expect(queued.map((entry) => entry.path), ['/orders/create-with-item/']);
     expect(queued.every((entry) => entry.status == SyncQueueStatus.pending), isTrue);
   });
 
@@ -115,29 +134,30 @@ void main() {
     await sync.push();
 
     principal.reachable = true;
-    principal.onRelay = (mutation) => mutation.path == '/orders/'
-        ? {'id': 'pedido-do-principal', 'status': 'open', 'items': const []}
+    principal.onRelay = (mutation) =>
+        mutation.path == '/orders/create-with-item/'
+        ? {
+            'id': 'pedido-do-principal',
+            'status': 'open',
+            'items': const [
+              {'id': 'item-do-principal', 'quantity': 1},
+            ],
+          }
         : {'id': 'item-do-principal'};
     await stack.queue.retryAllNow(scope: TestPdvStack.scope);
     await sync.push();
 
+    // Pedido e primeiro item sobem numa operação só — não há uma janela em
+    // que o principal conheça um pedido vazio.
     expect(principal.received.map((m) => m.path), [
-      '/orders/',
-      // A inclusão do item já sai com o id que o principal devolveu: enviar o
-      // identificador local faria o principal recusar um pedido que ele não
-      // conhece.
-      '/orders/pedido-do-principal/items/',
+      '/orders/create-with-item/',
     ]);
     expect(await stack.queue.entries(scope: TestPdvStack.scope), isEmpty);
   });
 
   test('o reenvio usa a mesma chave, e o principal reconhece a repetição', () async {
     principal.reachable = false;
-    await stack.gateway.write(
-      'POST',
-      '/orders/',
-      body: {'restaurant': 'rest-1', 'order_type': 'counter'},
-    );
+    await abrirVendaComItem();
     await sync.push();
 
     principal.reachable = true;
@@ -156,11 +176,7 @@ void main() {
   test('entrega ambígua volta para a fila em vez de sumir', () async {
     // O principal pode ter gravado e a confirmação ter se perdido. Descartar
     // aqui perderia a venda; repetir é seguro porque o recibo dele deduplica.
-    await stack.gateway.write(
-      'POST',
-      '/orders/',
-      body: {'restaurant': 'rest-1', 'order_type': 'counter'},
-    );
+    await abrirVendaComItem();
     principal.onRelay = (_) =>
         throw const MutationRelayUncertain('Conexão interrompida.');
 
@@ -171,12 +187,40 @@ void main() {
     expect(entry.nextRetryAt, isNotNull);
   });
 
+  test(
+    'principal OCUPADO ou SEM NUVEM (429/503) é falha temporária, não pendência',
+    () async {
+      // O `_signedRequest` do secundário reconstrói a resposta do principal
+      // como `ApiException(statusCode, retryAfter)` — sem `isConnectivity`.
+      // 429 ("processando muitas operações locais"), 503 ("não alcançou o
+      // servidor") e 500 são todos passageiros: mandar a venda para revisão
+      // manual por causa de um pico do principal é perder a venda por nada.
+      for (final status in const [429, 503, 500, 502, 504, 408]) {
+        await abrirVendaComItem();
+        principal.onRelay = (_) => throw ApiException(
+          'O Caixa Principal está processando muitas operações locais.',
+          statusCode: status,
+          retryAfter: status == 429 ? const Duration(seconds: 5) : null,
+        );
+
+        await sync.push();
+
+        final pendentes = await stack.queue.entries(scope: TestPdvStack.scope);
+        expect(
+          pendentes.every((e) => e.status == SyncQueueStatus.pending),
+          isTrue,
+          reason: 'HTTP $status do principal tem de voltar para a fila',
+        );
+        expect(pendentes.first.nextRetryAt, isNotNull, reason: 'HTTP $status');
+        for (final entry in pendentes) {
+          await stack.queue.discardFailed(entry.id);
+        }
+      }
+    },
+  );
+
   test('recusa do principal vira pendência para revisão, não retentativa', () async {
-    await stack.gateway.write(
-      'POST',
-      '/orders/',
-      body: {'restaurant': 'rest-1', 'order_type': 'counter'},
-    );
+    await abrirVendaComItem();
     principal.onRelay = (_) =>
         throw const ApiException('Comanda já possui pedido.', statusCode: 409);
 
@@ -188,10 +232,14 @@ void main() {
   });
 
   test('o secundário só enfileira o que o principal sabe executar', () async {
-    // Abrir caixa é do principal: aceitar aqui deixaria o operador com uma
-    // operação salva que nunca teria como ser entregue.
+    // Transferir a posse da gaveta valida gerente ou senha na hora: nunca
+    // espera em fila nenhuma.
     expect(
-      stack.gateway.handlesWrite('POST', '/cash-register/open/', const {}),
+      stack.gateway.handlesWrite(
+        'POST',
+        '/cash-register/sessao-12345678/transfer/',
+        const {},
+      ),
       isFalse,
     );
     expect(
@@ -319,14 +367,26 @@ void main() {
       expect(atual['id'], minha['id']);
       expect(atual['cash_station_name'], 'Caixa PDV 2');
 
-      // Sangria e suprimento entram na minha sessão, sem servidor nenhum.
-      await stack.gateway.write(
+      // Sangria e suprimento entram na minha sessão, sem servidor nenhum —
+      // pendentes até a autorização, como no servidor.
+      final sangria = await stack.gateway.write(
         'POST',
         '/cash-register/${minha['id']}/withdrawal/',
         body: {
           'amount': '20.00',
           'reason': 'troco',
           'terminal_installation_id': pdv2,
+        },
+      );
+      expect(sangria.payload['status'], 'pending');
+      await stack.gateway.write(
+        'POST',
+        '/cash-register/${minha['id']}/approve/',
+        body: {
+          'movement': sangria.payload['id'],
+          'reason': 'ok',
+          'cash_password_proof': 'prova',
+          'proof_nonce': 'nonce',
         },
       );
       final depois = await stack.gateway.read('/cash-register/current/');
@@ -341,6 +401,76 @@ void main() {
       final semCaixa = await stack.gateway.read('/cash-register/current/');
       expect(semCaixa['_empty'], isTrue);
     });
+
+    test(
+      'o roteador trata abertura e fechamento do caixa como escrita local '
+      'num secundário — é o que permite operar sem rede nenhuma',
+      () {
+        // Antes `handlesWrite` recusava as duas num secundário e o
+        // `ApiClient` as encaminhava ao principal NA HORA; com o principal
+        // desligado, o operador não abria nem fechava o turno.
+        expect(
+          stack.gateway.handlesWrite('POST', '/cash-register/open/', {
+            'cash_station': 'caixa-pdv2',
+          }),
+          isTrue,
+        );
+        expect(
+          stack.gateway.handlesWrite('POST', '/cash-register/sessao-x/close/', {
+            'actual_amount': '10.00',
+          }),
+          isTrue,
+        );
+        // Transferir a posse continua exigindo quem esteja no ar.
+        expect(
+          stack.gateway.handlesWrite(
+            'POST',
+            '/cash-register/sessao-x/transfer/',
+            {'reason': 'troca'},
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'turno aberto com o principal desligado sobe para ele em ordem quando volta',
+      () async {
+        principal.reachable = false;
+        final minha = await abrirCaixaDoPdv2();
+        final sangria = await stack.gateway.write(
+          'POST',
+          '/cash-register/${minha['id']}/withdrawal/',
+          body: {
+            'amount': '20.00',
+            'reason': 'troco',
+            'terminal_installation_id': pdv2,
+          },
+        );
+        await stack.gateway.write(
+          'POST',
+          '/cash-register/${minha['id']}/close/',
+          body: {'actual_amount': '30.00', 'terminal_installation_id': pdv2},
+        );
+        await sync.push();
+        expect(principal.received, isEmpty, reason: 'principal fora: nada saiu');
+
+        principal.reachable = true;
+        await stack.queue.retryAllNow(scope: TestPdvStack.scope);
+        await sync.push();
+
+        // Abertura primeiro, com a sessão temporária; depois a sangria e o
+        // fechamento já com o id que o principal devolveu.
+        final caminhos = principal.received.map((m) => m.path).toList();
+        expect(caminhos.first, '/cash-register/open/');
+        expect(caminhos.last, endsWith('/close/'));
+        expect(caminhos, hasLength(3));
+        expect(caminhos[1], endsWith('/withdrawal/'));
+        final idDoPrincipal = principal.received.first.operationId;
+        expect(idDoPrincipal, isNotEmpty);
+        expect(sangria.payload['status'], 'pending');
+      },
+    );
 
     test('a gaveta do PDV 1 não é adotada nem movimentada aqui', () async {
       principal.reachable = false;

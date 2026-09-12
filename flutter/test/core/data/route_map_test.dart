@@ -191,10 +191,20 @@ void main() {
       ),
       isTrue,
     );
-    // Abrir caixa é do principal: aceitar aqui deixaria o operador com uma
-    // operação salva que nunca teria como ser entregue.
+    // Abrir caixa também é local num secundário: o principal sabe executar
+    // (`_matches` inclui a rota) em nome deste terminal, então a operação
+    // entra na fila como uma venda. Sem isso o turno não abria sem rede.
     expect(
       stack.gateway.handlesWrite('POST', '/cash-register/open/', const {}),
+      isTrue,
+    );
+    // Transferir a posse da gaveta continua exigindo quem esteja no ar.
+    expect(
+      stack.gateway.handlesWrite(
+        'POST',
+        '/cash-register/sessao-12345678/transfer/',
+        const {},
+      ),
       isFalse,
     );
     // A pesagem do próprio secundário fecha aqui, mesmo com o Principal

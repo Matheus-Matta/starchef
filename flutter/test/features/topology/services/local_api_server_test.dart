@@ -173,6 +173,27 @@ void main() {
     expect((result['results'] as List).single['sequence'], 10);
   });
 
+  test(
+    'GET /local/orders anexa `_client_ids` ao pedido que nasceu temporário',
+    () async {
+      // O principal criou este pedido sem nuvem (id temporário) e, quando a
+      // internet voltou, o servidor o numerou. A promoção fica no `id_map`;
+      // um secundário que ainda segure o temporário precisa saber disso.
+      await gateway.queue.registerResolvedId(
+        scope: gateway.scope!,
+        localId: 'offline-do-principal-1',
+        remoteId: 'pedido-1',
+      );
+
+      final response = await call('GET', '/local/orders');
+
+      expect(response.status, HttpStatus.ok);
+      final result = response.body['result'] as Map<String, dynamic>;
+      final pedido = (result['results'] as List).single as Map<String, dynamic>;
+      expect(pedido['_client_ids'], ['offline-do-principal-1']);
+    },
+  );
+
   test('GET /local/printers entrega a configuração dos periféricos (§18)', () async {
     // A configuração é centralizada no principal; a execução continua no
     // terminal que alcança o equipamento fisicamente.
@@ -202,8 +223,29 @@ void main() {
     // vão ler daqui em diante.
     final stored = await gateway.orders.read(orderId);
     expect(stored, isNotNull);
+    // Sem item ele ainda é rascunho: nada a entregar à nuvem. É o primeiro
+    // item que o faz existir lá.
+    expect(await gateway.queue.entries(scope: gateway.scope!), isEmpty);
+
+    // Produto fora da copia local passou a ser recusado no lancamento — sem ele
+    // o item entrava sem nome e sem preco. O principal so vende o que ja
+    // sincronizou, entao a semeadura aqui e o retrato de um terminal pronto.
+    await gateway.repository(EntityCatalog.product).applyRemoteList([
+      {
+        'id': 'prod-1',
+        'name': 'Pastel de queijo',
+        'restaurant': restaurantId,
+        'current_price': '7.50',
+        'pricing_unit': 'unit',
+      },
+    ]);
+    await gateway.write(
+      'POST',
+      '/orders/$orderId/items/',
+      body: {'product': 'prod-1', 'quantity': 1},
+    );
     final queued = await gateway.queue.entries(scope: gateway.scope!);
-    expect(queued.single.path, '/orders/');
+    expect(queued.single.path, '/orders/create-with-item/');
   });
 
   test('a mesma operação enviada duas vezes não cria dois pedidos (§7)', () async {
