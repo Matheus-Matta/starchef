@@ -158,7 +158,7 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 
 ## 7. Autenticação no frontend
 
-- **Login**: `LoginScreen.vue` → `authStore.login()` → `services/api.js` (o backend grava os cookies httpOnly); a store então chama `fetchMe()` para popular `user`.
+- **Login**: `LoginScreen.vue` → `authStore.login()` → `services/api.js` (o backend grava os cookies httpOnly); a store então chama `fetchMe()` para popular `user`. Esse `fetchMe()` é também a prova de que o navegador guardou os cookies: se der 401 logo após o 200 do login (Domain que não cobre o host da API, Secure em HTTP), a store lança `SESSION_COOKIE_REJECTED` e a tela de login explica, em vez de entrar no painel e voltar. A store grava a flag `sc_session` no origin do frontend (`tokenStorage.markSession()`), porque com a API em outro host a flag que o backend grava fica lá e `hasSession()` nunca a veria.
 - **Restauração de sessão**: o guard de rota chama `auth.validateSession()`, que confia num cache de 30s se já validado, senão bate em `/auth/me/`; em 401, tenta um `refreshAccessToken()` explícito + retry antes de desistir.
 - **Logout**: `auth.logout()` chama `/auth/logout/` e limpa o estado local; também é disparado globalmente pelo evento `auth:unauthorized` (do interceptor do axios) que limpa a sessão e redireciona para `/login?next=...`.
 - **Gating por módulo/papel**: `auth.hasModule(nome)` — superusuário sempre passa, os demais checam `user.enabled_modules`. Usado no guard de rota (bloqueia acesso direto a rotas de módulo desabilitado) e na UI (menus, campos de recurso com `module`). Permissões finas de negócio (papel → permissões) são modeladas no backend e editadas via o próprio CRUD genérico (`PermissionAccordion.vue`).

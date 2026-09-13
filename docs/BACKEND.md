@@ -223,7 +223,7 @@ Tudo sob `/api/v1/...` (sem outra versão hoje). Pontos notáveis:
 Documentadas na íntegra em `.env.example` (produção — é o que `docker-compose.yml` lê via `.env`), na raiz do monorepo. Os grupos principais:
 
 - **Django core**: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CORS_ALLOWED_ORIGINS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_FIRST_ACCESS_TOKEN`.
-- **Cookies/TLS**: `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_AUTH_COOKIE_SECURE`, `DJANGO_AUTH_COOKIE_SAMESITE`, `DJANGO_AUTH_COOKIE_DOMAIN`.
+- **Cookies/TLS**: `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_AUTH_COOKIE_SECURE`, `DJANGO_AUTH_COOKIE_SAMESITE`, `DJANGO_AUTH_COOKIE_DOMAIN`. Com painel e API em subdomínios distintos, `DJANGO_AUTH_COOKIE_DOMAIN` precisa ser o domínio-pai (`.seu-dominio.com`); um valor que não cubra o host da API faz o navegador descartar os cookies (login 200, depois 401 em tudo e 400 no refresh).
 - **Banco**: `USE_SQLITE_DATABASE`, `SQLITE_DB_NAME`, `SQLITE_LOCK_TIMEOUT`, `POSTGRES_DB/USER/PASSWORD/HOST/PORT`, `POSTGRES_POOL` (padrão ligado) com `POSTGRES_POOL_MIN/MAX/TIMEOUT` — pool nativo Django 5.1 + psycopg 3, obrigatório sob ASGI: sem ele a conexão persistente vaza por thread e o Postgres estoura `max_connections` (achado do teste de carga em modo produção). `POSTGRES_CONN_MAX_AGE` só vale com o pool desligado.
 - **Redis/Celery**: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_CONCURRENCY`.
 - **Gunicorn** (opcional): `GUNICORN_WORKERS/TIMEOUT/MAX_REQUESTS/LOG_LEVEL`.

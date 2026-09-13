@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { clearSession } from "./tokenStorage";
+import { clearSession, markSession } from "./tokenStorage";
 
 describe("clearSession", () => {
   let written;
@@ -30,6 +30,14 @@ describe("clearSession", () => {
   // O backend grava a flag com Domain quando a API vive em outro subdomínio
   // (DJANGO_AUTH_COOKIE_DOMAIN): sem repetir o Domain, o delete não casa e o
   // usuário continua "logado" depois de clicar em Sair.
+  // A flag vai para o origin do FRONTEND: com a API em outro host, o cookie
+  // que o backend grava fica lá e este origin nunca o enxerga.
+  it("markSession grava a flag neste origin, Secure em https", () => {
+    markSession();
+
+    expect(written).toEqual(["sc_session=1; Max-Age=604800; path=/; SameSite=Lax; Secure"]);
+  });
+
   it("expira a flag no host e nos domínios-pai", () => {
     clearSession();
 

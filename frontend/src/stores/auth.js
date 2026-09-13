@@ -1,10 +1,13 @@
 import { defineStore } from "pinia";
 
 import { api, loginRequest, refreshAccessToken } from "../services/api";
-import { clearSession, hasSession } from "../services/tokenStorage";
+import { clearSession, hasSession, markSession } from "../services/tokenStorage";
 
 const SESSION_VALIDATION_TTL_MS = 30_000;
 let lastValidatedAt = 0;
+
+/** Login aceito pela API, mas o navegador não guardou (ou não envia) os cookies. */
+export const SESSION_COOKIE_REJECTED = "session_cookie_rejected";
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
@@ -53,10 +56,24 @@ export const useAuthStore = defineStore("auth", {
     async login({ username, password }) {
       this.loading = true;
       try {
-        const response = await loginRequest({ username, password });
+        await loginRequest({ username, password });
+        markSession();
+        // O 200 do login prova a senha, não a sessão: os tokens vão em cookies
+        // httpOnly e o navegador pode recusá-los (Domain que não cobre o host
+        // da API, Secure em HTTP, SameSite). Sem esta prova o usuário entraria
+        // no painel, cada chamada daria 401 e ele voltaria ao login sem
+        // explicação. Uma chamada autenticada aqui transforma isso em erro
+        // legível na própria tela de login.
+        try {
+          await this.fetchMe();
+        } catch (error) {
+          this.clearLocal();
+          const rejected = new Error("Sessão não persistida pelo navegador");
+          rejected.code = SESSION_COOKIE_REJECTED;
+          rejected.cause = error;
+          throw rejected;
+        }
         this.authed = true;
-        this.user = response.data?.user || null;
-        if (!this.user) await this.fetchMe();
         lastValidatedAt = Date.now();
         this.initialized = true;
         return this.user;

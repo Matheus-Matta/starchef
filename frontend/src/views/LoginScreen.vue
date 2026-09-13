@@ -107,7 +107,7 @@ import InputText from "primevue/inputtext";
 import Password from "primevue/password";
 
 import AppIcon from "../components/AppIcon.vue";
-import { useAuthStore } from "../stores/auth";
+import { SESSION_COOKIE_REJECTED, useAuthStore } from "../stores/auth";
 
 const logoUrl = "/logoicon.png";
 
@@ -135,11 +135,14 @@ async function submit() {
   try {
     await auth.login({ username: username.value, password: password.value });
     done.value = true;
-    const next = typeof route.query.next === "string" ? route.query.next : "/painel";
+    const next = typeof route.query.next === "string" ? route.query.next : { name: "painel" };
     await router.replace(next);
   } catch (error) {
     const status = error.response?.status;
-    if (status === 401) {
+    if (error.code === SESSION_COOKIE_REJECTED) {
+      errorMessage.value =
+        "Login aceito, mas o navegador não guardou a sessão. Verifique HTTPS e o domínio dos cookies da API (DJANGO_AUTH_COOKIE_DOMAIN).";
+    } else if (status === 401) {
       errorMessage.value = "Usuário ou senha inválidos.";
     } else if (status === 403) {
       errorMessage.value = "Conta sem permissão para acessar o sistema.";
