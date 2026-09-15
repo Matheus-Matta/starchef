@@ -67,7 +67,8 @@ class InboundNFeItemSerializer(TenantModelSerializer):
             "product", "product_name", "product_stock_unit",
             "product_item_type", "product_tracking_mode", "product_requires_lot_control", "product_requires_serial_number",
             "product_brand", "product_model", "is_asset",
-            "conversion_factor", "received_quantity", "stock_movement"
+            "conversion_factor", "received_quantity", "stock_movement",
+            "is_ignored", "ignored_at", "ignored_reason"
         ]
 
     def get_is_asset(self, obj):
@@ -83,6 +84,8 @@ class InboundNFeItemSerializer(TenantModelSerializer):
 class InboundNFeSerializer(TenantModelSerializer):
     items = serializers.SerializerMethodField()
     items_count = serializers.SerializerMethodField()
+    ignored_items_count = serializers.SerializerMethodField()
+    active_items_count = serializers.SerializerMethodField()
     unmapped_items_count = serializers.SerializerMethodField()
     has_unmapped_items = serializers.SerializerMethodField()
     latest_manifestation = serializers.SerializerMethodField()
@@ -97,8 +100,10 @@ class InboundNFeSerializer(TenantModelSerializer):
             "manifestation_status", "receiving_status",
             "fiscal_status", "fiscal_status_display", "cancelled_at",
             "cancellation_protocol", "cancellation_reason",
+            "ignored_at", "ignored_reason",
             "last_status_check_at", "last_status_cstat", "last_status_reason",
             "stock_applied_at", "items", "items_count",
+            "ignored_items_count", "active_items_count",
             "unmapped_items_count", "has_unmapped_items", "latest_manifestation"
         ]
 
@@ -120,20 +125,28 @@ class InboundNFeSerializer(TenantModelSerializer):
     def get_items_count(self, obj):
         return InboundNFeItem.all_objects.filter(invoice=obj).count()
 
+    def get_ignored_items_count(self, obj):
+        return InboundNFeItem.all_objects.filter(invoice=obj, is_ignored=True).count()
+
+    def get_active_items_count(self, obj):
+        return InboundNFeItem.all_objects.filter(invoice=obj, is_ignored=False).count()
+
     def get_unmapped_items_count(self, obj):
-        if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED):
+        if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_IGNORED):
             return 0
         return InboundNFeItem.all_objects.filter(
             invoice=obj,
+            is_ignored=False,
             ingredient__isnull=True,
             product__isnull=True
         ).count()
 
     def get_has_unmapped_items(self, obj):
-        if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_RECEIVED):
+        if obj.status in (InboundNFe.STATUS_SUMMARY, InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_RECEIVED, InboundNFe.STATUS_IGNORED):
             return False
         return InboundNFeItem.all_objects.filter(
             invoice=obj,
+            is_ignored=False,
             ingredient__isnull=True,
             product__isnull=True
         ).exists()

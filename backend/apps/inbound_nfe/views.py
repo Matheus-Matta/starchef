@@ -1,4 +1,5 @@
 from decimal import Decimal
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -13,6 +14,7 @@ from apps.inbound_nfe.models import (
 )
 from apps.inbound_nfe.serializers import (
     InboundNFeSerializer,
+    InboundNFeItemSerializer,
     InboundNFeItemMapRequestSerializer,
     ReceiveInvoiceRequestSerializer,
     DFeDistributionDocumentSerializer,
@@ -67,6 +69,8 @@ class InboundNFeFilterSet(django_filters.FilterSet):
             return queryset.filter(status=InboundNFe.STATUS_PENDING_RECEIPT).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif value in ("received", "finalized"):
             return queryset.filter(status=InboundNFe.STATUS_RECEIVED)
+        elif value == "ignored":
+            return queryset.filter(status=InboundNFe.STATUS_IGNORED)
         elif value == "summary":
             return queryset.filter(status=InboundNFe.STATUS_SUMMARY)
         elif value == "cancelled":
@@ -105,6 +109,8 @@ class InboundNFeViewSet(BaseTenantViewSet):
             qs = qs.filter(status=InboundNFe.STATUS_PENDING_RECEIPT).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif mapping_filter in ("received", "finalized"):
             qs = qs.filter(status=InboundNFe.STATUS_RECEIVED)
+        elif mapping_filter == "ignored":
+            qs = qs.filter(status=InboundNFe.STATUS_IGNORED)
         elif mapping_filter == "summary":
             qs = qs.filter(status=InboundNFe.STATUS_SUMMARY)
         elif mapping_filter == "cancelled":
@@ -144,6 +150,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
             "unmapped": counts.get(InboundNFe.STATUS_PENDING_MAPPING, 0),
             "ready": counts.get(InboundNFe.STATUS_PENDING_RECEIPT, 0),
             "received": counts.get(InboundNFe.STATUS_RECEIVED, 0),
+            "ignored": counts.get(InboundNFe.STATUS_IGNORED, 0),
             "summary": counts.get(InboundNFe.STATUS_SUMMARY, 0),
             "cancelled": cancelled_count,
         })
@@ -744,6 +751,91 @@ class InboundNFeViewSet(BaseTenantViewSet):
             "invoice": serializer.data,
         })
 
+    @action(detail=True, methods=["post"], url_path="ignore")
+    def ignore(self, request, pk=None, *args, **kwargs):
+        """Marca uma NF-e inteira como ignorada (não entrará no estoque)."""
+        invoice = self.get_object()
+        if invoice.status == InboundNFe.STATUS_RECEIVED:
+            return Response(
+                {"error": "Esta nota já foi recebida no estoque e não pode ser ignorada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if invoice.fiscal_status == InboundNFe.FISCAL_CANCELLED or invoice.status == InboundNFe.STATUS_CANCELLED:
+            return Response(
+                {"error": "Esta nota está cancelada e já não afeta o estoque."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get("reason") or "Ignorada pelo operador").strip()
+        invoice.status = InboundNFe.STATUS_IGNORED
+        invoice.ignored_at = timezone.now()
+        invoice.ignored_reason = reason
+        invoice.ignored_by = request.user
+        invoice.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
+
+        serializer = self.get_serializer(invoice)
+        return Response({
+            "success": True,
+            "message": "Nota fiscal marcada como ignorada com sucesso.",
+            "status": invoice.status,
+            "invoice": serializer.data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="unignore")
+    def unignore(self, request, pk=None, *args, **kwargs):
+        """Reativa uma nota fiscal previamente ignorada."""
+        invoice = self.get_object()
+        if invoice.status != InboundNFe.STATUS_IGNORED:
+            return Response(
+                {"error": "Esta nota não está marcada como ignorada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Se todos os itens estavam ignorados, desmarca os itens
+        if not invoice.items.filter(is_ignored=False).exists():
+            invoice.items.update(is_ignored=False, ignored_at=None, ignored_reason="", ignored_by=None)
+
+        unmapped = invoice.items.filter(is_ignored=False, product__isnull=True, ingredient__isnull=True).exists()
+        invoice.status = InboundNFe.STATUS_PENDING_MAPPING if unmapped else InboundNFe.STATUS_PENDING_RECEIPT
+        invoice.ignored_at = None
+        invoice.ignored_reason = ""
+        invoice.ignored_by = None
+        invoice.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
+
+        serializer = self.get_serializer(invoice)
+        return Response({
+            "success": True,
+            "message": "Nota fiscal reativada com sucesso.",
+            "status": invoice.status,
+            "invoice": serializer.data,
+        })
+
+    @action(detail=False, methods=["post"], url_path="bulk-ignore")
+    def bulk_ignore(self, request, *args, **kwargs):
+        """Ignora um lote de notas fiscais selecionadas."""
+        ids = request.data.get("ids", [])
+        if not ids or not isinstance(ids, list):
+            return Response({"error": "Informe a lista de IDs das notas para ignorar."}, status=status.HTTP_400_BAD_REQUEST)
+
+        reason = (request.data.get("reason") or "Ignoradas em lote pelo operador").strip()
+        now = timezone.now()
+
+        qs = self.get_queryset().filter(id__in=ids).exclude(status__in=[InboundNFe.STATUS_RECEIVED, InboundNFe.STATUS_CANCELLED])
+        count = 0
+        for inv in qs:
+            inv.status = InboundNFe.STATUS_IGNORED
+            inv.ignored_at = now
+            inv.ignored_reason = reason
+            inv.ignored_by = request.user
+            inv.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
+            count += 1
+
+        return Response({
+            "success": True,
+            "message": f"{count} nota(s) marcada(s) como ignorada(s).",
+            "ignored_count": count,
+        })
+
     @action(detail=False, methods=["get", "post"], url_path="export-xml")
     def export_xml(self, request, *args, **kwargs):
         """
@@ -899,7 +991,7 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
             item.save(update_fields=["ingredient", "product", "conversion_factor"])
 
             # Checar se a NF mudou status para pronta para recebimento
-            unmapped_exists = item.invoice.items.filter(product__isnull=True, ingredient__isnull=True).exists()
+            unmapped_exists = item.invoice.items.filter(is_ignored=False, product__isnull=True, ingredient__isnull=True).exists()
             if not unmapped_exists:
                 item.invoice.status = InboundNFe.STATUS_PENDING_RECEIPT
                 item.invoice.save(update_fields=["status"])
@@ -965,6 +1057,90 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
             return Response({"message": "Item mapeado com sucesso."})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="ignore")
+    def ignore(self, request, pk=None, *args, **kwargs):
+        """Marca um item da NF-e como ignorado (não gerará estoque)."""
+        item = self.get_object()
+        invoice = item.invoice
+
+        if invoice.status == InboundNFe.STATUS_RECEIVED:
+            return Response(
+                {"error": "Esta nota já foi recebida no estoque e seus itens não podem ser alterados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get("reason") or "Ignorado pelo operador").strip()
+        item.is_ignored = True
+        item.ignored_at = timezone.now()
+        item.ignored_reason = reason
+        item.ignored_by = request.user
+        item.save(update_fields=["is_ignored", "ignored_at", "ignored_reason", "ignored_by"])
+
+        # Recalcular status da nota mãe
+        all_items = invoice.items.all()
+        has_active_items = all_items.filter(is_ignored=False).exists()
+
+        if not has_active_items:
+            invoice.status = InboundNFe.STATUS_IGNORED
+            invoice.ignored_at = timezone.now()
+            invoice.ignored_reason = "Todos os itens foram ignorados"
+            invoice.ignored_by = request.user
+            invoice.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
+        else:
+            unmapped_exists = all_items.filter(is_ignored=False, product__isnull=True, ingredient__isnull=True).exists()
+            new_status = InboundNFe.STATUS_PENDING_MAPPING if unmapped_exists else InboundNFe.STATUS_PENDING_RECEIPT
+            if invoice.status not in (InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_RECEIVED):
+                invoice.status = new_status
+                invoice.save(update_fields=["status"])
+
+        serializer = InboundNFeItemSerializer(item, context={"request": request})
+        return Response({
+            "success": True,
+            "message": f"Item #{item.item_number} ignorado com sucesso.",
+            "item": serializer.data,
+            "invoice_status": invoice.status,
+        })
+
+    @action(detail=True, methods=["post"], url_path="unignore")
+    def unignore(self, request, pk=None, *args, **kwargs):
+        """Reativa um item da NF-e previamente ignorado."""
+        item = self.get_object()
+        invoice = item.invoice
+
+        if invoice.status == InboundNFe.STATUS_RECEIVED:
+            return Response(
+                {"error": "Esta nota já foi recebida no estoque e seus itens não podem ser alterados."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        item.is_ignored = False
+        item.ignored_at = None
+        item.ignored_reason = ""
+        item.ignored_by = None
+        item.save(update_fields=["is_ignored", "ignored_at", "ignored_reason", "ignored_by"])
+
+        all_items = invoice.items.all()
+        unmapped_exists = all_items.filter(is_ignored=False, product__isnull=True, ingredient__isnull=True).exists()
+        new_status = InboundNFe.STATUS_PENDING_MAPPING if unmapped_exists else InboundNFe.STATUS_PENDING_RECEIPT
+
+        if invoice.status == InboundNFe.STATUS_IGNORED:
+            invoice.ignored_at = None
+            invoice.ignored_reason = ""
+            invoice.ignored_by = None
+            invoice.status = new_status
+            invoice.save(update_fields=["status", "ignored_at", "ignored_reason", "ignored_by"])
+        elif invoice.status not in (InboundNFe.STATUS_CANCELLED, InboundNFe.STATUS_RECEIVED):
+            invoice.status = new_status
+            invoice.save(update_fields=["status"])
+
+        serializer = InboundNFeItemSerializer(item, context={"request": request})
+        return Response({
+            "success": True,
+            "message": f"Item #{item.item_number} reativado com sucesso.",
+            "item": serializer.data,
+            "invoice_status": invoice.status,
+        })
 
 
 class DFeDistributionDocumentViewSet(BaseTenantViewSet):

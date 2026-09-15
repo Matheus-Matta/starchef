@@ -304,6 +304,15 @@
             <i :class="reconcileLoading ? 'pi pi-spin pi-spinner' : 'pi pi-shield'" /> Verificar Situação SEFAZ ({{ selection.length }})
           </button>
           <button
+            v-if="props.endpoint === '/inbound-nfe/'"
+            class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+            type="button"
+            :disabled="bulkIgnoreLoading"
+            @click="openBulkIgnoreDialog"
+          >
+            <i :class="bulkIgnoreLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" /> Ignorar Notas ({{ selection.length }})
+          </button>
+          <button
             v-for="bulkAction in bulkActions"
             :key="bulkAction.key"
             class="rpro-btn rpro-btn--ghost rpro-btn--sm"
@@ -376,18 +385,22 @@
               <span
                 class="rpro-chip font-bold"
                 :data-tone="(data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? 'danger' : (data.status === 'received' ? 'success' : data.status === 'pending_receipt' ? 'info' : (data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'info' : data.status === 'pending_mapping' ? 'warning' : 'neutral')"
-                :title="(data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? (data.cancellation_reason || 'Nota Fiscal Cancelada na SEFAZ') : undefined"
+                :title="(data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? (data.cancellation_reason || 'Nota Fiscal Cancelada na SEFAZ') : (data.status === 'ignored' ? (data.ignored_reason || 'Nota Fiscal Ignorada (não gera movimentação de estoque)') : undefined)"
               >
                 <i v-if="data.fiscal_status === 'CANCELLED' || data.status === 'cancelled'" class="pi pi-ban text-xs mr-1" />
                 <i v-else-if="data.status === 'received'" class="pi pi-check-circle text-xs mr-1" />
                 <i v-else-if="data.status === 'pending_receipt'" class="pi pi-box text-xs mr-1" />
+                <i v-else-if="data.status === 'ignored'" class="pi pi-eye-slash text-xs mr-1" />
                 <i v-else-if="data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending'" class="pi pi-spin pi-spinner text-xs mr-1" />
                 <i v-else-if="data.status === 'pending_mapping'" class="pi pi-exclamation-triangle text-xs mr-1" />
                 <i v-else class="pi pi-file text-xs mr-1" />
-                {{ (data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? 'CANCELADA' : ((data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'Aguardando XML (SEFAZ)' : (data.status === 'pending_mapping' ? 'Pendente de Vínculo' : data.status === 'pending_receipt' ? 'Pronta p/ Entrada' : data.status === 'received' ? 'Entrada Concluída' : data.status === 'summary' ? 'Resumo SEFAZ' : label(value(data, column), column.map))) }}
+                {{ (data.fiscal_status === 'CANCELLED' || data.status === 'cancelled') ? 'CANCELADA' : (data.status === 'ignored' ? 'IGNORADA' : ((data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending') ? 'Aguardando XML (SEFAZ)' : (data.status === 'pending_mapping' ? 'Pendente de Vínculo' : data.status === 'pending_receipt' ? 'Pronta p/ Entrada' : data.status === 'received' ? 'Entrada Concluída' : data.status === 'summary' ? 'Resumo SEFAZ' : label(value(data, column), column.map)))) }}
               </span>
               <span v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled' && data.status === 'pending_mapping' && data.unmapped_items_count" class="rpro-nfe-pending-pill" title="Itens que ainda precisam ser associados ao cadastro interno">
                 {{ data.unmapped_items_count }} item(ns) pendente(s)
+              </span>
+              <span v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled' && data.status !== 'ignored' && data.ignored_items_count" class="rpro-nfe-ignored-pill" title="Itens ignorados nesta nota (não darão entrada no estoque)">
+                {{ data.ignored_items_count }} ignorado(s)
               </span>
               <template v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled'">
                 <button
@@ -913,6 +926,33 @@
           </div>
         </div>
 
+        <!-- Alerta de NF-e Ignorada -->
+        <div
+          v-if="inboundDetailData.status === 'ignored'"
+          class="rpro__inbound-ignored-banner"
+        >
+          <div class="rpro__inbound-ignored-icon">
+            <i class="pi pi-eye-slash text-2xl" />
+          </div>
+          <div class="rpro__inbound-cancelled-info">
+            <strong class="text-neutral-300">NOTA FISCAL IGNORADA</strong>
+            <p>
+              Esta nota fiscal foi marcada como ignorada. Ela não gera movimentação de estoque nem bloqueia os fluxos do sistema.
+            </p>
+            <div
+              v-if="inboundDetailData.ignored_at || inboundDetailData.ignored_reason"
+              class="rpro__inbound-cancelled-meta"
+            >
+              <span v-if="inboundDetailData.ignored_at">
+                <strong>Ignorada em:</strong> {{ formatDfeDate(inboundDetailData.ignored_at) }}
+              </span>
+              <span v-if="inboundDetailData.ignored_reason">
+                <strong>Motivo:</strong> {{ inboundDetailData.ignored_reason }}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- Cabeçalho / Sumário da NF-e -->
         <div class="rpro__inbound-summary">
           <div class="rpro__inbound-summary-grid">
@@ -954,7 +994,12 @@
         <!-- Tabela de Produtos / Itens -->
         <div class="rpro__inbound-items-section">
           <div class="rpro__inbound-items-head flex justify-between items-center">
-            <h3>Produtos da Nota ({{ (inboundDetailData.items || []).length }} itens)</h3>
+            <div class="flex items-center gap-2">
+              <h3>Produtos da Nota ({{ (inboundDetailData.items || []).length }} itens)</h3>
+              <span v-if="inboundDetailData.ignored_items_count" class="text-xs text-amber-400 font-normal">
+                ({{ inboundDetailData.active_items_count }} ativos, {{ inboundDetailData.ignored_items_count }} ignorados)
+              </span>
+            </div>
             <div class="flex items-center gap-2">
               <button
                 type="button"
@@ -967,12 +1012,32 @@
                 Verificar Situação SEFAZ
               </button>
               <button
-                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'received' && inboundDetailData.status !== 'cancelled'"
+                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'received' && inboundDetailData.status !== 'cancelled' && inboundDetailData.status !== 'ignored'"
                 type="button"
                 class="rpro-btn rpro-btn--primary rpro-btn--sm"
                 @click="openReceiveModalFromDetail"
               >
                 <i class="pi pi-box" /> Dar Entrada no Estoque
+              </button>
+              <button
+                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'received' && inboundDetailData.status !== 'cancelled' && inboundDetailData.status !== 'ignored'"
+                type="button"
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm text-amber-500 hover:text-amber-400"
+                title="Ignorar esta nota inteira (não dará entrada e irá para a aba Ignoradas)"
+                :disabled="inboundActionLoading"
+                @click="openIgnoreInvoiceDialog(inboundDetailData)"
+              >
+                <i class="pi pi-eye-slash text-xs mr-1" /> Ignorar Nota
+              </button>
+              <button
+                v-else-if="inboundDetailData.status === 'ignored'"
+                type="button"
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm text-emerald-400 hover:text-emerald-300"
+                title="Reativar esta nota fiscal"
+                :disabled="inboundActionLoading"
+                @click="unignoreInvoice(inboundDetailData)"
+              >
+                <i class="pi pi-undo text-xs mr-1" /> Reativar Nota
               </button>
               <button
                 v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
@@ -988,6 +1053,9 @@
               </div>
               <div v-else-if="inboundDetailData.status === 'received'" class="rpro__inbound-received-badge">
                 <i class="pi pi-check-circle" /> Estocada
+              </div>
+              <div v-if="inboundDetailData.status === 'ignored'" class="rpro__inbound-ignored-badge">
+                <i class="pi pi-eye-slash" /> Ignorada
               </div>
             </div>
           </div>
@@ -1010,11 +1078,14 @@
               </thead>
               <tbody>
                 <template v-for="item in inboundDetailData.items || []" :key="item.id || item.item_number">
-                  <tr class="rpro__inbound-row" :class="{ 'rpro__inbound-row--has-taxes': item.tax_data && Object.keys(item.tax_data).length }">
+                  <tr class="rpro__inbound-row" :class="{ 'rpro__inbound-row--has-taxes': item.tax_data && Object.keys(item.tax_data).length, 'rpro__inbound-row--ignored': item.is_ignored }">
                     <td class="text-center font-bold text-muted">{{ item.item_number }}</td>
                     <td><code class="rpro__code-pill">{{ item.supplier_code || '-' }}</code></td>
                     <td>
                       <strong class="rpro__inbound-item-desc">{{ item.description }}</strong>
+                      <small v-if="item.is_ignored && item.ignored_reason" class="text-xs text-amber-400/80 block mt-0.5">
+                        Ignorado: {{ item.ignored_reason }}
+                      </small>
                     </td>
                     <td><span class="font-mono text-xs">{{ item.ean || item.ean_trib || 'Sem GTIN' }}</span></td>
                     <td>
@@ -1029,7 +1100,23 @@
                     <td style="text-align: right; font-family: var(--font-table)">{{ money(item.commercial_unit_value) }}</td>
                     <td style="text-align: right; font-weight: bold; font-family: var(--font-table)">{{ money(item.product_total) }}</td>
                     <td>
-                      <div v-if="item.product_name || item.ingredient_name" class="flex items-center justify-between gap-2">
+                      <!-- Item Ignorado -->
+                      <div v-if="item.is_ignored" class="flex items-center justify-between gap-2">
+                        <Tag severity="secondary" rounded value="Ignorado (Sem Estoque)" icon="pi pi-eye-slash" />
+                        <button
+                          v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                          type="button"
+                          class="rpro-btn rpro-btn--ghost rpro-btn--xs text-emerald-400 hover:text-emerald-300"
+                          title="Reativar este item para movimentar estoque"
+                          :disabled="inboundActionLoading"
+                          @click="unignoreItem(item)"
+                        >
+                          <i class="pi pi-undo mr-1" /> Reativar
+                        </button>
+                      </div>
+
+                      <!-- Item Ativo Vinculado -->
+                      <div v-else-if="item.product_name || item.ingredient_name" class="flex items-center justify-between gap-2">
                         <div>
                           <Tag
                             v-if="item.is_asset || item.product_item_type === 'EQUIPMENT' || item.product_item_type === 'FIXED_ASSET'"
@@ -1050,24 +1137,48 @@
                             Fator: x{{ Number(item.conversion_factor) }}
                           </small>
                         </div>
-                        <button
-                          v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
-                          type="button"
-                          class="rpro-btn rpro-btn--ghost rpro-btn--xs"
-                          title="Alterar vínculo"
-                          @click="openMapModal(item)"
-                        >
-                          <i class="pi pi-pencil" />
-                        </button>
+                        <div class="flex items-center gap-1">
+                          <button
+                            v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                            type="button"
+                            class="rpro-btn rpro-btn--ghost rpro-btn--xs"
+                            title="Alterar vínculo"
+                            @click="openMapModal(item)"
+                          >
+                            <i class="pi pi-pencil" />
+                          </button>
+                          <button
+                            v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                            type="button"
+                            class="rpro-btn rpro-btn--ghost rpro-btn--xs text-neutral-400 hover:text-amber-400"
+                            title="Ignorar este item (não dará entrada no estoque)"
+                            :disabled="inboundActionLoading"
+                            @click="openIgnoreItemDialog(item)"
+                          >
+                            <i class="pi pi-eye-slash" />
+                          </button>
+                        </div>
                       </div>
-                      <div v-else>
+
+                      <!-- Item Ativo Não Vinculado -->
+                      <div v-else class="flex items-center gap-1">
                         <button
                           type="button"
-                          class="rpro-btn rpro-btn--ghost rpro-btn--sm w-full"
+                          class="rpro-btn rpro-btn--ghost rpro-btn--sm flex-1"
                           :disabled="inboundDetailData.status === 'received' || inboundDetailData.fiscal_status === 'CANCELLED' || inboundDetailData.status === 'cancelled'"
                           @click="openMapModal(item)"
                         >
                           <i class="pi pi-link" /> Vincular Produto
+                        </button>
+                        <button
+                          v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                          type="button"
+                          class="rpro-btn rpro-btn--ghost rpro-btn--sm text-neutral-400 hover:text-amber-400"
+                          title="Ignorar este item (não dará entrada no estoque)"
+                          :disabled="inboundActionLoading"
+                          @click="openIgnoreItemDialog(item)"
+                        >
+                          <i class="pi pi-eye-slash" />
                         </button>
                       </div>
                     </td>
@@ -1156,6 +1267,147 @@
         >
           <i :class="manualCancelLoading ? 'pi pi-spin pi-spinner' : 'pi pi-check'" />
           Confirmar Cancelamento
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Diálogo Ignorar NF-e Inteira ── -->
+    <Dialog
+      v-model:visible="ignoreInvoiceDialogVisible"
+      modal
+      header="Ignorar Nota Fiscal"
+      :style="{ width: 'min(480px, 94vw)' }"
+    >
+      <div v-if="ignoreInvoiceTarget" class="flex flex-col gap-3 py-1">
+        <p class="text-sm text-gray-300">
+          Deseja ignorar a NF-e <strong>#{{ ignoreInvoiceTarget.number }}</strong> ({{ ignoreInvoiceTarget.supplier_name }})?
+        </p>
+        <div class="p-3 bg-neutral-900/60 border border-neutral-700/60 rounded text-xs text-neutral-300">
+          <i class="pi pi-info-circle mr-1 text-amber-400" />
+          A nota será movida para a aba <strong>Ignoradas</strong> e não dará entrada em nenhum item no estoque. Você poderá reativá-la a qualquer momento.
+        </div>
+        <div class="flex flex-col gap-1 mt-1">
+          <label class="text-xs font-semibold text-gray-300">Motivo (opcional)</label>
+          <textarea
+            v-model="ignoreInvoiceReason"
+            rows="3"
+            class="rpro__manual-cancel-textarea"
+            placeholder="Ex: Mercadoria devolvida, bonificação ou sem controle de estoque."
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          :disabled="ignoreInvoiceLoading"
+          @click="ignoreInvoiceDialogVisible = false"
+        >
+          Voltar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary bg-amber-600 border-amber-600 hover:bg-amber-700"
+          type="button"
+          :disabled="ignoreInvoiceLoading"
+          @click="confirmIgnoreInvoice"
+        >
+          <i :class="ignoreInvoiceLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" />
+          Confirmar e Ignorar
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Diálogo Ignorar Item da NF-e ── -->
+    <Dialog
+      v-model:visible="ignoreItemDialogVisible"
+      modal
+      header="Ignorar Item da Nota Fiscal"
+      :style="{ width: 'min(480px, 94vw)' }"
+    >
+      <div v-if="ignoreItemTarget" class="flex flex-col gap-3 py-1">
+        <p class="text-sm text-gray-300">
+          Deseja ignorar o item <strong>#{{ ignoreItemTarget.item_number }} - {{ ignoreItemTarget.description }}</strong>?
+        </p>
+        <div class="p-3 bg-neutral-900/60 border border-neutral-700/60 rounded text-xs text-neutral-300">
+          <i class="pi pi-info-circle mr-1 text-amber-400" />
+          Este item não será movimentado para o estoque e não exigirá vínculo de produto. Os demais itens da nota continuarão o processo normal de entrada.
+        </div>
+        <div class="flex flex-col gap-1 mt-1">
+          <label class="text-xs font-semibold text-gray-300">Motivo (opcional)</label>
+          <textarea
+            v-model="ignoreItemReason"
+            rows="3"
+            class="rpro__manual-cancel-textarea"
+            placeholder="Ex: Item de uso e consumo imediato, brinde ou serviço."
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          :disabled="ignoreItemLoading"
+          @click="ignoreItemDialogVisible = false"
+        >
+          Voltar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary bg-amber-600 border-amber-600 hover:bg-amber-700"
+          type="button"
+          :disabled="ignoreItemLoading"
+          @click="confirmIgnoreItem"
+        >
+          <i :class="ignoreItemLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" />
+          Confirmar e Ignorar Item
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Diálogo Ignorar Notas em Lote ── -->
+    <Dialog
+      v-model:visible="bulkIgnoreDialogVisible"
+      modal
+      header="Ignorar Notas Selecionadas"
+      :style="{ width: 'min(480px, 94vw)' }"
+    >
+      <div class="flex flex-col gap-3 py-1">
+        <p class="text-sm text-gray-300">
+          Você selecionou <strong>{{ selection.length }}</strong> {{ selection.length === 1 ? 'nota fiscal' : 'notas fiscais' }} para ignorar.
+        </p>
+        <div class="p-3 bg-neutral-900/60 border border-neutral-700/60 rounded text-xs text-neutral-300">
+          <i class="pi pi-info-circle mr-1 text-amber-400" />
+          Todas as notas selecionadas serão marcadas como ignoradas e movidas para a aba <strong>Ignoradas</strong>.
+        </div>
+        <div class="flex flex-col gap-1 mt-1">
+          <label class="text-xs font-semibold text-gray-300">Motivo (opcional)</label>
+          <textarea
+            v-model="bulkIgnoreReason"
+            rows="3"
+            class="rpro__manual-cancel-textarea"
+            placeholder="Ex: Notas fiscais ignoradas em lote pelo usuário."
+          />
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          class="rpro-btn rpro-btn--ghost"
+          type="button"
+          :disabled="bulkIgnoreLoading"
+          @click="bulkIgnoreDialogVisible = false"
+        >
+          Voltar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary bg-amber-600 border-amber-600 hover:bg-amber-700"
+          type="button"
+          :disabled="bulkIgnoreLoading"
+          @click="confirmBulkIgnore"
+        >
+          <i :class="bulkIgnoreLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" />
+          Ignorar {{ selection.length }} {{ selection.length === 1 ? 'Nota' : 'Notas' }}
         </button>
       </template>
     </Dialog>
@@ -2167,6 +2419,7 @@ const INBOUND_FILTER_OPTIONS = [
   { value: "unmapped", label: "Pendente de Vínculo", icon: "pi pi-exclamation-triangle", tone: "warning" },
   { value: "ready", label: "Pronta p/ Entrada", icon: "pi pi-box", tone: "info" },
   { value: "received", label: "Entrada Concluída", icon: "pi pi-check-circle", tone: "success" },
+  { value: "ignored", label: "Ignoradas", icon: "pi pi-eye-slash", tone: "neutral" },
   { value: "summary", label: "Resumo SEFAZ", icon: "pi pi-file", tone: "neutral" },
   { value: "cancelled", label: "Canceladas", icon: "pi pi-ban", tone: "danger" },
 ];
@@ -3185,14 +3438,34 @@ async function openReceiveModalFromDetail() {
     });
     return;
   }
+  if (inboundDetailData.value?.status === "ignored") {
+    toast.add({
+      severity: "warn",
+      summary: "Nota Fiscal Ignorada",
+      detail: "Esta nota fiscal está marcada como ignorada. Reative-a antes de dar entrada no estoque.",
+      life: 6000,
+    });
+    return;
+  }
 
-  const items = inboundDetailData.value?.items || [];
+  const allItems = inboundDetailData.value?.items || [];
+  const items = allItems.filter((it) => !it.is_ignored);
+  if (items.length === 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Todos os itens estão ignorados",
+      detail: "Não há itens ativos para dar entrada no estoque.",
+      life: 6000,
+    });
+    return;
+  }
+
   const unmapped = items.filter((it) => !it.ingredient && !it.product);
   if (unmapped.length > 0) {
     toast.add({
       severity: "warn",
       summary: "Itens sem vínculo",
-      detail: `Existem ${unmapped.length} item(ns) sem produto/ingrediente vinculado. Vincule todos antes de dar entrada no estoque.`,
+      detail: `Existem ${unmapped.length} item(ns) ativos sem produto/ingrediente vinculado. Vincule ou ignore os itens antes de dar entrada no estoque.`,
       life: 6000,
     });
   }
@@ -3577,6 +3850,192 @@ async function confirmManualCancel() {
     });
   } finally {
     manualCancelLoading.value = false;
+  }
+}
+
+// ── Ignorar / Reativar Notas Fiscais e Itens ─────────────────────────
+const ignoreInvoiceDialogVisible = ref(false);
+const ignoreInvoiceTarget = ref(null);
+const ignoreInvoiceReason = ref("");
+const ignoreInvoiceLoading = ref(false);
+
+const ignoreItemDialogVisible = ref(false);
+const ignoreItemTarget = ref(null);
+const ignoreItemReason = ref("");
+const ignoreItemLoading = ref(false);
+
+const bulkIgnoreDialogVisible = ref(false);
+const bulkIgnoreReason = ref("");
+const bulkIgnoreLoading = ref(false);
+
+const inboundActionLoading = ref(false);
+
+function openIgnoreInvoiceDialog(invoice) {
+  if (!invoice) return;
+  ignoreInvoiceTarget.value = invoice;
+  ignoreInvoiceReason.value = "";
+  ignoreInvoiceDialogVisible.value = true;
+}
+
+async function confirmIgnoreInvoice() {
+  if (!ignoreInvoiceTarget.value?.id) return;
+  ignoreInvoiceLoading.value = true;
+  try {
+    const { data } = await api.post(`/inbound-nfe/${ignoreInvoiceTarget.value.id}/ignore/`, {
+      reason: (ignoreInvoiceReason.value || "").trim(),
+    });
+    toast.add({
+      severity: "info",
+      summary: "Nota Fiscal Ignorada",
+      detail: data.message || "A nota fiscal foi marcada como ignorada.",
+      life: 5000,
+    });
+    ignoreInvoiceDialogVisible.value = false;
+    await reload();
+    await fetchInboundStatusCounts();
+    if (inboundDetailVisible.value && inboundDetailData.value?.id === ignoreInvoiceTarget.value.id) {
+      await openInboundDetail(ignoreInvoiceTarget.value);
+    }
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao ignorar nota",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    ignoreInvoiceLoading.value = false;
+  }
+}
+
+async function unignoreInvoice(invoice) {
+  if (!invoice?.id) return;
+  inboundActionLoading.value = true;
+  try {
+    const { data } = await api.post(`/inbound-nfe/${invoice.id}/unignore/`);
+    toast.add({
+      severity: "success",
+      summary: "Nota Fiscal Reativada",
+      detail: data.message || "A nota fiscal foi reativada com sucesso.",
+      life: 5000,
+    });
+    await reload();
+    await fetchInboundStatusCounts();
+    if (inboundDetailVisible.value && inboundDetailData.value?.id === invoice.id) {
+      await openInboundDetail(invoice);
+    }
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao reativar nota",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    inboundActionLoading.value = false;
+  }
+}
+
+function openIgnoreItemDialog(item) {
+  if (!item) return;
+  ignoreItemTarget.value = item;
+  ignoreItemReason.value = "";
+  ignoreItemDialogVisible.value = true;
+}
+
+async function confirmIgnoreItem() {
+  if (!ignoreItemTarget.value?.id) return;
+  ignoreItemLoading.value = true;
+  try {
+    const { data } = await api.post(`/inbound-nfe-items/${ignoreItemTarget.value.id}/ignore/`, {
+      reason: (ignoreItemReason.value || "").trim(),
+    });
+    toast.add({
+      severity: "info",
+      summary: "Item Ignorado",
+      detail: data.message || "O item foi ignorado e não dará entrada no estoque.",
+      life: 5000,
+    });
+    ignoreItemDialogVisible.value = false;
+    if (inboundDetailData.value?.id) {
+      await openInboundDetail(inboundDetailData.value);
+    }
+    await reload();
+    await fetchInboundStatusCounts();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao ignorar item",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    ignoreItemLoading.value = false;
+  }
+}
+
+async function unignoreItem(item) {
+  if (!item?.id) return;
+  inboundActionLoading.value = true;
+  try {
+    const { data } = await api.post(`/inbound-nfe-items/${item.id}/unignore/`);
+    toast.add({
+      severity: "success",
+      summary: "Item Reativado",
+      detail: data.message || "O item foi reativado para dar entrada no estoque.",
+      life: 5000,
+    });
+    if (inboundDetailData.value?.id) {
+      await openInboundDetail(inboundDetailData.value);
+    }
+    await reload();
+    await fetchInboundStatusCounts();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao reativar item",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    inboundActionLoading.value = false;
+  }
+}
+
+function openBulkIgnoreDialog() {
+  if (!selection.value.length) return;
+  bulkIgnoreReason.value = "";
+  bulkIgnoreDialogVisible.value = true;
+}
+
+async function confirmBulkIgnore() {
+  if (!selection.value.length) return;
+  bulkIgnoreLoading.value = true;
+  try {
+    const ids = selection.value.map((r) => r.id);
+    const { data } = await api.post("/inbound-nfe/bulk-ignore/", {
+      ids,
+      reason: (bulkIgnoreReason.value || "").trim() || "Ignorado em lote pelo usuário",
+    });
+    toast.add({
+      severity: "info",
+      summary: "Notas Ignoradas",
+      detail: `${data.updated_count || ids.length} nota(s) ignorada(s) com sucesso.`,
+      life: 5000,
+    });
+    bulkIgnoreDialogVisible.value = false;
+    selection.value = [];
+    await reload();
+    await fetchInboundStatusCounts();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Falha ao ignorar notas em lote",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    bulkIgnoreLoading.value = false;
   }
 }
 
@@ -4247,6 +4706,19 @@ const rowMenuItems = computed(() => {
         icon: "pi pi-shield",
         command: () => checkSefazStatusDirect(row),
       });
+      if (row.status === "ignored") {
+        items.push({
+          label: "Reativar Nota Fiscal",
+          icon: "pi pi-undo",
+          command: () => unignoreInvoice(row),
+        });
+      } else if (row.status !== "received" && row.fiscal_status !== "CANCELLED" && row.status !== "cancelled") {
+        items.push({
+          label: "Ignorar Nota Fiscal",
+          icon: "pi pi-eye-slash",
+          command: () => openIgnoreInvoiceDialog(row),
+        });
+      }
       if (row.fiscal_status !== "CANCELLED" && row.status !== "cancelled") {
         items.push({
           label: "Marcar como Cancelada / Substituída",
@@ -4507,7 +4979,7 @@ const STATUS_TONE = {
   pending: "warning", awaiting_payment: "warning", cleaning: "warning", adjustment: "warning",
   partial: "info", partially_ready: "info", open: "info", preparing: "info", sent_to_kitchen: "info", out_for_delivery: "info", reserved: "info",
   refunded: "danger", cancelled: "danger", failed: "danger", error: "danger", occupied: "danger", out: "danger",
-  idle: "neutral", draft: "neutral", closed: "neutral",
+  idle: "neutral", draft: "neutral", closed: "neutral", ignored: "neutral", IGNORED: "neutral",
   IN_USE: "success", IN_STOCK: "info", IN_MAINTENANCE: "warning", BROKEN: "danger", DISPOSED: "danger",
   LOST: "danger", STOLEN: "danger", LOANED: "neutral", TRANSFERRED: "neutral", INACTIVE: "neutral",
   CONFIRMED: "success", DIVERGENT: "warning", DRAFT: "neutral", CANCELLED: "danger",
@@ -5777,6 +6249,59 @@ onBeforeUnmount(() => {
   color: #ef4444;
   font-weight: var(--weight-bold);
   font-size: 12px;
+}
+
+.rpro__inbound-ignored-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  margin-bottom: 16px;
+}
+
+.rpro__inbound-ignored-icon {
+  color: #94a3b8;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.rpro__inbound-ignored-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  font-weight: var(--weight-bold);
+  font-size: 12px;
+}
+
+.rpro__inbound-row--ignored {
+  opacity: 0.55;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.rpro__inbound-row--ignored .rpro__inbound-item-desc {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.rpro-nfe-ignored-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  border-radius: 9999px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .rpro__manual-cancel-textarea {

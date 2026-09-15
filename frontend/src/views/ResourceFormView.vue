@@ -1288,18 +1288,29 @@ const receiveForm = reactive({
 });
 
 async function openReceiveModal() {
-  const unmapped = (record.value?.items || []).filter((it) => !it.ingredient && !it.product);
+  const allItems = record.value?.items || [];
+  const items = allItems.filter((it) => !it.is_ignored);
+  if (items.length === 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Todos os itens estão ignorados",
+      detail: "Não há itens ativos para dar entrada no estoque.",
+      life: 6000,
+    });
+    return;
+  }
+  const unmapped = items.filter((it) => !it.ingredient && !it.product);
   if (unmapped.length > 0) {
     toast.add({
       severity: "warn",
       summary: "Itens sem vínculo",
-      detail: `Existem ${unmapped.length} item(ns) sem produto/ingrediente vinculado. Vincule todos antes de aplicar a entrada.`,
+      detail: `Existem ${unmapped.length} item(ns) ativos sem produto/ingrediente vinculado. Vincule ou ignore os itens antes de aplicar a entrada.`,
       life: 6000,
     });
   }
 
   receiveForm.notes = "";
-  receiveForm.items = (record.value?.items || []).map((it) => {
+  receiveForm.items = items.map((it) => {
     const factor = Number(it.conversion_factor) || 1;
     const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
     let rawStockUnit = it.product_stock_unit || (it.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : it.ingredient_unit);

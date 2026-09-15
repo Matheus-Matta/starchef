@@ -662,7 +662,7 @@ export const resources = [
     pro: {
       pageSize: 20,
       dateField: { param: "issue_date", label: "Emissão" },
-      description: "O StarChef conecta-se aos webservices oficiais da SEFAZ (NFeDistribuicaoDFe) utilizando o Certificado Digital A1. As notas destinadas ao seu CNPJ são obtidas sequencialmente por NSU. Para proteger seu CNPJ contra bloqueios por Consumo Indevido (Rejeição 656), as consultas respeitam uma janela de segurança mínima entre requisições. A rotina automática roda a cada 1 hora em segundo plano.",
+      description: "O StarChef conecta-se aos webservices oficiais da SEFAZ (NFeDistribuicaoDFe) utilizando o Certificado Digital A1. As notas destinadas ao seu CNPJ são obtidas sequencialmente por NSU. Para proteger seu CNPJ contra bloqueios por Consumo Indevido (Rejeição 656), as consultas respeitam uma janela de segurança mínima entre requisições. A rotina automática roda a cada 5 horas em segundo plano.",
       headerActions: [
         { key: "upload-xml", label: "Importar XMLs", icon: "pi pi-upload", type: "upload-xml" },
         { key: "sync", label: "Sincronizar SEFAZ", icon: "pi pi-sync", type: "sync-sefaz" },

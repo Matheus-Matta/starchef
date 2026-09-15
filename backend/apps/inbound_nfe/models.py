@@ -158,6 +158,7 @@ class InboundNFe(TenantModel):
     STATUS_PENDING_RECEIPT = "pending_receipt"
     STATUS_RECEIVED = "received"
     STATUS_CANCELLED = "cancelled"
+    STATUS_IGNORED = "ignored"
 
     DISTRIBUTION_SUMMARY = "summary"
     DISTRIBUTION_FULL = "full"
@@ -319,6 +320,26 @@ class InboundNFe(TenantModel):
 
     full_xml = models.TextField(
         blank=True
+    )
+
+    ignored_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data e hora em que a nota fiscal foi marcada como ignorada."
+    )
+
+    ignored_reason = models.TextField(
+        blank=True,
+        help_text="Motivo pelo qual a nota fiscal foi ignorada."
+    )
+
+    ignored_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Usuário que marcou a nota como ignorada."
     )
 
     stock_applied_at = models.DateTimeField(
@@ -813,6 +834,33 @@ class InboundNFeItem(TenantModel):
         blank=True,
         on_delete=models.PROTECT,
         related_name="inbound_nfe_item"
+    )
+
+    is_ignored = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Se marcado, o item é ignorado e não dá entrada no estoque nem exige vínculo."
+    )
+
+    ignored_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Data e hora em que o item foi marcado como ignorado."
+    )
+
+    ignored_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Motivo de ter ignorado o item da nota."
+    )
+
+    ignored_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Usuário que marcou o item como ignorado."
     )
 
     class Meta:

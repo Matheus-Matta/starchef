@@ -89,9 +89,16 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
     if invoice.status == InboundNFe.STATUS_CANCELLED:
         raise ValueError("Não é possível receber uma NF-e cancelada.")
 
+    if invoice.status == InboundNFe.STATUS_IGNORED:
+        raise ValueError("Esta NF-e está marcada como ignorada e não pode ser recebida no estoque. Reative a nota para prosseguir.")
+
     items = list(InboundNFeItem.all_objects.select_for_update().filter(invoice=invoice))
     if not items:
         raise ValueError("Esta NF-e não possui itens para receber.")
+
+    active_items = [i for i in items if not i.is_ignored]
+    if not active_items:
+        raise ValueError("Todos os itens desta NF-e foram ignorados. Não há produtos para dar entrada no estoque.")
 
     items_dict = {str(item_data["item_id"]): item_data for item_data in items_data}
 
@@ -120,6 +127,9 @@ def receive_invoice(invoice_id, user, location, items_data: list, receipt_notes:
     has_divergence = False
 
     for item in items:
+        if item.is_ignored:
+            continue
+
         item_id_str = str(item.id)
         item_data = items_dict.get(item_id_str, {})
 

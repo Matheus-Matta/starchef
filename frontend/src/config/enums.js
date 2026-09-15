@@ -271,6 +271,7 @@ export const INBOUND_NFE_STATUS_LABELS = {
   pending_mapping: { label: "Pendente de Vínculo", tone: "warning" },
   pending_receipt: { label: "Pronta p/ Entrada", tone: "info" },
   received: { label: "Entrada Concluída", tone: "success" },
+  ignored: { label: "Ignorada", tone: "neutral" },
   summary: { label: "Resumo SEFAZ", tone: "neutral" },
   xml_available: { label: "XML Completo", tone: "info" },
   cancelled: { label: "Cancelada", tone: "danger" },
@@ -278,6 +279,7 @@ export const INBOUND_NFE_STATUS_LABELS = {
   PENDING: { label: "Pendente de Vínculo", tone: "warning" },
   MANIFESTED: { label: "Manifestada", tone: "info" },
   STOCKED: { label: "Entrada Concluída", tone: "success" },
+  IGNORED: { label: "Ignorada", tone: "neutral" },
   CANCELED: { label: "Cancelada", tone: "danger" },
   CANCELLED: { label: "Cancelada", tone: "danger" },
 };
