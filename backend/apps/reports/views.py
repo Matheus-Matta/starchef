@@ -33,20 +33,19 @@ class TenantReportMixin:
             filters = {"account_id": account.id}
         else:
             return {"account_id": None}
+        # Filial NÃO entra no escopo: o pedido nasce com `branch=None`
+        # (`create_order`) desde que a filial virou detalhe de cadastro, e
+        # filtrar por ela devolvia relatório vazio para todo gerente com filial
+        # no perfil. O restaurante é a unidade real.
         if is_tenant_admin(user):
             restaurant_id = self.request.query_params.get("restaurant")
-            branch_id = self.request.query_params.get("branch")
             if restaurant_id:
                 filters["restaurant_id"] = restaurant_id
-            if branch_id:
-                filters["branch_id"] = branch_id
             return filters
         profile = getattr(user, "profile", None)
         if not profile or not profile.restaurant_id:
             return {"account_id": None}
         filters["restaurant_id"] = profile.restaurant_id
-        if profile.branch_id:
-            filters["branch_id"] = profile.branch_id
         return filters
 
 
@@ -347,6 +346,21 @@ class SalesReportView(TenantReportMixin, APIView):
             "by_cancellation_reason": cancellation_reasons,
         }
 
+        if self.report_section == "orders":
+            from apps.reports.order_cancellations import cancellation_details
+
+            data.update(
+                cancellation_details(
+                    all_orders=all_orders,
+                    item_queryset=self.tenant_manager(OrderItem).filter(
+                        **item_filters,
+                        **({} if not parsed_from else {"order__opened_at__date__gte": parsed_from}),
+                        **({} if not parsed_to else {"order__opened_at__date__lte": parsed_to}),
+                    ),
+                    request=request,
+                )
+            )
+
         if export == "csv":
             return self._csv_response(data, date_from, date_to)
 
@@ -358,7 +372,11 @@ class SalesReportView(TenantReportMixin, APIView):
                 "by_payment_method", "by_restaurant", "by_waiter", "by_product",
                 "by_status", "by_order_type", "by_cancellation_reason",
             ),
-            "orders": ("by_status", "by_order_type", "by_cancellation_reason"),
+            "orders": (
+                "by_status", "by_order_type", "by_cancellation_reason",
+                "cancelled_orders", "voided_items", "cancelled_by_user",
+                "cancelled_by_hour", "cancelled_by_authorization",
+            ),
             "products": ("by_product",),
             "payments": ("by_payment_method",),
             "waiters": ("by_waiter",),
@@ -390,6 +408,9 @@ class SalesReportView(TenantReportMixin, APIView):
             "date_from": request.query_params.get("date_from"),
             "date_to": request.query_params.get("date_to"),
             "restaurant": request.query_params.get("restaurant"),
+            "cancelled_by": request.query_params.get("cancelled_by"),
+            "authorization": request.query_params.get("authorization"),
+            "order_type": request.query_params.get("order_type"),
             "category": request.query_params.get("category"),
             "sector": request.query_params.get("sector"),
             "product_type": request.query_params.get("product_type"),
@@ -445,6 +466,11 @@ class SalesReportView(TenantReportMixin, APIView):
 
 class OrdersReportView(SalesReportView):
     report_section = "orders"
+
+    def _csv_response(self, data, date_from, date_to):
+        from apps.reports.order_cancellations import cancellations_csv
+
+        return cancellations_csv(data, date_from, date_to)
 
 
 class ProductsReportView(SalesReportView):

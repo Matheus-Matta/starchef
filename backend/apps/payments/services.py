@@ -269,6 +269,12 @@ def create_cash_movement(
             reason=reason,
             destination=destination,
             status="pending" if needs_approval else "approved",
+            # De onde o lancamento partiu: o relatorio de caixa mostra o
+            # terminal, e a sessao pode ter sido transferida de maquina.
+            metadata={
+                "terminal_installation_id": str(installation_id or ""),
+                "terminal_name": (terminal.label if terminal is not None else "") or "",
+            },
             created_by=user,
             updated_by=user,
         )
@@ -588,6 +594,12 @@ def register_payment(
             "applied_amount": str(accepted_amount),
             "change_amount": str(change_amount),
         }
+        if cash_register is not None:
+            # So o dinheiro vira `CashMovement`; cartao, PIX e voucher nao
+            # passam pela gaveta e ficavam sem vinculo com a sessao. O
+            # relatorio de fechamento precisa de TODAS as formas (ver
+            # `CashRegisterSerializer.sales`).
+            payment_metadata["cash_register"] = str(cash_register.pk)
 
         payment = Payment.objects.create(
             account=order.account,

@@ -1,7 +1,8 @@
 import { api } from "./api";
 
-const endpoints = {
+export const endpoints = {
   sales: "/reports/sales/",
+  cash: "/reports/cash-movements/",
   orders: "/reports/orders/",
   product: "/reports/products/",
   payment: "/reports/payments/",

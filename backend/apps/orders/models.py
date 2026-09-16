@@ -168,6 +168,26 @@ class Order(TenantModel):
     general_notes = models.TextField(blank=True)
     change_history = models.JSONField(default=list, blank=True)
     cancel_reason = models.TextField(blank=True)
+    # Quem cancelou, quem liberou e como — o relatorio de cancelamentos lê
+    # daqui; antes isso morava só no metadata do AuditLog.
+    AUTHORIZATION_OWN = "own"
+    AUTHORIZATION_CASH_PASSWORD = "cash_password"
+    AUTHORIZATION_DELEGATED = "delegated"
+    AUTHORIZATION_GRACE = "grace"
+    AUTHORIZATION_CHOICES = [
+        (AUTHORIZATION_OWN, "Própria"),
+        (AUTHORIZATION_CASH_PASSWORD, "Senha do caixa"),
+        (AUTHORIZATION_DELEGATED, "Usuário autorizado"),
+        (AUTHORIZATION_GRACE, "Dentro da carência"),
+    ]
+    cancelled_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, related_name="orders_cancelled", on_delete=models.SET_NULL
+    )
+    cancel_authorized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, related_name="orders_cancel_authorized", on_delete=models.SET_NULL
+    )
+    cancel_authorization = models.CharField(max_length=20, choices=AUTHORIZATION_CHOICES, blank=True, default="")
 
     class Meta:
         ordering = ["-updated_at"]
@@ -298,6 +318,10 @@ class OrderItem(TenantModel):
     ready_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     void_reason = models.TextField(blank=True)
+    voided_at = models.DateTimeField(null=True, blank=True)
+    voided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, related_name="order_items_voided", on_delete=models.SET_NULL
+    )
 
     class Meta:
         ordering = ["launched_at"]

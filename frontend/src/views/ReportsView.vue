@@ -34,6 +34,31 @@
           <option value="dessert">Sobremesas</option>
         </select>
       </template>
+      <template v-if="section === 'orders'">
+        <select v-model="ordersFilters.authorization" class="reports-view__select" aria-label="Autorização do cancelamento" @change="loadReport">
+          <option value="">Toda autorização</option>
+          <option value="own">Própria</option>
+          <option value="cash_password">Senha do caixa</option>
+          <option value="delegated">Usuário autorizado</option>
+          <option value="grace">Dentro da carência</option>
+        </select>
+        <select v-model="ordersFilters.order_type" class="reports-view__select" aria-label="Tipo de pedido" @change="loadReport">
+          <option value="">Todos os tipos</option>
+          <option value="table">Mesa</option>
+          <option value="command">Comanda</option>
+          <option value="counter">Balcão</option>
+          <option value="delivery">Entrega</option>
+          <option value="takeaway">Retirada</option>
+        </select>
+      </template>
+      <select v-if="section === 'cash'" v-model="cashFilters.movement_type" class="reports-view__select" aria-label="Tipo de movimento" @change="loadReport">
+        <option value="">Todos os movimentos</option>
+        <option value="opening">Abertura</option>
+        <option value="sale">Venda em dinheiro</option>
+        <option value="supply">Suprimento</option>
+        <option value="withdrawal">Sangria</option>
+        <option value="refund">Estorno</option>
+      </select>
       <AppDateRange
         v-model="reportPeriod"
         class="reports-view__range"
@@ -47,6 +72,8 @@
         <AppIcon name="download" :size="14" /> Exportar CSV
       </button>
     </div>
+
+    <CashMovementsReport v-if="section === 'cash'" :report="report" :bar-options="barOptions" />
 
     <div v-if="section === 'sales'" class="responsive-kpi-grid">
       <StatCard label="Total vendido" :value="money(report.total)" tone="success" caption="Periodo selecionado">
@@ -183,6 +210,8 @@
       </Card>
     </div>
 
+    <OrdersCancellationsPanel v-if="section === 'orders'" :report="report" :bar-options="barOptions" />
+
     <div v-if="section === 'orders'" class="responsive-one-col">
       <Card title="Ocorrências por motivo">
         <div class="report-chart report-chart--wide"><Chart type="bar" :data="cancellationChartData" :options="barOptions" /></div>
@@ -203,9 +232,11 @@ import StatCard from "../components/data/StatCard.vue";
 import Card from "../components/display/Card.vue";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
+import CashMovementsReport from "../components/reports/CashMovementsReport.vue";
+import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
 import { api, API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
-import { reportService } from "../services/reportService";
+import { endpoints, reportService } from "../services/reportService";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { currentMonthRange } from "../utils/dateRange";
 
@@ -213,7 +244,7 @@ const props = defineProps({
   section: { type: String, default: "sales" },
 });
 useRealtimeResource(
-  ["orders.order", "orders.orderitem", "payments.payment"],
+  ["orders.order", "orders.orderitem", "payments.payment", "payments.cashmovement", "payments.cashregister"],
   () => loadReport(),
   { debounce: 300 },
 );
@@ -235,6 +266,8 @@ const productFilters = reactive({
   product_type: "",
   production_sector: "",
 });
+const cashFilters = reactive({ movement_type: "" });
+const ordersFilters = reactive({ authorization: "", order_type: "" });
 const selectedRestaurantId = ref(getBrowserValue("starchef-restaurant-scope") || "");
 const activeTab = ref("payment");
 
@@ -457,6 +490,8 @@ async function loadReport() {
       date_to: dateTo.value,
       restaurant: selectedRestaurantId.value,
       ...(props.section === "product" ? productFilters : {}),
+      ...(props.section === "cash" ? { ...cashFilters, page_size: 200 } : {}),
+      ...(props.section === "orders" ? { ...ordersFilters, page_size: 200 } : {}),
     });
   } finally {
     loading.value = false;
@@ -510,7 +545,12 @@ async function exportCsv() {
     export: "csv",
   });
   if (selectedRestaurantId.value) params.set("restaurant", selectedRestaurantId.value);
-  const url = `${API_BASE_URL}/reports/sales/?${params}`;
+  if (props.section === "cash" && cashFilters.movement_type) params.set("movement_type", cashFilters.movement_type);
+  if (props.section === "orders") {
+    Object.entries(ordersFilters).forEach(([key, value]) => value && params.set(key, value));
+  }
+  // Cada seção exporta o próprio relatório; antes tudo saía como "vendas".
+  const url = `${API_BASE_URL}${endpoints[props.section] || endpoints.sales}?${params}`;
   // Autenticação vai pelo cookie httpOnly (credentials: "include").
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) return;
@@ -518,7 +558,8 @@ async function exportCsv() {
   const blobUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = blobUrl;
-  a.setAttribute("download", `vendas_${dateFrom.value}_${dateTo.value}.csv`);
+  const prefix = { cash: "caixa", orders: "pedidos" }[props.section] || "vendas";
+  a.setAttribute("download", `${prefix}_${dateFrom.value}_${dateTo.value}.csv`);
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

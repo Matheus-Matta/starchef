@@ -902,6 +902,8 @@ export const resources = [
       { name: "zip_code", label: "CEP", type: "text", maxlength: 16, placeholder: "00000-000" },
       { name: "default_service_fee_percent", label: "Taxa de servico (%)", type: "decimal", default: 10, section: "Operacao" },
       { name: "require_open_cash_register", label: "Exigir caixa aberto para pagamentos", type: "boolean", default: true, section: "Operacao" },
+      { name: "max_commands_per_table", label: "Comandas por mesa (0 = sem limite)", type: "number", default: 4, min: 0, section: "Operacao", hint: "Quantas comandas podem ficar vinculadas à mesma mesa. O servidor barra a próxima com aviso no PDV e no app do garçom." },
+      { name: "cancellation_grace_seconds", label: "Carência de cancelamento (segundos)", type: "number", default: 0, min: 0, max: 600, section: "Operacao", hint: "Tempo entre enviar para a cozinha e a comanda sair de fato. Dentro dele, cancelar não pede a senha do caixa nem imprime cupom de cancelamento. 0 desliga." },
       // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
       { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", configuredField: "has_cash_action_password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "As bolinhas indicam que já existe uma senha salva. Digite apenas para substituir. Não cole uma hash." },
     ],

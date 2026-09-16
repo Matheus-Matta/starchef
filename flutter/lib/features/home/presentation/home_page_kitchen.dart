@@ -24,6 +24,7 @@ mixin _KitchenSection on _HomePageShared {
   Map<String, dynamic>? get selectedTable;
   Map<String, dynamic>? get selectedCommand;
   Map<String, dynamic>? get selectedCustomer;
+  Map<String, dynamic>? get selectedRestaurant;
   List<Map<String, dynamic>> get orderItems;
   String? get selectedOrderItemId;
   set selectedOrderItemId(String? value);
@@ -182,59 +183,70 @@ mixin _KitchenSection on _HomePageShared {
     );
     if (!mounted || reason == null) return;
 
-    String? cashPassword;
-    String? authorizationUsername;
-    String? authorizationPassword;
-    final authorized = await showSupervisorCloseDialog(
-      context: context,
-      title: 'Autorizar cancelamento',
-      description:
-          'Confirme com a senha de operação do restaurante ou com o login '
-          'de um administrador/usuário que tenha permissão para cancelar pedidos.',
-      confirmLabel: 'Cancelar pedido',
-      cancelLabel: 'Voltar',
-      confirmIcon: Icons.cancel_outlined,
-      credentialRoleLabel: 'usuário autorizado',
-      verifyPassword: (password) async {
-        final valid = await widget.controller.verifySupervisorClosePassword(
-          password,
+    // Carência do restaurante: dentro dela nada chegou à produção e o
+    // servidor cancela sem senha. Quem sabe se ainda está dentro é ele (o
+    // relógio da rodada é de lá), então a primeira tentativa vai sem senha;
+    // um 403 é "já saiu da carência" e aí a senha é pedida como sempre.
+    Map<String, dynamic>? cancelled;
+    final graceConfigured =
+        _number(selectedRestaurant?['cancellation_grace_seconds']).round() > 0;
+    if (graceConfigured) {
+      try {
+        cancelled = await api.post(
+          '/orders/${order['id']}/cancel/',
+          body: {'reason': reason},
+          accessToken: token,
         );
-        if (valid) cashPassword = password;
-        return valid;
-      },
-      verifyAdminCredentials: (username, password) async {
-        final failure = await widget.controller
-            .verifyOrderCancellationCredentials(username, password);
-        if (failure == null) {
-          authorizationUsername = username;
-          authorizationPassword = password;
+      } on ApiException catch (error) {
+        if (error.statusCode != 403) {
+          if (mounted) {
+            _error(error, title: 'Não foi possível cancelar o pedido');
+          }
+          return;
         }
-        return failure;
-      },
-      onInvalidPassword: () => widget.controller.syncSupervisorPassword(
-        restaurantId: restaurantId,
-        force: true,
-      ),
-    );
-    if (!mounted ||
-        !authorized ||
-        '${activeOrder?['id']}' != '${order['id']}') {
-      return;
+      }
+      if (!mounted) return;
     }
 
-    final cancelled = await _work(
-      () => api.post(
-        '/orders/${order['id']}/cancel/',
-        body: {
-          'reason': reason,
-          'cash_password': ?cashPassword,
-          'authorization_username': ?authorizationUsername,
-          'authorization_password': ?authorizationPassword,
+    if (cancelled == null) {
+      // Só a senha de ações do caixa: conferida aqui, contra o hash já
+      // sincronizado, e enviada ao servidor junto do cancelamento (que é
+      // quem apaga consumo já lançado — a senha nunca entra na fila offline).
+      String? cashPassword;
+      final authorized = await showSupervisorCloseDialog(
+        context: context,
+        title: 'Autorizar cancelamento',
+        description:
+            'Informe a senha de ações do caixa para cancelar este pedido.',
+        confirmLabel: 'Cancelar pedido',
+        cancelLabel: 'Voltar',
+        confirmIcon: Icons.cancel_outlined,
+        verifyPassword: (password) async {
+          final valid = await widget.controller.verifySupervisorClosePassword(
+            password,
+          );
+          if (valid) cashPassword = password;
+          return valid;
         },
-        accessToken: token,
-      ),
-      errorTitle: 'Não foi possível cancelar o pedido',
-    );
+        onInvalidPassword: () => widget.controller.syncSupervisorPassword(
+          restaurantId: restaurantId,
+          force: true,
+        ),
+      );
+      if (!mounted ||
+          !authorized ||
+          '${activeOrder?['id']}' != '${order['id']}') {
+        return;
+      }
+      cancelled = await _work(
+        () => api.post(
+          '/orders/${order['id']}/cancel/',
+          body: {'reason': reason, 'cash_password': ?cashPassword},
+          accessToken: token,
+        ),
+        errorTitle: 'Não foi possível cancelar o pedido',
+      );
+    }
     if (!mounted || cancelled == null) return;
 
     final scope = api.sessionScope;

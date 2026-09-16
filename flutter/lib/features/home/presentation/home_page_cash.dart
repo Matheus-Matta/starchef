@@ -44,18 +44,20 @@ mixin _CashSection on _HomePageShared {
   Future<void> _goHome();
   Future<void> _load();
 
+  /// Divergência no fechamento: só a senha de ações do caixa libera.
+  ///
+  /// Já houve aqui um segundo modo, "login de gerente" (usuário + senha na
+  /// Retaguarda). Saiu: a senha do caixa é conferida neste terminal contra o
+  /// hash sincronizado e funciona sem internet ([_approveWithCashPassword]);
+  /// o login de gerente não, e a pergunta "qual usuário?" travava o
+  /// operador no fim do turno.
   Future<void> _showCashDivergence() async {
     if (!mounted || !hasCashDivergence || divergenceDialogOpen) return;
     divergenceDialogOpen = true;
-    final username = TextEditingController();
-    final password = TextEditingController();
     final cashPassword = TextEditingController();
     final reason = TextEditingController();
     final formKey = GlobalKey<FormState>();
     var authorizing = false;
-    // Modo de autorização: false = login de gerente (online) / true = senha do
-    // caixa do restaurante (verificável offline).
-    var cashMode = false;
     try {
       await showDialog<void>(
         context: context,
@@ -80,7 +82,8 @@ mixin _CashSection on _HomePageShared {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'O PDV permanecerá bloqueado até que um gerente autorizado resolva o fechamento.',
+                          'O PDV permanecerá bloqueado até que o fechamento '
+                          'seja autorizado com a senha de ações do caixa.',
                         ),
                         const SizedBox(height: 18),
                         _divergenceValue(
@@ -103,70 +106,21 @@ mixin _CashSection on _HomePageShared {
                           Text('Observação: ${cashSession!['notes']}'),
                         ],
                         const Divider(height: 32),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: authorizing
-                                ? null
-                                : () => update(() => cashMode = !cashMode),
-                            icon: Icon(
-                              cashMode
-                                  ? Icons.person_outline
-                                  : Icons.password_outlined,
-                            ),
-                            label: Text(
-                              cashMode
-                                  ? 'Usar login de gerente'
-                                  : 'Usar senha do caixa',
-                            ),
+                        TextFormField(
+                          controller: cashPassword,
+                          autofocus: true,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Senha de ações do caixa',
+                            helperText:
+                                'Definida no cadastro do restaurante. '
+                                'Conferida neste terminal, funciona sem internet.',
+                            prefixIcon: Icon(Icons.lock_outline),
                           ),
+                          validator: (value) => value == null || value.isEmpty
+                              ? 'Informe a senha de ações do caixa.'
+                              : null,
                         ),
-                        const SizedBox(height: 6),
-                        if (!cashMode) ...[
-                          TextFormField(
-                            controller: username,
-                            autofocus: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Usuário autorizador',
-                              helperText:
-                                  'Gerente, administrador ou proprietário.',
-                              prefixIcon: Icon(Icons.person_outline),
-                            ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Informe o usuário autorizador.'
-                                : null,
-                          ),
-                          const SizedBox(height: 14),
-                          TextFormField(
-                            controller: password,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Senha',
-                              helperText:
-                                  'A credencial será descartada após a autorização.',
-                              prefixIcon: Icon(Icons.lock_outline),
-                            ),
-                            validator: (value) => value == null || value.isEmpty
-                                ? 'Informe a senha.'
-                                : null,
-                          ),
-                        ] else ...[
-                          TextFormField(
-                            controller: cashPassword,
-                            autofocus: true,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Senha do caixa',
-                              helperText:
-                                  'Senha de ações do caixa definida no restaurante — dispensa login de gerente.',
-                              prefixIcon: Icon(Icons.lock_outline),
-                            ),
-                            validator: (value) => value == null || value.isEmpty
-                                ? 'Informe a senha do caixa.'
-                                : null,
-                          ),
-                        ],
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: reason,
@@ -203,59 +157,10 @@ mixin _CashSection on _HomePageShared {
                       : () async {
                           if (!formKey.currentState!.validate()) return;
                           update(() => authorizing = true);
-                          // Modo "senha do caixa": o servidor verifica a senha do
-                          // restaurante e aprova — sem precisar de login de gerente.
-                          if (cashMode) {
-                            try {
-                              cashSession = await _approveWithCashPassword(
-                                reason: reason.text.trim(),
-                                password: cashPassword.text,
-                              );
-                              if (dialogContext.mounted) {
-                                Navigator.pop(dialogContext);
-                              }
-                              await _load();
-                            } catch (error) {
-                              if (mounted) _error(error);
-                              update(() => authorizing = false);
-                            } finally {
-                              cashPassword.clear();
-                            }
-                            return;
-                          }
-                          String? temporaryAccess;
-                          String? temporaryRefresh;
                           try {
-                            final login = await api.post(
-                              '/auth/login/',
-                              body: {
-                                'username': username.text.trim(),
-                                'password': password.text,
-                                // Autorização gerencial temporária: só usa o token
-                                // (Bearer), sem cookies do navegador.
-                                'no_cookie': true,
-                              },
-                            );
-                            temporaryAccess = '${login['access']}';
-                            temporaryRefresh = '${login['refresh']}';
-                            final user = login['user'] as Map<String, dynamic>?;
-                            final allowed =
-                                user?['is_superuser'] == true ||
-                                {
-                                  'admin',
-                                  'owner',
-                                  'manager',
-                                }.contains('${user?['profile_type']}');
-                            if (!allowed) {
-                              throw const ApiException(
-                                'O usuário informado não possui permissão gerencial.',
-                                statusCode: 403,
-                              );
-                            }
-                            cashSession = await api.post(
-                              '/cash-register/${cashSession!['id']}/approve/',
-                              body: {'reason': reason.text.trim()},
-                              accessToken: temporaryAccess,
+                            cashSession = await _approveWithCashPassword(
+                              reason: reason.text.trim(),
+                              password: cashPassword.text,
                             );
                             if (dialogContext.mounted) {
                               Navigator.pop(dialogContext);
@@ -265,20 +170,7 @@ mixin _CashSection on _HomePageShared {
                             if (mounted) _error(error);
                             update(() => authorizing = false);
                           } finally {
-                            password.clear();
-                            if (temporaryAccess != null &&
-                                temporaryRefresh != null) {
-                              try {
-                                await api.post(
-                                  '/auth/logout/',
-                                  body: {
-                                    'refresh': temporaryRefresh,
-                                    'no_cookie': true,
-                                  },
-                                  accessToken: temporaryAccess,
-                                );
-                              } catch (_) {}
-                            }
+                            cashPassword.clear();
                           }
                         },
                   icon: authorizing
@@ -297,8 +189,6 @@ mixin _CashSection on _HomePageShared {
       );
     } finally {
       divergenceDialogOpen = false;
-      username.dispose();
-      password.dispose();
       cashPassword.dispose();
       reason.dispose();
     }

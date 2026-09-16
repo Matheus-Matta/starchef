@@ -68,3 +68,30 @@ def next_command_number(restaurant):
 def default_command_code(number):
     """Código escaneável padrão a partir do número (zero-padded, ex.: 1 -> "0001")."""
     return f"{int(number):04d}"
+
+
+def assert_table_accepts_commands(table, *, restaurant=None, exclude_command_ids=(), adding=1):
+    """Garante o limite de comandas por mesa do restaurante antes de vincular.
+
+    O teto vem de `Restaurant.max_commands_per_table` (0 = sem limite). Só o
+    servidor conta de verdade: dois terminais vinculando ao mesmo tempo, ou o
+    app do garçom, não enxergam a comanda um do outro. `exclude_command_ids`
+    tira da conta a(s) comanda(s) que já estão nesta mesa e estão sendo
+    re-vinculadas (mover para a própria mesa não ocupa vaga nova).
+    """
+    from apps.core.exceptions import LimitReached
+
+    restaurant = restaurant or table.restaurant
+    limit = int(getattr(restaurant, "max_commands_per_table", 0) or 0)
+    if limit <= 0:
+        return
+    seated = (
+        Command.objects.filter(current_table=table, is_active=True)
+        .exclude(pk__in=list(exclude_command_ids))
+        .count()
+    )
+    if seated + adding > limit:
+        raise LimitReached(
+            f"A mesa {table.number} já tem {seated} comanda(s); o limite do restaurante é {limit} por mesa. "
+            "Ajuste em Restaurantes > Operação ou use outra mesa."
+        )

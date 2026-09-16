@@ -47,8 +47,25 @@ class CashRegisterRepository extends EntityRepository {
     super.cipher,
   }) : super(descriptor: _descriptor);
 
-  static final EntityDescriptor _descriptor =
-      EntityCatalog.byType(EntityCatalog.cashSession)!;
+  static final EntityDescriptor _descriptor = EntityCatalog.byType(
+    EntityCatalog.cashSession,
+  )!;
+
+  /// Uma alteração da sessão por vez.
+  ///
+  /// Toda escrita aqui é ler-o-payload-inteiro, mexer, gravar. Dois desses
+  /// entrelaçados perdem um lançamento: a leitura do servidor (`applyRemote`,
+  /// disparada por qualquer GET da sessão) lia a cópia antes de o
+  /// recebimento entrar e gravava depois — e a venda sumia da gaveta até a
+  /// leitura seguinte. Não é hipótese: apareceu no teste funcional com o
+  /// backend real, uma vez em cada três.
+  Future<void> _turn = Future.value();
+
+  Future<T> _serialized<T>(Future<T> Function() action) {
+    final run = _turn.then((_) => action());
+    _turn = run.then((_) {}, onError: (_) {});
+    return run;
+  }
 
   /// Sessão em andamento deste operador, neste terminal — se houver.
   ///
@@ -65,14 +82,15 @@ class CashRegisterRepository extends EntityRepository {
     String? installationId,
   }) async {
     final page = await list(
-      query: {
-        'restaurant': ?restaurantId,
-        'page_size': 50,
-      },
+      query: {'restaurant': ?restaurantId, 'page_size': 50},
     );
     for (final session in page.results) {
       if (CashSessionStatus.isFinished(session['status'])) continue;
-      if (!_belongsTo(session, operatorId: operatorId, installationId: installationId)) {
+      if (!_belongsTo(
+        session,
+        operatorId: operatorId,
+        installationId: installationId,
+      )) {
         continue;
       }
       return session;
@@ -81,9 +99,14 @@ class CashRegisterRepository extends EntityRepository {
   }
 
   /// A sessão ocupando este caixa, seja de quem for (para explicar o bloqueio).
-  Future<Map<String, dynamic>?> occupying(String? stationId, {String? restaurantId}) async {
+  Future<Map<String, dynamic>?> occupying(
+    String? stationId, {
+    String? restaurantId,
+  }) async {
     if (stationId == null || stationId.isEmpty) return null;
-    final page = await list(query: {'restaurant': ?restaurantId, 'page_size': 50});
+    final page = await list(
+      query: {'restaurant': ?restaurantId, 'page_size': 50},
+    );
     for (final session in page.results) {
       if (CashSessionStatus.isFinished(session['status'])) continue;
       if ('${session['cash_station'] ?? ''}' == stationId) return session;
@@ -154,7 +177,9 @@ class CashRegisterRepository extends EntityRepository {
     final station = stationLabelOf(session);
     final operator = '${session['opened_by_name'] ?? ''}';
     final terminal = '${session['opened_terminal_label'] ?? ''}';
-    final openedAt = DateTime.tryParse('${session['opened_at'] ?? ''}')?.toLocal();
+    final openedAt = DateTime.tryParse(
+      '${session['opened_at'] ?? ''}',
+    )?.toLocal();
     final by = operator.isEmpty ? '' : ' por $operator';
     final where = terminal.isEmpty ? '' : ' no terminal $terminal';
     final since = openedAt == null
@@ -387,10 +412,7 @@ class CashRegisterRepository extends EntityRepository {
       '_offline_pending': true,
     };
     final movements = [..._movementsOf(session.payload), movement];
-    final updated = {
-      ...session.payload,
-      'movements': movements,
-    };
+    final updated = {...session.payload, 'movements': movements};
     final record = await saveLocal(
       {
         ...updated,
@@ -399,7 +421,8 @@ class CashRegisterRepository extends EntityRepository {
       },
       operation: SyncOperation.update,
       method: 'POST',
-      path: '/cash-register/$id/${movementType == 'supply' ? 'supply' : 'withdrawal'}/',
+      path:
+          '/cash-register/$id/${movementType == 'supply' ? 'supply' : 'withdrawal'}/',
       requestBody: {...body, 'client_movement_id': movementId},
       id: id,
     );
@@ -512,23 +535,66 @@ class CashRegisterRepository extends EntityRepository {
     required double amount,
     String reason = '',
   }) async {
-    if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
-    final session = await read(sessionId);
-    if (session == null) return;
-    final movements = _movementsOf(session.payload);
-    if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
-    movements.add({
-      'id': paymentId,
-      'cash_register': sessionId,
-      'payment': paymentId,
-      'movement_type': 'sale',
-      'amount': amount.toStringAsFixed(2),
-      'reason': reason,
-      'status': 'approved',
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-      '_offline_pending': true,
+    return _serialized(() async {
+      if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
+      final session = await read(sessionId);
+      if (session == null) return;
+      final movements = _movementsOf(session.payload);
+      if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
+      movements.add({
+        'id': paymentId,
+        'cash_register': sessionId,
+        'payment': paymentId,
+        'movement_type': 'sale',
+        'amount': amount.toStringAsFixed(2),
+        'reason': reason,
+        'status': 'approved',
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        '_offline_pending': true,
+      });
+      await _saveWithBalance(session.payload, movements);
     });
-    await _saveWithBalance(session.payload, movements);
+  }
+
+  /// Anota na sessão um recebimento em QUALQUER forma de pagamento.
+  ///
+  /// Não mexe na gaveta — isso é [registerLocalSale], só para dinheiro. Esta
+  /// lista espelha `CashRegisterSerializer.sales` e existe para o relatório
+  /// de fechamento impresso: o operador confere os comprovantes de cartão e
+  /// PIX contra o que o sistema registrou, não só o dinheiro contado. O id é
+  /// o do pagamento: quando a fila entrega, `replaceReference` o troca pelo
+  /// real e a leitura seguinte do servidor passa a valer sem contar duas
+  /// vezes.
+  Future<void> registerLocalPayment(
+    String sessionId, {
+    required Map<String, dynamic> payment,
+    Map<String, dynamic>? method,
+    String orderSequence = '',
+  }) async {
+    return _serialized(() async {
+      final paymentId = '${payment['id'] ?? ''}';
+      if (sessionId.isEmpty || paymentId.isEmpty) return;
+      final session = await read(sessionId);
+      if (session == null) return;
+      final sales = salesOf(session.payload);
+      if (sales.any((sale) => '${sale['id']}' == paymentId)) return;
+      sales.add({
+        'id': paymentId,
+        'order': payment['order'],
+        'order_sequence': orderSequence,
+        'payment_method': payment['payment_method'],
+        'payment_method_name':
+            payment['payment_method_name'] ?? method?['name'],
+        'method_type': payment['method_type'] ?? method?['method_type'],
+        'card_subtype': payment['card_subtype'] ?? '',
+        'amount': '${payment['amount'] ?? '0.00'}',
+        'change_amount': '${payment['change_amount'] ?? '0.00'}',
+        'paid_at':
+            payment['created_at'] ?? DateTime.now().toUtc().toIso8601String(),
+        '_offline_pending': true,
+      });
+      await saveLocalEffect({...session.payload, 'sales': sales});
+    });
   }
 
   /// Registra na gaveta o TROCO de um recebimento que não entrou nela.
@@ -549,24 +615,26 @@ class CashRegisterRepository extends EntityRepository {
     required double amount,
     String reason = '',
   }) async {
-    if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
-    final session = await read(sessionId);
-    if (session == null) return;
-    final movements = _movementsOf(session.payload);
-    if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
-    movements.add({
-      'id': paymentId,
-      'cash_register': sessionId,
-      'payment': paymentId,
-      // `_signedCents` já lê `withdrawal` como saída.
-      'movement_type': 'withdrawal',
-      'amount': amount.toStringAsFixed(2),
-      'reason': reason,
-      'status': 'approved',
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-      '_offline_pending': true,
+    return _serialized(() async {
+      if (sessionId.isEmpty || paymentId.isEmpty || amount <= 0) return;
+      final session = await read(sessionId);
+      if (session == null) return;
+      final movements = _movementsOf(session.payload);
+      if (movements.any((movement) => '${movement['id']}' == paymentId)) return;
+      movements.add({
+        'id': paymentId,
+        'cash_register': sessionId,
+        'payment': paymentId,
+        // `_signedCents` já lê `withdrawal` como saída.
+        'movement_type': 'withdrawal',
+        'amount': amount.toStringAsFixed(2),
+        'reason': reason,
+        'status': 'approved',
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        '_offline_pending': true,
+      });
+      await _saveWithBalance(session.payload, movements);
     });
-    await _saveWithBalance(session.payload, movements);
   }
 
   /// Desfaz o lançamento de um recebimento removido antes de subir.
@@ -574,13 +642,21 @@ class CashRegisterRepository extends EntityRepository {
     String sessionId, {
     required String paymentId,
   }) async {
-    if (sessionId.isEmpty || paymentId.isEmpty) return;
-    final session = await read(sessionId);
-    if (session == null) return;
-    final movements = _movementsOf(
-      session.payload,
-    ).where((movement) => '${movement['id']}' != paymentId).toList();
-    await _saveWithBalance(session.payload, movements);
+    return _serialized(() async {
+      if (sessionId.isEmpty || paymentId.isEmpty) return;
+      final session = await read(sessionId);
+      if (session == null) return;
+      final movements = _movementsOf(
+        session.payload,
+      ).where((movement) => '${movement['id']}' != paymentId).toList();
+      // O recebimento desfeito sai também da lista de vendas da sessão, em
+      // qualquer forma — senão o fechamento impresso somaria uma venda que o
+      // operador apagou.
+      final sales = salesOf(
+        session.payload,
+      ).where((sale) => '${sale['id']}' != paymentId).toList();
+      await _saveWithBalance({...session.payload, 'sales': sales}, movements);
+    });
   }
 
   /// Grava a sessão com o saldo recalculado, sem enfileirar nada.
@@ -610,32 +686,57 @@ class CashRegisterRepository extends EntityRepository {
     bool overwriteLocalChanges = false,
     String? ignoreQueuedOperationId,
   }) async {
-    final stored = await read('${payload['id'] ?? ''}', includeDeleted: true);
-    final pending = stored == null
-        ? const <Map<String, dynamic>>[]
-        : _movementsOf(stored.payload)
-              .where((movement) => LocalId.isTemporary('${movement['id']}'))
-              .toList();
-    if (pending.isEmpty) {
+    return _serialized(() async {
+      final stored = await read('${payload['id'] ?? ''}', includeDeleted: true);
+      // O que este terminal lançou e o servidor ainda não devolveu continua
+      // aqui. Não basta olhar o id temporário: a entrega troca o id pelo real
+      // (`replaceReference`) e uma leitura do servidor disparada ANTES da
+      // entrega pode chegar DEPOIS dela, sem o lançamento — aplicá-la apagava
+      // a venda da sessão até a leitura seguinte. Lançamento marcado
+      // `_offline_pending` fica até o servidor listá-lo pelo mesmo id.
+      // O movimento local de venda usa o id do PAGAMENTO; o do servidor tem id
+      // próprio e aponta para o pagamento em `payment`. Os dois contam.
+      final remoteMovementIds = {
+        for (final movement in _movementsOf(payload)) ...{
+          '${movement['id']}',
+          if ('${movement['payment'] ?? ''}'.isNotEmpty)
+            '${movement['payment']}',
+        },
+      };
+      final pending = stored == null
+          ? const <Map<String, dynamic>>[]
+          : _movementsOf(stored.payload)
+                .where((movement) => _stillLocal(movement, remoteMovementIds))
+                .toList();
+      // As vendas seguem a mesma regra dos movimentos.
+      final remoteSaleIds = salesOf(payload).map((s) => '${s['id']}').toSet();
+      final pendingSales = stored == null
+          ? const <Map<String, dynamic>>[]
+          : salesOf(
+              stored.payload,
+            ).where((sale) => _stillLocal(sale, remoteSaleIds)).toList();
+      if (pending.isEmpty && pendingSales.isEmpty) {
+        return super.applyRemote(
+          payload,
+          overwriteLocalChanges: overwriteLocalChanges,
+          ignoreQueuedOperationId: ignoreQueuedOperationId,
+        );
+      }
+      final merged = {
+        ...payload,
+        'movements': [..._movementsOf(payload), ...pending],
+        'sales': [...salesOf(payload), ...pendingSales],
+      };
       return super.applyRemote(
-        payload,
+        {
+          ...merged,
+          'current_balance': _drawerAmountText(merged),
+          'expected_amount': _drawerAmountText(merged),
+        },
         overwriteLocalChanges: overwriteLocalChanges,
         ignoreQueuedOperationId: ignoreQueuedOperationId,
       );
-    }
-    final merged = {
-      ...payload,
-      'movements': [..._movementsOf(payload), ...pending],
-    };
-    return super.applyRemote(
-      {
-        ...merged,
-        'current_balance': _drawerAmountText(merged),
-        'expected_amount': _drawerAmountText(merged),
-      },
-      overwriteLocalChanges: overwriteLocalChanges,
-      ignoreQueuedOperationId: ignoreQueuedOperationId,
-    );
+    });
   }
 
   /// Dinheiro na gaveta, na mesma conta do backend.
@@ -646,17 +747,18 @@ class CashRegisterRepository extends EntityRepository {
   /// que a API nunca enviou e ainda invertia o sinal de tudo que não fosse
   /// suprimento — um recebimento em dinheiro DIMINUÍA o esperado do caixa.
   static int _drawerCents(Map<String, dynamic> session) {
-    var total = _approvedMovements(session).fold<int>(
-      0,
-      (sum, movement) => sum + _signedCents(movement),
-    );
+    var total = _approvedMovements(
+      session,
+    ).fold<int>(0, (sum, movement) => sum + _signedCents(movement));
     // Enquanto a sessão só existe aqui não há movimento de abertura — o valor
     // contado está em `opening_amount`. Depois de subir ele vira um movimento
     // `opening`, e somar os dois contaria o troco inicial duas vezes.
     final hasOpening = _approvedMovements(
       session,
     ).any((movement) => '${movement['movement_type']}' == 'opening');
-    if (!hasOpening) total += DecimalMoney.minorUnits(session['opening_amount']);
+    if (!hasOpening) {
+      total += DecimalMoney.minorUnits(session['opening_amount']);
+    }
     return total;
   }
 
@@ -691,9 +793,23 @@ class CashRegisterRepository extends EntityRepository {
     return status == 'approved' || status.isEmpty;
   }).toList();
 
-  static List<Map<String, dynamic>> _movementsOf(Map<String, dynamic> session) =>
-      (session['movements'] as List? ?? const [])
+  static bool _stillLocal(Map<String, dynamic> entry, Set<String> remoteIds) {
+    final id = '${entry['id']}';
+    if (remoteIds.contains(id)) return false;
+    return LocalId.isTemporary(id) || entry['_offline_pending'] == true;
+  }
+
+  /// Recebimentos da sessão, em qualquer forma (ver [registerLocalPayment]).
+  static List<Map<String, dynamic>> salesOf(Map<String, dynamic> session) =>
+      (session['sales'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
+
+  static List<Map<String, dynamic>> _movementsOf(
+    Map<String, dynamic> session,
+  ) => (session['movements'] as List? ?? const [])
+      .whereType<Map>()
+      .map((item) => Map<String, dynamic>.from(item))
+      .toList();
 }

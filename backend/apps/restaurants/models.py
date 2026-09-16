@@ -42,6 +42,15 @@ class Restaurant(TenantBaseModel):
     stock_deduction_timing = models.CharField(
         max_length=20, choices=STOCK_DEDUCTION_CHOICES, default=STOCK_DEDUCTION_PAYMENT
     )
+    # Quantas comandas podem sentar na mesma mesa. Era um improviso com a
+    # `Table.capacity` (lugares) só no PDV; agora é regra do restaurante e o
+    # servidor a garante. 0 = sem limite.
+    max_commands_per_table = models.PositiveIntegerField(default=4)
+    # Janela, em segundos, entre "enviar para a cozinha" e a comanda sair de
+    # fato (KDS/impressora). Dentro dela cancelar item ou pedido não pede a
+    # senha do caixa nem gera cupom de cancelamento — nada chegou à produção.
+    # 0 = desligada (comportamento antigo: sai na hora).
+    cancellation_grace_seconds = models.PositiveIntegerField(default=0)
     operational_settings = models.JSONField(default=dict, blank=True)
     fiscal_settings = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)

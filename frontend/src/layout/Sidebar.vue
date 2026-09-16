@@ -263,6 +263,7 @@ const groups = computed(() =>
             { id: "relatorio-pedidos", label: "Pedidos" },
             { id: "relatorio-produtos", label: "Produtos" },
             { id: "relatorio-pagamentos", label: "Pagamentos" },
+            { id: "relatorio-caixa", label: "Caixa" },
             { id: "relatorio-garcons", label: "Garçons" },
             { id: "relatorio-restaurantes", label: "Restaurantes" },
           ],

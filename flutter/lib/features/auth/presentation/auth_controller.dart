@@ -167,59 +167,6 @@ class AuthController extends ChangeNotifier {
     return cashAuth.trySync(current, restaurantId: restaurantId, force: force);
   }
 
-  /// Valida online credenciais administrativas da mesma conta. `null`
-  /// significa autorização aprovada; qualquer texto é seguro para a UI.
-  Future<String?> verifyAdministratorCloseCredentials(
-    String username,
-    String password,
-  ) async {
-    final current = session;
-    if (current == null) return 'A sessão atual não está disponível.';
-    try {
-      await _repository.authorizeAdministrator(
-        currentSession: current,
-        username: username,
-        password: password,
-      );
-      return null;
-    } on ApiException catch (error) {
-      if (error.isConnectivity) {
-        return 'A validação do administrador exige conexão com a Retaguarda. '
-            'Use a senha do restaurante para autorizar offline.';
-      }
-      return error.message;
-    } catch (_) {
-      return 'Não foi possível validar o administrador.';
-    }
-  }
-
-  /// Autoriza o cancelamento com um administrador ou um usuário da mesma
-  /// conta que possua explicitamente `orders.cancel`.
-  Future<String?> verifyOrderCancellationCredentials(
-    String username,
-    String password,
-  ) async {
-    final current = session;
-    if (current == null) return 'A sessão atual não está disponível.';
-    try {
-      await _repository.authorizeAdministrator(
-        currentSession: current,
-        username: username,
-        password: password,
-        requiredPermission: 'orders.cancel',
-      );
-      return null;
-    } on ApiException catch (error) {
-      if (error.isConnectivity) {
-        return 'A validação por login exige conexão com a Retaguarda. '
-            'Use a senha de operação do restaurante.';
-      }
-      return error.message;
-    } catch (_) {
-      return 'Não foi possível validar o usuário autorizado.';
-    }
-  }
-
   void _safeNotify() {
     if (!_disposed) notifyListeners();
   }

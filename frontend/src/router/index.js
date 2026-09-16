@@ -146,6 +146,7 @@ export const router = createRouter({
         { path: "relatorios/pagamentos", name: "relatorio-pagamentos", component: ReportsView, props: { section: "payment" }, meta: { requiresAuth: true, title: "Relatório de pagamentos", nav: "relatorio-pagamentos" } },
         { path: "relatorios/garcons", name: "relatorio-garcons", component: ReportsView, props: { section: "waiter" }, meta: { requiresAuth: true, title: "Relatório de garçons", nav: "relatorio-garcons" } },
         { path: "relatorios/restaurantes", name: "relatorio-restaurantes", component: ReportsView, props: { section: "restaurant" }, meta: { requiresAuth: true, title: "Relatório por restaurante", nav: "relatorio-restaurantes" } },
+        { path: "relatorios/caixa", name: "relatorio-caixa", component: ReportsView, props: { section: "cash" }, meta: { requiresAuth: true, title: "Relatório de caixa", nav: "relatorio-caixa" } },
         { path: "relatorios/filiais", redirect: { name: "relatorio-restaurantes" } },
         ...resourceRoutes,
       ],

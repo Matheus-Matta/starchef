@@ -192,5 +192,9 @@ def test_senha_do_restaurante_nao_atribui_autorizacao_a_uma_pessoa(
 
     assert response.status_code == 200
     registro = AuditLog.all_objects.filter(metadata__event="order_cancelled").latest("created_at")
-    assert registro.metadata["authorization"] == "own"
+    # A autorizacao e nomeada ("senha do caixa"), mas continua sem pessoa.
+    assert registro.metadata["authorization"] == "cash_password"
     assert registro.metadata["authorized_by_username"] == ""
+    order.refresh_from_db()
+    assert order.cancel_authorization == "cash_password"
+    assert order.cancel_authorized_by is None

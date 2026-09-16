@@ -70,12 +70,14 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('troca para login administrativo e valida pela API', (
+
+  testWidgets('só pede a senha de ações do caixa — sem login de usuário', (
     tester,
   ) async {
+    // O modo "login de administrador" saiu: exigia servidor e a pergunta
+    // "qual usuário?" travava o operador. A senha do caixa é conferida no
+    // terminal e funciona sem internet.
     final navigatorKey = GlobalKey<NavigatorState>();
-    String? receivedUsername;
-    String? receivedPassword;
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
@@ -88,34 +90,25 @@ void main() {
 
     final result = showSupervisorCloseDialog(
       context: navigatorKey.currentContext!,
-      title: 'Fechar o PDV',
-      description: 'Confirme o fechamento.',
-      confirmLabel: 'Fechar',
+      title: 'Autorizar cancelamento',
+      description: 'Confirme.',
+      confirmLabel: 'Cancelar pedido',
       verifyPassword: (_) async => false,
-      verifyAdminCredentials: (username, password) async {
-        receivedUsername = username;
-        receivedPassword = password;
-        return null;
-      },
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Usar login de administrador'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('admin-username')),
-      'admin@starchef.test',
-    );
-    await tester.enterText(
-      find.byKey(const Key('admin-password')),
-      'senha-admin',
-    );
-    await tester.tap(find.text('Fechar'));
-    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Senha de ações do caixa'), findsOneWidget);
+    expect(find.textContaining('login'), findsNothing);
+    expect(find.byKey(const Key('admin-username')), findsNothing);
 
-    expect(receivedUsername, 'admin@starchef.test');
-    expect(receivedPassword, 'senha-admin');
-    expect(await result, isTrue);
-    expect(tester.takeException(), isNull);
+    await tester.enterText(find.byType(TextField), 'errada');
+    await tester.tap(find.text('Cancelar pedido'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('incorreta'), findsOneWidget);
+
+    await tester.tap(find.text('Manter aberto'));
+    await tester.pumpAndSettle();
+    expect(await result, isFalse);
   });
 }

@@ -254,6 +254,16 @@ item/pagamento/movimentação) e no que ainda estiver na fila
 (`registerResolvedId`). Sem o segundo, a próxima leitura vinda do servidor
 trataria o item confirmado como "ainda pendente" e o somaria de novo.
 
+Quando a resposta é o **pedido inteiro**, e não o item — `create-with-item`
+(pedido e primeiro item juntos) e `checkout-command` (pesado e extras juntos)
+— o servidor precisa dizer qual item é qual: `created_item_id` no
+`create-with-item` (o item pode ter entrado numa linha que já existia ou num
+pedido que outro terminal abriu antes) e `weighed_item`/`extra_items` na
+pesagem, na ordem do corpo. `OfflineFirstGateway._createdItemPairs` faz esse
+casamento; temporário sem par sai da cópia local (`forgetPendingItem`), porque
+a operação foi aceita e mantê-lo é exatamente o que duplicava o primeiro item
+de toda comanda.
+
 ### Ordem, retry e revisão
 
 A fila é FIFO por `id` autoincremental — determinístico mesmo para operações

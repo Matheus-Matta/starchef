@@ -94,14 +94,9 @@ class _ScaleWindowAppState extends State<ScaleWindowApp> with WindowListener {
         context: dialogContext,
         title: 'Fechar a Balança Rápida',
         description:
-            'Use a senha do restaurante ou as credenciais de um administrador da conta.',
+            'Informe a senha de ações do caixa. Ela é conferida neste terminal e funciona sem internet.',
         confirmLabel: 'Fechar balança',
         verifyPassword: _auth.verifySupervisorClosePassword,
-        verifyAdminCredentials: _auth.verifyAdministratorCloseCredentials,
-        passwordLabel: 'Senha do restaurante',
-        invalidPasswordMessage:
-            'Senha do restaurante incorreta. Se ela foi alterada, '
-            'recarregue os dados do PDV.',
         onInvalidPassword: () async {
           await windowManager.setFullScreen(true);
           if (mounted) setState(() => _isFullScreen = true);

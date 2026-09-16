@@ -570,3 +570,51 @@ def test_deleted_terminal_resurrects_itself_on_the_next_request(station, manager
     assert terminal.deleted_at is None, (
         "o terminal excluido voltou a ficar ativo sozinho, so por ter sido usado de novo"
     )
+
+
+def test_sessao_lista_as_vendas_de_toda_forma_de_pagamento(
+    station, restaurant, branch, table, product, manager_user, payment_method
+):
+    """O relatorio de fechamento impresso pelo PDV precisa das vendas por
+    forma — nao so do dinheiro que passou pela gaveta. Cartao e PIX nao geram
+    `CashMovement`; o vinculo com a sessao e o `metadata.cash_register` do
+    recebimento, e `sales` devolve todos eles.
+    """
+    from apps.orders.models import Order
+    from apps.orders.services import add_order_item, close_order, create_order
+    from apps.payments.models import PaymentMethod
+
+    client = client_for(manager_user, BALCAO_01)
+    opened = open_via_api(client, station).json()
+    cash = PaymentMethod.objects.create(
+        account=station.account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Dinheiro",
+        method_type=PaymentMethod.TYPE_CASH,
+    )
+
+    def venda_paga(method, amount):
+        order = create_order(
+            restaurant=restaurant, branch=branch, order_type=Order.TYPE_TABLE, table=table, user=manager_user
+        )
+        add_order_item(order=order, product=product, quantity=1, user=manager_user)
+        order = close_order(order, manager_user)
+        paid = client.post(
+            f"/api/v1/orders/{order.id}/pay/",
+            {"payment_method": str(method.id), "amount": str(order.total), "cash_register": opened["id"]},
+            format="json",
+        )
+        assert paid.status_code == 201, paid.content
+        return order
+
+    venda_paga(cash, None)
+    pix_order = venda_paga(payment_method, None)
+
+    session = client.get("/api/v1/cash-register/current/").json()
+    sales = session["sales"]
+    assert [sale["method_type"] for sale in sales] == ["cash", "pix"]
+    assert sales[1]["order_sequence"] == pix_order.sequence
+    assert sales[1]["amount"] == str(pix_order.total)
+    # A gaveta continua conhecendo so o dinheiro.
+    assert [m["movement_type"] for m in session["movements"]] == ["opening", "sale"]

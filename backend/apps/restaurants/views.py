@@ -19,7 +19,12 @@ from apps.restaurants.serializers import (
     TableSectorSerializer,
     TableSerializer,
 )
-from apps.restaurants.services import default_command_code, next_command_number, sync_branch_for_restaurant
+from apps.restaurants.services import (
+    assert_table_accepts_commands,
+    default_command_code,
+    next_command_number,
+    sync_branch_for_restaurant,
+)
 
 
 def _codes_payload(obj):
@@ -221,6 +226,7 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         commands = list(from_table.active_commands.all())
         if not commands:
             raise ValidationError({"detail": "Não há comandas vinculadas a esta mesa para transferir."})
+        assert_table_accepts_commands(to_table, adding=len(commands))
 
         from apps.orders.models import Order
         from apps.restaurants.models import CommandMovementLog
@@ -325,6 +331,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             return Response(self.get_serializer(command).data)
         if table.status == Table.STATUS_CLEANING:
             raise ValidationError({"table_id": "A mesa selecionada aguarda limpeza."})
+        assert_table_accepts_commands(table, exclude_command_ids=[command.pk])
 
         from apps.restaurants.models import CommandMovementLog
 

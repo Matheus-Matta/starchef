@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv/core/data/cash_register_repository.dart';
 import 'package:starchef_pdv/core/data/entity_catalog.dart';
 import 'package:starchef_pdv/core/data/local_id.dart';
 import 'package:starchef_pdv/core/formatters/value_formatters.dart';
@@ -110,6 +111,51 @@ void main() {
 
     final session = await stack.gateway.read('/cash-register/current/');
     expect(balanceOf(session), 120.0);
+  });
+
+  test('toda forma entra em `sales` da sessão; só dinheiro na gaveta', () async {
+    // O relatório de fechamento impresso confere cartão e PIX contra os
+    // comprovantes da maquininha — a gaveta sozinha não conta essas vendas.
+    final shift = await openShift();
+    await payCash(shift.orderId, shift.sessionId, amount: '10.00');
+    await stack.gateway.write(
+      'POST',
+      '/orders/${shift.orderId}/pay/',
+      body: {
+        'payment_method': 'credito',
+        'amount': '10.00',
+        'cash_register': shift.sessionId,
+        'metadata': {'card_subtype': 'credit'},
+      },
+      context: {
+        'payment_method': {
+          'id': 'credito',
+          'name': 'Cartão',
+          'method_type': 'card',
+        },
+      },
+    );
+
+    var session = await stack.gateway.read('/cash-register/current/');
+    final sales = CashRegisterRepository.salesOf(session);
+    expect(sales.map((sale) => sale['method_type']), ['cash', 'card']);
+    expect(sales.last['card_subtype'], 'credit');
+    expect(sales.last['payment_method_name'], 'Cartão');
+    expect(sales.last['amount'], '10.00');
+    expect(balanceOf(session), 110.0);
+
+    // A leitura do servidor ainda não conhece os dois recebimentos (a fila
+    // não subiu): eles continuam na lista, como os movimentos pendentes.
+    await stack.gateway.cashRegister.applyRemote({
+      ...session,
+      'movements': const [],
+      'sales': const [],
+      'current_balance': '100.00',
+      'expected_amount': '100.00',
+    });
+    session = await stack.gateway.read('/cash-register/current/');
+    expect(CashRegisterRepository.salesOf(session), hasLength(2));
+    expect(balanceOf(session), 110.0);
   });
 
   test('recebimento em cartão não mexe no dinheiro da gaveta', () async {

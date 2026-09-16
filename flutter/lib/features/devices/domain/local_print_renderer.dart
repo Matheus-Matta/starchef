@@ -1,6 +1,9 @@
+import '../../../core/formatters/decimal_money.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
+
+part 'cash_print_renderer.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 

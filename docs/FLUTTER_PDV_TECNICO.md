@@ -253,7 +253,32 @@ quem sobe é o `pay`), e `releaseSettledCommands`, rodado ao fim de cada
 `pullAll`, devolve as que já ficaram presas: comanda apontando para um pedido
 local pago, cancelado ou estornado. Comanda apontando para pedido que este
 terminal não conhece fica como está; se o servidor discordar, a sincronização
-seguinte reescreve.
+seguinte reescreve — e para isso o espelho é gravado como `synced`, não como
+alteração pendente: pendente vence toda leitura do servidor e nenhuma entrega
+o confirmaria, então a comanda ficava "livre" aqui para sempre mesmo depois de
+o garçom reabri-la com outro pedido (o primeiro item lançado aqui caía no
+pedido dele, e os itens "dos outros" apareciam na comanda).
+
+**Comandas por mesa e carência vêm do restaurante.** `_linkCommandDialog`
+compara `active_commands` da mesa com `selectedRestaurant['max_commands_per_table']`
+(0 = sem limite) e recusa antes de chamar `link-table`; o servidor recusa de
+qualquer jeito com 409 `limit_reached`. Não há mais "vincular mesmo assim":
+quem quer mais comandas edita o restaurante. No cancelamento de pedido, com
+`cancellation_grace_seconds` > 0 a primeira tentativa vai SEM senha; um 403
+significa "já saiu da carência" e aí a senha de ações do caixa é pedida como
+sempre (`_cancelOrder`, `home_page_kitchen.dart`). A impressão local da
+comanda de cozinha continua imediata: a carência segura a rodada no servidor
+(KDS e `PrintJob`), e a comanda já impressa no terminal (`offline_printed`)
+não espera.
+
+**Uma alteração da sessão de caixa por vez.** `CashRegisterRepository`
+serializa `applyRemote`, `registerLocalSale/Payment/Change` e
+`removeLocalSale` numa fila (`_serialized`): são leituras-modificações-
+gravações do payload inteiro, e duas entrelaçadas perdiam um lançamento. E
+`applyRemote` preserva os lançamentos `_offline_pending` até o servidor
+listá-los pelo mesmo id (movimento de venda casa também por `payment`),
+porque a entrega troca o id temporário pelo real e uma leitura disparada
+antes dela pode chegar depois, sem o lançamento.
 
 **Escada fiscal não roda offline.** `_flushFiscalWithRetries` insiste
 0/0,5/1/2/3 s para que o DANFE saia no mesmo gesto do recibo quando a entrega
@@ -668,10 +693,25 @@ puro.
 
 ### 4.7-b Fechar o aplicativo
 
-Com sessão, fechar o PDV pede a **senha do restaurante** (a mesma das ações de
-caixa, configurável por loja — inclusive curta, como `123`) ou a credencial de
-um administrador da conta. É a proteção que importa: alguém fechando o caixa no
-meio do expediente.
+Com sessão, fechar o PDV pede a **senha de ações do caixa** (configurável por
+loja no cadastro do restaurante — inclusive curta, como `123`). É a proteção
+que importa: alguém fechando o caixa no meio do expediente.
+
+**Uma credencial só, em todo o PDV.** Fechar o aplicativo, fechar a Balança
+Rápida, cancelar um pedido, autorizar sangria/suprimento e aprovar a
+divergência do fechamento pedem a mesma senha de ações do caixa, e nada mais.
+O modo "login de gerente/administrador" (usuário + senha validados na
+Retaguarda) que existia como alternativa em cada um desses diálogos saiu, junto
+com `AuthRepository.authorizeAdministrator` e os verificadores do
+`AuthController`. Motivo: a senha do caixa é conferida **neste terminal**
+contra o hash PBKDF2 sincronizado (`CashAuthRepository.verify`, baixado no
+login, na renovação do token e quando a senha muda), então funciona sem
+internet; o login de gerente exigia servidor, e a pergunta "qual usuário?"
+travava o operador na frente do cliente. Online, a senha vai ao servidor no
+próprio request (`cash_password` no `/cancel/` e no `/approve/`); offline, a
+aprovação do caixa sobe como prova HMAC (`cash_password_proof`) e o
+cancelamento de um pedido que o servidor já conhece continua exigindo rede —
+é o servidor quem apaga consumo lançado, e a senha nunca entra na fila.
 
 **Sem sessão, a janela fecha direto.** Antes existia aqui um verificador
 PBKDF2 embutido no binário, igual em toda instalação — um segredo que basta
@@ -1044,6 +1084,23 @@ arquivo `0600`, validade de um minuto e remoção após a primeira leitura.
     de spool portátil.
 - Código de barras: para driver ESC/POS, gera `GS k` Code 128 conjunto B quando
   o valor é ASCII imprimível; caso contrário cai para texto explícito.
+- `domain/local_print_renderer.dart` — cupons montados no terminal, espelhando
+  `apps/printers/services.py` (recibo, cancelamento, pesagem, teste).
+  `domain/cash_print_renderer.dart` (`part` da mesma biblioteca) monta os
+  **comprovantes do caixa**: abertura, sangria, suprimento e o relatório de
+  fechamento — estes não têm equivalente no backend, o caixa é do terminal. O
+  fechamento separa a gaveta (movimentos aprovados, com o sinal de cada um,
+  a mesma conta do saldo esperado) das **vendas por forma de pagamento**, que
+  saem de `session['sales']`: no servidor é `CashRegisterSerializer.sales`
+  (todo recebimento com `metadata.cash_register` da sessão); no terminal,
+  `CashRegisterRepository.registerLocalPayment` anota cada `pay` (qualquer
+  forma) e `applyRemote` preserva os de id temporário, como faz com os
+  movimentos. Quem imprime é `_CashPrintSection` (`home_page_cash_print.dart`),
+  pelo mesmo caminho do recibo e do DANFE: impressora master das preferências
+  (ou o diálogo de escolha), `ReceiptPrinter` e a fila local do agente. Os
+  comprovantes saem DEPOIS de a operação estar registrada — abertura ao abrir,
+  sangria/suprimento ao serem autorizados, relatório ao fechar — e uma
+  impressora fora do ar avisa, nunca desfaz a operação.
 
 O agente **não lê balança**. Isso saiu daqui quando a leitura passou a ser local
 na janela: manter os dois abrindo a mesma COM era uma disputa real.
@@ -1075,6 +1132,30 @@ flutter analyze
 flutter test
 flutter build windows
 ```
+
+### 6.0 Teste funcional contra o backend real (`functional/`)
+
+`functional/fluxo_pdv_backend_test.dart` liga o núcleo real do PDV (SQLite,
+fila, gateway offline-first, `SyncService`) a um backend Django de verdade e
+percorre o balcão na ordem em que ele vive: abrir caixa → abrir comanda →
+primeiro item (`create-with-item`) e segundo (`/items/`) → sincronizar e
+reler do servidor (nada duplicado, nenhum `offline-…` sobrando) → receber em
+PIX e dinheiro (`sales` da sessão nos dois lados, comanda liberada) →
+cancelar outra comanda só com a senha de ações do caixa → fechar o caixa e
+montar o relatório impresso. Mora fora de `test/` de propósito: `flutter
+test` sem argumento não o encontra, porque ele exige servidor no ar e dados
+semeados (um caixa com o operador vinculado, comandas livres, produto por
+unidade, formas `cash` e `pix`, `cash_action_password` definida).
+
+```powershell
+python backend\manage.py runserver 127.0.0.1:8001 --noreload
+Set-Location flutter
+flutter test functional/ --dart-define=API_URL=http://127.0.0.1:8001/api/v1 --dart-define=USUARIO=admin --dart-define=SENHA=<senha> --dart-define=SENHA_CAIXA=caixa123
+```
+
+Uma rodada interrompida deixa o caixa aberto por outra instalação (o id do
+terminal muda a cada execução); o teste falha cedo dizendo isso — cancele a
+sessão no backend antes de repetir.
 
 ### 6.1 Instalador Windows (Inno Setup)
 

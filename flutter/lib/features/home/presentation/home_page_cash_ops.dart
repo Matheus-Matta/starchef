@@ -40,6 +40,16 @@ mixin _CashOpsSection on _HomePageShared {
   Future<void> _goHome();
   Future<void> _load();
   Future<void> _refreshCashSession();
+  // Comprovantes no papel (`_CashPrintSection`): saem DEPOIS de a operação
+  // estar registrada, e uma impressora fora do ar nunca a desfaz.
+  Future<void> _printCashOpening(Map<String, dynamic> session);
+  Future<void> _printCashMovement(
+    Map<String, dynamic> movement,
+    Map<String, dynamic> session, {
+    String authorizedBy,
+    String managerReason,
+  });
+  Future<void> _printCashClosing(Map<String, dynamic> session);
 
   Future<void> _openCash() async {
     final userId = widget.controller.session!.user.id;
@@ -146,7 +156,8 @@ mixin _CashOpsSection on _HomePageShared {
         return cashSession;
       }, onError: (error) => _cashError(error, 'abrir o caixa'));
       if (result != null) {
-        await _goHome();
+        await _printCashOpening(result);
+        if (mounted) await _goHome();
       }
     }
   }
@@ -227,18 +238,28 @@ mixin _CashOpsSection on _HomePageShared {
           isWithdrawal ? 'registrar a sangria' : 'registrar o suprimento',
         ),
       );
-      if (movement != null && movement['status'] == 'pending') {
+      if (movement == null) return;
+      if (movement['status'] == 'pending') {
+        // O comprovante sai quando a movimentação for autorizada.
         setState(() => pendingCashMovement = movement);
         await _showMovementApproval();
+        return;
       }
+      final session = cashSession;
+      if (session != null) await _printCashMovement(movement, session);
     }
   }
 
+  /// Autoriza a sangria/suprimento pendente com a senha de ações do caixa.
+  ///
+  /// Só ela: é conferida neste terminal contra o hash sincronizado e
+  /// funciona sem internet ([_approveWithCashPassword]). O login de gerente
+  /// que existia aqui como alternativa saiu — exigia servidor e a pergunta
+  /// "qual usuário?" travava o operador com a gaveta aberta.
   Future<void> _showMovementApproval() async {
     final movement = pendingCashMovement;
     if (!mounted || movement == null || movementApprovalDialogOpen) return;
     movementApprovalDialogOpen = true;
-    final username = TextEditingController();
     final password = TextEditingController();
     final managerReason = TextEditingController();
     final formKey = GlobalKey<FormState>();
@@ -274,28 +295,19 @@ mixin _CashOpsSection on _HomePageShared {
                       if ('${movement['destination'] ?? ''}'.isNotEmpty)
                         Text('Destino: ${movement['destination']}'),
                       const Divider(height: 30),
-                      // O usuário é opcional de propósito: em branco, a senha
-                      // abaixo é a SENHA DE AÇÕES DO CAIXA do restaurante, que
-                      // este terminal confere sem internet. Era o único jeito
-                      // de autorizar uma sangria offline — e sem autorização a
-                      // sangria não entrava no saldo aqui nem no servidor.
-                      TextFormField(
-                        controller: username,
-                        autofocus: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Usuário autorizador (opcional)',
-                          helperText:
-                              'Gerente, administrador ou proprietário. Em '
-                              'branco, use a senha de ações do caixa.',
-                        ),
-                      ),
-                      const SizedBox(height: 14),
                       TextFormField(
                         controller: password,
+                        autofocus: true,
                         obscureText: true,
-                        decoration: const InputDecoration(labelText: 'Senha'),
+                        decoration: const InputDecoration(
+                          labelText: 'Senha de ações do caixa',
+                          helperText:
+                              'Definida no cadastro do restaurante. '
+                              'Conferida neste terminal, funciona sem internet.',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
                         validator: (value) => value == null || value.isEmpty
-                            ? 'Informe a senha.'
+                            ? 'Informe a senha de ações do caixa.'
                             : null,
                       ),
                       const SizedBox(height: 14),
@@ -329,73 +341,27 @@ mixin _CashOpsSection on _HomePageShared {
                     : () async {
                         if (!formKey.currentState!.validate()) return;
                         update(() => authorizing = true);
-                        String? temporaryAccess;
-                        String? temporaryRefresh;
                         try {
-                          if (username.text.trim().isEmpty) {
-                            await _approveWithCashPassword(
-                              password: password.text,
-                              reason: managerReason.text.trim(),
-                              movementId: '${movement['id']}',
-                            );
-                            pendingCashMovement = null;
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext);
-                            }
-                            await _load();
-                            return;
-                          }
-                          final login = await api.post(
-                            '/auth/login/',
-                            body: {
-                              'username': username.text.trim(),
-                              'password': password.text,
-                            },
-                          );
-                          temporaryAccess = '${login['access']}';
-                          temporaryRefresh = '${login['refresh']}';
-                          final user = login['user'] as Map<String, dynamic>?;
-                          final allowed =
-                              user?['is_superuser'] == true ||
-                              {
-                                'admin',
-                                'owner',
-                                'manager',
-                              }.contains('${user?['profile_type']}');
-                          if (!allowed) {
-                            throw const ApiException(
-                              'O usuário informado não possui permissão gerencial.',
-                              statusCode: 403,
-                            );
-                          }
-                          await api.post(
-                            '/cash-register/${cashSession!['id']}/approve/',
-                            body: {
-                              'movement': movement['id'],
-                              'reason': managerReason.text.trim(),
-                            },
-                            accessToken: temporaryAccess,
+                          await _approveWithCashPassword(
+                            password: password.text,
+                            reason: managerReason.text.trim(),
+                            movementId: '${movement['id']}',
                           );
                           pendingCashMovement = null;
                           if (dialogContext.mounted) {
                             Navigator.pop(dialogContext);
                           }
                           await _load();
+                          await _printApprovedMovement(
+                            movement,
+                            authorizedBy: 'Senha de ações do caixa',
+                            managerReason: managerReason.text.trim(),
+                          );
                         } catch (error) {
                           if (mounted) _error(error);
                           update(() => authorizing = false);
                         } finally {
                           password.clear();
-                          if (temporaryAccess != null &&
-                              temporaryRefresh != null) {
-                            try {
-                              await api.post(
-                                '/auth/logout/',
-                                body: {'refresh': temporaryRefresh},
-                                accessToken: temporaryAccess,
-                              );
-                            } catch (_) {}
-                          }
                         }
                       },
                 icon: authorizing
@@ -413,10 +379,25 @@ mixin _CashOpsSection on _HomePageShared {
       );
     } finally {
       movementApprovalDialogOpen = false;
-      username.dispose();
       password.dispose();
       managerReason.dispose();
     }
+  }
+
+  /// Comprovante da sangria/suprimento recém-autorizado.
+  Future<void> _printApprovedMovement(
+    Map<String, dynamic> movement, {
+    required String authorizedBy,
+    required String managerReason,
+  }) async {
+    final session = cashSession;
+    if (!mounted || session == null) return;
+    await _printCashMovement(
+      {...movement, 'status': 'approved'},
+      session,
+      authorizedBy: authorizedBy,
+      managerReason: managerReason,
+    );
   }
 
   Future<void> _closeCash() async {
@@ -500,7 +481,7 @@ mixin _CashOpsSection on _HomePageShared {
       ),
     );
     if (confirmed == true) {
-      await _work(() async {
+      final closed = await _work(() async {
         cashSession = await api.post(
           '/cash-register/${cashSession!['id']}/close/',
           body: {
@@ -511,7 +492,9 @@ mixin _CashOpsSection on _HomePageShared {
           accessToken: token,
         );
         setState(() {});
+        return cashSession;
       }, onError: (error) => _cashError(error, 'fechar o caixa'));
+      if (closed != null) await _printCashClosing(closed);
     }
   }
 

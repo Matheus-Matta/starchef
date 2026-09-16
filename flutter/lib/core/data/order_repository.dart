@@ -365,12 +365,19 @@ class OrderRepository extends EntityRepository {
           payload['created_at'] ?? DateTime.now().toUtc().toIso8601String(),
     };
 
+    // Cada item nasce com um id temporário que também viaja no corpo: é por
+    // ele que a confirmação da entrega troca o local pelo real que o servidor
+    // devolve em `weighed_item`/`extra_items` (ver `confirmDelivery`).
+    final weighedItemId = LocalId.temporary();
     payload = await _withNewItem(payload, {
       'product': '${weighedProduct['id']}',
       'weight_kg': weightKg.toStringAsFixed(3),
-    }, knownProduct: weighedProduct);
+    }, itemId: weighedItemId, knownProduct: weighedProduct);
+    final extrasWithIds = <Map<String, dynamic>>[];
     for (final extra in extras) {
-      payload = await _withNewItem(payload, extra);
+      final extraItemId = LocalId.temporary();
+      payload = await _withNewItem(payload, extra, itemId: extraItemId);
+      extrasWithIds.add({...extra, 'client_item_id': extraItemId});
     }
 
     final record = await saveLocal(
@@ -381,7 +388,8 @@ class OrderRepository extends EntityRepository {
       requestBody: {
         'command_code': '${command['code'] ?? command['number'] ?? ''}',
         'weight_kg': weightKg.toStringAsFixed(3),
-        'extras': extras,
+        'client_item_id': weighedItemId,
+        'extras': extrasWithIds,
         'client_order_id': orderId,
         // O terminal já imprimiu a nota; sem isto o backend criaria um
         // `PrintJob` novo e a nota sairia uma segunda vez ao sincronizar.
@@ -835,6 +843,28 @@ class OrderRepository extends EntityRepository {
       WHERE scope = ? AND entity_type = ? AND entity_id = ?
       ''',
       [scope, type, orderId],
+    );
+  }
+
+  /// Tira do pedido um item temporário cuja subida foi confirmada sem que o
+  /// servidor dissesse qual id ele ganhou.
+  ///
+  /// O item existe lá — a operação que o criou foi aceita. Mantê-lo aqui com
+  /// o id temporário é o que faz [applyRemote] preservá-lo como pendente e
+  /// somá-lo de novo ao lado da cópia do servidor.
+  Future<void> forgetPendingItem(String orderId, String itemId) async {
+    if (!LocalId.isTemporary(itemId)) return;
+    final stored = await read(orderId, includeDeleted: true);
+    if (stored == null) return;
+    final items = _itemsOf(stored.payload);
+    final remaining = items
+        .where((item) => '${item['id']}' != itemId)
+        .toList();
+    if (remaining.length == items.length) return;
+    await saveLocalEffect(
+      OrderPresenter.withItems(stored.payload, remaining),
+      id: orderId,
+      syncStatus: stored.syncStatus,
     );
   }
 

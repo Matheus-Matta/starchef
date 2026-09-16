@@ -28,6 +28,9 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
         help_text="Senha para autorizar ações do caixa. Enviada em texto; armazenada com hash.",
     )
     has_cash_action_password = serializers.SerializerMethodField()
+    # Teto de dez minutos: acima disso a "carencia" vira cozinha parada.
+    cancellation_grace_seconds = serializers.IntegerField(required=False, min_value=0, max_value=600)
+    max_commands_per_table = serializers.IntegerField(required=False, min_value=0, max_value=100)
     fiscal_provider = serializers.ChoiceField(
         choices=("manual", "focus_nfe"),
         required=False,

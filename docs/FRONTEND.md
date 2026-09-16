@@ -202,6 +202,7 @@ npm run preview               # serve o build localmente
 Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--variáveis-de-ambiente) (raiz do monorepo). As relevantes para o frontend:
 
 - `VITE_BACKEND_TARGET` — alvo do proxy do Vite em dev.
+- Relatórios: `views/ReportsView.vue` monta a barra de filtros por seção e delega os painéis maiores a `components/reports/`: `OrdersCancellationsPanel.vue` (seção Pedidos: KPIs de cancelamento, por hora, por autorização, listas de pedidos cancelados e itens retirados; filtros de autorização e tipo) e `CashMovementsReport.vue` (seção Caixa, rota `relatorios/caixa`: gaveta por dia, resumo, por caixa/operador, sessões e movimentos). O CSV de cada seção sai do endpoint da própria seção (`reportService.endpoints`). `CashRegisterView.vue` autoriza sangria e divergência só com a senha de ações do caixa (`cash_password` no `/approve/`), como o PDV, e mostra operador, terminal, autorização e saldo após cada movimento. O form de Restaurantes (`config/resources.js`) tem "Comandas por mesa" e "Carência de cancelamento" na seção Operação.
 - `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 

@@ -83,6 +83,10 @@ def test_create_with_item_never_leaves_an_empty_order(api_client, manager_user, 
     assert created.status_code == 201, created.data
     assert Order.all_objects.count() == 1
     assert OrderItem.all_objects.filter(order_id=created.data["id"]).count() == 1
+    # O PDV lancou o item com um id temporario e precisa saber qual item da
+    # resposta e o dele, para trocar o id local pelo real e nao duplicar.
+    assert created.data["created_item_id"] == created.data["items"][0]["id"]
+    assert created.data["client_item_id"] is None
 
 
 def test_create_with_item_on_open_command_appends_instead_of_conflicting(
@@ -110,16 +114,20 @@ def test_create_with_item_on_open_command_appends_instead_of_conflicting(
     payload = {
         "order_type": "command",
         "command": str(command.id),
-        "item": {"product": str(product.id), "quantity": 1},
+        "item": {"product": str(product.id), "quantity": 1, "client_item_id": "offline-item-1"},
     }
     created = api_client.post("/api/v1/orders/create-with-item/", payload, format="json")
     assert created.status_code == 201, created.data
 
+    payload["item"]["client_item_id"] = "offline-item-2"
     again = api_client.post("/api/v1/orders/create-with-item/", payload, format="json")
 
     assert again.status_code == 200, again.data
     # O mesmo pedido, agora com os dois itens: nenhum pedido novo foi aberto.
     assert again.data["id"] == created.data["id"]
+    # O item entrou na linha que ja existia: e ela que o cliente deve adotar.
+    assert again.data["created_item_id"] == created.data["created_item_id"]
+    assert again.data["client_item_id"] == "offline-item-2"
     assert Order.all_objects.filter(command=command).count() == 1
     itens = OrderItem.all_objects.filter(order_id=created.data["id"])
     # Item identico soma na linha que ja existe, como em qualquer lancamento

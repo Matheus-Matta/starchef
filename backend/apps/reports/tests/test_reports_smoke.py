@@ -15,6 +15,8 @@ pytestmark = pytest.mark.django_db
         "/api/v1/reports/payments/",
         "/api/v1/reports/waiters/",
         "/api/v1/reports/restaurants/",
+        "/api/v1/reports/cash-movements/",
+        "/api/v1/cash-movements/",
     ],
 )
 def test_report_endpoint_ok(api_client, path):

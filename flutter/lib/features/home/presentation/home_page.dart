@@ -69,6 +69,7 @@ import 'table_details_panel.dart';
 
 part 'home_page_cash.dart';
 part 'home_page_cash_ops.dart';
+part 'home_page_cash_print.dart';
 part 'home_page_commands.dart';
 part 'home_page_commands_view.dart';
 part 'home_page_customer.dart';
@@ -116,6 +117,7 @@ class _HomePageState extends State<HomePage>
         _HomePageShared,
         _CashSection,
         _CashOpsSection,
+        _CashPrintSection,
         _CommandSection,
         _CommandView,
         _FiscalSection,

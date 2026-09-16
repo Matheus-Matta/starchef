@@ -414,7 +414,15 @@ def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_prin
             raise ValidationError("Não há itens pendentes para enviar à cozinha.")
 
         now = timezone.now()
-        dispatch_at = now
+        # Carência do restaurante: a rodada nasce agendada e só chega ao KDS e
+        # à impressora quando `dispatch_at` vencer (task `orders.dispatch_due_
+        # kitchen_batches` ou o fallback de leitura do KDS). Até lá, cancelar
+        # é de graça — nada chegou à produção. Comanda já impressa no terminal
+        # (`offline_printed`) não espera: o papel já saiu.
+        grace_seconds = int(getattr(order.restaurant, "cancellation_grace_seconds", 0) or 0)
+        if offline_printed:
+            grace_seconds = 0
+        dispatch_at = now + timedelta(seconds=grace_seconds) if grace_seconds > 0 else now
 
         batch_serial = None
         if client_batch_serial:
@@ -458,7 +466,8 @@ def send_order_to_kitchen(order, user, *, client_batch_serial=None, offline_prin
                 "batch": batch.batch_number,
                 "batch_serial": str(batch.serial),
                 "dispatch_at": dispatch_at.isoformat(),
-                "immediate": True,
+                "immediate": grace_seconds == 0,
+                "grace_seconds": grace_seconds,
             },
         )
 
@@ -492,6 +501,10 @@ def create_order_with_item(
             table = Table.objects.select_for_update().get(pk=table.pk)
             if table.restaurant_id != restaurant.id or table.status == Table.STATUS_CLEANING:
                 raise ValidationError("A mesa selecionada não está disponível neste restaurante.")
+            if command.current_table_id != table.id:
+                from apps.restaurants.services import assert_table_accepts_commands
+
+                assert_table_accepts_commands(table, restaurant=restaurant, exclude_command_ids=[command.pk])
             old_table_id = command.current_table_id
             command.current_table = table
             command.branch = table.branch
@@ -710,8 +723,10 @@ def void_order_item(item, user, reason="", offline_printed=False):
         was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
         item.status = OrderItem.STATUS_CANCELLED
         item.void_reason = reason
+        item.voided_at = timezone.now()
+        item.voided_by = user
         item.updated_by = user
-        item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
+        item.save(update_fields=["status", "void_reason", "voided_at", "voided_by", "updated_by", "updated_at"])
         recalculate_order(item.order)
         if within_grace and item.batch_id:
             from apps.printers.services import refresh_scheduled_kitchen_batch_jobs
@@ -754,8 +769,10 @@ def comp_order_item(item, user, reason=""):
 
         item.status = OrderItem.STATUS_COMPED
         item.void_reason = reason
+        item.voided_at = timezone.now()
+        item.voided_by = user
         item.updated_by = user
-        item.save(update_fields=["status", "void_reason", "updated_by", "updated_at"])
+        item.save(update_fields=["status", "void_reason", "voided_at", "voided_by", "updated_by", "updated_at"])
         recalculate_order(item.order)
         record_audit(
             action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"}
@@ -986,7 +1003,32 @@ def order_is_empty(order):
         return not has_items and not has_payments
 
 
-def cancel_order(order, user, reason, authorized_by=None):
+# Itens que ainda não chegaram à produção: nunca enviados ou enviados dentro
+# da carência (rodada agendada, KDS e impressora ainda não viram).
+_ITEM_STATUSES_NOT_IN_PRODUCTION = {
+    OrderItem.STATUS_PENDING,
+    OrderItem.STATUS_QUEUED,
+    OrderItem.STATUS_CANCELLED,
+    OrderItem.STATUS_COMPED,
+}
+
+
+def order_within_cancellation_grace(order):
+    """Cancelar este pedido agora dispensa autorização?
+
+    Verdadeiro quando o restaurante tem carência configurada e nenhum item
+    chegou à produção. Antes de decidir, libera as rodadas vencidas: um
+    lote agendado há mais tempo que a carência já é da cozinha.
+    """
+    grace = int(getattr(order.restaurant, "cancellation_grace_seconds", 0) or 0)
+    if grace <= 0:
+        return False
+    if order.batches.filter(status=OrderBatch.STATUS_SCHEDULED, dispatch_at__lte=timezone.now()).exists():
+        dispatch_due_kitchen_batches(restaurant_id=order.restaurant_id)
+    return not order.items.exclude(status__in=_ITEM_STATUSES_NOT_IN_PRODUCTION).exists()
+
+
+def cancel_order(order, user, reason, authorized_by=None, authorization=None):
     # Pedido vazio dispensa motivo: nao e um cancelamento comercial, e o
     # descarte de uma comanda que foi aberta e nao virou venda. Exigir uma
     # justificativa ali so ensina o operador a escrever qualquer coisa.
@@ -998,12 +1040,30 @@ def cancel_order(order, user, reason, authorized_by=None):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status == Order.STATUS_PAID:
             raise ValidationError("Pedidos pagos devem ser estornados, não cancelados.")
+        now = timezone.now()
+        if not authorization:
+            authorization = Order.AUTHORIZATION_DELEGATED if authorized_by is not None else Order.AUTHORIZATION_OWN
         order.status = Order.STATUS_CANCELLED
         order.cancel_reason = reason
+        order.cancelled_at = now
+        order.cancelled_by = user
+        order.cancel_authorized_by = authorized_by
+        order.cancel_authorization = authorization
         order.updated_by = user
-        order.save(update_fields=["status", "cancel_reason", "updated_by", "updated_at"])
+        order.save(
+            update_fields=[
+                "status",
+                "cancel_reason",
+                "cancelled_at",
+                "cancelled_by",
+                "cancel_authorized_by",
+                "cancel_authorization",
+                "updated_by",
+                "updated_at",
+            ]
+        )
         order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).update(
-            status=OrderItem.STATUS_CANCELLED, void_reason=reason
+            status=OrderItem.STATUS_CANCELLED, void_reason=reason, voided_at=now, voided_by=user
         )
         if order.table_id:
             free_table_if_empty(order.table)
@@ -1024,7 +1084,7 @@ def cancel_order(order, user, reason, authorized_by=None):
                 "requested_by_username": getattr(user, "username", "") or "",
                 "authorized_by": str(getattr(authorized_by, "id", "") or ""),
                 "authorized_by_username": getattr(authorized_by, "username", "") or "",
-                "authorization": "delegated" if authorized_by is not None else "own",
+                "authorization": authorization,
             },
         )
         return order

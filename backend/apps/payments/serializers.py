@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
@@ -140,14 +140,63 @@ class PaymentSerializer(TenantModelSerializer):
 
 
 class CashMovementSerializer(TenantModelSerializer):
+    """Movimento da gaveta com quem, onde e por que — o que o relatorio de
+    caixa e a tabela do painel mostram sem precisar abrir a auditoria."""
+
+    operator_name = serializers.SerializerMethodField()
+    authorized_by_name = serializers.SerializerMethodField()
+    terminal_label = serializers.SerializerMethodField()
+    cash_station_name = serializers.CharField(
+        source="cash_register.cash_station.name", read_only=True, default=None
+    )
+    order_sequence = serializers.IntegerField(source="payment.order.sequence", read_only=True, default=None)
+    payment_method_name = serializers.CharField(
+        source="payment.payment_method.name", read_only=True, default=None
+    )
+    authorization = serializers.SerializerMethodField()
+    manager_reason = serializers.SerializerMethodField()
+
     class Meta:
         model = CashMovement
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
+    def get_operator_name(self, obj):
+        from apps.payments.terminals import operator_label
+
+        return operator_label(obj.operator) if obj.operator_id else ""
+
+    def get_authorized_by_name(self, obj):
+        from apps.payments.terminals import operator_label
+
+        return operator_label(obj.authorized_by) if obj.authorized_by_id else ""
+
+    def get_terminal_label(self, obj):
+        # O terminal de quem lancou viaja no metadata (o mesmo header
+        # X-Terminal-Id das outras operacoes); movimentos antigos caem no
+        # terminal que abriu a sessao.
+        label = str((obj.metadata or {}).get("terminal_name") or "").strip()
+        if label:
+            return label
+        return obj.cash_register.opened_terminal_label or ""
+
+    def get_authorization(self, obj):
+        meta = obj.metadata or {}
+        if obj.status != "approved":
+            return "pending"
+        if meta.get("authorized_by_cash_password"):
+            return "cash_password"
+        if obj.authorized_by_id:
+            return "manager"
+        return "automatic"
+
+    def get_manager_reason(self, obj):
+        return str((obj.metadata or {}).get("manager_reason") or "")
+
 
 class CashRegisterSerializer(TenantModelSerializer):
-    movements = CashMovementSerializer(many=True, read_only=True)
+    movements = serializers.SerializerMethodField()
+    sales = serializers.SerializerMethodField()
     current_balance = serializers.SerializerMethodField()
     opened_by_name = serializers.SerializerMethodField()
     terminal_label = serializers.SerializerMethodField()
@@ -192,6 +241,57 @@ class CashRegisterSerializer(TenantModelSerializer):
 
     def get_opened_terminal_installation_id(self, obj):
         return obj.opened_terminal.installation_id if obj.opened_terminal_id else ""
+
+    def get_movements(self, obj):
+        """Movimentos em ordem cronologica, cada um com o saldo da gaveta
+        DEPOIS dele (`balance_after`) — e o que o operador confere na tabela e
+        no relatorio, em vez de somar de cabeca."""
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("movements")
+        movements = list(prefetched) if prefetched is not None else list(obj.movements.all())
+        movements.sort(key=lambda movement: (movement.created_at, str(movement.pk)))
+        running = 0
+        rows = []
+        for movement in movements:
+            if movement.status == "approved":
+                running += movement.amount
+            row = CashMovementSerializer(movement, context=self.context).data
+            row["balance_after"] = str(running)
+            rows.append(row)
+        return rows
+
+    def get_sales(self, obj):
+        """Todo recebimento da sessao, em qualquer forma de pagamento.
+
+        `movements` so conhece o dinheiro (e o troco que saiu da gaveta). O
+        relatorio de fechamento impresso pelo PDV precisa das vendas por
+        forma — dinheiro, credito, debito, PIX, voucher — para o operador
+        conferir os comprovantes da maquininha, nao so a gaveta. O vinculo e
+        o `metadata.cash_register` gravado no recebimento; pagamentos antigos
+        em dinheiro entram pelo `CashMovement` que os aponta.
+        """
+        session_id = str(obj.pk)
+        payments = (
+            Payment.objects.filter(status=Payment.STATUS_APPROVED)
+            .filter(Q(metadata__cash_register=session_id) | Q(cash_movements__cash_register_id=obj.pk))
+            .select_related("payment_method", "order")
+            .distinct()
+            .order_by("paid_at")
+        )
+        return [
+            {
+                "id": str(payment.pk),
+                "order": str(payment.order_id),
+                "order_sequence": payment.order.sequence,
+                "payment_method": str(payment.payment_method_id),
+                "payment_method_name": payment.payment_method.name,
+                "method_type": payment.payment_method.method_type,
+                "card_subtype": payment.card_subtype,
+                "amount": str(payment.amount),
+                "change_amount": str(payment.change_amount),
+                "paid_at": payment.paid_at,
+            }
+            for payment in payments
+        ]
 
     def get_current_balance(self, obj):
         prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("movements")

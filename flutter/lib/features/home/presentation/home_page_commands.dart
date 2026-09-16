@@ -25,6 +25,7 @@ mixin _CommandSection on _HomePageShared {
   Map<String, dynamic>? get selectedCustomer;
   set selectedCustomer(Map<String, dynamic>? value);
   Map<String, dynamic>? get cashSession;
+  Map<String, dynamic>? get selectedRestaurant;
   String? get orderType;
   set orderType(String? value);
   List<Map<String, dynamic>> get orderItems;
@@ -54,6 +55,10 @@ mixin _CommandSection on _HomePageShared {
 
   // Kept temporarily for compatibility with queued mutations from older PDV
   // builds; no current PDV surface calls these waiter-only actions.
+  /// Comandas por mesa, do cadastro do restaurante (0 = sem limite).
+  int get _commandsPerTableLimit =>
+      _number(selectedRestaurant?['max_commands_per_table'] ?? 4).round();
+
   Future<void> _linkCommandDialog() async {
     final searchController = TextEditingController();
     final action = await showDialog<String>(
@@ -108,31 +113,23 @@ mixin _CommandSection on _HomePageShared {
       }
 
       if (selectedTable != null) {
-        final capacity = selectedTable!['capacity'] ?? 0;
-        final activeCommandsCount =
-            (selectedTable!['active_commands'] as List? ?? []).length;
-        if (capacity > 0 && activeCommandsCount >= capacity) {
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AppDialog(
-              title: const Text('Lotação Atingida'),
-              content: const Text(
-                'A mesa já atingiu a sua capacidade máxima. Deseja vincular a comanda mesmo assim?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('Vincular'),
-                ),
-              ],
-            ),
+        // O teto é do restaurante (`max_commands_per_table`), não a
+        // capacidade da mesa em lugares. O servidor barra de qualquer jeito
+        // (409); aqui só evita a viagem e explica antes. Sem "vincular mesmo
+        // assim": quem quer mais comandas edita o restaurante.
+        final limit = _commandsPerTableLimit;
+        final seated = (selectedTable!['active_commands'] as List? ?? const [])
+            .where((item) => item is Map && '${item['id']}' != '${command['id']}')
+            .length;
+        if (limit > 0 && seated >= limit) {
+          showAppToast(
+            context,
+            'Mesa ${selectedTable!['number']} já tem $seated comanda(s); o '
+            'limite do restaurante é $limit por mesa. Use outra mesa ou '
+            'ajuste em Restaurantes > Operação.',
+            severity: AppErrorSeverity.warning,
           );
-          if (!mounted) return;
-          if (confirm != true) return;
+          return;
         }
 
         try {
@@ -364,7 +361,7 @@ mixin _CommandSection on _HomePageShared {
                     final table = available[index];
                     final occupied =
                         (table['active_commands'] as List? ?? const []).length;
-                    final capacity = _number(table['capacity']).round();
+                    final capacity = _commandsPerTableLimit;
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.table_restaurant_outlined),

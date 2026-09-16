@@ -91,10 +91,10 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
       // ser encerrado pelo sistema operacional a qualquer momento.
       //
       // Sem sessão não há turno em andamento, caixa aberto nem venda na tela:
-      // não há o que proteger. Com sessão, a autorização continua sendo a do
-      // restaurante (senha cadastrada ou credencial de administrador), que é
-      // configurável por loja e existe justamente para o caso que importa —
-      // alguém fechando o PDV no meio do expediente.
+      // não há o que proteger. Com sessão, a autorização é a senha de ações
+      // do caixa do restaurante — configurável por loja, conferida neste
+      // terminal (funciona sem internet) — e existe justamente para o caso
+      // que importa: alguém fechando o PDV no meio do expediente.
       if (!_auth.isAuthenticated) {
         await windowManager.setPreventClose(false);
         await windowManager.destroy();
@@ -104,14 +104,9 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
         context: dialogContext,
         title: 'Autorização para fechar o PDV',
         description:
-            'Use a senha cadastrada do restaurante ou as credenciais de um administrador da conta.',
+            'Informe a senha de ações do caixa. Ela é conferida neste terminal e funciona sem internet.',
         confirmLabel: 'Fechar aplicação',
         verifyPassword: _auth.verifySupervisorClosePassword,
-        verifyAdminCredentials: _auth.verifyAdministratorCloseCredentials,
-        passwordLabel: 'Senha do restaurante',
-        invalidPasswordMessage:
-            'Senha do restaurante incorreta. Se ela foi alterada, '
-            'recarregue os dados do PDV.',
         onInvalidPassword: () async {
           await windowManager.setFullScreen(true);
           if (mounted) setState(() => _isFullScreen = true);

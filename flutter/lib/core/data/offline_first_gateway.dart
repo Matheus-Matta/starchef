@@ -7,6 +7,7 @@ import '../network/offline_mutations.dart';
 import '../network/relay_origin.dart';
 import 'cash_register_repository.dart';
 import 'entity_catalog.dart';
+import 'entity_record.dart';
 import 'entity_repository.dart';
 import 'fiscal_queue_service.dart';
 import 'fiscal_snapshot.dart';
@@ -658,6 +659,14 @@ class OfflineFirstGateway {
     final sessionId = '${body['cash_register'] ?? ''}';
     if (sessionId.isEmpty) return;
     final paymentId = '${payment['id'] ?? ''}';
+    // Toda forma entra na lista de vendas da sessão (relatório de
+    // fechamento); só o dinheiro entra na gaveta, abaixo.
+    await cashRegister.registerLocalPayment(
+      sessionId,
+      payment: payment,
+      method: method,
+      orderSequence: '${result['sequence'] ?? ''}',
+    );
 
     if ('${method?['method_type'] ?? ''}' == 'cash') {
       // Só o valor APLICADO entra na gaveta: o troco volta para o cliente, e
@@ -751,13 +760,23 @@ class OfflineFirstGateway {
         '${stored.payload['status'] ?? ''}' == 'free' &&
         '${stored.payload['current_order_id'] ?? ''}'.isEmpty;
     if (alreadyFree) return;
+    // Gravado como SINCRONIZADO, não como alteração pendente. Isto é um
+    // espelho do que o servidor vai fazer quando o `pay` chegar lá, não uma
+    // mudança que este terminal precisa entregar — e nada entregaria: um
+    // registro pendente vence toda leitura do servidor (ver
+    // `ConflictResolver`) e nenhuma entrega o confirma, então a comanda
+    // ficava "livre" aqui para sempre. Reaberta pelo garçom ou por outro
+    // caixa, o operador a via livre, abria, e o primeiro item caía no pedido
+    // deles: os itens "dos outros" entravam sozinhos na comanda. Se a
+    // sincronização trouxer a comanda ainda presa à venda paga (o `pay` na
+    // fila), `releaseSettledCommands` a solta de novo logo depois da carga.
     await repo.saveLocalEffect({
       ...stored.payload,
       'status': 'free',
       'current_order_id': null,
       'customer_name': '',
       'current_table': null,
-    }, id: commandId);
+    }, id: commandId, syncStatus: SyncStatus.synced);
   }
 
   /// Apaga um pedido que só existe aqui: a fila dele e o registro local.
@@ -1180,8 +1199,21 @@ class OfflineFirstGateway {
         remoteId: realId,
       );
       await repo.replaceId(entry.entityId, realId);
+      await _reconcileCreatedItems(repo, realId, entry.payload, response);
       await repo.markSynced(
         realId,
+        serverPayload: entityPayload,
+        ignoreQueuedOperationId: entry.operationId,
+      );
+      return;
+    }
+
+    // A resposta é o PRÓPRIO pedido (pesagem na balança): os itens que a
+    // operação criou voltam dentro dele, já com id real.
+    if (realId == entry.entityId) {
+      await _reconcileCreatedItems(repo, realId, entry.payload, response);
+      await repo.markSynced(
+        entry.entityId,
         serverPayload: entityPayload,
         ignoreQueuedOperationId: entry.operationId,
       );
@@ -1215,6 +1247,100 @@ class OfflineFirstGateway {
       serverPayload: entityPayload,
       ignoreQueuedOperationId: entry.operationId,
     );
+  }
+
+  /// Pares (id temporário -> id real) dos itens que ESTA operação criou,
+  /// quando a resposta é o pedido inteiro e não o item.
+  ///
+  /// Onde o temporário viaja e onde o real volta:
+  ///
+  /// - `/orders/create-with-item/`: `item.client_item_id`; o servidor diz qual
+  ///   item é em `created_item_id` — ele pode ter entrado numa linha que já
+  ///   existia (pendentes iguais se agrupam) ou num pedido que outro terminal
+  ///   abriu antes. Servidor antigo, sem a dica: um pedido recém-criado tem um
+  ///   item só, e é ele.
+  /// - `/scales/<id>/checkout-command/`: `client_item_id` no topo (o pesado)
+  ///   e um por entrada de `extras`; a resposta traz `weighed_item` e
+  ///   `extra_items`, na mesma ordem.
+  ///
+  /// Um temporário sem par fica com `''`: sai da cópia local, porque a
+  /// operação foi aceita e mantê-lo é o que duplica.
+  static Map<String, String> _createdItemPairs(
+    Map<String, dynamic>? payload,
+    Map<String, dynamic> response,
+    Map<String, dynamic> order,
+  ) {
+    final pairs = <String, String>{};
+    if (payload == null) return pairs;
+    void pair(Object? local, Object? real) {
+      final localId = '${local ?? ''}';
+      if (!LocalId.isTemporary(localId)) return;
+      final realId = '${real ?? ''}';
+      pairs[localId] = LocalId.isTemporary(realId) ? '' : realId;
+    }
+
+    final weighed = response['weighed_item'];
+    pair(payload['client_item_id'], weighed is Map ? weighed['id'] : null);
+
+    final item = payload['item'];
+    if (item is Map) {
+      final items = (order['items'] as List? ?? const []).whereType<Map>();
+      // `_created_item` é como o Caixa Principal responde pela rede local
+      // (ver `OrderRepository.addItem`).
+      final relayed = response['_created_item'];
+      pair(
+        item['client_item_id'],
+        order['created_item_id'] ??
+            (relayed is Map ? relayed['id'] : null) ??
+            (items.length == 1 ? items.single['id'] : null),
+      );
+    }
+
+    final extras = payload['extras'];
+    final extraItems = response['extra_items'];
+    if (extras is List) {
+      for (var index = 0; index < extras.length; index += 1) {
+        final extra = extras[index];
+        if (extra is! Map) continue;
+        final created = extraItems is List && index < extraItems.length
+            ? extraItems[index]
+            : null;
+        pair(extra['client_item_id'], created is Map ? created['id'] : null);
+      }
+    }
+    return pairs;
+  }
+
+  /// Troca, na cópia local do pedido, os ids temporários dos itens que a
+  /// operação criou pelos reais que o servidor devolveu.
+  ///
+  /// Sem isto o local seguia conhecendo o item pelo temporário, e
+  /// `applyRemote` preserva todo item temporário como "ainda pendente": a
+  /// cópia ficava com os dois, e a coxinha aparecia duas vezes na comanda —
+  /// e continuava lá a cada leitura seguinte.
+  Future<void> _reconcileCreatedItems(
+    EntityRepository repo,
+    String orderId,
+    Map<String, dynamic>? payload,
+    Map<String, dynamic> response,
+  ) async {
+    if (repo.type != EntityCatalog.order) return;
+    final order = _entityPayloadOf(EntityCatalog.order, response);
+    final pairs = _createdItemPairs(payload, response, order);
+    if (pairs.isEmpty) return;
+    final scope = _requireScope();
+    for (final entry in pairs.entries) {
+      if (entry.value.isEmpty) {
+        await orders.forgetPendingItem(orderId, entry.key);
+        continue;
+      }
+      await queue.registerResolvedId(
+        scope: scope,
+        localId: entry.key,
+        remoteId: entry.value,
+      );
+      await repo.replaceReference(orderId, entry.key, entry.value);
+    }
   }
 
   /// Desembrulha o recurso quando a resposta é um envelope.

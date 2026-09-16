@@ -989,6 +989,38 @@ void main() {
       expect(comanda['customer_name'], '');
     });
 
+    test('a comanda liberada aqui volta a aceitar o que o servidor diz', () async {
+      // O caso real: paga e liberada neste caixa, a comanda foi reaberta pelo
+      // garçom (ou outro terminal) com um pedido NOVO. A liberação local era
+      // gravada como alteração pendente — e alteração pendente vence toda
+      // leitura do servidor, para sempre, porque nenhuma entrega a confirma.
+      // A comanda seguia "livre" na tela; ao abri-la, o primeiro item caía no
+      // pedido do garçom e o operador via os itens dele entrarem "sozinhos".
+      final orderId = await comandaOcupadaComPedido();
+      final pedido = await stack.gateway.read('/orders/$orderId/');
+      await stack.gateway.write(
+        'POST',
+        '/orders/$orderId/pay/',
+        body: {'payment_method': 'metodo-1', 'amount': '${pedido['total']}'},
+        context: {
+          'payment_method': {'id': 'metodo-1', 'method_type': 'cash'},
+        },
+      );
+      expect((await lerComanda())['status'], 'free');
+
+      await stack.gateway.repository(EntityCatalog.command).applyRemote({
+        'id': 'comanda-9',
+        'number': 9,
+        'restaurant': 'rest-1',
+        'status': 'occupied',
+        'current_order_id': 'pedido-do-garcom',
+      });
+
+      final comanda = await lerComanda();
+      expect(comanda['status'], 'occupied');
+      expect(comanda['current_order_id'], 'pedido-do-garcom');
+    });
+
     test('pagamento parcial NÃO libera a comanda', () async {
       final orderId = await comandaOcupadaComPedido();
 

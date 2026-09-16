@@ -48,10 +48,17 @@ def _can_authorize_order_cancellation(request, order):
     expirar. Quem autoriza tambem nao vira administrador da sessao — a
     permissao dele vale para este request e acaba com ele.
 
-    Devolve `(autorizado, quem_autorizou)`. O segundo valor alimenta a
-    auditoria: sem ele, o registro dizia apenas que o operador cancelou, e a
-    pergunta "quem liberou?" ficava sem resposta.
+    Devolve `(autorizado, quem_autorizou, como)`. Os dois ultimos alimentam
+    o pedido e a auditoria: sem eles, o registro dizia apenas que o operador
+    cancelou, e a pergunta "quem liberou?" ficava sem resposta.
     """
+
+    # Dentro da carência do restaurante nada chegou à produção: não há
+    # consumo a proteger, e a senha só atrasaria quem digitou errado.
+    from apps.orders.services import order_within_cancellation_grace
+
+    if order_within_cancellation_grace(order):
+        return True, None, Order.AUTHORIZATION_GRACE
 
     cash_password = str(request.data.get("cash_password") or "")
     if cash_password:
@@ -59,12 +66,12 @@ def _can_authorize_order_cancellation(request, order):
         approved = check_password(cash_password, stored) if stored else cash_password == "12345678"
         # A senha e do restaurante, nao de uma pessoa: quem autorizou e a
         # propria operacao da loja.
-        return approved, None
+        return approved, None, Order.AUTHORIZATION_CASH_PASSWORD
 
     login = str(request.data.get("authorization_username") or "").strip()
     password = str(request.data.get("authorization_password") or "")
     if not login or not password:
-        return False, None
+        return False, None, ""
 
     username = login
     if "@" in login:
@@ -80,13 +87,13 @@ def _can_authorize_order_cancellation(request, order):
             username = matched.get_username()
     authorizer = authenticate(request=request, username=username, password=password)
     if authorizer is None:
-        return False, None
+        return False, None, ""
     profile = getattr(authorizer, "profile", None)
     if not profile or not profile.is_active or profile.account_id != order.account_id:
-        return False, None
+        return False, None, ""
     codes = effective_permission_codes(authorizer)
     approved = is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
-    return approved, (authorizer if approved else None)
+    return approved, (authorizer if approved else None), Order.AUTHORIZATION_DELEGATED
 
 
 class OrderFilterSet(django_filters.FilterSet):
@@ -319,13 +326,16 @@ class OrderViewSet(BaseTenantViewSet):
             ).first()
         if existing_order is not None:
             try:
-                add_order_item(order=existing_order, product=product, user=request.user, **item_data)
+                item = add_order_item(order=existing_order, product=product, user=request.user, **item_data)
             except ValidationError as exc:
                 return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
             existing_order = Order.objects.prefetch_related(
                 "items__product", "items__addons", "items__batch"
             ).get(pk=existing_order.pk)
-            return Response(self.get_serializer(existing_order).data, status=status.HTTP_200_OK)
+            return Response(
+                self._with_created_item(self.get_serializer(existing_order).data, item, raw_item),
+                status=status.HTTP_200_OK,
+            )
 
         try:
             order = create_order_with_item(
@@ -340,7 +350,24 @@ class OrderViewSet(BaseTenantViewSet):
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
+        return Response(
+            self._with_created_item(self.get_serializer(order).data, order.items.first(), raw_item),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @staticmethod
+    def _with_created_item(data, item, raw_item):
+        """Diz ao cliente QUAL item desta resposta e o que ele acabou de lancar.
+
+        A resposta e o pedido inteiro, e o item pode ter entrado numa linha que
+        ja existia (itens pendentes iguais se agrupam) ou num pedido que outro
+        terminal abriu antes. O PDV lancou o item offline com um id temporario
+        (`client_item_id`) e precisa troca-lo pelo real: sem saber qual e, a
+        copia local ficava com os dois e o item aparecia duas vezes na comanda.
+        """
+        data["created_item_id"] = str(item.pk) if item is not None else None
+        data["client_item_id"] = raw_item.get("client_item_id")
+        return data
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -610,7 +637,7 @@ class OrderViewSet(BaseTenantViewSet):
         # do supervisor existe para impedir que alguem apague consumo ja
         # lancado. Exigi-la aqui deixava a comanda ocupada por um pedido que
         # nunca virou nada — e travava o proximo cliente que fosse usa-la.
-        authorized, authorizer = _can_authorize_order_cancellation(request, order)
+        authorized, authorizer, authorization = _can_authorize_order_cancellation(request, order)
         if not order_is_empty(order) and not authorized:
             return Response(
                 {
@@ -627,6 +654,8 @@ class OrderViewSet(BaseTenantViewSet):
                 request.user,
                 request.data.get("reason", ""),
                 authorized_by=authorizer,
+                # Pedido vazio descartado nao passou por autorizacao nenhuma.
+                authorization=authorization or Order.AUTHORIZATION_OWN,
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
