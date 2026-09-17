@@ -1,7 +1,36 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Chave de assinatura do release. Fica FORA do versionamento (android/key.properties
+// e o .jks estão no .gitignore): quem tem o arquivo consegue publicar uma
+// atualização se passando pelo app. Sem ele — em um clone limpo ou na CI sem os
+// Secrets — o build cai na chave de debug e continua compilando.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    // Lido como UTF-8 explicitamente: gravado com BOM (o padrão do PowerShell),
+    // o arquivo carrega mas a primeira chave vem com o BOM grudado no nome e
+    // some. Foi assim que um release saiu assinado com a chave de debug sem
+    // ninguém perceber.
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.reader(Charsets.UTF_8).use { load(it) }
+        remove("﻿storeFile")?.let { setProperty("storeFile", it as String) }
+    }
+}
+val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
+
+// Existir e não servir é pior do que não existir: sem isto o build cai na
+// chave de debug calado, e o APK só é recusado na hora de atualizar o app já
+// instalado no aparelho do garçom.
+if (keystorePropertiesFile.exists() && !hasReleaseKeystore) {
+    throw GradleException(
+        "android/key.properties existe mas não define storeFile. " +
+            "Verifique o arquivo (deve ser texto puro, sem BOM) antes de gerar o release."
+    )
 }
 
 android {
@@ -15,7 +44,14 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Identidade do app no aparelho. NÃO mude depois da primeira instalação:
+        // o Android trata outro applicationId como outro app, e o aparelho
+        // acabaria com dois ícones e a sessão do antigo.
+        //
+        // É DIFERENTE do app do garçom (`br.com.starchef.garcom`), de
+        // propósito: este é outra linhagem, que só opera conectada. Instalar
+        // por cima do app offline que está na mão do garçom seria trocar um
+        // aplicativo que funciona sem rede por um que não funciona.
         applicationId = "br.com.starchef.starchef_pdv_mobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -25,11 +61,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
