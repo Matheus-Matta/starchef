@@ -242,6 +242,34 @@ depois. Cole no `.env.local` e suba a loja.
 
 ---
 
+## Apontar o PDV para a loja
+
+A URL é **`http://`**, sem `s`:
+
+```
+http://<ip-da-loja>:8000/api/v1
+```
+
+O backend da loja serve HTTP puro — quem termina TLS é um proxy reverso
+externo, que este compose deliberadamente não inclui (mesma decisão do compose
+da nuvem). Com `https://` o PDV falha no handshake:
+
+```
+Falha de TLS ao conectar em https://...: Handshake error in client
+```
+
+Não é rede, nem certificado: é que não há nada escutando TLS daquele lado.
+
+Dois detalhes que costumam morder em seguida:
+
+- **`localhost` só vale no mesmo computador.** De outro terminal da rede, use o
+  IP do servidor — e esse IP precisa estar em `DJANGO_ALLOWED_HOSTS` no
+  `.env.local`, senão o backend responde `400 DisallowedHost`.
+- **O WebSocket é derivado da URL**: `http://host:8000/api/v1` vira
+  `ws://host:8000` sozinho. Acertar o esquema aqui acerta o tempo real também.
+
+---
+
 ## Passo 4 — Conferir que funcionou
 
 Na **loja**:

@@ -9,6 +9,7 @@ import logging
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.conf import settings
 
 from apps.synchronization.constants import CloseCode, MessageType
 from apps.synchronization.consumer_handlers import HandlerMixin
@@ -31,6 +32,14 @@ class SyncConsumer(HandlerMixin, AsyncWebsocketConsumer):
             logger.warning("sync: conexão recusada — %s", erro)
             await self.close(code=CloseCode.WRONG_ENVIRONMENT)
             return
+        # A chave é do AMBIENTE, não do nó — então já está disponível aqui, e
+        # precisa estar: o `receive` decifra a mensagem ANTES de saber quem a
+        # enviou, e o HELLO já chega cifrado. Defini-la só no `handle_hello`
+        # criava um ovo-e-galinha — a nuvem recusava o próprio HELLO com
+        # "mensagem cifrada recebida sem chave configurada", e a loja nunca
+        # passava do handshake.
+        self.key = getattr(settings, "SYNC_ENCRYPTION_KEY", "") or None
+
         # Aceita sem identidade: quem prova quem é, é o HELLO. Até lá a conexão
         # não está em grupo nenhum e não recebe dado de conta alguma.
         await self.accept()

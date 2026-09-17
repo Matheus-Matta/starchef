@@ -8,7 +8,6 @@ loop de eventos trava a conexão de todos os nós.
 import logging
 
 from channels.db import database_sync_to_async
-from django.conf import settings
 from django.utils import timezone
 
 from apps.synchronization.constants import CloseCode, MessageType, PROTOCOL_VERSION, SCHEMA_VERSION
@@ -32,7 +31,8 @@ class HandlerMixin:
             return
 
         self.node = no
-        self.key = getattr(settings, "SYNC_ENCRYPTION_KEY", "") or None
+        # `self.key` já foi definida no `connect` — ela é do ambiente, não do
+        # nó, e o HELLO que acabou de ser lido já veio cifrado com ela.
         self.group = no.group_name
         proprio = await database_sync_to_async(nodes.self_node)()
         self.scope["sync_self_node_id"] = str(proprio.id)

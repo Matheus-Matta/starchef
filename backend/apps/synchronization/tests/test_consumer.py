@@ -234,3 +234,33 @@ async def test_pull_sem_nada_pendente_responde_zero(como_nuvem, no_loja, no_nuve
     assert tipo == MessageType.SYNC_AVAILABLE
     assert payload["pending"] == 0
     await com.disconnect()
+
+
+async def test_hello_CIFRADO_e_aceito(como_nuvem, no_loja):
+    """O handshake real: a loja já tem a chave, então o HELLO vem cifrado.
+
+    Este é o teste que faltava. Os outros mandam o HELLO em claro, e por isso
+    atravessavam um ovo-e-galinha: o consumer só definia `self.key` DENTRO do
+    `handle_hello`, mas o `receive` decifra ANTES de despachar. Com o HELLO
+    cifrado — que é o que acontece em produção — a nuvem recusava a própria
+    mensagem de abertura com "mensagem cifrada recebida sem chave configurada",
+    e nenhuma loja passava do handshake.
+    """
+    com = _comunicador()
+    conectado, _ = await com.connect()
+    assert conectado
+
+    cifrado = protocol.build(
+        MessageType.HELLO, source_node_id=no_loja.id, target_node_id=None,
+        account_id=no_loja.account_id, payload=_hello(no_loja)["payload"]
+        if "payload" in _hello(no_loja) else protocol.parse(_hello(no_loja)),
+        key=CHAVE_DE_TESTE,
+    )
+    assert "ciphertext" in cifrado, "o HELLO deste teste precisa ir CIFRADO"
+
+    await com.send_to(text_data=json.dumps(cifrado, default=str))
+    tipo, payload = await _ler(com)
+
+    assert tipo == MessageType.AUTHENTICATED
+    assert payload["node_id"] == str(no_loja.id)
+    await com.disconnect()
