@@ -1,22 +1,20 @@
-# Imagens publicadas pelo CI em ghcr.io (backend/frontend só saem em tag de
-# release — ver .github/workflows/{backend,frontend}.yml), settings de produção,
-# gunicorn+UvicornWorker. `.env` na raiz é lido automaticamente pelo Compose.
+# Imagens publicadas pelo CI em ghcr.io.
+# O arquivo `.env` na raiz é lido automaticamente pelo Docker Compose.
+#
 # Suba com:
 #   docker compose pull
 #   docker compose up -d
-# Imagens fixas em `:latest` (backend e frontend) — sempre a última tag de
-# release publicada pelo CI.
+#
+# Este compose não executa banco de dados nem broker de filas.
+# As conexões utilizadas pelo Django e pelo Celery devem ser configuradas
+# externamente por meio das variáveis presentes no arquivo `.env`.
 #
 # SEM nginx/TLS/rate-limit neste compose: backend e frontend publicam HTTP
-# puro (em loopback por padrão — ver BACKEND_BIND/FRONTEND_BIND). TLS,
-# proxy same-origin de /api e /ws, e rate-limit de borda são responsabilidade
-# de um proxy reverso EXTERNO a este arquivo (nginx do host, Caddy, LB da
-# nuvem etc.) — ver infra/reverse-proxy.example.conf como ponto de partida.
+# puro em loopback por padrão. TLS, proxy de /api e /ws e rate-limit devem
+# ser configurados em um proxy reverso externo.
 #
-# Limites de memória/CPU abaixo são conservadores para uma VPS pequena (ajuste
-# via env se o servidor tiver mais recursos) — sem eles, um vazamento em
-# qualquer serviço pode consumir toda a RAM do host e derrubar os outros.
-# Log rotation (json-file) evita disco cheio por log de container sem limite.
+# Log rotation evita que os logs dos containers ocupem todo o disco.
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -24,73 +22,41 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
-    cpus: ${POSTGRES_CPUS:-1.0}
-    logging: *default-logging
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-starchef}
-      POSTGRES_USER: ${POSTGRES_USER:-starchef}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD é obrigatório em produção}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    # Sem portas expostas ao host: só acessível na rede interna do compose.
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starchef} -d ${POSTGRES_DB:-starchef}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - starchef
-
   backend:
     image: ghcr.io/matheus-matta/starchef-backend:latest
     restart: unless-stopped
     user: "1000:1000"
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     logging: *default-logging
-    # `sync_install_triggers` roda depois do migrate. É idempotente e NÃO faz
-    # nada com `SYNC_ENABLED=false` (o padrão) — então é seguro deixar aqui em
-    # qualquer instalação. Numa nuvem com a sincronização ligada, é ele que
-    # instala a rede de segurança que captura escrita feita por fora do ORM
-    # (bulk, SQL direto). Ver docs/SINCRONIZACAO.md.
+
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             python manage.py sync_install_triggers &&
              gunicorn config.asgi:application -c gunicorn.conf.py"
+
     env_file:
       - .env
+
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+
     volumes:
       - backend_media:/app/media
       - backend_static:/app/staticfiles
-    # Publicado em loopback por padrão: o backend confia em X-Forwarded-Proto/
-    # X-Forwarded-For de quem se conectar nele (SECURE_PROXY_SSL_HEADER), então
-    # só deve ficar acessível pelo proxy reverso externo. Se esse proxy rodar
-    # em outra máquina, troque BACKEND_BIND para 0.0.0.0 e restrinja o acesso
-    # via firewall/security group só ao IP do proxy.
-    # A porta interna é a do gunicorn.conf.py (GUNICORN_BIND, default
-    # 0.0.0.0:8000) — a mesma do EXPOSE no Dockerfile.
+
     ports:
       - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/ || exit 1"]
+      test:
+        - CMD-SHELL
+        - curl -fsS http://localhost:8000/health/ || exit 1
       interval: 30s
       timeout: 10s
       retries: 3
+
     networks:
-      - starchef
-      # Redis é compartilhado com outros apps do servidor, fora deste
-      # compose — não roda aqui. `apps_net` é a rede Docker onde ele já
-      # está (`docker network ls` no host pra conferir o nome exato).
       - apps_net
 
   celery_worker:
@@ -99,17 +65,38 @@ services:
     user: "1000:1000"
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-1g}
     logging: *default-logging
-    command: celery -A config worker -l info --concurrency=${CELERY_CONCURRENCY:-4}
+
+    # `-Q` e OBRIGATORIO com a sincronizacao ligada. As tarefas do modulo
+    # declaram fila propria (`sync.apply`, `sync.retry`, ...); um worker sem
+    # `-Q` consome SO a fila `celery`, e as do sync ficam enfileiradas para
+    # sempre — sem erro, sem log, sem metrica. O sintoma que chega e outro:
+    # "a loja se matriculou, conectou e nao recebeu nada".
+    #
+    # `sync.bootstrap` NAO entra aqui de proposito: a carga total pode levar
+    # horas (time_limit de 3h) e ocuparia um slot deste worker, que tambem
+    # roda o `dispatch-due-kitchen-batches` a cada 5 segundos. Ela tem
+    # container proprio, logo abaixo.
+    #
+    # Deixar as filas de sync aqui com a sincronizacao desligada nao custa
+    # nada: fila vazia nao consome recurso.
+    command: >
+      celery -A config worker
+      -l info
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      -Q ${CELERY_QUEUES:-celery,sync.dispatch,sync.receive,sync.apply,sync.retry,sync.reconcile,sync.cleanup}
+
     env_file:
       - .env
+
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+
     depends_on:
-      - backend
-      - postgres
+      backend:
+        condition: service_healthy
+
     networks:
-      - starchef
       - apps_net
 
   celery_beat:
@@ -118,54 +105,85 @@ services:
     user: "1000:1000"
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
     logging: *default-logging
+
     command: celery -A config beat -l info
+
     env_file:
       - .env
+
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
       DJANGO_DEBUG: "False"
+
     depends_on:
-      - backend
-      - postgres
+      backend:
+        condition: service_healthy
+
     networks:
-      - starchef
       - apps_net
 
-  # SPA (Vue) já compilado dentro da imagem, servido em HTTP puro pelo `serve`
-  # (sem nginx). TLS e o proxy same-origin de /api e /ws ficam a cargo do
-  # proxy reverso externo (ver comentário no topo do arquivo).
+  # A carga total, isolada do resto.
+  #
+  # NAO confundir com o `sync_worker` do `docker/local/`: aquele e o processo
+  # da LOJA, que abre a conexao WSS para ca. Na nuvem ele nao existe — quem
+  # recebe as conexoes e o proprio `backend`, pelo consumer em /ws/sync/v1/.
+  # (`manage.py sync_worker` recusa rodar com SYNC_NODE_TYPE=cloud.)
+  #
+  # Este container consome so `sync.bootstrap`. Uma carga total varre a conta
+  # inteira e pode levar horas; num worker compartilhado ela seguraria um slot
+  # e atrasaria as tarefas operacionais do salao.
+  celery_worker_sync:
+    image: ghcr.io/matheus-matta/starchef-backend:latest
+    restart: unless-stopped
+    user: "1000:1000"
+    mem_limit: ${CELERY_SYNC_MEM_LIMIT:-1g}
+    logging: *default-logging
+
+    # Concorrencia baixa de proposito: duas cargas simultaneas ja sao muito
+    # trabalho de banco, e o proprio codigo recusa duas no mesmo no.
+    command: >
+      celery -A config worker
+      -l info
+      --concurrency=${CELERY_SYNC_CONCURRENCY:-2}
+      -Q sync.bootstrap
+
+    env_file:
+      - .env
+
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DJANGO_DEBUG: "False"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    networks:
+      - apps_net
+
   frontend:
     image: ghcr.io/matheus-matta/starchef-frontend:latest
-    environment:
-      # Injetada pelo entrypoint no start do container (runtime-config.js via
-      # sed — a mesma imagem serve qualquer ambiente sem rebuild), mas o
-      # valor tem que vir do `.env` explicitamente, sem fallback silencioso.
-      API_URL: ${API_URL:?API_URL é obrigatório}
-      # Opcional: só defina se o WebSocket não estiver na mesma origem da API
-      # (vazio => o frontend deriva wss://<host da API>/ws/realtime/).
-      WS_URL: ${WS_URL:-}
     restart: unless-stopped
     mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
     logging: *default-logging
-    # Publicado em loopback por padrão — mesmo raciocínio do backend: quem
-    # termina TLS e expõe pra internet é o proxy reverso externo.
+
+    environment:
+      API_URL: ${API_URL:?API_URL é obrigatório}
+
     ports:
       - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-8080}:8080"
+
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+
     networks:
-      - starchef
+      - apps_net
 
 volumes:
-  postgres_data:
   backend_media:
   backend_static:
 
 networks:
-  starchef:
-    driver: bridge
-  # Rede onde o Redis compartilhado (usado por outros apps do servidor) já
-  # está — não é criada por este compose, precisa existir de antemão no
-  # Docker do host. Troque o nome se o seu Redis estiver em outra rede.
   apps_net:
     external: true

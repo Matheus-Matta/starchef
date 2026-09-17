@@ -6,12 +6,32 @@ recuperá-los, e é assim que tem de ser.
 """
 import uuid
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from apps.synchronization.constants import ENVIRONMENT_DEVELOPMENT, NodeStatus, NodeType
 from apps.synchronization.models import SyncNode
 from apps.synchronization.services import crypto, guard, nodes
+
+
+def chave_do_ambiente():
+    """A chave AES **deste ambiente**, lida da env desta instalação.
+
+    Ela NÃO é gerada por nó, e essa distinção é a diferença entre sincronizar e
+    não sincronizar. O consumer da nuvem cifra com `settings.SYNC_ENCRYPTION_KEY`
+    e o worker da loja decifra com o valor dele — se o provisionamento
+    inventasse uma chave nova por nó, os dois lados usariam chaves diferentes e
+    TODA mensagem falharia na tag do AES-GCM, sem nunca chegar ao domínio.
+
+    É o que o §8.4 do plano descreve: uma chave por ambiente, em variável de
+    ambiente; o banco guarda só o `key_id` e a impressão digital, justamente
+    para conferir que as duas pontas têm a mesma.
+
+    Vazio é um modo válido: o transporte continua sendo WSS, e o AES-GCM é uma
+    camada adicional. O que não pode é uma ponta cifrar e a outra não.
+    """
+    return getattr(settings, "SYNC_ENCRYPTION_KEY", "") or ""
 
 
 def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed_ip=None,
@@ -25,8 +45,8 @@ def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed
 
     par = pair_id or uuid.uuid4()
     token = crypto.generate_token()
-    chave = crypto.generate_key()
-    key_id = f"dev-{uuid.uuid4().hex[:8]}"
+    chave = chave_do_ambiente()
+    key_id = getattr(settings, "SYNC_ENCRYPTION_KEY_ID", "") or f"dev-{uuid.uuid4().hex[:8]}"
 
     with transaction.atomic():
         no = SyncNode.objects.create(
@@ -41,7 +61,7 @@ def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed
             credential_hash=crypto.hash_token(token),
             credential_rotated_at=timezone.now(),
             encryption_key_id=key_id,
-            secret_fingerprint=crypto.fingerprint(chave),
+            secret_fingerprint=crypto.fingerprint(chave) if chave else "",
             status=NodeStatus.PENDING,
         )
         proprio = ensure_self_node(account=account, node_type=NodeType.CLOUD, pair_id=par)
@@ -88,14 +108,20 @@ def ensure_self_node(*, account, node_type, pair_id, name=None, node_id=None):
 
 
 def rotate_credentials(no):
-    """Gera token e chave novos. O anterior para de valer na hora."""
+    """Gera um TOKEN novo. A chave do ambiente continua a mesma.
+
+    Token e chave têm ciclos diferentes de propósito: o token é por nó e
+    revogá-lo afeta só aquela loja; a chave é do ambiente e trocá-la exige
+    reconfigurar as duas pontas ao mesmo tempo. Gerar uma chave nova aqui
+    deixaria a loja com uma que a nuvem não usa — e nada mais sincronizaria.
+    """
     guard.ensure_environment()
 
     token = crypto.generate_token()
-    chave = crypto.generate_key()
+    chave = chave_do_ambiente()
     no.credential_hash = crypto.hash_token(token)
-    no.secret_fingerprint = crypto.fingerprint(chave)
-    no.encryption_key_id = f"dev-{uuid.uuid4().hex[:8]}"
+    no.secret_fingerprint = crypto.fingerprint(chave) if chave else ""
+    no.encryption_key_id = getattr(settings, "SYNC_ENCRYPTION_KEY_ID", "") or no.encryption_key_id
     no.credential_rotated_at = timezone.now()
     no.save(update_fields=[
         "credential_hash", "secret_fingerprint", "encryption_key_id",

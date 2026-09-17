@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand
 
 from apps.synchronization.constants import NodeStatus
 from apps.synchronization.models import SyncNode
-from apps.synchronization.services import guard, recovery
+from apps.synchronization.services import guard, recovery, workers
 
 
 class Command(BaseCommand):
@@ -33,9 +33,25 @@ class Command(BaseCommand):
         self.stdout.write(f"  SYNC_ENVIRONMENT ..: {guard.current_environment() or '(vazio)'}")
         self.stdout.write(f"  SYNC_NODE_TYPE ....: {guard.node_type() or '(vazio)'}")
 
+        self._workers()
         self._nos(options.get("account"))
         self._fila(options.get("account"))
         self._parados(options["stuck_minutes"])
+
+    def _workers(self):
+        """Alguém está consumindo as filas do sync?
+
+        Sem isto a falha é muda: as tarefas são enfileiradas, ninguém as tira,
+        e o sintoma que chega é "a loja conectou mas não recebeu nada".
+        """
+        if not guard.is_enabled():
+            return
+        self.stdout.write(self.style.MIGRATE_HEADING("\nWorkers Celery"))
+        aviso = workers.diagnostico()
+        if aviso is None:
+            self.stdout.write(self.style.SUCCESS("  todas as filas do sync têm worker consumindo"))
+        else:
+            self.stdout.write(self.style.ERROR(f"  {aviso}"))
 
     def _nos(self, account_id):
         consulta = SyncNode.objects.all()

@@ -233,3 +233,65 @@ def test_enroll_ja_matriculado_pede_force(settings, como_loja):
     texto = _rodar("sync_enroll", "--api-url", "https://n.test", "--username", "x",
                    "--password", "y", "--account", "z", "--secret", "s" * 30)
     assert "--force" in texto
+
+
+# ── Persistência da matrícula ───────────────────────────────────────────────
+def test_credenciais_da_matricula_sobrevivem_ao_restart(tmp_path, settings):
+    """O arquivo gravado pela matrícula precisa ser LIDO de volta.
+
+    Gravar não bastava: nada o lia. Todo restart do container reencontrava
+    `SYNC_AUTH_TOKEN` vazio, concluía "não estou matriculado" e se matriculava
+    de novo — gastando uma das 5 tentativas por hora, rotacionando a credencial
+    e disparando outra carga total. Um `docker compose restart` custava isso.
+    """
+    import importlib
+
+    destino = tmp_path / "credentials.env"
+    destino.write_text(
+        "SYNC_NODE_ID=11111111-1111-1111-1111-111111111111\n"
+        "SYNC_AUTH_TOKEN=token-vindo-da-matricula\n"
+        "SYNC_ENCRYPTION_KEY=chave-do-ambiente\n",
+        encoding="utf-8",
+    )
+
+    import os
+
+    anterior = os.environ.get("SYNC_ENROLL_ENV_PATH")
+    os.environ["SYNC_ENROLL_ENV_PATH"] = str(destino)
+    try:
+        from config.settings import sync as modulo
+
+        importlib.reload(modulo)
+        assert modulo.SYNC_AUTH_TOKEN == "token-vindo-da-matricula"
+        assert modulo.SYNC_NODE_ID == "11111111-1111-1111-1111-111111111111"
+    finally:
+        if anterior is None:
+            os.environ.pop("SYNC_ENROLL_ENV_PATH", None)
+        else:
+            os.environ["SYNC_ENROLL_ENV_PATH"] = anterior
+        importlib.reload(modulo)
+
+
+def test_o_ambiente_explicito_vence_o_arquivo(tmp_path):
+    """Quem provisionou à mão não pode ser sobrescrito por matrícula antiga."""
+    import importlib
+    import os
+
+    destino = tmp_path / "credentials.env"
+    destino.write_text("SYNC_AUTH_TOKEN=token-do-arquivo\n", encoding="utf-8")
+
+    guardados = {k: os.environ.get(k) for k in ("SYNC_ENROLL_ENV_PATH", "SYNC_AUTH_TOKEN")}
+    os.environ["SYNC_ENROLL_ENV_PATH"] = str(destino)
+    os.environ["SYNC_AUTH_TOKEN"] = "token-colado-na-mao"
+    try:
+        from config.settings import sync as modulo
+
+        importlib.reload(modulo)
+        assert modulo.SYNC_AUTH_TOKEN == "token-colado-na-mao"
+    finally:
+        for k, v in guardados.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        importlib.reload(modulo)

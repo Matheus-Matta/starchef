@@ -11,6 +11,8 @@ nuvem — é a mesma imagem, o mesmo código, as mesmas migrations:
 qualquer outro valor (ver `apps/synchronization/services/guard.py`) — não é
 uma convenção, é uma exceção levantada.
 """
+from pathlib import Path
+
 from decouple import config
 
 SYNC_ENABLED = config("SYNC_ENABLED", default=False, cast=bool)
@@ -103,6 +105,51 @@ SYNC_NODE_NAME = config("SYNC_NODE_NAME", default="")
 # Onde gravar as credenciais recebidas. Sem isto elas valem só para o processo
 # atual — o container reinicia e a loja perde o token.
 SYNC_ENROLL_ENV_PATH = config("SYNC_ENROLL_ENV_PATH", default="")
+
+
+def _carregar_credenciais_da_matricula():
+    """Lê de volta o que a matrícula gravou, preenchendo o que veio vazio.
+
+    Gravar o arquivo não bastava: nada o lia. O efeito era que TODO restart do
+    container reencontrava `SYNC_AUTH_TOKEN` vazio, concluía "não estou
+    matriculado" e se matriculava de novo — gastando uma das 5 tentativas por
+    hora, rotacionando a credencial (invalidando a anterior) e disparando mais
+    uma carga total. Um `docker compose restart` custava tudo isso.
+
+    Precedência: o que está EXPLÍCITO no ambiente vence. Quem provisionou à mão
+    e colou o pacote no `.env` não pode ter esses valores sobrescritos por um
+    arquivo de uma matrícula antiga. O arquivo só preenche o que está vazio.
+    """
+    caminho = SYNC_ENROLL_ENV_PATH
+    if not caminho:
+        return {}
+    arquivo = Path(caminho)
+    if not arquivo.is_file():
+        return {}
+
+    valores = {}
+    try:
+        for linha in arquivo.read_text(encoding="utf-8").splitlines():
+            linha = linha.strip()
+            if not linha or linha.startswith("#") or "=" not in linha:
+                continue
+            chave, _, valor = linha.partition("=")
+            valores[chave.strip()] = valor.strip()
+    except OSError:
+        # Arquivo ilegível não pode impedir o backend de subir: sem ele a
+        # instalação apenas volta a se comportar como não matriculada.
+        return {}
+    return valores
+
+
+_credenciais = _carregar_credenciais_da_matricula()
+for _chave in (
+    "SYNC_NODE_ID", "SYNC_PAIR_ID", "SYNC_ACCOUNT_ID", "SYNC_STORE_ID",
+    "SYNC_PEER_NODE_ID", "SYNC_CLOUD_WSS_URL", "SYNC_AUTH_TOKEN",
+    "SYNC_ENCRYPTION_KEY", "SYNC_ENCRYPTION_KEY_ID",
+):
+    if not globals().get(_chave) and _credenciais.get(_chave):
+        globals()[_chave] = _credenciais[_chave]
 
 
 # ── Arquivos (§16) e métricas (§19.1) ────────────────────────────────────────

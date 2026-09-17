@@ -35,8 +35,46 @@ def check_sync_configuration(app_configs, **kwargs):
 
     if tipo == NodeType.LOCAL:
         avisos.extend(_checar_local())
+    avisos.extend(_checar_chave())
     avisos.extend(_checar_triggers())
     return avisos
+
+
+def _checar_chave():
+    """A chave AES é utilizável?
+
+    Sem esta checagem o erro aparece no pior lugar possível: a conexão é
+    aceita, o HELLO é autenticado, e a instalação estoura ao CIFRAR a
+    resposta. Do outro lado se vê uma conexão que cai sozinha, sem mensagem —
+    e o motivo real (uma chave com o número errado de bytes) não aparece em
+    lugar nenhum.
+
+    O engano comum é usar `secrets.token_urlsafe(32)`, que devolve ~43
+    caracteres e decodifica para 32 bytes só por acaso, ou `token_urlsafe(48)`,
+    que dá 48 bytes e é recusado. O certo é
+    `base64.b64encode(secrets.token_bytes(32))`.
+    """
+    from apps.synchronization.services import crypto
+
+    chave = getattr(settings, "SYNC_ENCRYPTION_KEY", "")
+    if not chave:
+        # Vazio é um modo válido (WSS sem AES-GCM adicional), desde que as
+        # DUAS pontas estejam assim.
+        return []
+    try:
+        crypto.load_key(chave)
+    except Exception as erro:  # noqa: BLE001 — a mensagem é o produto aqui
+        return [CheckWarning(
+            f"SYNC_ENCRYPTION_KEY inválida: {erro}",
+            hint=(
+                "Gere com: python -c \"import secrets,base64;"
+                "print(base64.b64encode(secrets.token_bytes(32)).decode())\" — "
+                "e use a MESMA nas duas pontas. Com ela assim, a conexão é "
+                "aceita e a instalação estoura ao cifrar a resposta."
+            ),
+            id="synchronization.W005",
+        )]
+    return []
 
 
 def _checar_triggers():
