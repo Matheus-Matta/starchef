@@ -41,6 +41,25 @@ class SyncEventQuerySet(models.QuerySet):
             .order_by("sequence")
         )
 
+    def pending_for_target(self, target):
+        """O que está esperando para ir até ESTE destino.
+
+        Filtrar por destino em vez de por origem é o que torna o despacho
+        imune a uma instalação com mais de um nó `is_self` — todo evento
+        OUTBOUND que existe aqui foi criado por esta instalação, então a
+        pergunta útil é "para quem vai", não "quem gerou".
+        """
+        agora = timezone.now()
+        return (
+            self.filter(
+                direction=Direction.OUTBOUND,
+                target_node=target,
+                status__in=[EventStatus.PENDING, EventStatus.FAILED],
+            )
+            .filter(models.Q(next_attempt_at__isnull=True) | models.Q(next_attempt_at__lte=agora))
+            .order_by("sequence")
+        )
+
     def unconfirmed(self, node):
         """Saiu daqui mas ninguém confirmou — o que a reconexão reenvia."""
         return self.filter(

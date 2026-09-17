@@ -37,9 +37,14 @@ def collect_batch(source_node, target_node=None):
     from apps.synchronization.models import SyncEvent
 
     max_eventos, max_bytes = limites()
-    consulta = SyncEvent.objects.pending_outbound(source_node)
+    # Com destino conhecido, a consulta é POR DESTINO: todo evento OUTBOUND
+    # daqui foi criado por esta instalação, e amarrar ao `source_node` fazia o
+    # lote sair vazio quando havia mais de um nó `is_self` (ver
+    # `provisioning.ensure_self_node`).
     if target_node is not None:
-        consulta = consulta.filter(target_node=target_node)
+        consulta = SyncEvent.objects.pending_for_target(target_node)
+    else:
+        consulta = SyncEvent.objects.pending_outbound(source_node)
 
     lote, bytes_acumulados = [], 0
     for evento in consulta[: max_eventos * 2]:

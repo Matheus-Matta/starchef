@@ -434,6 +434,16 @@ CSRF_COOKIE_SAMESITE = "Lax"
 # aqui é a mesma garantia um nível antes, no navegador.
 SESSION_COOKIE_PATH = "/admin/"
 
+# O `ModelBackend` continua sendo o caminho normal e vem PRIMEIRO: quem tem
+# usuário no banco entra por ele. O segundo só responde no nó LOCAL, em
+# development, com a sincronização ligada — e existe porque uma loja recém
+# instalada tem banco vazio: sem ele, ninguém consegue abrir o /admin dela para
+# ver por que a carga não chegou. Ver apps/synchronization/auth_backend.py.
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "apps.synchronization.auth_backend.LocalConsoleBackend",
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},

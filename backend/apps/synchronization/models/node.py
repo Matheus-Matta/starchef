@@ -66,8 +66,14 @@ class SyncNode(TimeStampedModel):
     is_active = models.BooleanField(default=True)
     #: Marcado quando este registro representa a PRÓPRIA instalação.
     is_self = models.BooleanField(default=False)
-    peer = models.OneToOneField(
-        "self", null=True, blank=True, related_name="peer_of", on_delete=models.SET_NULL
+    #: O nó do outro lado. ForeignKey, não OneToOne: a nuvem tem UMA
+    #: identidade e N lojas apontando para ela. Modelar isto como 1-para-1
+    #: obrigava a nuvem a criar um nó "este" por loja — que era exatamente o
+    #: defeito que fazia o despacho devolver lote vazio (ver
+    #: `provisioning.ensure_self_node`). Do lado da loja continua havendo um
+    #: só, porque a loja fala com uma nuvem.
+    peer = models.ForeignKey(
+        "self", null=True, blank=True, related_name="peers", on_delete=models.SET_NULL
     )
     last_error = models.TextField(blank=True)
 

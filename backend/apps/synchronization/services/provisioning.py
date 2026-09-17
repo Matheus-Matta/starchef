@@ -86,12 +86,23 @@ def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed
 
 
 def ensure_self_node(*, account, node_type, pair_id, name=None, node_id=None):
-    """O registro que representa ESTA instalação. Idempotente de propósito."""
+    """O registro que representa ESTA instalação. Idempotente de propósito.
+
+    A busca NÃO filtra por `pair_id`, e essa é a correção de um defeito caro: o
+    `pair_id` é novo a cada provisionamento, então filtrar por ele fazia a
+    nuvem criar outro nó "este" por loja matriculada. Com dois, `self_node()`
+    passa a escolher um arbitrariamente — e como o despacho filtrava os eventos
+    por `source_node`, uma loja podia pedir o lote e receber vazio para sempre,
+    com centenas de eventos parados em PENDING e nenhum erro em lugar nenhum.
+
+    A instalação tem UMA identidade; o `pair_id` pertence ao VÍNCULO com cada
+    loja, não a ela.
+    """
     guard.ensure_environment()
 
     existente = SyncNode.objects.filter(
-        account=account, node_type=node_type, pair_id=pair_id, is_self=True
-    ).first()
+        account=account, node_type=node_type, is_self=True
+    ).order_by("created_at").first()
     if existente is not None:
         return existente
 

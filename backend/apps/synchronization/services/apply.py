@@ -81,9 +81,7 @@ def _aplicar(event, entrada):
     fields = payload.get("fields", {})
     remote_version = int(payload.get("entity_version") or event.entity_version or 1)
 
-    existente = model._default_manager.filter(pk=event.entity_id).first()
-    if existente is None and hasattr(model, "all_objects"):
-        existente = model.all_objects.filter(pk=event.entity_id).first()
+    existente = _encontrar(model, event.entity_id)
 
     if event.operation == Operation.DELETE:
         return _apagar(existente)
@@ -114,6 +112,30 @@ def _aplicar(event, entrada):
     return _gravar(model, entrada, event, fields, existente)
 
 
+def _encontrar(model, pk):
+    """A linha com esta identidade, esteja ela visível ou não.
+
+    O manager padrão de boa parte dos models daqui é filtrado — por tenant, por
+    `deleted_at`, por conta ativa. Procurar só por ele faz uma linha que existe
+    parecer ausente, e aí a aplicação tenta INSERIR um UUID que o banco já tem:
+    erro de chave duplicada num caminho em que a resposta certa era atualizar.
+
+    A ordem vai do mais específico ao mais cru: `_base_manager` é o único que o
+    Django garante sem filtro nenhum.
+    """
+    for manager in (
+        model._default_manager,
+        getattr(model, "all_objects", None),
+        model._base_manager,
+    ):
+        if manager is None:
+            continue
+        encontrado = manager.filter(pk=pk).first()
+        if encontrado is not None:
+            return encontrado
+    return None
+
+
 def _gravar(model, entrada, event, fields, existente):
     kwargs = serialization.deserialize(model, fields)
     kwargs.pop("id", None)
@@ -128,10 +150,43 @@ def _gravar(model, entrada, event, fields, existente):
     if existente is None:
         return _inserir(model, kwargs, event)
 
-    for nome, valor in kwargs.items():
-        setattr(existente, nome, valor)
-    existente.save()
+    return _atualizar(existente, kwargs)
+
+
+def _atualizar(instancia, kwargs):
+    """Grava só se algo mudou de verdade. Devolve True se mexeu.
+
+    Reaplicar um registro idêntico não é inofensivo: cada `save()` mexe no
+    `updated_at`, dispara os sinais do model e — num destino que também
+    sincroniza — vira movimento para o outro lado. Numa carga inicial de
+    centenas de registros que já estão iguais, isso é trabalho puro sem
+    resultado nenhum.
+    """
+    mudou = [
+        nome for nome, valor in kwargs.items()
+        if not _igual(getattr(instancia, nome, None), valor)
+    ]
+    if not mudou:
+        return False
+
+    for nome in mudou:
+        setattr(instancia, nome, kwargs[nome])
+    instancia.save()
     return True
+
+
+def _igual(atual, novo):
+    """Comparação tolerante ao tipo que voltou da serialização.
+
+    Um UUID chega como `str` no payload e vive como `UUID` na instância; o
+    mesmo vale para Decimal e data. Na dúvida a resposta é "mudou" — gravar à
+    toa custa uma escrita, dar um falso "igual" descarta um dado novo.
+    """
+    if atual == novo:
+        return True
+    if atual is None or novo is None:
+        return False
+    return str(atual) == str(novo)
 
 
 def _inserir(model, kwargs, event):
@@ -145,6 +200,22 @@ def _inserir(model, kwargs, event):
             model(pk=event.entity_id, **kwargs).save(force_insert=True)
         return True
     except IntegrityError as erro:
+        # Se a identidade JÁ existe, inserir nunca foi a operação certa —
+        # atualizar é. Acontece quando a linha estava invisível na consulta
+        # (manager filtrado, corrida entre dois eventos do mesmo registro) e é
+        # o caso em que `try_adopt` não tem nada a fazer: não há disputa por
+        # chave única, há o mesmo registro chegando de novo, possivelmente com
+        # dados mais novos.
+        ja_existe = model._base_manager.filter(pk=event.entity_id).first()
+        if ja_existe is not None:
+            mexeu = _atualizar(ja_existe, kwargs)
+            logger.info(
+                "sync: %s %s já existia — %s em vez de inserido",
+                model.__name__, event.entity_id,
+                "atualizado" if mexeu else "sem mudanças, ignorado",
+            )
+            return mexeu
+
         adotou, motivo = adoption.try_adopt(model, kwargs, event)
         if not adotou:
             raise IntegrityRejected(f"{erro} — {motivo}") from erro
