@@ -193,6 +193,9 @@ urlpatterns = [
     path("api/v1/integrations/focus-nfe/config/", FocusNfeConfigView.as_view(), name="focus-nfe-config"),
     path("api/v1/integrations/cosmos/config/", CosmosConfigView.as_view(), name="cosmos-config"),
     path("api/v1/integrations/focus-nfe/webhook/", FocusNfeWebhookView.as_view(), name="focus-nfe-webhook"),
+    # Gerenciamento da sincronização backend-to-backend. Fica fora do router
+    # principal porque tem rota própria sem autenticação (a matrícula).
+    path("api/v1/sync/", include("apps.synchronization.urls")),
     path("api/v1/", include(router.urls)),
 ]
 

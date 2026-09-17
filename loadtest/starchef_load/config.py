@@ -19,6 +19,13 @@ class LoadConfig:
     username: str = "admin"
     password: str = "admin12345"
 
+    # O SEGUNDO backend. A suite `sync` ataca os dois ao mesmo tempo: o
+    # `base_url` é o da LOJA (nó LOCAL) e este, o da NUVEM (nó CLOUD). Vazio =
+    # a suite roda só o que cabe num alvo e diz o que deixou de medir.
+    cloud_url: str = ""
+    cloud_username: str = ""
+    cloud_password: str = ""
+
     profile: str = "medio"
     workers: int = 64
     rate: int = 500
@@ -49,7 +56,8 @@ class LoadConfig:
         for chave, valor in perfil.items():
             setattr(config, chave, valor)
         for campo in (
-            "base_url", "frontend_url", "username", "password", "workers", "rate",
+            "base_url", "frontend_url", "cloud_url", "cloud_username", "cloud_password",
+            "username", "password", "workers", "rate",
             "duration", "count", "timeout", "chaos_ratio", "sloppy_ratio", "offline_ratio",
             "terminals", "waiters", "sales", "seed", "report_dir", "label",
             "cleanup", "verbose", "skip_bootstrap",
@@ -60,12 +68,18 @@ class LoadConfig:
         config.models = list(getattr(args, "models", None) or [])
         config.base_url = os.environ.get("LOADTEST_BASE_URL", config.base_url)
         config.frontend_url = os.environ.get("LOADTEST_FRONTEND_URL", config.frontend_url)
+        config.cloud_url = os.environ.get("LOADTEST_CLOUD_URL", config.cloud_url)
+        # Sem credencial própria, a nuvem usa a mesma da loja — é o caso comum
+        # no ambiente de desenvolvimento, onde a conta é a mesma dos dois lados.
+        config.cloud_username = config.cloud_username or config.username
+        config.cloud_password = config.cloud_password or config.password
         return config
 
     def describe(self):
         return {
             "perfil": self.profile,
             "api": self.base_url,
+            "api_nuvem": self.cloud_url or "(não informada)",
             "frontend": self.frontend_url,
             "workers": self.workers,
             "taxa_alvo_rps": self.rate,

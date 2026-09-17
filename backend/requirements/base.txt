@@ -21,3 +21,10 @@ requests>=2.31,<3.0
 # Só entram em uso quando AWS_STORAGE_BUCKET_NAME está configurado.
 django-storages>=1.14,<2.0
 boto3>=1.34,<2.0
+# Sincronização backend-to-backend (apps.synchronization):
+# - `cryptography` fornece o AES-256-GCM do payload (chave de 32 bytes, nonce
+#   por mensagem). Algoritmo próprio é proibido pelo plano.
+# - `websockets` é o cliente WSS do worker LOCAL, que abre a conexão de saída
+#   para a nuvem (a loja nunca precisa expor porta).
+cryptography>=42.0,<50.0
+websockets>=12.0,<16.0

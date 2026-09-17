@@ -51,9 +51,15 @@ services:
     user: "1000:1000"
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     logging: *default-logging
+    # `sync_install_triggers` roda depois do migrate. É idempotente e NÃO faz
+    # nada com `SYNC_ENABLED=false` (o padrão) — então é seguro deixar aqui em
+    # qualquer instalação. Numa nuvem com a sincronização ligada, é ele que
+    # instala a rede de segurança que captura escrita feita por fora do ORM
+    # (bulk, SQL direto). Ver docs/SINCRONIZACAO.md.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
+             python manage.py sync_install_triggers &&
              gunicorn config.asgi:application -c gunicorn.conf.py"
     env_file:
       - .env

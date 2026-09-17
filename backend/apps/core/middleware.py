@@ -27,6 +27,22 @@ PUBLIC_URL_NAMES = {
     "password-reset",
     "password-reset-confirm",
     "focus-nfe-webhook",
+    # Matrícula de um backend de loja. Como o login, ela apresenta usuário e
+    # senha no próprio corpo: quem chama é uma instalação nova, que ainda não
+    # tem token nenhum — e não teria como ter. O middleware responderia 401
+    # antes de a view rodar, e nenhuma loja conseguiria se matricular.
+    "sync-enroll",
+    # As rotas de servidor-para-servidor da sincronização. Quem chama é um
+    # backend (token de nó) ou o coletor de métricas (token de raspagem) —
+    # nenhum dos dois tem conta, perfil ou sessão de usuário, que é tudo o que
+    # este middleware sabe resolver. A autorização delas é própria e mais
+    # estrita: ver `apps/synchronization/node_auth.py`.
+    "sync-metrics",
+    "sync-file-open",
+    "sync-file-status",
+    "sync-file-chunk",
+    "sync-file-complete",
+    "sync-file-download",
 }
 
 # O Django admin tem autenticação e escopo de tenant próprios (TenantAdminMixin

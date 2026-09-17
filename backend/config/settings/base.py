@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "apps.sla",
     "apps.notifications",
     "apps.realtime",
+    "apps.synchronization",
 ]
 
 MIDDLEWARE = [
@@ -310,6 +311,17 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# ── Sincronização backend-to-backend ─────────────────────────────────────────
+# As variáveis ficam em `config/settings/sync.py` porque são muitas e mudam
+# juntas. As periódicas só entram no beat quando SYNC_ENABLED: sem isso, um
+# backend comum ficaria acordando tarefas de sincronização a cada 10 segundos
+# para descobrir que não há nada a fazer.
+from config.settings.sync import *  # noqa: E402,F401,F403
+from config.settings import sync as _sync  # noqa: E402
+
+if _sync.SYNC_ENABLED:
+    CELERY_BEAT_SCHEDULE.update(_sync.SYNC_BEAT_SCHEDULE)
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         # Lê o JWT do header Authorization (compat) OU do cookie httpOnly.
@@ -346,6 +358,10 @@ REST_FRAMEWORK = {
         "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
         "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
+        # Matrícula de nó: aceita usuário e senha no corpo, então é alvo de
+        # força bruta como qualquer login. Limite mais apertado que o do login
+        # normal porque uma instalação legítima faz isso uma vez.
+        "sync_enroll": config("THROTTLE_RATE_SYNC_ENROLL", default="5/hour"),
     },
 }
 

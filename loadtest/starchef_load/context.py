@@ -18,6 +18,10 @@ class Context:
         self.recorder = Recorder()
         self.api = HttpClient(config.base_url, timeout=config.timeout)
         self.web = HttpClient(config.frontend_url, timeout=config.timeout)
+        # O segundo backend (a nuvem). Só existe quando `--cloud-url` foi dado:
+        # a suite `sync` precisa dos dois lados para medir a fila entre eles.
+        self.cloud = HttpClient(config.cloud_url, timeout=config.timeout) if config.cloud_url else None
+        self.cloud_session = None
         self.session = None
         self.schema = None
         self.refs = None
@@ -35,6 +39,8 @@ class Context:
         if need_schema:
             self.schema = ApiSchema.fetch(self.api, headers=self.session.headers())
             self.log(f"[schema] {len(self.schema.endpoints)} rotas de escrita descritas pelo OpenAPI")
+        if self.cloud is not None:
+            self._login_na_nuvem()
         if need_refs:
             self.refs = RefPool(self.session).load()
             if not self.config.skip_bootstrap:
@@ -46,6 +52,23 @@ class Context:
                 f"formas={len(self.refs.ids['payment_methods'])}"
             )
         return self
+
+    def _login_na_nuvem(self):
+        """Autentica no segundo backend. Falhar aqui NÃO aborta a execução.
+
+        A nuvem fora do ar é um cenário a medir, não um motivo para não medir
+        nada: sem ela, a suite `sync` roda as fases de um alvo só e diz o que
+        deixou de fora.
+        """
+        try:
+            self.cloud_session = auth.login(
+                self.cloud, self.config.cloud_username, self.config.cloud_password,
+                terminal_name="LT-orquestrador-nuvem",
+            )
+            self.log(f"[auth] sessao ativa na NUVEM ({self.config.cloud_url})")
+        except Exception as erro:  # noqa: BLE001
+            self.cloud_session = None
+            self.log(f"[auth] AVISO: nao autenticou na nuvem ({self.config.cloud_url}): {erro}")
 
     def record(self, suite, group, method, path, response, *, expectation, case="valido", payload="", started=None):
         resultado = RequestResult(

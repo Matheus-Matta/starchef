@@ -134,6 +134,18 @@ PERMISSION_GROUPS = [
             ("storefront.domains", "Gerenciar domínios", "Cadastrar e verificar subdomínio ou domínio próprio."),
         ],
     ),
+    (
+        # Sincronização loja ⇄ nuvem. Ver o estado da fila é rotina de suporte;
+        # disparar carga total, revogar um vínculo ou rotacionar credencial
+        # mexe na operação de uma loja inteira — daí códigos separados.
+        "Sincronização",
+        MODULE_BASE,
+        [
+            ("sync.view", "Ver a sincronização", "Consultar nós, fila, cargas e conflitos."),
+            ("sync.manage", "Gerenciar a sincronização",
+             "Disparar carga total, reprocessar falhas, revogar vínculo e rotacionar credencial."),
+        ],
+    ),
 ]
 
 

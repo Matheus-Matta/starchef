@@ -348,3 +348,28 @@ loadtest/
 - Não mede WebSocket. As invalidações em tempo real ficam fora desta versão.
 - Não substitui o `pytest`: ele prova regra de negócio; este prova comportamento
   sob volume.
+
+
+## Suíte `sync` — os dois backends ao mesmo tempo
+
+As outras quatro suítes atacam um alvo. Esta ataca o par (loja + nuvem), porque
+o que ela mede não existe dentro de um processo: é a fila entre eles.
+
+```
+python loadtest/run.py sync --cloud-url http://127.0.0.1:8002 --profile leve
+```
+
+`--base-url` é o backend da **loja** (nó LOCAL) e `--cloud-url`, o da **nuvem**
+(nó CLOUD). Sem credencial própria para a nuvem (`--cloud-username` /
+`--cloud-password`), ela usa a mesma da loja.
+
+Cinco fases: identidade dos dois alvos, escrita pesada na loja (enchendo a
+outbox), drenagem da fila, leitura da API de gerenciamento sob carga nos dois
+lados, e a rota de matrícula atacada com credencial errada (403 é o certo;
+201 e 500 são falhas).
+
+Sem `--cloud-url` a suíte roda só o que cabe num alvo e **diz no relatório o
+que deixou de medir** — ela não inventa um segundo backend.
+
+O veredito que importa não é "a fila esvaziou": loja offline é um estado
+legítimo. É **"nada sumiu"** — todo evento continua em algum estado do banco.

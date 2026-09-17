@@ -1,0 +1,55 @@
+{% extends "admin/change_form.html" %}
+{% comment %}
+Os botões do §14.1. Todos são POST com CSRF — um GET aqui significaria que
+qualquer link (ou pré-carregamento do navegador) dispararia uma carga total.
+{% endcomment %}
+
+{% block content %}
+{% if original %}
+<div style="margin:0 0 18px;padding:16px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa">
+  <div style="font-weight:600;margin-bottom:4px">Sincronização — {{ original.name }}</div>
+  <div style="font-size:12px;color:#6b7280;margin-bottom:12px">
+    Ambiente {{ original.environment }} · estado {{ original.status }} ·
+    visto em {{ original.last_seen_at|default:"nunca" }} ·
+    cursor enviado {{ original.last_sent_cursor }} / recebido {{ original.last_received_cursor }}
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <form method="post" action="{% url 'admin:synchronization_syncnode_test' original.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="button">Testar conexão</button>
+    </form>
+
+    <form method="post" action="{% url 'admin:synchronization_syncnode_bootstrap' original.pk %}"
+          onsubmit="return confirm('Enviar os dados essenciais (cadastros, usuários, cardápio) para este nó?');">
+      {% csrf_token %}
+      <input type="hidden" name="reason" value="Botão do Admin: dados essenciais">
+      <button type="submit" class="button">Sincronizar dados essenciais</button>
+    </form>
+
+    <form method="post" action="{% url 'admin:synchronization_syncnode_full' original.pk %}"
+          onsubmit="return confirm('Enviar TUDO da conta para este nó? Pode levar horas e gerar muitos eventos.');">
+      {% csrf_token %}
+      <input type="hidden" name="reason" value="Botão do Admin: carga total">
+      <button type="submit" class="button" style="background:#2563eb">Sincronizar tudo</button>
+    </form>
+
+    <form method="post" action="{% url 'admin:synchronization_syncnode_retry' original.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="button">Reprocessar falhas</button>
+    </form>
+
+    <form method="post" action="{% url 'admin:synchronization_syncnode_revoke' original.pk %}"
+          onsubmit="return confirm('Revogar o vínculo? A credencial para de valer imediatamente e a conexão cai. Os eventos pendentes continuam guardados.');">
+      {% csrf_token %}
+      <button type="submit" class="button" style="background:#dc2626">Revogar vínculo</button>
+    </form>
+  </div>
+
+  <div style="font-size:11px;color:#9ca3af;margin-top:10px">
+    Disponível somente em DEVELOPMENT. Quem clicou, quando e de qual IP fica no log e no SyncRun.
+  </div>
+</div>
+{% endif %}
+{{ block.super }}
+{% endblock %}

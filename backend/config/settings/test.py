@@ -27,3 +27,11 @@ FOCUS_NFE_PRODUCTION_URL = ""
 FOCUS_NFE_HOMOLOGATION_URL = ""
 FOCUS_NFE_WEBHOOK_URL = ""
 FOCUS_NFE_WEBHOOK_AUTHORIZATION = ""
+
+# Sincronização DESLIGADA por padrão nos testes. Os signals de captura de
+# outbox rodam em todo `save()` de model sincronizável — com ela ligada, a
+# suíte inteira pagaria esse custo para testar coisa nenhuma. Os testes da
+# sincronização a ligam explicitamente (apps/synchronization/tests/conftest.py).
+SYNC_ENABLED = False
+SYNC_ENVIRONMENT = "development"
+SYNC_NODE_TYPE = ""

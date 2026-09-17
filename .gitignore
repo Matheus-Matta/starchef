@@ -1,4 +1,11 @@
 .env
+# Os `.env` preenchidos da sincronização: senha do banco da loja, segredo de
+# matrícula e, depois do primeiro boot, o token e a chave do nó. Só os
+# `*.example` são versionados.
+.env.local
+.env.cloud
+docker/local/.env.local
+docker/local/.env.cloud
 .venv/
 venv/
 __pycache__/

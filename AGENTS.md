@@ -34,7 +34,20 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/TESTE_CARGA_PDV.md`: teste de carga do nucleo do PDV (histórico da
   linhagem offline; a suíte vivia em `flutter/loadtest/`, que não existe
   nesta branch);
-- `docs/ANALISE_DE_RISCOS.md`: os defeitos que a carga achou, o que foi corrigido e o que segue aberto.
+- `docs/ANALISE_DE_RISCOS.md`: os defeitos que a carga achou, o que foi corrigido e o que segue aberto;
+- `docs/SINCRONIZACAO.md`: sincronização backend-to-backend (loja ⇄ nuvem),
+  a matrícula do nó, a outbox durável e a recuperação do que não subiu.
+
+## Regra da sincronização
+
+Ao criar um model novo em `backend/apps/`, ele precisa de decisão explícita:
+entra em `apps/synchronization/catalog.py` (sincroniza) ou em
+`apps/synchronization/decisions.py` (não sincroniza, com o motivo).
+`manage.py sync_check_registry` falha o deploy se ficar sem nenhuma das duas.
+
+No PostgreSQL, rode também `manage.py sync_install_triggers` depois do
+`migrate` (é idempotente): são elas que capturam escrita feita por fora do ORM.
+O compose de `docker/local/` já faz isso no boot.
 
 ## Regras do release do PDV
 
@@ -45,8 +58,20 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - Um Pull Request executa validações, mas não publica release.
 - `workflow_dispatch` gera artefatos temporários, mas não publica o
   `latest-desktop.json` nem cria GitHub Release.
-- A tag executa os três workflows do monorepo. No Flutter, o fluxo esperado é
-  `test` → `release-metadata` → builds Windows/Linux → `publish-release`.
+- A tag executa os QUATRO workflows do monorepo — `backend`, `frontend`,
+  `pdv-desktop` e `pdv-mobile` —, cada um independente. No `pdv-desktop` o
+  fluxo é `test` → `release-metadata` → builds Windows/Linux →
+  `publish-release`; no `pdv-mobile`, `test` → `release-metadata` →
+  `build-apk` → `publish-mobile`.
+- **Os dois workflows do Flutter são independentes: um NÃO chama o outro.**
+  Eles reagem à mesma tag e anexam ao mesmo GitHub Release, serializados pelo
+  grupo de `concurrency` `gh-release-<tag>`, que os dois compartilham. Se você
+  alterar esse grupo, altere nos DOIS arquivos — grupos diferentes trazem de
+  volta a corrida na criação do Release (um dos dois recebe 422).
+- Cada produto publica o manifesto dele: `latest-desktop.json` pelo
+  `pdv_desktop.yml` e `latest-mobile.json` pelo `pdv_mobile.yml`. Nenhum dos
+  dois pode escrever `latest.json`: esse nome é da linhagem 1.8.x do PDV
+  offline, que segue em produção nas outras branches.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
   `pubspec.yaml`.
 - `backend.yml`/`frontend.yml` decidem se reconstroem a imagem comparando o
@@ -92,10 +117,10 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - A URL padrão do manifesto é
   `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` e
   pode ser substituída por `PDV_UPDATE_MANIFEST_URL` no build.
-- O APK do aplicativo do garçom não faz parte do manifesto do PDV.
-- O atendimento móvel tem workflow próprio, `.github/workflows/pdv_mobile.yml`,
-  chamado pelo `pdv_desktop.yml` durante o release para o APK sair no mesmo run e
-  ser anexado ao mesmo GitHub Release.
+- O APK do atendimento móvel não faz parte do manifesto do PDV: ele tem o
+  `latest-mobile.json`, publicado pelo próprio `pdv_mobile.yml`.
+- O `pdv_mobile.yml` roda sozinho na tag; o `pdv_desktop.yml` não o chama mais.
+  O APK continua saindo no mesmo GitHub Release.
 - Em tags, a assinatura exige os quatro Secrets `GARCOM_*` e o job **falha** sem
   eles — ou se o APK sair com `CN=Android Debug`. Nunca publique APK de
   produção com a chave de debug: ele não instala por cima do app já instalado.
@@ -103,6 +128,10 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   componente mudaram desde a tag anterior. Quem não é reconstruído é
   re-etiquetado (imagens) ou herdado do manifesto anterior (APK). O PDV é
   sempre reconstruído, porque a tag é a versão dele.
+- O `publish-mobile` roda em TODA tag, mesmo sem APK novo: ele precisa
+  reescrever o `latest-mobile.json` no release novo. Sem isso a URL
+  `releases/latest/download/latest-mobile.json` passa a responder 404 e o app
+  perde a checagem de atualização.
 
 ## Arquivos que precisam permanecer coerentes
 

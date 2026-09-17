@@ -6,10 +6,10 @@ import time
 from . import report
 from .config import PROFILES, LoadConfig
 from .context import Context
-from .suites import backend, desktop, mobile, web
+from .suites import backend, desktop, mobile, sync, web
 
-SUITES = {"backend": backend, "web": web, "desktop": desktop, "mobile": mobile}
-ORDEM = ["backend", "web", "desktop", "mobile"]
+SUITES = {"backend": backend, "web": web, "desktop": desktop, "mobile": mobile, "sync": sync}
+ORDEM = ["backend", "web", "desktop", "mobile", "sync"]
 
 
 def build_parser():
@@ -22,6 +22,10 @@ def build_parser():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="medio", help="intensidade (padrao: medio)")
     parser.add_argument("--base-url", dest="base_url", help="API (padrao http://127.0.0.1:8001)")
     parser.add_argument("--frontend-url", dest="frontend_url", help="SPA (padrao http://127.0.0.1:5173)")
+    parser.add_argument("--cloud-url", dest="cloud_url",
+                        help="backend da NUVEM (suite sync). Sem ela, base-url e o unico alvo")
+    parser.add_argument("--cloud-username", dest="cloud_username", help="usuario na nuvem (padrao: o mesmo)")
+    parser.add_argument("--cloud-password", dest="cloud_password", help="senha na nuvem (padrao: a mesma)")
     parser.add_argument("--username", help="usuario da conta de teste")
     parser.add_argument("--password", help="senha da conta de teste")
     parser.add_argument("--workers", type=int, help="conexoes simultaneas")
@@ -50,7 +54,8 @@ def build_parser():
 def _aviso_de_ambiente(config, log):
     log("=" * 78)
     log("TESTE DE CARGA STARCHEF — este comando FOI FEITO para degradar o alvo.")
-    log(f"  API .......: {config.base_url}")
+    log(f"  API loja ..: {config.base_url}")
+    log(f"  API nuvem .: {config.cloud_url or '(nao informada — suite sync mede so um alvo)'}")
     log(f"  Frontend ..: {config.frontend_url}")
     log(f"  Perfil ....: {config.profile} ({config.workers} conexoes, alvo {config.rate}/s, {config.duration}s/fase)")
     log("  Use um banco descartavel e THROTTLE_RATE_* alto (veja docs/TESTE_CARGA.md).")
@@ -64,7 +69,7 @@ def main(argv=None):
     _aviso_de_ambiente(config, log)
 
     escolhidas = ORDEM if args.suite == "all" else [args.suite]
-    precisa_refs = any(nome in ("backend", "desktop", "mobile", "web") for nome in escolhidas)
+    precisa_refs = any(nome in ("backend", "desktop", "mobile", "web", "sync") for nome in escolhidas)
     ctx = Context(config, log=log)
     inicio = time.time()
     try:
