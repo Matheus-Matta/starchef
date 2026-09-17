@@ -9,7 +9,7 @@ name: pdv-mobile
 #
 # O release continua sendo UM só: em uma tag `vX.Y.Z`, o `pdv_desktop.yml` chama
 # este workflow (`workflow_call`), o APK sai no mesmo run e é anexado ao mesmo
-# GitHub Release, escrito na mesma chave `garcom` do `latest.json`. Separar o
+# GitHub Release, escrito na chave `mobile` do `latest-desktop.json`. Separar o
 # arquivo não separou o release.
 
 on:
@@ -72,6 +72,10 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     env:
+      # Os quatro `GARCOM_*` continuam com o nome antigo de proposito: eles sao
+      # Secrets do repositorio, cadastrados em Settings -> Secrets, e o nome
+      # mora la — nao aqui. Renomear neste arquivo faria eles pararem de
+      # resolver, e o APK de release sairia assinado com a chave de debug.
       GARCOM_KEYSTORE_BASE64: ${{ secrets.GARCOM_KEYSTORE_BASE64 }}
       GARCOM_KEYSTORE_PASSWORD: ${{ secrets.GARCOM_KEYSTORE_PASSWORD }}
       GARCOM_KEY_ALIAS: ${{ secrets.GARCOM_KEY_ALIAS }}
@@ -132,9 +136,9 @@ jobs:
             echo "::warning::Secrets GARCOM_* ausentes: APK de homologação assinado com a chave de debug. Serve para instalar em aparelho limpo, não para atualizar."
             exit 0
           fi
-          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-garcom-release.jks
+          printf '%s' "$GARCOM_KEYSTORE_BASE64" | base64 --decode > android/starchef-pdv-mobile-release.jks
           {
-            printf 'storeFile=starchef-garcom-release.jks\n'
+            printf 'storeFile=starchef-pdv-mobile-release.jks\n'
             printf 'storePassword=%s\n' "$GARCOM_KEYSTORE_PASSWORD"
             printf 'keyAlias=%s\n' "$GARCOM_KEY_ALIAS"
             printf 'keyPassword=%s\n' "$GARCOM_KEY_PASSWORD"
@@ -152,7 +156,7 @@ jobs:
       - name: Build dos APKs
         shell: bash
         env:
-          GARCOM_VERSION: ${{ steps.version.outputs.version }}
+          MOBILE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           flutter build apk --release --split-per-abi
@@ -160,9 +164,9 @@ jobs:
           out="$GITHUB_WORKSPACE/artifacts"
           mkdir -p "$out"
           apks=build/app/outputs/flutter-apk
-          cp "$apks/app-release.apk" "$out/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+          cp "$apks/app-release.apk" "$out/StarChef-PDV-Mobile-v${MOBILE_VERSION}.apk"
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            nome="StarChef-Garcom-v${GARCOM_VERSION}-$abi.apk"
+            nome="StarChef-PDV-Mobile-v${MOBILE_VERSION}-$abi.apk"
             cp "$apks/app-$abi-release.apk" "$out/$nome"
           done
           ls -la "$out"
@@ -174,10 +178,10 @@ jobs:
       - name: Conferir quem assinou o APK
         shell: bash
         env:
-          GARCOM_VERSION: ${{ steps.version.outputs.version }}
+          MOBILE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          apk="$GITHUB_WORKSPACE/artifacts/StarChef-Garcom-v${GARCOM_VERSION}.apk"
+          apk="$GITHUB_WORKSPACE/artifacts/StarChef-PDV-Mobile-v${MOBILE_VERSION}.apk"
           apksigner="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" \
             -name apksigner -type f 2>/dev/null | sort -r | head -n1 || true)"
           if [[ -n "$apksigner" ]]; then
@@ -205,6 +209,6 @@ jobs:
       - name: Upload do APK
         uses: actions/upload-artifact@v4
         with:
-          name: starchef-garcom-android-${{ steps.version.outputs.version }}
-          path: artifacts/StarChef-Garcom-v*.apk
+          name: starchef-pdv-mobile-android-${{ steps.version.outputs.version }}
+          path: artifacts/StarChef-PDV-Mobile-v*.apk
           if-no-files-found: error

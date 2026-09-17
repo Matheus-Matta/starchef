@@ -77,8 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      garcom_version: ${{ steps.version.outputs.garcom_version }}
-      garcom_changed: ${{ steps.garcom.outputs.changed }}
+      mobile_version: ${{ steps.version.outputs.mobile_version }}
+      mobile_changed: ${{ steps.mobile.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,14 +104,14 @@ jobs:
               exit 1
             fi
           fi
-          garcom_full_version="$(awk '/^version:/{print $2; exit}' ../pdv_mobile/pubspec.yaml)"
-          garcom_version="${garcom_full_version%%+*}"
-          if [[ ! "$garcom_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Versão inválida no pdv_mobile/pubspec.yaml: $garcom_full_version" >&2
+          mobile_full_version="$(awk '/^version:/{print $2; exit}' ../pdv_mobile/pubspec.yaml)"
+          mobile_version="${mobile_full_version%%+*}"
+          if [[ ! "$mobile_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Versão inválida no pdv_mobile/pubspec.yaml: $mobile_full_version" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "garcom_version=$garcom_version" >> "$GITHUB_OUTPUT"
+          echo "mobile_version=$mobile_version" >> "$GITHUB_OUTPUT"
 
       # O APK só é recompilado quando o aplicativo do garçom mudou de verdade
       # desde o release anterior. Um APK universal pesa ~72 MB; republicar um
@@ -129,7 +129,7 @@ jobs:
       # contra ela mesma (ou quase) dava vazio, e o APK ficava reaproveitado em
       # silencio mesmo com pdv_mobile tendo mudado de verdade.
       - name: Decidir se o APK do garçom precisa ser reconstruído
-        id: garcom
+        id: mobile
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -143,7 +143,7 @@ jobs:
           elif ! git diff --quiet "$previous" "$GITHUB_SHA" --               pdv_mobile .github/workflows/pdv_mobile.yml; then
             changed=true
             reason="pdv_mobile mudou desde $previous"
-          elif ! curl -fsSL --max-time 30 "$MANIFEST_URL"               | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("garcom",{}).get("package",{}).get("url") else 1)'; then
+          elif ! curl -fsSL --max-time 30 "$MANIFEST_URL"               | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("mobile",{}).get("package",{}).get("url") else 1)'; then
             # Sem um APK reaproveitável no manifesto anterior não há o que
             # herdar: o app ficaria sem para onde apontar.
             changed=true
@@ -284,39 +284,39 @@ jobs:
   # apenas CHAMADO, para o APK sair no mesmo run e poder ser anexado ao mesmo
   # Release. `require_signing` é o que impede um release de sair com a chave de
   # debug: assinado assim, o APK não instala por cima do app já instalado.
-  garcom:
+  mobile:
     needs: release-metadata
     if: >-
-      needs.release-metadata.outputs.garcom_changed == 'true' &&
+      needs.release-metadata.outputs.mobile_changed == 'true' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'push' && github.ref_type == 'tag'))
     uses: ./.github/workflows/pdv_mobile.yml
     with:
-      version: ${{ needs.release-metadata.outputs.garcom_version }}
+      version: ${{ needs.release-metadata.outputs.mobile_version }}
       require_signing: ${{ github.ref_type == 'tag' }}
     secrets: inherit
 
   # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes e
   # publica o manifesto junto do Release. O `latest-desktop.json` carrega o PDV em
-  # `platforms` e o app do garçom na chave `garcom` — este último com
+  # `platforms` e o atendimento móvel na chave `mobile` — este último com
   # versionamento próprio, por isso fora de `platforms`.
   publish-release:
     # `always()` porque o job do garçom é PULADO quando o app não mudou desde
     # o release anterior; sem isso, um job pulado em `needs` pularia o publish
     # junto e o release inteiro não sairia. Os builds do PDV continuam
     # obrigatórios.
-    needs: [release-metadata, build-windows, build-linux, garcom]
+    needs: [release-metadata, build-windows, build-linux, mobile]
     if: >-
       always() && github.event_name == 'push' && github.ref_type == 'tag' &&
       needs.build-windows.result == 'success' &&
       needs.build-linux.result == 'success' &&
-      (needs.garcom.result == 'success' || needs.garcom.result == 'skipped')
+      (needs.mobile.result == 'success' || needs.mobile.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       APP_VERSION: ${{ needs.release-metadata.outputs.version }}
-      GARCOM_VERSION: ${{ needs.release-metadata.outputs.garcom_version }}
+      MOBILE_VERSION: ${{ needs.release-metadata.outputs.mobile_version }}
       # De onde herdar o APK quando ele nao foi reconstruido neste release.
       # Neste instante `releases/latest` ainda aponta para o release ANTERIOR:
       # o desta tag so e criado no ultimo passo deste job.
@@ -330,10 +330,10 @@ jobs:
           merge-multiple: true
 
       - name: Baixar APK do app do garçom
-        if: needs.garcom.result == 'success'
+        if: needs.mobile.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          name: starchef-garcom-android-${{ needs.release-metadata.outputs.garcom_version }}
+          name: starchef-pdv-mobile-android-${{ needs.release-metadata.outputs.mobile_version }}
           path: release-assets
 
       - name: Gerar latest-desktop.json com SHA-256
@@ -351,7 +351,7 @@ jobs:
           root = Path(os.environ["GITHUB_WORKSPACE"])
           assets = root / "release-assets"
           version = os.environ["APP_VERSION"]
-          garcom_version = os.environ["GARCOM_VERSION"]
+          mobile_version = os.environ["MOBILE_VERSION"]
           tag = os.environ["GITHUB_REF_NAME"]
           repository = os.environ["GITHUB_REPOSITORY"]
 
@@ -359,7 +359,7 @@ jobs:
               "windows_installer": f"StarChef-PDV-Setup-{version}.exe",
               "windows_zip": f"StarChef-PDV-Windows-v{version}.zip",
               "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
-              "garcom_apk": f"StarChef-Garcom-v{garcom_version}.apk",
+              "mobile_apk": f"StarChef-PDV-Mobile-v{mobile_version}.apk",
           }
           # Os três do PDV são obrigatórios: o manifesto existe para servi-los.
           for key in ("windows_installer", "windows_zip", "linux_zip"):
@@ -381,13 +381,13 @@ jobs:
               }
 
           # As arquiteturas que o `--split-per-abi` do Flutter gera.
-          GARCOM_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
-          for _abi in GARCOM_ABIS:
-              names[f"garcom_{_abi}"] = (
-                  f"StarChef-Garcom-v{garcom_version}-{_abi}.apk"
+          MOBILE_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
+          for _abi in MOBILE_ABIS:
+              names[f"mobile_{_abi}"] = (
+                  f"StarChef-PDV-Mobile-v{mobile_version}-{_abi}.apk"
               )
 
-          def garcom_block():
+          def mobile_block():
               """O APK deste release, ou o do release anterior.
 
               Quando `pdv_mobile/` nao muda entre duas tags, o APK nao e
@@ -397,29 +397,29 @@ jobs:
               continua valida — o app compara versao, ve que ja esta nela e
               nao baixa nada.
               """
-              if (assets / names["garcom_apk"]).is_file():
+              if (assets / names["mobile_apk"]).is_file():
                   # `package` continua sendo o universal, e continua sendo o
                   # unico campo que as versoes antigas do app conhecem: elas
                   # seguem atualizando por ele. `packages` e a lista por
                   # arquitetura, ~25 MB cada em vez dos ~69 MB do universal —
                   # o app novo escolhe a sua e baixa um terco.
                   por_abi = [
-                      {**package(f"garcom_{abi}", "apk", "apk", True), "abi": abi}
-                      for abi in GARCOM_ABIS
-                      if (assets / names[f"garcom_{abi}"]).is_file()
+                      {**package(f"mobile_{abi}", "apk", "apk", True), "abi": abi}
+                      for abi in MOBILE_ABIS
+                      if (assets / names[f"mobile_{abi}"]).is_file()
                   ]
                   return {
-                      "version": garcom_version,
-                      "package": package("garcom_apk", "apk", "apk", True),
+                      "version": mobile_version,
+                      "package": package("mobile_apk", "apk", "apk", True),
                       "packages": por_abi,
                   }
               previous = os.environ["MANIFEST_URL"]
               with urlopen(previous, timeout=30) as response:
-                  herdado = json.load(response).get("garcom")
+                  herdado = json.load(response).get("mobile")
               if not herdado or not herdado.get("package", {}).get("url"):
                   raise SystemExit(
                       "APK ausente e o manifesto anterior nao traz um para "
-                      "herdar. Rode o release de novo com o job do garcom."
+                      "herdar. Rode o release de novo com o job do mobile."
                   )
               print(f"Reaproveitando o APK {herdado['version']} do release anterior.")
               return herdado
@@ -444,11 +444,11 @@ jobs:
                       ]
                   },
               },
-              # App do garcom: versionamento proprio (pdv_mobile/pubspec.yaml),
+              # Atendimento movel: versionamento proprio (pdv_mobile/pubspec.yaml),
               # nao participa de "platforms" porque nao roda no PDV. O app
               # consulta esta chave direto pra saber se ha versao nova pra
               # baixar e instalar por cima da atual.
-              "garcom": garcom_block(),
+              "mobile": mobile_block(),
           }
           (assets / "latest.json").write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",

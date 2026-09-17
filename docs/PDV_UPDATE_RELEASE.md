@@ -14,7 +14,7 @@ atualização.
 
 O PDV possui **atualização automática transacional** no Windows e no Linux.
 
-- ao iniciar, consulta o `latest.json` do último GitHub Release sem bloquear o
+- ao iniciar, consulta o `latest-desktop.json` do último GitHub Release sem bloquear o
   login quando a rede ou o GitHub estiverem indisponíveis;
 - compara a versão instalada com a versão publicada;
 - quando existe versão nova, escolhe o ZIP portátil da plataforma, bloqueia
@@ -43,9 +43,9 @@ O mecanismo transacional descrito acima (ZIP, troca de bundle, rollback) é
 somente do **PDV desktop**. O aplicativo do garçom tem versionamento próprio
 (`flutter_garcom/pubspec.yaml`) e um caminho de atualização diferente — baixa o
 APK e entrega ao instalador do Android —, mas **compartilha o mesmo
-`latest.json`**: ele lê a chave `garcom`, fora de `platforms` justamente porque
+`latest-desktop.json`**: ele lê a chave `mobile`, fora de `platforms` justamente porque
 não é uma plataforma do PDV. O contrato dessa chave está em
-[Manifesto `latest.json`](#manifesto-latestjson).
+[Manifesto `latest-desktop.json`](#manifesto-latestjson).
 
 ## Visão do fluxo
 
@@ -57,14 +57,14 @@ pubspec.yaml: 1.0.34+32
           ▼
 GitHub Actions
   ├── valida tag x pubspec do PDV
-  ├── executa analyze e testes do PDV e do app do garçom
+  ├── executa analyze e testes do PDV e do atendimento móvel
   ├── compila Windows
   │     ├── StarChef-PDV-Setup-1.0.34.exe
   │     └── StarChef-PDV-Windows-v1.0.34.zip
   ├── compila Linux
   │     └── StarChef-PDV-Linux-v1.0.34.zip
   ├── compila o APK universal do garçom
-  │     └── StarChef-Garcom-v1.6.3.apk
+  │     └── StarChef-PDV-Mobile-v1.6.3.apk
   ├── calcula SHA-256 e tamanho dos três pacotes do PDV
   ├── gera latest.json
   └── publica tudo no GitHub Release v1.0.34
@@ -105,9 +105,9 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 | Windows | `StarChef-PDV-Setup-X.Y.Z.exe` | primeira instalação ou atualização manual pelo Inno Setup |
 | Windows | `StarChef-PDV-Windows-vX.Y.Z.zip` | bundle usado pelo atualizador automático transacional |
 | Linux | `StarChef-PDV-Linux-vX.Y.Z.zip` | pacote principal com o bundle completo |
-| Android | `StarChef-Garcom-vA.B.C.apk` | APK universal do app do garçom (~69 MB); instalação manual em qualquer aparelho, e o que as versões do app anteriores a 1.8.3 baixam |
-| Android | `StarChef-Garcom-vA.B.C-<abi>.apk` | um por arquitetura (`arm64-v8a`, `armeabi-v7a`, `x86_64`), ~25 MB; é o que a atualização automática baixa |
-| Todos | `latest.json` | manifesto consumido pelo verificador do PDV |
+| Android | `StarChef-PDV-Mobile-vA.B.C.apk` | APK universal do atendimento móvel (~69 MB); instalação manual em qualquer aparelho, e o que as versões do app anteriores a 1.8.3 baixam |
+| Android | `StarChef-PDV-Mobile-vA.B.C-<abi>.apk` | um por arquitetura (`arm64-v8a`, `armeabi-v7a`, `x86_64`), ~25 MB; é o que a atualização automática baixa |
+| Todos | `latest-desktop.json` | manifesto consumido pelo verificador do PDV |
 
 No Windows, prefira o instalador para a primeira instalação. O `AppId` permanece
 estável e o instalador bloqueia instalação de versão igual ou inferior. Depois
@@ -122,7 +122,7 @@ que executa o PDV. Instalações protegidas por `root`, como `/opt` sem permiss�
 de escrita, não podem ser substituídas automaticamente; nesse caso o PDV mantém
 a versão atual e registra a falha em `pdv.log`.
 
-## Formato do `latest.json`
+## Formato do `latest-desktop.json`
 
 O manifesto usa `schema_version: 1` e separa os pacotes por plataforma:
 
@@ -183,19 +183,19 @@ https://github.com/Matheus-Matta/starchef/releases/latest/download/latest.json
 O redirecionamento de `releases/latest` faz a URL acompanhar o release mais
 recente sem precisar alterar ou recompilar os terminais a cada versão.
 
-### A chave `garcom` do manifesto
+### A chave `mobile` do manifesto
 
 O aplicativo do garçom tem versionamento próprio, então não entra em
 `platforms`. Ele lê esta chave:
 
 ```json
-"garcom": {
+"mobile": {
   "version": "1.8.3",
-  "package": { "kind": "apk", "name": "StarChef-Garcom-v1.8.3.apk", "url": "...", "sha256": "...", "size": 72488796 },
+  "package": { "kind": "apk", "name": "StarChef-PDV-Mobile-v1.8.3.apk", "url": "...", "sha256": "...", "size": 72488796 },
   "packages": [
-    { "abi": "arm64-v8a",   "name": "StarChef-Garcom-v1.8.3-arm64-v8a.apk",   "url": "...", "sha256": "...", "size": 26214400 },
-    { "abi": "armeabi-v7a", "name": "StarChef-Garcom-v1.8.3-armeabi-v7a.apk", "url": "...", "sha256": "...", "size": 24117248 },
-    { "abi": "x86_64",      "name": "StarChef-Garcom-v1.8.3-x86_64.apk",      "url": "...", "sha256": "...", "size": 26738688 }
+    { "abi": "arm64-v8a",   "name": "StarChef-PDV-Mobile-v1.8.3-arm64-v8a.apk",   "url": "...", "sha256": "...", "size": 26214400 },
+    { "abi": "armeabi-v7a", "name": "StarChef-PDV-Mobile-v1.8.3-armeabi-v7a.apk", "url": "...", "sha256": "...", "size": 24117248 },
+    { "abi": "x86_64",      "name": "StarChef-PDV-Mobile-v1.8.3-x86_64.apk",      "url": "...", "sha256": "...", "size": 26738688 }
   ]
 }
 ```
@@ -235,7 +235,7 @@ Configure no repositório:
 | Variable | `PDV_API_BASE_URL` | sim | URL da API incorporada aos builds |
 | Secret | `PDV_SENTRY_DSN` | não | telemetria do PDV |
 | Variable | `PDV_UPDATE_MANIFEST_URL` | não | substitui a URL padrão do GitHub |
-| Secret | `GARCOM_KEYSTORE_BASE64` | não | JKS do app do garçom codificado em Base64 |
+| Secret | `GARCOM_KEYSTORE_BASE64` | não | JKS do atendimento móvel codificado em Base64 |
 | Secret | `GARCOM_KEYSTORE_PASSWORD` | não | senha do keystore Android |
 | Secret | `GARCOM_KEY_ALIAS` | não | alias da chave de assinatura |
 | Secret | `GARCOM_KEY_PASSWORD` | não | senha da chave de assinatura |
@@ -274,7 +274,7 @@ PowerShell e copie somente a saída para o Secret `GARCOM_KEYSTORE_BASE64`:
 
 ```powershell
 [Convert]::ToBase64String(
-  [IO.File]::ReadAllBytes("flutter_garcom/android/starchef-garcom-release.jks")
+  [IO.File]::ReadAllBytes("pdv_mobile/android/starchef-pdv-mobile-release.jks")
 )
 ```
 
@@ -283,7 +283,7 @@ Secrets**. Nunca adicione `key.properties`, o JKS ou suas senhas ao Git.
 
 ## Builds condicionais
 
-Uma tag corta backend, frontend, PDV e app do garçom de uma vez, mas quase
+Uma tag corta backend, frontend, PDV e atendimento móvel de uma vez, mas quase
 nunca os quatro mudaram. Nos dez releases anteriores a `v1.6.42`, o backend foi
 reconstruído dez vezes **sem uma única alteração** em `backend/`, e o APK de
 ~72 MB foi recompilado e republicado dez vezes idêntico ao anterior.
@@ -295,7 +295,7 @@ Por isso cada workflow decide, na hora da tag, se tem o que publicar:
 | `backend` | `backend/` ou o próprio workflow mudaram desde a tag anterior | re-etiqueta a imagem publicada com a versão nova |
 | `frontend` | `frontend/` ou o próprio workflow mudaram | re-etiqueta a imagem publicada com a versão nova |
 | PDV (`flutter`) | **sempre** | — |
-| APK (`garcom`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o manifesto herda a chave `garcom` do release anterior |
+| APK (`garcom`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o manifesto herda a chave `mobile` do release anterior |
 
 O PDV não tem exceção porque a tag **é** a versão dele: `release-metadata`
 recusa uma tag que não bata com `flutter/pubspec.yaml`, então cortar um release
@@ -326,9 +326,9 @@ re-etiqueta essa imagem com `X.Y.Z` e `X.Y` usando
 são nomes novos para o **mesmo digest** — e mantém respondível a pergunta
 "qual backend rodava no release `X.Y.Z`?".
 
-**APK.** O `publish-release` lê o `latest.json` do release anterior (naquele
+**APK.** O `publish-release` lê o `latest-desktop.json` do release anterior (naquele
 instante `releases/latest` ainda é o anterior, pois o desta tag só é criado no
-último passo) e copia a chave `garcom` inteira para o manifesto novo. A URL
+último passo) e copia a chave `mobile` inteira para o manifesto novo. A URL
 aponta para o asset do release antigo, que continua válido. O app compara a
 versão, vê que já está nela e não baixa nada. Se o manifesto anterior não
 trouxer um APK reaproveitável, `release-metadata` força a reconstrução.
@@ -343,7 +343,7 @@ dois acontecerem próximos um do outro, é normal aparecerem seis execuções:
 | Pull Request | `backend` | testes, lint e migrations; não publica imagem |
 | Pull Request | `frontend` | lint, testes, build e auditoria; não publica imagem |
 | Pull Request | `flutter` | analyze e testes do PDV; não publica release |
-| Pull Request | `garcom` | analyze, testes e APK temporário de homologação do app do garçom |
+| Pull Request | `garcom` | analyze, testes e APK temporário de homologação do atendimento móvel |
 | tag `vX.Y.Z` | `backend` | testa e publica a imagem no GHCR **se `backend/` mudou** |
 | tag `vX.Y.Z` | `frontend` | testa e publica a imagem no GHCR **se `frontend/` mudou** |
 | tag `vX.Y.Z` | `flutter` | testa, compila Windows/Linux, chama `garcom` se preciso e publica o Release |
@@ -449,9 +449,9 @@ No workflow `flutter`, os jobs executam nesta ordem:
 5. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
    publica o GitHub Release.
 
-Se um build do PDV falhar, `publish-release` não roda e o novo `latest.json`
+Se um build do PDV falhar, `publish-release` não roda e o novo `latest-desktop.json`
 não é publicado. O job `garcom` **pulado** não impede a publicação: nesse caso
-o manifesto herda a chave `garcom` do release anterior, cuja URL continua
+o manifesto herda a chave `mobile` do release anterior, cuja URL continua
 válida (ver [Builds condicionais](#builds-condicionais)).
 
 ### 6. Conferir o release
@@ -462,12 +462,12 @@ O release deve conter exatamente estes arquivos para a versão:
 StarChef-PDV-Setup-X.Y.Z.exe
 StarChef-PDV-Windows-vX.Y.Z.zip
 StarChef-PDV-Linux-vX.Y.Z.zip
-StarChef-Garcom-vA.B.C.apk
+StarChef-PDV-Mobile-vA.B.C.apk
 latest.json
 ```
 
 `A.B.C` é a versão independente declarada em `flutter_garcom/pubspec.yaml`.
-Abra o `latest.json` e confirme `version`, `tag`, `commit`, nomes e URLs.
+Abra o `latest-desktop.json` e confirme `version`, `tag`, `commit`, nomes e URLs.
 Depois instale em um terminal de homologação e confira se o cabeçalho mostra a
 tag instalada com o ícone verde.
 
@@ -495,7 +495,7 @@ O botão **Run workflow** permite executar `workflow_dispatch`. Ele aceita:
 O disparo manual gera artefatos temporários do Actions para Windows, Linux e o
 APK do garçom,
 mas não executa `publish-release`: não cria tag, não cria GitHub Release e não
-altera o `latest.json`. Use-o para homologação de build, nunca como substituto
+altera o `latest-desktop.json`. Use-o para homologação de build, nunca como substituto
 da tag de produção.
 
 ## Conferência manual de integridade
@@ -512,7 +512,7 @@ No Linux:
 sha256sum StarChef-PDV-Linux-v1.0.34.zip
 ```
 
-Compare o resultado com o `sha256` do mesmo arquivo no `latest.json`. O hash
+Compare o resultado com o `sha256` do mesmo arquivo no `latest-desktop.json`. O hash
 protege contra arquivo incompleto ou diferente do publicado. O PDV faz essa
 conferência automaticamente para o ZIP; os comandos continuam úteis para
 auditar manualmente um release ou validar o EXE do instalador.
@@ -548,7 +548,7 @@ Verifique:
 
 - acesso do terminal a `github.com` e `objects.githubusercontent.com`;
 - existência de um release marcado como mais recente;
-- presença do `latest.json` nos assets;
+- presença do `latest-desktop.json` nos assets;
 - JSON válido com `schema_version: 1`;
 - presença de pacote `windows` ou `linux`, conforme o terminal;
 - data, hora e certificados TLS da máquina.
