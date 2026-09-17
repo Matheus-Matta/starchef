@@ -1,0 +1,204 @@
+import 'dart:io';
+
+class AppConfig {
+  const AppConfig({
+    required this.apiBaseUrl,
+    this.envFilePath,
+    this.usedFallbackApiUrl = false,
+    this.sentryDsn,
+  });
+
+  /// API oficial usada pelos builds de produção quando não há override.
+  static const productionApiBaseUrl = 'https://api.starchef.com.br/api/v1';
+
+  /// O endereço assumido quando não há override nenhum.
+  ///
+  /// A ordem completa está em [load]: o que o operador cadastrou na
+  /// engrenagem do login vem PRIMEIRO, depois `--dart-define`, depois o
+  /// `.env`, e só então isto.
+  static String get defaultApiBaseUrl => productionApiBaseUrl;
+
+  final String apiBaseUrl;
+  final String? envFilePath;
+
+  /// Mantido para sinalizar apenas configurações inválidas. A ausência de
+  /// override não é erro: o app usa [defaultApiBaseUrl].
+  final bool usedFallbackApiUrl;
+
+  /// DSN do Sentry (opcional). Sem ela, `main.dart` não inicializa o Sentry —
+  /// mesmo critério de "zero overhead sem configuração" usado no backend e
+  /// no frontend web.
+  final String? sentryDsn;
+
+  /// Base do WebSocket derivada da API (http→ws, https→wss), sem o sufixo
+  /// `/api/v1`. Ex.: `http://host:8001/api/v1` → `ws://host:8001`.
+  String get webSocketBaseUrl {
+    final base = apiBaseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
+    return base.replaceFirst(RegExp(r'^http'), 'ws');
+  }
+
+  /// URL do WS de notificações. O app nativo autentica pelo token na query
+  /// (`?token=`) — não há cookie nem Origin de navegador.
+  String notificationsSocketUrl(String accessToken) =>
+      '$webSocketBaseUrl/ws/notifications/?token=${Uri.encodeComponent(accessToken)}';
+
+  /// [manualOverrideUrl] vem de `LocalPreferences.apiBaseUrlOverride` — o que
+  /// o usuário digitou na engrenagem da tela de login. Tem prioridade sobre
+  /// --dart-define/.env porque é a ação mais explícita e recente: se alguém
+  /// mexeu ali, é porque quer apontar para outro lugar de propósito.
+  static Future<AppConfig> load({String? manualOverrideUrl}) async {
+    const definedUrl = String.fromEnvironment('API_BASE_URL');
+    const definedDsn = String.fromEnvironment('PDV_SENTRY_DSN');
+
+    if (manualOverrideUrl != null && _absoluteHttpUrl(manualOverrideUrl)) {
+      final dsn = definedDsn.isNotEmpty
+          ? definedDsn
+          : await _sentryDsnFromEnvFile();
+      return AppConfig(
+        apiBaseUrl: normalizeApiBaseUrl(manualOverrideUrl),
+        sentryDsn: _orNull(dsn),
+      );
+    }
+
+    if (_absoluteHttpUrl(definedUrl)) {
+      // --dart-define resolve a API diretamente; ainda assim tenta achar um
+      // .env só para pegar PDV_SENTRY_DSN, se a DSN não veio por --dart-define.
+      final dsn = definedDsn.isNotEmpty
+          ? definedDsn
+          : await _sentryDsnFromEnvFile();
+      return AppConfig(
+        apiBaseUrl: normalizeApiBaseUrl(definedUrl),
+        sentryDsn: _orNull(dsn),
+      );
+    }
+
+    final envFile = await EnvFileLoader.find();
+    if (envFile == null) {
+      return AppConfig(
+        apiBaseUrl: defaultApiBaseUrl,
+        sentryDsn: _orNull(definedDsn),
+      );
+    }
+
+    final values = await EnvFileLoader.read(
+      envFile,
+      allowedKeys: const {
+        'VITE_API_BASE_URL',
+        'VITE_BACKEND_TARGET',
+        'API_BASE_URL',
+        'API_URL',
+        'PDV_SENTRY_DSN',
+      },
+    );
+    final explicitApiUrl = values['API_BASE_URL'];
+    final sharedApiUrl = values['API_URL'];
+    final viteApiUrl = values['VITE_API_BASE_URL'];
+    final backendTarget = values['VITE_BACKEND_TARGET'];
+    final apiUrl = _absoluteHttpUrl(explicitApiUrl)
+        ? explicitApiUrl
+        : _absoluteHttpUrl(sharedApiUrl)
+        ? sharedApiUrl
+        : _absoluteHttpUrl(viteApiUrl)
+        ? viteApiUrl
+        : _absoluteHttpUrl(backendTarget)
+        ? normalizeApiBaseUrl(backendTarget!)
+        : defaultApiBaseUrl;
+    return AppConfig(
+      apiBaseUrl: normalizeApiBaseUrl(apiUrl!),
+      envFilePath: envFile.path,
+      usedFallbackApiUrl: false,
+      sentryDsn: _orNull(
+        definedDsn.isNotEmpty ? definedDsn : values['PDV_SENTRY_DSN'],
+      ),
+    );
+  }
+
+  static Future<String?> _sentryDsnFromEnvFile() async {
+    final envFile = await EnvFileLoader.find();
+    if (envFile == null) return null;
+    final values = await EnvFileLoader.read(
+      envFile,
+      allowedKeys: const {'PDV_SENTRY_DSN'},
+    );
+    return values['PDV_SENTRY_DSN'];
+  }
+
+  static String? _orNull(String? value) =>
+      (value == null || value.trim().isEmpty) ? null : value.trim();
+
+  static bool _absoluteHttpUrl(String? value) {
+    if (value == null || value.trim().isEmpty) return false;
+    final uri = Uri.tryParse(value.trim());
+    return uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty;
+  }
+
+  /// Aceita tanto a URL completa da API quanto apenas o domínio. Sem caminho,
+  /// acrescenta o namespace usado por todos os endpoints do PDV.
+  static String normalizeApiBaseUrl(String value) {
+    final normalized = value.trim().replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.parse(normalized);
+    if (uri.path.isEmpty || uri.path == '/') {
+      return '$normalized/api/v1';
+    }
+    return normalized;
+  }
+}
+
+abstract final class EnvFileLoader {
+  static Future<File?> find() async {
+    const explicitPath = String.fromEnvironment('STAR_CHEF_ENV_PATH');
+    if (explicitPath.isNotEmpty) {
+      final file = File(explicitPath);
+      return await file.exists() ? file : null;
+    }
+
+    final starts = <Directory>[
+      Directory.current,
+      File(Platform.resolvedExecutable).parent,
+    ];
+    final visited = <String>{};
+
+    for (final start in starts) {
+      var directory = start.absolute;
+      for (var depth = 0; depth < 8; depth++) {
+        if (visited.add(directory.path)) {
+          final candidate = File(
+            '${directory.path}${Platform.pathSeparator}.env',
+          );
+          if (await candidate.exists()) return candidate;
+        }
+        final parent = directory.parent;
+        if (parent.path == directory.path) break;
+        directory = parent;
+      }
+    }
+    return null;
+  }
+
+  static Future<Map<String, String>> read(
+    File file, {
+    Set<String>? allowedKeys,
+  }) async {
+    final values = <String, String>{};
+    for (final rawLine in await file.readAsLines()) {
+      var line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+      if (line.startsWith('export ')) line = line.substring(7).trimLeft();
+      final separator = line.indexOf('=');
+      if (separator <= 0) continue;
+
+      final key = line.substring(0, separator).trim();
+      if (allowedKeys != null && !allowedKeys.contains(key)) continue;
+      var value = line.substring(separator + 1).trim();
+      if (value.length >= 2 &&
+          ((value.startsWith('"') && value.endsWith('"')) ||
+              (value.startsWith("'") && value.endsWith("'")))) {
+        value = value.substring(1, value.length - 1);
+      }
+      values[key] = value;
+    }
+    return values;
+  }
+}

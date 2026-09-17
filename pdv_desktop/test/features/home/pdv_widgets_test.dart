@@ -1,0 +1,749 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:starchef_pdv_desktop/core/network/api_client.dart';
+import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
+import 'package:starchef_pdv_desktop/core/update/pdv_update_service.dart';
+import 'package:starchef_pdv_desktop/features/home/presentation/pdv_navigation_shell.dart';
+import 'package:starchef_pdv_desktop/features/home/presentation/product_catalog_panel.dart';
+import 'package:starchef_pdv_desktop/features/orders/presentation/order_cart_panel.dart';
+
+void main() {
+  group('PdvSidebar', () {
+    testWidgets(
+      'mostra somente a tag atual e ícone vermelho quando desatualizado',
+      (tester) async {
+        await _pumpAtSize(
+          tester,
+          size: const Size(800, 640),
+          child: PdvSidebar(
+            expanded: true,
+            selected: PdvDestination.menu,
+            onToggle: () {},
+            onSelected: (_) {},
+            userName: 'Operador',
+            userSubtitle: '@operador',
+            onLogout: () {},
+            versionStatus: const PdvUpdateStatus(
+              phase: PdvUpdatePhase.updateAvailable,
+              installed: PdvInstalledVersion(
+                version: '1.0.33',
+                buildNumber: '31',
+              ),
+              latestVersion: '1.0.34',
+            ),
+          ),
+        );
+
+        expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+        expect(find.textContaining('+31'), findsNothing);
+        expect(find.textContaining('Nova v1.0.34'), findsNothing);
+        final icon = tester.widget<Icon>(find.byIcon(Icons.cancel));
+        expect(icon.color, const Color(0xFFDC2626));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('usa ícone verde quando a versão está atualizada', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(800, 640),
+        child: PdvSidebar(
+          expanded: true,
+          selected: PdvDestination.menu,
+          onToggle: () {},
+          onSelected: (_) {},
+          userName: 'Operador',
+          userSubtitle: '@operador',
+          onLogout: () {},
+          versionStatus: const PdvUpdateStatus(
+            phase: PdvUpdatePhase.upToDate,
+            installed: PdvInstalledVersion(version: '1.0.33'),
+            latestVersion: '1.0.33',
+          ),
+        ),
+      );
+
+      expect(find.text('STARCHEF v1.0.33'), findsOneWidget);
+      final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+      expect(icon.color, const Color(0xFF16A34A));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('expõe destinos e encaminha ações', (tester) async {
+      PdvDestination? selected;
+      var toggles = 0;
+      var logouts = 0;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(800, 640),
+        child: PdvSidebar(
+          expanded: true,
+          selected: PdvDestination.menu,
+          onToggle: () => toggles++,
+          onSelected: (destination) => selected = destination,
+          userName: 'Ana Souza',
+          userSubtitle: '@ana · Operadora',
+          onLogout: () => logouts++,
+        ),
+      );
+
+      expect(find.text('STARCHEF'), findsOneWidget);
+      expect(find.text('Menu'), findsOneWidget);
+      expect(find.text('Mesas'), findsOneWidget);
+      expect(find.text('Balança rápida'), findsOneWidget);
+      expect(find.text('AS'), findsOneWidget);
+      expect(find.text('Ana Souza'), findsOneWidget);
+      expect(find.text('@ana · Operadora'), findsOneWidget);
+      expect(find.text('StarChef Centro'), findsNothing);
+
+      // Delivery deixou de ser um módulo da barra lateral; ele existe apenas
+      // como tipo de pedido dentro do fluxo de Pedidos.
+      expect(find.text('Delivery'), findsNothing);
+
+      await tester.tap(find.text('Financeiro'));
+      await tester.tap(find.byTooltip('Recolher menu'));
+      await tester.tap(find.text('Sair'));
+
+      expect(selected, PdvDestination.finance);
+      expect(toggles, 1);
+      expect(logouts, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rail compacto respeita permissões sem overflow', (
+      tester,
+    ) async {
+      PdvDestination? selected;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(180, 520),
+        child: PdvSidebar(
+          expanded: false,
+          selected: PdvDestination.tables,
+          onToggle: () {},
+          onSelected: (destination) => selected = destination,
+          userName: 'Operador',
+          userSubtitle: '@operador',
+          onLogout: () {},
+          showOrders: false,
+          showScale: false,
+          showSettings: false,
+        ),
+      );
+
+      expect(find.text('Pedidos'), findsNothing);
+      expect(find.byIcon(Icons.scale_outlined), findsNothing);
+      expect(find.byIcon(Icons.settings_outlined), findsNothing);
+      expect(find.byTooltip('Expandir menu'), findsOneWidget);
+
+      expect(find.byIcon(Icons.delivery_dining_outlined), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.table_restaurant_outlined));
+
+      expect(selected, PdvDestination.tables);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('ProductCatalogPanel', () {
+    final products = <Map<String, dynamic>>[
+      {
+        'id': 'product-1',
+        'name': 'Suco de laranja',
+        'category': 'category-1',
+        'category_name': 'Bebidas',
+        'current_price': 12.5,
+        'sale_price': 12.5,
+        'pricing_unit': 'unit',
+      },
+      {
+        'id': 'product-2',
+        'name': 'Hambúrguer artesanal',
+        'category': 'category-2',
+        'category_name': 'Lanches',
+        'current_price': 28,
+        'sale_price': 28,
+        'pricing_unit': 'unit',
+      },
+    ];
+
+    testWidgets('filtra categorias e encaminha busca e produto', (
+      tester,
+    ) async {
+      String? search;
+      String? category;
+      Map<String, dynamic>? pressedProduct;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(640, 680),
+        child: ProductCatalogPanel(
+          products: products,
+          allProducts: products,
+          categories: const [
+            {'id': 'category-1', 'name': 'Bebidas'},
+            {'id': 'category-2', 'name': 'Lanches'},
+          ],
+          selectedCategory: null,
+          search: '',
+          money: _money,
+          onSearchChanged: (value) => search = value,
+          onCategoryChanged: (value) => category = value,
+          onProductPressed: (value) => pressedProduct = value,
+        ),
+      );
+
+      expect(find.text('2 itens'), findsAtLeastNWidgets(1));
+      expect(find.text('Suco de laranja'), findsOneWidget);
+      expect(find.text('Hambúrguer artesanal'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'suco');
+      // A faixa de categorias permanece visível para seleção rápida no PDV.
+      await tester.tap(find.text('Bebidas · 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Suco de laranja'));
+
+      expect(search, 'suco');
+      expect(category, 'category-1');
+      expect(pressedProduct?['id'], 'product-1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('mostra estado vazio em largura compacta sem overflow', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(360, 520),
+        child: ProductCatalogPanel(
+          products: const [],
+          allProducts: const [],
+          categories: const [],
+          selectedCategory: null,
+          search: 'inexistente',
+          money: _money,
+          onSearchChanged: (_) {},
+          onCategoryChanged: (_) {},
+          onProductPressed: (_) {},
+        ),
+      );
+
+      expect(find.text('0 itens'), findsAtLeastNWidgets(1));
+      expect(find.text('Nenhum produto encontrado'), findsOneWidget);
+      expect(
+        find.text('Tente buscar por outro nome, código ou categoria.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('card do produto não estoura com nome de 2 linhas + pesado + '
+        'promocional', (tester) async {
+      // Pior caso empilhado: nome longo o bastante para 2 linhas, unidade
+      // "/ kg" e preço promocional riscado — os três elementos que competem
+      // por altura dentro do card ao mesmo tempo.
+      final heavy = <Map<String, dynamic>>[
+        {
+          'id': 'product-1',
+          'name': 'Picanha Angus Premium Fatiada Especial',
+          'category': 'category-1',
+          'category_name': 'Carnes nobres',
+          'current_price': 89.9,
+          'sale_price': 109.9,
+          'promotional_price': 89.9,
+          'pricing_unit': 'kg',
+          'is_weighed': true,
+        },
+      ];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(1280, 800),
+        child: ProductCatalogPanel(
+          products: heavy,
+          allProducts: heavy,
+          categories: const [
+            {'id': 'category-1', 'name': 'Carnes nobres'},
+          ],
+          selectedCategory: null,
+          search: '',
+          money: _money,
+          onSearchChanged: (_) {},
+          onCategoryChanged: (_) {},
+          onProductPressed: (_) {},
+        ),
+      );
+
+      expect(find.textContaining('Picanha'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('o código fica acima da categoria, no tamanho dela', (
+      tester,
+    ) async {
+      final coded = <Map<String, dynamic>>[
+        {
+          'id': 'product-1',
+          'name': 'Suco de laranja',
+          'internal_code': '104',
+          'category': 'category-1',
+          'category_name': 'Bebidas',
+          'current_price': 12.5,
+          'sale_price': 12.5,
+          'pricing_unit': 'unit',
+        },
+      ];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(640, 680),
+        child: ProductCatalogPanel(
+          products: coded,
+          allProducts: coded,
+          categories: const [
+            {'id': 'category-1', 'name': 'Bebidas'},
+          ],
+          selectedCategory: null,
+          search: '',
+          money: _money,
+          onSearchChanged: (_) {},
+          onCategoryChanged: (_) {},
+          onProductPressed: (_) {},
+        ),
+      );
+
+      // O código já foi prefixo do título, no mesmo corpo e no mesmo peso:
+      // comia a primeira das duas linhas do nome, e num produto de nome longo
+      // sobrava na tela o número e reticências. Agora é uma linha própria,
+      // acima da categoria e do tamanho dela.
+      // Dentro da grade: 'Bebidas' também é o nome de um filtro de categoria
+      // logo acima, e a busca solta acharia os dois.
+      Finder noCard(String texto) => find.descendant(
+        of: find.byType(GridView),
+        matching: find.text(texto),
+      );
+      final codigo = noCard('#104');
+      final categoria = noCard('Bebidas');
+      final titulo = noCard('Suco de laranja');
+      expect(codigo, findsOneWidget);
+      expect(
+        titulo,
+        findsOneWidget,
+        reason: 'o nome não carrega mais o código',
+      );
+
+      expect(
+        tester.getTopLeft(codigo).dy,
+        lessThan(tester.getTopLeft(categoria).dy),
+      );
+      expect(
+        tester.widget<Text>(codigo).style?.fontSize,
+        tester.widget<Text>(categoria).style?.fontSize,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('OrderCartPanel', () {
+    testWidgets('desabilita ações e orienta quando o pedido está vazio', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(320, 640),
+        child: OrderCartPanel(
+          order: null,
+          table: null,
+          customer: null,
+          items: const [],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onSendToKitchen: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      expect(find.text('O pedido está vazio'), findsOneWidget);
+      expect(
+        find.text('Toque em um produto do cardápio para começar.'),
+        findsOneWidget,
+      );
+      // O número do pedido e o contexto saíram daqui para a barra do
+      // aplicativo — a regra de como essa linha é montada está em
+      // `order_presenter_test.dart`.
+      expect(find.text('Novo pedido'), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Pagamento'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Enviar pedidos'),
+            )
+            .onPressed,
+        isNull,
+        reason: 'sem itens pendentes não há rodada para mandar à produção',
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Imprimir recibo'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('exibe totais e encaminha remoção, revisão e impressão', (
+      tester,
+    ) async {
+      Map<String, dynamic>? voidedItem;
+      var finishes = 0;
+      var prints = 0;
+      var cancellations = 0;
+      final item = <String, dynamic>{
+        'id': 'item-1',
+        'product': 'product-1',
+        'product_name': 'Prato executivo',
+        'quantity': 2,
+        'unit_price': 10,
+        'total_price': 20,
+        'customer_note': 'Sem cebola',
+        'status': 'pending',
+      };
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {
+            'sequence': 42,
+            'order_type': 'table',
+            'subtotal': 20,
+            'service_fee': 2,
+            'discount': 1,
+            'total': 21,
+            '_offline_pending': true,
+          },
+          table: const {'number': 7},
+          customer: null,
+          items: [item],
+          money: _money,
+          onVoidItem: (value) => voidedItem = value,
+          onFinish: () => finishes++,
+          onSendToKitchen: () {},
+          onPrint: () => prints++,
+          onCancel: () => cancellations++,
+          printing: false,
+        ),
+      );
+
+      expect(find.text('LOCAL'), findsOneWidget);
+      expect(find.text('Prato executivo'), findsOneWidget);
+      expect(find.text('Sem cebola'), findsOneWidget);
+      expect(find.text('Taxa de serviço'), findsOneWidget);
+      expect(find.text('Desconto'), findsOneWidget);
+      expect(find.text('R\$ 21,00'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Cancelar item'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Pagamento'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Imprimir recibo'));
+      await tester.tap(find.byTooltip('Mais ações do pedido'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancelar pedido'));
+      await tester.pumpAndSettle();
+
+      expect(voidedItem?['id'], 'item-1');
+      expect(finishes, 1);
+      expect(prints, 1);
+      expect(cancellations, 1);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('contador do cartão soma e subtrai item aguardando envio', (
+      tester,
+    ) async {
+      final deltas = <int>[];
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 7, 'order_type': 'counter', 'total': 21},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Coca Cola 350ml',
+              'quantity': 3,
+              'unit_price': 7,
+              'total_price': 21,
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onSendToKitchen: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, delta) => deltas.add(delta),
+        ),
+      );
+
+      // A quantidade fica embaixo do nome, no próprio cartão: é o que dispensa
+      // o modal de confirmação para um produto sem variação.
+      expect(find.text('3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Uma unidade a mais'));
+      await tester.tap(find.byTooltip('Uma unidade a menos'));
+
+      expect(deltas, [1, -1]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('item em produção e produto por peso não mostram contador', (
+      tester,
+    ) async {
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 8, 'order_type': 'counter', 'total': 30},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-1',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 10,
+              'total_price': 10,
+              // Já saiu para a cozinha: mudar a quantidade aqui não desfaz o
+              // que a produção já recebeu.
+              'status': 'sent',
+            },
+            {
+              'id': 'item-2',
+              'product_name': 'Buffet',
+              'quantity': 0.5,
+              'unit_price': 40,
+              'total_price': 20,
+              'pricing_unit': 'kg',
+              'status': 'pending',
+            },
+          ],
+          money: _money,
+          onVoidItem: (_) {},
+          onFinish: () {},
+          onSendToKitchen: () {},
+          onPrint: () {},
+          printing: false,
+          onChangeQuantity: (_, _) {},
+        ),
+      );
+
+      // Por peso a quantidade vem da balança: um `+1` ali seria um quilo.
+      expect(find.byTooltip('Uma unidade a mais'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('item em produção pode ser cancelado e mantém o selo', (
+      tester,
+    ) async {
+      Map<String, dynamic>? voidedItem;
+
+      await _pumpAtSize(
+        tester,
+        size: const Size(380, 700),
+        child: OrderCartPanel(
+          order: const {'sequence': 61, 'order_type': 'command', 'total': 20},
+          table: null,
+          customer: null,
+          items: const [
+            {
+              'id': 'item-sent',
+              'product_name': 'Prato executivo',
+              'quantity': 1,
+              'unit_price': 20,
+              'total_price': 20,
+              'status': 'sent',
+              'batch_number': 3,
+            },
+            // Cortesia já saiu da conta: o backend recusa cancelar de novo,
+            // então nem deve oferecer o botão.
+            {
+              'id': 'item-comped',
+              'product_name': 'Sobremesa',
+              'quantity': 1,
+              'unit_price': 0,
+              'total_price': 0,
+              'status': 'comped',
+              'batch_number': 3,
+            },
+          ],
+          money: _money,
+          onVoidItem: (value) => voidedItem = value,
+          onFinish: () {},
+          onSendToKitchen: () {},
+          onPrint: () {},
+          printing: false,
+        ),
+      );
+
+      expect(find.text('EM PRODUÇÃO (2)'), findsOneWidget);
+      // O selo de rodada/estado continua visível mesmo com o botão presente:
+      // era ele que sumia quando a exibição dependia de "não pode remover".
+      expect(find.text('Rodada 3'), findsNWidgets(2));
+      expect(find.text('Cozinha'), findsOneWidget);
+      expect(find.text('Cortesia'), findsOneWidget);
+
+      // Só o item em produção oferece cancelar; a cortesia não.
+      expect(find.byTooltip('Cancelar item'), findsOneWidget);
+      await tester.tap(find.byTooltip('Cancelar item'));
+      expect(voidedItem?['id'], 'item-sent');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  testWidgets('PdvConnectionBadge não pisca com oscilação curta de fase', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.online),
+      ),
+    );
+    expect(find.text('Online'), findsOneWidget);
+
+    // O servidor engasga por 300ms e volta: o operador não deve ver o
+    // indicador trocar de estado por causa disso.
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.degraded),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Online'), findsOneWidget);
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.online),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Online'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge assume a fase que se mantém', (tester) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.online),
+      ),
+    );
+
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.offline),
+      ),
+    );
+    // Num PDV que só opera conectado, ficar sem conexão é a informação mais
+    // importante da tela: some depois da carência, não some para sempre.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Sem conexão'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge online usa verde escuro com alto contraste', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(phase: NetworkPhase.online),
+      ),
+    );
+
+    final badge = tester.widget<ShadBadge>(find.byType(ShadBadge));
+    expect(badge.backgroundColor, const Color(0xFF166534));
+    expect(badge.hoverBackgroundColor, const Color(0xFF14532D));
+    expect(badge.foregroundColor, Colors.white);
+    expect(find.text('Online'), findsOneWidget);
+  });
+
+  testWidgets('PdvConnectionBadge não oferece contador de fila', (
+    tester,
+  ) async {
+    await _pumpAtSize(
+      tester,
+      size: const Size(240, 100),
+      child: const PdvConnectionBadge(
+        status: NetworkStatus(
+          phase: NetworkPhase.offline,
+          lastError: 'Não foi possível conectar ao servidor 10.0.0.2.',
+        ),
+      ),
+    );
+
+    // Não existe fila de saída neste PDV: um número ao lado de "Sem conexão"
+    // prometeria ao operador que a venda está guardada em algum lugar.
+    expect(find.text('Sem conexão'), findsOneWidget);
+    expect(find.textContaining('·'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Future<void> _pumpAtSize(
+  WidgetTester tester, {
+  required Size size,
+  required Widget child,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: const Color(0xFFF57C00),
+      ),
+      home: ShadTheme(
+        data: AppTheme.shadLight(),
+        child: Scaffold(body: child),
+      ),
+    ),
+  );
+  await tester.pump();
+}
+
+String _money(dynamic value) {
+  final number = value is num ? value.toDouble() : 0;
+  return 'R\$ ${number.toStringAsFixed(2).replaceAll('.', ',')}';
+}
