@@ -171,7 +171,17 @@ mantenha o job Ubuntu do Actions e suas dependências coerentes com o bundle.
 Antes de concluir:
 
 - execute `git diff --check`;
-- valide a sintaxe do workflow e o JSON de exemplo quando forem alterados;
+- valide os workflows contra o SCHEMA do GitHub, não só como YAML:
+
+  ```bash
+  python -m check_jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml
+  ```
+
+  `yaml.safe_load` aceita coisas que o GitHub recusa. Um `env:` sem filhos vira
+  `env: null` — YAML perfeito, workflow inválido: o arquivo INTEIRO é rejeitado,
+  o workflow some da lista de gatilhos e aparece no Actions com o caminho no
+  lugar do nome. Foi assim que a v3.0.0 saiu sem APK;
+- valide o JSON de exemplo quando for alterado;
 - não versione `artifacts/`, builds, instaladores, ZIPs ou APKs;
 - informe claramente se houve apenas commit/push de branch ou também uma
   publicação por tag.

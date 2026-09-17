@@ -206,7 +206,6 @@ jobs:
       # `package`) continuam baixando.
       - name: Build dos APKs
         shell: bash
-        env:
         run: |
           set -euo pipefail
           flutter build apk --release --split-per-abi
@@ -227,7 +226,6 @@ jobs:
       # chave de debug é recusada explicitamente em release.
       - name: Conferir quem assinou o APK
         shell: bash
-        env:
         run: |
           set -euo pipefail
           apk="$GITHUB_WORKSPACE/artifacts/StarChef-PDV-Mobile-v${MOBILE_VERSION}.apk"
