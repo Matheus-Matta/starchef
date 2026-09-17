@@ -198,6 +198,15 @@ class PrintJob(TenantModel):
     STATUS_SCHEDULED = "scheduled"
     STATUS_PENDING = "pending"
     STATUS_RENDERED = "rendered"
+    # Um terminal assumiu este cupom e vai poe-lo no papel.
+    #
+    # Existe porque a fila e da UNIDADE, nao do terminal: dois PDVs no mesmo
+    # restaurante enxergam a mesma lista de pendentes e as impressoras de rede
+    # sao alcancaveis dos dois. Sem uma reserva atomica, os dois ingeriam o
+    # mesmo trabalho entre uma consulta e outra e a comanda saia duas vezes na
+    # cozinha. `status` nao tem `choices`, entao este valor novo nao exige
+    # migracao.
+    STATUS_CLAIMED = "claimed"
     STATUS_PRINTED = "printed"
     STATUS_FAILED = "failed"
     STATUS_CANCELLED = "cancelled"

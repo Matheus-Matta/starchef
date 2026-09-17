@@ -256,6 +256,49 @@ class CashRegisterViewSet(BaseTenantViewSet):
     def supply(self, request, pk=None):
         return self._movement(request, CashMovement.TYPE_SUPPLY, "source")
 
+    @action(detail=True, methods=["get"], url_path="print-document")
+    def print_document(self, request, pk=None):
+        """Comprovante do caixa em texto, pronto para a impressora do terminal.
+
+        O PDV nao monta mais esse papel: ele e o dono da impressora, nao do
+        conteudo. Duas implementacoes do mesmo relatorio divergiriam no
+        primeiro ajuste de regra, e a divergencia apareceria justamente no
+        documento que o operador assina.
+
+        `document` diz qual dos quatro: `opening`, `withdrawal`, `supply` ou
+        `closing`. Os dois do meio precisam de `movement`, o identificador do
+        lancamento que acabou de ser registrado.
+        """
+        from apps.printers import cash_documents
+
+        cash_register = self.get_object()
+        document = (request.query_params.get("document") or "closing").strip()
+        operator_name = (request.query_params.get("operator_name") or "").strip()
+
+        if document == "opening":
+            content = cash_documents.opening_text(cash_register, operator_name=operator_name)
+        elif document == "closing":
+            content = cash_documents.closing_text(cash_register, operator_name=operator_name)
+        elif document in {"withdrawal", "supply"}:
+            movement = cash_register.movements.filter(pk=request.query_params.get("movement")).first()
+            if movement is None:
+                return Response(
+                    {"detail": "Informe o lançamento ('movement') desta sessão de caixa."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            content = cash_documents.movement_text(
+                movement,
+                operator_name=operator_name,
+                authorized_by=(request.query_params.get("authorized_by") or "").strip(),
+                manager_reason=(request.query_params.get("manager_reason") or "").strip(),
+            )
+        else:
+            return Response(
+                {"detail": "Documento inválido. Use opening, withdrawal, supply ou closing."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"document": document, "text_content": content})
+
     @action(
         detail=True,
         methods=["post"],

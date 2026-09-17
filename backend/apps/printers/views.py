@@ -487,7 +487,16 @@ class ScaleReadingViewSet(BaseTenantViewSet):
 class PrintJobViewSet(BaseTenantViewSet):
     serializer_class = PrintJobSerializer
     queryset = PrintJob.objects.select_related("restaurant", "branch", "printer", "order", "printed_by").all()
-    filterset_fields = ["restaurant", "printer", "job_type", "status"]
+    # `status__in` existe para o agente do PDV pedir `scheduled`, `pending` e
+    # `rendered` numa requisicao so, em vez de uma por status. Sao tres
+    # chamadas a cada ciclo, em cada terminal de cada loja — e o resultado e
+    # sempre a mesma lista concatenada.
+    filterset_fields = {
+        "restaurant": ["exact"],
+        "printer": ["exact"],
+        "job_type": ["exact"],
+        "status": ["exact", "in"],
+    }
     ordering_fields = ["created_at", "printed_at"]
 
     def list(self, request, *args, **kwargs):
@@ -498,12 +507,91 @@ class PrintJobViewSet(BaseTenantViewSet):
         account = getattr(request, "account", None)
         if account is not None:
             dispatch_due_kitchen_batches(account_id=account.id)
+        self._release_stale_claims()
         return super().list(request, *args, **kwargs)
+
+    # Uma reserva dura o tempo de mandar bytes para uma impressora. Passado
+    # isso, quem reservou nao existe mais: o PDV foi fechado, a maquina
+    # reiniciou, o processo morreu. Sem devolver, o cupom fica `claimed` para
+    # sempre — invisivel para os outros terminais, que so olham `pending` e
+    # `rendered`, e a cozinha nunca recebe a comanda.
+    CLAIM_TTL = timedelta(minutes=5)
+
+    def _release_stale_claims(self):
+        self.get_queryset().filter(
+            status=PrintJob.STATUS_CLAIMED,
+            updated_at__lt=timezone.now() - self.CLAIM_TTL,
+        ).update(status=PrintJob.STATUS_PENDING, updated_at=timezone.now())
 
     def get_throttles(self):
         if self.action == "list":
             return [DevicePollingRateThrottle()]
         return super().get_throttles()
+
+    @action(detail=True, methods=["post"], url_path="claim")
+    def claim(self, request, pk=None):
+        """Reserva este cupom para o terminal que esta chamando.
+
+        A fila de impressao e da UNIDADE, nao do terminal: dois PDVs no mesmo
+        restaurante consultam a mesma lista de pendentes, e uma impressora de
+        rede e alcancavel dos dois. Entre a consulta de um e a de outro cabe
+        folga de sobra para os dois ingerirem o mesmo trabalho — e a comanda
+        sair duas vezes na cozinha.
+
+        A reserva e um UPDATE condicional: o banco decide quem chegou primeiro.
+        Checar e depois gravar nao resolveria, porque as duas transacoes leem
+        "pendente" antes de qualquer uma escrever.
+
+        Chamar de novo para um cupom que JA e deste terminal apenas renova a
+        reserva. E o que permite uma impressora sem papel ficar meia hora
+        insistindo sem que a reserva expire no meio e outro terminal imprima a
+        mesma comanda.
+
+        200 = e seu, pode imprimir. 409 = outro terminal levou.
+        """
+        terminal = (request.headers.get("X-Terminal-Id") or "").strip()
+        job = self.get_object()
+        renewable = [PrintJob.STATUS_PENDING, PrintJob.STATUS_RENDERED]
+        if terminal and job.status == PrintJob.STATUS_CLAIMED:
+            if (job.payload or {}).get("claimed_by_terminal") == terminal:
+                renewable.append(PrintJob.STATUS_CLAIMED)
+
+        claimed = (
+            self.get_queryset()
+            .filter(pk=job.pk, status__in=renewable)
+            .update(status=PrintJob.STATUS_CLAIMED, updated_at=timezone.now())
+        )
+        if not claimed:
+            job.refresh_from_db()
+            return Response(
+                {
+                    "detail": "Este cupom ja foi assumido por outro terminal.",
+                    "status": job.status,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        job.refresh_from_db()
+        if terminal and (job.payload or {}).get("claimed_by_terminal") != terminal:
+            # E o dono da reserva: sem isto, a renovacao acima nao teria como
+            # saber que o cupom ja e deste terminal.
+            job.payload = {**(job.payload or {}), "claimed_by_terminal": terminal}
+            job.save(update_fields=["payload", "updated_at"])
+        return Response(PrintJobSerializer(job, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="release")
+    def release(self, request, pk=None):
+        """Devolve a reserva: este terminal nao vai conseguir imprimir.
+
+        Sem isto, um cupom reservado por um PDV que fechou logo depois ficaria
+        parado para sempre — invisivel para os outros terminais, que so olham
+        `pending` e `rendered`.
+        """
+        updated = (
+            self.get_queryset()
+            .filter(pk=self.get_object().pk, status=PrintJob.STATUS_CLAIMED)
+            .update(status=PrintJob.STATUS_PENDING, updated_at=timezone.now())
+        )
+        return Response({"released": bool(updated)})
 
     @action(detail=True, methods=["post"], url_path="mark-printed")
     def mark_printed(self, request, pk=None):
