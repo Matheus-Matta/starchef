@@ -387,7 +387,12 @@ jobs:
           print(json.dumps(manifesto, ensure_ascii=False, indent=2))
 
       - name: Anexar ao GitHub Release da tag
-        uses: softprops/action-gh-release@v2
+        # `@v3`, nao `@v2`: a v2 declara `using: node20`, e o GitHub passou a
+        # rodar essas actions no Node 24 (o node20 esta em depreciacao). Sob o
+        # runtime novo a v2 falha ao montar o diretorio temporario dos assets —
+        # "Error creating asset temp dir" — DEPOIS de ja ter criado o Release,
+        # entao a tag sai com um release vazio. Foi o que aconteceu na v3.0.1.
+        uses: softprops/action-gh-release@v3
         with:
           # O PDV desktop anexa os pacotes dele ao MESMO release. A action
           # cria o release se ainda não existir e o atualiza se existir, então

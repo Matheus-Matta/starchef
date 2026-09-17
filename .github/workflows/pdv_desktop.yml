@@ -351,7 +351,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publicar GitHub Release
-        uses: softprops/action-gh-release@v2
+        # `@v3`, nao `@v2`: a v2 declara `using: node20`, e o GitHub passou a
+        # rodar essas actions no Node 24 (o node20 esta em depreciacao). Sob o
+        # runtime novo a v2 falha ao montar o diretorio temporario dos assets —
+        # "Error creating asset temp dir" — DEPOIS de ja ter criado o Release,
+        # entao a tag sai com um release vazio. Foi o que aconteceu na v3.0.1.
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: release-assets/*
