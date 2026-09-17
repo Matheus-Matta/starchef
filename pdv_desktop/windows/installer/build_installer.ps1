@@ -1,5 +1,5 @@
 # Compila o instalador Windows (Inno Setup) usando a versao do pubspec.yaml
-# como unica fonte de verdade — starchef_pdv_desktop.iss recebe /DAppVersion no lugar
+# como unica fonte de verdade — starchef_pdv.iss recebe /DAppVersion no lugar
 # de manter a versao hardcoded em dois arquivos.
 #
 # Uso:
@@ -38,7 +38,14 @@ if (-not $iscc) {
     }
 }
 
-$issPath = Join-Path $PSScriptRoot "starchef_pdv_desktop.iss"
+$issPath = Join-Path $PSScriptRoot "starchef_pdv.iss"
+# `Join-Path` nao confere se o arquivo existe: com o nome errado, o ISCC recebia
+# um caminho inexistente e falhava com um codigo de saida sem explicacao. O
+# release v3.0.0 quebrou exatamente assim, com o script procurando
+# `starchef_pdv_desktop.iss`. Melhor falhar aqui, dizendo o que falta.
+if (-not (Test-Path $issPath)) {
+    throw "Script do Inno Setup nao encontrado: $issPath"
+}
 $isccPath = if ($iscc.Source) { $iscc.Source } else { $iscc.FullName }
 & $isccPath "/DAppVersion=$appVersion" $issPath
 if ($LASTEXITCODE -ne 0) {
