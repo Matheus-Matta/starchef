@@ -84,7 +84,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 - **`KdsStationsView.vue`** — cadastro de estações/colunas do KDS, master-detail, mão feita (não usa o CRUD genérico).
 - **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.
 - **`HomeView.vue`** — home mobile-first, atalhos e navegação condicionados a papel do usuário e módulos habilitados na conta.
-- **`CashRegisterView.vue`** — gestão de caixa (estações, abrir/fechar sessão, sangria/suprimento, fluxo de aprovação gerencial reautenticando com token temporário). Mão feita, fora do CRUD genérico.
+- **`CashRegisterView.vue`** — gestão de caixa (estações, abrir/fechar sessão, sangria/suprimento e aprovação gerencial). Para uma sessão presa a uma máquina indisponível, mostra somente ao administrador a ação **Forçar liberação**, que exige justificativa, cancela a sessão sem simular conferência da gaveta e libera o caixa para outro terminal. Mão feita, fora do CRUD genérico.
 
 ## 5. O sistema de CRUD genérico
 

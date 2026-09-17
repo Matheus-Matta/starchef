@@ -1124,9 +1124,13 @@ class _HomePageState extends State<HomePage>
     try {
       final drafts = await _list(
         '/orders/',
+        // `open`, e nao `draft`: esse status nunca existiu no backend, cujos
+        // valores sao open/awaiting_payment/paid/cancelled/refunded. A
+        // consulta voltava 400, o `catch` de baixo engolia, e esta varredura
+        // passou a producao inteira sem apagar um unico rascunho orfao.
         query: {
           'restaurant': restaurant,
-          'status': 'draft',
+          'status': 'open',
           'page_size': 50,
         },
       );
@@ -1151,8 +1155,15 @@ class _HomePageState extends State<HomePage>
           data: {'quantidade': removed},
         );
       }
-    } catch (_) {
-      // Limpeza de fundo: falhar aqui não pode atrapalhar a venda em curso.
+    } catch (erro) {
+      // Limpeza de fundo: falhar aqui não pode atrapalhar a venda em curso —
+      // mas tem de APARECER. Engolir em silêncio foi o que manteve a consulta
+      // quebrada indefinidamente, com o servidor recusando toda varredura e
+      // ninguém sabendo.
+      AppLogger.instance.warning(
+        'rascunhos_orfaos_varredura_falhou',
+        data: {'erro': '$erro'},
+      );
     }
   }
 

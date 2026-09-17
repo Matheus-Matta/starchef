@@ -11,6 +11,7 @@ from apps.core.requests import required_field
 from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
+from apps.payments.cash_session_admin import force_release_cash_session
 from apps.payments.models import CashMovement, CashRegister, CashStation, PdvTerminal, Payment, PaymentMethod
 from apps.payments.serializers import (
     CashMovementSerializer,
@@ -338,6 +339,24 @@ class CashRegisterViewSet(BaseTenantViewSet):
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(transferred).data)
+
+    @action(detail=True, methods=["post"], url_path="force-release")
+    def force_release(self, request, pk=None):
+        """Release an orphaned cash session without impersonating its terminal."""
+        if not is_tenant_admin(request.user):
+            return Response(
+                {"detail": "Somente um administrador da conta pode forçar a liberação do caixa."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            released = force_release_cash_session(
+                cash_register=self.get_object(),
+                administrator=request.user,
+                reason=request.data.get("reason", ""),
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(released).data)
 
     @action(
         detail=True,

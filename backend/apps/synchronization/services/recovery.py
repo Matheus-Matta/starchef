@@ -134,3 +134,40 @@ def prune(dias=30):
         status=EventStatus.ACKNOWLEDGED, acknowledged_at__lt=corte
     ).delete()
     return apagados
+
+
+def discard_outbound(node):
+    """Apaga a fila de SAÍDA de um nó e encerra as cargas dele.
+
+    Devolve `(eventos_apagados, cargas_encerradas)`.
+
+    Para que serve: a fila ficou apontando para o lugar errado — tipicamente
+    uma loja que rematriculou e passou a conectar por outro nó, deixando
+    centenas de eventos endereçados a um destino que ninguém mais escuta.
+    Refazer a carga é mais limpo que reaproveitá-los: os eventos novos saem do
+    estado ATUAL do banco, sem payload velho e sem sequência remendada.
+
+    Só toca em OUTBOUND, e isso não é detalhe. Um evento INBOUND é dado que a
+    loja mandou e que este lado ainda não aplicou — uma venda, um pagamento,
+    uma sangria. Apagar isso perderia o dado de verdade, sem volta, e é a
+    única coisa que este módulo existe para impedir.
+    """
+    from apps.synchronization.constants import Direction, RunStatus
+    from apps.synchronization.models import SyncRun
+
+    apagados, _ = SyncEvent.objects.filter(
+        target_node=node, direction=Direction.OUTBOUND
+    ).delete()
+
+    cargas = SyncRun.objects.filter(target_node=node, status__in=list(RunStatus.BUSY))
+    cancelados = cargas.update(
+        status=RunStatus.CANCELLED,
+        error="Fila descartada no Admin; refaça a carga.",
+        completed_at=timezone.now(),
+    )
+
+    logger.warning(
+        "sync: fila de saída do nó %s descartada — %s evento(s), %s carga(s)",
+        node.id, apagados, cancelados,
+    )
+    return apagados, cancelados

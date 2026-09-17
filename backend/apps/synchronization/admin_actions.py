@@ -35,6 +35,9 @@ class NodeActionsMixin:
                  name="synchronization_syncnode_full"),
             path("<uuid:node_id>/reprocessar/", self.admin_site.admin_view(self.acao_reprocessar),
                  name="synchronization_syncnode_retry"),
+            path("<uuid:node_id>/descartar-fila/",
+                 self.admin_site.admin_view(self.acao_descartar_fila),
+                 name="synchronization_syncnode_discard"),
             path("<uuid:node_id>/revogar/", self.admin_site.admin_view(self.acao_revogar),
                  name="synchronization_syncnode_revoke"),
             path("<uuid:node_id>/testar/", self.admin_site.admin_view(self.acao_testar),
@@ -57,6 +60,34 @@ class NodeActionsMixin:
         total = recovery.requeue(account_id=no.account_id, apenas_mortos=False)
         self._auditar(request, no, f"reprocessou {total} evento(s)")
         messages.success(request, f"{total} evento(s) devolvidos à fila.")
+        return self._voltar(node_id)
+
+    @method_decorator(require_POST)
+    def acao_descartar_fila(self, request, node_id):
+        """Apaga a fila de SAÍDA deste nó e libera uma carga nova.
+
+        Existe para o caso em que a fila ficou apontando para o lugar errado —
+        uma loja que rematriculou e passou a conectar por outro nó, por
+        exemplo. Refazer a carga é mais limpo que reaproveitar eventos velhos:
+        os novos saem do estado ATUAL do banco.
+
+        Apaga SÓ o que é OUTBOUND. Um evento INBOUND é dado que a loja mandou e
+        que esta nuvem ainda não aplicou — apagá-lo perderia venda, e nenhum
+        botão de Admin pode fazer isso.
+        """
+        if not request.user.has_perm(PERMISSAO_CARGA):
+            messages.error(request, "Você não tem permissão para descartar a fila.")
+            return self._voltar(node_id)
+
+        no = self._no(node_id)
+        apagados, cancelados = recovery.discard_outbound(no)
+        self._auditar(request, no, f"descartou {apagados} evento(s) de saída")
+        messages.warning(
+            request,
+            f"{apagados} evento(s) de saída descartados e {cancelados} carga(s) "
+            "encerrada(s). Nada que veio da loja foi tocado. Use "
+            "“Sincronizar tudo” para gerar a fila de novo.",
+        )
         return self._voltar(node_id)
 
     @method_decorator(require_POST)

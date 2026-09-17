@@ -67,8 +67,13 @@ class SyncNodeAdmin(NodeActionsMixin, ModelAdmin):
 @admin.register(SyncEvent)
 class SyncEventAdmin(ModelAdmin):
     list_display = ("created_at", "entity_type", "entity_id", "operation", "direction",
-                    "estado", "attempts", "sequence")
-    list_filter = ("direction", "status", "operation", "entity_type")
+                    "estado", "attempts", "sequence", "target_node")
+    # `target_node` e `source_node` no filtro não são conforto: quando uma loja
+    # rematricula, a fila fica apontando para o nó antigo e a única pergunta
+    # que importa é "para QUEM estes eventos vão". Sem o filtro, isolá-los no
+    # Admin é impossível e sobra apagar tudo.
+    list_filter = ("direction", "status", "operation", "entity_type",
+                   "target_node", "source_node")
     search_fields = ("event_id", "entity_id", "entity_type", "correlation_id")
     readonly_fields = tuple(f.name for f in SyncEvent._meta.fields)
     date_hierarchy = "created_at"

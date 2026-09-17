@@ -39,6 +39,12 @@ qualquer link (ou pré-carregamento do navegador) dispararia uma carga total.
       <button type="submit" class="button">Reprocessar falhas</button>
     </form>
 
+    <form method="post" action="{% url 'admin:synchronization_syncnode_discard' original.pk %}"
+          onsubmit="return confirm('Apagar a fila de SAÍDA deste nó? Os eventos que a loja mandou e ainda não foram aplicados NÃO são tocados. Depois use Sincronizar tudo para gerar a fila de novo.');">
+      {% csrf_token %}
+      <button type="submit" class="button" style="background:#b45309">Descartar fila de saída</button>
+    </form>
+
     <form method="post" action="{% url 'admin:synchronization_syncnode_revoke' original.pk %}"
           onsubmit="return confirm('Revogar o vínculo? A credencial para de valer imediatamente e a conexão cai. Os eventos pendentes continuam guardados.');">
       {% csrf_token %}

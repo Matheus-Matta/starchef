@@ -169,6 +169,7 @@ services:
         condition: service_started
 
   sync_worker:
+  
     <<: *backend-base
     mem_limit: ${SYNC_WORKER_MEM_LIMIT:-512m}
     # Espera o backend porque a primeira subida roda a matrícula, que precisa
