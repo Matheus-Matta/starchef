@@ -1,5 +1,17 @@
 name: pdv-desktop
 
+# Só o PDV Windows/Linux. O atendimento móvel tem workflow próprio
+# (`pdv_mobile.yml`) e não passa mais por aqui.
+#
+# Os dois reagem à MESMA tag `vX.Y.Z`, cada um por conta própria, e anexam ao
+# MESMO GitHub Release. O que os coordena é o `concurrency` do job de
+# publicação, compartilhado entre os dois arquivos. Antes o desktop CHAMAVA o
+# mobile (`workflow_call`), o que fazia uma mudança só no Android passar pelo
+# pipeline do instalador do Windows — e o APK só sair se o desktop chegasse lá.
+#
+# Cada produto publica o manifesto dele: `latest-desktop.json` aqui,
+# `latest-mobile.json` no workflow do móvel.
+
 on:
   push:
     branches: [main]
@@ -7,12 +19,10 @@ on:
     paths:
       - "pdv_desktop/**"
       - ".github/workflows/pdv_desktop.yml"
-      - ".github/workflows/pdv_mobile.yml"
   pull_request:
     paths:
       - "pdv_desktop/**"
       - ".github/workflows/pdv_desktop.yml"
-      - ".github/workflows/pdv_mobile.yml"
   workflow_dispatch:
     inputs:
       api_base_url:
@@ -77,8 +87,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      mobile_version: ${{ steps.version.outputs.mobile_version }}
-      mobile_changed: ${{ steps.mobile.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,60 +112,8 @@ jobs:
               exit 1
             fi
           fi
-          mobile_full_version="$(awk '/^version:/{print $2; exit}' ../pdv_mobile/pubspec.yaml)"
-          mobile_version="${mobile_full_version%%+*}"
-          if [[ ! "$mobile_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Versão inválida no pdv_mobile/pubspec.yaml: $mobile_full_version" >&2
-            exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "mobile_version=$mobile_version" >> "$GITHUB_OUTPUT"
 
-      # O APK só é recompilado quando o aplicativo do garçom mudou de verdade
-      # desde o release anterior. Um APK universal pesa ~72 MB; republicar um
-      # arquivo idêntico a cada tag do PDV enche o Release de peso morto e
-      # ainda faz o aparelho do garçom baixar de novo o que já tem.
-      #
-      # A conta é por ARQUIVO ALTERADO, não pela versão declarada: esquecer de
-      # subir o `version:` do pubspec faria a correção não ser publicada, em
-      # silêncio — falha muito pior do que um build a mais.
-      # A tag anterior e achada pelo NOME (a mais recente que nao seja esta), nao
-      # por `git describe` a partir do commit pai: refazer uma tag (apagar e
-      # recriar sobre outro commit, como a v1.7.2 e a v1.8.1 ja precisaram) muda
-      # o ref sem mudar o grafo de commits na mesma velocidade, e `describe`
-      # podia encontrar a propria tag recem-apagada como "anterior" — o diff
-      # contra ela mesma (ou quase) dava vazio, e o APK ficava reaproveitado em
-      # silencio mesmo com pdv_mobile tendo mudado de verdade.
-      - name: Decidir se o APK do garçom precisa ser reconstruído
-        id: mobile
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          MANIFEST_URL: ${{ vars.PDV_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-desktop.json', github.repository) }}
-        run: |
-          set -euo pipefail
-          previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
-          if [[ -z "$previous" ]]; then
-            changed=true
-            reason="não há release anterior para comparar"
-          elif ! git diff --quiet "$previous" "$GITHUB_SHA" --               pdv_mobile .github/workflows/pdv_mobile.yml; then
-            changed=true
-            reason="pdv_mobile mudou desde $previous"
-          elif ! curl -fsSL --max-time 30 "$MANIFEST_URL"               | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("mobile",{}).get("package",{}).get("url") else 1)'; then
-            # Sem um APK reaproveitável no manifesto anterior não há o que
-            # herdar: o app ficaria sem para onde apontar.
-            changed=true
-            reason="o manifesto anterior não traz um APK reaproveitável"
-          else
-            changed=false
-            reason="nada mudou em pdv_mobile desde $previous"
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-          if [[ "$changed" == "true" ]]; then
-            echo "::notice::APK do garçom será reconstruído ($reason)."
-          else
-            echo "::notice::APK do garçom reaproveitado do release anterior ($reason)."
-          fi
 
   build-windows:
     needs: release-metadata
@@ -280,47 +236,25 @@ jobs:
           path: artifacts/StarChef-PDV-Linux-v*.zip
           if-no-files-found: error
 
-  # O atendimento móvel tem workflow próprio (`pdv_mobile.yml`); aqui ele é
-  # apenas CHAMADO, para o APK sair no mesmo run e poder ser anexado ao mesmo
-  # Release. `require_signing` é o que impede um release de sair com a chave de
-  # debug: assinado assim, o APK não instala por cima do app já instalado.
-  mobile:
-    needs: release-metadata
-    if: >-
-      needs.release-metadata.outputs.mobile_changed == 'true' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && github.ref_type == 'tag'))
-    uses: ./.github/workflows/pdv_mobile.yml
-    with:
-      version: ${{ needs.release-metadata.outputs.mobile_version }}
-      require_signing: ${{ github.ref_type == 'tag' }}
-    secrets: inherit
-
-  # Um único job reúne os três pacotes do PDV e o APK, calcula os hashes e
-  # publica o manifesto junto do Release. O `latest-desktop.json` carrega o PDV em
-  # `platforms` e o atendimento móvel na chave `mobile` — este último com
-  # versionamento próprio, por isso fora de `platforms`.
+  # Reúne os três pacotes do PDV, calcula os hashes e publica o manifesto junto
+  # do Release. O APK do atendimento móvel NÃO passa por aqui: ele é anexado ao
+  # mesmo Release pelo `pdv_mobile.yml`, com manifesto próprio.
   publish-release:
-    # `always()` porque o job do garçom é PULADO quando o app não mudou desde
-    # o release anterior; sem isso, um job pulado em `needs` pularia o publish
-    # junto e o release inteiro não sairia. Os builds do PDV continuam
-    # obrigatórios.
-    needs: [release-metadata, build-windows, build-linux, mobile]
+    needs: [release-metadata, build-windows, build-linux]
     if: >-
-      always() && github.event_name == 'push' && github.ref_type == 'tag' &&
-      needs.build-windows.result == 'success' &&
-      needs.build-linux.result == 'success' &&
-      (needs.mobile.result == 'success' || needs.mobile.result == 'skipped')
+      github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # O workflow do atendimento móvel publica no MESMO Release. Este grupo é
+    # compartilhado com o `publish-mobile` de `pdv_mobile.yml`: os dois nunca
+    # mexem no Release ao mesmo tempo, e quem chegar primeiro cria. Sem isso,
+    # os dois podem tentar criar o mesmo release e um recebe 422.
+    concurrency:
+      group: gh-release-${{ github.ref_name }}
+      cancel-in-progress: false
     env:
       APP_VERSION: ${{ needs.release-metadata.outputs.version }}
-      MOBILE_VERSION: ${{ needs.release-metadata.outputs.mobile_version }}
-      # De onde herdar o APK quando ele nao foi reconstruido neste release.
-      # Neste instante `releases/latest` ainda aponta para o release ANTERIOR:
-      # o desta tag so e criado no ultimo passo deste job.
-      MANIFEST_URL: ${{ vars.PDV_UPDATE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-desktop.json', github.repository) }}
     steps:
       - name: Baixar pacotes dos builds
         uses: actions/download-artifact@v4
@@ -328,13 +262,6 @@ jobs:
           pattern: starchef-pdv-*-${{ needs.release-metadata.outputs.version }}
           path: release-assets
           merge-multiple: true
-
-      - name: Baixar APK do app do garçom
-        if: needs.mobile.result == 'success'
-        uses: actions/download-artifact@v4
-        with:
-          name: starchef-pdv-mobile-android-${{ needs.release-metadata.outputs.mobile_version }}
-          path: release-assets
 
       - name: Gerar latest-desktop.json com SHA-256
         shell: python
@@ -351,7 +278,6 @@ jobs:
           root = Path(os.environ["GITHUB_WORKSPACE"])
           assets = root / "release-assets"
           version = os.environ["APP_VERSION"]
-          mobile_version = os.environ["MOBILE_VERSION"]
           tag = os.environ["GITHUB_REF_NAME"]
           repository = os.environ["GITHUB_REPOSITORY"]
 
@@ -359,10 +285,9 @@ jobs:
               "windows_installer": f"StarChef-PDV-Setup-{version}.exe",
               "windows_zip": f"StarChef-PDV-Windows-v{version}.zip",
               "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
-              "mobile_apk": f"StarChef-PDV-Mobile-v{mobile_version}.apk",
           }
-          # Os três do PDV são obrigatórios: o manifesto existe para servi-los.
-          for key in ("windows_installer", "windows_zip", "linux_zip"):
+          # Os três são obrigatórios: o manifesto existe para servi-los.
+          for key in names:
               if not (assets / names[key]).is_file():
                   raise SystemExit(f"Artefato obrigatório ausente: {names[key]}")
 
@@ -379,50 +304,6 @@ jobs:
                   "size": path.stat().st_size,
                   "recommended": recommended,
               }
-
-          # As arquiteturas que o `--split-per-abi` do Flutter gera.
-          MOBILE_ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
-          for _abi in MOBILE_ABIS:
-              names[f"mobile_{_abi}"] = (
-                  f"StarChef-PDV-Mobile-v{mobile_version}-{_abi}.apk"
-              )
-
-          def mobile_block():
-              """O APK deste release, ou o do release anterior.
-
-              Quando `pdv_mobile/` nao muda entre duas tags, o APK nao e
-              recompilado: republicar 72 MB identicos encheria o Release de
-              peso morto e faria cada aparelho baixar de novo o que ja tem. O
-              manifesto entao aponta para o APK do release ANTERIOR, cuja URL
-              continua valida — o app compara versao, ve que ja esta nela e
-              nao baixa nada.
-              """
-              if (assets / names["mobile_apk"]).is_file():
-                  # `package` continua sendo o universal, e continua sendo o
-                  # unico campo que as versoes antigas do app conhecem: elas
-                  # seguem atualizando por ele. `packages` e a lista por
-                  # arquitetura, ~25 MB cada em vez dos ~69 MB do universal —
-                  # o app novo escolhe a sua e baixa um terco.
-                  por_abi = [
-                      {**package(f"mobile_{abi}", "apk", "apk", True), "abi": abi}
-                      for abi in MOBILE_ABIS
-                      if (assets / names[f"mobile_{abi}"]).is_file()
-                  ]
-                  return {
-                      "version": mobile_version,
-                      "package": package("mobile_apk", "apk", "apk", True),
-                      "packages": por_abi,
-                  }
-              previous = os.environ["MANIFEST_URL"]
-              with urlopen(previous, timeout=30) as response:
-                  herdado = json.load(response).get("mobile")
-              if not herdado or not herdado.get("package", {}).get("url"):
-                  raise SystemExit(
-                      "APK ausente e o manifesto anterior nao traz um para "
-                      "herdar. Rode o release de novo com o job do mobile."
-                  )
-              print(f"Reaproveitando o APK {herdado['version']} do release anterior.")
-              return herdado
 
           manifest = {
               "schema_version": 1,
@@ -444,13 +325,20 @@ jobs:
                       ]
                   },
               },
-              # Atendimento movel: versionamento proprio (pdv_mobile/pubspec.yaml),
-              # nao participa de "platforms" porque nao roda no PDV. O app
-              # consulta esta chave direto pra saber se ha versao nova pra
-              # baixar e instalar por cima da atual.
-              "mobile": mobile_block(),
           }
-          (assets / "latest.json").write_text(
+          # `latest-desktop.json`, e NUNCA `latest.json`.
+          #
+          # As duas linhagens do PDV convivem: a 1.8.x (offline, pasta
+          # `flutter/` das outras branches) publica e consome `latest.json`.
+          # Escrever esse nome aqui faria o PDV ANTIGO enxergar a 3.0.0 como
+          # atualizacao, baixar um ZIP cujo executavel tem outro nome e ou
+          # recusa-lo a cada verificacao, ou aplica-lo — trocando um PDV que
+          # vende sem internet por um que nao vende.
+          #
+          # O nome tambem precisa bater com o que o app desta linhagem pede em
+          # `pdv_desktop/lib/core/update/pdv_update_service.dart`: o asset do
+          # Release E a URL, entao um nome diferente aqui e um 404 la.
+          (assets / "latest-desktop.json").write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
               encoding="utf-8",
           )

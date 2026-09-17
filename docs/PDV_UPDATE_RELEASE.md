@@ -40,12 +40,18 @@ realmente transacional.
 > contenha este atualizador, os releases superiores são aplicados sozinhos.
 
 O mecanismo transacional descrito acima (ZIP, troca de bundle, rollback) é
-somente do **PDV desktop**. O aplicativo do garçom tem versionamento próprio
-(`flutter_garcom/pubspec.yaml`) e um caminho de atualização diferente — baixa o
-APK e entrega ao instalador do Android —, mas **compartilha o mesmo
-`latest-desktop.json`**: ele lê a chave `mobile`, fora de `platforms` justamente porque
-não é uma plataforma do PDV. O contrato dessa chave está em
-[Manifesto `latest-desktop.json`](#manifesto-latestjson).
+somente do **PDV desktop**. O atendimento móvel tem versionamento próprio
+(`pdv_mobile/pubspec.yaml`), um caminho de atualização diferente — baixa o APK e
+entrega ao instalador do Android — e, desde a separação dos workflows,
+**manifesto próprio**: `latest-mobile.json`. O `latest-desktop.json` voltou a
+ser só do PDV.
+
+> **Dois manifestos, dois produtos.** `latest-desktop.json` é do PDV
+> Windows/Linux; `latest-mobile.json` é do atendimento móvel. Os dois são
+> publicados no MESMO GitHub Release da tag `vX.Y.Z`, por workflows diferentes.
+> E nenhum dos dois é o `latest.json` — esse nome pertence à linhagem 1.8.x do
+> PDV offline, que segue em produção em outras branches; escrevê-lo aqui faria
+> o PDV antigo enxergar a 3.0.0 como atualização.
 
 ## Visão do fluxo
 
@@ -55,25 +61,32 @@ pubspec.yaml: 1.0.34+32
           ├── tag obrigatória: v1.0.34
           │
           ▼
-GitHub Actions
-  ├── valida tag x pubspec do PDV
-  ├── executa analyze e testes do PDV e do atendimento móvel
-  ├── compila Windows
-  │     ├── StarChef-PDV-Setup-1.0.34.exe
-  │     └── StarChef-PDV-Windows-v1.0.34.zip
-  ├── compila Linux
-  │     └── StarChef-PDV-Linux-v1.0.34.zip
-  ├── compila o APK universal do garçom
-  │     └── StarChef-PDV-Mobile-v1.6.3.apk
-  ├── calcula SHA-256 e tamanho dos três pacotes do PDV
-  ├── gera latest.json
-  └── publica tudo no GitHub Release v1.0.34
+GitHub Actions — DOIS workflows independentes, a mesma tag
+  │
+  ├── pdv-desktop
+  │     ├── valida tag x pubspec do PDV
+  │     ├── analyze e testes do PDV
+  │     ├── compila Windows (Setup .exe + ZIP portátil)
+  │     ├── compila Linux (ZIP portátil)
+  │     ├── calcula SHA-256 e tamanho dos três pacotes
+  │     └── gera latest-desktop.json
+  │
+  └── pdv-mobile
+        ├── analyze e testes do app
+        ├── compila os APKs (universal + por arquitetura)
+        └── gera latest-mobile.json
+
+            os dois anexam ao MESMO Release v1.0.34,
+            serializados pelo grupo de concurrency
                     │
                     ▼
-PDV consulta /releases/latest/download/latest.json
+PDV consulta   /releases/latest/download/latest-desktop.json
   ├── Windows baixa o ZIP portátil para atualização automática
   ├── Linux baixa o ZIP portátil para atualização automática
   └── EXE de Windows permanece disponível para instalação manual
+
+App móvel consulta /releases/latest/download/latest-mobile.json
+  └── baixa o APK da própria arquitetura e entrega ao Android
 ```
 
 ## Fonte da versão
@@ -177,28 +190,39 @@ O manifesto usa `schema_version: 1` e separa os pacotes por plataforma:
 O arquivo é publicado em cada release. O PDV usa a URL estável:
 
 ```text
-https://github.com/Matheus-Matta/starchef/releases/latest/download/latest.json
+https://github.com/Matheus-Matta/starchef/releases/latest/download/latest-desktop.json
 ```
 
 O redirecionamento de `releases/latest` faz a URL acompanhar o release mais
 recente sem precisar alterar ou recompilar os terminais a cada versão.
 
-### A chave `mobile` do manifesto
+### Manifesto do atendimento móvel (`latest-mobile.json`)
 
-O aplicativo do garçom tem versionamento próprio, então não entra em
-`platforms`. Ele lê esta chave:
+Arquivo separado, publicado pelo `pdv_mobile.yml` no mesmo Release:
 
 ```json
-"mobile": {
+{
+  "schema_version": 1,
   "version": "1.8.3",
-  "package": { "kind": "apk", "name": "StarChef-PDV-Mobile-v1.8.3.apk", "url": "...", "sha256": "...", "size": 72488796 },
+  "tag": "v1.0.34",
+  "published_at": "2026-02-10T12:00:00+00:00",
+  "commit": "…",
+  "release_url": "https://github.com/<owner>/<repo>/releases/tag/v1.0.34",
+  "package": {
+    "kind": "apk", "format": "apk",
+    "name": "StarChef-PDV-Mobile-v1.8.3.apk",
+    "url": "…", "sha256": "…", "size": 72351744, "recommended": true
+  },
   "packages": [
-    { "abi": "arm64-v8a",   "name": "StarChef-PDV-Mobile-v1.8.3-arm64-v8a.apk",   "url": "...", "sha256": "...", "size": 26214400 },
-    { "abi": "armeabi-v7a", "name": "StarChef-PDV-Mobile-v1.8.3-armeabi-v7a.apk", "url": "...", "sha256": "...", "size": 24117248 },
-    { "abi": "x86_64",      "name": "StarChef-PDV-Mobile-v1.8.3-x86_64.apk",      "url": "...", "sha256": "...", "size": 26738688 }
+    { "abi": "arm64-v8a",   "name": "StarChef-PDV-Mobile-v1.8.3-arm64-v8a.apk",   "url": "…", "sha256": "…", "size": 26214400 },
+    { "abi": "armeabi-v7a", "name": "StarChef-PDV-Mobile-v1.8.3-armeabi-v7a.apk", "url": "…", "sha256": "…", "size": 24117248 },
+    { "abi": "x86_64",      "name": "StarChef-PDV-Mobile-v1.8.3-x86_64.apk",      "url": "…", "sha256": "…", "size": 26738688 }
   ]
 }
 ```
+
+`version` é a do `pdv_mobile/pubspec.yaml`, independente da tag — a tag é a
+versão do PDV. `tag` diz em qual Release este manifesto foi publicado.
 
 `package` é o APK universal e **não pode sair do manifesto**: é o único campo
 que as versões do app anteriores a 1.8.3 conhecem, e é por ele que elas
@@ -209,6 +233,13 @@ continuam se atualizando.
 correspondente e baixa só ela — cerca de um terço do universal, que carrega o
 código nativo das três. Sem correspondência, ou sem a lista, ele cai no
 `package`.
+
+O manifesto é reescrito em **toda** tag, mesmo quando o APK não é
+reconstruído. O motivo é concreto: o app procura o arquivo em
+`releases/latest/download/`, e `latest` passa a ser o release da tag nova assim
+que ele existe. Sem reescrever, essa URL responderia 404 e o app pararia de
+conseguir checar atualização — estando na versão certa. Quando não há APK novo,
+o manifesto herda o `package` do release anterior, cuja URL continua válida.
 
 ## Estados mostrados no PDV
 
@@ -243,8 +274,11 @@ Configure no repositório:
 Sem `PDV_UPDATE_MANIFEST_URL`, o Actions calcula automaticamente:
 
 ```text
-https://github.com/<owner>/<repository>/releases/latest/download/latest.json
+https://github.com/<owner>/<repository>/releases/latest/download/latest-desktop.json
 ```
+
+O atendimento móvel tem o equivalente em `PDV_MOBILE_MANIFEST_URL`, que aponta
+para `latest-mobile.json` no mesmo lugar.
 
 O override é útil se o manifesto passar a ser entregue por domínio próprio ou
 CDN. Ele é incorporado no binário por `--dart-define`; não é um segredo.
@@ -294,8 +328,8 @@ Por isso cada workflow decide, na hora da tag, se tem o que publicar:
 | --- | --- | --- |
 | `backend` | `backend/` ou o próprio workflow mudaram desde a tag anterior | re-etiqueta a imagem publicada com a versão nova |
 | `frontend` | `frontend/` ou o próprio workflow mudaram | re-etiqueta a imagem publicada com a versão nova |
-| PDV (`flutter`) | **sempre** | — |
-| APK (`garcom`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o manifesto herda a chave `mobile` do release anterior |
+| PDV (`pdv-desktop`) | **sempre** | — |
+| APK (`pdv-mobile`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o `latest-mobile.json` herda o `package` do release anterior |
 
 O PDV não tem exceção porque a tag **é** a versão dele: `release-metadata`
 recusa uma tag que não bata com `flutter/pubspec.yaml`, então cortar um release
@@ -326,12 +360,12 @@ re-etiqueta essa imagem com `X.Y.Z` e `X.Y` usando
 são nomes novos para o **mesmo digest** — e mantém respondível a pergunta
 "qual backend rodava no release `X.Y.Z`?".
 
-**APK.** O `publish-release` lê o `latest-desktop.json` do release anterior (naquele
-instante `releases/latest` ainda é o anterior, pois o desta tag só é criado no
-último passo) e copia a chave `mobile` inteira para o manifesto novo. A URL
-aponta para o asset do release antigo, que continua válido. O app compara a
-versão, vê que já está nela e não baixa nada. Se o manifesto anterior não
-trouxer um APK reaproveitável, `release-metadata` força a reconstrução.
+**APK.** O `publish-mobile` lê o `latest-mobile.json` do release anterior
+(naquele instante `releases/latest` ainda é o anterior) e copia o `package` e o
+`packages` para o manifesto novo. A URL aponta para o asset do release antigo,
+que continua válido. O app compara a versão, vê que já está nela e não baixa
+nada. Se o manifesto anterior não trouxer um APK reaproveitável, o
+`release-metadata` do `pdv_mobile.yml` força a reconstrução.
 
 ## Por que aparecem vários processos no Actions
 
@@ -346,7 +380,8 @@ dois acontecerem próximos um do outro, é normal aparecerem seis execuções:
 | Pull Request | `garcom` | analyze, testes e APK temporário de homologação do atendimento móvel |
 | tag `vX.Y.Z` | `backend` | testa e publica a imagem no GHCR **se `backend/` mudou** |
 | tag `vX.Y.Z` | `frontend` | testa e publica a imagem no GHCR **se `frontend/` mudou** |
-| tag `vX.Y.Z` | `flutter` | testa, compila Windows/Linux, chama `garcom` se preciso e publica o Release |
+| tag `vX.Y.Z` | `pdv-desktop` | testa, compila Windows/Linux e publica o Release com `latest-desktop.json` |
+| tag `vX.Y.Z` | `pdv-mobile` | testa, compila o APK **se `pdv_mobile/` mudou** e anexa `latest-mobile.json` ao mesmo Release |
 
 Portanto, as execuções do Pull Request não duplicam o release. Elas são as
 verificações exigidas para aprovar o merge. Somente as execuções iniciadas pela
@@ -443,16 +478,21 @@ No workflow `flutter`, os jobs executam nesta ordem:
 2. `release-metadata`: lê as duas versões, compara a versão do PDV com a tag e
    decide se o APK do garçom precisa ser reconstruído;
 3. `build-windows` e `build-linux`: geram o instalador e os ZIPs;
-4. `garcom`: chama o workflow `pdv_mobile.yml`, que roda analyze/testes do app e
-   compila o APK assinado. **É pulado quando `flutter_garcom/` não mudou desde
-   a tag anterior**;
-5. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
-   publica o GitHub Release.
+4. `publish-release`: reúne os pacotes do PDV, calcula hashes, gera o
+   `latest-desktop.json` e publica o GitHub Release.
 
-Se um build do PDV falhar, `publish-release` não roda e o novo `latest-desktop.json`
-não é publicado. O job `garcom` **pulado** não impede a publicação: nesse caso
-o manifesto herda a chave `mobile` do release anterior, cuja URL continua
-válida (ver [Builds condicionais](#builds-condicionais)).
+Em paralelo, e **em outro processo do Actions**, o `pdv-mobile` roda a mesma
+tag: analyze/testes do app, APK assinado (pulado quando `pdv_mobile/` não
+mudou) e `publish-mobile`, que anexa o APK ao MESMO Release e escreve o
+`latest-mobile.json`.
+
+Os dois jobs de publicação compartilham o mesmo grupo de `concurrency`
+(`gh-release-<tag>`), então nunca mexem no Release ao mesmo tempo: quem chegar
+primeiro cria, o outro anexa. A ordem entre eles não importa.
+
+Se um build do PDV falhar, `publish-release` não roda e o novo
+`latest-desktop.json` não é publicado — mas o APK e o `latest-mobile.json`
+saem assim mesmo, porque são de um workflow independente.
 
 ### 6. Conferir o release
 
@@ -463,7 +503,11 @@ StarChef-PDV-Setup-X.Y.Z.exe
 StarChef-PDV-Windows-vX.Y.Z.zip
 StarChef-PDV-Linux-vX.Y.Z.zip
 StarChef-PDV-Mobile-vA.B.C.apk
-latest.json
+StarChef-PDV-Mobile-vA.B.C-arm64-v8a.apk
+StarChef-PDV-Mobile-vA.B.C-armeabi-v7a.apk
+StarChef-PDV-Mobile-vA.B.C-x86_64.apk
+latest-desktop.json
+latest-mobile.json
 ```
 
 `A.B.C` é a versão independente declarada em `flutter_garcom/pubspec.yaml`.
