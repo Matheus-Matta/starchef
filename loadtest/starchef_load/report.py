@@ -28,7 +28,7 @@ def build(recorder, config, suites_executadas, elapsed):
         for veredito, quantidade in grupo["vereditos"].items():
             totais["por_veredito"][veredito] = totais["por_veredito"].get(veredito, 0) + quantidade
     totais["defeitos"] = sum(totais["por_veredito"].get(v, 0) for v in verdicts.DEFECTS)
-    latencias = sorted(l for stats in recorder.groups.values() for l in stats.latencies)
+    latencias = sorted(ms for stats in recorder.groups.values() for ms in stats.latencies)
     totais["p50_ms"] = round(percentile(latencias, 0.50), 1)
     totais["p95_ms"] = round(percentile(latencias, 0.95), 1)
     totais["p99_ms"] = round(percentile(latencias, 0.99), 1)

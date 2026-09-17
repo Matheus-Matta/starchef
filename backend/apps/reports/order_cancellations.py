@@ -9,7 +9,7 @@ retroalimentadas da auditoria pela migracao 0008.
 
 import csv
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Sum
 from django.db.models.functions import ExtractHour
 from django.http import HttpResponse
 
