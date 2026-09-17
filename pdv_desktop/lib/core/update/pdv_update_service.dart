@@ -235,22 +235,7 @@ class PdvUpdateService {
     }
 
     try {
-      final response = await _client
-          .get(manifestUri, headers: const {'Accept': 'application/json'})
-          .timeout(timeout);
-      if (response.statusCode != 200) {
-        throw HttpException(
-          'GitHub respondeu HTTP ${response.statusCode}',
-          uri: manifestUri,
-        );
-      }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map) {
-        throw const FormatException('Manifesto não é um objeto JSON');
-      }
-      final manifest = PdvReleaseManifest.fromJson(
-        Map<String, dynamic>.from(decoded),
-      );
+      final manifest = PdvReleaseManifest.fromJson(await _fetchManifest());
       final artifact = manifest.automaticArtifactFor(platform);
       if (artifact == null) {
         throw FormatException('Release sem ZIP portátil para $platform');
@@ -273,6 +258,87 @@ class PdvUpdateService {
         detail: 'Não foi possível consultar a versão mais recente: $error',
       );
     }
+  }
+
+  /// Busca o manifesto, com uma saída para quando o `latest` ainda não o tem.
+  ///
+  /// O 404 aqui não é "não há atualização": é o release mais recente existindo
+  /// sem o manifesto do desktop. Acontece o tempo todo, por dois motivos —
+  /// o Release é criado pelo workflow do atendimento móvel, que termina em
+  /// minutos, enquanto o build do desktop leva mais de dez; e um build de
+  /// desktop que falha deixa a tag publicada sem manifesto nenhum.
+  ///
+  /// Tratar isso como erro fatal foi o que parou a atualização automática na
+  /// 3.0: o PDV recebia 404, desistia em silêncio e ficava na versão antiga
+  /// indefinidamente, mesmo com um release bom logo atrás.
+  Future<Map<String, dynamic>> _fetchManifest() async {
+    final response = await _client
+        .get(manifestUri, headers: const {'Accept': 'application/json'})
+        .timeout(timeout);
+    if (response.statusCode == 200) {
+      return _decodeManifest(response.bodyBytes);
+    }
+    if (response.statusCode == 404) {
+      final anterior = await _manifestFromReleasesApi();
+      if (anterior != null) return anterior;
+    }
+    throw HttpException(
+      'GitHub respondeu HTTP ${response.statusCode}',
+      uri: manifestUri,
+    );
+  }
+
+  /// O release mais recente que realmente publicou o manifesto.
+  ///
+  /// Devolve `null` — e não lança — quando não dá para responder: manifesto
+  /// hospedado fora do GitHub, API indisponível, limite de requisição. Quem
+  /// chama volta a tratar o 404 original, então o PDV nunca fica pior do que
+  /// já estava.
+  Future<Map<String, dynamic>?> _manifestFromReleasesApi() async {
+    final origem = _githubReleaseAsset(manifestUri);
+    if (origem == null) return null;
+
+    try {
+      final api = Uri.https(
+        'api.github.com',
+        '/repos/${origem.owner}/${origem.repository}/releases',
+        const {'per_page': '30'},
+      );
+      final resposta = await _client
+          .get(
+            api,
+            headers: const {
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+          )
+          .timeout(timeout);
+      if (resposta.statusCode != 200) return null;
+
+      final lista = jsonDecode(utf8.decode(resposta.bodyBytes));
+      if (lista is! List) return null;
+
+      // A API devolve do mais novo para o mais antigo: o primeiro que tiver o
+      // manifesto é o que vale.
+      for (final item in lista) {
+        if (item is! Map || item['draft'] == true) continue;
+        final assets = item['assets'];
+        if (assets is! List) continue;
+        for (final asset in assets) {
+          if (asset is! Map || '${asset['name']}' != origem.asset) continue;
+          final url = Uri.tryParse('${asset['browser_download_url'] ?? ''}');
+          if (url == null || url.scheme != 'https') continue;
+          final corpo = await _client
+              .get(url, headers: const {'Accept': 'application/json'})
+              .timeout(timeout);
+          if (corpo.statusCode != 200) continue;
+          return _decodeManifest(corpo.bodyBytes);
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   Future<PdvDownloadedArtifact> downloadAndVerify(
@@ -421,4 +487,36 @@ String _requiredText(Map<String, dynamic> json, String key) {
   final value = '${json[key] ?? ''}'.trim();
   if (value.isEmpty) throw FormatException('Campo obrigatório ausente: $key');
   return value;
+}
+
+Map<String, dynamic> _decodeManifest(List<int> bytes) {
+  final decoded = jsonDecode(utf8.decode(bytes));
+  if (decoded is! Map) {
+    throw const FormatException('Manifesto não é um objeto JSON');
+  }
+  return Map<String, dynamic>.from(decoded);
+}
+
+class _GithubReleaseAsset {
+  const _GithubReleaseAsset(this.owner, this.repository, this.asset);
+
+  final String owner;
+  final String repository;
+  final String asset;
+}
+
+/// Reconhece `https://github.com/{dono}/{repo}/releases/latest/download/{asset}`.
+///
+/// Qualquer outro formato devolve `null`: uma instalação que aponta o
+/// manifesto para um servidor próprio não tem API de releases para consultar.
+_GithubReleaseAsset? _githubReleaseAsset(Uri uri) {
+  if (uri.host != 'github.com') return null;
+  final partes = uri.pathSegments;
+  if (partes.length != 6) return null;
+  if (partes[2] != 'releases' ||
+      partes[3] != 'latest' ||
+      partes[4] != 'download') {
+    return null;
+  }
+  return _GithubReleaseAsset(partes[0], partes[1], partes[5]);
 }

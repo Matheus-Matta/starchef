@@ -241,8 +241,18 @@ jobs:
   # mesmo Release pelo `pdv_mobile.yml`, com manifesto próprio.
   publish-release:
     needs: [release-metadata, build-windows, build-linux]
+    # `always()` porque este job precisa rodar MESMO com o build quebrado.
+    # O motivo é o mesmo que o `publish-mobile` já documenta: o app procura o
+    # manifesto em `releases/latest/download/`, e `latest` passa a ser o
+    # release DESTA tag assim que ele existe — e quem o cria primeiro costuma
+    # ser o workflow do mobile, que leva 2 minutos contra os 12 daqui. Se este
+    # job não publicasse um `latest-desktop.json`, a URL responderia 404 e
+    # TODO PDV em campo pararia de conseguir checar atualização, em silêncio,
+    # até alguém publicar outra tag. Foi o que aconteceu na v3.0.1, cujo
+    # release ficou permanentemente sem manifesto.
     if: >-
-      github.event_name == 'push' && github.ref_type == 'tag'
+      always() && github.event_name == 'push' && github.ref_type == 'tag' &&
+      needs.release-metadata.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -257,6 +267,9 @@ jobs:
       APP_VERSION: ${{ needs.release-metadata.outputs.version }}
     steps:
       - name: Baixar pacotes dos builds
+        if: >-
+          needs.build-windows.result == 'success' &&
+          needs.build-linux.result == 'success'
         uses: actions/download-artifact@v4
         with:
           pattern: starchef-pdv-*-${{ needs.release-metadata.outputs.version }}
@@ -266,6 +279,8 @@ jobs:
       - name: Gerar latest-desktop.json com SHA-256
         shell: python
         working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           import hashlib
           import json
@@ -273,10 +288,11 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           from urllib.parse import quote
-          from urllib.request import urlopen
+          from urllib.request import Request, urlopen
 
           root = Path(os.environ["GITHUB_WORKSPACE"])
           assets = root / "release-assets"
+          assets.mkdir(parents=True, exist_ok=True)
           version = os.environ["APP_VERSION"]
           tag = os.environ["GITHUB_REF_NAME"]
           repository = os.environ["GITHUB_REPOSITORY"]
@@ -286,10 +302,6 @@ jobs:
               "windows_zip": f"StarChef-PDV-Windows-v{version}.zip",
               "linux_zip": f"StarChef-PDV-Linux-v{version}.zip",
           }
-          # Os três são obrigatórios: o manifesto existe para servi-los.
-          for key in names:
-              if not (assets / names[key]).is_file():
-                  raise SystemExit(f"Artefato obrigatório ausente: {names[key]}")
 
           def package(key, kind, file_format, recommended):
               name = names[key]
@@ -305,27 +317,82 @@ jobs:
                   "recommended": recommended,
               }
 
-          manifest = {
-              "schema_version": 1,
-              "version": version,
-              "tag": tag,
-              "published_at": datetime.now(timezone.utc).isoformat(),
-              "commit": os.environ["GITHUB_SHA"],
-              "release_url": f"https://github.com/{repository}/releases/tag/{tag}",
-              "platforms": {
-                  "windows": {
-                      "packages": [
-                          package("windows_installer", "installer", "exe", True),
-                          package("windows_zip", "portable", "zip", False),
-                      ]
+          def herdado():
+              # O manifesto do release anterior que AINDA tem os pacotes.
+              #
+              # Vale quando o build desta tag nao produziu os tres artefatos.
+              # Publicar o manifesto anterior mantem as URLs de download
+              # validas e diz a verdade ao PDV: a ultima versao utilizavel
+              # continua sendo a X. O terminal fica onde esta, que e o
+              # comportamento certo -- em vez de receber 404 e parar de checar.
+              #
+              # A busca e pela API e NAO por `releases/latest`: neste instante
+              # o `latest` ja pode ser o release desta tag, criado pelo
+              # workflow do mobile, que nao tem manifesto de desktop nenhum.
+              pedido = Request(
+                  f"https://api.github.com/repos/{repository}/releases?per_page=30",
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "X-GitHub-Api-Version": "2022-11-28",
                   },
-                  "linux": {
-                      "packages": [
-                          package("linux_zip", "portable", "zip", True),
-                      ]
+              )
+              with urlopen(pedido, timeout=30) as resposta:
+                  releases = json.load(resposta)
+
+              # A API devolve do mais novo para o mais antigo.
+              for release in releases:
+                  if release.get("tag_name") == tag or release.get("draft"):
+                      continue
+                  for asset in release.get("assets", []):
+                      if asset.get("name") != "latest-desktop.json":
+                          continue
+                      with urlopen(asset["browser_download_url"], timeout=30) as corpo:
+                          anterior = json.load(corpo)
+                      print(
+                          "Build sem artefatos: herdando o manifesto "
+                          f"{anterior.get('version')} de {release.get('tag_name')}."
+                      )
+                      return anterior
+              raise SystemExit(
+                  "Os artefatos desta tag nao existem e nenhum release anterior "
+                  "traz um latest-desktop.json para herdar. Refaca o build."
+              )
+
+          faltando = [nome for nome in names.values() if not (assets / nome).is_file()]
+          if faltando:
+              print("Artefatos ausentes: " + ", ".join(faltando))
+              manifest = herdado()
+              # A tag e a data sao DESTE release: o manifesto vive nele. Só os
+              # pacotes, e a versao que eles entregam, e que sao herdados.
+              manifest["inherited_from"] = manifest.get("release_url", "")
+              manifest["tag"] = tag
+              manifest["published_at"] = datetime.now(timezone.utc).isoformat()
+              manifest["release_url"] = (
+                  f"https://github.com/{repository}/releases/tag/{tag}"
+              )
+          else:
+              manifest = {
+                  "schema_version": 1,
+                  "version": version,
+                  "tag": tag,
+                  "published_at": datetime.now(timezone.utc).isoformat(),
+                  "commit": os.environ["GITHUB_SHA"],
+                  "release_url": f"https://github.com/{repository}/releases/tag/{tag}",
+                  "platforms": {
+                      "windows": {
+                          "packages": [
+                              package("windows_installer", "installer", "exe", True),
+                              package("windows_zip", "portable", "zip", False),
+                          ]
+                      },
+                      "linux": {
+                          "packages": [
+                              package("linux_zip", "portable", "zip", True),
+                          ]
+                      },
                   },
-              },
-          }
+              }
           # `latest-desktop.json`, e NUNCA `latest.json`.
           #
           # As duas linhagens do PDV convivem: a 1.8.x (offline, pasta
@@ -348,7 +415,10 @@ jobs:
         with:
           name: starchef-pdv-release-${{ needs.release-metadata.outputs.version }}
           path: release-assets/*
-          if-no-files-found: error
+          # `warn`, nao `error`: num build que falhou a pasta traz so o
+          # manifesto herdado, e reprovar aqui apagaria justamente a publicacao
+          # que existe para impedir o 404 em campo.
+          if-no-files-found: warn
 
       - name: Publicar GitHub Release
         # `@v3`, nao `@v2`: a v2 declara `using: node20`, e o GitHub passou a
