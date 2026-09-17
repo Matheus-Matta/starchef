@@ -1,5 +1,11 @@
 # Teste de carga do PDV Flutter
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Suíte manual que exercita o **núcleo do PDV desktop por dentro**, em volume, à
 procura de três coisas: bug, erro não tratado e **demora na resposta**.
 

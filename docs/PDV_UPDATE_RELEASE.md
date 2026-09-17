@@ -1,5 +1,11 @@
 # Atualização e release do StarChef PDV
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Este documento explica como o PDV identifica novas versões, como os pacotes de
 Windows e Linux são publicados e qual é o procedimento seguro para liberar uma
 atualização.
@@ -220,7 +226,7 @@ isolados do fluxo de vendas.
 
 ## Configuração do GitHub
 
-O workflow está em `.github/workflows/flutter.yml`.
+O workflow está em `.github/workflows/pdv_desktop.yml`.
 
 Configure no repositório:
 
@@ -250,7 +256,7 @@ O Android só instala uma versão por cima da anterior quando a assinatura é
 idêntica, e a chave de debug do Flutter é gerada nova a cada execução do
 runner. Um release assinado com ela não atualiza nenhum aparelho que já tenha o
 app — só desinstalar e instalar de novo, perdendo sessão e pareamento em cada
-celular do salão. Por isso o job `build-apk` de `garcom.yml`:
+celular do salão. Por isso o job `build-apk` de `pdv_mobile.yml`:
 
 - **falha** numa tag se os Secrets estiverem ausentes (`require_signing`);
 - **falha** numa tag se o APK gerado tiver saído com `CN=Android Debug`, mesmo
@@ -289,7 +295,7 @@ Por isso cada workflow decide, na hora da tag, se tem o que publicar:
 | `backend` | `backend/` ou o próprio workflow mudaram desde a tag anterior | re-etiqueta a imagem publicada com a versão nova |
 | `frontend` | `frontend/` ou o próprio workflow mudaram | re-etiqueta a imagem publicada com a versão nova |
 | PDV (`flutter`) | **sempre** | — |
-| APK (`garcom`) | `flutter_garcom/` ou `garcom.yml` mudaram | o manifesto herda a chave `garcom` do release anterior |
+| APK (`garcom`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o manifesto herda a chave `garcom` do release anterior |
 
 O PDV não tem exceção porque a tag **é** a versão dele: `release-metadata`
 recusa uma tag que não bata com `flutter/pubspec.yaml`, então cortar um release
@@ -437,7 +443,7 @@ No workflow `flutter`, os jobs executam nesta ordem:
 2. `release-metadata`: lê as duas versões, compara a versão do PDV com a tag e
    decide se o APK do garçom precisa ser reconstruído;
 3. `build-windows` e `build-linux`: geram o instalador e os ZIPs;
-4. `garcom`: chama o workflow `garcom.yml`, que roda analyze/testes do app e
+4. `garcom`: chama o workflow `pdv_mobile.yml`, que roda analyze/testes do app e
    compila o APK assinado. **É pulado quando `flutter_garcom/` não mudou desde
    a tag anterior**;
 5. `publish-release`: reúne os pacotes, calcula hashes, gera o manifesto e
@@ -598,7 +604,7 @@ correção.
 
 ## Arquivos relacionados
 
-- `.github/workflows/flutter.yml`: build, manifesto e publicação;
+- `.github/workflows/pdv_desktop.yml`: build, manifesto e publicação;
 - `flutter/pubspec.yaml`: versão do PDV;
 - `flutter/lib/core/update/pdv_update_service.dart`: leitura e validação do
   manifesto;

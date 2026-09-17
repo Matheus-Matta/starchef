@@ -1,5 +1,11 @@
 # Estados da emissão fiscal e cadastro incompleto
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Este documento explica **por que** a emissão da NFC-e mudou em 31/08/2026 e como
 ela se comporta agora. Ele complementa
 [`FLUXO_PAGAMENTO_EMISSAO_FISCAL.md`](FLUXO_PAGAMENTO_EMISSAO_FISCAL.md), que

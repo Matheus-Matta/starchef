@@ -1,5 +1,11 @@
 # Orientações para agentes de IA
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Este arquivo vale para todo o monorepo StarChef.
 
 ## Documentação obrigatória por assunto
@@ -25,18 +31,20 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/BACKEND.md`: API e serviços do backend;
 - `docs/FRONTEND.md`: retaguarda web;
 - `docs/TESTE_CARGA.md`: teste de carga manual das quatro frentes (`loadtest/`);
-- `docs/TESTE_CARGA_PDV.md`: teste de carga do nucleo do PDV Flutter (`flutter/loadtest/`);
+- `docs/TESTE_CARGA_PDV.md`: teste de carga do nucleo do PDV (histórico da
+  linhagem offline; a suíte vivia em `flutter/loadtest/`, que não existe
+  nesta branch);
 - `docs/ANALISE_DE_RISCOS.md`: os defeitos que a carga achou, o que foi corrigido e o que segue aberto.
 
 ## Regras do release do PDV
 
-- A versão vem de `flutter/pubspec.yaml` no formato `X.Y.Z+N`.
+- A versão vem de `pdv_desktop/pubspec.yaml` no formato `X.Y.Z+N`.
 - A tag de release correspondente é `vX.Y.Z`; ela não inclui o build number.
 - Nunca crie, mova, apague ou reutilize uma tag sem autorização explícita do
   usuário. Uma tag dispara publicação externa de backend, frontend e PDV.
 - Um Pull Request executa validações, mas não publica release.
 - `workflow_dispatch` gera artefatos temporários, mas não publica o
-  `latest.json` nem cria GitHub Release.
+  `latest-desktop.json` nem cria GitHub Release.
 - A tag executa os três workflows do monorepo. No Flutter, o fluxo esperado é
   `test` → `release-metadata` → builds Windows/Linux → `publish-release`.
 - O pipeline deve falhar se a tag não corresponder à versão pública do
@@ -85,8 +93,8 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` e
   pode ser substituída por `PDV_UPDATE_MANIFEST_URL` no build.
 - O APK do aplicativo do garçom não faz parte do manifesto do PDV.
-- O aplicativo do garçom tem workflow próprio, `.github/workflows/garcom.yml`,
-  chamado pelo `flutter.yml` durante o release para o APK sair no mesmo run e
+- O atendimento móvel tem workflow próprio, `.github/workflows/pdv_mobile.yml`,
+  chamado pelo `pdv_desktop.yml` durante o release para o APK sair no mesmo run e
   ser anexado ao mesmo GitHub Release.
 - Em tags, a assinatura exige os quatro Secrets `GARCOM_*` e o job **falha** sem
   eles — ou se o APK sair com `CN=Android Debug`. Nunca publique APK de
@@ -98,17 +106,17 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 
 ## Arquivos que precisam permanecer coerentes
 
-- `.github/workflows/flutter.yml`;
-- `.github/workflows/garcom.yml`;
-- `flutter_garcom/pubspec.yaml`, `flutter_garcom/android/app/build.gradle.kts`
-  e `flutter_garcom/README.md`;
-- `flutter/pubspec.yaml` e `flutter/pubspec.lock`;
-- `flutter/lib/core/update/pdv_update_service.dart`;
-- `flutter/lib/core/update/pdv_auto_updater.dart`;
-- `flutter/lib/core/update/pdv_update_installer.dart`;
-- `flutter/lib/features/home/presentation/pdv_navigation_shell.dart`;
-- `flutter/windows/installer/build_installer.ps1`;
-- `flutter/windows/installer/starchef_pdv.iss`;
+- `.github/workflows/pdv_desktop.yml`;
+- `.github/workflows/pdv_mobile.yml`;
+- `pdv_mobile/pubspec.yaml`, `pdv_mobile/android/app/build.gradle.kts`
+  e `pdv_mobile/README.md`;
+- `pdv_desktop/pubspec.yaml` e `pdv_desktop/pubspec.lock`;
+- `pdv_desktop/lib/core/update/pdv_update_service.dart`;
+- `pdv_desktop/lib/core/update/pdv_auto_updater.dart`;
+- `pdv_desktop/lib/core/update/pdv_update_installer.dart`;
+- `pdv_desktop/lib/features/home/presentation/pdv_navigation_shell.dart`;
+- `pdv_desktop/windows/installer/build_installer.ps1`;
+- `pdv_desktop/windows/installer/starchef_pdv.iss`;
 - `docs/PDV_UPDATE_RELEASE.md`.
 
 Ao alterar o schema do manifesto, atualize na mesma mudança o gerador do

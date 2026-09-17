@@ -1,5 +1,11 @@
 # Teste de desempenho sob carga massiva — resumo geral
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Trabalho de 10 e 11/09/2026 na branch `release/v2.0.0`. Este arquivo é o
 sumário executivo: o que foi construído, o que quebrou, o que mudou e o que
 ainda vale fazer. O detalhe item a item (arquivo, linha, causa raiz) vive em

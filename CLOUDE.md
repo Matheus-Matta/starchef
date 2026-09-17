@@ -3,7 +3,7 @@
 ## Project context
 Read `AGENTS.md` before applying this guide; AGENTS.md takes precedence over conflicting rules here. User instructions define the task scope.
 The filename is intentionally preserved from the request. Claude Code automatically discovers `CLAUDE.md`, not `CLOUDE.md`; this file must be explicitly loaded unless renamed or imported by that standard file.
-StarChef includes `backend/` (Django/DRF, Channels, Celery), `frontend/` (Vue 3, PrimeVue, Pinia, Vite), `flutter/` (Windows/Linux PDV) and `flutter_garcom/` (Flutter waiter app).
+StarChef includes `backend/` (Django/DRF, Channels, Celery), `frontend/` (Vue 3, PrimeVue, Pinia, Vite), `pdv_desktop/` (Windows/Linux PDV, online-only) and `pdv_mobile/` (Flutter waiter app, online-only). On this branch there is no `flutter/` or `flutter_garcom/` — that offline lineage lives on other branches.
 Production uses PostgreSQL, Redis and `docker-compose.yml`. Development uses PowerShell on Windows; inspect the root `package.json` for existing commands.
 Read the relevant docs: `docs/BACKEND.md`, `docs/FRONTEND.md`, `docs/FLUTTER_DESKTOP.md`, `docs/FLUTTER_PDV_TECNICO.md`, and `docs/PDV_OFFLINE_SCALE_ARCHITECTURE.md`.
 Load-test references: `docs/TESTE_CARGA.md`, `docs/TESTE_CARGA_PDV.md`, and `docs/ANALISE_DE_RISCOS.md`.
@@ -72,7 +72,7 @@ Tests and checks — according to scope
 Scope what you RUN by the triage size (see "Task sizing"): small and medium changes run only the tests covering the touched code; the full suite is for large and contract changes. State in the report which lane ran and why. Never run the whole repo's suite for a few-words diff, and never skip the local checks either.
 What you WRITE still follows the rules below. "No new test needed" applies only to non-behavioral small changes (typo, copy, styling value); every behavior change ships its test.
 Validate changed behavior with existing tools: pytest (backend), Vitest (frontend), and flutter test (Flutter apps). LLM evals apply only to features using LLMs.
-Behavior fixes need regression coverage. For PDV/release changes, AGENTS.md overrides triage: run flutter pub get, flutter analyze and flutter test in flutter/. Also validate the Windows release build when its build changes.
+Behavior fixes need regression coverage. For PDV/release changes, AGENTS.md overrides triage: run flutter pub get, flutter analyze and flutter test in pdv_desktop/. Also validate the Windows release build when its build changes.
 Document recurring failures in the relevant project guide or automate their prevention; do not assume a separate ten-step skill exists.
 Include meaningful regression coverage for behavior changes. Existing tests can be sufficient; documentation-only edits need content, path and whitespace checks, not application tests.
 Two test lanes, different budgets:
@@ -114,7 +114,7 @@ Skillify repeated success, not just failure
 Automate recurring work when reuse justifies it. Prefer existing scripts and guides; do not create a skill or workflow for every failure or repeated command.
 
 Architecture — respect the existing monorepo
-Extend backend/apps/, frontend/src/, flutter/lib/ and flutter_garcom/lib/ using existing conventions and test locations. Do not move modules to an invented services/ hierarchy.
+Extend backend/apps/, frontend/src/, pdv_desktop/lib/ and pdv_mobile/lib/ using existing conventions and test locations. Do not move modules to an invented services/ hierarchy.
 Keep business responsibilities focused. Prefer modules within existing applications over new deployable services without an operational need.
 Maintain API serializers, routes and client models together when contracts change. Verify tenant isolation and compatibility with offline clients.
 Deployments follow Compose and the existing Actions workflows; release coordination is documented in docs/PDV_UPDATE_RELEASE.md.

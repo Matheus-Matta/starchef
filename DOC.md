@@ -1,5 +1,11 @@
 # StarChef — Documentação técnica
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 > Atualizado em 26/07/2026 para a versão atual do repositório.
 
 ## 1. Visão geral
@@ -43,7 +49,7 @@ Desktop: Flutter/Dart, `http`, `flutter_secure_storage`, `window_manager`, SVG e
 
 Infraestrutura: Docker Compose, Gunicorn com `UvicornWorker`, volumes persistentes e health checks. TLS/proxy reverso são infra externa ao Compose.
 
-As versões exatas estão em `backend/requirements/*.txt`, `frontend/package.json` e `flutter/pubspec.yaml`.
+As versões exatas estão em `backend/requirements/*.txt`, `frontend/package.json` e `pdv_desktop/pubspec.yaml`.
 
 ## 4. Multi-tenancy
 
@@ -224,7 +230,7 @@ Autenticação:
 
 ## 8. PDV Flutter para Windows
 
-O aplicativo em `flutter/` é uma superfície operacional dedicada. Ele inclui:
+O aplicativo em `pdv_desktop/` é uma superfície operacional dedicada. Ele inclui:
 
 - login e restauração segura de sessão;
 - seleção de restaurante/filial;
@@ -235,7 +241,7 @@ O aplicativo em `flutter/` é uma superfície operacional dedicada. Ele inclui:
 - inventário de dispositivos locais;
 - seleção de impressora e cache de templates;
 - agente local de impressão/balança;
-- instalador Inno Setup em `flutter/windows/installer/starchef_pdv.iss`.
+- instalador Inno Setup em `pdv_desktop/windows/installer/starchef_pdv.iss`.
 
 Configuração da API:
 

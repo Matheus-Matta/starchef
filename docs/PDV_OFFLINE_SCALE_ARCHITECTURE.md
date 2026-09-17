@@ -1,5 +1,11 @@
 # PDV offline e Balança Rápida — arquitetura implementada
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Este documento descreve o comportamento que existe no código atual. Ele é um registro **AS-IS**, não uma promessa da arquitetura desejada ao fim de todos os sprints. As lacunas conhecidas estão reunidas no final.
 
 Para a estrutura interna do aplicativo Flutter — camadas, arquivos, decisões de

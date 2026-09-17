@@ -1,8 +1,4 @@
 .env
-# Exceção: o .env do app do garçom guarda só o endereço do backend (nenhum
-# segredo — a senha do Caixa Principal é digitada no login) e é embarcado
-# como asset, então precisa existir no clone para o build funcionar.
-!flutter_garcom/.env
 .venv/
 venv/
 __pycache__/
@@ -45,9 +41,9 @@ infra/simuladores/logs/
 
 logs/
 
-# Chaves de assinatura Android, em QUALQUER pasta. O flutter_garcom/android/
-# já tinha a própria regra, mas um .jks gerado um nível acima (ao rodar o
-# keytool da pasta errada) escapava dela — e este repositório é público.
+# Chaves de assinatura Android, em QUALQUER pasta. O pdv_mobile/android/ já
+# tinha a própria regra, mas um .jks gerado um nível acima (ao rodar o keytool
+# da pasta errada) escapava dela — e este repositório é público.
 *.jks
 *.keystore
 key.properties

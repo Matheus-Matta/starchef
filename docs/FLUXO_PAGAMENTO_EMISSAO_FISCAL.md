@@ -1,5 +1,11 @@
 # Fluxo do pagamento à emissão da NF-e/NFC-e
 
+> **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
+> Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
+> `pdv_mobile/` (atendimento móvel), que falam direto com o backend, sem
+> operação offline. As pastas antigas seguem nas outras branches.
+
+
 Este documento descreve o comportamento **atual** do StarChef, do fechamento e
 pagamento de um pedido até a geração, autorização e impressão do documento
 fiscal. O fluxo foi conferido no backend Django, na retaguarda Vue e no PDV
