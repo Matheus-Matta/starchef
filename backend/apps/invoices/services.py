@@ -189,7 +189,50 @@ def with_fiscal_state(data, invoice):
         Invoice.STATUS_ISSUED,
     )
     data["printable"] = is_fiscally_printable(invoice)
+    if not data["emitted"]:
+        # `message` NÃO é opcional aqui, e a falta dele custou caro. Quem
+        # consome esta resposta precisa dizer ao operador por que a nota não
+        # saiu — e sem este campo o PDV caía num texto fixo, "o provedor
+        # fiscal não está configurado", que ele inventava por não ter nada
+        # melhor. O operador via essa frase com o provedor configurado e
+        # funcionando, para QUALQUER recusa: NCM faltando, rejeição da SEFAZ,
+        # erro da Focus. O motivo real estava em `error_message`, ali do lado,
+        # e ninguém lia.
+        data["message"] = fiscal_refusal_message(invoice)
     return data
+
+
+#: O que dizer ao operador em cada situação de nota não emitida. `error_message`
+#: vem primeiro sempre que existe: é o texto da SEFAZ ou do provedor, e nenhuma
+#: frase nossa explica melhor uma rejeição do que a própria rejeição.
+_MOTIVO_POR_ESTADO = {
+    "configuration_error": "A configuração fiscal está incompleta ou inválida.",
+    "rejected": "A nota foi recusada na transmissão.",
+    "cancelled": "Esta nota está cancelada.",
+    "reconciliation_required": (
+        "A situação desta nota precisa ser reconciliada com o provedor antes de reenviar."
+    ),
+    "draft": "A nota ainda não foi montada para transmissão.",
+}
+
+
+def fiscal_refusal_message(invoice):
+    """Por que esta nota não conta como emitida. Sempre uma frase útil."""
+    if invoice is None:
+        return "Nota fiscal não emitida: o pedido ainda não gerou documento."
+
+    detalhe = (invoice.error_message or "").strip()
+    if detalhe:
+        return f"Nota fiscal não emitida: {detalhe}"
+
+    estado = fiscal_state_of(invoice)
+    generico = _MOTIVO_POR_ESTADO.get(estado)
+    if generico:
+        return f"Nota fiscal não emitida: {generico}"
+    return (
+        "Nota fiscal não emitida: situação "
+        f"'{estado}' — consulte a nota para o detalhe."
+    )
 
 
 def is_fiscally_printable(invoice):
