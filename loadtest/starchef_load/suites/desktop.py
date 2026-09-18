@@ -94,9 +94,14 @@ def fase_abertura(ctx):
 def fase_abrir_caixa(ctx, refs):
     """Sem caixa aberto o backend recusa o recebimento — e está certo.
 
-    O PDV real abre a sessão antes de vender; pular isso aqui faria a suíte
-    reportar "0 vendas" e parecer defeito do sistema quando é ausência de
-    pré-condição do teste.
+    O PDV real abre a sessão antes de vender; pular isso faria a suíte reportar
+    "0 vendas" e parecer defeito do sistema quando é pré-condição do teste
+    faltando.
+
+    A estação tem operadores autorizados, e um usuário só pode estar vinculado
+    a UMA por vez — então adivinhar qual usar não funciona. A suíte tenta as
+    estações em ordem e fica com a primeira que abrir: é o que um operador
+    faria, e não depende de conhecer o modelo de permissão.
     """
     ctx.log(f"[{SUITE}] fase 2/5 — abertura do caixa")
     atual = ctx.session.get("/api/v1/cash-register/current/")
@@ -104,43 +109,42 @@ def fase_abrir_caixa(ctx, refs):
         ctx.note(SUITE, "já havia caixa aberto; reaproveitado")
         return True
 
-    estacao = (refs.cash_station or {}).get("id")
-    if not estacao:
-        ctx.note(SUITE, "nenhuma estação de caixa no cenário; venda não será exercitada")
+    lista = ctx.session.get("/api/v1/cash-stations/?page_size=50&is_active=true")
+    corpo = lista.json() or {}
+    estacoes = corpo.get("results") or corpo.get("data") or []
+    if not estacoes:
+        ctx.note(SUITE, "nenhuma estação de caixa no cenário; venda não exercitada")
         return False
 
-    # A estação tem lista de operadores autorizados, e o usuário do teste pode
-    # não estar nela — "O operador não está vinculado a este caixa". Isso é
-    # pré-condição de CENÁRIO, não defeito do sistema: a suíte se vincula e
-    # segue, em vez de reportar falha e esconder o que ela veio medir.
-    eu = ctx.session.get("/api/v1/auth/me/")
-    meu_id = (eu.json() or {}).get("id") if eu.status == 200 else None
-    if meu_id:
-        vinculo = ctx.session.patch(
-            f"/api/v1/cash-stations/{estacao}/", {"operators": [meu_id]}
+    recusas = []
+    for estacao in estacoes:
+        inicio = time.time()
+        resposta = ctx.session.post(
+            "/api/v1/cash-register/open/",
+            {"cash_station": estacao.get("id"), "opening_amount": "200.00",
+             "notes": "carga"},
+            idempotency_key=str(uuid.uuid4()),
         )
-        if vinculo.status not in (200, 202):
+        ctx.record(SUITE, f"{SUITE}::abrir_caixa", "POST",
+                   "/api/v1/cash-register/open/", resposta,
+                   expectation="2xx", started=inicio)
+        # 409 é "já existe sessão aberta nesta estação" — sucesso para o que a
+        # suíte precisa, não falha.
+        if resposta.status in (200, 201, 409):
             ctx.note(
                 SUITE,
-                f"não foi possível vincular o operador à estação "
-                f"(HTTP {vinculo.status}); a abertura pode ser recusada",
+                f"caixa aberto na estação '{estacao.get('name', '?')}' "
+                f"(HTTP {resposta.status})",
             )
+            return True
+        recusas.append(f"{estacao.get('name', '?')}: HTTP {resposta.status}")
 
-    inicio = time.time()
-    resposta = ctx.session.post(
-        "/api/v1/cash-register/open/",
-        {"cash_station": estacao, "opening_amount": "200.00", "notes": "carga"},
-        idempotency_key=str(uuid.uuid4()),
-    )
-    ctx.record(SUITE, f"{SUITE}::abrir_caixa", "POST", "/api/v1/cash-register/open/",
-               resposta, expectation="2xx", started=inicio)
-    aberto = resposta.status in (200, 201)
     ctx.check(
-        SUITE, "o caixa abre",
-        aberto,
-        f"HTTP {resposta.status} ao abrir — sem caixa não há recebimento",
+        SUITE, "há caixa aberto para receber",
+        False,
+        "nenhuma estação aceitou abrir — " + "; ".join(recusas[:4]),
     )
-    return aberto
+    return False
 
 
 def _uma_venda(ctx, sessao, refs, rng):
@@ -186,6 +190,28 @@ def _uma_venda(ctx, sessao, refs, rng):
                item, expectation="2xx", started=inicio)
     if item.status not in (200, 201):
         return None
+
+    # O fluxo real tem dois passos que faltavam aqui: a cozinha recebe o lote
+    # ANTES de o caixa fechar, e o fechamento aplica taxa/desconto e trava o
+    # total. Pular isso media um caminho que o app nunca percorre.
+    inicio = time.time()
+    cozinha = sessao.post(
+        f"/api/v1/orders/{pedido}/send-to-kitchen/",
+        {"client_batch_serial": str(uuid.uuid4())},
+        idempotency_key=str(uuid.uuid4()),
+    )
+    ctx.record(SUITE, f"{SUITE}::enviar_cozinha", "POST",
+               "/api/v1/orders/{id}/send-to-kitchen/", cozinha,
+               expectation="2xx", started=inicio)
+
+    inicio = time.time()
+    fechamento = sessao.post(
+        f"/api/v1/orders/{pedido}/close/",
+        {"discount": 0, "service_fee_enabled": False, "fiscal_customer_cpf": ""},
+        idempotency_key=str(uuid.uuid4()),
+    )
+    ctx.record(SUITE, f"{SUITE}::fechar", "POST", "/api/v1/orders/{id}/close/",
+               fechamento, expectation="2xx", started=inicio)
 
     metodo = (refs.payment_by_type.get("cash") or {}).get("id")
     if not metodo:
@@ -273,29 +299,53 @@ def fase_conferencia(ctx, vendas):
     if not vendas:
         return
 
-    duplicados = 0
-    divergentes = 0
-    for venda in vendas[: max(1, min(25, len(vendas)))]:
-        resposta = ctx.session.get(f"/api/v1/orders/{venda['pedido']}/")
+    # O que É defeito e o que NÃO é, porque a primeira versão desta fase
+    # confundiu os dois:
+    #
+    # Vários pagamentos num pedido é CONTA DIVIDIDA — funcionalidade. Reprovar
+    # por isso acusava o sistema de cobrança dupla num comportamento correto.
+    #
+    # Cobrança dupla de verdade tem duas assinaturas: a mesma chave de
+    # idempotência gerando dois recebimentos, ou a soma dos pagamentos passando
+    # do total do pedido. São essas que valem verificar.
+    chaves = {}
+    repetidas = 0
+    acima_do_total = 0
+    # DEDUPLICAR os pedidos antes de ler, e isto não é detalhe: vários caixas
+    # abrem a MESMA comanda, então o mesmo pedido aparece repetido em `vendas`.
+    # Lendo-o duas vezes, cada chave de idempotência era contada em dobro e a
+    # fase acusava o sistema de cobrança dupla — com a idempotência funcionando
+    # perfeitamente. Acusar o sistema pelo erro do teste é pior que não testar.
+    unicos = list(dict.fromkeys(v["pedido"] for v in vendas))
+    for pedido_id in unicos[: max(1, min(40, len(unicos)))]:
+        resposta = ctx.session.get(f"/api/v1/orders/{pedido_id}/")
         if resposta.status != 200:
             continue
         pedido = resposta.json() or {}
         pagamentos = pedido.get("payments") or []
-        if len(pagamentos) > 1:
-            duplicados += 1
-        total = sum(Decimal(str(p.get("amount") or "0")) for p in pagamentos)
-        if total and total != venda["valor"]:
-            divergentes += 1
+
+        for pagamento in pagamentos:
+            chave = pagamento.get("idempotency_key")
+            if not chave:
+                continue
+            chaves[chave] = chaves.get(chave, 0) + 1
+            if chaves[chave] == 2:
+                repetidas += 1
+
+        pago = sum(Decimal(str(p.get("amount") or "0")) for p in pagamentos)
+        total = Decimal(str(pedido.get("total") or pedido.get("total_amount") or "0"))
+        if total and pago > total:
+            acima_do_total += 1
 
     ctx.check(
-        SUITE, "nenhuma venda foi cobrada duas vezes",
-        duplicados == 0,
-        f"{duplicados} pedido(s) com mais de um pagamento para uma cobrança só",
+        SUITE, "nenhuma chave de idempotência gerou dois recebimentos",
+        repetidas == 0,
+        f"{repetidas} chave(s) com mais de um pagamento — a idempotência não segurou",
     )
     ctx.check(
-        SUITE, "o valor cobrado bate com o lançado",
-        divergentes == 0,
-        f"{divergentes} pedido(s) com soma de pagamentos diferente do item lançado",
+        SUITE, "ninguém pagou mais que o total do pedido",
+        acima_do_total == 0,
+        f"{acima_do_total} pedido(s) com soma de pagamentos ACIMA do total",
     )
 
 

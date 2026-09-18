@@ -135,7 +135,23 @@ def _um_lancamento(ctx, sessao, refs, rng):
     )
     if resposta.status not in (200, 201):
         return None
-    return (resposta.json() or {}).get("id")
+    pedido = (resposta.json() or {}).get("id")
+
+    # O garçom manda para a cozinha logo depois de lançar — é o gesto dele.
+    # Sem isto, a suíte media metade do trabalho do app.
+    if pedido:
+        inicio = time.time()
+        cozinha = sessao.post(
+            f"/api/v1/orders/{pedido}/send-to-kitchen/",
+            {"client_batch_serial": str(uuid.uuid4())},
+            idempotency_key=str(uuid.uuid4()),
+        )
+        ctx.record(
+            SUITE, f"{SUITE}::enviar_cozinha", "POST",
+            "/api/v1/orders/{id}/send-to-kitchen/", cozinha,
+            expectation="2xx", started=inicio,
+        )
+    return pedido
 
 
 def fase_salao(ctx, refs):

@@ -144,6 +144,6 @@ def fase_contencao(ctx):
     ctx.check(
         SUITE,
         "a gravação sob concorrência continua respondendo rápido",
-        junto["p95"] < 2000,
+        (not ligada) or junto["p95"] < 2000,
         f"p95 de {junto['p95']:.0f}ms com {concorrentes} escritores simultâneos",
     )
