@@ -156,22 +156,24 @@ jobs:
             throw "flutter build windows falhou com código $LASTEXITCODE"
           }
 
-      - name: Gerar instalador (Inno Setup)
-        shell: pwsh
-        run: .\windows\installer\build_installer.ps1
-
-      - name: Gerar ZIP portátil do Windows
+      - name: Executável com o nome da linhagem 1.8.x
         shell: pwsh
         run: |
-          # Uma cópia do executável com o nome da linhagem 1.8.x.
+          # ANTES do instalador E do ZIP, de propósito. Os dois pacotes
+          # precisam do arquivo, por motivos diferentes:
           #
-          # O atualizador do PDV antigo procura `starchef_pdv.exe` dentro do ZIP
-          # e RECUSA o pacote quando não o encontra — a migração falharia a cada
-          # abertura, para sempre, sem nunca concluir. A cópia também mantém
-          # válido o atalho que já existe na área de trabalho das instalações
-          # antigas, que aponta para aquele nome.
+          # O ZIP, porque o atualizador do PDV antigo procura
+          # `starchef_pdv.exe` dentro dele e RECUSA o pacote quando não o
+          # encontra — a migração falharia a cada abertura, sem nunca concluir.
           #
-          # O Flutter no Windows localiza `data\` ao lado do executável, não
+          # O INSTALADOR, porque o `AppId` é o mesmo nas duas linhagens: a 3.x
+          # instala POR CIMA da 1.8.x, na mesma pasta. Sem esta cópia, o
+          # `starchef_pdv.exe` ANTIGO sobrevive à atualização e os atalhos que
+          # já existem continuam apontando para ele. O operador clica no ícone
+          # de sempre e abre o PDV velho — parece que não atualizou, porque o
+          # que ele clica realmente não atualizou.
+          #
+          # O Flutter no Windows localiza `data\` ao lado do executável e não
           # pelo nome dele, então os dois arquivos rodam o mesmo aplicativo.
           $release = ".\build\windows\x64\runner\Release"
           $novo = Join-Path $release "starchef_pdv_desktop.exe"
@@ -180,6 +182,14 @@ jobs:
           }
           Copy-Item $novo (Join-Path $release "starchef_pdv.exe") -Force
 
+      - name: Gerar instalador (Inno Setup)
+        shell: pwsh
+        run: .\windows\installer\build_installer.ps1
+
+      - name: Gerar ZIP portátil do Windows
+        shell: pwsh
+        run: |
+          $release = ".\build\windows\x64\runner\Release"
           $output = "..\artifacts\StarChef-PDV-Windows-v$env:APP_VERSION.zip"
           Compress-Archive -Path "$release\*" -DestinationPath $output -Force
 

@@ -1,5 +1,15 @@
+# Imagem base pelo espelho publico da AWS, e nao pelo Docker Hub.
+#
+# O Hub limita pull ANONIMO por IP, e os runners do GitHub compartilham IP.
+# Quando a cota estoura, o build morre na linha 1 com um erro que nao parece
+# cota — "failed to fetch oauth token: connection reset by peer" — antes mesmo
+# de o Dockerfile ser lido. Foi o que derrubou o build da v3.0.8.
+#
+# `public.ecr.aws/docker/library/*` e o espelho oficial das imagens `library`
+# do Hub: mesma imagem, mesmas tags, sem limite para pull anonimo e sem
+# precisar guardar credencial do Docker Hub como secret.
 # Stage 1: Build Frontend
-FROM node:24-alpine AS frontend-build
+FROM public.ecr.aws/docker/library/node:24-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -8,7 +18,7 @@ ENV API_URL=/api/v1
 RUN npm run build
 
 # Stage 2: Standalone Image
-FROM ubuntu:24.04
+FROM public.ecr.aws/docker/library/ubuntu:24.04
 
 # Evita prompts do apt
 ENV DEBIAN_FRONTEND=noninteractive

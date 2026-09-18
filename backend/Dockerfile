@@ -1,4 +1,14 @@
-FROM python:3.12-slim
+# Imagem base pelo espelho publico da AWS, e nao pelo Docker Hub.
+#
+# O Hub limita pull ANONIMO por IP, e os runners do GitHub compartilham IP.
+# Quando a cota estoura, o build morre na linha 1 com um erro que nao parece
+# cota — "failed to fetch oauth token: connection reset by peer" — antes mesmo
+# de o Dockerfile ser lido. Foi o que derrubou o build da v3.0.8.
+#
+# `public.ecr.aws/docker/library/*` e o espelho oficial das imagens `library`
+# do Hub: mesma imagem, mesmas tags, sem limite para pull anonimo e sem
+# precisar guardar credencial do Docker Hub como secret.
+FROM public.ecr.aws/docker/library/python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
