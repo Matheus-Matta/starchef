@@ -105,6 +105,25 @@ def entity_version(instance):
     return 1
 
 
+def tem_fonte_de_versao(instance):
+    """O model consegue dizer QUANDO foi alterado pela última vez?
+
+    `entity_version` devolve 1 quando não há nem `sync_version` nem
+    `updated_at`. Aí o número é uma constante, e comparar duas constantes não
+    informa nada — mas o resolvedor de conflito tratava "igual" como "já
+    apliquei, ignore".
+
+    `auth.User` é hoje a única entidade nessa situação, e o efeito era grave:
+    depois do primeiro apply, NENHUM evento de usuário voltava a ser aplicado.
+    A nuvem podia mandar o hash da senha para sempre que a loja descartaria.
+    """
+    if instance is None:
+        return False
+    if getattr(instance, "sync_version", None):
+        return True
+    return getattr(instance, "updated_at", None) is not None
+
+
 def build_payload(instance, entry, *, origin_node_id):
     """O payload completo de um evento de entidade."""
     return {

@@ -28,7 +28,14 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
     if not local_exists:
         return APLICAR
     if remote_version == local_version:
-        return IGNORAR
+        # Sem fonte de versão, "igual" é só a constante 1 comparada com ela
+        # mesma — não quer dizer "já apliquei". Deixa passar e quem decide é a
+        # comparação de CONTEÚDO em `apply._atualizar`, que não grava nada
+        # quando os campos vêm iguais.
+        from apps.synchronization.services import serialization
+
+        if serialization.tem_fonte_de_versao(local_instance):
+            return IGNORAR
     if _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
         return APLICAR
     if remote_version < local_version:

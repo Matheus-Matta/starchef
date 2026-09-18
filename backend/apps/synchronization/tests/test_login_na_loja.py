@@ -22,7 +22,8 @@ Usuario = get_user_model()
 SENHA = "senha-real-do-operador"
 
 
-def _evento_de_usuario(conta, origem, destino, *, user_id, username, hash_senha):
+def _evento_de_usuario(conta, origem, destino, *, user_id, username, hash_senha,
+                       sequencia=1):
     payload = {
         "schema_version": 1,
         "entity_type": "user",
@@ -42,7 +43,7 @@ def _evento_de_usuario(conta, origem, destino, *, user_id, username, hash_senha)
     }
     return SyncEvent.objects.create(
         account=conta, source_node=origem, target_node=destino,
-        direction=Direction.INBOUND, sequence=1, entity_type="user",
+        direction=Direction.INBOUND, sequence=sequencia, entity_type="user",
         entity_id=str(user_id), operation=Operation.UPSERT, entity_version=10**18,
         payload=payload, payload_checksum=crypto.checksum(payload),
         status=EventStatus.RECEIVED,
@@ -114,3 +115,59 @@ def test_sem_hash_a_senha_nasce_inutilizavel_e_nao_vazia(como_loja, conta, no_nu
         "sem hash, a senha tem de se declarar inutilizável em vez de fingir"
     )
     assert authenticate(username="sem_senha", password="qualquer") is None
+
+
+# ── e a senha chega mesmo num usuário que já existe aqui ───────────────────
+#
+# `auth.User` não tem `updated_at` nem `sync_version`, então `entity_version`
+# devolve 1 dos dois lados — sempre. E o resolvedor tratava "versão igual" como
+# "já apliquei, ignore": depois do primeiro apply, NENHUM evento de usuário
+# voltava a ser aplicado. A nuvem podia mandar o hash para sempre que a loja
+# descartaria, e o operador continuaria sem conseguir entrar.
+def test_o_usuario_e_a_unica_entidade_sem_fonte_de_versao():
+    """Se outra aparecer, ela herda o mesmo problema — e este teste avisa."""
+    sem_versao = [
+        e.entity_type for e in registry.entries.values()
+        if "sync_version" not in {c.name for c in e.model._meta.concrete_fields}
+        and "updated_at" not in {c.name for c in e.model._meta.concrete_fields}
+    ]
+    assert sem_versao == ["user"], (
+        "entidade nova sem `updated_at`: confira se ela também precisa que o "
+        "conteúdo decida, e não a versão"
+    )
+
+
+def test_a_senha_chega_num_usuario_que_ja_existe(como_loja, conta, no_nuvem, no_loja):
+    """O caso exato da produção: 8 usuários, 0 com senha utilizável."""
+    existente = Usuario.objects.create(username="operador2", email="o2@t.test")
+    existente.set_unusable_password()
+    existente.save()
+
+    hash_da_nuvem = make_password(SENHA)
+    evento = _evento_de_usuario(
+        conta, no_nuvem, no_loja, user_id=existente.pk,
+        username="operador2", hash_senha=hash_da_nuvem,
+    )
+
+    assert apply.apply_event(evento) is True, (
+        "versão constante não pode significar 'já apliquei'"
+    )
+    assert authenticate(username="operador2", password=SENHA) is not None
+
+
+def test_reaplicar_o_mesmo_usuario_identico_nao_grava(como_loja, conta, no_nuvem, no_loja):
+    """Deixar passar pela versão não pode virar escrita à toa: quem decide é o
+    conteúdo, e conteúdo igual não gera gravação."""
+    hash_da_nuvem = make_password(SENHA)
+    primeiro = _evento_de_usuario(
+        conta, no_nuvem, no_loja, user_id=9003, username="op3",
+        hash_senha=hash_da_nuvem,
+    )
+    assert apply.apply_event(primeiro) is True
+
+    segundo = _evento_de_usuario(
+        conta, no_nuvem, no_loja, user_id=9003, username="op3",
+        hash_senha=hash_da_nuvem, sequencia=2,
+    )
+
+    assert apply.apply_event(segundo) is False, "nada mudou: não havia o que gravar"
