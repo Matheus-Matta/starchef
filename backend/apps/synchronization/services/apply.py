@@ -262,7 +262,9 @@ def _inserir(model, kwargs, event):
     """
     try:
         with transaction.atomic():
-            model(pk=event.entity_id, **kwargs).save(force_insert=True)
+            instancia = model(pk=event.entity_id, **kwargs)
+            _senha_honesta(instancia)
+            instancia.save(force_insert=True)
         return True
     except IntegrityError as erro:
         # Se a identidade JÁ existe, inserir nunca foi a operação certa —
@@ -286,6 +288,24 @@ def _inserir(model, kwargs, event):
             raise IntegrityRejected(f"{erro} — {motivo}") from erro
         model(pk=event.entity_id, **kwargs).save(force_insert=True)
         return True
+
+
+def _senha_honesta(instancia):
+    """Senha ausente vira INUTILIZÁVEL, não vazia.
+
+    O campo `password` do Django tem `""` como padrão, e
+    `has_usable_password()` responde True para string vazia — ela só não começa
+    com `!`. Um usuário assim AFIRMA ter senha utilizável enquanto nenhuma
+    senha do mundo confere, e quem for diagnosticar vai procurar o problema em
+    qualquer outro lugar.
+
+    Acontecia com todo usuário sincronizado antes de o hash passar a viajar, e
+    continua valendo para eventos gerados por versões que não o mandam.
+    """
+    if not hasattr(instancia, "set_unusable_password"):
+        return
+    if not getattr(instancia, "password", ""):
+        instancia.set_unusable_password()
 
 
 def _validar_dependencias(model, kwargs):

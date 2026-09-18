@@ -115,6 +115,8 @@ def test_nenhum_campo_com_cara_de_segredo_viaja():
                 continue
             from apps.synchronization.services.serialization import _campo_permitido
 
+            if campo.name in entrada.allow_fields:
+                continue  # liberação nominal, conferida pelo teste abaixo
             if _campo_permitido(campo.name, entrada):
                 problemas.append(f"{entrada.entity_type}.{campo.name}")
 
@@ -157,3 +159,22 @@ def test_local_only_fields_aponta_para_campo_que_existe():
     assert not problemas, (
         "`local_only_fields` aponta para campo inexistente:\n  " + "\n  ".join(problemas)
     )
+
+
+def test_a_lista_de_segredos_liberados_e_esta_e_nenhuma_outra():
+    """Liberar segredo é decisão, não descuido — então fica escrita aqui.
+
+    Qualquer campo novo em `allow_fields` quebra este teste até alguém
+    adicioná-lo à lista, o que força a decisão a aparecer no diff e a ser
+    discutida em vez de passar despercebida.
+    """
+    liberados = {
+        f"{e.entity_type}.{campo}"
+        for e in registry.entries.values()
+        for campo in e.allow_fields
+    }
+    assert liberados == {
+        # Sem o hash, a loja recebe os usuários e ninguém entra no backend
+        # local — o que apaga a razão de ele existir.
+        "user.password",
+    }, f"liberação de segredo não declarada neste teste: {liberados}"

@@ -55,6 +55,11 @@ def _encode(valor):
 def _campo_permitido(nome, entry):
     if nome in entry.exclude_fields:
         return False
+    # A exclusão vence sempre; a liberação nominal vence o filtro por
+    # substring. Ordem importa: um campo em `exclude_fields` NÃO volta a viajar
+    # por estar em `allow_fields`.
+    if nome in getattr(entry, "allow_fields", ()):
+        return True
     return not any(proibido in nome for proibido in CAMPOS_PROIBIDOS)
 
 

@@ -45,6 +45,17 @@ class SyncEntry:
     #: terminais sem a sessão de caixa que já está aberta. A direção contínua
     #: continua sendo só para cima; o que muda é a semeadura inicial.
     seed_to_local: bool = False
+    #: Campos que o filtro global de segredos barraria, liberados AQUI.
+    #:
+    #: Existe para um caso só, e a lista precisa continuar minúscula: o hash de
+    #: senha do usuário. Sem ele, a loja recebe os usuários e NINGUÉM consegue
+    #: entrar no backend local — o que derruba a razão de ele existir, que é
+    #: operar quando a nuvem cai.
+    #:
+    #: A liberação é NOMINAL de propósito. Nada de afrouxar `CAMPOS_PROIBIDOS`,
+    #: que continua barrando token, CSC, certificado e chave: qualquer novo
+    #: segredo trafegando precisa ser escrito aqui, e aparecer no diff.
+    allow_fields: tuple = ()
     #: ManyToMany que viajam, como `{campo: atributo-chave}`.
     #:
     #: O vínculo vai pela CHAVE NATURAL e não pelo id: `{"permissions": "code"}`

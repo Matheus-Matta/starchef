@@ -65,8 +65,22 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
 # campos concretos e ManyToMany não é um deles.
 _e("role", "accounts.Role", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("account",), m2m_fields={"permissions": "code"})
+# O HASH da senha viaja, e só ele entre os segredos. Sem isso a loja recebia os
+# usuários com o campo vazio e ninguém entrava no backend local — derrubando a
+# razão de ele existir, que é operar quando a nuvem cai.
+#
+# O hash do Django é autocontido (`algoritmo$iterações$salt$hash`) e NÃO usa a
+# `SECRET_KEY`: ela assina sessão, CSRF e token de reset, nunca a senha. Por
+# isso um hash gerado na nuvem confere na loja sem nenhum retrabalho.
+#
+# É um alargamento de superfície consciente: o banco da loja passa a ser
+# material sensível. Mas um hash PBKDF2 já É a forma protegida da senha — é
+# para isso que ele existe —, e a alternativa (login sempre contra a nuvem)
+# apaga o login inteiro quando a internet cai.
+#
+# `last_login` fica de fora por outro motivo: é do nó onde a pessoa entrou.
 _e("user", "auth.User", conflict_policy=CLOUD, flow="cloud_to_local",
-   exclude_fields=("last_login",))
+   exclude_fields=("last_login",), allow_fields=("password",))
 _e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("user", "role", "restaurant"))
 
