@@ -38,6 +38,7 @@ PUBLIC_URL_NAMES = {
     # este middleware sabe resolver. A autorização delas é própria e mais
     # estrita: ver `apps/synchronization/node_auth.py`.
     "sync-metrics",
+    "sync-credentials",
     "sync-file-open",
     "sync-file-status",
     "sync-file-chunk",

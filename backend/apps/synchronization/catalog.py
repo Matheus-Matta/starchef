@@ -42,7 +42,12 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
    dependencies=("restaurant",),
    # Segredo de emissão: o CSC vai por canal próprio, cifrado (ver a memória
    # "CSC no terminal"). Ele NUNCA viaja no payload de sincronização.
-   exclude_fields=("csc_token_homologation", "csc_token_production"),
+   # Estes nomes precisam EXISTIR no model — havia dois aqui
+   # (`csc_token_homologation`, `csc_token_production`) que nunca existiram, e
+   # a exclusão mirava no vazio. O CSC só estava protegido por acidente, porque
+   # `csc_token` contém "token" e o filtro global o pegava. Um teste agora
+   # recusa `exclude_fields` apontando para campo inexistente.
+   exclude_fields=("csc_id", "csc_token", "certificate_ref"),
    # `local_fiscal_url` é o endereço do Comunicador NAQUELA máquina, como o IP
    # da impressora: a nuvem não tem como saber e não pode zerar o que o
    # técnico configurou na loja.
@@ -83,10 +88,19 @@ _e("menu_item", "menu.MenuItem", conflict_policy=CLOUD, flow="cloud_to_local",
 
 # 8-9. Impressoras, balanças e periféricos. `local_only_fields` protege o que
 # só a loja sabe: o IP da impressora e a porta da balança mudam na loja.
+# Os nomes aqui precisam EXISTIR no model. Estavam errados: protegiam
+# `ip_address`, `is_online`, `last_seen_at` e `serial_port`, que nunca
+# existiram nestes models — enquanto `host` e `endpoint`, o endereço REAL da
+# impressora, viajavam e eram sobrescritos pela nuvem a cada sincronização.
+# Exatamente o que o comentário abaixo jurava impedir.
 _e("printer", "printers.Printer", conflict_policy=CLOUD, dependencies=("restaurant",),
-   local_only_fields=("ip_address", "port", "is_online", "last_seen_at"))
+   local_only_fields=("host", "port", "endpoint"))
+# Na balança, além do endereço, a posse do agente: `agent_instance_id` e
+# `agent_lease_expires_at` dizem QUAL processo daquela loja está segurando a
+# balança agora. A nuvem não tem como saber e sobrescrever derruba a leitura.
 _e("scale", "printers.Scale", conflict_policy=CLOUD, dependencies=("restaurant",),
-   local_only_fields=("ip_address", "port", "serial_port", "is_online", "last_seen_at"))
+   local_only_fields=("port", "protocol", "agent_instance_id",
+                      "agent_lease_expires_at"))
 _e("kds_station", "kitchen.KdsStation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("kds_column", "kitchen.KdsColumn", conflict_policy=CLOUD, dependencies=("kds_station",))
 _e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA,

@@ -362,6 +362,10 @@ REST_FRAMEWORK = {
         # força bruta como qualquer login. Limite mais apertado que o do login
         # normal porque uma instalação legítima faz isso uma vez.
         "sync_enroll": config("THROTTLE_RATE_SYNC_ENROLL", default="5/hour"),
+        # Pedido de credencial de emissão: a loja pede quando vai emitir e
+        # guarda em memória por alguns minutos. Folgado para o uso legítimo,
+        # estreito para quem varra com um token capturado.
+        "sync_credentials": "60/hour",
     },
 }
 

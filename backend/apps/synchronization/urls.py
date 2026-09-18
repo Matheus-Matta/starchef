@@ -8,6 +8,7 @@ from apps.synchronization.views import (
     SyncNodeViewSet,
     SyncRunViewSet,
 )
+from apps.synchronization.views_credentials import SyncCredentialsView
 from apps.synchronization.views_enroll import SyncEnrollView
 from apps.synchronization.views_metrics import SyncMetricsView
 
@@ -26,6 +27,9 @@ urlpatterns = [
     # Primeiro contato da loja: sem token, autentica por usuário e senha no
     # corpo. Precisa vir ANTES do router para não ser engolida por ele.
     path("enroll/", SyncEnrollView.as_view(), name="sync-enroll"),
+    # Segredo de emissão, emprestado sob demanda e nunca replicado. Autentica
+    # por token de NÓ, como as métricas e a transferência de arquivo.
+    path("credentials/", SyncCredentialsView.as_view(), name="sync-credentials"),
     # Métricas para o coletor e transferência de binário: autenticam por token
     # (de raspagem e de nó), não por JWT de usuário. Antes do router, pelo
     # mesmo motivo da matrícula.

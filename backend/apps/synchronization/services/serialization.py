@@ -15,7 +15,20 @@ from django.db.models.fields.files import FieldFile
 from apps.synchronization.constants import SCHEMA_VERSION
 
 #: Campos que nunca viajam, em nenhuma entidade. Segredo, sessão ou derivado.
-CAMPOS_PROIBIDOS = {"password", "token", "secret", "csc_token", "private_key", "api_key"}
+#:
+#: A comparação é por SUBSTRING do nome, então `focus_token_production` é pego
+#: por "token". É uma rede grosseira de propósito: ela precisa pegar o campo que
+#: alguém criar amanhã sem lembrar desta lista.
+#:
+#: `certificate` entrou depois de uma auditoria constatar que
+#: `focus_certificate_base64` — o certificado A1 da empresa — estava viajando
+#: em cada evento e ficando gravado na tabela de eventos dos DOIS lados,
+#: enquanto `focus_certificate_password`, ali do lado, era bloqueado por conter
+#: "password". O inverso do que qualquer um esperaria.
+CAMPOS_PROIBIDOS = {
+    "password", "token", "secret", "csc_token", "private_key", "api_key",
+    "certificate",
+}
 
 
 def _encode(valor):

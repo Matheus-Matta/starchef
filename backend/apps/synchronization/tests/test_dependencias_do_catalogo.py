@@ -92,3 +92,68 @@ def test_dependencias_declaradas_existem_no_catalogo():
         if registry.get(dep) is None
     ]
     assert not faltando, "dependência declarada que não está no catálogo:\n  " + "\n  ".join(faltando)
+
+
+# ── segredo nunca viaja ─────────────────────────────────────────────────────
+#
+# Uma auditoria encontrou o certificado A1 da empresa
+# (`focus_certificate_base64`) viajando em cada evento e gravado na tabela de
+# eventos dos DOIS lados — enquanto a SENHA dele, no campo ao lado, era
+# bloqueada por conter "password". O inverso do que qualquer um esperaria.
+PALAVRAS_DE_SEGREDO = (
+    "password", "senha", "token", "secret", "segredo", "certificate",
+    "certificado", "private_key", "api_key", "csc",
+)
+
+
+def test_nenhum_campo_com_cara_de_segredo_viaja():
+    problemas = []
+    for entrada in registry.entries.values():
+        for campo in entrada.model._meta.concrete_fields:
+            nome = campo.name.lower()
+            if not any(palavra in nome for palavra in PALAVRAS_DE_SEGREDO):
+                continue
+            from apps.synchronization.services.serialization import _campo_permitido
+
+            if _campo_permitido(campo.name, entrada):
+                problemas.append(f"{entrada.entity_type}.{campo.name}")
+
+    assert not problemas, (
+        "Campo com cara de segredo viajando no payload. Segredo fica gravado na "
+        "tabela de eventos dos DOIS lados e sai em qualquer dump.\n"
+        "Resolva incluindo a palavra em `CAMPOS_PROIBIDOS` (vale para todas as "
+        "entidades) ou o campo em `exclude_fields`:\n  " + "\n  ".join(problemas)
+    )
+
+
+def test_exclude_fields_aponta_para_campo_que_existe():
+    """Exclusão que mira no vazio dá a impressão de proteger e não protege.
+
+    Havia duas no catálogo — `csc_token_homologation` e `csc_token_production` —
+    e o CSC só estava protegido por acidente, porque `csc_token` contém "token"
+    e caía no filtro global. Bastava alguém renomear o campo para o segredo
+    passar a viajar, com a exclusão ali parecendo cuidar do assunto.
+    """
+    problemas = []
+    for entrada in registry.entries.values():
+        existentes = {c.name for c in entrada.model._meta.concrete_fields}
+        for campo in entrada.exclude_fields:
+            if campo not in existentes:
+                problemas.append(f"{entrada.entity_type}.{campo}")
+
+    assert not problemas, (
+        "`exclude_fields` aponta para campo inexistente:\n  " + "\n  ".join(problemas)
+    )
+
+
+def test_local_only_fields_aponta_para_campo_que_existe():
+    problemas = []
+    for entrada in registry.entries.values():
+        existentes = {c.name for c in entrada.model._meta.concrete_fields}
+        for campo in entrada.local_only_fields:
+            if campo not in existentes:
+                problemas.append(f"{entrada.entity_type}.{campo}")
+
+    assert not problemas, (
+        "`local_only_fields` aponta para campo inexistente:\n  " + "\n  ".join(problemas)
+    )
