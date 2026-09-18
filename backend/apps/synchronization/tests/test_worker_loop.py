@@ -171,3 +171,52 @@ async def test_once_nao_reconecta(monkeypatch):
     worker = _worker()
     await worker.run()
     assert tentativas["n"] == 1
+
+
+# ── a loja pergunta por conta própria ───────────────────────────────────────
+#
+# O defeito que isto fecha: o download dependia INTEIRAMENTE de a nuvem mandar
+# `SYNC_AVAILABLE`. Um aviso perdido — broker reiniciando, `group_send` que não
+# chegou, reconexão entre duas passadas do beat — deixava a loja conectada,
+# autenticada e calada para sempre, com centenas de eventos endereçados a ela.
+async def test_pergunta_sozinha_mesmo_sem_aviso_da_nuvem():
+    """Sem nenhuma mensagem da nuvem, a loja ainda assim pede."""
+    conexao = ConexaoFalsa()
+    worker = LocalSyncWorker(config={}, intervalo=0.01, heartbeat=5, once=True)
+
+    await asyncio.wait_for(worker._puxar(conexao), timeout=2)
+
+    tipos = [t for t, _p, _k in conexao.enviados]
+    assert MessageType.SYNC_PULL_REQUEST in tipos
+
+
+async def test_o_intervalo_de_perguntar_tem_piso():
+    """Um intervalo de empurrar minúsculo não pode virar enxurrada de pedidos."""
+    worker = LocalSyncWorker(config={}, intervalo=0.5, heartbeat=5)
+    assert worker.pull_interval >= 10.0
+
+
+async def test_intervalo_de_perguntar_e_configuravel():
+    worker = LocalSyncWorker(config={}, intervalo=2, heartbeat=5, pull_interval=30)
+    assert worker.pull_interval == 30
+
+
+async def test_lote_recebido_ja_pede_o_proximo(monkeypatch):
+    """A nuvem manda UM lote por pedido; sem isto a carga desceria a conta-gotas."""
+    from apps.synchronization import worker as modulo
+
+    monkeypatch.setattr(modulo, "registrar_lote_recebido", lambda *a, **k: [1])
+    monkeypatch.setattr(modulo, "aplicar_recebidos", lambda ids: [])
+
+    conexao = ConexaoFalsa()
+    worker = LocalSyncWorker(config={}, intervalo=0.01, heartbeat=5, once=True)
+    await worker._tratar(
+        conexao, MessageType.EVENT_BATCH, {"message_id": "m1"},
+        {"events": [{"event_id": "e1"}]},
+    )
+
+    tipos = [t for t, _p, _k in conexao.enviados]
+    assert MessageType.ACK in tipos
+    assert tipos[-1] == MessageType.SYNC_PULL_REQUEST, (
+        "depois de aplicar o lote, o próximo pedido tem de sair na hora"
+    )

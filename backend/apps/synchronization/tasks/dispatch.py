@@ -26,10 +26,15 @@ def notify_pending_to_local_nodes():
     if proprio is None:
         return 0
 
+    # NÃO filtra por `source_node`, e isso é a correção de um defeito caro.
+    # Todo evento OUTBOUND que existe aqui foi criado por esta instalação, então
+    # a pergunta útil é "para quem vai". Amarrar ao `source_node` fazia o aviso
+    # nunca sair quando a identidade da nuvem resolvia para outro registro — e
+    # como a loja só pede depois de avisada, ela ficava conectada, autenticada e
+    # calada, com centenas de eventos endereçados a ela e `tentativas=0`.
     pendentes = (
         SyncEvent.objects.filter(
             direction=Direction.OUTBOUND,
-            source_node=proprio,
             status__in=[EventStatus.PENDING, EventStatus.FAILED],
         )
         .values_list("target_node_id", flat=True)

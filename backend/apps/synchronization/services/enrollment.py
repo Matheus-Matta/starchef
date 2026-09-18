@@ -22,7 +22,7 @@ from django.db import transaction
 from apps.accounts.models import Account
 from apps.synchronization.constants import NodeType, RunType
 from apps.synchronization.models import SyncNode
-from apps.synchronization.services import bootstrap, crypto, guard, provisioning
+from apps.synchronization.services import bootstrap, crypto, guard, provisioning, staleness
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,13 @@ def enroll(*, username, password, account_id, enrollment_secret, node_name,
         # ninguém mais vai receber aquela. Sem isto, uma instalação que caiu no
         # meio do primeiro bootstrap ficaria travada em "já existe uma carga".
         bootstrap.cancel_running(no, motivo=f"Substituída pela matrícula de {node_name}.")
+        # E supera também as fichas ANTIGAS da mesma loja. Sem isto, uma loja
+        # que rematricula deixa para trás um nó com a carga inteira endereçada
+        # a ele e passa a conectar por outro, que não tem nada — a nuvem
+        # responde "0 pendentes" e nada acontece, para sempre.
+        staleness.superar_nos_irmaos(
+            no, motivo=f"Superado pela matrícula de {node_name}."
+        )
         run = bootstrap.start_run(
             target_node=no,
             run_type=RunType.FULL,

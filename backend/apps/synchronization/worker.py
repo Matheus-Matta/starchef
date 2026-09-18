@@ -28,10 +28,17 @@ logger = logging.getLogger(__name__)
 class LocalSyncWorker:
     """O worker da loja. Um por instalação; concorrência interna é desnecessária."""
 
-    def __init__(self, *, config, intervalo=2.0, heartbeat=20.0, once=False):
+    def __init__(self, *, config, intervalo=2.0, heartbeat=20.0, once=False,
+                 pull_interval=None):
         self.config = config
         self.intervalo = intervalo
         self.heartbeat = heartbeat
+        # Perguntar por conta própria é a rede de segurança do download; não
+        # precisa ser tão frequente quanto empurrar a outbox, porque a nuvem
+        # continua avisando quando há novidade. Cinco vezes o intervalo de
+        # empurrar é folgado o bastante para não pesar e curto o bastante para
+        # um aviso perdido virar segundos de atraso, não silêncio permanente.
+        self.pull_interval = pull_interval or max(intervalo * 5, 10.0)
         self.once = once
         self.parar = asyncio.Event()
 
@@ -68,16 +75,16 @@ class LocalSyncWorker:
                 raise PermissionError(payload.get("reason", "Handshake recusado."))
 
     async def _sessao(self, conexao):
-        """Enquanto a conexão viver: escuta e empurra o que estiver pendente."""
+        """Enquanto a conexão viver: escuta, empurra, pergunta e pulsa."""
         escuta = asyncio.create_task(self._escutar(conexao))
         empurra = asyncio.create_task(self._empurrar(conexao))
+        puxa = asyncio.create_task(self._puxar(conexao))
         pulso = asyncio.create_task(self._pulsar(conexao))
+        tarefas = (escuta, empurra, puxa, pulso)
         try:
-            await asyncio.wait(
-                [escuta, empurra, pulso], return_when=asyncio.FIRST_COMPLETED
-            )
+            await asyncio.wait(tarefas, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for tarefa in (escuta, empurra, pulso):
+            for tarefa in tarefas:
                 tarefa.cancel()
 
     async def _escutar(self, conexao):
@@ -99,12 +106,37 @@ class LocalSyncWorker:
             aplicados = await sync_to_async(aplicar_recebidos)(ids)
             if aplicados:
                 await conexao.send(MessageType.ACK, {"acknowledged": aplicados})
+            # A nuvem manda UM lote por pedido. Pedir o próximo aqui é o que
+            # faz uma carga de centenas de eventos descer de uma vez, em vez
+            # de um lote a cada intervalo.
+            await conexao.send(MessageType.SYNC_PULL_REQUEST, {})
         elif tipo in (MessageType.ACK, MessageType.NACK):
             await sync_to_async(tratar_ack)(payload, conexao.peer_node_id)
         elif tipo == MessageType.SYNC_AVAILABLE:
             await conexao.send(MessageType.SYNC_PULL_REQUEST, {})
         elif tipo == MessageType.ERROR:
             logger.error("sync: a nuvem respondeu ERROR — %s", payload.get("reason"))
+
+    async def _puxar(self, conexao):
+        """Pergunta à nuvem se há algo para esta loja. Por conta própria.
+
+        Antes, o download dependia INTEIRAMENTE de a nuvem mandar
+        `SYNC_AVAILABLE`: a loja só pedia depois de avisada. Um aviso que não
+        chegasse — broker reiniciando, `group_send` perdido, reconexão entre
+        duas passadas do beat, ou a consulta do aviso simplesmente não achando
+        os eventos — deixava a loja conectada, autenticada e calada para
+        sempre, sem erro em lugar nenhum.
+
+        Perguntar custa uma mensagem por intervalo e transforma uma falha
+        permanente em um atraso de alguns segundos. A nuvem responde
+        `SYNC_AVAILABLE` com `pending: 0` quando não há nada, então o custo de
+        perguntar à toa é desprezível.
+        """
+        while not self.parar.is_set():
+            await conexao.send(MessageType.SYNC_PULL_REQUEST, {})
+            if self.once:
+                return
+            await asyncio.sleep(self.pull_interval)
 
     async def _empurrar(self, conexao):
         """Envia a outbox. Vazia, dorme; cheia, manda lote atrás de lote."""

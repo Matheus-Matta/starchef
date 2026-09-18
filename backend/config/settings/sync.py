@@ -84,7 +84,27 @@ SYNC_BEAT_SCHEDULE = {
         "task": "sync.prune_dirty_rows",
         "schedule": 12 * 60 * 60.0,
     },
+    # Fila endereçada a nó que não responde tem prazo. Uma vez por dia basta:
+    # o que ela corrige leva dias para aparecer, não segundos.
+    "sync-expire-stale-queues": {
+        "task": "sync.expire_stale_queues",
+        "schedule": 24 * 60 * 60.0,
+    },
 }
+
+
+# ── Prazo de validade da fila de saída ───────────────────────────────────────
+# Um nó que nunca conectou, ou que emudeceu, acumula fila para sempre. Foi
+# assim que centenas de eventos ficaram endereçados à ficha de uma loja que
+# rematriculou e passou a conectar por outra — sem erro, sem tentativa, sem
+# prazo.
+#
+# Descartar a fila de SAÍDA não perde nada: ela é regenerável a partir do
+# estado atual do banco, e uma carga nova traz dados mais recentes que os
+# guardados. A fila de ENTRADA nunca é tocada: aquilo é venda que a loja
+# mandou e este lado ainda não aplicou.
+SYNC_STALE_NEVER_SEEN_DAYS = config("SYNC_STALE_NEVER_SEEN_DAYS", default=7, cast=int)
+SYNC_STALE_SILENT_DAYS = config("SYNC_STALE_SILENT_DAYS", default=30, cast=int)
 
 
 # ── Matrícula automática do nó LOCAL (primeiro contato) ──────────────────────
