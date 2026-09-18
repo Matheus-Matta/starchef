@@ -269,6 +269,64 @@ lê a API de gerenciamento sob carga e ataca a rota de matrícula com credencial
 errada. Sem `--cloud-url` ela roda o que cabe num alvo e **diz o que deixou de
 medir** — ver `docs/TESTE_CARGA.md`.
 
+## Revisão de arquitetura: o que era real e o que não era
+
+Uma revisão externa levantou 20 pontos. A maior parte deles descreve o
+**plano**, não o que foi construído — vale registrar a diferença, porque a
+próxima revisão vai levantar os mesmos.
+
+**Três eram defeitos de verdade, e foram corrigidos** (`test_revisao_de_seguranca.py`
+prova cada um: os quatro testes falham na versão anterior do código):
+
+1. **Aplicação sem lock de linha.** `apply_event` já fazia domínio e `APPLIED`
+   na MESMA transação — isso a revisão errou. O que faltava era o lock: a
+   checagem `if status == APPLIED` lia um objeto de fora da transação. E os
+   dois caminhos que pedem aplicação (o consumer ao gravar na inbox, o beat a
+   cada 15s) pegam o mesmo evento de propósito. Num UPSERT a versão igual
+   acabava salvando por acidente; no DELETE não há rede, e a segunda passagem
+   apagava o registro que a nuvem tinha acabado de recriar. Agora há
+   `SELECT ... FOR UPDATE SKIP LOCKED` com reconferência do estado sob o lock.
+
+2. **A retenção apagava o índice de deduplicação.** `prune` apagava qualquer
+   ACKNOWLEDGED, e a deduplicação é a existência da linha de ENTRADA. Basta um
+   ACK se perder para a origem deixar o evento em SENT e reenviá-lo na próxima
+   reconexão — meses depois, se a loja ficou fora do ar. Agora `prune` só toca
+   em OUTBOUND, e `tombstone_inbound` esvazia o payload da entrada mantendo a
+   linha. A memória de "já apliquei isto" passou a durar MAIS que o conteúdo,
+   que é a ordem correta. De quebra resolve um crescimento sem fim: nada nunca
+   apagava um INBOUND, porque ele termina em APPLIED e a retenção só olhava
+   ACKNOWLEDGED.
+
+3. **ACK sem endereço.** `apply_ack` casava por `event_id` sem conferir se o
+   evento era endereçado a quem estava confirmando. Nunca foi porta aberta (o
+   UUID é impossível de adivinhar), mas confirmar é o poder de tirar um evento
+   da fila para sempre, e isso não pode depender só do sigilo de um id. O
+   consumer agora passa o nó que a conexão autenticou.
+
+**Já estava implementado**, ao contrário do que a revisão supôs: o envelope
+inteiro entra como AAD do AES-GCM (`protocol.HEADER_FIELDS`); inbox e domínio
+sempre estiveram na mesma transação; o worker da loja é processo próprio, não
+uma task Celery infinita (`worker.py`); `entity_type` resolve por registry
+fechado, nunca por `apps.get_model()`; cross-tenant é recusado e auditado
+(`inbox._validar_escopo`); há teto de eventos e de bytes por lote.
+
+**Não se aplica à topologia atual:** `SKIP LOCKED` na coleta da outbox (o
+worker da loja é um só — não há múltiplos consumidores disputando a fila) e
+head-of-line blocking por sequência global (um evento que falha vira FAILED com
+`next_attempt_at` e sai do filtro; o laço segue para o próximo).
+
+**Continua em aberto, e é decisão de produto, não correção:**
+
+- **RLS no PostgreSQL da nuvem.** Hoje o isolamento é do ORM. Ligar RLS é a
+  recomendação certa e é grande: exige política por tabela, `set_config` por
+  transação e um usuário de banco sem BYPASSRLS. Não cabe junto de uma
+  correção de defeito.
+- **mTLS por nó.** A matrícula entrega token e chave no mesmo pacote, cifrado
+  por um segredo de uso combinado. Trocar isso por CSR e CA interna muda a
+  operação inteira de provisionamento.
+- **Separar `SyncEvent` em outbox/delivery/inbox.** Melhora auditoria e índice;
+  é migração de dados em produção, com a sincronização no ar.
+
 ## O que ainda não está pronto
 
 - **Homologação com duas instalações reais.** O protocolo foi exercitado ponta

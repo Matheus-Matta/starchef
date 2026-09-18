@@ -3,10 +3,19 @@
 Este arquivo INTEIRO é pulado no SQLite. Não é preguiça: a rede de segurança do
 §11.2 é PL/pgSQL, e testá-la em qualquer outro banco seria testar o `skip`.
 
-Para rodar:
+Para rodar, use o settings dedicado. `USE_SQLITE_DATABASE=False` sozinho NAO
+funciona: `config/settings/test.py` fixa SQLite DEPOIS de o ambiente ser lido,
+entao este arquivo se pularia inteiro alegando "nao e PostgreSQL" — passando
+por verde sem ter testado nada.
 
-    POSTGRES_HOST=localhost POSTGRES_DB=starchef_test USE_SQLITE_DATABASE=False \
-      pytest apps/synchronization/tests/test_triggers_postgres.py
+    docker run -d --rm --name pg -e POSTGRES_PASSWORD=synctest \
+      -e POSTGRES_USER=starchef -e POSTGRES_DB=starchef_sync \
+      -p 55432:5432 postgres:16-alpine
+
+    POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432 POSTGRES_PASSWORD=synctest \
+      POSTGRES_DB=starchef_sync POSTGRES_USER=starchef \
+      pytest --ds=config.settings.test_postgres \
+      apps/synchronization/tests/test_triggers_postgres.py
 
 Ou, no compose da loja:
 

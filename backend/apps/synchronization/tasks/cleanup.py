@@ -23,4 +23,15 @@ def prune_acknowledged_events(dias=None):
     apagados = recovery.prune(retencao)
     if apagados:
         logger.info("sync: %s evento(s) confirmados apagados (retenção %sd)", apagados, retencao)
+
+    # A fila de ENTRADA não some, encolhe. A linha é o índice de deduplicação
+    # e precisa durar mais que o conteúdo; o payload, não. Ver
+    # `recovery.tombstone_inbound`.
+    esvaziados = recovery.tombstone_inbound(retencao)
+    if esvaziados:
+        logger.info(
+            "sync: payload de %s evento(s) de entrada esvaziado (retenção %sd); "
+            "a linha fica para a deduplicação",
+            esvaziados, retencao,
+        )
     return apagados

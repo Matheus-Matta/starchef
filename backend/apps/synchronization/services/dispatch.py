@@ -94,11 +94,21 @@ def mark_batch_failed(eventos, erro):
     return len(eventos)
 
 
-def apply_ack(source_node, ack_payload):
+def apply_ack(source_node, ack_payload, *, target_node=None):
     """Processa o ACK/NACK do outro lado.
 
     RECEIVED só avança o estado; ACKNOWLEDGED é o que encerra. Um evento
     listado como falho volta para a escada de retentativa em vez de sumir.
+
+    `target_node` é o nó que a CONEXÃO autenticou, e quando ele vem, só os
+    eventos endereçados a ele podem ser confirmados. Sem esse filtro, a única
+    coisa entre uma loja e a fila de outra é adivinhar um `event_id` — e
+    "confirmar" é justamente o poder de tirar um evento da fila para sempre.
+    O UUID é impossível de adivinhar, então isto nunca foi uma porta aberta;
+    é a diferença entre não ter fechadura e não ter endereço.
+
+    Fica opcional porque o lado LOJA fala com um interlocutor só: lá a
+    pergunta "de quem veio este ACK?" tem uma resposta possível.
     """
     from apps.synchronization.models import SyncEvent
 
@@ -107,21 +117,21 @@ def apply_ack(source_node, ack_payload):
     recebidos = ack_payload.get("received") or []
     falhos = ack_payload.get("failed") or []
 
+    meus = SyncEvent.objects.filter(source_node=source_node, direction=Direction.OUTBOUND)
+    if target_node is not None:
+        meus = meus.filter(target_node=target_node)
+
     with transaction.atomic():
         if recebidos:
-            SyncEvent.objects.filter(
-                source_node=source_node, event_id__in=recebidos, direction=Direction.OUTBOUND
-            ).exclude(status=EventStatus.ACKNOWLEDGED).update(
-                status=EventStatus.RECEIVED, received_at=agora
-            )
+            meus.filter(event_id__in=recebidos).exclude(
+                status=EventStatus.ACKNOWLEDGED
+            ).update(status=EventStatus.RECEIVED, received_at=agora)
         if confirmados:
-            SyncEvent.objects.filter(
-                source_node=source_node, event_id__in=confirmados, direction=Direction.OUTBOUND
-            ).update(status=EventStatus.ACKNOWLEDGED, acknowledged_at=agora)
+            meus.filter(event_id__in=confirmados).update(
+                status=EventStatus.ACKNOWLEDGED, acknowledged_at=agora
+            )
         for item in falhos:
-            evento = SyncEvent.objects.filter(
-                source_node=source_node, event_id=item.get("event_id")
-            ).first()
+            evento = meus.filter(event_id=item.get("event_id")).first()
             if evento is not None:
                 retry.mark_failure(evento, item.get("error", "NACK sem detalhe"))
 

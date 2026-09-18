@@ -101,7 +101,11 @@ class HandlerMixin:
 
     async def handle_ack(self, _envelope, payload):
         proprio = await database_sync_to_async(nodes.self_node)()
-        await database_sync_to_async(dispatch.apply_ack)(proprio, payload)
+        # `self.node` é quem a conexão autenticou: um ACK só vale para o que
+        # foi endereçado a ele.
+        await database_sync_to_async(dispatch.apply_ack)(
+            proprio, payload, target_node=self.node
+        )
 
     async def handle_pull_request(self, envelope, _payload):
         """O nó local pediu o que houver para ele. Envia um lote e para."""

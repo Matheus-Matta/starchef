@@ -128,12 +128,56 @@ def export(eventos, destino):
 
 
 def prune(dias=30):
-    """Apaga SÓ o que o outro lado já confirmou. O resto fica, sempre."""
+    """Apaga SÓ o que o outro lado já confirmou, e só da fila de SAÍDA.
+
+    A restrição a OUTBOUND não é detalhe de desempenho: a linha de ENTRADA é
+    o índice de deduplicação. `inbox._gravar` decide se um evento já chegou
+    perguntando se existe `event_id` igual — apagar a linha apaga a memória de
+    que aquilo já foi aplicado, e um reenvio tardio volta a passar como novo.
+
+    O cenário não é teórico. Basta o ACK se perder no caminho: a origem deixa
+    o evento em SENT para sempre e `resend_unconfirmed` o reenvia na próxima
+    reconexão, que pode ser meses depois. Aqui ele já tinha sido aplicado.
+
+    Quem cuida do tamanho da fila de entrada é `tombstone_inbound`, que tira o
+    payload e deixa a linha.
+    """
     corte = timezone.now() - timezone.timedelta(days=dias)
     apagados, _ = SyncEvent.objects.filter(
-        status=EventStatus.ACKNOWLEDGED, acknowledged_at__lt=corte
+        direction=Direction.OUTBOUND,
+        status=EventStatus.ACKNOWLEDGED,
+        acknowledged_at__lt=corte,
     ).delete()
     return apagados
+
+
+def tombstone_inbound(dias=30):
+    """Esvazia o payload dos eventos de ENTRADA já aplicados. Não apaga a linha.
+
+    Sem isto a inbox cresce para sempre: nada nunca apagava um INBOUND, porque
+    ele termina em APPLIED e a retenção só olhava para ACKNOWLEDGED. Numa loja
+    movimentada são centenas de milhares de linhas carregando o JSON inteiro
+    de cada venda que veio da nuvem, guardado só para que a deduplicação tenha
+    o que consultar.
+
+    Mas quem deduplica é o `event_id`, não o payload. Então a linha fica — com
+    uns 200 bytes em vez de alguns KB — e a memória de "isto já foi aplicado"
+    passa a durar mais que o conteúdo, que é exatamente a ordem correta: a
+    retenção da deduplicação precisa ser MAIOR que a dos eventos, nunca menor.
+
+    Só toca em APPLIED. Um DEAD continua inteiro: é dele que alguém precisa
+    quando vai reprocessar à mão.
+    """
+    corte = timezone.now() - timezone.timedelta(days=dias)
+    return (
+        SyncEvent.objects.filter(
+            direction=Direction.INBOUND,
+            status=EventStatus.APPLIED,
+            applied_at__lt=corte,
+        )
+        .exclude(payload={})
+        .update(payload={})
+    )
 
 
 def discard_outbound(node):

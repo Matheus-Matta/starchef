@@ -11,7 +11,7 @@ Três garantias, nesta ordem:
 """
 import logging
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 
 from apps.synchronization.constants import EventStatus, Operation
 from apps.synchronization.services import adoption, conflicts, outbox, retry, serialization
@@ -51,8 +51,11 @@ def apply_event(event):
 
     try:
         with transaction.atomic(), outbox.applying_remote_event():
-            mexeu = _aplicar(event, entrada)
-            _marcar_aplicado(event)
+            travado = _travar(event)
+            if travado is None:
+                return False
+            mexeu = _aplicar(travado, entrada)
+            _marcar_aplicado(travado)
         return mexeu
     except DependencyMissing as erro:
         retry.mark_failure(event, erro)
@@ -73,6 +76,39 @@ def apply_event(event):
         logger.exception("sync: falha ao aplicar %s", event.event_id)
         retry.mark_failure(event, erro)
         return False
+
+
+def _travar(event):
+    """Pega a linha do evento com FOR UPDATE e reconfere o estado sob o lock.
+
+    O `if status == APPLIED` la de cima le um objeto que veio da consulta, e
+    entre aquela leitura e esta transacao cabe outro worker inteiro. Dois
+    caminhos pedem a aplicacao ao mesmo tempo, de proposito: o consumer
+    enfileira o lote assim que grava na inbox, e o beat varre a mesma fila a
+    cada 15s. Com o broker lento, os dois pegam o MESMO evento.
+
+    Aplicar duas vezes quase sempre converge, porque a gravacao e um upsert.
+    Quase: duas passagens contam duas tentativas na escada de retentativa
+    (queimando metade do orcamento de retry sem nenhuma falha real), registram
+    o mesmo conflito duas vezes e, num DELETE, apagam a linha que a outra
+    transacao tinha acabado de gravar.
+
+    `SKIP LOCKED` e o comportamento certo aqui: se outro worker ja esta com o
+    evento, este segue para o proximo em vez de esperar na fila por um
+    trabalho que nao vai sobrar para ele. Onde o banco nao conhece SKIP LOCKED
+    (o SQLite dos testes), o lock vira o que o backend souber fazer e a
+    reconferencia do estado abaixo continua valendo.
+    """
+    from apps.synchronization.models import SyncEvent
+
+    consulta = SyncEvent.objects.filter(pk=event.pk).exclude(
+        status__in=(EventStatus.APPLIED, EventStatus.ACKNOWLEDGED)
+    )
+    if connection.features.has_select_for_update:
+        consulta = consulta.select_for_update(
+            skip_locked=connection.features.has_select_for_update_skip_locked
+        )
+    return consulta.first()
 
 
 def _aplicar(event, entrada):
