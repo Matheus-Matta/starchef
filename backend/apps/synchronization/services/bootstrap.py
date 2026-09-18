@@ -93,7 +93,11 @@ def build_manifest(run):
 
 def _flui_para(entrada, run):
     if run.target_node.node_type == "LOCAL":
-        return registry.flows_to_local(entrada.entity_type)
+        # `seed_to_local` abre exceção para o estado vivo do salão: pedido
+        # aberto e sessão de caixa sobem no dia a dia, mas precisam DESCER uma
+        # vez, senão a loja assume a operação com as mesas ocupadas e nenhuma
+        # comanda para atender.
+        return registry.flows_to_local(entrada.entity_type) or entrada.seed_to_local
     return registry.flows_to_cloud(entrada.entity_type)
 
 
@@ -113,6 +117,12 @@ def _queryset(entrada, run):
 
     if entrada.scope == "store" and run.target_node.restaurant_id and "restaurant" in campos:
         consulta = consulta.filter(restaurant_id=run.target_node.restaurant_id)
+    if entrada.essential_filter and run.run_type == RunType.BOOTSTRAP:
+        # Só na carga ESSENCIAL. Ali a loja leva o que precisa para abrir a
+        # porta: cadastros mais o estado vivo do salão — a comanda aberta, o
+        # caixa em turno. "Sincronizar tudo" ignora este filtro de propósito,
+        # porque ali a promessa é trazer todos os dados da conta.
+        consulta = consulta.filter(**entrada.essential_filter)
     return consulta.order_by("pk")
 
 

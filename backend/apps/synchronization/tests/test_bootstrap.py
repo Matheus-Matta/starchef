@@ -167,3 +167,96 @@ def test_carga_registra_quem_iniciou(como_nuvem, no_loja, cenario):
     assert run.initiated_ip == "10.0.0.9"
     assert run.reason == "pedido do suporte"
     assert SyncRun.objects.filter(initiated_by=usuario).exists()
+
+
+# ── o estado vivo do salão desce na carga ───────────────────────────────────
+#
+# Pedido e sessão de caixa nascem na loja e sobem. Mas uma loja que está
+# ASSUMINDO a operação começa com o banco vazio — sem esta semeadura ela herda
+# as mesas ocupadas sem nenhuma comanda para atender, e os terminais sem a
+# sessão de caixa que já está aberta.
+def test_pedido_aberto_desce_na_carga(como_nuvem, no_loja, cenario):
+    from apps.synchronization.services.registry import registry
+
+    entrada = registry.require("order")
+    assert entrada.seed_to_local, "pedido aberto precisa descer na carga"
+    assert entrada.flow == "local_to_cloud", (
+        "a direção CONTÍNUA segue sendo só para cima; o que muda é a semeadura"
+    )
+
+
+def test_a_semeadura_nao_traz_o_historico(como_nuvem, no_loja):
+    """Sem filtro, cada loja receberia todo pedido que a conta já teve."""
+    from apps.synchronization.services.registry import registry
+
+    for tipo in ("order", "order_item", "payment", "cash_register", "cash_movement"):
+        entrada = registry.require(tipo)
+        assert entrada.essential_filter, (
+            f"{tipo} desceria na carga ESSENCIAL sem filtro — e essa carga "
+            "existe para a loja abrir a porta, não para receber o histórico"
+        )
+
+
+def test_so_pedido_aberto_entra_no_manifesto(como_nuvem, no_loja, conta, cenario):
+    from apps.orders.models import Order
+    from apps.restaurants.models import Restaurant
+
+    restaurante = Restaurant._base_manager.filter(account=conta).first()
+
+    def pedido(status, numero):
+        return Order.objects.create(account=conta, restaurant=restaurante,
+                                    status=status, sequence=numero)
+
+    aberto = pedido("open", 1)
+    pedido("paid", 2)
+    pedido("cancelled", 3)
+
+    essencial = bootstrap.build_manifest(
+        bootstrap.start_run(target_node=no_loja, run_type=RunType.BOOTSTRAP)
+    )
+    assert essencial.get("order") == 1, (
+        f"na carga ESSENCIAL só o pedido aberto desce; vieram "
+        f"{essencial.get('order')} — o aberto é {aberto.id}"
+    )
+
+    bootstrap.cancel_running(no_loja, motivo="troca de cenário no teste")
+    completa = bootstrap.build_manifest(
+        bootstrap.start_run(target_node=no_loja, run_type=RunType.FULL)
+    )
+    assert completa.get("order") == 3, (
+        "'Sincronizar tudo' promete TODOS os dados da conta — o histórico "
+        "inclusive"
+    )
+
+
+def test_caixa_fechado_nao_desce(como_nuvem, no_loja, conta, cenario):
+    from django.contrib.auth import get_user_model
+
+    from apps.payments.models import CashRegister, CashStation
+    from apps.restaurants.models import Restaurant
+
+    restaurante = Restaurant._base_manager.filter(account=conta).first()
+    estacao = CashStation.objects.create(account=conta, restaurant=restaurante, name="Caixa 1")
+    operador = get_user_model().objects.create_user("caixa1", "c@t.test", "x")
+
+    def sessao(status):
+        return CashRegister.objects.create(
+            account=conta, restaurant=restaurante, cash_station=estacao,
+            status=status, opened_by=operador,
+        )
+
+    sessao("open")
+    sessao("closed")
+
+    essencial = bootstrap.build_manifest(
+        bootstrap.start_run(target_node=no_loja, run_type=RunType.BOOTSTRAP)
+    )
+    assert essencial.get("cash_register") == 1, (
+        "na carga essencial, sessão encerrada é histórico, não estado vivo"
+    )
+
+    bootstrap.cancel_running(no_loja, motivo="troca de cenário no teste")
+    completa = bootstrap.build_manifest(
+        bootstrap.start_run(target_node=no_loja, run_type=RunType.FULL)
+    )
+    assert completa.get("cash_register") == 2, "'tudo' leva as duas sessões"

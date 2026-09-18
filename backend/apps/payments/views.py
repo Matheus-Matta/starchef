@@ -12,6 +12,7 @@ from apps.core.access import is_tenant_admin
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
 from apps.payments.cash_session_admin import force_release_cash_session
+from apps.payments.cash_session_statement import cash_session_statement
 from apps.payments.models import CashMovement, CashRegister, CashStation, PdvTerminal, Payment, PaymentMethod
 from apps.payments.serializers import (
     CashMovementSerializer,
@@ -116,6 +117,16 @@ class CashRegisterViewSet(BaseTenantViewSet):
     queryset = CashRegister.objects.select_related("restaurant", "branch", "opened_by", "closed_by").prefetch_related("movements").all()
     filterset_fields = ["status", "opened_by", "station"]
     ordering_fields = ["opened_at", "closed_at"]
+
+    @action(detail=True, methods=["get"], url_path="statement")
+    def statement(self, request, pk=None):
+        """Complete session statement for the web detail/print view."""
+        return Response(
+            cash_session_statement(
+                self.get_object(),
+                context={"request": request},
+            )
+        )
 
     @action(detail=False, methods=["post"], url_path="open")
     def open(self, request):

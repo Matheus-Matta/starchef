@@ -17,7 +17,8 @@ IGNORAR = "ignore"
 CONFLITO = "conflict"
 
 
-def decide(entity_type, *, local_version, remote_version, receiving_node_type, local_exists):
+def decide(entity_type, *, local_version, remote_version, receiving_node_type, local_exists,
+           local_instance=None):
     """`APLICAR`, `IGNORAR` ou `CONFLITO` para uma versão que acabou de chegar.
 
     Registro que ainda não existe aqui é sempre aplicado: não há o que
@@ -28,9 +29,54 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
         return APLICAR
     if remote_version == local_version:
         return IGNORAR
+    if _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
+        return APLICAR
     if remote_version < local_version:
         return _decidir_versao_antiga(entity_type, receiving_node_type)
     return _decidir_versao_nova(entity_type, receiving_node_type)
+
+
+def _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
+    """A origem manda mesmo trazendo versão mais antiga?
+
+    Só em UM caso: a entidade é de mão única, quem recebe está do lado que
+    nunca a edita, E a linha local NASCEU AQUI — nunca foi alvo de um evento
+    de sincronização aplicado.
+
+    O defeito que isto corrige: a matrícula cria um esqueleto de `Account` para
+    segurar as chaves estrangeiras, e esse esqueleto nasce com `updated_at` de
+    AGORA. Como a versão de um registro é o `updated_at` em microssegundos, o
+    esqueleto recém-criado é sempre "mais novo" que o registro real da nuvem —
+    que pode não ser editado há meses. A loja então descartava o dado
+    verdadeiro por considerá-lo velho: evento marcado APPLIED, sem erro, sem
+    conflito, e a conta seguia chamando "(aguardando sincronização)" com o nome
+    certo parado dentro do payload.
+
+    As três condições juntas são o que impede que a correção vire outro
+    defeito. A exigência de ter nascido aqui é a mais importante: sem ela, um
+    evento ATRASADO sobrescreveria um mais novo da mesma origem, e a ordem de
+    entrega deixaria de valer. Se a linha veio da sincronização, a versão
+    decide como sempre decidiu.
+
+    MANUAL fica de fora: documento fiscal não se resolve em silêncio, nem a
+    favor da nuvem.
+    """
+    from apps.synchronization.services import adoption
+
+    entrada = registry.get(entity_type)
+    if entrada is None or entrada.conflict_policy == ConflictResolution.MANUAL:
+        return False
+
+    if entrada.flow == "cloud_to_local":
+        lado_certo = receiving_node_type == NodeType.LOCAL
+    elif entrada.flow == "local_to_cloud":
+        lado_certo = receiving_node_type == NodeType.CLOUD
+    else:
+        return False
+
+    if not lado_certo or local_instance is None:
+        return False
+    return adoption.born_locally(entrada.model, local_instance)
 
 
 def _politica(entity_type):

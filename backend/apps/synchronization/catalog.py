@@ -103,20 +103,42 @@ _e("stock_movement", "stock.StockMovement", conflict_policy=LOJA, flow="local_to
 
 # 13-14. Pedidos, vendas e pagamentos. Nascem na loja e sobem.
 _e("payment_method", "payments.PaymentMethod", conflict_policy=CLOUD, dependencies=("restaurant",))
+# Estas entidades nascem na loja e sobem no dia a dia (`local_to_cloud`), mas
+# uma loja que está ASSUMINDO a operação começa com o banco vazio: sem descer,
+# ela herda as mesas ocupadas sem nenhuma comanda para atender e os terminais
+# sem a sessão de caixa que já está em turno. `seed_to_local` abre essa exceção.
+#
+# `essential_filter` separa as duas cargas:
+#   • "Dados essenciais" leva só o que está ABERTO — o suficiente para atender.
+#   • "Sincronizar tudo" traz o histórico inteiro da conta, sem filtro.
+ABERTOS = ["open", "awaiting_payment"]
+CAIXA_VIVO = ["pending_opening", "open", "blocked",
+              "pending_manager_approval", "pending_closing"]
+
 _e("order", "orders.Order", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("restaurant", "table", "customer"), include_in_bootstrap=False)
+   dependencies=("restaurant", "table", "customer"),
+   seed_to_local=True, essential_filter={"status__in": ABERTOS})
 _e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order",), include_in_bootstrap=False)
+   dependencies=("order",),
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 _e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order", "product"), include_in_bootstrap=False)
+   dependencies=("order", "product"),
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 _e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order_item", "product_addon"), include_in_bootstrap=False)
+   dependencies=("order_item", "product_addon"),
+   seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS})
 _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("restaurant", "cash_station"), include_in_bootstrap=False)
+   dependencies=("restaurant", "cash_station"),
+   seed_to_local=True, essential_filter={"status__in": CAIXA_VIVO})
+# Movimento é imutável: a loja insere e nunca reescreve. Ele desce junto da
+# sessão porque o saldo do caixa aberto é a soma deles — sem os movimentos, a
+# sangria e o suprimento do turno sumiriam da conferência.
 _e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("cash_register",), include_in_bootstrap=False, immutable=True)
+   dependencies=("cash_register",), immutable=True,
+   seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
 _e("payment", "payments.Payment", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order", "payment_method", "cash_register"), include_in_bootstrap=False)
+   dependencies=("order", "payment_method", "cash_register"),
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 
 # 15. Documentos fiscais. Conflito aqui nunca é resolvido em silêncio.
 _e("invoice", "invoices.Invoice", conflict_policy=MANUAL, flow="local_to_cloud",

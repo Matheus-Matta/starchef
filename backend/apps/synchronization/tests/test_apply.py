@@ -252,3 +252,21 @@ def test_uuid_como_texto_nao_conta_como_mudanca(como_loja, conta, no_nuvem, no_l
     assert apply._igual(None, None) is True
     assert apply._igual(None, "algo") is False
     assert apply._igual("a", "b") is False
+
+
+def test_sucesso_limpa_o_erro_da_tentativa_anterior(como_loja, conta, no_nuvem, no_loja):
+    """Erro velho colado em evento que deu certo manda o diagnóstico para o
+    lugar errado — foi exatamente o que aconteceu investigando produção."""
+    restaurante_id = uuid.uuid4()
+    evento = _evento(conta, no_nuvem, no_loja, entity_type="restaurant",
+                     entity_id=restaurante_id,
+                     fields={"account_id": str(conta.id), "legal_name": "Nova LTDA",
+                             "trade_name": "Nova", "is_active": True})
+    evento.last_error = "falha da tentativa anterior"
+    evento.save(update_fields=["last_error"])
+
+    assert apply.apply_event(evento) is True
+
+    evento.refresh_from_db()
+    assert evento.status == EventStatus.APPLIED
+    assert evento.last_error == "", "o erro velho não pode sobreviver ao sucesso"

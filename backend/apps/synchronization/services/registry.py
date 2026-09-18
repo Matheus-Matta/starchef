@@ -37,6 +37,25 @@ class SyncEntry:
     local_only_fields: tuple = ()
     #: Append-only: o destino insere, mas nunca atualiza nem apaga.
     immutable: bool = False
+    #: Entra na carga para a LOJA mesmo sendo `local_to_cloud`.
+    #:
+    #: Existe para o estado vivo do salão. Pedido e sessão de caixa nascem na
+    #: loja e sobem — mas uma loja que está ASSUMINDO a operação começa com o
+    #: banco vazio e herdaria as mesas ocupadas sem nenhuma comanda, e os
+    #: terminais sem a sessão de caixa que já está aberta. A direção contínua
+    #: continua sendo só para cima; o que muda é a semeadura inicial.
+    seed_to_local: bool = False
+    #: Filtro aplicado SÓ na carga essencial, como kwargs de `QuerySet.filter`.
+    #:
+    #: "Dados essenciais" leva o que a loja precisa para abrir a porta e
+    #: atender: cadastros mais o estado vivo do salão — a comanda que está
+    #: aberta, a sessão de caixa que está em turno. O histórico de meses não
+    #: entra aí.
+    #:
+    #: "Sincronizar tudo" ignora este filtro de propósito: ali a promessa é
+    #: trazer TODOS os dados da conta, e quem decide o que nunca sincroniza é
+    #: `decisions.py` — auditoria, log, notificação, sessão e token.
+    essential_filter: dict = field(default_factory=dict)
 
     @property
     def model(self):

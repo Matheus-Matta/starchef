@@ -4,7 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from apps.payments.models import CashStation
+from apps.orders.models import Order, OrderItem
+from apps.payments.models import CashStation, Payment, PaymentMethod
 
 from tests.test_cash_session_exclusivity import BALCAO_01, client_for, open_via_api
 
@@ -110,3 +111,58 @@ def test_cash_movements_report_sums_only_approved(station, restaurant, manager_u
 
     bad = client.get("/api/v1/reports/cash-movements/", {"date_from": "2026-13-01"})
     assert bad.status_code == 400
+
+
+def test_cash_session_statement_includes_orders_and_items(
+    station, restaurant, branch, manager_user, product
+):
+    client = client_for(manager_user, BALCAO_01)
+    session_id = _shift_with_movements(client, station, restaurant)
+    order = Order.objects.create(
+        account=station.account,
+        restaurant=restaurant,
+        branch=branch,
+        sequence=91,
+        order_type=Order.TYPE_COUNTER,
+        status=Order.STATUS_PAID,
+        payment_status=Order.PAYMENT_PAID,
+        responsible_user=manager_user,
+        total="25.00",
+    )
+    item = OrderItem.objects.create(
+        account=station.account,
+        restaurant=restaurant,
+        branch=branch,
+        order=order,
+        product=product,
+        quantity="1.000",
+        unit_price="25.00",
+        total_price="25.00",
+        production_sector=product.production_sector,
+        status=OrderItem.STATUS_DELIVERED,
+    )
+    method = PaymentMethod.objects.create(
+        account=station.account,
+        restaurant=restaurant,
+        branch=branch,
+        name="PIX",
+        method_type=PaymentMethod.TYPE_PIX,
+    )
+    Payment.objects.create(
+        account=station.account,
+        restaurant=restaurant,
+        branch=branch,
+        order=order,
+        payment_method=method,
+        amount="25.00",
+        metadata={"cash_register": session_id},
+    )
+
+    response = client.get(f"/api/v1/cash-register/{session_id}/statement/")
+
+    assert response.status_code == 200, response.content
+    assert response.json()["session"]["cash_station_name"] == "Caixa 1"
+    statement_order = response.json()["orders"][0]
+    assert statement_order["sequence"] == 91
+    assert statement_order["items"][0]["id"] == str(item.pk)
+    assert statement_order["items"][0]["product_name"] == "X-Burger"

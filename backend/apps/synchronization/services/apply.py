@@ -92,6 +92,9 @@ def _aplicar(event, entrada):
         remote_version=remote_version,
         receiving_node_type=event.target_node.node_type,
         local_exists=existente is not None,
+        # A instância vai junto porque a decisão depende de ELA ter nascido
+        # aqui ou ter vindo da sincronização — ver `_origem_vence_a_versao`.
+        local_instance=existente,
     )
     if decisao == conflicts.IGNORAR:
         return False
@@ -253,6 +256,10 @@ def _marcar_aplicado(event, nota=""):
     event.status = EventStatus.APPLIED
     event.applied_at = timezone.now()
     event.next_attempt_at = None
-    if nota:
-        event.last_error = nota
+    # Limpar o erro no sucesso não é cosmético. Um evento que falhou, foi
+    # retentado e deu certo ficava APPLIED carregando a mensagem da primeira
+    # tentativa — e quem fosse diagnosticar leria "Restaurant.created_by aponta
+    # para User 10, que ainda não existe aqui" num restaurante que existe,
+    # procurando um problema que já tinha se resolvido sozinho.
+    event.last_error = nota
     event.save(update_fields=["status", "applied_at", "next_attempt_at", "last_error"])
