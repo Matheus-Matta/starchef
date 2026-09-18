@@ -1,20 +1,16 @@
 import django_filters
 from django.core.exceptions import ValidationError
-from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.core.requests import required_field
-from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
+from apps.core.viewsets import ReadOnlyTenantViewSet
 from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
 from apps.orders.services import update_order_item_status
-from apps.restaurants.models import Restaurant
-
-from .models import KdsColumn, KdsStation
-from .serializers import KdsColumnSerializer, KdsStationSerializer
-from .station_templates import STATION_TEMPLATES, TEMPLATES_BY_KEY
+from .models import KdsColumn, KdsItemPosition, KdsStation
+from .rules import apply_station_rules, move_position
 
 # Pedidos sem producao possivel: saem do KDS. PAGO nao entra aqui de proposito
 # — o caixa cobra assim que manda os itens para a cozinha, entao tirar o pago do
@@ -65,7 +61,7 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
     serializer_class = OrderItemSerializer
     queryset = (
         OrderItem.objects.select_related("restaurant", "branch", "order__table", "order__command", "product", "batch")
-        .prefetch_related("addons")
+        .prefetch_related("addons", "kds_positions")
         .all()
     )
     filterset_class = KitchenItemFilter
@@ -77,7 +73,19 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
         account = getattr(request, "account", None)
         if account is not None:
             dispatch_due_kitchen_batches(account_id=account.id)
-        return super().list(request, *args, **kwargs)
+        station_id = request.query_params.get("station")
+        if not station_id:
+            return super().list(request, *args, **kwargs)
+        station = KdsStation.objects.filter(pk=station_id, account=account, is_active=True).first()
+        if station is None:
+            return Response({"detail": "Estação KDS inválida."}, status=status.HTTP_400_BAD_REQUEST)
+        queryset = self.filter_queryset(self.get_queryset())
+        visible_ids = apply_station_rules(list(queryset), station, request.user)
+        queryset = queryset.filter(pk__in=visible_ids)
+        page = self.paginate_queryset(queryset)
+        context = {**self.get_serializer_context(), "kds_station_id": station.id}
+        serializer = self.get_serializer(page if page is not None else queryset, many=True, context=context)
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
     def get_queryset(self):
         # Fora o item em si, o PEDIDO precisa continuar vivo: um pedido
@@ -122,72 +130,29 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
             if column is None:
                 return Response({"detail": "Coluna inválida para esta conta."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            if column and column.is_done and item.status != OrderItem.STATUS_READY:
-                item = update_order_item_status(item, OrderItem.STATUS_READY, request.user)
-            elif column and not column.is_done and not column.is_entry and item.status == OrderItem.STATUS_SENT:
-                item = update_order_item_status(item, OrderItem.STATUS_PREPARING, request.user)
-        except ValidationError as exc:
-            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        if column and column.station.restaurant_id != item.restaurant_id:
+            return Response({"detail": "A coluna não pertence ao restaurante do item."}, status=status.HTTP_400_BAD_REQUEST)
 
-        item.kds_column = column
-        item.save(update_fields=["kds_column", "updated_at"])
+        if column:
+            entry = column.station.columns.filter(is_active=True, is_entry=True).first()
+            entry = entry or column.station.columns.filter(is_active=True).order_by("position").first() or column
+            position, _ = KdsItemPosition.objects.get_or_create(
+                station=column.station,
+                item=item,
+                defaults={
+                    "account": account, "column": entry,
+                    "created_by": request.user, "updated_by": request.user,
+                },
+            )
+            try:
+                item = move_position(position, column, item, request.user)
+            except ValidationError as exc:
+                return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            item.kds_column = None
+            item.save(update_fields=["kds_column", "updated_at"])
         return Response(self.get_serializer(item).data)
 
 
-class KdsStationViewSet(BaseTenantViewSet):
-    serializer_class = KdsStationSerializer
-    queryset = KdsStation.objects.prefetch_related("columns").all()
-    filterset_fields = ["is_active"]
-
-    @action(detail=False, methods=["get"], url_path="templates")
-    def templates(self, request):
-        """Catálogo de modelos de estação (cozinha, bar, pizzaria…) para o onboarding."""
-        return Response(STATION_TEMPLATES)
-
-    @action(detail=False, methods=["post"], url_path="from-template")
-    def from_template(self, request):
-        """Cria uma estação + suas colunas de uma vez, a partir de um modelo."""
-        template = TEMPLATES_BY_KEY.get(request.data.get("template"))
-        if template is None:
-            return Response({"template": "Modelo inválido."}, status=status.HTTP_400_BAD_REQUEST)
-
-        account = getattr(request, "account", None)
-        if account is None:
-            return Response({"detail": "Contexto de conta é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
-
-        restaurant = Restaurant.objects.filter(pk=request.data.get("restaurant"), account=account).first()
-        if restaurant is None:
-            return Response({"restaurant": "Selecione um restaurante válido."}, status=status.HTTP_400_BAD_REQUEST)
-
-        name = (request.data.get("name") or template["name"]).strip()
-        try:
-            sla_minutes = int(request.data.get("sla_minutes") or 15)
-        except (TypeError, ValueError):
-            sla_minutes = 15
-        # Setores: usa o que o formulário enviar; senão, o padrão do modelo.
-        sectors = request.data.get("sectors")
-        if not isinstance(sectors, list):
-            sectors = template.get("sectors", [])
-
-        with transaction.atomic():
-            station = KdsStation.objects.create(
-                account=account, restaurant=restaurant, name=name, sla_minutes=sla_minutes, sectors=sectors,
-            )
-            KdsColumn.objects.bulk_create([
-                KdsColumn(
-                    account=account, station=station, position=pos, name=col["name"],
-                    color=col["color"], is_entry=col["is_entry"], is_done=col["is_done"],
-                )
-                for pos, col in enumerate(template["columns"])
-            ])
-        station = self.get_queryset().get(pk=station.pk)
-        return Response(self.get_serializer(station).data, status=status.HTTP_201_CREATED)
-
-
-class KdsColumnViewSet(BaseTenantViewSet):
-    serializer_class = KdsColumnSerializer
-    queryset = KdsColumn.objects.select_related("station").all()
-    filterset_fields = ["station", "is_active"]
-    ordering_fields = ["position", "name"]
-    ordering = ["position"]
+# Reexporta para preservar os imports públicos usados pelo router.
+from .station_views import KdsColumnViewSet, KdsStationViewSet  # noqa: E402,F401

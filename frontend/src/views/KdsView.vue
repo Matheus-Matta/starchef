@@ -1,5 +1,5 @@
 <template>
-  <div class="kds-root">
+  <div ref="kdsRoot" class="kds-root" :class="{ 'kds-root--fullscreen': isFullscreen }">
     <!-- ── Header ─────────────────────────────────────────────── -->
     <header class="kds-head">
       <!-- Select do quadro colado à esquerda -->
@@ -51,6 +51,10 @@
         </div>
 
         <span class="kds-live"><span class="kds-live__dot" />Ao vivo</span>
+        <button class="kds-refresh" type="button" @click="toggleFullscreen">
+          <AppIcon :name="isFullscreen ? 'minimize' : 'maximize'" :size="14" />
+          {{ isFullscreen ? "Sair da tela cheia" : "Tela cheia" }}
+        </button>
         <button class="kds-refresh" type="button" :disabled="refreshing" @click="loadItems">
           <AppIcon name="refresh" :size="14" :class="{ 'kds-refresh__spin': refreshing }" />
           {{ updatedLabel }}
@@ -93,6 +97,7 @@
         class="kds-col"
         :class="{ 'kds-col--dropping': dragOverColumnId === column.id }"
         :style="{ '--c': column.color }"
+        :data-kds-column="column.id"
         @dragover.prevent="dragOverColumnId = column.id"
         @dragleave="onDragLeave(column.id)"
         @drop="onDrop(column)"
@@ -116,6 +121,10 @@
             @dragstart="onDragStart(item)"
             @dragend="onDragEnd"
             @click="openModal(item)"
+            @pointerdown="onPointerDown($event, item)"
+            @pointermove="onPointerMove"
+            @pointerup="onPointerUp"
+            @pointercancel="onPointerCancel"
           >
             <div class="ticket__head">
               <span class="ticket__seq">#{{ item.order_sequence || shortId(item.order) }}</span>
@@ -290,6 +299,10 @@ const dragItem = ref(null);
 const dragOverColumnId = ref(null);
 const movingId = ref("");
 const modalItem = ref(null);
+const kdsRoot = ref(null);
+const isFullscreen = ref(false);
+let touchDrag = null;
+let suppressCardClick = false;
 
 let refreshTimer = null;
 let clockTimer = null;
@@ -314,6 +327,7 @@ const boardItems = computed(() => items.value.filter(belongsToBoard));
 
 /** Coluna efetiva de um item neste quadro (cai na entrada se ainda não posicionado). */
 function effectiveColumnId(item) {
+  if (item.kds_position && columnIds.value.has(item.kds_position)) return item.kds_position;
   if (item.kds_column && columnIds.value.has(item.kds_column)) return item.kds_column;
   return entryColumn.value ? entryColumn.value.id : null;
 }
@@ -380,7 +394,7 @@ const nextColumn = computed(() => (modalIndex.value >= 0 ? boardColumns.value[mo
 const prevColumn = computed(() => (modalIndex.value > 0 ? boardColumns.value[modalIndex.value - 1] || null : null));
 
 function openModal(item) {
-  if (dragItem.value) return; // não abre no fim de um arraste
+  if (dragItem.value || suppressCardClick) return; // não abre no fim de um arraste
   modalItem.value = item;
 }
 async function advanceModal(delta) {
@@ -410,16 +424,51 @@ async function onDrop(column) {
   await moveItem(item, column);
 }
 
+function onPointerDown(event, item) {
+  if (event.pointerType !== "touch") return;
+  touchDrag = { pointerId: event.pointerId, item, x: event.clientX, y: event.clientY, active: false };
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+}
+function onPointerMove(event) {
+  if (!touchDrag || touchDrag.pointerId !== event.pointerId) return;
+  const distance = Math.hypot(event.clientX - touchDrag.x, event.clientY - touchDrag.y);
+  if (!touchDrag.active && distance < 10) return;
+  touchDrag.active = true;
+  dragItem.value = touchDrag.item;
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest?.("[data-kds-column]");
+  dragOverColumnId.value = target?.dataset.kdsColumn || null;
+  if (event.cancelable) event.preventDefault();
+}
+async function onPointerUp(event) {
+  if (!touchDrag || touchDrag.pointerId !== event.pointerId) return;
+  const wasActive = touchDrag.active;
+  const item = touchDrag.item;
+  const targetId = dragOverColumnId.value;
+  touchDrag = null;
+  dragItem.value = null;
+  dragOverColumnId.value = null;
+  if (!wasActive) return;
+  suppressCardClick = true;
+  window.setTimeout(() => { suppressCardClick = false; }, 0);
+  const column = boardColumns.value.find((entry) => entry.id === targetId);
+  if (column && effectiveColumnId(item) !== column.id) await moveItem(item, column);
+}
+function onPointerCancel() {
+  touchDrag = null;
+  dragItem.value = null;
+  dragOverColumnId.value = null;
+}
+
 async function moveItem(item, column) {
   movingId.value = item.id;
   errorMsg.value = "";
-  const previous = item.kds_column;
-  item.kds_column = column.id; // otimista
+  const previous = item.kds_position;
+  item.kds_position = column.id; // otimista para a estação selecionada
   try {
     await api.post(`/kitchen/items/${item.id}/move/`, { column: column.id });
     await loadItems(); // reflete efeitos de status (concluir/iniciar preparo)
   } catch (err) {
-    item.kds_column = previous; // desfaz
+    item.kds_position = previous; // desfaz
     errorMsg.value = normalizeApiError(err).message;
     // O card pode ter morrido com a tela aberta (pedido cancelado/estornado no
     // caixa): recarregar tira ele do quadro em vez de deixar um card parado
@@ -437,6 +486,7 @@ async function loadItems() {
     const response = await api.get("/kitchen/items/", {
       params: {
         ordering: "sent_to_kitchen_at",
+        station: station.value?.id,
         page_size: 100, // máx. do backend; o board mostra itens ativos (poucos por natureza)
         launched_after: dateRange.value.after,
         launched_before: dateRange.value.before,
@@ -476,9 +526,17 @@ function selectStation(s) {
   station.value = s;
   stationMenuOpen.value = false;
   resetVisible();
+  loadItems();
 }
 function goToStations() {
   router.push({ name: "kds-estacoes" });
+}
+async function toggleFullscreen() {
+  if (!document.fullscreenElement) await kdsRoot.value?.requestFullscreen?.();
+  else await document.exitFullscreen?.();
+}
+function syncFullscreen() {
+  isFullscreen.value = document.fullscreenElement === kdsRoot.value;
 }
 
 /* ── Rótulos / helpers ───────────────────────────────────────── */
@@ -523,22 +581,25 @@ watch(dateRange, () => {
   loadItems();
 });
 
-onMounted(() => {
-  loadStations();
-  loadItems();
+onMounted(async () => {
+  await loadStations();
+  await loadItems();
   loadSlas();
+  document.addEventListener("fullscreenchange", syncFullscreen);
   // Polling remains only as a safety net when an intermediary blocks WebSocket.
-  refreshTimer = window.setInterval(loadItems, 120000);
+  refreshTimer = window.setInterval(loadItems, 15000);
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
 });
 onUnmounted(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
   if (clockTimer) window.clearInterval(clockTimer);
+  document.removeEventListener("fullscreenchange", syncFullscreen);
 });
 </script>
 
 <style scoped>
 .kds-root { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
+.kds-root--fullscreen { width: 100vw; height: 100vh; padding: 12px; overflow: hidden; background: var(--surface-ground); }
 .kds-root > * { animation: soft-pop var(--motion-base) var(--motion-spring) both; }
 
 /* ── Header ──────────────────────────────────────────────────── */
@@ -629,6 +690,7 @@ onUnmounted(() => {
 /* ── Ticket (card) ───────────────────────────────────────────── */
 .ticket {
   display: flex; flex-direction: column; gap: 7px; padding: 11px 12px; cursor: grab; user-select: none;
+  touch-action: pan-y;
   border: 1px solid var(--border); border-left: 3px solid var(--c, var(--border-strong)); border-radius: var(--radius-md);
   background: var(--surface-card); box-shadow: var(--shadow-sm); transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }

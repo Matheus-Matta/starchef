@@ -613,8 +613,11 @@ onMounted(async () => {
 .reports-view {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
+  padding-top: 4px;
 }
+
+.reports-view > :not(.reports-view__filters) { margin-top: 4px; }
 
 .reports-view__filters {
   display: flex;
@@ -693,7 +696,7 @@ onMounted(async () => {
 .responsive-one-col {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
 }
 
 .reports-view__restaurant-filter {
@@ -748,7 +751,7 @@ onMounted(async () => {
 }
 
 @media (max-width: 720px) {
-  .reports-view { gap: 14px; }
+  .reports-view { gap: 18px; padding-top: 2px; }
   .reports-view__filters {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

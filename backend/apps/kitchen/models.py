@@ -14,6 +14,10 @@ class KdsStation(TenantBaseModel):
     branch = models.ForeignKey(Branch, null=True, blank=True, related_name="kds_stations", on_delete=models.SET_NULL)
     sla_minutes = models.PositiveIntegerField(default=15)
     sectors = models.JSONField(default=list, blank=True)
+    # Regras declarativas avaliadas na leitura do quadro. A migration deixa
+    # estações já existentes com [] e o serializer fornece a regra padrão
+    # somente para estações criadas depois desta funcionalidade.
+    rules = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:
@@ -45,3 +49,21 @@ class KdsColumn(TenantBaseModel):
 
     def __str__(self):
         return f"{self.station.name} · {self.name}"
+
+
+class KdsItemPosition(TenantBaseModel):
+    """Posição independente de um item em cada estação KDS."""
+
+    station = models.ForeignKey(KdsStation, related_name="item_positions", on_delete=models.CASCADE)
+    item = models.ForeignKey("orders.OrderItem", related_name="kds_positions", on_delete=models.CASCADE)
+    column = models.ForeignKey(KdsColumn, related_name="item_positions", on_delete=models.CASCADE)
+    entered_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["station", "item"], name="unique_kds_position_per_station_item"),
+        ]
+        indexes = [models.Index(fields=["station", "column"])]
+
+    def __str__(self):
+        return f"{self.station.name} · {self.item_id} · {self.column.name}"

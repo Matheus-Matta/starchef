@@ -201,6 +201,17 @@ simples já existentes sem alterar hashes válidas.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.
 
+**KDS e estações**: `KdsStation.rules` guarda até 50 regras declarativas por
+estação. As ações são incluir, excluir e mover; as condições cobrem tipo do
+pedido, setor, status do item/pedido/pagamento/produção/entrega, mesa, comanda,
+observação e tempo desde o envio ou na coluna. Estações existentes continuam
+com `rules=[]`; estações novas recebem a regra editável “Incluir todos os
+pedidos”. `GET /kitchen/items/?station=<id>` avalia as regras e devolve
+`kds_position`/`kds_entered_at`. A posição é persistida em `KdsItemPosition`
+por item + estação, portanto mover o mesmo item em um quadro não altera sua
+coluna em outro. `POST /kitchen/items/{id}/move/` mantém o campo legado
+`OrderItem.kds_column` por compatibilidade.
+
 ## 8. Celery
 
 Configurado (`config/celery.py`), com Redis como broker/result backend em produção e `CELERY_TASK_ALWAYS_EAGER=True` em dev/test (roda síncrono, sem precisar de worker nem Redis). **Nenhuma task assíncrona está definida hoje** além do helper de contexto `celery_tenant_context` em `apps/core/tasks.py` — a infraestrutura (worker + beat, subidos pelo `runservices` e pelo `docker-compose.yml`) está pronta e conectada, mas não há jobs de fato agendados/enfileirados ainda.

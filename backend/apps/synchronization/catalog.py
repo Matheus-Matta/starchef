@@ -90,7 +90,8 @@ _e("scale", "printers.Scale", conflict_policy=CLOUD, dependencies=("restaurant",
 _e("kds_station", "kitchen.KdsStation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("kds_column", "kitchen.KdsColumn", conflict_policy=CLOUD, dependencies=("kds_station",))
 _e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA,
-   dependencies=("kds_station", "kds_column", "order_item"), include_in_bootstrap=False)
+   flow="local_to_cloud", dependencies=("kds_station", "kds_column", "order_item"),
+   include_in_bootstrap=False)
 _e("sla", "sla.ServiceLevelAgreement", conflict_policy=CLOUD, dependencies=("restaurant",),
    include_in_bootstrap=False)
 

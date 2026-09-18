@@ -71,6 +71,8 @@ const icons = {
   "lock": "pi-lock",
   "mail": "pi-envelope",
   "map-pin": "pi-map-marker",
+  "maximize": "pi-window-maximize",
+  "minimize": "pi-window-minimize",
   "minus": "pi-minus",
   "money": "pi-money-bill",
   "moon": "pi-moon",

@@ -2,7 +2,7 @@
 import pytest
 from rest_framework_simplejwt.tokens import AccessToken
 
-from apps.kitchen.models import KdsColumn, KdsStation
+from apps.kitchen.models import KdsColumn, KdsItemPosition, KdsStation
 from apps.orders.models import Order, OrderItem
 from apps.orders.services import add_order_item, create_order, send_order_to_kitchen
 
@@ -112,6 +112,64 @@ def test_create_station_from_template(manager_user, restaurant):
     assert [c["name"] for c in sorted(cols, key=lambda c: c["position"])] == ["A fazer", "Em preparo", "Montagem", "Pronto"]
     assert cols[0]["is_entry"] is True
     assert any(c["is_done"] for c in cols)
+    assert resp.data["rules"][0]["action"] == "include"
+
+
+def test_existing_station_has_no_implicit_rules(manager_user, station):
+    resp = _client(manager_user).get(f"/api/v1/kitchen/stations/{station.id}/")
+    assert resp.status_code == 200
+    assert resp.data["rules"] == []
+
+
+def test_new_station_gets_include_all_rule(manager_user, restaurant):
+    resp = _client(manager_user).post(
+        "/api/v1/kitchen/stations/",
+        {"name": "Nova", "restaurant": str(restaurant.id)},
+        format="json",
+    )
+    assert resp.status_code == 201, resp.data
+    assert resp.data["rules"][0]["name"] == "Incluir todos os pedidos"
+
+
+def test_station_rule_filters_order_type(manager_user, station, entry_column, sent_item):
+    station.rules = [{
+        "id": "delivery", "name": "Somente delivery", "action": "include",
+        "match": "all", "conditions": [{"field": "order_type", "operator": "equals", "value": "delivery"}],
+        "target_column": None, "enabled": True, "priority": 0,
+    }]
+    station.save(update_fields=["rules", "updated_at"])
+    response = _client(manager_user).get(f"/api/v1/kitchen/items/?station={station.id}")
+    assert response.status_code == 200, response.data
+    assert all(row["id"] != str(sent_item.id) for row in response.data["results"])
+
+
+def test_station_rule_moves_overdue_item(manager_user, station, entry_column, done_column, sent_item):
+    station.rules = [{
+        "id": "delay", "name": "Atraso", "action": "move", "match": "all",
+        "conditions": [{"field": "minutes_since_sent", "operator": "gte", "value": 0}],
+        "target_column": str(done_column.id), "enabled": True, "priority": 0,
+    }]
+    station.save(update_fields=["rules", "updated_at"])
+    response = _client(manager_user).get(f"/api/v1/kitchen/items/?station={station.id}")
+    assert response.status_code == 200, response.data
+    row = next(item for item in response.data["results"] if item["id"] == str(sent_item.id))
+    assert row["kds_position"] == str(done_column.id)
+    assert KdsItemPosition.all_objects.get(station=station, item=sent_item).column_id == done_column.id
+
+
+def test_item_has_independent_position_per_station(manager_user, station, entry_column, sent_item):
+    other = KdsStation.objects.create(
+        account=station.account, restaurant=station.restaurant, name="Expedição",
+    )
+    other_entry = KdsColumn.objects.create(
+        account=station.account, station=other, name="Recebidos", position=0, is_entry=True,
+    )
+    client = _client(manager_user)
+    assert client.get(f"/api/v1/kitchen/items/?station={station.id}").status_code == 200
+    assert client.get(f"/api/v1/kitchen/items/?station={other.id}").status_code == 200
+    assert KdsItemPosition.all_objects.filter(item=sent_item).count() == 2
+    assert KdsItemPosition.all_objects.get(item=sent_item, station=station).column_id == entry_column.id
+    assert KdsItemPosition.all_objects.get(item=sent_item, station=other).column_id == other_entry.id
 
 
 def test_create_from_template_rejects_bad_template(manager_user, restaurant):

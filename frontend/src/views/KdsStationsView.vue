@@ -76,6 +76,7 @@
               Sem colunas. Adicione a primeira e marque-a como <strong>Entrada</strong>.
             </div>
           </div>
+          <KdsRulesEditor :station="selected" @saved="loadStations(selected.id)" />
         </template>
       </section>
     </div>
@@ -163,6 +164,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
 
+import KdsRulesEditor from "../components/kds/KdsRulesEditor.vue";
 import { api } from "../services/api";
 import { normalizeApiError } from "../utils/apiError";
 

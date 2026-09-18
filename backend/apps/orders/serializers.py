@@ -21,6 +21,12 @@ class OrderItemSerializer(TenantModelSerializer):
     # Fields for KDS display
     order_sequence = serializers.IntegerField(source="order.sequence", read_only=True)
     order_type = serializers.CharField(source="order.order_type", read_only=True)
+    order_status = serializers.CharField(source="order.status", read_only=True)
+    order_payment_status = serializers.CharField(source="order.payment_status", read_only=True)
+    order_production_status = serializers.CharField(source="order.production_status", read_only=True)
+    order_delivery_status = serializers.CharField(source="order.delivery_status", read_only=True)
+    kds_position = serializers.SerializerMethodField()
+    kds_entered_at = serializers.SerializerMethodField()
     order_table_number = serializers.SerializerMethodField()
     order_command_code = serializers.SerializerMethodField()
     batch_number = serializers.IntegerField(source="batch.batch_number", read_only=True, default=None)
@@ -53,6 +59,23 @@ class OrderItemSerializer(TenantModelSerializer):
             return obj.order.command.code if obj.order.command_id else None
         except Exception:
             return None
+
+    def _station_position(self, obj):
+        station_id = self.context.get("kds_station_id")
+        if not station_id:
+            return None
+        return next(
+            (position for position in obj.kds_positions.all() if str(position.station_id) == str(station_id)),
+            None,
+        )
+
+    def get_kds_position(self, obj):
+        position = self._station_position(obj)
+        return str(position.column_id) if position else None
+
+    def get_kds_entered_at(self, obj):
+        position = self._station_position(obj)
+        return position.entered_at if position else None
 
 
 class OrderBatchSerializer(TenantModelSerializer):
