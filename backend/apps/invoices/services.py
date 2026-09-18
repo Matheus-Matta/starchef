@@ -252,6 +252,41 @@ def is_fiscally_printable(invoice):
     return invoice.emission_type == Invoice.EMISSION_CONTINGENCY
 
 
+def entrar_em_contingencia(invoice, erro, *, user=None):
+    """Marca a nota como emitida em contingência (tpEmis=9). Porta ÚNICA.
+
+    Recusa tudo que não seja indisponibilidade, e a recusa é uma exceção — não
+    um retorno que dá para ignorar sem querer. É isto que impede a regra de se
+    perder outra vez: o serviço de emissão tem cinco blocos de `except`
+    diferentes, dois deles terminando num `except Exception` genérico, e a
+    contingência precisa ser alcançável por um caminho só.
+
+    Contingência é para não CONSEGUIR FALAR com o autorizador. Uma nota
+    recusada em contingência sai igualmente errada, com o cupom já na mão do
+    cliente e um documento irregular no CNPJ — que depois só se resolve
+    cancelando, um a um, dentro do prazo.
+    """
+    from apps.invoices import contingency
+
+    if not contingency.justifica_contingencia(erro):
+        raise ValidationError(contingency.motivo_da_recusa(erro))
+
+    invoice.emission_type = Invoice.EMISSION_CONTINGENCY
+    invoice.status = Invoice.STATUS_PENDING
+    invoice.error_message = str(erro)[:500]
+    payload = dict(invoice.fiscal_payload or {})
+    # O registro de POR QUE se entrou em contingência. Uma nota em tpEmis=9
+    # precisa ser retransmitida depois, e quem for auditá-la meses adiante tem
+    # de saber o que estava fora do ar naquele momento.
+    payload["contingency_reason"] = str(erro)[:500]
+    payload["contingency_class"] = contingency.classificar(erro)
+    payload["awaiting"] = AWAITING_TRANSMISSION
+    invoice.fiscal_payload = payload
+    if user is not None:
+        invoice.updated_by = user
+    return invoice
+
+
 def _resolve_fiscal_config(restaurant, branch=None):
     """Acha a `FiscalConfig` ativa pra emissao.
 
