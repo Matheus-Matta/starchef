@@ -11,9 +11,22 @@ PROTOCOL_VERSION = 1
 #: Versão do formato dos payloads de entidade (ver `services/serialization.py`).
 SCHEMA_VERSION = 1
 
-#: Único ambiente liberado nesta fase. Ver `services/guard.py`.
+#: Ambientes da sincronização. Ver `services/guard.py`.
+#:
+#: Não são rótulo: o ambiente faz parte da IDENTIDADE do nó e é conferido no
+#: HELLO. Uma loja de homologação não consegue conectar na nuvem de produção
+#: nem com credencial válida — é o que impede venda de teste entrar no banco
+#: que vale, por um `.env` apontado para o lugar errado.
 ENVIRONMENT_DEVELOPMENT = "development"
-ENVIRONMENT_CHOICES = [(ENVIRONMENT_DEVELOPMENT, "Development")]
+ENVIRONMENT_PRODUCTION = "production"
+ENVIRONMENT_CHOICES = [
+    (ENVIRONMENT_DEVELOPMENT, "Development"),
+    (ENVIRONMENT_PRODUCTION, "Production"),
+]
+#: Os valores aceitos. Qualquer outra coisa é erro de configuração, não um
+#: ambiente novo — um typo em `SYNC_ENVIRONMENT` não pode virar um terceiro
+#: ambiente silencioso no qual nenhum nó encontra nenhum outro.
+ENVIRONMENTS_ALLOWED = frozenset({ENVIRONMENT_DEVELOPMENT, ENVIRONMENT_PRODUCTION})
 
 
 class NodeType:

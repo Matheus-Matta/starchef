@@ -134,7 +134,9 @@ def test_segunda_carga_no_mesmo_no_da_409(como_nuvem, admin, no_loja):
 
 
 def test_carga_fora_de_development_da_503(settings, como_nuvem, admin, no_loja):
-    settings.SYNC_ENVIRONMENT = "production"
+    # `production` virou um ambiente VÁLIDO; o que estes testes exercitam é
+    # o valor desconhecido, que continua sendo recusado.
+    settings.SYNC_ENVIRONMENT = "homologacao-do-fulano"
     resposta = _cliente(admin).post(
         f"/api/v1/sync/nodes/{no_loja.id}/start_run/", {}, format="json"
     )

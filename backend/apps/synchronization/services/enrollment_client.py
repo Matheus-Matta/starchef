@@ -11,7 +11,7 @@ import requests
 from django.conf import settings
 from django.db import transaction
 
-from apps.synchronization.constants import ENVIRONMENT_DEVELOPMENT, NodeStatus, NodeType
+from apps.synchronization.constants import NodeStatus, NodeType
 from apps.synchronization.models import SyncNode
 from apps.synchronization.services import enrollment, guard, nodes
 
@@ -139,7 +139,7 @@ def _gravar_no(node_id, pair_id, conta_id, node_type, nome, *, is_self):
             "pair_id": uuid.UUID(str(pair_id)),
             "account_id": conta_id,
             "node_type": node_type,
-            "environment": ENVIRONMENT_DEVELOPMENT,
+            "environment": guard.current_environment(),
             "name": nome,
             "status": NodeStatus.ACTIVE if is_self else NodeStatus.PENDING,
             "is_self": is_self,

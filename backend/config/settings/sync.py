@@ -7,9 +7,14 @@ nuvem — é a mesma imagem, o mesmo código, as mesmas migrations:
     SYNC_NODE_TYPE=cloud   -> recebe conexões WSS das lojas
     SYNC_NODE_TYPE=local   -> abre a conexão de saída para a nuvem
 
-`SYNC_ENVIRONMENT` só aceita `development` nesta fase. O código recusa
-qualquer outro valor (ver `apps/synchronization/services/guard.py`) — não é
-uma convenção, é uma exceção levantada.
+`SYNC_ENVIRONMENT` aceita `development` e `production`, e nada mais: um typo
+como `prod` é recusado com exceção, não tratado como um terceiro ambiente onde
+nenhum nó encontraria nenhum outro (ver `services/guard.py`).
+
+O ambiente faz parte da IDENTIDADE do nó e é conferido no HELLO. Loja e nuvem
+precisam estar no mesmo, e a ficha do nó na nuvem também — é isso que impede
+venda de homologação entrar no banco que vale por um `.env` apontado errado.
+Para virar de um para outro, ver `manage.py sync_set_environment`.
 """
 from pathlib import Path
 

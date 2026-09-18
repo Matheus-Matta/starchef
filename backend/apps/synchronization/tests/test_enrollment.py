@@ -115,7 +115,9 @@ def test_conta_inexistente_e_recusada(como_nuvem, superadmin):
 
 
 def test_matricula_fora_de_development_e_bloqueada(settings, como_nuvem, conta, superadmin):
-    settings.SYNC_ENVIRONMENT = "production"
+    # `production` virou um ambiente VÁLIDO; o que estes testes exercitam é
+    # o valor desconhecido, que continua sendo recusado.
+    settings.SYNC_ENVIRONMENT = "homologacao-do-fulano"
     from apps.synchronization.services import guard
 
     with pytest.raises(guard.SyncDisabled):

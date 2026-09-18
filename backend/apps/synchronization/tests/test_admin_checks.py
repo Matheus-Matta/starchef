@@ -117,7 +117,9 @@ def test_usuario_sem_permissao_nao_inicia_carga(como_nuvem, conta, no_loja):
 
 
 def test_carga_fora_de_development_e_bloqueada(settings, como_nuvem, admin_logado, no_loja):
-    settings.SYNC_ENVIRONMENT = "production"
+    # `production` virou um ambiente VÁLIDO; o que estes testes exercitam é
+    # o valor desconhecido, que continua sendo recusado.
+    settings.SYNC_ENVIRONMENT = "homologacao-do-fulano"
     admin_logado.post(reverse("admin:synchronization_syncnode_full", args=[no_loja.id]), {})
     assert not SyncRun.objects.filter(target_node=no_loja).exists()
 
@@ -150,7 +152,9 @@ def test_check_silencioso_quando_desligado(settings, como_nuvem):
 def test_check_avisa_ambiente_proibido(settings, como_nuvem):
     from apps.synchronization.checks import check_sync_configuration
 
-    settings.SYNC_ENVIRONMENT = "production"
+    # `production` virou um ambiente VÁLIDO; o que estes testes exercitam é
+    # o valor desconhecido, que continua sendo recusado.
+    settings.SYNC_ENVIRONMENT = "homologacao-do-fulano"
     ids = [a.id for a in check_sync_configuration(None)]
     assert "synchronization.W001" in ids
 

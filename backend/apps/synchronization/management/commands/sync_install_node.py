@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts.models import Account
-from apps.synchronization.constants import ENVIRONMENT_DEVELOPMENT, NodeStatus, NodeType
+from apps.synchronization.constants import NodeStatus, NodeType
 from apps.synchronization.models import SyncNode
 from apps.synchronization.services import guard, nodes
 
@@ -63,7 +63,7 @@ class Command(BaseCommand):
                 "pair_id": uuid.UUID(str(pair_id)),
                 "account": conta,
                 "node_type": node_type,
-                "environment": ENVIRONMENT_DEVELOPMENT,
+                "environment": guard.current_environment(),
                 "name": nome,
                 "status": NodeStatus.ACTIVE if is_self else NodeStatus.PENDING,
                 "is_self": is_self,

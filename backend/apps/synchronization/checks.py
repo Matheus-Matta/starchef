@@ -21,7 +21,7 @@ def check_sync_configuration(app_configs, **kwargs):
     if not guard.environment_is_allowed():
         avisos.append(CheckWarning(
             f"SYNC_ENVIRONMENT={guard.current_environment() or '(vazio)'}: {guard.MENSAGEM}",
-            hint="Nesta fase só `development` é aceito. O worker vai recusar subir.",
+            hint="Use `development` ou `production` — um typo como `prod` não vira ambiente novo, vira nó que não conecta em lugar nenhum.",
             id="synchronization.W001",
         ))
 
@@ -107,14 +107,40 @@ def _checar_triggers():
     )]
 
 
+def _checar_nome():
+    """Esta loja tem nome próprio?
+
+    Vazio cai no padrão "Servidor da loja", e o padrão é o mesmo para todo
+    mundo: com três lojas matriculadas, o Admin da nuvem lista três nós com o
+    mesmo nome e nada que os distinga além do UUID. Quem for descartar a fila
+    de uma delas está a um clique de descartar a da outra.
+    """
+    if not getattr(settings, "SYNC_AUTO_ENROLL", False):
+        return []
+    if getattr(settings, "SYNC_NODE_NAME", "").strip():
+        return []
+    return [CheckWarning(
+        "SYNC_NODE_NAME vazio: esta loja vai se matricular como "
+        '"Servidor da loja".',
+        hint=(
+            "Dê um nome próprio (ex.: SYNC_NODE_NAME=Loja Cobogó). É como ela "
+            "aparece no Admin da nuvem; sem isso, todas ficam com o mesmo nome "
+            "e só o UUID as distingue. Trocar depois e rematricular renomeia o "
+            "nó existente."
+        ),
+        id="synchronization.W006",
+    )]
+
+
 def _checar_local():
+    avisos = _checar_nome()
     faltando = [
         nome for nome in ("SYNC_NODE_ID", "SYNC_CLOUD_WSS_URL", "SYNC_AUTH_TOKEN")
         if not getattr(settings, nome, "")
     ]
     if not faltando:
-        return []
-    return [CheckWarning(
+        return avisos
+    return avisos + [CheckWarning(
         "Nó LOCAL sem credencial: " + ", ".join(faltando),
         hint=(
             "A loja continua operando e gravando eventos na outbox; eles ficam "

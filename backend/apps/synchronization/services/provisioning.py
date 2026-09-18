@@ -10,7 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.synchronization.constants import ENVIRONMENT_DEVELOPMENT, NodeStatus, NodeType
+from apps.synchronization.constants import NodeStatus, NodeType
 from apps.synchronization.models import SyncNode
 from apps.synchronization.services import crypto, guard, nodes
 
@@ -54,7 +54,11 @@ def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed
             account=account,
             restaurant=restaurant,
             node_type=NodeType.LOCAL,
-            environment=ENVIRONMENT_DEVELOPMENT,
+            # O ambiente vem da CONFIGURAÇÃO desta instalação, não de uma constante.
+            # Gravar `development` literal aqui fazia todo nó nascer em
+            # homologação mesmo numa nuvem de produção — e ele só descobriria
+            # isso no primeiro HELLO, recusado por ambiente incompatível.
+            environment=guard.current_environment(),
             name=name,
             endpoint=endpoint,
             allowed_ip=allowed_ip,
@@ -70,12 +74,18 @@ def provision_local_node(*, account, restaurant=None, name, endpoint="", allowed
 
     pacote = {
         "SYNC_ENABLED": "true",
-        "SYNC_ENVIRONMENT": ENVIRONMENT_DEVELOPMENT,
+        "SYNC_ENVIRONMENT": guard.current_environment(),
         "SYNC_NODE_TYPE": "local",
         "SYNC_NODE_ID": str(no.id),
         "SYNC_PAIR_ID": str(no.pair_id),
         "SYNC_ACCOUNT_ID": str(account.id),
         "SYNC_STORE_ID": str(restaurant.id) if restaurant else "",
+        # O nome volta no pacote para a ficha que a LOJA grava de si mesma ter
+        # o mesmo nome que a da nuvem. Sem isto, o lado de cá caía no padrão
+        # "Servidor da loja": o Admin da nuvem dizia "Loja Cobogó" e o da loja
+        # dizia outra coisa, para o MESMO nó — e quem fosse diagnosticar com os
+        # dois abertos não teria como cruzar um com o outro.
+        "SYNC_NODE_NAME": name,
         "SYNC_CLOUD_WSS_URL": cloud_endpoint or endpoint,
         "SYNC_AUTH_TOKEN": token,
         "SYNC_ENCRYPTION_KEY": chave,
@@ -111,7 +121,7 @@ def ensure_self_node(*, account, node_type, pair_id, name=None, node_id=None):
         pair_id=pair_id,
         account=account,
         node_type=node_type,
-        environment=ENVIRONMENT_DEVELOPMENT,
+        environment=guard.current_environment(),
         name=name or f"{node_type} {account}",
         status=NodeStatus.ACTIVE,
         is_self=True,

@@ -4,7 +4,17 @@ Como a loja continua vendendo sem internet, e como tudo que aconteceu lá chega
 à nuvem depois — sem duplicar, sem perder e sem misturar contas.
 
 Implementa `afazer/PLANO_IMPLEMENTACAO_SINCRONIZACAO_BACKEND_TO_BACKEND.md`.
-Fase **DEVELOPMENT**: o código **recusa** qualquer outro ambiente.
+
+`SYNC_ENVIRONMENT` aceita **`development`** e **`production`**. Um valor fora
+dessa lista é recusado com exceção — `prod` não vira um terceiro ambiente onde
+nenhum nó encontra nenhum outro.
+
+O ambiente faz parte da **identidade do nó** e é conferido no HELLO em três
+perguntas: o valor existe, é o mesmo desta instalação, e é o mesmo da ficha do
+nó na nuvem. É isso que impede uma loja de homologação entrar na nuvem de
+produção com credencial válida. Para virar de um para outro sem derrubar as
+lojas, ver `manage.py sync_set_environment` — o comando traz a ordem dos
+passos no próprio `--help`.
 
 ## O desenho em uma frase
 

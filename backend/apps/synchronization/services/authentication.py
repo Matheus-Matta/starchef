@@ -58,9 +58,42 @@ def _validar_estado(no, client_ip):
 
 
 def _validar_ambiente(no, payload):
+    """Três perguntas diferentes, e as três precisam de sim.
+
+    1. O ambiente declarado EXISTE? (typo em `SYNC_ENVIRONMENT` não passa)
+    2. É o MESMO desta instalação? (loja de homologação não entra na nuvem de
+       produção, nem com credencial válida)
+    3. É o mesmo que está gravado na ficha do nó? (a ficha é a memória da
+       nuvem sobre aquele nó; divergir aqui é configuração trocada)
+
+    Enquanto só existia `development`, a pergunta 1 respondia a 2 por acidente
+    — qualquer valor aceito era, necessariamente, o nosso. Abrir `production`
+    quebrou essa coincidência, e sem a pergunta 2 explícita uma loja de
+    homologação passaria a conectar na nuvem de produção desde que a ficha
+    dela também dissesse `development`. Venda de teste no banco que vale.
+    """
     ambiente = str(payload.get("environment") or "").strip().lower()
-    if not guard.environment_is_allowed(ambiente) or no.environment != ambiente:
+    if not guard.environment_is_allowed(ambiente):
         raise AuthenticationFailed(guard.MENSAGEM)
+    if not guard.matches_environment(ambiente):
+        logger.error(
+            "sync: nó %s declarou ambiente %s numa instalação %s",
+            no.id, ambiente, guard.current_environment(),
+        )
+        raise AuthenticationFailed(
+            f"Ambiente incompatível: o nó declara '{ambiente}' e esta "
+            f"instalação é '{guard.current_environment()}'."
+        )
+    if no.environment != ambiente:
+        logger.error(
+            "sync: nó %s tem ficha em %s mas declarou %s",
+            no.id, no.environment, ambiente,
+        )
+        raise AuthenticationFailed(
+            f"Ambiente incompatível: a ficha deste nó na nuvem está em "
+            f"'{no.environment}' e ele declarou '{ambiente}'. "
+            "Veja `manage.py sync_set_environment`."
+        )
 
     versao = int(payload.get("protocol_version") or 0)
     if versao != PROTOCOL_VERSION:

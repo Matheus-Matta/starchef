@@ -209,6 +209,18 @@ def _provisionar(conta, restaurant_id, node_name, cloud_wss_url, existing_node_i
             pk=existing_node_id, account=conta, node_type=NodeType.LOCAL
         ).first()
         if no is not None:
+            # O nome acompanha o `.env` da loja. Sem isto, trocar
+            # `SYNC_NODE_NAME` de "Loja Centro" para "Loja Cobogó" e
+            # rematricular não mudava nada: a nuvem continuava listando o nome
+            # antigo, e quem fosse procurar a loja no Admin procuraria por um
+            # nome que só existe no arquivo de configuração dela.
+            if node_name and no.name != node_name:
+                logger.info(
+                    "sync-enroll: nó %s renomeado de %r para %r",
+                    no.id, no.name, node_name,
+                )
+                no.name = node_name
+                no.save(update_fields=["name", "updated_at"])
             segredos = provisioning.rotate_credentials(no)
             return no, _pacote(no, conta, cloud_wss_url, segredos)
 
@@ -236,6 +248,12 @@ def _pacote(no, conta, cloud_wss_url, segredos):
         "SYNC_PAIR_ID": str(no.pair_id),
         "SYNC_ACCOUNT_ID": str(conta.id),
         "SYNC_STORE_ID": str(no.restaurant_id or ""),
+        # O nome volta no pacote para a ficha que a LOJA grava de si mesma ter
+        # o mesmo nome que a da nuvem. Sem isto, o lado de cá caía no padrão
+        # "Servidor da loja" — o Admin da nuvem dizia "Loja Cobogó" e o da loja
+        # dizia outra coisa, para o mesmo nó. Quem fosse diagnosticar com os
+        # dois abertos não teria como cruzar um com o outro.
+        "SYNC_NODE_NAME": no.name,
         "SYNC_CLOUD_WSS_URL": cloud_wss_url or no.endpoint,
         "SYNC_PEER_NODE_ID": str(no.peer_id or ""),
         **segredos,

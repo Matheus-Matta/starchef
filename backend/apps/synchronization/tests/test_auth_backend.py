@@ -58,7 +58,9 @@ def test_na_NUVEM_nunca_entra(como_nuvem, credenciais):
 
 
 def test_fora_de_development_nunca_entra(settings, como_loja, credenciais):
-    settings.SYNC_ENVIRONMENT = "production"
+    # `production` virou um ambiente VÁLIDO; o que estes testes exercitam é
+    # o valor desconhecido, que continua sendo recusado.
+    settings.SYNC_ENVIRONMENT = "homologacao-do-fulano"
     assert authenticate(username=USUARIO, password=SENHA) is None
 
 
