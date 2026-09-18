@@ -30,6 +30,17 @@ SUITE = "desktop"
 
 #: O que o app pede ao abrir, na ordem em que ele pede.
 #: Extraído das chamadas reais de `pdv_desktop/lib`.
+#:
+#: Já foi testado juntar as sete numa rota agregadora `/pdv/bootstrap/`, e ela
+#: FICOU PIOR sob carga: 13.786ms contra 8.145ms no pior caso (0,6x). O motivo é
+#: que sob saturação o gargalo é TEMPO DE WORKER, não ida-e-volta. Juntar não
+#: reduz o trabalho — concentra tudo num handler que segura um worker do
+#: gunicorn, enquanto as sete pequenas se intercalam entre eles. E numa LAN,
+#: onde o RTT é desprezível, agregar não tem o que economizar.
+#:
+#: O caminho promissor é outro: payload MENOR na abertura. O serializer de
+#: produto carrega variações, ficha técnica, adicionais e imagens — nada disso
+#: é usado para desenhar a grade inicial.
 ROTAS_DE_ABERTURA = [
     "/api/v1/auth/me/",
     "/api/v1/menu/categories/?page_size=100&is_active=true",
@@ -49,7 +60,12 @@ def _preco(produto):
 
 
 def fase_abertura(ctx):
-    """N terminais ligando ao mesmo tempo. É o pior instante do dia."""
+    """N terminais ligando ao mesmo tempo. É o pior instante do dia.
+
+    Sete leituras sequenciais, como o app faz. Já foi medida a alternativa de
+    juntá-las numa rota agregadora: ela NÃO ajudou — ver o comentário em
+    `ROTAS_DE_ABERTURA`.
+    """
     ctx.log(f"[{SUITE}] fase 1/5 — abertura simultânea dos terminais")
     # `--terminals` é o botão que descreve a FROTA; `--workers` descreve a
     # pressão de escrita. Misturar os dois faria o perfil "pesado" abrir 128
