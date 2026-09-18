@@ -135,6 +135,32 @@ class SyncEvent(UUIDModel):
             models.Index(fields=["target_node", "status"]),
             models.Index(fields=["entity_type", "entity_id"]),
             models.Index(fields=["status", "next_attempt_at"]),
+            # Índices PARCIAIS para as duas consultas do caminho quente —
+            # `pending_for_target` e `pending_inbound`, que rodam a cada aviso
+            # de disponibilidade e a cada 15s no beat.
+            #
+            # Parcial e não completo porque a fila viva é uma fatia minúscula
+            # da tabela: o normal é quase tudo estar ACKNOWLEDGED ou APPLIED, e
+            # um índice completo carregaria milhões de linhas terminais para
+            # responder sobre as poucas abertas. O índice parcial só indexa o
+            # que a consulta procura, então ele cabe na memória e — o que pesa
+            # mais — deixa de ser reescrito a cada evento que chega ao fim.
+            models.Index(
+                fields=["target_node", "sequence"],
+                name="sync_saida_viva_idx",
+                condition=models.Q(
+                    direction=Direction.OUTBOUND,
+                    status__in=[EventStatus.PENDING, EventStatus.FAILED],
+                ),
+            ),
+            models.Index(
+                fields=["target_node", "sequence"],
+                name="sync_entrada_viva_idx",
+                condition=models.Q(
+                    direction=Direction.INBOUND,
+                    status__in=[EventStatus.RECEIVED, EventStatus.FAILED],
+                ),
+            ),
         ]
 
     def __str__(self):

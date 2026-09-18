@@ -53,6 +53,11 @@ def enroll(*, username, password, account_id, enrollment_secret, node_name,
     conta = _conta_autorizada(usuario, account_id, client_ip)
 
     with transaction.atomic():
+        # Um bilhete, se for o caso, é gasto AQUI — dentro da mesma transação
+        # que provisiona. Gastá-lo antes deixaria um bilhete queimado por uma
+        # matrícula que falhou depois; gastá-lo depois abriria a janela para a
+        # segunda tentativa simultânea passar.
+        bilhete = _consumir_bilhete(enrollment_secret, conta, client_ip)
         no, pacote = _provisionar(
             conta, restaurant_id, node_name, cloud_wss_url, existing_node_id
         )
@@ -74,6 +79,9 @@ def enroll(*, username, password, account_id, enrollment_secret, node_name,
             ip=client_ip,
             reason=f"Matrícula automática do nó {node_name}",
         )
+        if bilhete is not None:
+            bilhete.used_by_node = no
+            bilhete.save(update_fields=["used_by_node"])
 
     pacote["SYNC_INITIAL_RUN_ID"] = str(run.id)
     envelope = _cifrar(pacote, enrollment_secret)
@@ -82,6 +90,84 @@ def enroll(*, username, password, account_id, enrollment_secret, node_name,
         no.id, conta.id, usuario, run.id,
     )
     return no, envelope, run
+
+
+def emitir_bilhete(*, conta, criado_por=None, restaurante=None, label="",
+                   validade_minutos=None):
+    """Lado NUVEM: cria um bilhete e devolve `(bilhete, codigo_em_claro)`.
+
+    O código em claro só existe aqui e na resposta. Depois disto, nem o Admin
+    consegue lê-lo de volta — o que fica gravado é o hash, pela mesma razão que
+    o token do nó fica: um banco lido por quem não devia não pode virar um
+    banco de credenciais utilizáveis.
+    """
+    from apps.synchronization.models import SyncEnrollmentTicket
+    from django.utils import timezone
+
+    minutos = validade_minutos or SyncEnrollmentTicket.VALIDADE_PADRAO_MINUTOS
+    codigo = SyncEnrollmentTicket.novo_codigo()
+    bilhete = SyncEnrollmentTicket.objects.create(
+        account=conta,
+        restaurant=restaurante,
+        code_hash=crypto.hash_token(codigo),
+        label=label[:120],
+        created_by=criado_por,
+        expires_at=timezone.now() + timezone.timedelta(minutes=minutos),
+    )
+    logger.info(
+        "sync-enroll: bilhete %s emitido para a conta %s por %s (validade %smin)",
+        bilhete.id, conta.id, criado_por, minutos,
+    )
+    return bilhete, codigo
+
+
+def _consumir_bilhete(segredo, conta, client_ip):
+    """Gasta o bilhete correspondente ao segredo, se houver um.
+
+    Devolve o bilhete ou `None`. `None` NÃO é recusa: significa que o segredo
+    apresentado não é um bilhete, e o fluxo segue pelo `SYNC_ENROLL_SECRET`
+    combinado — que continua valendo para não quebrar instalação existente.
+
+    O `select_for_update` existe porque "uso único" é uma promessa sobre
+    concorrência: duas matrículas simultâneas com o mesmo código precisam
+    resultar em uma aceita e uma recusada, não em duas aceitas porque as duas
+    leram `used_at = None` antes de qualquer uma gravar.
+    """
+    from apps.synchronization.models import SyncEnrollmentTicket
+    from django.utils import timezone
+
+    hash_do_codigo = crypto.hash_token(segredo)
+    bilhete = SyncEnrollmentTicket.objects.filter(code_hash=hash_do_codigo).first()
+    if bilhete is None:
+        return None
+
+    bloqueado = (
+        SyncEnrollmentTicket.objects.select_for_update()
+        .filter(pk=bilhete.pk)
+        .first()
+    )
+    if bloqueado.used_at is not None:
+        logger.error(
+            "sync-enroll: bilhete %s reapresentado (já usado em %s) ip=%s",
+            bloqueado.id, bloqueado.used_at, client_ip,
+        )
+        raise EnrollmentRefused("Este bilhete de matrícula já foi usado.")
+    if bloqueado.vencido:
+        logger.warning("sync-enroll: bilhete %s vencido ip=%s", bloqueado.id, client_ip)
+        raise EnrollmentRefused("Este bilhete de matrícula venceu. Peça um novo.")
+    if str(bloqueado.account_id) != str(conta.id):
+        # Conta diferente da do bilhete: não é engano de digitação, é uso do
+        # bilhete de uma conta para matricular nó em outra.
+        logger.error(
+            "sync-enroll: bilhete %s da conta %s usado para a conta %s ip=%s",
+            bloqueado.id, bloqueado.account_id, conta.id, client_ip,
+        )
+        raise EnrollmentRefused("Este bilhete não pertence à conta informada.")
+
+    bloqueado.used_at = timezone.now()
+    bloqueado.used_from_ip = client_ip or None
+    bloqueado.save(update_fields=["used_at", "used_from_ip"])
+    return bloqueado
 
 
 def _validar_segredo(segredo):

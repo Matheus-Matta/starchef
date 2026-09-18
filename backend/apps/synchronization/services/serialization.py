@@ -30,10 +30,52 @@ CAMPOS_PROIBIDOS = {
     "certificate",
 }
 
+#: Teto de aninhamento ao limpar um JSON. Nenhum payload legítimo chega perto;
+#: o limite existe para um documento montado de propósito não virar recursão
+#: sem fim dentro do `json.dumps` que grava o evento.
+MAX_PROFUNDIDADE_JSON = 24
+
+
+def _limpar_segredos(valor, _profundidade=0):
+    """Tira chaves proibidas de DENTRO de um JSON, recursivamente.
+
+    `_campo_permitido` olha o nome do campo Django — e para ali. Um
+    `JSONField` chamado `metadata` passa no filtro e leva junto tudo o que
+    houver dentro dele, incluindo uma chave `token` devolvida pela maquininha
+    e gravada sem ninguém reparar. O nome do campo estava limpo; o conteúdo
+    não.
+
+    É o caso do `payments.Payment.metadata`, que nasce de entrada do cliente:
+    o PDV manda o dicionário e ele viaja inteiro para a nuvem. Hoje só há ali
+    identificador de terminal e motivo de gerente, mas "hoje não tem" não é
+    controle — controle é o segredo não conseguir passar nem se alguém puser.
+
+    O teto de profundidade existe para um JSON aninhado de propósito não virar
+    recursão sem fim na hora de gravar o evento.
+    """
+    if _profundidade > MAX_PROFUNDIDADE_JSON:
+        return "[profundidade máxima excedida]"
+    if isinstance(valor, dict):
+        return {
+            chave: _limpar_segredos(item, _profundidade + 1)
+            for chave, item in valor.items()
+            if _nome_limpo(str(chave))
+        }
+    if isinstance(valor, (list, tuple)):
+        return [_limpar_segredos(item, _profundidade + 1) for item in valor]
+    return valor
+
+
+def _nome_limpo(nome):
+    return not any(proibido in nome.lower() for proibido in CAMPOS_PROIBIDOS)
+
 
 def _encode(valor):
     if isinstance(valor, uuid.UUID):
         return str(valor)
+    if isinstance(valor, (dict, list, tuple)):
+        # JSONField: o conteúdo passa pelo mesmo crivo que o nome do campo.
+        return _limpar_segredos(valor)
     if isinstance(valor, decimal.Decimal):
         # String, não float: `float(Decimal("0.1"))` muda o valor e um centavo
         # a menos no pagamento vira divergência de caixa na nuvem.

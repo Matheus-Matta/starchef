@@ -146,6 +146,13 @@ TEMPLATES = [
 
 USE_SQLITE_DATABASE = config("USE_SQLITE_DATABASE", default=DEBUG, cast=bool)
 
+# Row Level Security por conta, imposta pelo PostgreSQL (ver `apps/core/rls.py`).
+# Desligada por padrão: ligar exige que as políticas já estejam instaladas
+# (`manage.py install_rls`) E que os processos de fundo que varrem todas as
+# contas estejam dentro de `rls.escopo_da_plataforma()`. Ligar antes disso faz
+# consulta legítima devolver zero linha.
+RLS_ENABLED = config("RLS_ENABLED", default=False, cast=bool)
+
 
 def build_database_settings(use_sqlite):
     if use_sqlite:

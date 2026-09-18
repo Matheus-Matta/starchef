@@ -3,6 +3,7 @@ import logging
 
 from celery import shared_task
 
+from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.models import SyncEvent
 from apps.synchronization.services import apply, guard, nodes
 
@@ -12,6 +13,7 @@ MAX_POR_EXECUCAO = 500
 
 
 @shared_task(name="sync.apply_pending_events", queue="sync.apply")
+@trabalho_de_plataforma("aplica a fila de entrada de todas as lojas")
 def apply_pending_events(event_pks=None):
     """Aplica em ordem de sequência. Chamada pelo consumer e pelo beat.
 

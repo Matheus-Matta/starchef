@@ -52,7 +52,81 @@ def coletar():
     linhas += _conflitos(SyncConflict)
     linhas += _cargas(SyncRun)
     linhas += _ultimo_sucesso(SyncNode)
+    linhas += _volume_da_fila(SyncEvent)
+    linhas += _entrada(SyncEvent)
     return linhas
+
+
+def _volume_da_fila(SyncEvent):
+    """Bytes parados na fila de saída, por nó de destino.
+
+    A fila durável troca o risco da internet pelo risco do disco: uma loja
+    semanas offline acumula outbox, e ninguém descobre isso por um contador de
+    eventos — dez mil linhas de estoque não pesam o que mil pedidos com trinta
+    itens pesam. O que enche o disco é byte, então é byte que precisa aparecer.
+
+    O tamanho sai do próprio payload, somado no banco. Custa uma varredura por
+    raspagem — aceitável para algo lido a cada 15-60 segundos, e é o número
+    honesto em vez de uma estimativa por contagem de linhas.
+    """
+    from django.db.models.functions import Cast, Length
+    from django.db.models import Sum, TextField
+
+    consulta = (
+        SyncEvent.objects.filter(
+            direction=Direction.OUTBOUND, status__in=list(EventStatus.OUTBOUND_OPEN)
+        )
+        .annotate(tamanho=Length(Cast("payload", TextField())))
+        .values("target_node_id")
+        .annotate(bytes=Sum("tamanho"), total=Count("id"))
+    )
+    amostras_bytes, amostras_contagem = [], []
+    for linha in consulta[:50]:
+        rotulo = {"node": str(linha["target_node_id"])}
+        amostras_bytes.append(_linha("outbox_bytes", linha["bytes"] or 0, rotulo))
+        amostras_contagem.append(_linha("outbox_events", linha["total"], rotulo))
+
+    return _bloco(
+        "outbox_bytes", "Bytes de payload parados na fila de saída, por destino.",
+        "gauge", amostras_bytes,
+    ) + _bloco(
+        "outbox_events", "Eventos parados na fila de saída, por destino.",
+        "gauge", amostras_contagem,
+    )
+
+
+def _entrada(SyncEvent):
+    """Atraso de aplicação e mortos da fila de ENTRADA.
+
+    `event_lag_seconds` mede só a saída, e as duas pontas falham por motivos
+    diferentes: a saída para quando falta internet, a entrada para quando falta
+    dependência ou o worker de aplicação morreu. Um número só para as duas
+    esconderia metade dos problemas — e é justamente a metade que significa
+    "a venda chegou da nuvem e não entrou no banco".
+    """
+    agora = timezone.now()
+    mais_antigo = SyncEvent.objects.filter(
+        direction=Direction.INBOUND, status__in=list(EventStatus.INBOUND_OPEN)
+    ).aggregate(inicio=Min("created_at"))["inicio"]
+    atraso = (agora - mais_antigo).total_seconds() if mais_antigo else 0
+
+    pendentes = SyncEvent.objects.filter(
+        direction=Direction.INBOUND, status__in=list(EventStatus.INBOUND_OPEN)
+    ).count()
+    mortos = SyncEvent.objects.filter(
+        direction=Direction.INBOUND, status=EventStatus.DEAD
+    ).count()
+
+    return _bloco(
+        "inbox_lag_seconds", "Idade, em segundos, do evento recebido mais antigo sem aplicar.",
+        "gauge", [_linha("inbox_lag_seconds", round(atraso, 1))],
+    ) + _bloco(
+        "inbox_pending", "Eventos recebidos aguardando aplicação.", "gauge",
+        [_linha("inbox_pending", pendentes)],
+    ) + _bloco(
+        "inbox_dead", "Eventos recebidos que desistiram de aplicar.", "gauge",
+        [_linha("inbox_dead", mortos)],
+    )
 
 
 def _conexoes(SyncNode):

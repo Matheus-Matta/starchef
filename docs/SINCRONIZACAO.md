@@ -315,17 +315,98 @@ worker da loja é um só — não há múltiplos consumidores disputando a fila)
 head-of-line blocking por sequência global (um evento que falha vira FAILED com
 `next_attempt_at` e sai do filtro; o laço segue para o próximo).
 
-**Continua em aberto, e é decisão de produto, não correção:**
+**Também implementado na segunda rodada:**
 
-- **RLS no PostgreSQL da nuvem.** Hoje o isolamento é do ORM. Ligar RLS é a
-  recomendação certa e é grande: exige política por tabela, `set_config` por
-  transação e um usuário de banco sem BYPASSRLS. Não cabe junto de uma
-  correção de defeito.
-- **mTLS por nó.** A matrícula entrega token e chave no mesmo pacote, cifrado
-  por um segredo de uso combinado. Trocar isso por CSR e CA interna muda a
-  operação inteira de provisionamento.
-- **Separar `SyncEvent` em outbox/delivery/inbox.** Melhora auditoria e índice;
-  é migração de dados em produção, com a sincronização no ar.
+4. **Segredo aninhado em JSON.** `CAMPOS_PROIBIDOS` olhava o NOME do campo
+   Django e parava ali. Um `JSONField` chamado `metadata` — como o de
+   `payments.Payment`, que nasce de entrada do PDV — passava no filtro e levava
+   o conteúdo inteiro. Agora `serialization._limpar_segredos` varre dicionários
+   e listas recursivamente, com teto de profundidade.
+
+5. **Limite de recepção.** O remetente cortava o lote; o destino aceitava o que
+   viesse. `inbox._validar_lote` recusa o lote ANTES de gravar qualquer coisa,
+   com folga de 4x sobre o lote configurado — é teto de absurdo, não segundo
+   corte.
+
+6. **Uma conexão por nó.** Duas conexões com o mesmo `node_id` (uma instalação
+   clonada) dividiam a fila entre si, e cada loja ficava com um pedaço do
+   banco. O HELLO agora desloca a conexão anterior e registra em ERROR. Deslocar
+   e não recusar é deliberado: o caso comum não é clonagem, é reconexão com um
+   fantasma do outro lado.
+
+7. **Índices parciais** (`0006`) para as duas consultas do caminho quente. A
+   fila viva é uma fatia minúscula da tabela; um índice completo carregaria
+   milhões de linhas terminais e seria reescrito a cada evento que termina.
+
+8. **Métricas que faltavam**: `sync_outbox_bytes` e `sync_outbox_events` por
+   destino (o que enche disco é byte, não contagem de linha) e
+   `sync_inbox_lag_seconds` / `inbox_pending` / `inbox_dead` — a fila de
+   entrada falha por motivos diferentes da de saída, e um número só para as
+   duas escondia metade dos problemas.
+
+9. **Bilhete de matrícula de uso único** (`manage.py sync_issue_ticket`). O
+   `SYNC_ENROLL_SECRET` fixo nunca foi suficiente sozinho para matricular nada
+   — a rota também exige usuário, senha e `account_id` —, então a revisão
+   exagerou ao chamar o ponto de crítico. Mas ele não expira e não diz quem
+   usou. O bilhete nasce para UMA conta, morre ao ser usado ou no prazo, e
+   guarda quem emitiu e qual nó saiu dele. É **aditivo**: o segredo combinado
+   continua valendo, para adotar loja por loja.
+
+10. **RLS na nuvem** (`manage.py install_rls` + `RLS_ENABLED`). Implementada,
+    testada contra PostgreSQL e **desligada por padrão** — ver abaixo.
+
+## RLS: como ligar, e a armadilha que quase todo mundo cai
+
+A política vive em `apps/core/rls.py` e cobre toda tabela com `account` (a
+lista é descoberta, não fixa, para uma tabela nova não ficar de fora em
+silêncio). Uma consulta que esqueceu o filtro não devolve dado errado: devolve
+nada.
+
+A ordem importa:
+
+```
+manage.py install_rls --status     # o que falta, e se o usuário do banco serve
+manage.py install_rls              # cria as políticas
+RLS_ENABLED=true                   # a aplicação passa a se identificar
+```
+
+Invertida, o passo 2 sem o 3 faz toda consulta devolver zero linha.
+
+**A armadilha:** `SUPERUSER` e `BYPASSRLS` ignoram qualquer política, e
+`FORCE ROW LEVEL SECURITY` **não** os alcança — ele só estende a política ao
+dono da tabela. Instalar RLS com o usuário errado responde "48 tabelas
+protegidas", pinta o `--status` de verde e não protege absolutamente nada. Foi
+o que aconteceu na primeira execução dos testes aqui, e é por isso que
+`rls.papel_burla_rls()` existe e grita em vermelho na instalação. **Crie um
+usuário de aplicação sem SUPERUSER e sem BYPASSRLS antes de confiar no
+relatório.**
+
+Trabalho que legitimamente atravessa contas (o despacho, as métricas, a
+retenção) declara isso com `rls.escopo_da_plataforma()` ou o decorador
+`@trabalho_de_plataforma`. Num deploy endurecido esse escopo deixaria de ser
+variável de sessão e viraria um segundo usuário de banco com `BYPASSRLS` — aí
+nem o código da API conseguiria abri-lo. Enquanto for variável de sessão, o
+controle é disciplina apoiada por revisão, não impossibilidade.
+
+**Continua fora, por decisão:**
+
+- **mTLS por nó com CA interna.** Mudaria a operação inteira de
+  provisionamento, e rende menos do que parece: a chave privada moraria na
+  mesma máquina que a credencial de hoje. O ganho real seria revogação mais
+  fina e detecção de clonagem — e a detecção de clonagem foi feita (item 6)
+  sem trocar o esquema de credencial.
+- **Separar `SyncEvent` em outbox/delivery/inbox.** Zero valor de segurança;
+  é migração de dados com a sincronização no ar para ganhar ergonomia de
+  auditoria e tamanho de índice. Os índices parciais (item 7) resolvem a parte
+  que doía.
+- **Ordenação por agregado.** Não há head-of-line blocking para resolver: um
+  evento que falha vira FAILED com `next_attempt_at` e sai do filtro; o laço
+  segue para o próximo.
+- **JWT curto para o canal de sincronização.** O canal não usa JWT — a
+  identidade é o token do nó, validado no HELLO.
+- **Bootstrap com high-water mark.** Já é keyset (`order_by("pk")` +
+  `iterator`) com transação por registro; não existe a transação longa que a
+  revisão supôs.
 
 ## O que ainda não está pronto
 

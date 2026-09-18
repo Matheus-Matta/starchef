@@ -36,6 +36,27 @@ class HandlerMixin:
         self.group = no.group_name
         proprio = await database_sync_to_async(nodes.self_node)()
         self.scope["sync_self_node_id"] = str(proprio.id)
+
+        # UMA conexão por nó. Antes de entrar no grupo, avisa quem já estiver
+        # nele com esta identidade que a vez passou.
+        #
+        # Duas conexões com o mesmo `node_id` não são um cenário exótico: é o
+        # que acontece quando alguém clona a instalação da loja (copiar a VM, o
+        # volume ou o diretório de credenciais para "subir uma segunda loja
+        # rápido"). As duas autenticam, as duas recebem eventos endereçados
+        # àquele nó, e cada uma aplica um pedaço — a fila esvazia e nenhuma das
+        # duas lojas fica com o banco inteiro. O sintoma aparece dias depois
+        # como "faltam pedidos", e a causa é impossível de adivinhar.
+        #
+        # Deslocar em vez de recusar é deliberado: o caso COMUM aqui não é
+        # clonagem, é reconexão — a loja caiu, a nuvem ainda não percebeu, e a
+        # conexão velha é um fantasma. Recusar a nova deixaria a loja fora do
+        # ar até o timeout da antiga expirar.
+        await self.channel_layer.group_send(
+            self.group,
+            {"type": "sync.displace", "channel": self.channel_name,
+             "ip": str(self._client_ip() or "")},
+        )
         await self.channel_layer.group_add(self.group, self.channel_name)
 
         # Reconexão: o que saiu daqui e ninguém confirmou volta para a fila.
@@ -56,6 +77,18 @@ class HandlerMixin:
             },
             correlation_id=envelope.get("message_id"),
         )
+
+    async def sync_displace(self, event):
+        """Outra conexão assumiu esta identidade de nó. Esta sai."""
+        if event.get("channel") == self.channel_name:
+            return  # a mensagem é nossa; o group_send alcança quem enviou
+        logger.error(
+            "sync: nó %s reautenticou de %s enquanto outra conexão estava de pé — "
+            "a anterior foi encerrada. Se as duas forem simultâneas e de origens "
+            "diferentes, a instalação foi clonada.",
+            getattr(self.node, "id", "?"), event.get("ip") or "origem desconhecida",
+        )
+        await self.close(code=CloseCode.SUPERSEDED)
 
     async def handle_heartbeat(self, envelope, _payload):
         await database_sync_to_async(self._tocar_presenca)()

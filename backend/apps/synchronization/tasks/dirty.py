@@ -3,12 +3,14 @@ import logging
 
 from celery import shared_task
 
+from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.services import dirty, guard
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name="sync.collect_dirty_rows", queue="sync.dispatch")
+@trabalho_de_plataforma("rede de seguranca das triggers, que e por tabela e nao por conta")
 def collect_dirty_rows():
     """A rede de segurança do §11.2, rodando a cada poucos segundos.
 
@@ -23,6 +25,7 @@ def collect_dirty_rows():
 
 
 @shared_task(name="sync.prune_dirty_rows", queue="sync.cleanup")
+@trabalho_de_plataforma("rede de seguranca das triggers, que e por tabela e nao por conta")
 def prune_dirty_rows(dias=7):
     """Marcas já processadas: uma por linha escrita, então acumulam rápido."""
     if not guard.is_enabled():

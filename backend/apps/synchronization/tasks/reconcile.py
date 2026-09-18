@@ -2,6 +2,8 @@
 import logging
 
 from celery import shared_task
+
+from apps.core.rls import trabalho_de_plataforma
 from django.utils import timezone
 
 from apps.synchronization.constants import Direction, EventStatus, NodeStatus
@@ -15,6 +17,7 @@ SILENCIO_MINUTOS = 5
 
 
 @shared_task(name="sync.reconcile_nodes", queue="sync.reconcile")
+@trabalho_de_plataforma("reconciliacao entre todos os nos")
 def reconcile_nodes():
     """Marca nós calados como OFFLINE e reenfileira o que ficou sem confirmação.
 
@@ -50,6 +53,7 @@ def reconcile_nodes():
 
 
 @shared_task(name="sync.resend_unconfirmed", queue="sync.reconcile")
+@trabalho_de_plataforma("reconciliacao entre todos os nos")
 def resend_unconfirmed():
     """Reenvia tudo que saiu e não voltou. Usada na reconexão e no Admin."""
     if not guard.is_enabled():

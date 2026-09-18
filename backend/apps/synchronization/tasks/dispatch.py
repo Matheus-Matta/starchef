@@ -5,6 +5,7 @@ from asgiref.sync import async_to_sync
 from celery import shared_task
 from channels.layers import get_channel_layer
 
+from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.constants import Direction, EventStatus, MessageType
 from apps.synchronization.models import SyncEvent, SyncNode
 from apps.synchronization.services import guard, nodes
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(name="sync.notify_pending_to_local_nodes", queue="sync.dispatch")
+@trabalho_de_plataforma("avisa todas as lojas com fila pendente")
 def notify_pending_to_local_nodes():
     """Avisa cada loja com fila pendente, no grupo exclusivo dela.
 

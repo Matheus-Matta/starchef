@@ -3,6 +3,7 @@ import logging
 
 from celery import shared_task
 
+from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.models import SyncRun
 from apps.synchronization.services import bootstrap, guard
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(name="sync.run_bootstrap", queue="sync.bootstrap", time_limit=3 * 60 * 60)
+@trabalho_de_plataforma("gera a carga inicial de um no especifico, varrendo o catalogo")
 def run_bootstrap(run_id):
     """Gera o manifesto e os eventos da carga. Retomável por construção.
 

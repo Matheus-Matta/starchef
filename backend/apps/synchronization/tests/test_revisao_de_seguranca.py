@@ -178,3 +178,76 @@ def test_ack_de_uma_loja_nao_confirma_a_fila_de_outra(como_nuvem, conta, no_nuve
     for evento in lote:
         evento.refresh_from_db()
         assert evento.status == EventStatus.ACKNOWLEDGED
+
+
+# ── 4. Segredo escondido dentro de um JSONField ──────────────────────────────
+
+def test_segredo_aninhado_em_json_nao_viaja(conta):
+    """`CAMPOS_PROIBIDOS` olhava o nome do campo e parava ali.
+
+    Um `JSONField` chamado `metadata` passa no filtro e leva tudo o que houver
+    dentro — inclusive o que a maquininha devolveu e alguém gravou sem reparar.
+    """
+    from apps.synchronization.services import serialization
+
+    limpo = serialization._limpar_segredos({
+        "terminal_name": "Caixa 1",
+        "provider_token": "nao-pode-viajar",
+        "card": {"last_four": "1234", "api_key": "nao-pode-viajar"},
+        "tentativas": [{"password": "nao-pode-viajar", "status": "ok"}],
+    })
+
+    assert limpo == {
+        "terminal_name": "Caixa 1",
+        "card": {"last_four": "1234"},
+        "tentativas": [{"status": "ok"}],
+    }
+
+
+def test_json_absurdamente_aninhado_nao_vira_recursao(conta):
+    """Um documento montado de propósito não pode derrubar a gravação."""
+    from apps.synchronization.services import serialization
+
+    fundo = {"ok": 1}
+    for _ in range(200):
+        fundo = {"n": fundo}
+
+    resultado = serialization._limpar_segredos(fundo)
+    assert resultado  # não estourou a pilha, e é isso que importa
+
+
+# ── 5. Lote de entrada sem teto ──────────────────────────────────────────────
+
+def test_lote_absurdo_e_recusado_antes_de_gravar(como_loja, conta, no_nuvem, no_loja, settings):
+    """Quem valida entrada não conta com a boa vontade da origem."""
+    from apps.synchronization.services import inbox
+
+    settings.SYNC_BATCH_MAX_EVENTS = 10
+    exagerado = [
+        {"event_id": str(uuid.uuid4()), "entity_type": "restaurant",
+         "entity_id": str(uuid.uuid4()), "operation": Operation.UPSERT, "payload": {}}
+        for _ in range(10 * inbox.FOLGA + 1)
+    ]
+
+    antes = SyncEvent.objects.count()
+    with pytest.raises(inbox.BatchRejected, match="teto de recepção"):
+        inbox.store_batch(exagerado, connection_node=no_nuvem, account_id=conta.id)
+    assert SyncEvent.objects.count() == antes, "gravou parte do lote antes de recusar"
+
+
+def test_lote_dentro_do_teto_continua_passando(como_loja, conta, no_nuvem, no_loja, settings):
+    """O limite é o teto do absurdo, não um segundo corte de lote."""
+    from apps.synchronization.services import inbox
+
+    settings.SYNC_BATCH_MAX_EVENTS = 10
+    normal = [
+        {"event_id": str(uuid.uuid4()), "entity_type": "restaurant",
+         "entity_id": str(uuid.uuid4()), "operation": Operation.UPSERT,
+         "sequence": i + 1, "payload": {"fields": _campos(conta)}}
+        for i in range(10)
+    ]
+
+    aceitos, _maior = inbox.store_batch(
+        normal, connection_node=no_nuvem, account_id=conta.id
+    )
+    assert len(aceitos) == 10

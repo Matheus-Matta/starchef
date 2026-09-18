@@ -170,3 +170,5 @@ class CloseCode:
     PROTOCOL = 4400
     WRONG_ENVIRONMENT = 4412
     INCOMPATIBLE = 4426
+    #: Outro processo autenticou com a MESMA identidade de nó e assumiu a vez.
+    SUPERSEDED = 4409

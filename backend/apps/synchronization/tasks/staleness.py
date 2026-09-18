@@ -8,12 +8,14 @@ import logging
 
 from celery import shared_task
 
+from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.services import guard, staleness
 
 logger = logging.getLogger(__name__)
 
 
 @shared_task(name="sync.expire_stale_queues", queue="sync.cleanup")
+@trabalho_de_plataforma("expira filas orfas de qualquer conta")
 def expire_stale_queues():
     if not guard.is_enabled():
         return {}

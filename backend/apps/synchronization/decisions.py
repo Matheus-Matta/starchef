@@ -25,7 +25,12 @@ EXCLUDED = {
     "synchronization.SyncRun": "Tabela interna da sincronização (§14.5).",
     "synchronization.SyncConflict": "Tabela interna da sincronização (§14.5).",
     "synchronization.SyncFileTransfer": "Tabela interna da sincronização (§14.5).",
-    "synchronization.SyncDirty": "Tabela interna da sincronização (§14.5).",
+    "synchronization.SyncDirty": "Tabela interna da sincronização (§14.5)."
+    ,
+    # Credencial de matrícula. Sincronizá-la mandaria para a LOJA o hash do
+    # bilhete de todas as outras — e o bilhete é justamente o que autoriza
+    # uma instalação nova a existir.
+    "synchronization.SyncEnrollmentTicket": "Credencial de matrícula; nasce e morre na nuvem.",
     # Plataforma/SaaS: vive só na nuvem, a loja não precisa nem pode alterar.
     "accounts.Plan": "Cadastro da plataforma; a loja não opera planos.",
     "accounts.Permission": (

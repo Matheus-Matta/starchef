@@ -14,9 +14,32 @@ from apps.synchronization.services import crypto
 
 logger = logging.getLogger(__name__)
 
+#: Quantas vezes o lote configurado ainda é aceito na recepção.
+FOLGA = 4
+
 
 class CrossTenantRejected(PermissionError):
     """Evento cuja conta ou destino não bate com a conexão autenticada."""
+
+
+class BatchRejected(ValueError):
+    """Lote fora dos limites combinados — recusado antes de gravar qualquer coisa."""
+
+
+def _limites():
+    """Tetos de recepção, derivados dos de envio.
+
+    O remetente já corta em `SYNC_BATCH_MAX_EVENTS` e `SYNC_BATCH_MAX_BYTES`,
+    mas isso é disciplina de quem envia, e quem valida entrada não pode contar
+    com a boa vontade da origem — mesmo autenticada. A folga generosa existe
+    para o limite nunca recusar tráfego legítimo: ele é o teto do absurdo, não
+    um segundo corte de lote.
+    """
+    from django.conf import settings
+
+    eventos = int(getattr(settings, "SYNC_BATCH_MAX_EVENTS", 200)) * FOLGA
+    bytes_por_evento = int(getattr(settings, "SYNC_BATCH_MAX_BYTES", 1_048_576))
+    return eventos, bytes_por_evento
 
 
 def store_batch(events_payload, *, connection_node, account_id, run=None):
@@ -30,6 +53,7 @@ def store_batch(events_payload, *, connection_node, account_id, run=None):
     from apps.synchronization.services import nodes
 
     destino = nodes.self_node()
+    _validar_lote(events_payload, connection_node)
     aceitos, maior_sequencia = [], 0
 
     with transaction.atomic():
@@ -41,6 +65,36 @@ def store_batch(events_payload, *, connection_node, account_id, run=None):
             maior_sequencia = max(maior_sequencia, int(bruto.get("sequence") or 0))
 
     return aceitos, maior_sequencia
+
+
+def _validar_lote(events_payload, connection_node):
+    """Recusa o lote inteiro ANTES de gravar, se vier fora do combinado.
+
+    Recusar antes importa: gravar metade e estourar no meio deixaria a inbox
+    com um pedaço de um lote que a origem considera não entregue, e ela
+    reenviaria o lote todo — a deduplicação resolveria, mas o estado
+    intermediário é exatamente o que ninguém quer ter de explicar depois.
+    """
+    max_eventos, max_bytes = _limites()
+    if len(events_payload) > max_eventos:
+        logger.error(
+            "sync: lote com %s eventos do nó %s (teto %s)",
+            len(events_payload), connection_node.id, max_eventos,
+        )
+        raise BatchRejected(
+            f"Lote com {len(events_payload)} eventos; o teto de recepção é {max_eventos}."
+        )
+
+    for bruto in events_payload:
+        tamanho = len(crypto.canonical_json(bruto.get("payload") or {}))
+        if tamanho > max_bytes:
+            logger.error(
+                "sync: evento %s do nó %s com %s bytes (teto %s)",
+                bruto.get("event_id"), connection_node.id, tamanho, max_bytes,
+            )
+            raise BatchRejected(
+                f"Evento {bruto.get('event_id')} tem {tamanho} bytes; o teto é {max_bytes}."
+            )
 
 
 def _validar_escopo(bruto, connection_node, destino, account_id):

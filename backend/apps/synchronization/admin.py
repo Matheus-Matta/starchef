@@ -6,7 +6,13 @@ from unfold.admin import ModelAdmin
 
 from apps.synchronization.admin_actions import NodeActionsMixin
 from apps.synchronization.constants import EventStatus, NodeStatus, RunStatus
-from apps.synchronization.models import SyncConflict, SyncEvent, SyncNode, SyncRun
+from apps.synchronization.models import (
+    SyncConflict,
+    SyncEnrollmentTicket,
+    SyncEvent,
+    SyncNode,
+    SyncRun,
+)
 
 CORES_NO = {
     NodeStatus.ACTIVE: "#16a34a",
@@ -136,4 +142,34 @@ class SyncConflictAdmin(ModelAdmin):
                        "remote_payload", "created_at")
 
     def has_add_permission(self, request):
+        return False
+
+
+@admin.register(SyncEnrollmentTicket)
+class SyncEnrollmentTicketAdmin(ModelAdmin):
+    """Só leitura. Emitir é `manage.py sync_issue_ticket`, e há um motivo.
+
+    O código em claro existe uma vez só, na saída do comando. Um formulário de
+    criação no Admin teria de exibi-lo numa página que fica no histórico do
+    navegador, no log do proxy e, se alguém apertar Ctrl+P por engano, no
+    papel. O comando entrega o código ao terminal de quem já está no servidor.
+    """
+
+    list_display = ("label", "account", "estado", "created_at", "expires_at", "used_at")
+    list_filter = ("account",)
+    search_fields = ("label",)
+    readonly_fields = ("account", "restaurant", "code_hash", "label", "created_by",
+                       "created_at", "expires_at", "used_at", "used_by_node",
+                       "used_from_ip")
+
+    @admin.display(description="Estado")
+    def estado(self, obj):
+        if obj.used_at:
+            return "usado"
+        return "aberto" if obj.utilizavel else "vencido"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False

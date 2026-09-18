@@ -8,6 +8,7 @@ from django.http import HttpResponse
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
+from apps.core import rls
 from apps.synchronization.node_auth import metrics_token_ok
 from apps.synchronization.services import guard, metrics
 
@@ -32,7 +33,13 @@ class SyncMetricsView(APIView):
                 "# sincronização desligada nesta instalação (SYNC_ENABLED=false)\n",
                 content_type=CONTENT_TYPE,
             )
-        return HttpResponse(metrics.render(), content_type=CONTENT_TYPE)
+        # As métricas contam TODAS as contas — é o que uma métrica de
+        # plataforma é. Com RLS ligada e sem esta declaração, cada número
+        # viraria zero e o painel diria "nenhuma fila pendente" para uma nuvem
+        # com a fila cheia: o pior resultado possível para um alerta.
+        with rls.escopo_da_plataforma("métricas de sincronização"):
+            corpo = metrics.render()
+        return HttpResponse(corpo, content_type=CONTENT_TYPE)
 
     def _autorizado(self, request):
         """Token de raspagem OU superusuário. Nesta ordem, e sem lista de auth.

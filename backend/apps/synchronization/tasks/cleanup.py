@@ -2,6 +2,8 @@
 import logging
 
 from celery import shared_task
+
+from apps.core.rls import trabalho_de_plataforma
 from django.conf import settings
 
 from apps.synchronization.services import guard, recovery
@@ -10,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(name="sync.prune_acknowledged_events", queue="sync.cleanup")
+@trabalho_de_plataforma("retencao, que conta linhas de todas as contas")
 def prune_acknowledged_events(dias=None):
     """Limpeza conservadora: só ACKNOWLEDGED e só depois da retenção.
 
