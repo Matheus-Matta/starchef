@@ -119,7 +119,10 @@ reprovada — dá para usar em script.
 
 Qualquer valor do perfil pode ser sobrescrito: `--workers`, `--rate`,
 `--duration`, `--terminals`, `--waiters`, `--sales`, `--chaos-ratio`,
-`--sloppy-ratio`, `--offline-ratio`, `--seed`.
+`--sloppy-ratio`, `--seed`.
+
+`--offline-ratio` saiu junto com a simulação offline: a linha 3.x do PDV é
+só-conectada, e manter a opção sugeriria um comportamento que o app não tem.
 
 **A taxa é um ALVO, não uma promessa.** O gerador dispara em malha aberta: se o
 servidor não acompanha, a taxa alcançada cai e isso aparece no relatório como
@@ -189,48 +192,76 @@ Pensada como ataque, em três fases:
 3. **Envio de formulários sob carga** — POST nos recursos que as telas de
    cadastro usam, metade preenchido errado, mais corpos crus.
 
-### 3.3 `desktop` — frota de PDVs simulados
+### 3.3 `desktop` — o PDV do caixa
 
-Os PDVs são **simuladores em Python do protocolo do PDV**, não o binário
-Flutter. Eles reproduzem o que está em
-[`PDV_OFFLINE_SCALE_ARCHITECTURE.md`](PDV_OFFLINE_SCALE_ARCHITECTURE.md):
-fila de saída transacional, `operation_id` como `Idempotency-Key`, ID local
-`offline-<uuid>` trocado pelo definitivo quando a criação sobe, barreira de
-dependência (fechamento e recebimento esperam os itens), escada de retentativa
-(5s, 15s, 30s, 1min, 5min — com o relógio comprimido) e `FAILED` definitivo
-para recusa de regra de negócio.
+Simula o **`pdv_desktop` 3.x**, que é só-conectado: ele fala direto com UM
+backend e não opera offline. As rotas e os corpos saem do código do app, não de
+suposição — se o app mudar de rota, a suíte passa a medir a rota errada e é
+isso que os testes de fumaça pegam.
 
-A topologia é a real: **um Caixa Principal e N Secundários**, cada um com seu
-`X-Terminal-Id`. O secundário nunca fala com a nuvem — entrega ao principal,
-que guarda recibo por `operation_id` e entrega ao backend.
+**A topologia é escolha de execução, não do código.** Aponte `--base-url` para
+o backend da loja e você mede a operação com backend local; aponte para a nuvem
+e mede o acesso direto.
 
-Quatro fases:
+Cinco fases:
 
-1. **Turnos simultâneos** — abre caixa, vende, sangra, supre, fecha caixa; a
-   rede cai no meio conforme `--offline-ratio`. A venda cobre comanda e balcão,
-   lançamento de item, envio à cozinha (com `offline_printed` quando a operação
-   ficou na fila), fechamento com `expected_total` divergente de propósito,
-   recebimento em dinheiro/cartão/PIX com troco — e a venda pela **Balança
-   Rápida** nas duas rotas: online com `ScaleReading` e offline com o peso
-   bruto no corpo do `checkout-command`.
-2. **Principal fora do ar** — os secundários continuam vendendo na fila deles;
-   verifica-se que a fila cresce e depois escoa quando ele volta.
-3. **Apagão geral** — todos offline, venda em massa, retorno simultâneo.
-4. **Reenvio duplicado** — os mesmos recebimentos são reenviados com a chave
-   original.
+1. **Abertura simultânea** — o app dispara sete leituras ao abrir (perfil,
+   categorias, produtos, mesas, comandas, formas de pagamento, estações). Com N
+   terminais ligando às 8h isso é uma rajada, não uma fila, e é o pior instante
+   do dia.
+2. **Abrir caixa** — sem sessão aberta o backend recusa o recebimento, e está
+   certo. A estação tem lista de operadores autorizados, então a suíte se
+   vincula antes: falta de pré-condição do teste não pode virar "defeito do
+   sistema" no relatório.
+3. **Turno** — vendas concorrentes de ponta a ponta: abre o pedido (comanda ou
+   balcão), lança item, recebe em `/orders/{id}/pay/`.
+4. **Fiscal** — emissão, e uma regra que vale sozinha: `emitted: false` **sem**
+   `message` é defeito. Sem motivo, o PDV cai num texto fixo que ele inventa, e
+   o operador lê "o provedor fiscal não está configurado" para qualquer falha —
+   inclusive rejeição da SEFAZ.
+5. **Conferência** — ninguém foi cobrado duas vezes, e o valor cobrado bate com
+   o lançado.
 
-E então a verificação que importa mais que a vazão: para cada venda paga, o
-teste lê `/orders/<id>/payments/` e confere que **existe um recebimento só**.
+### 3.4 `mobile` — o app do garçom
 
-### 3.4 `mobile` — enxame de aplicativos de garçom
+Simula o **`pdv_mobile` 3.x**, também só-conectado. Não é cópia do desktop
+porque o garçom trabalha diferente:
 
-Mesma mecânica, um degrau abaixo na cadeia: o aparelho só alcança o Caixa
-Principal. Verifica as três promessas do app real:
+- ele **abre o pedido e lança o item no mesmo gesto**
+  (`orders/create-with-item/`, com o item aninhado): na mesa ninguém abre
+  comanda vazia para depois anotar;
+- ele **não fecha conta** — quem recebe é o caixa. Medir pagamento aqui seria
+  medir o app errado;
+- são **muitos aparelhos lançando pouco cada**, o oposto do caixa. É o perfil
+  que expõe contenção de escrita.
 
-- leitura sem principal vem do **cache marcado** (`_from_cache`, `_cached_at`);
-- **sem cache, a leitura falha** com motivo — não inventa resposta;
-- **a sessão de caixa nunca vem do cache**: sem principal, dinheiro não aparece
-  como forma de pagamento.
+Três fases: abertura simultânea (com régua mais apertada que a do caixa — o
+garçom está em pé na frente do cliente), salão lançando em paralelo, e a
+conferência de que todo lançamento aceito virou item de verdade.
+
+### 3.5 `sync` — a fila entre os dois backends
+
+Exercita a sincronização nuvem↔loja: identidade dos nós, escrita pesada
+enchendo a outbox, drenagem da fila, e a matrícula sob tentativa de força
+bruta. A garantia que ela cobra não é "a fila esvaziou" — é **"nada sumiu"**
+entre a outbox e a inbox.
+
+Inclui a fase de **contenção**, que responde se a captura de eventos serializa
+a escrita do negócio. Toda gravação sincronizada chama `outbox.record()` dentro
+da transação do negócio, e ele incrementa `sequence_counter` na linha do nó —
+sempre a MESMA linha. A fase mede a mesma gravação em concorrência 1 e em N: se
+a mediana cresce proporcional à concorrência enquanto a vazão fica plana, há
+serialização.
+
+> **Leia a atribuição antes do número.** Com `SYNC_ENABLED=false` no alvo,
+> `outbox.record` sai cedo e `next_sequence` nem é chamado — a medição continua
+> válida como carga de escrita, mas não diz nada sobre o lock. A fase avisa
+> quando esse é o caso.
+>
+> Para medir o lock de verdade, o alvo precisa de `SYNC_ENABLED=true` e nó
+> provisionado. Há também um teste de unidade que prova o bloqueio por ordem de
+> eventos, sem cronômetro, em
+> `backend/apps/synchronization/tests/test_contencao_da_sequencia.py`.
 
 ---
 
@@ -338,13 +369,13 @@ loadtest/
 
 ## 8. O que este teste NÃO faz
 
-- Não executa o código Dart do PDV: os PDVs e os aparelhos são simuladores do
-  **protocolo** documentado. Quem testa o núcleo Flutter por dentro — SQLite,
-  fila, balança, impressão — é [`TESTE_CARGA_PDV.md`](TESTE_CARGA_PDV.md). Homologação de balança, impressora e leitor
-  continua sendo física (ver `PDV_OFFLINE_SCALE_ARCHITECTURE.md`).
-- Não fala a API local `/local/...` nem `/v1/relay` de um Caixa Principal real:
-  a cadeia secundário → principal acontece dentro do processo do teste, com a
-  mesma semântica de recibo por `operation_id`.
+- Não executa o código Dart do PDV: as suítes reproduzem as REQUISIÇÕES dos
+  apps, extraídas do código deles, não o binário Flutter. Homologação de
+  balança, impressora e leitor continua sendo física.
+- Não simula operação offline. A linha 3.x do PDV é só-conectada — a simulação
+  da cadeia Caixa Principal → Secundários, que existia aqui para a linha 1.8.x,
+  foi removida junto com ela. Testar uma arquitetura aposentada dá a impressão
+  de cobertura que não existe.
 - Não mede WebSocket. As invalidações em tempo real ficam fora desta versão.
 - Não substitui o `pytest`: ele prova regra de negócio; este prova comportamento
   sob volume.

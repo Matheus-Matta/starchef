@@ -36,7 +36,6 @@ def build_parser():
     parser.add_argument("--chaos-ratio", dest="chaos_ratio", type=float, help="fracao de payloads errados (0 a 1)")
     parser.add_argument("--sloppy-ratio", dest="sloppy_ratio", type=float,
                         help="fracao de payloads validos porem toscos (CPF errado, e-mail sem arroba)")
-    parser.add_argument("--offline-ratio", dest="offline_ratio", type=float, help="chance de o terminal cair por venda")
     parser.add_argument("--terminals", type=int, help="quantidade de PDVs simulados")
     parser.add_argument("--waiters", type=int, help="quantidade de aparelhos de garcom")
     parser.add_argument("--sales", type=int, help="vendas por terminal")

@@ -35,7 +35,6 @@ class LoadConfig:
 
     chaos_ratio: float = 0.35
     sloppy_ratio: float = 0.3
-    offline_ratio: float = 0.35
     terminals: int = 6
     waiters: int = 10
     sales: int = 20
@@ -58,7 +57,7 @@ class LoadConfig:
         for campo in (
             "base_url", "frontend_url", "cloud_url", "cloud_username", "cloud_password",
             "username", "password", "workers", "rate",
-            "duration", "count", "timeout", "chaos_ratio", "sloppy_ratio", "offline_ratio",
+            "duration", "count", "timeout", "chaos_ratio", "sloppy_ratio",
             "terminals", "waiters", "sales", "seed", "report_dir", "label",
             "cleanup", "verbose", "skip_bootstrap",
         ):
@@ -86,7 +85,6 @@ class LoadConfig:
             "duracao_por_fase_s": self.duration,
             "proporcao_caos": self.chaos_ratio,
             "proporcao_desleixo": self.sloppy_ratio,
-            "proporcao_offline": self.offline_ratio,
             "terminais_pdv": self.terminals,
             "garcons": self.waiters,
             "vendas_por_terminal": self.sales,

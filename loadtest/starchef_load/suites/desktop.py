@@ -51,7 +51,10 @@ def _preco(produto):
 def fase_abertura(ctx):
     """N terminais ligando ao mesmo tempo. É o pior instante do dia."""
     ctx.log(f"[{SUITE}] fase 1/5 — abertura simultânea dos terminais")
-    terminais = max(2, min(12, ctx.config.workers or 4))
+    # `--terminals` é o botão que descreve a FROTA; `--workers` descreve a
+    # pressão de escrita. Misturar os dois faria o perfil "pesado" abrir 128
+    # caixas, que nenhuma loja tem.
+    terminais = max(2, min(24, ctx.config.terminals or 4))
     latencias = []
     trava = threading.Lock()
 

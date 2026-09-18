@@ -57,7 +57,8 @@ def _sessao_garcom(ctx, indice):
 def fase_abertura(ctx):
     """O salão inteiro abrindo o app ao mesmo tempo, no início do turno."""
     ctx.log(f"[{SUITE}] fase 1/3 — abertura simultânea dos aparelhos")
-    aparelhos = max(2, min(20, ctx.config.workers or 6))
+    # `--waiters` descreve o SALÃO; `--workers` descreve a pressão de escrita.
+    aparelhos = max(2, min(60, ctx.config.waiters or 6))
     latencias = []
     trava = threading.Lock()
 
