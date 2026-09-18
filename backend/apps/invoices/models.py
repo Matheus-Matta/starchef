@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
 
 from apps.core.models import TenantModel
@@ -54,6 +55,43 @@ class FiscalProfile(TenantModel):
 
     def __str__(self):
         return self.name
+
+
+def validar_emissao_local(*, local_fiscal_enabled, local_fiscal_contingency,
+                          provider, conta_autoriza):
+    """As recusas da emissao fiscal local. Devolve `{campo: mensagem}`.
+
+    Fonte unica: o `clean()` do model (Admin) e o `validate()` do serializer
+    (API) chamam esta mesma funcao. Duas copias da regra viram duas regras.
+
+    Tres estados sao recusados, e cada um por um motivo concreto:
+
+    - **contingencia sem emissao local**: um flag que nao liga nada, mas passa
+      a impressao de que a loja esta coberta para uma queda de rede — quando a
+      venda continua indo para o backend;
+    - **emissao local sem a conta autorizar**: a trava de cima existe
+      justamente para nao depender de ninguem lembrar de conferir a de baixo;
+    - **emissao local com provedor manual**: o terminal se anunciaria como
+      autoridade fiscal e nao emitiria nada, porque o unico motor local fala
+      com o Comunicador.
+    """
+    erros = {}
+    if local_fiscal_contingency and not local_fiscal_enabled:
+        erros["local_fiscal_contingency"] = (
+            "Contingencia exige a emissao local ligada. Sozinha ela nao liga "
+            "nada e passa a impressao de que a loja esta coberta."
+        )
+    if local_fiscal_enabled and not conta_autoriza:
+        erros["local_fiscal_enabled"] = (
+            "A conta ainda nao esta autorizada a emitir no terminal. Ligue "
+            "`local_fiscal_allowed` na conta antes."
+        )
+    if local_fiscal_enabled and provider == FiscalConfig.PROVIDER_MANUAL:
+        erros["local_fiscal_enabled"] = (
+            "O provedor Manual nao transmite nada. O terminal se anunciaria "
+            "como autoridade fiscal sem emitir documento nenhum."
+        )
+    return erros
 
 
 class FiscalConfig(TenantModel):
@@ -128,6 +166,31 @@ class FiscalConfig(TenantModel):
     uf = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=9, blank=True)
 
+    # Emissao fiscal LOCAL (no terminal). Tudo desligado por padrao, e o
+    # padrao nao e cautela decorativa: um terminal que liga sozinho comeca a
+    # alocar numeracao propria e a assinar NFC-e REAIS com o certificado da
+    # empresa. Documento fiscal emitido nao se apaga — so se cancela, um a um,
+    # dentro do prazo.
+    #
+    # Sao dois niveis: `accounts.Account.local_fiscal_allowed` autoriza a conta
+    # e estes campos ligam a loja. A loja so liga se a conta estiver ligada.
+    local_fiscal_enabled = models.BooleanField(
+        default=False,
+        help_text="O terminal emite a NFC-e localmente, sem passar pelo backend.",
+    )
+    local_fiscal_contingency = models.BooleanField(
+        default=False,
+        help_text=(
+            "O terminal pode emitir em contingencia (tpEmis=9) quando nao "
+            "alcancar o autorizador. Exige a emissao local ligada."
+        ),
+    )
+    local_fiscal_url = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Onde o Comunicador escuta no terminal (padrao 127.0.0.1:8090).",
+    )
+
     # Integracao NFC-e / certificado — EM BRANCO ate configurar.
     csc_id = models.CharField(max_length=6, blank=True, help_text="ID do CSC (idToken).")
     csc_token = models.CharField(max_length=64, blank=True, help_text="CSC (segredo) da NFC-e.")
@@ -162,6 +225,20 @@ class FiscalConfig(TenantModel):
         ),
     )
     is_active = models.BooleanField(default=True)
+
+    def clean(self):
+        """Recusa combinacoes que parecem cobertura e nao cobrem nada."""
+        super().clean()
+        erros = validar_emissao_local(
+            local_fiscal_enabled=self.local_fiscal_enabled,
+            local_fiscal_contingency=self.local_fiscal_contingency,
+            provider=self.provider,
+            conta_autoriza=bool(getattr(self.account, "local_fiscal_allowed", False))
+            if self.account_id
+            else False,
+        )
+        if erros:
+            raise DjangoValidationError(erros)
 
     class Meta:
         constraints = [

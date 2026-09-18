@@ -3,7 +3,13 @@ from rest_framework import serializers
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.invoices.fiscal import format_access_key
-from apps.invoices.models import FiscalConfig, FiscalProfile, Invoice, InvoiceItem
+from apps.invoices.models import (
+    FiscalConfig,
+    FiscalProfile,
+    Invoice,
+    InvoiceItem,
+    validar_emissao_local,
+)
 
 
 class FiscalProfileSerializer(TenantModelSerializer):
@@ -92,6 +98,25 @@ class FiscalConfigSerializer(TenantModelSerializer):
                 {field: "Este token e administrado automaticamente pela sincronizacao Focus NFe." for field in managed_tokens}
             )
         provider = attrs.get("provider", getattr(self.instance, "provider", FiscalConfig.PROVIDER_MANUAL))
+
+        # Emissão fiscal local: as MESMAS recusas do `clean()` do model, vindas
+        # da mesma função. Duas cópias da regra viram duas regras.
+        conta = attrs.get("account") or getattr(self.instance, "account", None)
+        erros_locais = validar_emissao_local(
+            local_fiscal_enabled=attrs.get(
+                "local_fiscal_enabled",
+                getattr(self.instance, "local_fiscal_enabled", False),
+            ),
+            local_fiscal_contingency=attrs.get(
+                "local_fiscal_contingency",
+                getattr(self.instance, "local_fiscal_contingency", False),
+            ),
+            provider=provider,
+            conta_autoriza=bool(getattr(conta, "local_fiscal_allowed", False)),
+        )
+        if erros_locais:
+            raise serializers.ValidationError(erros_locais)
+
         document_model = attrs.get("document_model", getattr(self.instance, "document_model", FiscalConfig.MODEL_NFCE))
         if provider == FiscalConfig.PROVIDER_FOCUS_NFE and document_model == FiscalConfig.MODEL_SAT:
             raise serializers.ValidationError({"document_model": "A Focus NFe desta integracao aceita NF-e ou NFC-e."})

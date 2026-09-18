@@ -51,6 +51,24 @@ class Account(TimeStampedModel):
     phone = models.CharField(max_length=20, blank=True, null=True)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
     plan = models.ForeignKey(Plan, null=True, blank=True, related_name="accounts", on_delete=models.SET_NULL)
+    #: A conta PODE usar emissão fiscal local (no terminal)?
+    #:
+    #: Trava de cima de duas. Esta autoriza a conta; a de baixo, em
+    #: `FiscalConfig`, liga loja por loja — e a loja só liga se esta estiver
+    #: ligada. Duas travas porque o estrago é irreversível: um terminal que
+    #: liga sozinho começa a alocar numeração própria e a assinar NFC-e REAIS
+    #: com o certificado da empresa, e documento fiscal emitido não se apaga —
+    #: só se cancela, um a um, dentro do prazo.
+    #:
+    #: Desligado por engano custa uma configuração esquecida. Ligado por engano
+    #: custa documento irreversível no CNPJ do cliente.
+    local_fiscal_allowed = models.BooleanField(
+        default=False,
+        help_text=(
+            "Autoriza esta conta a emitir NFC-e no proprio terminal. "
+            "Cada loja ainda precisa ser habilitada na configuracao fiscal."
+        ),
+    )
     timezone = models.CharField(max_length=50, default="America/Sao_Paulo")
     default_currency = models.CharField(max_length=3, default="BRL")
     trial_ends_at = models.DateTimeField(null=True, blank=True)

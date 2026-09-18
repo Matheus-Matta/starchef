@@ -42,7 +42,11 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
    dependencies=("restaurant",),
    # Segredo de emissão: o CSC vai por canal próprio, cifrado (ver a memória
    # "CSC no terminal"). Ele NUNCA viaja no payload de sincronização.
-   exclude_fields=("csc_token_homologation", "csc_token_production"))
+   exclude_fields=("csc_token_homologation", "csc_token_production"),
+   # `local_fiscal_url` é o endereço do Comunicador NAQUELA máquina, como o IP
+   # da impressora: a nuvem não tem como saber e não pode zerar o que o
+   # técnico configurou na loja.
+   local_only_fields=("local_fiscal_url",))
 
 # 4. Funções, permissões e usuários. Sessão autenticada nunca sincroniza.
 _e("permission", "accounts.Permission", conflict_policy=CLOUD, flow="cloud_to_local")
@@ -85,6 +89,8 @@ _e("scale", "printers.Scale", conflict_policy=CLOUD, dependencies=("restaurant",
    local_only_fields=("ip_address", "port", "serial_port", "is_online", "last_seen_at"))
 _e("kds_station", "kitchen.KdsStation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("kds_column", "kitchen.KdsColumn", conflict_policy=CLOUD, dependencies=("kds_station",))
+_e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA,
+   dependencies=("kds_station", "kds_column", "order_item"), include_in_bootstrap=False)
 _e("sla", "sla.ServiceLevelAgreement", conflict_policy=CLOUD, dependencies=("restaurant",),
    include_in_bootstrap=False)
 
