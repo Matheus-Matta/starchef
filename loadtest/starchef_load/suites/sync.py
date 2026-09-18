@@ -21,7 +21,7 @@ deixou de medir — ela não inventa um segundo backend.
 """
 import time
 
-from ..suites import sync_phases
+from ..suites import sync_contention, sync_phases
 from ..workers import LoadRunner
 
 SUITE = "sync"
@@ -189,5 +189,6 @@ def run(ctx):
     fila = fase_enchendo_a_outbox(ctx, papeis)
     fase_convergencia(ctx, fila)
     fase_leitura_de_gestao(ctx)
+    sync_contention.fase_contencao(ctx)
     fase_matricula_sob_ataque(ctx)
     ctx.note(SUITE, f"suite concluída em {time.time() - inicio:.1f}s")
