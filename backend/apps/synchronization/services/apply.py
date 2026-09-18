@@ -167,9 +167,55 @@ def _gravar(model, entrada, event, fields, existente):
     _validar_dependencias(model, kwargs)
 
     if existente is None:
-        return _inserir(model, kwargs, event)
+        mexeu = _inserir(model, kwargs, event)
+    else:
+        mexeu = _atualizar(existente, kwargs)
 
-    return _atualizar(existente, kwargs)
+    return _aplicar_m2m(model, entrada, event, fields) or mexeu
+
+
+def _aplicar_m2m(model, entrada, event, fields):
+    """Refaz os ManyToMany declarados, casando pela chave natural.
+
+    Um código que não existe aqui é IGNORADO, não é erro. O catálogo de
+    permissões é provisionado por código nos dois lados; uma nuvem mais nova
+    pode conhecer permissões que esta loja ainda não tem, e recusar o evento
+    inteiro por causa disso deixaria o perfil sem vínculo NENHUM — pior que
+    ficar com os que dão para resolver.
+    """
+    if not entrada.m2m_fields:
+        return False
+
+    instancia = _encontrar(model, event.entity_id)
+    if instancia is None:  # pragma: no cover — acabou de ser gravada
+        return False
+
+    mexeu = False
+    for campo, chave in entrada.m2m_fields.items():
+        if campo not in fields:
+            continue
+        relacao = getattr(instancia, campo, None)
+        if relacao is None:
+            continue
+
+        desejados = [str(v) for v in (fields.get(campo) or [])]
+        alvo = relacao.model._default_manager.filter(**{f"{chave}__in": desejados})
+        encontrados = list(alvo)
+
+        faltando = set(desejados) - {str(getattr(o, chave)) for o in encontrados}
+        if faltando:
+            logger.warning(
+                "sync: %s %s — %s valor(es) de `%s` desconhecidos aqui e "
+                "ignorados: %s", entrada.entity_type, event.entity_id,
+                len(faltando), campo, ", ".join(sorted(faltando))[:300],
+            )
+
+        atuais = set(relacao.values_list("pk", flat=True))
+        novos = {o.pk for o in encontrados}
+        if atuais != novos:
+            relacao.set(encontrados)
+            mexeu = True
+    return mexeu
 
 
 def _atualizar(instancia, kwargs):

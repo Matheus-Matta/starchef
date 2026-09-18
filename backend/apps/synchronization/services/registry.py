@@ -45,6 +45,13 @@ class SyncEntry:
     #: terminais sem a sessão de caixa que já está aberta. A direção contínua
     #: continua sendo só para cima; o que muda é a semeadura inicial.
     seed_to_local: bool = False
+    #: ManyToMany que viajam, como `{campo: atributo-chave}`.
+    #:
+    #: O vínculo vai pela CHAVE NATURAL e não pelo id: `{"permissions": "code"}`
+    #: manda `["orders.view", "cash.open"]` em vez de UUIDs. O id de uma linha
+    #: provisionada por código é diferente em cada instalação; o `code` é o
+    #: mesmo em todas, por ser único e nascer da mesma lista.
+    m2m_fields: dict = field(default_factory=dict)
     #: Filtro aplicado SÓ na carga essencial, como kwargs de `QuerySet.filter`.
     #:
     #: "Dados essenciais" leva o que a loja precisa para abrir a porta e

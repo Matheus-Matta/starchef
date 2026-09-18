@@ -28,6 +28,11 @@ EXCLUDED = {
     "synchronization.SyncDirty": "Tabela interna da sincronização (§14.5).",
     # Plataforma/SaaS: vive só na nuvem, a loja não precisa nem pode alterar.
     "accounts.Plan": "Cadastro da plataforma; a loja não opera planos.",
+    "accounts.Permission": (
+        "Catálogo global provisionado por código nos dois lados (`code` é "
+        "único): os bancos chegam ao mesmo conteúdo sozinhos. O que viaja é o "
+        "VÍNCULO com o perfil, em `role.m2m_fields`."
+    ),
     "accounts.Subscription": "Faturamento da conta, exclusivo da nuvem.",
     "accounts.GlobalSystemConfig": "Configuração global da plataforma.",
     "accounts.FirstAccessState": "Estado de onboarding, por instalação.",

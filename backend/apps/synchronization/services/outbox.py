@@ -102,7 +102,7 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
         logger.warning("sync: %s sem conta; evento descartado", entry.entity_type)
         return []
 
-    if not _direcao_permitida(entry, origem):
+    if not _direcao_permitida(entry, origem, operation=operation):
         return []
 
     destinos = nodes.targets_for(origem, account_id)
@@ -116,9 +116,25 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
     ]
 
 
-def _direcao_permitida(entry, origem):
+def _direcao_permitida(entry, origem, *, operation=Operation.UPSERT):
+    """A entidade pode sair DESTA instalação, nesta operação?
+
+    `seed_to_local` vale SÓ no SNAPSHOT, e a distinção é o ponto todo. Pedido e
+    sessão de caixa nascem na loja e sobem: a nuvem empurrá-los para baixo no
+    dia a dia brigaria com o que a loja está escrevendo naquele instante. Mas
+    uma loja que ASSUME a operação começa com o banco vazio e precisa receber o
+    estado vivo uma vez — e `SNAPSHOT` é exatamente essa uma vez, usada só pela
+    carga (`bootstrap._gerar_entidade`).
+
+    Sem isto, a carga percorria as 12 sessões de caixa, chamava `record` para
+    cada uma e recebia lista vazia de volta: a corrida terminava "COMPLETED,
+    483 processados, 0 falhas" sem ter gerado um evento sequer. O portão da
+    carga (`bootstrap._flui_para`) já conhecia a semeadura; este aqui não.
+    """
     if nodes.is_cloud():
-        return registry.flows_to_local(entry.entity_type)
+        if registry.flows_to_local(entry.entity_type):
+            return True
+        return operation == Operation.SNAPSHOT and entry.seed_to_local
     return registry.flows_to_cloud(entry.entity_type)
 
 

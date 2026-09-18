@@ -260,3 +260,92 @@ def test_caixa_fechado_nao_desce(como_nuvem, no_loja, conta, cenario):
         bootstrap.start_run(target_node=no_loja, run_type=RunType.FULL)
     )
     assert completa.get("cash_register") == 2, "'tudo' leva as duas sessões"
+
+
+# ── a carga precisa GERAR os eventos, não só percorrer as linhas ────────────
+#
+# O defeito que isto fecha: `bootstrap._flui_para` conhecia a semeadura, mas
+# `outbox._direcao_permitida` não. A carga percorria as 12 sessões de caixa,
+# chamava `record` para cada uma e recebia lista vazia de volta. A corrida
+# terminava "COMPLETED, 483 processados, 0 falhas" sem ter gerado um evento —
+# e o relatório dizia sucesso enquanto a loja não recebia uma linha.
+def test_a_carga_gera_evento_de_caixa_aberto(como_nuvem, no_loja, conta, cenario):
+    from django.contrib.auth import get_user_model
+
+    from apps.payments.models import CashRegister, CashStation
+    from apps.restaurants.models import Restaurant
+    from apps.synchronization.models import SyncEvent
+
+    restaurante = Restaurant._base_manager.filter(account=conta).first()
+    estacao = CashStation.objects.create(account=conta, restaurant=restaurante, name="Caixa 1")
+    operador = get_user_model().objects.create_user("op", "op@t.test", "x")
+    CashRegister.objects.create(
+        account=conta, restaurant=restaurante, cash_station=estacao,
+        status="open", opened_by=operador,
+    )
+
+    run = bootstrap.start_run(target_node=no_loja, run_type=RunType.FULL)
+    bootstrap.build_manifest(run)
+    antes = SyncEvent.objects.filter(entity_type="cash_register").count()
+    bootstrap.generate_events(run)
+
+    gerados = SyncEvent.objects.filter(entity_type="cash_register").count() - antes
+    assert gerados > 0, (
+        "o manifesto contava a sessão mas nenhum evento saía: o portão de "
+        "direção do outbox não conhecia `seed_to_local`"
+    )
+
+
+def test_fora_da_carga_a_nuvem_nao_empurra_caixa_para_baixo(como_nuvem, no_loja, conta,
+                                                            cenario):
+    """A semeadura vale SÓ no SNAPSHOT.
+
+    No dia a dia a nuvem empurrando sessão de caixa para a loja brigaria com o
+    que a loja está escrevendo naquele instante.
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.payments.models import CashRegister, CashStation
+    from apps.restaurants.models import Restaurant
+    from apps.synchronization.models import SyncEvent
+    from apps.synchronization.services import outbox
+
+    restaurante = Restaurant._base_manager.filter(account=conta).first()
+    estacao = CashStation.objects.create(account=conta, restaurant=restaurante, name="Caixa 2")
+    operador = get_user_model().objects.create_user("op2", "op2@t.test", "x")
+    sessao = CashRegister.objects.create(
+        account=conta, restaurant=restaurante, cash_station=estacao,
+        status="open", opened_by=operador,
+    )
+
+    antes = SyncEvent.objects.filter(entity_type="cash_register").count()
+    outbox.record(sessao)  # operação normal, não SNAPSHOT
+    depois = SyncEvent.objects.filter(entity_type="cash_register").count()
+
+    assert depois == antes, "fora da carga, caixa só sobe — nunca desce"
+
+
+def test_a_nota_do_pedido_aberto_desce_junto(como_nuvem, no_loja, conta, cenario):
+    """Não é só para imprimir o DANFE: é para NÃO EMITIR DUAS VEZES.
+
+    Se a loja assume um pedido que já teve NFC-e emitida na nuvem e não sabe
+    disso, ela emite outra — e documento fiscal em duplicidade não se apaga, só
+    se cancela, um a um, dentro do prazo.
+    """
+    from apps.synchronization.services.registry import registry
+
+    for tipo in ("invoice", "invoice_item", "payment"):
+        entrada = registry.require(tipo)
+        assert entrada.seed_to_local, f"{tipo} precisa descer na carga"
+        assert entrada.essential_filter, (
+            f"{tipo} sem filtro despejaria o histórico fiscal inteiro na loja"
+        )
+
+
+def test_a_nota_continua_com_resolucao_manual(como_nuvem):
+    """Semear não pode afrouxar a regra: divergência fiscal vira conflito."""
+    from apps.synchronization.constants import ConflictResolution
+    from apps.synchronization.services.registry import registry
+
+    assert registry.require("invoice").conflict_policy == ConflictResolution.MANUAL
+    assert registry.require("invoice_item").conflict_policy == ConflictResolution.MANUAL

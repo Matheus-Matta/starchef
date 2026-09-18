@@ -54,9 +54,17 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
    local_only_fields=("local_fiscal_url",))
 
 # 4. Funções, permissões e usuários. Sessão autenticada nunca sincroniza.
-_e("permission", "accounts.Permission", conflict_policy=CLOUD, flow="cloud_to_local")
+# `permission` NÃO sincroniza — ver `decisions.py`. É catálogo global
+# provisionado por código nos dois lados, com `code` único: os dois bancos
+# chegam ao mesmo conteúdo sozinhos. Sincronizá-lo gerava um evento por
+# permissão que era descartado na hora por não ter conta ("permission sem
+# conta; evento descartado"), enchendo o log a cada `sync_permissions`.
+#
+# O que precisa viajar é o VÍNCULO: sem `m2m_fields`, o perfil de acesso
+# chegava na loja sem permissão nenhuma, porque a serialização só olhava
+# campos concretos e ManyToMany não é um deles.
 _e("role", "accounts.Role", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account", "permission"))
+   dependencies=("account",), m2m_fields={"permissions": "code"})
 _e("user", "auth.User", conflict_policy=CLOUD, flow="cloud_to_local",
    exclude_fields=("last_login",))
 _e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to_local",
@@ -183,10 +191,20 @@ _e("payment", "payments.Payment", conflict_policy=LOJA, flow="local_to_cloud",
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 
 # 15. Documentos fiscais. Conflito aqui nunca é resolvido em silêncio.
+# A NOTA dos pedidos abertos desce junto com eles, e a razão é mais forte que
+# imprimir o DANFE: é NÃO EMITIR DUAS VEZES. Se a loja assume um pedido que já
+# teve NFC-e emitida na nuvem e não sabe disso, ela emite outra — e documento
+# fiscal em duplicidade não se apaga, só se cancela, um a um, dentro do prazo.
+#
+# `MANUAL` continua valendo: a nota entra na semeadura porque ainda não existe
+# na loja, mas uma divergência posterior vira SyncConflict para uma pessoa
+# decidir. Documento fiscal nunca se resolve em silêncio (§15).
 _e("invoice", "invoices.Invoice", conflict_policy=MANUAL, flow="local_to_cloud",
-   dependencies=("order", "fiscal_profile"), include_in_bootstrap=False)
+   dependencies=("order", "fiscal_profile"),
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 _e("invoice_item", "invoices.InvoiceItem", conflict_policy=MANUAL, flow="local_to_cloud",
-   dependencies=("invoice",), include_in_bootstrap=False)
+   dependencies=("invoice",),
+   seed_to_local=True, essential_filter={"invoice__order__status__in": ABERTOS})
 
 # 16. Produção e periféricos em uso.
 _e("print_job", "printers.PrintJob", conflict_policy=LOJA, flow="local_to_cloud",

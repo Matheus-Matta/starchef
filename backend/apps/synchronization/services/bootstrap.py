@@ -154,19 +154,40 @@ def _gerar_entidade(run, entrada, chunk):
 
     consulta = _queryset(entrada, run)
     processados = 0
+    vistos = 0
+    sem_evento = 0
     for instancia in consulta.iterator(chunk_size=chunk):
+        vistos += 1
         try:
             with transaction.atomic():
-                outbox.record(instancia, operation=Operation.SNAPSHOT, run=run, force=True)
-            processados += 1
+                eventos = outbox.record(
+                    instancia, operation=Operation.SNAPSHOT, run=run, force=True
+                )
+            # Conta EVENTO gerado, não instância percorrida. Contar instância
+            # fazia uma carga que não gerou nada terminar "483 processados, 0
+            # falhas" — o relatório dizia sucesso enquanto a loja não recebia
+            # uma linha sequer, e foi isso que escondeu o defeito do portão de
+            # direção por dias.
+            if eventos:
+                processados += len(eventos)
+            else:
+                sem_evento += 1
         except Exception as erro:  # noqa: BLE001 — um registro ruim não para a carga
             logger.exception("sync: falha no snapshot de %s", entrada.entity_type)
             run.failed_records += 1
             run.error = str(erro)[:2000]
-        if processados % chunk == 0:
+        if processados and processados % chunk == 0:
             _progresso(run, processados)
             processados = 0
     _progresso(run, processados)
+    if sem_evento:
+        # Não é erro — uma entidade sem destino ativo cai aqui legitimamente.
+        # Mas silêncio total era o que tornava o defeito invisível.
+        logger.warning(
+            "sync: carga %s — %s de %s registro(s) de `%s` não geraram evento "
+            "nenhum. Confira direção, destino ativo e conta do registro.",
+            run.id, sem_evento, vistos, entrada.entity_type,
+        )
     run.processed_entities += 1
     run.save(update_fields=["processed_entities", "failed_records", "error"])
 

@@ -69,6 +69,17 @@ def serialize(instance, entry):
             dados[f"{nome}_id"] = _encode(getattr(instance, campo.attname))
         else:
             dados[nome] = _encode(getattr(instance, nome))
+
+    for campo, chave in (entry.m2m_fields or {}).items():
+        # Lista de chaves naturais, ordenada: assim dois lados com o mesmo
+        # vínculo produzem o mesmo payload, e o checksum não muda à toa só
+        # porque o banco devolveu em outra ordem.
+        relacao = getattr(instance, campo, None)
+        if relacao is None:
+            continue
+        dados[campo] = sorted(
+            str(valor) for valor in relacao.values_list(chave, flat=True)
+        )
     return dados
 
 
