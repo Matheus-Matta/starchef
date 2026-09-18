@@ -163,8 +163,25 @@ jobs:
       - name: Gerar ZIP portátil do Windows
         shell: pwsh
         run: |
+          # Uma cópia do executável com o nome da linhagem 1.8.x.
+          #
+          # O atualizador do PDV antigo procura `starchef_pdv.exe` dentro do ZIP
+          # e RECUSA o pacote quando não o encontra — a migração falharia a cada
+          # abertura, para sempre, sem nunca concluir. A cópia também mantém
+          # válido o atalho que já existe na área de trabalho das instalações
+          # antigas, que aponta para aquele nome.
+          #
+          # O Flutter no Windows localiza `data\` ao lado do executável, não
+          # pelo nome dele, então os dois arquivos rodam o mesmo aplicativo.
+          $release = ".\build\windows\x64\runner\Release"
+          $novo = Join-Path $release "starchef_pdv_desktop.exe"
+          if (-not (Test-Path $novo)) {
+            throw "Executável não encontrado em $novo — o nome do binário mudou?"
+          }
+          Copy-Item $novo (Join-Path $release "starchef_pdv.exe") -Force
+
           $output = "..\artifacts\StarChef-PDV-Windows-v$env:APP_VERSION.zip"
-          Compress-Archive -Path ".\build\windows\x64\runner\Release\*" -DestinationPath $output -Force
+          Compress-Archive -Path "$release\*" -DestinationPath $output -Force
 
       - name: Upload dos pacotes Windows
         uses: actions/upload-artifact@v4
@@ -347,6 +364,7 @@ jobs:
                   for asset in release.get("assets", []):
                       if asset.get("name") != "latest-desktop.json":
                           continue
+                      # Herdado ou novo, o manifesto sai nos dois nomes.
                       with urlopen(asset["browser_download_url"], timeout=30) as corpo:
                           anterior = json.load(corpo)
                       print(
@@ -405,10 +423,24 @@ jobs:
           # O nome tambem precisa bater com o que o app desta linhagem pede em
           # `pdv_desktop/lib/core/update/pdv_update_service.dart`: o asset do
           # Release E a URL, entao um nome diferente aqui e um 404 la.
-          (assets / "latest-desktop.json").write_text(
-              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
+          corpo = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+          (assets / "latest-desktop.json").write_text(corpo, encoding="utf-8")
+
+          # `latest.json` é o nome que a linhagem 1.8.x consome, e publicá-lo
+          # aqui é o que FAZ os terminais antigos migrarem para esta versão.
+          #
+          # Isto era proibido de propósito enquanto a 1.8.x estava em produção:
+          # ela vende sem internet e a 3.x não, então a migração automática
+          # trocaria um PDV que opera offline por um que não opera. A proibição
+          # caiu quando a 1.8.x saiu de produção. Se algum dia uma instalação
+          # offline voltar a existir, o caminho é parar de escrever este arquivo
+          # — não mexer no conteúdo dele.
+          #
+          # O conteúdo é o MESMO: os dois atualizadores leem `schema_version: 1`
+          # e escolhem o pacote por `kind: portable` + `format: zip`. O que a
+          # 1.8.x exige a mais é o executável `starchef_pdv.exe` dentro do ZIP,
+          # garantido no passo de empacotamento do Windows.
+          (assets / "latest.json").write_text(corpo, encoding="utf-8")
 
       - name: Guardar pacote completo do release no Actions
         uses: actions/upload-artifact@v4
