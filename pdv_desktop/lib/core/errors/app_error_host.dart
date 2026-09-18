@@ -115,6 +115,10 @@ class AppErrorCard extends StatelessWidget {
         Icons.warning_amber_outlined,
       ),
       AppErrorSeverity.info => (scheme.primary, Icons.info_outline),
+      AppErrorSeverity.success => (
+        const Color(0xFF1B7F3B),
+        Icons.check_circle_outline,
+      ),
     };
 
     return Material(

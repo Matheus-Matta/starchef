@@ -61,15 +61,24 @@ void showAppToast(
   BuildContext context,
   String message, {
   String? title,
-  AppErrorSeverity severity = AppErrorSeverity.info,
+  AppErrorSeverity severity = AppErrorSeverity.success,
   Duration? autoDismissAfter,
 }) {
   ErrorCenterScope.read(context).report(
     AppError(
-      title: title ?? (severity == AppErrorSeverity.warning ? 'Atenção' : 'Concluído'),
+      title: title ?? _tituloPadrao(severity),
       message: message,
       severity: severity,
       autoDismissAfter: autoDismissAfter,
     ),
   );
 }
+
+/// Título quando quem chama não dá um. Cada tipo tem o seu — antes, tudo que
+/// não fosse aviso virava "Concluído", inclusive falha.
+String _tituloPadrao(AppErrorSeverity severity) => switch (severity) {
+  AppErrorSeverity.success => 'Concluído',
+  AppErrorSeverity.info => 'Aviso',
+  AppErrorSeverity.warning => 'Atenção',
+  AppErrorSeverity.failure => 'Não deu certo',
+};

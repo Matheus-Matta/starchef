@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+import '../../../core/errors/notification_bell.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
@@ -813,7 +814,9 @@ class _HomePageState extends State<HomePage>
             context,
             cashSessionBlockMessage!,
             title: 'Caixa indisponível neste terminal',
-            severity: AppErrorSeverity.warning,
+            // Bloqueia o recebimento: se ficasse só no sino, o operador
+            // apertaria "receber" e a tela não reagiria.
+            severity: AppErrorSeverity.failure,
           );
         }
       }
@@ -1245,7 +1248,9 @@ class _HomePageState extends State<HomePage>
           title: title ?? 'Falha ao comunicar com a impressora',
           message: error.message,
           origin: AppErrorOrigin.peripheral,
-          severity: AppErrorSeverity.warning,
+          // O cupom não saiu. Aviso iria só para o sino e o operador
+          // entregaria a venda sem papel sem perceber.
+          severity: AppErrorSeverity.failure,
           recommendedAction: action ?? error.recommendedAction,
           dedupeKey: 'printer-communication',
         ),

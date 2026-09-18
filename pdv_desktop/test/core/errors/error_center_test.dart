@@ -75,11 +75,14 @@ void main() {
       (tester) async {
         await tester.pumpWidget(const SizedBox());
         final center = ErrorCenter();
+        // `failure`, e não `info`: desde que só falha interrompe a tela, um
+        // `info` nem chega em `visible` — ele vai direto para o sino. O que
+        // este teste mede é o auto-dismiss, então precisa de algo que apareça.
         center.report(
           AppError(
-            title: 'Concluído',
-            message: 'Impressão enviada com sucesso.',
-            severity: AppErrorSeverity.info,
+            title: 'Não deu certo',
+            message: 'A impressora não respondeu.',
+            severity: AppErrorSeverity.failure,
             autoDismissAfter: const Duration(milliseconds: 500),
           ),
         );
@@ -327,6 +330,111 @@ void main() {
       expect(find.text('Não foi possível fechar o caixa'), findsOneWidget);
       expect(find.text('Sangria divergente.'), findsOneWidget);
       center.dismissAll();
+    });
+  });
+
+  group('o sino e a regra de quem interrompe a tela', () {
+    test('só falha aparece na tela; o resto vai para o sino', () {
+      final centro = ErrorCenter();
+      addTearDown(centro.dispose);
+
+      centro.report(AppError(
+        title: 'Concluído', message: 'Venda registrada.',
+        severity: AppErrorSeverity.success,
+      ));
+      centro.report(AppError(
+        title: 'Atenção', message: 'NFC-e ainda não autorizada.',
+        severity: AppErrorSeverity.warning,
+      ));
+      centro.report(AppError(
+        title: 'Não deu certo', message: 'Impressora não respondeu.',
+        severity: AppErrorSeverity.failure,
+      ));
+
+      expect(centro.visible.length, 1,
+          reason: 'sucesso e aviso não podem cobrir a tela do operador');
+      expect(centro.visible.single.severity, AppErrorSeverity.failure);
+      expect(centro.history.length, 3,
+          reason: 'o sino guarda tudo — inclusive o que não interrompeu');
+    });
+
+    test('a notificação 21 empurra a mais antiga', () {
+      final centro = ErrorCenter();
+      addTearDown(centro.dispose);
+
+      for (var i = 1; i <= 21; i++) {
+        centro.report(AppError(
+          title: 'Aviso $i', message: 'mensagem $i',
+          severity: AppErrorSeverity.info,
+        ));
+      }
+
+      expect(centro.history.length, 20);
+      expect(centro.history.first.title, 'Aviso 21', reason: 'a mais nova no topo');
+      expect(centro.history.last.title, 'Aviso 2',
+          reason: 'a de número 1 saiu quando a 21 entrou');
+    });
+
+    test('o contador de novas zera ao abrir o sino', () {
+      final centro = ErrorCenter();
+      addTearDown(centro.dispose);
+
+      centro.report(AppError(
+        title: 'a', message: 'a', severity: AppErrorSeverity.success));
+      centro.report(AppError(
+        title: 'b', message: 'b', severity: AppErrorSeverity.info));
+      expect(centro.unreadCount, 2);
+
+      centro.markAllSeen();
+      expect(centro.unreadCount, 0);
+      expect(centro.history.length, 2, reason: 'ver não é apagar');
+    });
+
+    test('o contador nunca fica negativo quando o teto descarta', () {
+      final centro = ErrorCenter(maximumHistory: 3);
+      addTearDown(centro.dispose);
+
+      for (var i = 0; i < 3; i++) {
+        centro.report(AppError(
+          title: 'n$i', message: 'm$i', severity: AppErrorSeverity.info));
+      }
+      centro.markAllSeen();
+      for (var i = 3; i < 6; i++) {
+        centro.report(AppError(
+          title: 'n$i', message: 'm$i', severity: AppErrorSeverity.info));
+      }
+
+      expect(centro.unreadCount, greaterThanOrEqualTo(0));
+      expect(centro.unreadCount, lessThanOrEqualTo(centro.history.length));
+    });
+
+    test('o dedupe também vale no sino', () {
+      final centro = ErrorCenter();
+      addTearDown(centro.dispose);
+
+      for (var i = 0; i < 10; i++) {
+        centro.report(AppError(
+          title: 'Sem conexão', message: 'Não foi possível falar com a retaguarda.',
+          severity: AppErrorSeverity.failure, dedupeKey: 'rede',
+        ));
+      }
+
+      expect(centro.history.length, 1,
+          reason: 'dez tentativas sem rede são um assunto só, não dez linhas');
+    });
+
+    test('limpar o sino não mexe no que está na tela', () {
+      final centro = ErrorCenter();
+      addTearDown(centro.dispose);
+
+      centro.report(AppError(
+        title: 'x', message: 'y', severity: AppErrorSeverity.failure));
+      expect(centro.visible.length, 1);
+
+      centro.clearHistory();
+
+      expect(centro.history, isEmpty);
+      expect(centro.visible.length, 1, reason: 'o erro na tela ainda exige reação');
     });
   });
 }

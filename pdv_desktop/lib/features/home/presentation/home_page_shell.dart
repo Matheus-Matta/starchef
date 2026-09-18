@@ -236,6 +236,13 @@ mixin _ShellSection on _HomePageShared {
                     // na hora e ele já sabe disso pela própria tela.
                     child: PdvConnectionBadge(status: networkStatus),
                   ),
+                  // O sino fica ao lado do estado da conexão: os dois dizem
+                  // "como as coisas estão", e o operador olha para o mesmo
+                  // canto quando quer saber.
+                  const Padding(
+                    padding: EdgeInsets.only(right: 6),
+                    child: NotificationBell(),
+                  ),
                   if (flowStep != 'type' || activeOrder != null)
                     IconButton(
                       tooltip: 'Voltar',

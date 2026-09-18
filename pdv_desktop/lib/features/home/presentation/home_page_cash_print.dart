@@ -181,7 +181,7 @@ mixin _CashPrintSection on _HomePageShared {
         showAppToast(
           context,
           '$failureTitle. Confira a configuração da impressora.',
-          severity: AppErrorSeverity.warning,
+          severity: AppErrorSeverity.failure,
         );
       }
     } catch (error) {

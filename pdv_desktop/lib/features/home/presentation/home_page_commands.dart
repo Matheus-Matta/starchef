@@ -105,7 +105,9 @@ mixin _CommandSection on _HomePageShared {
         showAppToast(
           context,
           'Comanda não encontrada.',
-          severity: AppErrorSeverity.warning,
+          // O operador bipou e nada aconteceu: a recusa precisa ser vista
+          // na hora, senão ele bipa de novo achando que falhou a leitura.
+          severity: AppErrorSeverity.failure,
         );
         return;
       }
@@ -125,7 +127,9 @@ mixin _CommandSection on _HomePageShared {
             'Mesa ${selectedTable!['number']} já tem $seated comanda(s); o '
             'limite do restaurante é $limit por mesa. Use outra mesa ou '
             'ajuste em Restaurantes > Operação.',
-            severity: AppErrorSeverity.warning,
+            // A abertura foi RECUSADA (`return` logo abaixo): o operador
+            // precisa saber por que a mesa não abriu.
+            severity: AppErrorSeverity.failure,
           );
           return;
         }

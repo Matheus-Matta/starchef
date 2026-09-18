@@ -1,7 +1,30 @@
 import '../network/api_exception.dart';
 
-/// Gravidade usada para escolher a apresentação e a urgência do alerta.
-enum AppErrorSeverity { info, warning, failure }
+/// O que a notificação é — e, por consequência, onde ela aparece.
+///
+/// A reorganização que trouxe `success` corrigiu um uso torto: `info` vinha
+/// sendo emitido para confirmar operação concluída, com o título "Concluído".
+/// Um tipo chamado "info" carregando "deu certo" força quem lê o código a
+/// adivinhar a intenção pelo texto, e foi assim que sucesso e aviso acabaram
+/// tratados como a mesma coisa.
+///
+/// A regra de apresentação é única e vive em `NotificationCenter`:
+/// **só [failure] interrompe a tela.** Os outros três vão para o sino, onde o
+/// operador olha quando quiser — porque uma confirmação de venda não pode
+/// cobrir o botão do caixa no meio do próximo pedido.
+enum AppErrorSeverity {
+  /// Deu certo. Confirmação de algo que o operador acabou de fazer.
+  success,
+
+  /// Informação de contexto, sem ação nem culpa.
+  info,
+
+  /// Algo merece atenção, mas a operação seguiu.
+  warning,
+
+  /// Deu errado. O ÚNICO tipo que aparece sozinho na tela.
+  failure,
+}
 
 /// Origem do problema, usada no texto de apoio e nos logs.
 enum AppErrorOrigin {
