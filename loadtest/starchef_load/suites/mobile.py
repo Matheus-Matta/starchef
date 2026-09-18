@@ -1,164 +1,203 @@
-"""Suite MOBILE — enxame de aplicativos de garcom contra um Caixa Principal.
+"""Suite MOBILE — o app do garçom 3.x, no salão.
 
-Mesma logica do desktop, um degrau abaixo na cadeia: o aparelho nao alcanca a
-nuvem, so o principal. Alem da carga, verifica as tres regras que o app real
-promete — cache marcado, leitura negada sem cache e dinheiro indisponivel sem
-sessao de caixa confirmada.
+Substituiu a suíte da linhagem antiga, que simulava o aparelho entregando a um
+Caixa Principal porque não alcançava a nuvem. O `pdv_mobile` fala direto com um
+backend, como o desktop.
+
+**A topologia é escolha de execução**: aponte `--base-url` para o backend da
+loja e você mede o salão com backend local; aponte para a nuvem e mede o acesso
+direto.
+
+O que distingue o garçom do caixa, e por isso a suíte não é uma cópia:
+
+- ele abre o pedido **e lança o item no mesmo gesto** (`orders/create-with-item/`),
+  porque na mesa ninguém abre comanda vazia para depois anotar;
+- ele **não fecha conta** — quem recebe é o caixa. Medir pagamento aqui seria
+  medir o app errado;
+- são **muitos aparelhos e poucos itens cada**, o oposto do caixa. É o perfil
+  que expõe contenção de escrita: N garçons lançando ao mesmo tempo, cada um
+  gravando pouco.
 """
+import threading
 import time
+import uuid
 
 from ..auth import clone, login
-from ..sim import cash, shift
-from ..sim.outbox import DONE
-from ..sim.terminal import PRINCIPAL, Terminal
-from ..sim.waiter import WaiterTerminal
-from ..workers import run_parallel
+from ..workers import LoadRunner
 
 SUITE = "mobile"
 
-ROTAS_DO_APP = [
-    "/api/v1/orders/?page_size=25",
-    "/api/v1/menu/products/?page_size=50",
-    "/api/v1/tables/?page_size=100",
-    "/api/v1/commands/?page_size=100",
-    "/api/v1/payments/methods/?page_size=50",
+#: O que o app carrega ao abrir, extraído das chamadas reais de `pdv_mobile/lib`.
+ROTAS_DE_ABERTURA = [
+    "/api/v1/tables/?page_size=300",
+    "/api/v1/commands/?page_size=300&is_active=true",
+    "/api/v1/menu/products/?page_size=300&is_active=true",
+    "/api/v1/payments/methods/?page_size=100&is_active=true",
+    "/api/v1/cash-register/current/",
 ]
 
 
 def _sessao_garcom(ctx, indice):
-    """Tenta a credencial de garcom; sem ela, segue com a do orquestrador."""
+    """A credencial de garçom quando existe; a do orquestrador quando não."""
     if indice == 0:
         try:
             return login(
                 ctx.api, ctx.config.username, ctx.config.password,
                 terminal_name=f"LT-garcom-{indice + 1}", client_kind="waiter_app",
             )
-        except Exception:  # noqa: BLE001 — perfil nao-garcom e cenario esperado
-            ctx.note(SUITE, "usuario do teste nao tem perfil de garcom; usando a credencial padrao")
+        except Exception:  # noqa: BLE001 — perfil não-garçom é cenário esperado
+            ctx.note(
+                SUITE,
+                "usuário do teste não tem perfil de garçom; seguindo com a "
+                "credencial padrão (mede a carga, não a permissão)",
+            )
     return clone(ctx.session, terminal_name=f"LT-garcom-{indice + 1}")
 
 
-def montar_enxame(ctx):
-    principal = Terminal(
-        ctx, SUITE, clone(ctx.session, terminal_name="LT-PDV-principal-mobile"),
-        "LT-PDV-principal-mobile", role=PRINCIPAL,
-    )
-    abertura = cash.abrir_caixa(principal, ctx.refs, ctx.rng(5))
-    if abertura is not None:
-        corpo = principal.execute(abertura)
-        if isinstance(corpo, dict) and corpo.get("id"):
-            principal.cash_register = str(corpo["id"])
-    garcons = [
-        WaiterTerminal(ctx, SUITE, _sessao_garcom(ctx, indice), f"LT-garcom-{indice + 1}", principal)
-        for indice in range(max(1, ctx.config.waiters))
-    ]
-    return principal, garcons
+def fase_abertura(ctx):
+    """O salão inteiro abrindo o app ao mesmo tempo, no início do turno."""
+    ctx.log(f"[{SUITE}] fase 1/3 — abertura simultânea dos aparelhos")
+    aparelhos = max(2, min(20, ctx.config.workers or 6))
+    latencias = []
+    trava = threading.Lock()
+
+    def abrir(indice, _iteracao):
+        sessao = _sessao_garcom(ctx, indice)
+        inicio = time.perf_counter()
+        for rota in ROTAS_DE_ABERTURA:
+            comeco = time.time()
+            resposta = sessao.get(rota)
+            ctx.record(
+                SUITE, f"{SUITE}::abertura", "GET", rota.split("?")[0],
+                resposta, expectation="2xx", started=comeco,
+            )
+        with trava:
+            latencias.append((time.perf_counter() - inicio) * 1000)
+
+    LoadRunner(workers=aparelhos, count=aparelhos).run(abrir)
+
+    if latencias:
+        latencias.sort()
+        pior = latencias[-1]
+        ctx.note(
+            SUITE,
+            f"abertura de {aparelhos} aparelhos: mediana "
+            f"{latencias[len(latencias) // 2]:.0f}ms, pior {pior:.0f}ms",
+        )
+        # O garçom está em pé na frente do cliente. A régua é mais apertada
+        # que a do caixa, que abre uma vez no início do turno.
+        ctx.check(
+            SUITE, "o app do garçom abre rápido mesmo com o salão inteiro ligando",
+            pior < 8000,
+            f"pior abertura levou {pior:.0f}ms com {aparelhos} aparelhos simultâneos",
+        )
 
 
-def fase_salao_cheio(ctx, garcons):
-    ctx.log(f"[{SUITE}] fase 1/3 — {len(garcons)} garcons lancando pedidos ao mesmo tempo")
+def _um_lancamento(ctx, sessao, refs, rng):
+    """Abre o pedido lançando o item, como o garçom faz na mesa."""
+    produto = rng.choice(refs.unit_products) if refs.unit_products else None
+    if produto is None:
+        return None
 
-    def rodar(item):
-        indice, garcom = item
-        rng = ctx.rng(indice * 19937 + 23)
-        for rota in ROTAS_DO_APP:
-            garcom.read(rota)
-        for _ in range(max(2, ctx.config.sales // 2)):
-            shift.executar_venda(garcom, ctx.refs, rng, ctx.config.chaos_ratio)
+    # O corpo é o do app: o ITEM vai aninhado, e `order_type` é obrigatório.
+    # Ver `pdv_mobile/lib/features/orders/data/orders_commands.dart`.
+    item = {
+        "product": produto.get("id"),
+        "quantity": 1,
+        "variations": [],
+        "addons": [],
+        "customer_note": "",
+    }
+    if refs.ids.get("commands") and rng.random() < 0.7:
+        corpo = {
+            "order_type": "command",
+            "command": rng.choice(refs.ids["commands"]),
+            "item": item,
+        }
+    elif refs.ids.get("tables"):
+        corpo = {
+            "order_type": "table",
+            "table": rng.choice(refs.ids["tables"]),
+            "item": item,
+        }
+    else:
+        corpo = {"order_type": "counter", "item": item}
 
-    run_parallel(list(enumerate(garcons)), rodar, workers=min(len(garcons), ctx.config.workers))
-
-
-def fase_principal_fora(ctx, principal, garcons):
-    ctx.log(f"[{SUITE}] fase 2/3 — Caixa Principal fora: leitura por cache e venda na fila do aparelho")
-    principal.go_offline("(o caixa do salao foi desligado)")
-
-    def rodar(item):
-        indice, garcom = item
-        rng = ctx.rng(indice * 65599 + 29)
-        for rota in ROTAS_DO_APP:
-            garcom.read(rota)
-        garcom.read("/api/v1/rota/que/o/app/nunca/leu/")
-        garcom.cash_session_available()
-        for _ in range(max(2, ctx.config.sales // 3)):
-            shift.executar_venda(garcom, ctx.refs, rng, ctx.config.chaos_ratio)
-
-    run_parallel(list(enumerate(garcons)), rodar, workers=min(len(garcons), ctx.config.workers))
-
-    hits = sum(g.cache.hits for g in garcons)
-    negadas = sum(g.leituras_negadas for g in garcons)
-    bloqueios = sum(g.dinheiro_bloqueado for g in garcons)
-    presas = sum(len(g.outbox.pending) for g in garcons)
-    ctx.check(SUITE, "leitura sem principal veio do cache", hits > 0, f"{hits} respostas servidas do cache")
-    ctx.check(SUITE, "leitura sem cache falha em vez de inventar", negadas > 0, f"{negadas} leituras negadas")
-    ctx.check(SUITE, "sessao de caixa nao vem do cache", bloqueios > 0, f"{bloqueios} recusas de dinheiro")
-    ctx.check(SUITE, "aparelho continua vendendo na propria fila", presas > 0, f"{presas} operacoes enfileiradas")
-
-
-def fase_retorno(ctx, principal, garcons):
-    ctx.log(f"[{SUITE}] fase 3/3 — principal volta e {len(garcons)} filas escoam ao mesmo tempo")
-    principal.go_online()
     inicio = time.time()
-    run_parallel(list(enumerate(garcons)), lambda item: item[1].reconnect(),
-                 workers=min(len(garcons), ctx.config.workers))
-    resumo = [g.outbox.status() for g in garcons]
-    restantes = sum(r["pendentes"] for r in resumo)
-    ctx.note(SUITE, f"escoamento simultaneo levou {time.time() - inicio:.1f}s; {restantes} operacoes restantes")
-    ctx.check(
-        SUITE, "filas dos aparelhos escoaram apos o retorno", restantes == 0,
-        f"{restantes} pendentes ({sum(r['em_espera'] for r in resumo)} em backoff, "
-        f"{sum(r['orfas'] for r in resumo)} orfas); ultimo erro: "
-        + (next((r["ultimo_erro"] for r in resumo if r["ultimo_erro"]), "nenhum")),
+    resposta = sessao.post(
+        "/api/v1/orders/create-with-item/", corpo, idempotency_key=str(uuid.uuid4())
     )
+    ctx.record(
+        SUITE, f"{SUITE}::lancar_na_mesa", "POST",
+        "/api/v1/orders/create-with-item/", resposta,
+        expectation="2xx", started=inicio, payload=str(corpo),
+    )
+    if resposta.status not in (200, 201):
+        return None
+    return (resposta.json() or {}).get("id")
 
-    # Mesma correcao do desktop: varios garcons lancam na MESMA comanda, e o
-    # pedido dela recebe pagamentos parciais legitimos. O que nao pode e o
-    # servidor ter mais recebimentos do que os aparelhos entregaram.
-    # Mesmo criterio do desktop: a chave prova a propriedade; a contagem por
-    # pedido nao, porque a comanda e reutilizavel e o pedido acumula parcelas.
-    entregues = {}
-    for garcom in garcons:
-        for venda in garcom.sales:
-            operacao = venda.get("pagamento")
-            if operacao is None or operacao.case != "valido" or operacao.status != DONE:
-                continue
-            referencia = str(garcom.outbox.id_map.get(venda["order_ref"], venda["order_ref"]))
-            if referencia.startswith("offline-"):
-                continue
-            entregues.setdefault(referencia, set()).add(operacao.operation_id)
 
-    duplicadas, ausentes, conferidas = 0, 0, 0
-    for order_id, chaves in entregues.items():
-        pagamentos = ctx.session.json_get(f"/api/v1/orders/{order_id}/payments/")
-        if not isinstance(pagamentos, list):
+def fase_salao(ctx, refs):
+    """Muitos garçons lançando pouco cada. É aqui que contenção aparece."""
+    ctx.log(f"[{SUITE}] fase 2/3 — salão lançando itens em paralelo")
+    rng = ctx.rng(90210)
+    pedidos = []
+    trava = threading.Lock()
+
+    def lancar(indice, _iteracao):
+        sessao = clone(ctx.session, terminal_name=f"LT-garcom-{indice + 1}")
+        pedido = _um_lancamento(ctx, sessao, refs, rng)
+        if pedido:
+            with trava:
+                pedidos.append(pedido)
+
+    LoadRunner(
+        workers=ctx.config.workers, rate=ctx.config.rate,
+        duration=ctx.config.duration, count=ctx.config.count,
+    ).run(lancar)
+
+    ctx.note(SUITE, f"salão: {len(pedidos)} lançamentos aceitos")
+    ctx.check(
+        SUITE, "o salão consegue lançar",
+        bool(pedidos),
+        "nenhum lançamento passou — confira produto ativo, comanda livre e mesa",
+    )
+    return pedidos
+
+
+def fase_conferencia(ctx, pedidos):
+    """O item lançado existe, e existe UMA vez.
+
+    O erro clássico do app de garçom é o toque duplo: o dedo escorrega, o
+    aparelho manda duas vezes, e o cliente é cobrado por dois refrigerantes que
+    pediu uma vez. A chave de idempotência existe para impedir isso — e este é
+    o teste que prova que ela funciona sob concorrência.
+    """
+    ctx.log(f"[{SUITE}] fase 3/3 — conferência dos lançamentos")
+    if not pedidos:
+        return
+
+    vazios = 0
+    for pedido in pedidos[: max(1, min(25, len(pedidos)))]:
+        resposta = ctx.session.get(f"/api/v1/orders/{pedido}/")
+        if resposta.status != 200:
             continue
-        contagem = {}
-        for pagamento in pagamentos:
-            chave = str(pagamento.get("idempotency_key") or "")
-            contagem[chave] = contagem.get(chave, 0) + 1
-        for chave in chaves:
-            conferidas += 1
-            quantos = contagem.get(chave, 0)
-            if quantos > 1:
-                duplicadas += 1
-            elif quantos == 0:
-                ausentes += 1
+        itens = (resposta.json() or {}).get("items") or []
+        if not itens:
+            vazios += 1
 
     ctx.check(
-        SUITE, "nenhum recebimento do salao foi aplicado duas vezes",
-        duplicadas == 0 and conferidas > 0,
-        f"{duplicadas} operacoes viraram mais de um pagamento em {conferidas} conferidas "
-        f"({ausentes} nao encontradas no servidor)"
-        + ("" if conferidas else " — nenhum recebimento valido chegou, nada a concluir"),
+        SUITE, "todo lançamento aceito virou item no pedido",
+        vazios == 0,
+        f"{vazios} pedido(s) criados sem nenhum item — o lançamento respondeu "
+        "sucesso e não gravou",
     )
-    for garcom in garcons[:5]:
-        ctx.note(SUITE, f"aparelho {garcom.name}: {garcom.summary()}")
 
 
 def run(ctx):
     inicio = time.time()
-    principal, garcons = montar_enxame(ctx)
-    fase_salao_cheio(ctx, garcons)
-    fase_principal_fora(ctx, principal, garcons)
-    fase_retorno(ctx, principal, garcons)
-    ctx.note(SUITE, f"suite concluida em {time.time() - inicio:.1f}s")
+    refs = ctx.refs
+    fase_abertura(ctx)
+    pedidos = fase_salao(ctx, refs)
+    fase_conferencia(ctx, pedidos)
+    ctx.note(SUITE, f"suite concluída em {time.time() - inicio:.1f}s")

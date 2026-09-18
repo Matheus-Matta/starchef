@@ -97,8 +97,13 @@ class RefPool:
         self._scope_pools(alvo)
 
         produtos = [p for p in self.objects.get("products") or [] if p.get("is_active", True)]
-        self.kg_product = next((p for p in produtos if p.get("pricing_mode") == "kg"), None)
-        self.unit_products = [p for p in produtos if p.get("pricing_mode") != "kg"] or produtos
+        # `pricing_unit`, e nao `pricing_mode`: o segundo NUNCA existiu no
+        # model. O filtro mirava num campo inexistente, entao `kg_product`
+        # ficava sempre None e `unit_products` incluia os vendidos por quilo —
+        # que recusam lancamento sem peso e apareciam como "suspeita" no
+        # relatorio, escondendo defeito de verdade no meio do ruido.
+        self.kg_product = next((p for p in produtos if p.get("pricing_unit") == "kg"), None)
+        self.unit_products = [p for p in produtos if p.get("pricing_unit") != "kg"] or produtos
         estacoes = self.objects.get("cash_stations") or []
         self.cash_station = estacoes[0] if estacoes else None
         balancas = self.objects.get("scales") or []

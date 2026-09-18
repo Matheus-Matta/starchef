@@ -81,6 +81,21 @@ def fase_contencao(ctx):
     ctx.log(f"[{SUITE}] fase extra — contenção da sequência sob concorrência")
     rng = ctx.rng(7777)
 
+    # Com a sincronização DESLIGADA no alvo, `outbox.record` sai cedo e
+    # `next_sequence` nunca é chamado. A medição continua válida como carga de
+    # escrita, mas atribuí-la ao lock da sequência seria mentira — e relatório
+    # que atribui a causa errada é pior que relatório nenhum.
+    estado = sync_phases.status(ctx, SUITE, "loja", sync_phases.alvo_loja(ctx))
+    ligada = bool(estado.get("enabled"))
+    if not ligada:
+        ctx.note(
+            SUITE,
+            "contenção: a sincronização está DESLIGADA neste alvo. Os números "
+            "abaixo medem a escrita do backend (servidor, banco, pool) e NÃO o "
+            "lock da sequência — para medir o lock, aponte para um alvo com "
+            "SYNC_ENABLED=true e nó provisionado.",
+        )
+
     # Amostras suficientes para a mediana ser estável, e poucas o bastante para
     # a fase não dominar a suíte inteira.
     amostras = max(20, min(120, ctx.config.count or 60))
@@ -118,7 +133,7 @@ def fase_contencao(ctx):
     ctx.check(
         SUITE,
         "a concorrência não serializa a escrita na fila",
-        fator < FATOR_ACEITAVEL or ganho > 1.5,
+        (not ligada) or fator < FATOR_ACEITAVEL or ganho > 1.5,
         f"mediana {fator:.1f}x maior com {concorrentes} escritores e vazão só "
         f"{ganho:.1f}x — assinatura de lock disputado. O suspeito é o UPDATE de "
         f"`sequence_counter` na linha do nó, que `outbox.record` executa dentro "
