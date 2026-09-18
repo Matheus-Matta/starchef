@@ -19,7 +19,17 @@ def _e(entity_type, model_label, **kwargs):
 
 
 # 1-2. Conta, empresa, lojas e configurações gerais. Descem da nuvem.
-_e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local")
+# `plan` sai do payload porque `accounts.Plan` está em `decisions.py` — a loja
+# não opera planos. Mandar a chave estrangeira sem mandar o alvo tornava o
+# evento da conta IMPOSSÍVEL de aplicar: ele falhava com "Plan … ainda não
+# existe aqui", retentava e falhava de novo, para sempre. A conta ficava presa
+# no esqueleto "(aguardando sincronização)", inativa — e conta inativa derruba
+# o isolamento por tenant do backend inteiro.
+#
+# O campo é nulável, então a loja fica com `plan=None`, que é exatamente o que
+# "a loja não opera planos" quer dizer.
+_e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local",
+   exclude_fields=("plan",))
 _e("restaurant", "restaurants.Restaurant", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("account",))
 _e("branch", "restaurants.Branch", conflict_policy=CLOUD, flow="cloud_to_local",
@@ -97,9 +107,20 @@ _e("customer_address", "customers.CustomerAddress", conflict_policy=VERSAO,
 _e("stock_location", "stock.StockLocation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("stock_supplier", "stock.Supplier", conflict_policy=CLOUD, dependencies=("account",),
    include_in_bootstrap=False)
-_e("stock_settings", "stock.StockSettings", conflict_policy=CLOUD, dependencies=("restaurant",))
+# `default_label_template` sai do payload: `StockLabelTemplate` é modelo de
+# etiqueta da impressora daquela loja e não sincroniza. Mandar a chave sem o
+# alvo travaria o evento em "ainda não existe aqui", para sempre.
+_e("stock_settings", "stock.StockSettings", conflict_policy=CLOUD,
+   dependencies=("restaurant",), exclude_fields=("default_label_template",))
+# `lot`, `entry` e `exit` saem do payload. Os três apontam para modelos que
+# `decisions.py` exclui de propósito — lote é derivado dos próprios movimentos,
+# e entrada/saída são documentos de rascunho. Como o movimento sobe para a
+# NUVEM, mandar essas chaves fazia a nuvem falhar ao aplicar e o movimento de
+# estoque da loja nunca chegar lá. Os três aceitam nulo, e o que importa —
+# produto, local e quantidade — continua viajando.
 _e("stock_movement", "stock.StockMovement", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("stock_location", "product"), include_in_bootstrap=False, immutable=True)
+   dependencies=("stock_location", "product"), include_in_bootstrap=False, immutable=True,
+   exclude_fields=("lot", "entry", "exit"))
 
 # 13-14. Pedidos, vendas e pagamentos. Nascem na loja e sobem.
 _e("payment_method", "payments.PaymentMethod", conflict_policy=CLOUD, dependencies=("restaurant",))
