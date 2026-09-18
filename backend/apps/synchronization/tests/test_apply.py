@@ -270,3 +270,38 @@ def test_sucesso_limpa_o_erro_da_tentativa_anterior(como_loja, conta, no_nuvem, 
     evento.refresh_from_db()
     assert evento.status == EventStatus.APPLIED
     assert evento.last_error == "", "o erro velho não pode sobreviver ao sucesso"
+
+
+def test_campo_proibido_no_payload_e_descartado_na_aplicacao(como_loja, conta, no_nuvem, no_loja):
+    """`exclude_fields` vale nos DOIS sentidos, e a assimetria custou caro.
+
+    Ele era honrado só na saída. Um evento gerado por uma versão anterior — ou
+    por uma instalação que ainda não atualizou — continuava trazendo o campo, e
+    o destino o gravava assim mesmo. Foi o que manteve a conta de produção
+    presa em "(aguardando sincronização)": o payload trazia `plan_id` para um
+    `Plan` que não sincroniza, e o evento morreu depois de 12 tentativas.
+    """
+    from apps.synchronization.services.registry import registry
+
+    entrada = registry.require("account")
+    assert "plan" in entrada.exclude_fields, "premissa do teste"
+
+    evento = _evento(
+        conta, no_nuvem, no_loja, entity_type="account", entity_id=conta.id,
+        fields={
+            "name": "Grupo New City",
+            "slug": conta.slug,
+            "is_active": True,
+            # O campo proibido, como uma versão antiga o enviaria — apontando
+            # para um Plan que não existe neste banco.
+            "plan_id": str(uuid.uuid4()),
+        },
+        version=_mais_nova_que(conta),
+    )
+
+    assert apply.apply_event(evento) is True, "o campo proibido não pode travar o evento"
+
+    conta.refresh_from_db()
+    assert conta.name == "Grupo New City"
+    assert conta.is_active is True
+    assert conta.plan_id is None, "o campo proibido não pode ter sido gravado"

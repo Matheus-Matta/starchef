@@ -147,6 +147,22 @@ def _gravar(model, entrada, event, fields, existente):
         # pode zerar o que o técnico configurou lá.
         kwargs.pop(campo, None)
         kwargs.pop(f"{campo}_id", None)
+    for campo in entrada.exclude_fields:
+        # `exclude_fields` era honrado só na SAÍDA, e a assimetria custou caro:
+        # um evento gerado por uma versão anterior — ou por uma instalação que
+        # ainda não atualizou — continua carregando o campo, e o destino o
+        # gravava assim mesmo.
+        #
+        # Foi o que manteve a conta presa em "(aguardando sincronização)": o
+        # payload trazia `plan_id` apontando para um `Plan` que não sincroniza,
+        # o evento falhava por dependência ausente, retentava 12 vezes e
+        # morria. Tirar o campo na saída não bastava; o que já estava na fila
+        # continuava envenenado.
+        #
+        # Um campo que o catálogo proíbe de viajar não deve ser gravado só
+        # porque alguém o mandou.
+        kwargs.pop(campo, None)
+        kwargs.pop(f"{campo}_id", None)
 
     _validar_dependencias(model, kwargs)
 
