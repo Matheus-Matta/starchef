@@ -1085,22 +1085,20 @@ arquivo `0600`, validade de um minuto e remoção após a primeira leitura.
 - Código de barras: para driver ESC/POS, gera `GS k` Code 128 conjunto B quando
   o valor é ASCII imprimível; caso contrário cai para texto explícito.
 - `domain/local_print_renderer.dart` — cupons montados no terminal, espelhando
-  `apps/printers/services.py` (recibo, cancelamento, pesagem, teste).
-  `domain/cash_print_renderer.dart` (`part` da mesma biblioteca) monta os
-  **comprovantes do caixa**: abertura, sangria, suprimento e o relatório de
-  fechamento — estes não têm equivalente no backend, o caixa é do terminal. O
-  fechamento separa a gaveta (movimentos aprovados, com o sinal de cada um,
-  a mesma conta do saldo esperado) das **vendas por forma de pagamento**, que
-  saem de `session['sales']`: no servidor é `CashRegisterSerializer.sales`
-  (todo recebimento com `metadata.cash_register` da sessão); no terminal,
-  `CashRegisterRepository.registerLocalPayment` anota cada `pay` (qualquer
-  forma) e `applyRemote` preserva os de id temporário, como faz com os
-  movimentos. Quem imprime é `_CashPrintSection` (`home_page_cash_print.dart`),
-  pelo mesmo caminho do recibo e do DANFE: impressora master das preferências
-  (ou o diálogo de escolha), `ReceiptPrinter` e a fila local do agente. Os
-  comprovantes saem DEPOIS de a operação estar registrada — abertura ao abrir,
-  sangria/suprimento ao serem autorizados, relatório ao fechar — e uma
-  impressora fora do ar avisa, nunca desfaz a operação.
+  `apps/printers/services.py` (recibo, cancelamento, pesagem, teste). Os
+  **comprovantes do caixa** são montados pelo backend em
+  `apps/printers/cash_documents.py` e obtidos por
+  `/cash-register/{id}/print-document/`: abertura, divergência autorizada da
+  abertura, sangria, suprimento e relatório de fechamento. O fechamento
+  separa a gaveta das vendas e sempre lista dinheiro, crédito, débito, PIX e
+  voucher com o total de cada forma. O comprovante de divergência registra os
+  valores esperado/contado, a justificativa e a assinatura; sangria e
+  suprimento deixam duas linhas livres antes da assinatura. Quem imprime é
+  `_CashPrintSection` (`home_page_cash_print.dart`), pelo mesmo caminho do
+  recibo e do DANFE: impressora master das preferências (ou o diálogo de
+  escolha), `ReceiptPrinter` e a fila local do agente. Os comprovantes saem
+  depois de a operação estar registrada ou autorizada, e uma impressora fora
+  do ar avisa, nunca desfaz a operação.
 
 O agente **não lê balança**. Isso saiu daqui quando a leitura passou a ser local
 na janela: manter os dois abrindo a mesma COM era uma disputa real.

@@ -423,7 +423,6 @@ mixin _CashOpsSection on _HomePageShared {
   ];
 }
 
-
 /// O formulário da autorização de sangria/suprimento.
 ///
 /// Existe como widget com estado por um motivo só, e é o que evita a tela

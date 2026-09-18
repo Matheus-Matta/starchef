@@ -277,9 +277,8 @@ class CashRegisterViewSet(BaseTenantViewSet):
         primeiro ajuste de regra, e a divergencia apareceria justamente no
         documento que o operador assina.
 
-        `document` diz qual dos quatro: `opening`, `withdrawal`, `supply` ou
-        `closing`. Os dois do meio precisam de `movement`, o identificador do
-        lancamento que acabou de ser registrado.
+        `document` diz qual comprovante deve ser montado. Sangria e suprimento
+        precisam de `movement`, o identificador do lancamento registrado.
         """
         from apps.printers import cash_documents
 
@@ -289,6 +288,19 @@ class CashRegisterViewSet(BaseTenantViewSet):
 
         if document == "opening":
             content = cash_documents.opening_text(cash_register, operator_name=operator_name)
+        elif document == "opening_divergence":
+            if (
+                cash_register.status != CashRegister.STATUS_OPEN
+                or cash_register.opening_is_initial
+                or not cash_register.difference_amount
+                or not cash_register.approved_at
+                or not cash_register.approval_reason
+            ):
+                return Response(
+                    {"detail": "A divergência de abertura ainda não foi autorizada."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            content = cash_documents.opening_divergence_text(cash_register, operator_name=operator_name)
         elif document == "closing":
             content = cash_documents.closing_text(cash_register, operator_name=operator_name)
         elif document in {"withdrawal", "supply"}:
@@ -306,7 +318,7 @@ class CashRegisterViewSet(BaseTenantViewSet):
             )
         else:
             return Response(
-                {"detail": "Documento inválido. Use opening, withdrawal, supply ou closing."},
+                {"detail": "Documento inválido. Use opening, opening_divergence, withdrawal, supply ou closing."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({"document": document, "text_content": content})

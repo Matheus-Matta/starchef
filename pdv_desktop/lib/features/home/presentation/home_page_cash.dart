@@ -40,6 +40,7 @@ mixin _CashSection on _HomePageShared {
   Future<void> _toggleCashBalanceVisibility();
   Future<void> _goHome();
   Future<void> _load();
+  Future<void> _printCashOpeningDivergence(Map<String, dynamic> session);
 
   /// Divergência no fechamento: só a senha de ações do caixa libera.
   ///
@@ -50,6 +51,7 @@ mixin _CashSection on _HomePageShared {
   /// operador no fim do turno.
   Future<void> _showCashDivergence() async {
     if (!mounted || !hasCashDivergence || divergenceDialogOpen) return;
+    final pendingOperation = '${cashSession?['pending_operation'] ?? ''}';
     divergenceDialogOpen = true;
     Map<String, dynamic>? aprovada;
     try {
@@ -83,6 +85,9 @@ mixin _CashSection on _HomePageShared {
 
     if (aprovada == null || !mounted) return;
     cashSession = aprovada;
+    if (pendingOperation == 'opening') {
+      await _printCashOpeningDivergence(aprovada);
+    }
     // FORA do diálogo: `_load` leva segundos e pode falhar. Dentro do callback
     // do botão, ele corria depois de o `showDialog` já ter retornado.
     await _load();
@@ -120,7 +125,6 @@ mixin _CashSection on _HomePageShared {
     return '${_money(difference.abs())} ($description)';
   }
 }
-
 
 /// O formulário da aprovação de divergência de caixa.
 ///
@@ -190,6 +194,7 @@ class _CashDivergenceFormState extends State<_CashDivergenceForm> {
   @override
   Widget build(BuildContext context) {
     final notes = '${widget.session?['notes'] ?? ''}'.trim();
+    final opening = widget.session?['pending_operation'] == 'opening';
     return AppDialog(
       title: const Row(
         children: [
@@ -207,8 +212,8 @@ class _CashDivergenceFormState extends State<_CashDivergenceForm> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'O PDV permanecerá bloqueado até que o fechamento '
-                  'seja autorizado com a senha de ações do caixa.',
+                  'O PDV permanecerá bloqueado até que a divergência seja '
+                  'autorizada com a senha de ações do caixa.',
                 ),
                 const SizedBox(height: 18),
                 widget.buildValue('Valor esperado', widget.expected),
@@ -274,7 +279,11 @@ class _CashDivergenceFormState extends State<_CashDivergenceForm> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.verified_user_outlined),
-          label: const Text('Aprovar e concluir fechamento'),
+          label: Text(
+            opening
+                ? 'Autorizar abertura divergente'
+                : 'Aprovar e concluir fechamento',
+          ),
         ),
       ],
     );

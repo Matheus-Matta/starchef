@@ -8,6 +8,8 @@
     responsive-layout="scroll"
     striped-rows
     class="report-data-table"
+    :row-class="rowClass"
+    @row-click="handleRowClick"
   >
     <Column
       v-for="column in columns"
@@ -32,10 +34,20 @@
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 
-defineProps({
+const props = defineProps({
   rows: { type: Array, required: true },
   columns: { type: Array, required: true },
+  rowClickable: { type: Boolean, default: false },
 });
+const emit = defineEmits(["row-click"]);
+
+function rowClass() {
+  return props.rowClickable ? "report-data-table__clickable" : "";
+}
+
+function handleRowClick(event) {
+  if (props.rowClickable) emit("row-click", event.data);
+}
 
 function formatValue(value, column) {
   if (column.type === "money") {
@@ -59,6 +71,9 @@ function formatValue(value, column) {
 .report-data-table :deep(.p-datatable-tbody > tr > td) {
   padding: 12px 16px;
 }
+
+.report-data-table :deep(.report-data-table__clickable) { cursor: pointer; }
+.report-data-table :deep(.report-data-table__clickable:hover) { background: var(--surface-hover); }
 
 @media (max-width: 720px) {
   .report-data-table :deep(.p-datatable-wrapper) { overscroll-behavior-x: contain; }

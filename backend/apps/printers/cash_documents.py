@@ -14,10 +14,12 @@ ter a cara do papel da venda.
 """
 
 from decimal import Decimal
+from textwrap import wrap
 
 from django.utils import timezone
 
 from apps.payments.models import CashMovement, CashRegister
+from apps.printers.cash_document_totals import gaveta, linha_centavos, vendas_por_forma
 from apps.printers.services import (
     LARGURA_CUPOM,
     _establishment_info,
@@ -37,19 +39,6 @@ _ROTULO_STATUS = {
     CashRegister.STATUS_BLOCKED: "BLOQUEADO",
     CashRegister.STATUS_PENDING_OPENING: "AGUARDANDO ABERTURA",
     CashRegister.STATUS_CANCELLED: "CANCELADO",
-}
-
-# Ordem em que o operador confere os comprovantes no fechamento: a gaveta
-# primeiro, depois as maquininhas, depois o resto.
-_ORDEM_FORMAS = ["cash", "card:credit", "card:debit", "card", "pix", "voucher", "other"]
-_ROTULO_FORMAS = {
-    "cash": "Dinheiro",
-    "card:credit": "Cartao credito",
-    "card:debit": "Cartao debito",
-    "card": "Cartao",
-    "pix": "PIX",
-    "voucher": "Vale/voucher",
-    "other": "Outras formas",
 }
 
 
@@ -102,7 +91,11 @@ def _linhas_sessao(session, operator_name=""):
 
 def _linhas_observacao(rotulo, valor):
     texto = str(valor or "").strip()
-    return [_corta(f"{rotulo}: {texto}")] if texto else []
+    if not texto:
+        return []
+    prefixo = f"{rotulo}: "
+    partes = wrap(texto, width=max(1, LARGURA_CUPOM - len(prefixo))) or [""]
+    return [f"{prefixo}{partes[0]}", *[f"{' ' * len(prefixo)}{parte}" for parte in partes[1:]]]
 
 
 def _rodape():
@@ -121,6 +114,33 @@ def opening_text(session, *, operator_name=""):
         *_linhas_observacao("Obs", session.notes),
         _REGUA,
         f"Assinatura: {_ASSINATURA}",
+        *_rodape(),
+    ]
+    return "\n".join(linhas)
+
+
+def opening_divergence_text(session, *, operator_name=""):
+    """Comprovante emitido somente depois de autorizar a abertura divergente."""
+    from apps.payments.terminals import operator_label
+
+    autorizado_por = operator_label(session.approved_by) if session.approved_by_id else ""
+    linhas = [
+        *_cabecalho(session, "DIVERGENCIA AUTORIZADA NA ABERTURA"),
+        f"Abertura: {_quando(session.opened_at)}",
+        f"Autorizacao: {_quando(session.approved_at)}",
+        *_linhas_sessao(session, operator_name),
+        *_linhas_observacao("Autorizado por", autorizado_por),
+        _REGUA,
+        _linha_valor("Valor esperado", _dinheiro(session.expected_amount)),
+        _linha_valor("Valor contado", _dinheiro(session.actual_amount)),
+        _linha_valor("Diferenca", _dinheiro(session.difference_amount)),
+        *_linhas_observacao("Justificativa", session.approval_reason),
+        *_linhas_observacao("Obs", session.notes),
+        _REGUA,
+        "Assinatura do responsavel:",
+        "",
+        "",
+        _ASSINATURA,
         *_rodape(),
     ]
     return "\n".join(linhas)
@@ -155,102 +175,18 @@ def movement_text(movement, *, operator_name="", authorized_by="", manager_reaso
         *_linhas_observacao("Justificativa", manager_reason),
         _REGUA,
         "Assinatura do responsavel:",
+        "",
+        "",
         _ASSINATURA,
         *_rodape(),
     ]
     return "\n".join(linhas)
 
 
-def _gaveta(session):
-    """A gaveta em centavos: o que entrou e o que saiu em DINHEIRO.
-
-    Os valores saem dos movimentos aprovados, com o sinal que cada tipo carrega
-    — a mesma conta do saldo esperado. Uma sangria ligada a um pagamento nao e
-    sangria: e o troco de um cartao/PIX saindo da gaveta, e sai em linha
-    propria porque o operador precisa distinguir as duas coisas ao conferir.
-    """
-    abertura = supri = sangria = troco = estorno = vendas = 0
-    tem_abertura = False
-    for movimento in session.movements.all():
-        if movimento.status != "approved":
-            continue
-        centavos = int((abs(Decimal(movimento.amount)) * 100).to_integral_value())
-        if movimento.movement_type == CashMovement.TYPE_OPENING:
-            abertura += centavos
-            tem_abertura = True
-        elif movimento.movement_type == CashMovement.TYPE_SALE:
-            vendas += centavos
-        elif movimento.movement_type == CashMovement.TYPE_SUPPLY:
-            supri += centavos
-        elif movimento.movement_type == CashMovement.TYPE_WITHDRAWAL:
-            if movimento.payment_id:
-                troco += centavos
-            else:
-                sangria += centavos
-        elif movimento.movement_type == CashMovement.TYPE_REFUND:
-            estorno += centavos
-    if not tem_abertura:
-        abertura = int((Decimal(session.opening_amount or 0) * 100).to_integral_value())
-    esperado = int((Decimal(session.expected_amount or 0) * 100).to_integral_value())
-    contado = int((Decimal(session.actual_amount or 0) * 100).to_integral_value())
-    diferenca = int((Decimal(session.difference_amount or 0) * 100).to_integral_value())
-    return {
-        "abertura": abertura,
-        "vendas": vendas,
-        "suprimentos": supri,
-        "sangrias": sangria,
-        "troco": troco,
-        "estornos": estorno,
-        "esperado": esperado,
-        "contado": contado,
-        "diferenca": diferenca,
-    }
-
-
-def _vendas_por_forma(session):
-    """Recebimentos da sessao agrupados por forma de pagamento.
-
-    `movements` so conhece o dinheiro. O que o operador confere contra a
-    maquininha e o comprovante do PIX esta aqui.
-    """
-    from django.db.models import Q
-
-    from apps.payments.models import Payment
-
-    recebimentos = (
-        Payment.objects.filter(status=Payment.STATUS_APPROVED)
-        .filter(Q(metadata__cash_register=str(session.pk)) | Q(cash_movements__cash_register_id=session.pk))
-        .select_related("payment_method")
-        .distinct()
-    )
-    totais = {}
-    total = quantidade = 0
-    for recebimento in recebimentos:
-        tipo = (recebimento.payment_method.method_type or "other").strip().lower()
-        subtipo = (recebimento.card_subtype or "").strip().lower()
-        chave = f"card:{subtipo}" if tipo == "card" and subtipo else tipo
-        if chave not in _ROTULO_FORMAS:
-            chave = "other"
-        centavos = int((Decimal(recebimento.amount or 0) * 100).to_integral_value())
-        totais[chave] = totais.get(chave, 0) + centavos
-        total += centavos
-        quantidade += 1
-    return {
-        "linhas": [(_ROTULO_FORMAS[chave], totais[chave]) for chave in _ORDEM_FORMAS if chave in totais],
-        "total": total,
-        "dinheiro": totais.get("cash", 0),
-        "quantidade": quantidade,
-    }
-
-
-def _centavos(rotulo, centavos):
-    return _linha_valor(rotulo, f"{Decimal(centavos) / 100:.2f}")
-
-
 def closing_text(session, *, operator_name=""):
     """Relatorio de fechamento: a gaveta (dinheiro) e as vendas por forma."""
-    gaveta = _gaveta(session)
-    vendas = _vendas_por_forma(session)
+    resumo_gaveta = gaveta(session)
+    vendas = vendas_por_forma(session)
     linhas = [
         *_cabecalho(session, "RELATORIO DE FECHAMENTO DE CAIXA"),
         *_linhas_sessao(session, operator_name),
@@ -258,24 +194,24 @@ def closing_text(session, *, operator_name=""):
         f"Fechamento: {_quando(session.closed_at)}",
         _REGUA,
         _centralizado("MOVIMENTO DA GAVETA (DINHEIRO)"),
-        _centavos("(+) Abertura (troco)", gaveta["abertura"]),
-        _centavos("(+) Vendas em dinheiro", gaveta["vendas"]),
-        _centavos("(+) Suprimentos", gaveta["suprimentos"]),
-        _centavos("(-) Sangrias", gaveta["sangrias"]),
+        linha_centavos("(+) Abertura (troco)", resumo_gaveta["abertura"]),
+        linha_centavos("(+) Vendas em dinheiro", resumo_gaveta["vendas"]),
+        linha_centavos("(+) Suprimentos", resumo_gaveta["suprimentos"]),
+        linha_centavos("(-) Sangrias", resumo_gaveta["sangrias"]),
     ]
-    if gaveta["troco"]:
-        linhas.append(_centavos("(-) Troco de outras formas", gaveta["troco"]))
-    if gaveta["estornos"]:
-        linhas.append(_centavos("(-) Estornos em dinheiro", gaveta["estornos"]))
+    if resumo_gaveta["troco"]:
+        linhas.append(linha_centavos("(-) Troco de outras formas", resumo_gaveta["troco"]))
+    if resumo_gaveta["estornos"]:
+        linhas.append(linha_centavos("(-) Estornos em dinheiro", resumo_gaveta["estornos"]))
     linhas += [
-        _centavos("(=) Esperado em caixa", gaveta["esperado"]),
-        _centavos("Valor contado", gaveta["contado"]),
-        _centavos("Diferenca", gaveta["diferenca"]),
+        linha_centavos("(=) Esperado em caixa", resumo_gaveta["esperado"]),
+        linha_centavos("Valor contado", resumo_gaveta["contado"]),
+        linha_centavos("Diferenca", resumo_gaveta["diferenca"]),
         _REGUA,
         _centralizado("VENDAS POR FORMA DE PAGAMENTO"),
-        *[_centavos(rotulo, centavos) for rotulo, centavos in vendas["linhas"]],
-        _centavos("Total de vendas", vendas["total"]),
-        _centavos("Comprovantes (nao dinheiro)", vendas["total"] - vendas["dinheiro"]),
+        *[linha_centavos(rotulo, centavos) for rotulo, centavos in vendas["linhas"]],
+        linha_centavos("Total de vendas", vendas["total"]),
+        linha_centavos("Comprovantes (nao dinheiro)", vendas["total"] - vendas["dinheiro"]),
         f"Recebimentos: {vendas['quantidade']}",
         _REGUA,
         f"Status: {_ROTULO_STATUS.get(session.status, session.status.upper())}",

@@ -35,20 +35,23 @@
 
     <div class="responsive-one-col">
       <Card title="Sessões de caixa" subtitle="Abertas no período" padding="none">
-        <ReportDataTable :rows="sessionRows" :columns="sessionColumns" />
+        <ReportDataTable :rows="sessionRows" :columns="sessionColumns" row-clickable @row-click="openSession" />
       </Card>
       <Card title="Movimentações" subtitle="Cada lançamento, com quem fez, onde e quem autorizou" padding="none">
-        <ReportDataTable :rows="movementRows" :columns="movementColumns" />
+        <ReportDataTable :rows="movementRows" :columns="movementColumns" row-clickable @row-click="openMovement" />
       </Card>
     </div>
+    <CashMovementDetailsDialog v-model:visible="movementDialog" :movement="selectedMovement" @view-session="openSessionById" />
   </div>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import Chart from "primevue/chart";
 
 import AppIcon from "../AppIcon.vue";
+import CashMovementDetailsDialog from "../cash/CashMovementDetailsDialog.vue";
 import Card from "../display/Card.vue";
 import StatCard from "../data/StatCard.vue";
 import ReportDataTable from "../data/ReportDataTable.vue";
@@ -57,6 +60,20 @@ const props = defineProps({
   report: { type: Object, required: true },
   barOptions: { type: Object, required: true },
 });
+const router = useRouter();
+const selectedMovement = ref(null);
+const movementDialog = ref(false);
+
+function openMovement(movement) {
+  selectedMovement.value = movement;
+  movementDialog.value = true;
+}
+function openSession(session) { openSessionById(session.id); }
+function openSessionById(id) {
+  if (!id) return;
+  movementDialog.value = false;
+  router.push({ name: "caixa-sessao-detalhe", params: { id } });
+}
 
 const summary = computed(() => props.report.summary || {});
 
@@ -171,3 +188,8 @@ const dayChart = computed(() => {
   };
 });
 </script>
+
+<style scoped>
+.cash-report{display:flex;flex-direction:column;gap:20px;padding-top:4px}
+@media(max-width:720px){.cash-report{gap:14px;padding-top:2px}}
+</style>

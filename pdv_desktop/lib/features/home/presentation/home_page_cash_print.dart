@@ -38,6 +38,18 @@ mixin _CashPrintSection on _HomePageShared {
         failureTitle: 'O comprovante de abertura não saiu na impressora',
       );
 
+  Future<void> _printCashOpeningDivergence(Map<String, dynamic> session) =>
+      _printCashDocument(
+        session: session,
+        document: 'opening_divergence',
+        title: 'Imprimir divergência autorizada da abertura',
+        summary:
+            '${cashStationLabelOf(session)} · '
+            'diferença ${_money(session['difference_amount'])}',
+        failureTitle:
+            'O comprovante da divergência de abertura não saiu na impressora',
+      );
+
   Future<void> _printCashMovement(
     Map<String, dynamic> movement,
     Map<String, dynamic> session, {
@@ -50,7 +62,8 @@ mixin _CashPrintSection on _HomePageShared {
       document: isWithdrawal ? 'withdrawal' : 'supply',
       extraQuery: {
         'movement': '${movement['id']}',
-        if (authorizedBy.trim().isNotEmpty) 'authorized_by': authorizedBy.trim(),
+        if (authorizedBy.trim().isNotEmpty)
+          'authorized_by': authorizedBy.trim(),
         if (managerReason.trim().isNotEmpty)
           'manager_reason': managerReason.trim(),
       },

@@ -163,6 +163,7 @@ def test_cash_session_statement_includes_orders_and_items(
     assert response.status_code == 200, response.content
     assert response.json()["session"]["cash_station_name"] == "Caixa 1"
     statement_order = response.json()["orders"][0]
+    assert response.json()["session"]["closed_by_name"] == ""
     assert statement_order["sequence"] == 91
     assert statement_order["items"][0]["id"] == str(item.pk)
     assert statement_order["items"][0]["product_name"] == "X-Burger"

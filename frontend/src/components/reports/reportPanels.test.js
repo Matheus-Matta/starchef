@@ -1,17 +1,20 @@
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import PrimeVue from "primevue/config";
 import { describe, expect, it, vi } from "vitest";
 
 import CashMovementsReport from "./CashMovementsReport.vue";
 import OrdersCancellationsPanel from "./OrdersCancellationsPanel.vue";
 
+const { routerPush } = vi.hoisted(() => ({ routerPush: vi.fn() }));
+vi.mock("vue-router", () => ({ useRouter: () => ({ push: routerPush }) }));
+
 // O Chart do PrimeVue precisa de canvas; aqui só interessa o que vira texto.
 vi.mock("primevue/chart", () => ({ default: { name: "Chart", template: "<div class='chart-stub' />" } }));
 
-const mountPanel = (component, report) =>
+const mountPanel = (component, report, stubs = {}) =>
   mount(component, {
     props: { report, barOptions: {} },
-    global: { plugins: [PrimeVue] },
+    global: { plugins: [PrimeVue], stubs },
   });
 
 describe("CashMovementsReport", () => {
@@ -32,6 +35,21 @@ describe("CashMovementsReport", () => {
     expect(text).toContain("Senha do caixa");
     expect(text).toContain("Balcão 01");
     expect(text).toContain("Aberto");
+  });
+
+  it("abre os detalhes ao clicar em uma movimentação", async () => {
+    const wrapper = mountPanel(CashMovementsReport, {
+      summary: {}, by_station: [], by_operator: [], by_day: [], sessions: [],
+      movements: [{ id: "m1", cash_register: "session-1", created_at: "2026-09-16T12:00:00Z", movement_type: "supply", amount: "50.00", reason: "Troco", status: "approved", authorization: "manager" }],
+    }, {
+      ReportDataTable: { props: ["rows"], emits: ["row-click"], template: `<button v-for="row in rows" @click="$emit('row-click', row)">{{ row.reason }}</button>` },
+      Dialog: { props: ["visible", "header"], template: `<section v-if="visible">{{ header }}<slot /></section>` },
+    });
+    const row = wrapper.findAll("button").find((item) => item.text().includes("Troco"));
+    await row.trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Detalhes da movimentação");
+    expect(wrapper.text()).toContain("Ver sessão completa");
   });
 });
 

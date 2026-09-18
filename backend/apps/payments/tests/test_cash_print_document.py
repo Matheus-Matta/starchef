@@ -7,6 +7,7 @@ de regra, e a divergencia apareceria no papel assinado.
 """
 
 import pytest
+from django.utils import timezone
 
 from apps.payments.models import CashMovement, CashRegister, CashStation
 
@@ -113,6 +114,30 @@ def test_sangria_precisa_do_lancamento(admin_client, session):
     assert resposta.status_code == 400
 
 
+def test_abertura_divergente_autorizada_traz_justificativa_e_assinatura(
+    admin_client, session, admin_user
+):
+    session.opening_is_initial = False
+    session.expected_amount = "150.00"
+    session.actual_amount = "140.00"
+    session.difference_amount = "-10.00"
+    session.approved_by = admin_user
+    session.approved_at = timezone.now()
+    session.approval_reason = "Faltaram dez reais na troca de turno"
+    session.save()
+
+    resposta = _document(admin_client, session, document="opening_divergence")
+
+    assert resposta.status_code == 200
+    texto = resposta.json()["text_content"]
+    assert "DIVERGENCIA AUTORIZADA NA ABERTURA" in texto
+    assert "Valor esperado" in texto and "150.00" in texto
+    assert "Valor contado" in texto and "140.00" in texto
+    assert "Diferenca" in texto and "-10.00" in texto
+    assert "Faltaram dez reais na troca de turno" in " ".join(texto.split())
+    assert f"Assinatura do responsavel:\n\n\n{'_' * 30}" in texto
+
+
 def test_sangria_traz_motivo_destino_e_quem_autorizou(
     admin_client, session, admin_user, account
 ):
@@ -146,6 +171,7 @@ def test_sangria_traz_motivo_destino_e_quem_autorizou(
     assert "Troco insuficiente no cofre" in texto
     assert "Cofre da loja" in texto
     assert "Senha de acoes do caixa" in texto
+    assert f"Assinatura do responsavel:\n\n\n{'_' * 30}" in texto
 
 
 def test_documento_invalido_e_recusado(admin_client, session):

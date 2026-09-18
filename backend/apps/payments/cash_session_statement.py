@@ -40,6 +40,7 @@ def _item_data(item):
 def cash_session_statement(session, *, context=None):
     """Return the session, receipts and sold items without client-side N+1 calls."""
     session_data = CashRegisterSerializer(session, context=context or {}).data
+    session_data["closed_by_name"] = operator_label(session.closed_by) if session.closed_by_id else ""
     order_ids = {sale["order"] for sale in session_data["sales"] if sale.get("order")}
     orders = (
         Order.objects.filter(pk__in=order_ids)

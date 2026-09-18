@@ -13,6 +13,7 @@ const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
 const PdvView = () => import("../views/PdvView.vue");
 const OrderEditView = () => import("../views/OrderEditView.vue");
 const CashRegisterView = () => import("../views/CashRegisterView.vue");
+const CashSessionDetailView = () => import("../views/CashSessionDetailView.vue");
 const ReportsView = () => import("../views/ReportsView.vue");
 const KdsStationsView = () => import("../views/KdsStationsView.vue");
 const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
@@ -122,6 +123,7 @@ export const router = createRouter({
         { path: "relatorio-geral", name: "relatorio-geral", component: DashboardView, meta: { requiresAuth: true, title: "Relatório geral", nav: "relatorio-geral" } },
         { path: "pdv", name: "pdv", component: PdvView, meta: { requiresAuth: true, title: "PDV — Ponto de Venda", nav: "pdv" } },
         { path: "caixa", name: "caixa", component: CashRegisterView, meta: { requiresAuth: true, title: "Controle de caixa", nav: "caixa" } },
+        { path: "caixa/sessoes/:id", name: "caixa-sessao-detalhe", component: CashSessionDetailView, meta: { requiresAuth: true, title: "Detalhamento da sessão de caixa", nav: "caixa" } },
         { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
         { path: "kds", name: "kds", component: KdsView, meta: { requiresAuth: true, title: "KDS Cozinha", nav: "kds", fullWidth: true } },
         { path: "kds-estacoes", name: "kds-estacoes", component: KdsStationsView, meta: { requiresAuth: true, title: "Estações KDS", nav: "kds-estacoes" } },

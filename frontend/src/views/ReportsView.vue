@@ -51,14 +51,20 @@
           <option value="takeaway">Retirada</option>
         </select>
       </template>
-      <select v-if="section === 'cash'" v-model="cashFilters.movement_type" class="reports-view__select" aria-label="Tipo de movimento" @change="loadReport">
-        <option value="">Todos os movimentos</option>
-        <option value="opening">Abertura</option>
-        <option value="sale">Venda em dinheiro</option>
-        <option value="supply">Suprimento</option>
-        <option value="withdrawal">Sangria</option>
-        <option value="refund">Estorno</option>
-      </select>
+      <template v-if="section === 'cash'">
+        <select v-model="cashFilters.cash_station" class="reports-view__select" aria-label="Caixa" @change="loadReport">
+          <option value="">Todos os caixas</option>
+          <option v-for="station in cashStations" :key="station.id" :value="station.id">{{ station.name }} · {{ station.code }}</option>
+        </select>
+        <select v-model="cashFilters.movement_type" class="reports-view__select" aria-label="Tipo de movimento" @change="loadReport">
+          <option value="">Todos os movimentos</option>
+          <option value="opening">Abertura</option>
+          <option value="sale">Venda em dinheiro</option>
+          <option value="supply">Suprimento</option>
+          <option value="withdrawal">Sangria</option>
+          <option value="refund">Estorno</option>
+        </select>
+      </template>
       <AppDateRange
         v-model="reportPeriod"
         class="reports-view__range"
@@ -260,13 +266,14 @@ const loadingRestaurants = ref(false);
 const restaurants = ref([]);
 const categories = ref([]);
 const sectors = ref([]);
+const cashStations = ref([]);
 const productFilters = reactive({
   category: "",
   sector: "",
   product_type: "",
   production_sector: "",
 });
-const cashFilters = reactive({ movement_type: "" });
+const cashFilters = reactive({ cash_station: "", movement_type: "" });
 const ordersFilters = reactive({ authorization: "", order_type: "" });
 const selectedRestaurantId = ref(getBrowserValue("starchef-restaurant-scope") || "");
 const activeTab = ref("payment");
@@ -515,8 +522,19 @@ async function loadProductFilterOptions() {
 async function handleRestaurantChange() {
   productFilters.category = "";
   productFilters.sector = "";
+  cashFilters.cash_station = "";
   await loadProductFilterOptions();
+  await loadCashFilterOptions();
   await loadReport();
+}
+
+async function loadCashFilterOptions() {
+  if (props.section !== "cash") return;
+  const response = await api.get("/cash-stations/", {
+    params: { restaurant: selectedRestaurantId.value, page_size: 200, ordering: "name" },
+    skipRestaurantScope: true,
+  });
+  cashStations.value = response.data?.results || response.data || [];
 }
 
 async function loadRestaurants() {
@@ -545,7 +563,9 @@ async function exportCsv() {
     export: "csv",
   });
   if (selectedRestaurantId.value) params.set("restaurant", selectedRestaurantId.value);
-  if (props.section === "cash" && cashFilters.movement_type) params.set("movement_type", cashFilters.movement_type);
+  if (props.section === "cash") {
+    Object.entries(cashFilters).forEach(([key, value]) => value && params.set(key, value));
+  }
   if (props.section === "orders") {
     Object.entries(ordersFilters).forEach(([key, value]) => value && params.set(key, value));
   }
@@ -584,6 +604,7 @@ function ymd(date) {
 onMounted(async () => {
   await loadRestaurants();
   await loadProductFilterOptions();
+  await loadCashFilterOptions();
   await loadReport();
 });
 </script>
