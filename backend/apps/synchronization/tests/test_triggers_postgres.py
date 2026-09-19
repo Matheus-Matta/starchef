@@ -127,3 +127,71 @@ def test_desinstalar_remove_tudo(com_triggers):
     triggers.uninstall(log=lambda _m: None)
     assert triggers.installed() == set()
     triggers.install(log=lambda _m: None)  # repõe para o teardown da fixture
+
+
+# ── faixa de id de usuário ──────────────────────────────────────────────────
+#
+# `auth.User` é a única das 52 entidades sincronizadas sem id UUID, e a loja
+# ADOTA o id da nuvem — tem de adotar, porque as FKs de usuário viajam como id
+# cru no payload. Inserir com id explícito não avança a sequência local, e ela
+# acaba entregando a um usuário da loja um número que a nuvem já deu a outra
+# pessoa. Ver `services/user_ids.py`.
+
+
+def test_a_loja_numera_usuario_fora_da_faixa_da_nuvem(settings, db):
+    """Reproduz o estado medido no nó real e confere a reserva."""
+    from django.contrib.auth import get_user_model
+
+    from apps.synchronization.services import user_ids
+
+    User = get_user_model()
+    settings.SYNC_NODE_TYPE = "local"
+
+    # O estado do nó de produção: usuário adotado da nuvem com id alto e a
+    # sequência local ainda lá atrás.
+    User.objects.create(pk=15, username="vindo-da-nuvem")
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_get_serial_sequence('auth_user', 'id')")
+        sequencia = cursor.fetchone()[0]
+        cursor.execute(f"ALTER SEQUENCE {sequencia} RESTART WITH 1")
+
+    assert user_ids.dentro_da_faixa_da_nuvem(connection), (
+        "o cenário de risco precisa existir para o teste valer"
+    )
+    assert user_ids.reservar_faixa(connection) is True
+
+    novo = User.objects.create(username="criado-na-loja")
+    assert novo.pk >= user_ids.PRIMEIRO_ID_LOCAL, (
+        "usuário criado na loja nasceu na faixa da nuvem — colisão à espera"
+    )
+
+
+def test_reservar_de_novo_nao_recua_a_sequencia(settings, db):
+    """Rodar duas vezes não pode devolver a loja para a faixa da nuvem."""
+    from apps.synchronization.services import user_ids
+
+    settings.SYNC_NODE_TYPE = "local"
+    user_ids.reservar_faixa(connection)
+    antes = user_ids.valor_atual(connection)
+
+    assert user_ids.reservar_faixa(connection) is False
+    assert user_ids.valor_atual(connection) >= antes
+
+
+def test_na_nuvem_a_faixa_nao_e_reservada(settings, db):
+    """Na nuvem a sequência é a autoridade e não pode ser empurrada.
+
+    A asserção é "não mexeu", e não um valor absoluto: o banco de teste é
+    compartilhado entre os casos deste arquivo, e um valor fixo aqui
+    dependeria da ordem em que eles rodam.
+    """
+    from apps.synchronization.services import user_ids
+
+    settings.SYNC_NODE_TYPE = "cloud"
+    antes = user_ids.valor_atual(connection)
+
+    assert user_ids.reservar_faixa(connection) is False
+    assert user_ids.valor_atual(connection) == antes
+    assert user_ids.dentro_da_faixa_da_nuvem(connection) is False, (
+        "a checagem nunca deve acusar risco numa instalação de nuvem"
+    )

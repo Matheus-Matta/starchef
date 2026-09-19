@@ -132,8 +132,39 @@ def _checar_nome():
     )]
 
 
+def _checar_faixa_de_id():
+    """A loja ainda numera usuário na mesma faixa que a nuvem?
+
+    A migration `0009` empurra a sequência para fora dela. Este aviso existe
+    para a instalação que já estava no ar quando a migration passou, ou que
+    virou nó LOCAL depois. O porquê inteiro está em `services/user_ids.py`.
+    """
+    try:
+        from django.db import connection
+
+        from apps.synchronization.services import user_ids
+
+        if not user_ids.dentro_da_faixa_da_nuvem(connection):
+            return []
+        atual = user_ids.valor_atual(connection)
+    except Exception:  # noqa: BLE001 — banco ainda migrando, por exemplo
+        return []
+
+    return [CheckWarning(
+        f"A sequência de `auth_user` está em {atual}, dentro da faixa que a "
+        "nuvem usa.",
+        hint=(
+            "Um usuário criado nesta loja pode receber um id que a nuvem já "
+            "deu a OUTRA pessoa, e a sincronização sobrescreveria uma com a "
+            "outra sem erro visível — hash de senha inclusive. Rode "
+            "`manage.py migrate synchronization`, que a 0009 reserva a faixa."
+        ),
+        id="synchronization.W007",
+    )]
+
+
 def _checar_local():
-    avisos = _checar_nome()
+    avisos = _checar_nome() + _checar_faixa_de_id()
     faltando = [
         nome for nome in ("SYNC_NODE_ID", "SYNC_CLOUD_WSS_URL", "SYNC_AUTH_TOKEN")
         if not getattr(settings, nome, "")
