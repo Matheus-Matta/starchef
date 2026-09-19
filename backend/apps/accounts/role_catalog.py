@@ -35,6 +35,9 @@ _WAITER_CODES = [
 # Caixa: tudo do garçom + enxergar todos os pedidos (fecha conta de qualquer
 # mesa/garçom) + abrir/fechar caixa, sangria/suprimento e receber pagamentos.
 _CASHIER_CODES = _WAITER_CODES + [
+    # A tela do PDV começa aqui e sobe (gerente herda do caixa, admin leva
+    # tudo). O garçom fica de fora de propósito: ele lança pelo aplicativo.
+    "pdv.operate",
     "orders.view",
     "cash.view.own",
     "cash.open",

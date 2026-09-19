@@ -32,6 +32,13 @@ PERMISSION_GROUPS = [
             ("orders.manage", "Gerenciar pedidos", "Editar itens, reabrir e alterar pedidos existentes."),
             ("orders.cancel", "Cancelar pedidos", "Cancelar pedidos já abertos."),
             ("orders.discount", "Aplicar descontos", "Conceder desconto no pedido (respeitando o limite do perfil)."),
+            # Abrir a TELA de venda é diferente de poder criar pedido: o garçom
+            # cria pedido pelo aplicativo dele e não opera o posto de venda. Sem
+            # um código próprio, a única forma de barrar a tela seria uma lista
+            # de perfis no roteador — a única regra de acesso do sistema fora
+            # deste catálogo, e a primeira a envelhecer quando alguém criar um
+            # perfil novo.
+            ("pdv.operate", "Operar o PDV", "Abrir a tela de ponto de venda (caixa, gerente e admin)."),
         ],
     ),
     (

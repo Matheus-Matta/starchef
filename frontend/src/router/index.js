@@ -4,6 +4,7 @@ import { resources } from "../config/resources";
 import { useAuthStore } from "../stores/auth";
 
 const AppLayout = () => import("../layout/AppLayout.vue");
+const PdvLayout = () => import("../layout/PdvLayout.vue");
 const DashboardView = () => import("../views/DashboardView.vue");
 const HomeView = () => import("../views/HomeView.vue");
 const KdsView = () => import("../views/KdsView.vue");
@@ -113,6 +114,32 @@ export const router = createRouter({
     { path: "/login", name: "login", component: LoginScreen, meta: { public: true, title: "Login" } },
     { path: "/esqueci-senha", name: "forgot-password", component: PasswordRecoveryView, meta: { public: true, title: "Esqueci minha senha" } },
     { path: "/redefinir-senha", name: "reset-password", component: PasswordRecoveryView, meta: { public: true, title: "Redefinir senha" } },
+    // O PDV fica FORA do AppLayout de propósito: nada de barra lateral nem
+    // cabeçalho de retaguarda. É tela de operação, no mesmo desenho do
+    // aplicativo desktop, e quem alterna entre os dois durante o turno não
+    // deve ter de reaprender onde as coisas estão.
+    //
+    // Declarada ANTES da raiz porque `path: "/"` com filhos casa tudo o que
+    // vier depois; invertido, o PDV voltaria a ser renderizado dentro do
+    // painel sem ninguém notar.
+    //
+    // O acesso é por CÓDIGO DE PERMISSÃO (`pdv.operate`), não por lista de
+    // perfis: é o mecanismo que o roteador já usa e o único lugar onde o
+    // projeto declara acesso. Uma lista de perfis aqui seria a primeira coisa
+    // a envelhecer quando alguém criar um perfil novo.
+    {
+      path: "/pdv",
+      component: PdvLayout,
+      meta: { requiresAuth: true, permission: "pdv.operate" },
+      children: [
+        {
+          path: "",
+          name: "pdv",
+          component: PdvView,
+          meta: { requiresAuth: true, title: "PDV — Ponto de Venda", nav: "pdv", pdvNav: "venda" },
+        },
+      ],
+    },
     {
       path: "/",
       component: AppLayout,
@@ -121,7 +148,6 @@ export const router = createRouter({
         { path: "", redirect: { name: "painel" } },
         { path: "home", name: "painel", component: HomeView, meta: { requiresAuth: true, title: "Home", nav: "painel" } },
         { path: "relatorio-geral", name: "relatorio-geral", component: DashboardView, meta: { requiresAuth: true, title: "Relatório geral", nav: "relatorio-geral" } },
-        { path: "pdv", name: "pdv", component: PdvView, meta: { requiresAuth: true, title: "PDV — Ponto de Venda", nav: "pdv" } },
         { path: "caixa", name: "caixa", component: CashRegisterView, meta: { requiresAuth: true, title: "Controle de caixa", nav: "caixa" } },
         { path: "caixa/sessoes/:id", name: "caixa-sessao-detalhe", component: CashSessionDetailView, meta: { requiresAuth: true, title: "Detalhamento da sessão de caixa", nav: "caixa" } },
         { path: "pedidos/:id/editar-itens", name: "pedido-editar-itens", component: OrderEditView, props: true, meta: { requiresAuth: true, title: "Editar pedido", nav: "pedidos" } },
