@@ -26,6 +26,7 @@ from apps.accounts.views import (
 )
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
+from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet, ReusableAssetViewSet
 from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, FocusNfeWebhookView, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
@@ -36,6 +37,7 @@ from apps.menu.views import (
     MenuViewSet,
     ProductAddonViewSet,
     ProductCategoryViewSet,
+    ProductUnitConversionViewSet,
     ProductVariationViewSet,
     ProductViewSet,
     RecipeItemViewSet,
@@ -72,6 +74,8 @@ from apps.restaurants.views import (
     TableViewSet,
 )
 from apps.stock.views import (
+    GoodsReceiptViewSet,
+    InventoryLotViewSet,
     StockAlertView,
     StockEntryViewSet,
     StockExitViewSet,
@@ -121,6 +125,7 @@ router.register("customers/addresses", CustomerAddressViewSet, basename="custome
 router.register("customers", CustomerViewSet, basename="customers")
 router.register("menu/categories", ProductCategoryViewSet, basename="product-categories")
 router.register("menu/products", ProductViewSet, basename="products")
+router.register("menu/unit-conversions", ProductUnitConversionViewSet, basename="product-unit-conversions")
 router.register("menu/addons", ProductAddonViewSet, basename="product-addons")
 router.register("menu/variations", ProductVariationViewSet, basename="product-variations")
 router.register("menu/ingredients", IngredientViewSet, basename="ingredients")
@@ -155,7 +160,12 @@ router.register("stock/label-templates", StockLabelTemplateViewSet, basename="st
 router.register("stock/lots", StockLotViewSet, basename="stock-lots")
 router.register("stock/entries", StockEntryViewSet, basename="stock-entries")
 router.register("stock/exits", StockExitViewSet, basename="stock-exits")
+router.register("stock/receipts", GoodsReceiptViewSet, basename="goods-receipts")
+router.register("stock/inventory-lots", InventoryLotViewSet, basename="inventory-lots")
 router.register("stock/movements", StockMovementViewSet, basename="stock-movements")
+router.register("assets/location-history", AssetLocationHistoryViewSet, basename="asset-location-history")
+router.register("assets/reusables", ReusableAssetViewSet, basename="reusable-assets")
+router.register("assets", AssetViewSet, basename="assets")
 router.register("notifications", NotificationViewSet, basename="notifications")
 
 urlpatterns = [
@@ -196,6 +206,7 @@ urlpatterns = [
     # Gerenciamento da sincronização backend-to-backend. Fica fora do router
     # principal porque tem rota própria sem autenticação (a matrícula).
     path("api/v1/sync/", include("apps.synchronization.urls")),
+    path("api/v1/", include("apps.inbound_nfe.urls")),
     path("api/v1/", include(router.urls)),
 ]
 

@@ -118,6 +118,8 @@ _e("product_category", "menu.ProductCategory", conflict_policy=CLOUD, flow="clou
 _e("product", "menu.Product", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("product_category", "restaurant"),
    m2m_fields={"restaurants": "id"})
+_e("product_unit_conversion", "menu.ProductUnitConversion", conflict_policy=CLOUD,
+   flow="cloud_to_local", dependencies=("product",))
 _e("product_variation", "menu.ProductVariation", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("product",))
 _e("product_addon", "menu.ProductAddon", conflict_policy=CLOUD, flow="cloud_to_local",
@@ -192,7 +194,8 @@ _e("stock_settings", "stock.StockSettings", conflict_policy=CLOUD,
 # produto, local e quantidade — continua viajando.
 _e("stock_movement", "stock.StockMovement", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("stock_location", "product"), include_in_bootstrap=False, immutable=True,
-   exclude_fields=("lot", "entry", "exit"))
+   exclude_fields=("lot", "entry", "exit", "nfe", "nfe_item", "receipt",
+                   "receipt_item", "inventory_lot"))
 
 # 13-14. Pedidos, vendas e pagamentos. Nascem na loja e sobem.
 _e("payment_method", "payments.PaymentMethod", conflict_policy=CLOUD, dependencies=("restaurant",))

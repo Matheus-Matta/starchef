@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01">
+  <chNFe>35260812345678000190550010000560211000560213</chNFe>
+  <CNPJ>12345678000190</CNPJ>
+  <xNome>ABC ALIMENTOS LTDA</xNome>
+  <IE>111222333444</IE>
+  <dhEmi>2026-08-19T10:00:00-03:00</dhEmi>
+  <tpNF>1</tpNF>
+  <vNF>4382.00</vNF>
+  <digVal>zxcvbnm123456=</digVal>
+  <dhRecbto>2026-08-19T10:01:00-03:00</dhRecbto>
+  <cSitNFe>1</cSitNFe>
+</resNFe>

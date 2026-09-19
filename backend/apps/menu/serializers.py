@@ -1,3 +1,4 @@
+from decimal import Decimal, ROUND_CEILING
 from django.utils.text import slugify
 from rest_framework import serializers
 
@@ -14,6 +15,7 @@ from apps.menu.models import (
     Product,
     ProductAddon,
     ProductCategory,
+    ProductUnitConversion,
     ProductVariation,
     Recipe,
     RecipeItem,
@@ -100,6 +102,15 @@ def _validate_consumption(serializer, attrs, *, ingredient_field, quantity_field
     return attrs
 
 
+class ProductUnitConversionSerializer(TenantModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+
+    class Meta:
+        model = ProductUnitConversion
+        fields = "__all__"
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+
 class ProductAddonSerializer(TenantModelSerializer):
     class Meta:
         model = ProductAddon
@@ -146,15 +157,53 @@ class RecipeSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "total_cost"]
 
 
+class CeilDecimalField(serializers.DecimalField):
+    """
+    Campo decimal que arredonda 1 centavo para cima caso o valor enviado
+    possua mais de 2 casas decimais (fração de centavo) usando ROUND_CEILING.
+    Garante que payloads com frações decimais sejam aceitos e arredondados
+    corretamente ao cadastrar produto a partir de notas fiscais.
+    """
+
+    def to_internal_value(self, data):
+        if data is not None and data != "":
+            try:
+                val = Decimal(str(data))
+                data = val.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+            except Exception:
+                pass
+        return super().to_internal_value(data)
+
+
 class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
     category_name = serializers.SerializerMethodField()
     sector_name = serializers.CharField(source="sector.name", read_only=True, default=None)
     current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     variations = ProductVariationSerializer(many=True, read_only=True)
     recipe = RecipeSerializer(read_only=True)
+    internal_code = serializers.CharField(required=False, allow_blank=True, default="")
+    # O banco aceita zero para equipamentos criados pelo recebimento fiscal,
+    # mas o cadastro comercial pela API continua exigindo preco explicito.
+    sale_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=True)
+    estimated_cost = CeilDecimalField(max_digits=12, decimal_places=2, required=False, default=Decimal("0.00"))
     # Adicionais vinculados a este produto (gerenciados na edição do produto).
     addons = serializers.SerializerMethodField()
     restaurant_names = serializers.SerializerMethodField()
+    current_stock = serializers.SerializerMethodField()
+    current_stock_display = serializers.SerializerMethodField()
+
+    def get_current_stock(self, obj):
+        from apps.stock.models import StockMovement
+        from django.db.models import Sum
+        val = StockMovement.all_objects.filter(product=obj, deleted_at__isnull=True).aggregate(total=Sum("quantity"))["total"]
+        return float(val) if val is not None else 0.0
+
+    def get_current_stock_display(self, obj):
+        qty = self.get_current_stock(obj)
+        unit = (obj.stock_unit or "UN").upper()
+        if qty == int(qty):
+            return f"{int(qty)} {unit}"
+        return f"{qty:.2f} {unit}"
 
     def get_addons(self, obj):
         return [
@@ -172,6 +221,15 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
         # `margin_percent` e assinado: vender abaixo do custo e uma decisao
         # possivel, e a margem negativa e o retrato dela.
         signed_fields = ["margin_percent"]
+        extra_kwargs = {
+            "gtin": {"required": False, "allow_blank": True, "default": ""},
+            "brand": {"required": False, "allow_blank": True, "default": ""},
+            "model": {"required": False, "allow_blank": True, "default": ""},
+            "description": {"required": False, "allow_blank": True, "default": ""},
+            "category": {"required": False, "allow_null": True, "default": None},
+            "sector": {"required": False, "allow_null": True, "default": None},
+            "fiscal_profile": {"required": False, "allow_null": True, "default": None},
+        }
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category_id else "Sem categoria"
@@ -221,8 +279,6 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
         account = getattr(self.context.get("request"), "account", None)
         if account and any(restaurant.account_id != account.id for restaurant in value):
             raise serializers.ValidationError("Selecione apenas restaurantes da mesma conta.")
-        if not value:
-            raise serializers.ValidationError("Selecione ao menos um restaurante.")
         return value
 
     def validate(self, attrs):
@@ -231,12 +287,48 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
         # conter várias unidades, desde que todas pertençam à mesma conta.
         selected = attrs.pop("restaurants", serializers.empty)
         attrs = super().validate(attrs)
+
+        request = self.context.get("request")
         if selected is not serializers.empty:
             attrs["restaurants"] = selected
-        # Vínculo direto (refrigerante em lata e afins): mesma coerência
-        # exigida do adicional. Produto COM ficha técnica ignora este vínculo
-        # na baixa — a ficha descreve a composição real —, mas um cadastro
-        # incoerente continua sendo recusado aqui.
+        elif not self.instance:
+            account = getattr(request, "account", None)
+            if account:
+                from apps.restaurants.models import Restaurant
+                account_restaurants = list(Restaurant.all_objects.filter(account=account, is_active=True))
+                if account_restaurants:
+                    attrs["restaurants"] = account_restaurants
+
+        if not attrs.get("internal_code") and not getattr(self.instance, "internal_code", None):
+            import uuid
+            attrs["internal_code"] = f"PRD-{uuid.uuid4().hex[:6].upper()}"
+
+        gtin = (attrs.get("gtin") or getattr(self.instance, "gtin", "") or "").strip()
+        branch = attrs.get("branch") or getattr(self.instance, "branch", None)
+        if not branch and request:
+            profile = getattr(request.user, "profile", None)
+            restaurant = attrs.get("restaurant") or getattr(profile, "restaurant", None)
+            if restaurant:
+                from apps.restaurants.models import Branch
+                inherited_branch = getattr(profile, "branch", None)
+                if inherited_branch and inherited_branch.restaurant_id == getattr(restaurant, "id", restaurant):
+                    branch = inherited_branch
+                else:
+                    branch = Branch.all_objects.filter(
+                        restaurant_id=getattr(restaurant, "id", restaurant),
+                        deleted_at__isnull=True,
+                    ).first()
+
+        if gtin:
+            normalized = self.validate_ean(gtin)
+            if attrs.get("ean") and attrs["ean"] != normalized:
+                raise serializers.ValidationError({"gtin": "EAN e GTIN devem identificar o mesmo produto."})
+            attrs["ean"] = normalized
+            attrs["gtin"] = normalized
+        elif "ean" in attrs:
+            attrs["gtin"] = attrs["ean"]
+
+        # Preserva a regra de consumo do PDV desta release.
         return _validate_consumption(
             self, attrs,
             ingredient_field="stock_ingredient",
@@ -261,6 +353,23 @@ class IngredientListSerializer(serializers.ListSerializer):
 
 class IngredientSerializer(TenantModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name", read_only=True, default="")
+    current_stock = serializers.SerializerMethodField()
+    current_stock_display = serializers.SerializerMethodField()
+
+    def get_current_stock(self, obj):
+        from apps.stock.models import StockMovement
+        from django.db.models import Sum
+        val = StockMovement.all_objects.filter(ingredient=obj, deleted_at__isnull=True).aggregate(total=Sum("quantity"))["total"]
+        return float(val) if val is not None else 0.0
+
+    def get_current_stock_display(self, obj):
+        qty = self.get_current_stock(obj)
+        unit = (obj.unit or "UN").upper()
+        if unit == "UNIT":
+            unit = "UN"
+        if qty == int(qty):
+            return f"{int(qty)} {unit}"
+        return f"{qty:.2f} {unit}"
 
     class Meta:
         model = Ingredient

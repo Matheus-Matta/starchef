@@ -412,3 +412,83 @@ export const LABEL_CODE_TYPE_LABELS = {
 export const LABEL_CODE_TYPE_OPTIONS = Object.entries(LABEL_CODE_TYPE_LABELS).map(
   ([value, label]) => ({ value, label }),
 );
+
+export const INBOUND_NFE_STATUS_LABELS = {
+  pending_mapping: { label: "Pendente de Vínculo", tone: "warning" },
+  pending_receipt: { label: "Pronta p/ Entrada", tone: "info" },
+  received: { label: "Entrada Concluída", tone: "success" },
+  ignored: { label: "Ignorada", tone: "neutral" },
+  summary: { label: "Resumo SEFAZ", tone: "neutral" },
+  xml_available: { label: "XML Completo", tone: "info" },
+  cancelled: { label: "Cancelada", tone: "danger" },
+  // Compatibilidade
+  PENDING: { label: "Pendente de Vínculo", tone: "warning" },
+  MANIFESTED: { label: "Manifestada", tone: "info" },
+  STOCKED: { label: "Entrada Concluída", tone: "success" },
+  IGNORED: { label: "Ignorada", tone: "neutral" },
+  CANCELED: { label: "Cancelada", tone: "danger" },
+  CANCELLED: { label: "Cancelada", tone: "danger" },
+};
+
+export const ASSET_STATUS_LABELS = {
+  IN_USE: { label: "Em Uso", tone: "success" },
+  IN_STOCK: { label: "Disponível / Estoque", tone: "info" },
+  IN_MAINTENANCE: { label: "Em Manutenção", tone: "warning" },
+  BROKEN: { label: "Com Avaria", tone: "danger" },
+  LOANED: { label: "Emprestado", tone: "neutral" },
+  TRANSFERRED: { label: "Transferido", tone: "neutral" },
+  INACTIVE: { label: "Desativado", tone: "neutral" },
+  DISPOSED: { label: "Baixado", tone: "danger" },
+  LOST: { label: "Extraviado", tone: "danger" },
+  STOLEN: { label: "Furtado / Roubado", tone: "danger" },
+  // Compatibilidade com minúsculas legadas
+  in_use: { label: "Em Uso", tone: "success" },
+  in_maintenance: { label: "Em Manutenção", tone: "warning" },
+  idle: { label: "Disponível", tone: "info" },
+  disposed: { label: "Baixado", tone: "danger" },
+};
+
+export const ASSET_STATUS_OPTIONS = [
+  { label: "Em Uso / Operação", value: "IN_USE" },
+  { label: "Disponível / Em Estoque", value: "IN_STOCK" },
+  { label: "Em Manutenção", value: "IN_MAINTENANCE" },
+  { label: "Com Avaria / Inoperante", value: "BROKEN" },
+  { label: "Emprestado / Comodato", value: "LOANED" },
+  { label: "Transferido", value: "TRANSFERRED" },
+  { label: "Desativado", value: "INACTIVE" },
+  { label: "Baixado / Descartado", value: "DISPOSED" },
+  { label: "Extraviado", value: "LOST" },
+  { label: "Furtado / Roubado", value: "STOLEN" },
+];
+
+export const INVENTORY_LOT_STATUS_LABELS = {
+  active: { label: "Ativo", tone: "success" },
+  depleted: { label: "Esgotado", tone: "neutral" },
+  expired: { label: "Vencido", tone: "danger" },
+  quarantine: { label: "Quarentena", tone: "warning" },
+};
+
+export const GOODS_RECEIPT_STATUS_LABELS = {
+  draft: { label: "Rascunho", tone: "neutral" },
+  received: { label: "Conforme", tone: "success" },
+  divergent: { label: "Com Divergência", tone: "warning" },
+  rejected: { label: "Rejeitado", tone: "danger" },
+};
+
+export const ITEM_TYPE_OPTIONS = [
+  { label: "Mercadoria para Revenda", value: "RESALE_PRODUCT" },
+  { label: "Insumo / Matéria-Prima", value: "INGREDIENT" },
+  { label: "Material de Consumo", value: "CONSUMABLE" },
+  { label: "Material Reutilizável (Utensílios)", value: "REUSABLE_MATERIAL" },
+  { label: "Equipamento Operacional", value: "EQUIPMENT" },
+  { label: "Ativo Fixo / Patrimônio", value: "FIXED_ASSET" },
+  { label: "Embalagem", value: "PACKAGING" },
+  { label: "Serviço", value: "SERVICE" },
+  { label: "Outro", value: "OTHER" },
+];
+
+export const TRACKING_MODE_OPTIONS = [
+  { label: "Apenas Quantidade / Saldo", value: "QUANTITY" },
+  { label: "Lote e Validade (FEFO)", value: "LOT" },
+  { label: "Serializado / Patrimônio Individual", value: "SERIALIZED" },
+];

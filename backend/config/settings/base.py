@@ -68,6 +68,8 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.realtime",
     "apps.synchronization",
+    "apps.inbound_nfe",
+    "apps.assets",
 ]
 
 MIDDLEWARE = [
@@ -315,6 +317,10 @@ CELERY_BEAT_SCHEDULE = {
     "dispatch-due-kitchen-batches": {
         "task": "orders.dispatch_due_kitchen_batches",
         "schedule": 5.0,
+    },
+    "sync-inbound-nfe-sefaz": {
+        "task": "apps.inbound_nfe.tasks.sync_all_inbound_nfe",
+        "schedule": 5 * 3600.0,  # Consulta automática na SEFAZ a cada 5 horas
     },
 }
 
@@ -620,18 +626,28 @@ UNFOLD = {
                 "items": [
                     {"title": "Movimentacoes de estoque", "icon": "inventory_2", "link": "/admin/stock/stockmovement/"},
                     {"title": "Locais de estoque", "icon": "warehouse", "link": "/admin/stock/stocklocation/"},
+                    {"title": "Notas de Entrada (SEFAZ)", "icon": "shield", "link": "/admin/inbound_nfe/inboundnfe/"},
+                    {"title": "Documentos DF-e (docZip)", "icon": "description", "link": "/admin/inbound_nfe/dfedistributiondocument/"},
+                    {"title": "Estado Sync DF-e", "icon": "sync", "link": "/admin/inbound_nfe/dfesyncstate/"},
+                    {"title": "Mapeamento Fornecedor", "icon": "join_inner", "link": "/admin/inbound_nfe/supplieritemmapping/"},
                 ],
             },
         ],
     },
 }
 
+try:
+    import pythonjsonlogger.jsonlogger  # noqa: F401
+    _json_formatter_cls = "pythonjsonlogger.jsonlogger.JsonFormatter"
+except ImportError:
+    _json_formatter_cls = "logging.Formatter"
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
         "json": {
-            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "()": _json_formatter_cls,
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
         }
     },

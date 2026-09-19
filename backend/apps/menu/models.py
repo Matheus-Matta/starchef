@@ -70,6 +70,38 @@ class Product(TenantModel):
         (TYPE_INPUT, "Input"),
     ]
 
+    ITEM_INGREDIENT = "INGREDIENT"
+    ITEM_RESALE = "RESALE_PRODUCT"
+    ITEM_CONSUMABLE = "CONSUMABLE"
+    ITEM_REUSABLE = "REUSABLE_MATERIAL"
+    ITEM_EQUIPMENT = "EQUIPMENT"
+    ITEM_FIXED_ASSET = "FIXED_ASSET"
+    ITEM_PACKAGING = "PACKAGING"
+    ITEM_SERVICE = "SERVICE"
+    ITEM_OTHER = "OTHER"
+
+    ITEM_TYPE_CHOICES = [
+        (ITEM_INGREDIENT, "Insumo / Ingrediente"),
+        (ITEM_RESALE, "Mercadoria p/ Revenda"),
+        (ITEM_CONSUMABLE, "Material de Consumo"),
+        (ITEM_REUSABLE, "Material Reutilizável (Utensílio)"),
+        (ITEM_EQUIPMENT, "Equipamento Operacional"),
+        (ITEM_FIXED_ASSET, "Ativo Fixo / Patrimônio"),
+        (ITEM_PACKAGING, "Embalagem"),
+        (ITEM_SERVICE, "Serviço"),
+        (ITEM_OTHER, "Outro"),
+    ]
+
+    TRACKING_QUANTITY = "QUANTITY"
+    TRACKING_LOT = "LOT"
+    TRACKING_SERIALIZED = "SERIALIZED"
+
+    TRACKING_MODE_CHOICES = [
+        (TRACKING_QUANTITY, "Por Quantidade"),
+        (TRACKING_LOT, "Por Lote e Validade"),
+        (TRACKING_SERIALIZED, "Serializado (Patrimônio)"),
+    ]
+
     SECTOR_KITCHEN = "kitchen"
     SECTOR_BAR = "bar"
     SECTOR_DESSERT = "dessert"
@@ -89,6 +121,20 @@ class Product(TenantModel):
     ]
 
     name = models.CharField(max_length=180, db_index=True)
+    item_type = models.CharField(
+        max_length=30,
+        choices=ITEM_TYPE_CHOICES,
+        default=ITEM_RESALE,
+        db_index=True,
+        help_text="Classificação de finalidade do item."
+    )
+    tracking_mode = models.CharField(
+        max_length=20,
+        choices=TRACKING_MODE_CHOICES,
+        default=TRACKING_QUANTITY,
+        db_index=True,
+        help_text="Tipo de rastreamento físico (quantidade, lote ou serializado)."
+    )
     restaurants = models.ManyToManyField(
         "restaurants.Restaurant",
         related_name="available_products",
@@ -111,6 +157,16 @@ class Product(TenantModel):
         db_index=True,
         help_text="Código de barras (EAN/GTIN). Opcional, único na conta.",
     )
+    # Compatibilidade com cadastros antigos da feature de NF-e; `ean` continua
+    # sendo o codigo usado pelo leitor do PDV.
+    gtin = models.CharField(
+        max_length=14,
+        blank=True,
+        db_index=True,
+        help_text="GTIN/EAN/UPC do produto, somente dígitos."
+    )
+    brand = models.CharField(max_length=120, blank=True, help_text="Marca do produto/fabricante.")
+    model = models.CharField(max_length=120, blank=True, help_text="Modelo ou especificação.")
     description = models.TextField(blank=True)
     category = models.ForeignKey(
         ProductCategory,
@@ -127,10 +183,18 @@ class Product(TenantModel):
         related_name="product_logos",
         on_delete=models.SET_NULL,
     )
-    sale_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Por unidade, ou por kg quando pricing_unit=kg.")
+    sale_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Por unidade, ou por kg quando pricing_unit=kg.",
+    )
     promotional_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     pricing_unit = models.CharField(max_length=8, choices=PRICING_CHOICES, default=PRICING_UNIT)
+    stock_unit = models.CharField(max_length=12, default="UN", help_text="Unidade padrão no estoque (ex: UN, KG, L, G, ML).")
     estimated_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    current_average_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0, help_text="Custo médio ponderado atual.")
+    last_purchase_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0, help_text="Último custo unitário de compra.")
     margin_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     product_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_MEAL)
     sector = models.ForeignKey(
@@ -164,6 +228,15 @@ class Product(TenantModel):
     )
     stock_consumption_quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
     stock_consumption_unit = models.CharField(max_length=12, choices=UNIT_CHOICES, blank=True)
+    minimum_stock = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True, help_text="Estoque mínimo de segurança.")
+    maximum_stock = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True, help_text="Estoque máximo desejado.")
+    requires_expiration_control = models.BooleanField(default=False, help_text="Exige data de validade na entrada.")
+    requires_lot_control = models.BooleanField(default=False, help_text="Exige número de lote na entrada.")
+    requires_serial_number = models.BooleanField(default=False, help_text="Exige número de série individual.")
+    requires_maintenance = models.BooleanField(default=False, help_text="Exige plano de manutenção periódica.")
+    requires_cleaning_schedule = models.BooleanField(default=False, help_text="Exige rotina periódica de limpeza/higienização.")
+    allow_negative_stock = models.BooleanField(default=False, help_text="Permite estoque negativo (padrão False).")
+    default_useful_life_months = models.PositiveIntegerField(null=True, blank=True, help_text="Vida útil estimada em meses.")
     allows_addons = models.BooleanField(default=True)
     allows_notes = models.BooleanField(default=True)
     requires_variation = models.BooleanField(
@@ -178,14 +251,21 @@ class Product(TenantModel):
     class Meta:
         ordering = ["category__display_order", "name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "internal_code"], name="unique_product_code_by_branch"),
-            # Vazio não conflita (a maioria dos produtos não tem código de
-            # barras); preenchido, é único na conta inteira — o leitor não
-            # sabe de qual filial é o produto que ele acabou de ler.
+            models.UniqueConstraint(
+                fields=["branch", "internal_code"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_product_code_by_branch",
+            ),
+            # O leitor de codigo de barras opera na conta inteira.
             models.UniqueConstraint(
                 fields=["account", "ean"],
                 condition=~models.Q(ean="") & models.Q(deleted_at__isnull=True),
                 name="unique_product_ean_by_account",
+            ),
+            models.UniqueConstraint(
+                fields=["branch", "gtin"],
+                condition=~models.Q(gtin="") & models.Q(deleted_at__isnull=True),
+                name="unique_product_gtin_by_branch",
             ),
         ]
         indexes = [
@@ -228,6 +308,45 @@ class ProductVariation(TenantModel):
 
     def __str__(self):
         return f"{self.product} - {self.name}"
+
+
+class ProductUnitConversion(TenantModel):
+    product = models.ForeignKey(
+        Product,
+        related_name="unit_conversions",
+        on_delete=models.CASCADE
+    )
+    source_unit = models.CharField(max_length=12, help_text="Unidade de compra / fiscal (ex: CX, FD, BD, LT)")
+    target_unit = models.CharField(max_length=12, help_text="Unidade interna de estoque (ex: UN, KG, L, G, ML)")
+    factor = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        default=1,
+        help_text="Multiplicador de conversão: 1 source_unit = factor * target_unit"
+    )
+    supplier_cnpj = models.CharField(
+        max_length=14,
+        blank=True,
+        help_text="CNPJ do fornecedor se for regra específica."
+    )
+    supplier_product_code = models.CharField(
+        max_length=60,
+        blank=True,
+        help_text="Código do produto no fornecedor."
+    )
+
+    class Meta:
+        verbose_name = "Conversão de Unidade de Produto"
+        verbose_name_plural = "Conversões de Unidades de Produtos"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account", "product", "source_unit", "supplier_cnpj", "supplier_product_code"],
+                name="unique_unit_conversion_rule"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.product.name}: 1 {self.source_unit} = {self.factor} {self.target_unit}"
 
 
 class ProductAddon(TenantModel):

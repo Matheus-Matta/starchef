@@ -54,6 +54,28 @@ EXCLUDED = {
     "stock.StockAllocation": "Reserva derivada do lote, recalculada no destino.",
     "stock.StockLot": "Derivado dos movimentos; recalculado a partir deles.",
     "stock.StockLabelTemplate": "Modelo de etiqueta local da impressora da loja.",
+    # A captura fiscal de entrada e por no. Dois backends podem consultar a
+    # mesma SEFAZ; replicar cursores, XML bruto e projecoes locais criaria
+    # duplicidade e disputa de estado. O efeito duravel que viaja e o
+    # stock.StockMovement, registrado no catalogo.
+    "inbound_nfe.DFeGlobalConfig": "Configuracao e trava local do coletor SEFAZ.",
+    "inbound_nfe.DFeSyncState": "Cursor NSU local do coletor SEFAZ.",
+    "inbound_nfe.DFeDistributionDocument": "Documento bruto reobtido da SEFAZ por cada no.",
+    "inbound_nfe.InboundNFe": "Projecao local do documento fiscal obtido da SEFAZ.",
+    "inbound_nfe.InboundNFeItem": "Item da projecao local da NF-e de entrada.",
+    "inbound_nfe.NFeEvent": "Evento fiscal reobtido da SEFAZ por cada no.",
+    "inbound_nfe.NFeIssue": "Pendencia operacional local da importacao fiscal.",
+    "inbound_nfe.NFeManifestation": "Fila local de manifestacao perante a SEFAZ.",
+    "inbound_nfe.SupplierItemMapping": "Aprendizado local derivado da conciliacao da NF-e.",
+    "stock.GoodsReceipt": "Projecao local do recebimento; o movimento de estoque e o livro sincronizado.",
+    "stock.GoodsReceiptItem": "Detalhe local do recebimento fiscal.",
+    "stock.InventoryLot": "Projecao FEFO local derivada do recebimento e dos movimentos.",
+    # Patrimonio depende diretamente das projecoes fiscais locais acima. Ate
+    # existir um contrato proprio, replica-lo deixaria FKs apontando para alvos
+    # que deliberadamente nao viajam.
+    "assets.Asset": "Registro operacional local ligado ao recebimento fiscal nao sincronizado.",
+    "assets.AssetLocationHistory": "Historico local do patrimonio.",
+    "assets.AssetDisposal": "Baixa local do patrimonio.",
 }
 
 

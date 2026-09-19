@@ -103,6 +103,132 @@
           </Column>
         </DataTable>
       </section>
+
+      <!-- ── Itens da NF-e de Entrada (Conferência, Mapeamento e Entrada no Estoque) ── -->
+      <section v-if="isInboundNFe && record?.items?.length" class="detail-section detail-section--inbound">
+        <div class="detail-section__header-flex">
+          <div class="detail-section__header-copy">
+            <h3 class="detail-section__title">
+              Produtos da Nota Fiscal
+              <small class="rpro-badge ml-2">{{ record.items.length }} {{ record.items.length === 1 ? 'produto' : 'produtos' }}</small>
+            </h3>
+            <p class="text-sm text-muted">
+              Confira os itens recebidos da SEFAZ, vincule aos ingredientes do estoque e confirme a entrada para atualizar seu saldo físico.
+            </p>
+          </div>
+
+          <div class="detail-section__header-actions">
+            <button
+              v-if="record.status !== 'received' && record.status !== 'cancelled'"
+              type="button"
+              class="rpro-btn rpro-btn--primary"
+              @click="openReceiveModal"
+            >
+              <i class="pi pi-box" /> Dar Entrada no Estoque
+            </button>
+            <div v-else-if="record.status === 'received'" class="rpro__inbound-received-badge">
+              <i class="pi pi-check-circle text-emerald-600 text-lg" />
+              <div>
+                <strong class="text-emerald-700 block text-xs uppercase tracking-wider">Estoque Atualizado</strong>
+                <span class="text-xs text-muted">{{ dateTime(record.stock_applied_at || record.updated_at) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DataTable :value="record.items" data-key="id" class="inbound-items-table" responsive-layout="scroll">
+          <Column header="#" :body-style="{ width: '48px', textAlign: 'center' }">
+            <template #body="{ data }">
+              <span class="font-bold text-muted">{{ data.item_number }}</span>
+            </template>
+          </Column>
+
+          <Column header="Cód. Fornecedor" :body-style="{ width: '130px' }">
+            <template #body="{ data }">
+              <code class="rpro__code-pill">{{ data.supplier_code || '-' }}</code>
+            </template>
+          </Column>
+
+          <Column header="Descrição do Produto">
+            <template #body="{ data }">
+              <div class="inbound-item-cell">
+                <strong class="inbound-item-title">{{ data.description }}</strong>
+                <div class="inbound-item-meta">
+                  <span v-if="data.ean || data.ean_trib" class="inbound-item-meta-tag font-mono">
+                    <i class="pi pi-barcode text-xs" /> {{ data.ean || data.ean_trib }}
+                  </span>
+                  <span v-if="data.ncm" class="inbound-item-meta-tag font-mono">NCM: {{ data.ncm }}</span>
+                  <span v-if="data.cest" class="inbound-item-meta-tag font-mono">CEST: {{ data.cest }}</span>
+                  <span v-if="data.cfop" class="inbound-item-meta-tag font-mono">CFOP: {{ data.cfop }}</span>
+                </div>
+                <!-- Tributos da NF-e -->
+                <div v-if="data.tax_data && Object.keys(data.tax_data).length" class="inbound-item-taxes">
+                  <span v-if="data.tax_data.ICMS" class="inbound-tax-badge">
+                    ICMS {{ data.tax_data.ICMS.tipo || data.tax_data.ICMS.CST }} (R$ {{ data.tax_data.ICMS.vICMS || '0,00' }})
+                  </span>
+                  <span v-if="data.tax_data.PIS" class="inbound-tax-badge">
+                    PIS: {{ data.tax_data.PIS.tipo }}
+                  </span>
+                  <span v-if="data.tax_data.COFINS" class="inbound-tax-badge">
+                    COFINS: {{ data.tax_data.COFINS.tipo }}
+                  </span>
+                </div>
+              </div>
+            </template>
+          </Column>
+
+          <Column header="Qtd Comprada" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '130px' }">
+            <template #body="{ data }">
+              <strong>{{ Number(data.commercial_quantity).toLocaleString('pt-BR') }}</strong>
+              <small class="text-muted ml-1 font-bold">{{ data.commercial_unit }}</small>
+            </template>
+          </Column>
+
+          <Column header="Valor Unit." header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '110px' }">
+            <template #body="{ data }">
+              <span class="font-mono">{{ money(data.commercial_unit_value) }}</span>
+            </template>
+          </Column>
+
+          <Column header="Valor Total" header-class="dt-col-right" :body-style="{ textAlign: 'right', width: '120px' }">
+            <template #body="{ data }">
+              <strong class="font-mono text-emerald-600">{{ money(data.product_total) }}</strong>
+            </template>
+          </Column>
+
+          <Column header="Vínculo Sistema / Estoque" :body-style="{ width: '280px' }">
+            <template #body="{ data }">
+              <div v-if="data.ingredient_name || data.product_name" class="inbound-mapping-linked">
+                <div class="inbound-mapping-linked-info">
+                  <Tag severity="success" rounded :value="data.ingredient_name ? `Ingrediente: ${data.ingredient_name}` : `Produto: ${data.product_name}`" />
+                  <small v-if="data.conversion_factor && Number(data.conversion_factor) !== 1" class="text-muted block text-xs mt-1 font-mono">
+                    Fator: x{{ Number(data.conversion_factor) }}
+                  </small>
+                </div>
+                <button
+                  v-if="record.status !== 'received'"
+                  type="button"
+                  class="rpro-btn rpro-btn--ghost rpro-btn--xs"
+                  title="Alterar vínculo"
+                  @click="openMapModal(data)"
+                >
+                  <i class="pi pi-pencil" />
+                </button>
+              </div>
+              <div v-else class="inbound-mapping-unlinked">
+                <button
+                  type="button"
+                  class="rpro-btn rpro-btn--ghost rpro-btn--sm w-full"
+                  :disabled="record.status === 'received'"
+                  @click="openMapModal(data)"
+                >
+                  <i class="pi pi-link" /> Vincular Produto
+                </button>
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </section>
     </div>
 
     <!-- ────────── FORM UNIFICADO: criar / editar / ver (campos desabilitados) ────────── -->
@@ -396,6 +522,383 @@
 
     <!-- Criação rápida de perfil fiscal a partir de qualquer remote-dropdown marcado com quickCreate: "fiscal-profile" (ex.: produto) -->
     <FiscalProfileDialog v-model:visible="fiscalProfileDialogOpen" @saved="onQuickCreateSaved" />
+
+    <!-- ── Modal de Mapeamento / Vínculo de Item da NF-e ── -->
+    <Dialog
+      v-model:visible="mapItemDialogVisible"
+      modal
+      :header="mappingItem ? `Vincular Item #${mappingItem.item_number} · ${mappingItem.description}` : 'Vincular Item'"
+      :style="{ width: 'min(560px, 95vw)' }"
+    >
+      <div v-if="mappingItem" class="inbound-modal-form">
+        <div class="inbound-modal-item-summary">
+          <span class="text-xs font-bold uppercase text-muted">Item da NF-e:</span>
+          <strong class="text-base text-strong">{{ mappingItem.description }}</strong>
+          <small class="text-muted">
+            Cód. Forn: {{ mappingItem.supplier_code || '-' }} · EAN: {{ mappingItem.ean || mappingItem.ean_trib || 'Sem GTIN' }} · Qtd: {{ Number(mappingItem.commercial_quantity) }} {{ mappingItem.commercial_unit }}
+          </small>
+        </div>
+
+        <div class="rpage__grid" style="grid-template-columns: 1fr; gap: 14px; margin-top: 14px">
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Tipo de Destino no Sistema</label>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="rpro-btn flex-1"
+                :class="mappingForm.targetType === 'ingredient' ? 'rpro-btn--primary' : 'rpro-btn--ghost'"
+                @click="mappingForm.targetType = 'ingredient'"
+              >
+                <i class="pi pi-database" /> Ingrediente de Estoque
+              </button>
+              <button
+                type="button"
+                class="rpro-btn flex-1"
+                :class="mappingForm.targetType === 'product' ? 'rpro-btn--primary' : 'rpro-btn--ghost'"
+                @click="mappingForm.targetType = 'product'"
+              >
+                <i class="pi pi-shopping-bag" /> Produto de Venda
+              </button>
+            </div>
+          </div>
+
+          <!-- Seleção de Ingrediente -->
+          <div v-if="mappingForm.targetType === 'ingredient'" class="rpage__field rpage__field--full">
+            <div class="flex items-center justify-between mb-1">
+              <label class="rpage__label mb-0">Ingrediente de Estoque</label>
+              <button
+                type="button"
+                class="text-xs text-emerald-400 hover:text-emerald-300 underline font-medium cursor-pointer"
+                @click="openQuickCreateIngredient"
+              >
+                + Cadastrar Novo Ingrediente
+              </button>
+            </div>
+            <Dropdown
+              v-model="mappingForm.ingredient_id"
+              :options="mappingIngredients"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o ingrediente correspondente..."
+              filter
+              :loading="mappingLoading"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Seleção de Produto -->
+          <div v-else class="rpage__field rpage__field--full">
+            <label class="rpage__label">Produto do Cardápio</label>
+            <Dropdown
+              v-model="mappingForm.product_id"
+              :options="mappingProducts"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o produto correspondente..."
+              filter
+              :loading="mappingLoading"
+              class="w-full"
+            />
+          </div>
+
+          <!-- Unidade de Estoque e Regra de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Unidade no Estoque</label>
+            <Dropdown
+              v-model="mappingForm.stock_unit"
+              :options="['UN', 'KG', 'G', 'L', 'ML', 'CX', 'PCT', 'DZ', 'FD', 'LT', 'BD', 'GL']"
+              editable
+              placeholder="Ex: UN, KG, G..."
+              class="w-full"
+            />
+          </div>
+
+          <!-- Modos de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">Modo de Conversão</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'multiply' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="onSelectMultiplyMode"
+              >
+                <i class="pi pi-times text-xs" /> Multiplicador
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'divide' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'divide'"
+              >
+                <i class="pi pi-percentage text-xs" /> Divisor
+              </button>
+              <button
+                type="button"
+                class="rpro-btn text-xs py-2 px-1 flex items-center justify-center gap-1"
+                :class="mappingForm.conversion_mode === 'direct' ? 'rpro-btn--primary font-bold' : 'rpro-btn--ghost border border-neutral-700'"
+                @click="mappingForm.conversion_mode = 'direct'"
+              >
+                <i class="pi pi-arrows-h text-xs" /> 1 : 1
+              </button>
+            </div>
+          </div>
+
+          <!-- Fator de Conversão -->
+          <div class="rpage__field rpage__field--full">
+            <label class="rpage__label">
+              <span v-if="mappingForm.conversion_mode === 'multiply'">Fator Multiplicador (1 {{ mappingItem.commercial_unit || 'UN' }} = X {{ currentStockUnit }})</span>
+              <span v-else-if="mappingForm.conversion_mode === 'divide'">Quantidade da Nota p/ 1 {{ currentStockUnit }}</span>
+              <span v-else>Mesma Unidade</span>
+            </label>
+
+            <div v-if="mappingForm.conversion_mode === 'multiply'" class="inbound-map__factor-wrapper flex items-center gap-2">
+              <span class="text-xs text-muted">1 {{ mappingItem.commercial_unit || 'UN' }} =</span>
+              <InputNumber
+                v-model="mappingForm.conversion_factor"
+                :min="0.000001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="6"
+                class="flex-1"
+              />
+              <span class="text-xs font-bold">{{ currentStockUnit }}</span>
+            </div>
+
+            <div v-else-if="mappingForm.conversion_mode === 'divide'" class="inbound-map__factor-wrapper flex items-center gap-2">
+              <span class="text-xs text-muted">São necessários</span>
+              <InputNumber
+                v-model="mappingForm.conversion_divisor"
+                :min="0.000001"
+                :min-fraction-digits="0"
+                :max-fraction-digits="6"
+                class="flex-1"
+              />
+              <span class="text-xs">{{ mappingItem.commercial_unit || 'UN' }} p/ 1 {{ currentStockUnit }}</span>
+            </div>
+
+            <div v-else class="bg-neutral-900 p-2.5 rounded border border-neutral-800 text-xs text-muted">
+              1 {{ mappingItem.commercial_unit || 'UN' }} equivale a 1 {{ currentStockUnit }} no estoque (Sem fator).
+            </div>
+          </div>
+
+          <!-- Preview da Simulação -->
+          <div class="rpage__field rpage__field--full bg-neutral-900/60 p-3 rounded border border-neutral-800">
+            <div class="text-xs font-bold text-emerald-400 mb-1 flex items-center gap-1">
+              <i class="pi pi-calculator text-xs" /> Simulação de Entrada no Estoque:
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span>Entrada: <strong class="text-emerald-400">{{ Number(calculatedStockQty.toFixed(4)) }} {{ currentStockUnit }}</strong></span>
+              <span>Custo: <strong class="text-strong">{{ money(calculatedUnitCostInStock) }} / {{ currentStockUnit }}</strong></span>
+            </div>
+          </div>
+
+          <!-- Lembrar Vínculo -->
+          <div class="rpage__field rpage__field--full">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <Checkbox v-model="mappingForm.save_supplier_mapping" :binary="true" />
+              <span class="text-sm">Lembrar este vínculo automaticamente para as próximas compras deste fornecedor</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="mappingSubmitting" @click="mapItemDialogVisible = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="mappingSubmitting || (mappingForm.targetType === 'ingredient' ? !mappingForm.ingredient_id : !mappingForm.product_id)"
+          @click="submitItemMapping"
+        >
+          <i :class="mappingSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Salvar Vínculo
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- Modal Cadastro Rápido de Ingrediente -->
+    <Dialog
+      v-model:visible="showQuickCreateIngDialog"
+      header="Cadastrar Novo Ingrediente"
+      :modal="true"
+      :style="{ width: '420px' }"
+    >
+      <div class="flex flex-col gap-3 py-2">
+        <div>
+          <label class="rpage__label">Nome do Ingrediente *</label>
+          <InputText v-model="quickIngName" class="w-full" placeholder="Ex: Massa de Pastel" />
+        </div>
+        <div>
+          <label class="rpage__label">Unidade de Medida</label>
+          <Dropdown
+            v-model="quickIngUnit"
+            :options="[
+              { label: 'Gramas (g)', value: 'g' },
+              { label: 'Quilos (kg)', value: 'kg' },
+              { label: 'Unidades (unit)', value: 'unit' },
+              { label: 'Litros (l)', value: 'l' },
+              { label: 'Mililitros (ml)', value: 'ml' },
+            ]"
+            option-label="label"
+            option-value="value"
+            class="w-full"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="quickIngSubmitting" @click="showQuickCreateIngDialog = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="quickIngSubmitting || !quickIngName.trim()"
+          @click="submitQuickCreateIngredient"
+        >
+          <i :class="quickIngSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" /> Salvar Ingrediente
+        </button>
+      </template>
+    </Dialog>
+
+    <!-- ── Modal de Confirmação de Entrada no Estoque / Recebimento Físico ── -->
+    <Dialog
+      v-model:visible="receiveDialogVisible"
+      modal
+      header="Conferência Física e Entrada no Estoque"
+      :style="{ width: 'min(1050px, 96vw)' }"
+    >
+      <div class="inbound-receive-form">
+        <p class="text-sm text-muted mb-4">
+          Realize a conferência física dos volumes, lotes, validades e números de série. Ao confirmar, o sistema gerará o registro imutável da <strong>Conferência de Recebimento</strong>, atualizará os saldos e lotes FEFO e criará os bens patrimoniais serializados.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="rpage__label">Local de Estoque de Destino *</label>
+            <Dropdown
+              v-model="receiveForm.location_id"
+              :options="receiveStockLocations"
+              option-label="name"
+              option-value="id"
+              placeholder="Selecione o local de estoque..."
+              :loading="receiveLocationsLoading"
+              class="w-full"
+            />
+          </div>
+          <div>
+            <label class="rpage__label">Observações da Conferência (Opcional)</label>
+            <InputText
+              v-model="receiveForm.notes"
+              placeholder="Ex: Carga entregue lacrada, sem avarias..."
+              class="w-full"
+            />
+          </div>
+        </div>
+
+        <div class="inbound-receive-table-wrapper">
+          <table class="rpro__inbound-table">
+            <thead>
+              <tr>
+                <th style="min-width: 200px">Item NF-e / Vínculo</th>
+                <th style="width: 90px; text-align: right">Qtd NF-e</th>
+                <th style="width: 110px; text-align: center">Fator Conversão</th>
+                <th style="width: 130px; text-align: right">Entrada Estoque</th>
+                <th style="min-width: 260px">Rastreabilidade (Lote / Validade / Seriais)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="it in receiveForm.items" :key="it.item_id">
+                <td>
+                  <strong>{{ it.description }}</strong>
+                  <div class="text-xs text-muted">Cód: {{ it.supplier_code || '-' }}</div>
+                  <div class="mt-1">
+                    <span v-if="it.target_name !== 'Não vinculado'" class="text-emerald-700 font-bold text-xs">
+                      <i class="pi pi-check text-xs" /> {{ it.target_name }}
+                    </span>
+                    <span v-else class="text-amber-600 font-bold text-xs">
+                      <i class="pi pi-exclamation-triangle text-xs" /> Não vinculado
+                    </span>
+                  </div>
+                </td>
+                <td style="text-align: right">
+                  <strong>{{ Number(it.commercial_quantity) }}</strong>
+                  <small class="text-muted ml-1 font-bold">{{ it.commercial_unit }}</small>
+                </td>
+                <td style="text-align: center">
+                  <div class="flex items-center justify-center gap-1">
+                    <span class="text-xs text-muted font-bold">x</span>
+                    <InputNumber
+                      v-model="it.conversion_factor"
+                      :min="0.0001"
+                      :max-fraction-digits="4"
+                      input-class="text-center w-16 p-1 text-xs font-mono font-bold"
+                      @update:model-value="(val) => {
+                        const f = Number(val || 1);
+                        it.received_quantity = Number((Number(it.commercial_quantity) * f).toFixed(4));
+                        if (f !== 1 && it.stock_unit === it.commercial_unit) {
+                          it.stock_unit = it.product_stock_unit || 'UN';
+                        }
+                      }"
+                    />
+                  </div>
+                </td>
+                <td style="text-align: right">
+                  <InputNumber
+                    v-model="it.received_quantity"
+                    :min-fraction-digits="0"
+                    :max-fraction-digits="3"
+                    input-class="text-right w-24 p-1 text-sm font-bold"
+                  />
+                  <div class="text-xs text-muted font-bold mt-0.5">
+                    {{ it.stock_unit || 'UN' }}
+                  </div>
+                  <div v-if="Number(it.received_quantity) !== Number((Number(it.commercial_quantity) * Number(it.conversion_factor || 1)).toFixed(4))" class="text-xs text-amber-600 font-bold mt-1">
+                    Divergência: {{ (Number(it.received_quantity) - (Number(it.commercial_quantity) * Number(it.conversion_factor || 1))).toFixed(2) }}
+                  </div>
+                </td>
+                <td>
+                  <!-- Controle de Lote e Validade (Perecíveis) -->
+                  <div v-if="it.requires_lot || it.tracking_mode === 'LOT_EXPIRATION'" class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-xs text-muted block mb-0.5">Lote</label>
+                      <InputText v-model="it.lot_number" placeholder="Nº Lote" class="w-full text-xs p-1" />
+                    </div>
+                    <div>
+                      <label class="text-xs text-muted block mb-0.5">Validade</label>
+                      <InputText v-model="it.expiration_date" placeholder="AAAA-MM-DD" class="w-full text-xs p-1" />
+                    </div>
+                  </div>
+                  <!-- Controle Serializado (Patrimônio / Equipamentos) -->
+                  <div v-else-if="it.requires_serial || it.tracking_mode === 'SERIALIZED'">
+                    <label class="text-xs text-muted block mb-0.5">Números de Série (1 por item ou separados por vírgula)</label>
+                    <InputText v-model="it.serials_text" placeholder="Ex: SER-001, SER-002" class="w-full text-xs p-1 font-mono" />
+                  </div>
+                  <!-- Padrão / Quantitativo -->
+                  <div v-else class="text-xs text-muted italic">
+                    Controle por saldo e custo médio
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="rpro-btn rpro-btn--ghost" type="button" :disabled="receiveSubmitting" @click="receiveDialogVisible = false">
+          Cancelar
+        </button>
+        <button
+          class="rpro-btn rpro-btn--primary"
+          type="button"
+          :disabled="receiveSubmitting || !receiveForm.location_id"
+          @click="submitReceiveInvoice"
+        >
+          <i :class="receiveSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-box'" /> Confirmar Recebimento e Estoque
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -409,7 +912,12 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "primevue/button";
+import Checkbox from "primevue/checkbox";
+import Column from "primevue/column";
+import DataTable from "primevue/datatable";
+import Dialog from "primevue/dialog";
 import Dropdown from "primevue/dropdown";
+import InputNumber from "primevue/inputnumber";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
 import MultiSelect from "primevue/multiselect";
@@ -417,8 +925,6 @@ import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
 
 import ProductVariationsEditor from "../components/product/ProductVariationsEditor.vue";
 import ProductAddonsEditor from "../components/product/ProductAddonsEditor.vue";
@@ -436,7 +942,7 @@ import { normalizeApiError } from "../utils/apiError";
 import { cpfDigits } from "../utils/cpf";
 import { useToast } from "primevue/usetoast";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
-import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel } from "../utils/format";
+import { formatDateTime, formatMoney, formatPercent, formatQuantity, mapLabel, roundUpToCent } from "../utils/format";
 import { getByPath, resolveColumnValue } from "../utils/object";
 
 const props = defineProps({
@@ -617,10 +1123,333 @@ const canResendInvoice = computed(() => isInvoice.value && (
   record.value?.status === "error"
   || (record.value?.status === "pending" && record.value?.emission_type === "9")
 ));
+const isInboundNFe = computed(() => resolveDetailType(props.endpoint) === "inboundNFe" || props.endpoint === "/inbound-nfe/");
 const printing = ref(false);
 const emittingInvoice = ref(false);
 const resendingInvoice = ref(false);
 const toast = useToast();
+
+// ── Inbound NF-e Item Mapping & Stock Receipt ────────────────────────
+const mapItemDialogVisible = ref(false);
+const mappingItem = ref(null);
+const mappingForm = reactive({
+  targetType: "product", // "ingredient" | "product"
+  ingredient_id: null,
+  product_id: null,
+  stock_unit: "UN",
+  conversion_mode: "multiply", // "multiply" | "divide" | "direct"
+  conversion_factor: 1,
+  conversion_divisor: 1,
+  save_supplier_mapping: true,
+});
+
+const effectiveConversionFactor = computed(() => {
+  if (mappingForm.conversion_mode === "direct") return 1;
+  if (mappingForm.conversion_mode === "divide") {
+    const div = Number(mappingForm.conversion_divisor) || 1;
+    return div > 0 ? 1 / div : 1;
+  }
+  return Number(mappingForm.conversion_factor) || 1;
+});
+
+const currentStockUnit = computed(() => {
+  return (mappingForm.stock_unit || "UN").toUpperCase();
+});
+
+const calculatedStockQty = computed(() => {
+  if (!mappingItem.value) return 0;
+  const commQty = Number(mappingItem.value.commercial_quantity) || 0;
+  return commQty * effectiveConversionFactor.value;
+});
+
+const calculatedUnitCostInStock = computed(() => {
+  if (!mappingItem.value) return 0;
+  const total = Number(mappingItem.value.product_total) || 0;
+  const finalQty = calculatedStockQty.value;
+  if (!finalQty || finalQty <= 0) return 0;
+  return roundUpToCent(total / finalQty);
+});
+
+const mappingIngredients = ref([]);
+const mappingProducts = ref([]);
+const mappingLoading = ref(false);
+const mappingSubmitting = ref(false);
+
+const showQuickCreateIngDialog = ref(false);
+const quickIngName = ref("");
+const quickIngUnit = ref("g");
+const quickIngSubmitting = ref(false);
+
+function openQuickCreateIngredient() {
+  quickIngName.value = (mappingItem.value?.description || "").trim();
+  const commU = (mappingItem.value?.commercial_unit || "").toUpperCase().trim();
+  if (commU === "KG") {
+    quickIngUnit.value = "g";
+  } else if (commU === "L") {
+    quickIngUnit.value = "ml";
+  } else {
+    quickIngUnit.value = "unit";
+  }
+  showQuickCreateIngDialog.value = true;
+}
+
+async function submitQuickCreateIngredient() {
+  if (!quickIngName.value.trim()) return;
+  quickIngSubmitting.value = true;
+  try {
+    const payload = {
+      name: quickIngName.value.trim(),
+      unit: quickIngUnit.value,
+      average_cost: calculatedUnitCostInStock.value || 0,
+      is_active: true,
+    };
+    const res = await api.post("/menu/ingredients/", payload);
+    const newIng = res.data;
+    await loadMappingOptions(true);
+    mappingForm.targetType = "ingredient";
+    mappingForm.ingredient_id = newIng.id;
+    mappingForm.stock_unit = quickIngUnit.value.toUpperCase();
+    if (mappingItem.value?.commercial_unit?.toUpperCase() === "KG" && quickIngUnit.value === "g") {
+      mappingForm.conversion_mode = "multiply";
+      mappingForm.conversion_factor = 1000;
+    }
+    showQuickCreateIngDialog.value = false;
+    toast.add({
+      severity: "success",
+      summary: "Ingrediente Criado",
+      detail: `'${newIng.name}' cadastrado e selecionado com sucesso!`,
+      life: 3000,
+    });
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Erro ao criar ingrediente",
+      detail: normalizeApiError(err).message,
+      life: 5000,
+    });
+  } finally {
+    quickIngSubmitting.value = false;
+  }
+}
+
+async function loadMappingOptions(force = false) {
+  if (!force && mappingIngredients.value.length && mappingProducts.value.length) return;
+  mappingLoading.value = true;
+  try {
+    const [ingRes, prodRes] = await Promise.all([
+      api.get("/menu/ingredients/", { params: { page_size: 300 } }),
+      api.get("/menu/products/", { params: { page_size: 500 } }),
+    ]);
+    mappingIngredients.value = ingRes.data.results || ingRes.data || [];
+    mappingProducts.value = prodRes.data.results || prodRes.data || [];
+  } catch (err) {
+    console.error("Erro ao carregar opções de mapeamento:", err);
+  } finally {
+    mappingLoading.value = false;
+  }
+}
+
+function onSelectMultiplyMode() {
+  mappingForm.conversion_mode = "multiply";
+  const commU = (mappingItem.value?.commercial_unit || "").toUpperCase().trim();
+  if (!mappingForm.stock_unit || mappingForm.stock_unit.toUpperCase().trim() === commU) {
+    mappingForm.stock_unit = "UN";
+  }
+}
+
+async function openMapModal(item) {
+  mappingItem.value = item;
+  mappingForm.targetType = item.product ? "product" : (item.ingredient ? "ingredient" : "product");
+  mappingForm.ingredient_id = item.ingredient || null;
+  mappingForm.product_id = item.product || null;
+  const factor = Number(item.conversion_factor) || 1;
+  let rawStockUnit = item.product_stock_unit || (item.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : item.ingredient_unit);
+  const commU = (item.commercial_unit || "UN").toUpperCase().trim();
+  const isPackage = ["CX", "FD", "DZ", "PCT", "CXA", "FARDO", "PACOTE", "ROLO"].includes(commU);
+  if (factor !== 1 && rawStockUnit && rawStockUnit.toUpperCase().trim() === commU) {
+    rawStockUnit = "UN";
+  }
+  mappingForm.stock_unit = (rawStockUnit || (factor !== 1 || isPackage ? "UN" : commU) || "UN").toUpperCase();
+  if (factor === 1) {
+    mappingForm.conversion_mode = "direct";
+    mappingForm.conversion_factor = 1;
+    mappingForm.conversion_divisor = 1;
+  } else if (factor < 1 && factor > 0) {
+    mappingForm.conversion_mode = "divide";
+    mappingForm.conversion_divisor = Math.round((1 / factor) * 10000) / 10000;
+    mappingForm.conversion_factor = factor;
+  } else {
+    mappingForm.conversion_mode = "multiply";
+    mappingForm.conversion_factor = factor;
+    mappingForm.conversion_divisor = factor;
+  }
+  mappingForm.save_supplier_mapping = true;
+  mapItemDialogVisible.value = true;
+  await loadMappingOptions();
+}
+
+async function submitItemMapping() {
+  if (!mappingItem.value?.id) return;
+  if (mappingForm.targetType === "ingredient" && !mappingForm.ingredient_id) {
+    toast.add({ severity: "warn", summary: "Selecione o Ingrediente", detail: "Escolha um ingrediente para vincular.", life: 3000 });
+    return;
+  }
+  if (mappingForm.targetType === "product" && !mappingForm.product_id) {
+    toast.add({ severity: "warn", summary: "Selecione o Produto", detail: "Escolha um produto para vincular.", life: 3000 });
+    return;
+  }
+  mappingSubmitting.value = true;
+  try {
+    const chosenUnit = (mappingForm.stock_unit || "UN").toUpperCase();
+    if (chosenUnit) {
+      try {
+        if (mappingForm.targetType === "product" && mappingForm.product_id) {
+          await api.patch(`/menu/products/${mappingForm.product_id}/`, { stock_unit: chosenUnit });
+        } else if (mappingForm.targetType === "ingredient" && mappingForm.ingredient_id) {
+          await api.patch(`/menu/ingredients/${mappingForm.ingredient_id}/`, { unit: chosenUnit.toLowerCase() });
+        }
+      } catch (patchErr) {
+        console.warn("Não foi possível atualizar unidade:", patchErr);
+      }
+    }
+
+    await api.post(`/inbound-nfe-items/${mappingItem.value.id}/map/`, {
+      ingredient_id: mappingForm.targetType === "ingredient" ? mappingForm.ingredient_id : null,
+      product_id: mappingForm.targetType === "product" ? mappingForm.product_id : null,
+      conversion_factor: effectiveConversionFactor.value,
+      save_supplier_mapping: mappingForm.save_supplier_mapping,
+    });
+    toast.add({ severity: "success", summary: "Vínculo salvo", detail: "Item vinculado com sucesso ao estoque.", life: 3000 });
+    mapItemDialogVisible.value = false;
+    await reload();
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao salvar vínculo", detail: normalizeApiError(err).message, life: 5000 });
+  } finally {
+    mappingSubmitting.value = false;
+  }
+}
+
+// ── Recebimento / Entrada de Estoque da NF-e ─────────────────────────
+const receiveDialogVisible = ref(false);
+const receiveStockLocations = ref([]);
+const receiveLocationsLoading = ref(false);
+const receiveSubmitting = ref(false);
+const receiveForm = reactive({
+  location_id: null,
+  notes: "",
+  items: [],
+});
+
+async function openReceiveModal() {
+  const allItems = record.value?.items || [];
+  const items = allItems.filter((it) => !it.is_ignored);
+  if (items.length === 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Todos os itens estão ignorados",
+      detail: "Não há itens ativos para dar entrada no estoque.",
+      life: 6000,
+    });
+    return;
+  }
+  const unmapped = items.filter((it) => !it.ingredient && !it.product);
+  if (unmapped.length > 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Itens sem vínculo",
+      detail: `Existem ${unmapped.length} item(ns) ativos sem produto/ingrediente vinculado. Vincule ou ignore os itens antes de aplicar a entrada.`,
+      life: 6000,
+    });
+  }
+
+  receiveForm.notes = "";
+  receiveForm.items = items.map((it) => {
+    const factor = Number(it.conversion_factor) || 1;
+    const stockQty = Number((Number(it.commercial_quantity) * factor).toFixed(4));
+    let rawStockUnit = it.product_stock_unit || (it.ingredient_unit?.toUpperCase() === "UNIT" ? "UN" : it.ingredient_unit);
+    if (factor !== 1 && rawStockUnit && it.commercial_unit && rawStockUnit.toUpperCase().trim() === it.commercial_unit.toUpperCase().trim()) {
+      rawStockUnit = "UN";
+    }
+    const resolvedStockUnit = (
+      rawStockUnit ||
+      (factor !== 1 ? "UN" : it.commercial_unit) ||
+      "UN"
+    ).toUpperCase();
+    return {
+      item_id: it.id,
+      description: it.description,
+      supplier_code: it.supplier_code,
+      target_name: it.product_name ? `Produto: ${it.product_name}` : (it.ingredient_name ? `Ingrediente: ${it.ingredient_name}` : "Não vinculado"),
+      tracking_mode: it.product_tracking_mode || "QUANTITY",
+      requires_lot: it.product_requires_lot_control || false,
+      requires_serial: it.product_requires_serial_number || false,
+      commercial_quantity: it.commercial_quantity,
+      commercial_unit: it.commercial_unit,
+      product_stock_unit: it.product_stock_unit,
+      stock_unit: resolvedStockUnit,
+      conversion_factor: factor,
+      received_quantity: stockQty,
+      accepted_quantity: stockQty,
+      rejected_quantity: 0,
+      lot_number: "",
+      expiration_date: "",
+      serials_text: "",
+    };
+  });
+
+  receiveDialogVisible.value = true;
+  receiveLocationsLoading.value = true;
+  try {
+    const { data } = await api.get("/stock/locations/", { params: { page_size: 100 } });
+    receiveStockLocations.value = data.results || data || [];
+    if (receiveStockLocations.value.length && !receiveForm.location_id) {
+      receiveForm.location_id = receiveStockLocations.value[0].id;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar locais de estoque:", err);
+  } finally {
+    receiveLocationsLoading.value = false;
+  }
+}
+
+async function submitReceiveInvoice() {
+  if (!receiveForm.location_id) {
+    toast.add({ severity: "warn", summary: "Selecione o local de estoque", detail: "Informe onde os produtos serão armazenados.", life: 4000 });
+    return;
+  }
+  receiveSubmitting.value = true;
+  try {
+    const payload = {
+      location_id: receiveForm.location_id,
+      notes: receiveForm.notes || "",
+      items: receiveForm.items.map((it) => ({
+        item_id: it.item_id,
+        conversion_factor: it.conversion_factor || 1,
+        received_quantity: it.received_quantity,
+        accepted_quantity: it.received_quantity,
+        rejected_quantity: 0,
+        lot_number: it.lot_number || "",
+        expiration_date: it.expiration_date || null,
+        serials: it.serials_text
+          ? it.serials_text.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)
+          : [],
+      })),
+    };
+    const { data } = await api.post(`/inbound-nfe/${recordId.value}/receive/`, payload);
+    toast.add({
+      severity: "success",
+      summary: "Entrada Concluída!",
+      detail: `Conferência ${data.receipt_number || ""} gerada e estoque atualizado com sucesso.`,
+      life: 5000,
+    });
+    receiveDialogVisible.value = false;
+    await reload();
+  } catch (err) {
+    toast.add({ severity: "error", summary: "Erro ao dar entrada no estoque", detail: normalizeApiError(err).message, life: 6000 });
+  } finally {
+    receiveSubmitting.value = false;
+  }
+}
 
 /* ── Criação rápida a partir de um remote-dropdown (ex.: perfil fiscal no
    formulário de produto), disparada por um "+" ao lado do campo
@@ -1315,6 +2144,130 @@ watch(() => [recordId.value, props.mode], async () => {
 :deep(.p-tag) { border: 1px solid transparent; font: var(--weight-extra) 11px/1 var(--font-sans); }
 :deep(.p-tag.p-tag-success) { background: #047857; border-color: #065f46; color: #fff; }
 :deep(.p-tag.p-tag-danger) { background: #b91c1c; border-color: #991b1b; color: #fff; }
+
+/* ── Estilos da Seção de NF-e de Entrada ──────────────────────────── */
+.detail-section--inbound {
+  padding: 24px;
+}
+
+.detail-section__header-flex {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.detail-section__header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rpro__inbound-received-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, #059669 10%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, #059669 25%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.inbound-items-table :deep(.p-datatable-thead > tr > th) {
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inbound-items-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.inbound-item-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inbound-item-title {
+  font-size: 13.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-strong);
+}
+
+.inbound-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inbound-item-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.inbound-item-taxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.inbound-tax-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--brand) 8%, var(--surface-card));
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
+  border-radius: 3px;
+  font-size: 10.5px;
+  color: var(--brand);
+}
+
+.inbound-mapping-linked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inbound-mapping-linked-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.inbound-modal-item-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.inbound-receive-table-wrapper {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
 
 /* ── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 760px) {

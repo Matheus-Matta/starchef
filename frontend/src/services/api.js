@@ -90,7 +90,7 @@ function isAuthRefreshRequest(url = "") {
 }
 
 function applyRestaurantScope(config) {
-  if (config.skipRestaurantScope || String(config.method || "get").toLowerCase() !== "get") {
+  if (config.skipRestaurantScope || isAuthRequest(config.url)) {
     return;
   }
 
@@ -99,9 +99,16 @@ function applyRestaurantScope(config) {
     return;
   }
 
-  config.params = { ...(config.params || {}) };
-  if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
-    config.params.restaurant = restaurantId;
+  config.headers = config.headers || {};
+  if (!config.headers["X-Restaurant-ID"]) {
+    config.headers["X-Restaurant-ID"] = restaurantId;
+  }
+
+  if (String(config.method || "get").toLowerCase() === "get") {
+    config.params = { ...(config.params || {}) };
+    if (!Object.prototype.hasOwnProperty.call(config.params, "restaurant")) {
+      config.params.restaurant = restaurantId;
+    }
   }
 }
 

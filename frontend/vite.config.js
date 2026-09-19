@@ -32,6 +32,8 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       proxy: {
         '/api': { target: backendTarget, changeOrigin: true },
+        '/admin': { target: backendTarget, changeOrigin: true },
+        '/static': { target: backendTarget, changeOrigin: true },
         // WebSocket das notificações (Channels) no mesmo host.
         '/ws': { target: backendTarget, changeOrigin: true, ws: true },
       },

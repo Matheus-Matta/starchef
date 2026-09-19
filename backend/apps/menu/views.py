@@ -9,7 +9,18 @@ from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.modules import MODULE_ECOMMERCE
 from apps.core.viewsets import BaseTenantViewSet
-from apps.menu.models import Ingredient, Menu, MenuItem, Product, ProductAddon, ProductCategory, ProductVariation, Recipe, RecipeItem
+from apps.menu.models import (
+    Ingredient,
+    Menu,
+    MenuItem,
+    Product,
+    ProductAddon,
+    ProductCategory,
+    ProductUnitConversion,
+    ProductVariation,
+    Recipe,
+    RecipeItem,
+)
 from apps.menu.serializers import (
     IngredientSerializer,
     MenuItemSerializer,
@@ -18,6 +29,7 @@ from apps.menu.serializers import (
     ProductAddonSerializer,
     ProductCategorySerializer,
     ProductSerializer,
+    ProductUnitConversionSerializer,
     ProductVariationSerializer,
     RecipeItemSerializer,
     RecipeSerializer,
@@ -33,6 +45,14 @@ class ProductCategoryViewSet(BaseTenantViewSet):
     ordering = ["display_order", "name"]
 
 
+class ProductUnitConversionViewSet(BaseTenantViewSet):
+    serializer_class = ProductUnitConversionSerializer
+    queryset = ProductUnitConversion.objects.select_related("product").all()
+    filterset_fields = ["product", "source_unit", "target_unit"]
+    search_fields = ["product__name", "source_unit", "target_unit", "supplier_cnpj", "supplier_product_code"]
+    ordering_fields = ["created_at"]
+
+
 class ProductViewSet(BaseTenantViewSet):
     serializer_class = ProductSerializer
     queryset = Product.objects.select_related(
@@ -41,13 +61,16 @@ class ProductViewSet(BaseTenantViewSet):
     filterset_fields = [
         "category",
         "product_type",
+        "item_type",
+        "tracking_mode",
+        "controls_stock",
         "production_sector", "sector",
         "is_active",
         "available_for_table",
         "available_for_counter",
         "available_for_delivery",
     ]
-    search_fields = ["name", "internal_code", "description", "ean"]
+    search_fields = ["name", "internal_code", "ean", "gtin", "brand", "model", "description"]
     ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
     ordering = ["name"]
 
@@ -69,7 +92,59 @@ class ProductViewSet(BaseTenantViewSet):
                 return queryset.none()
         if restaurant_id:
             queryset = queryset.filter(restaurants__id=restaurant_id)
+        exclude_item_types = self.request.query_params.get("exclude_item_types")
+        if exclude_item_types:
+            types = [t.strip() for t in exclude_item_types.split(",") if t.strip()]
+            queryset = queryset.exclude(item_type__in=types)
         return queryset.distinct()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        gtin = (serializer.validated_data.get("gtin") or "").strip()
+        account = getattr(request, "account", None)
+        profile = getattr(request.user, "profile", None)
+        selected_restaurant = serializer.validated_data.get("restaurant") or getattr(profile, "restaurant", None)
+        selected_branch = serializer.validated_data.get("branch") or getattr(profile, "branch", None)
+        if not selected_branch and selected_restaurant:
+            from apps.restaurants.models import Branch
+            selected_branch = Branch.all_objects.filter(restaurant=selected_restaurant, deleted_at__isnull=True).first()
+
+        if gtin and account:
+            deleted_qs = Product.all_objects.filter(account=account, gtin=gtin, deleted_at__isnull=False)
+            if selected_branch:
+                deleted_qs = deleted_qs.filter(branch=selected_branch)
+            deleted_prod = deleted_qs.first()
+
+            if deleted_prod:
+                deleted_prod.deleted_at = None
+                deleted_prod.is_active = True
+
+                restaurants = serializer.validated_data.get("restaurants")
+                for key, val in serializer.validated_data.items():
+                    if key not in ("id", "created_at", "created_by", "restaurants"):
+                        setattr(deleted_prod, key, val)
+                if selected_branch:
+                    deleted_prod.branch = selected_branch
+                if selected_restaurant:
+                    deleted_prod.restaurant = selected_restaurant
+                deleted_prod.save()
+
+                if restaurants:
+                    deleted_prod.restaurants.set(restaurants)
+                elif selected_restaurant:
+                    deleted_prod.restaurants.add(selected_restaurant)
+
+                from apps.core.models import AuditLog
+                from apps.core.mixins import record_audit
+                record_audit(action=AuditLog.ACTION_UPDATED, instance=deleted_prod, actor=request.user, request=request)
+
+                return Response(self.get_serializer(deleted_prod).data, status=status.HTTP_201_CREATED)
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
     def perform_create(self, serializer):
         selected = serializer.validated_data.get("restaurants") or []
