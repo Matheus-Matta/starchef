@@ -79,24 +79,50 @@ _e("role", "accounts.Role", conflict_policy=CLOUD, flow="cloud_to_local",
 # apaga o login inteiro quando a internet cai.
 #
 # `last_login` fica de fora por outro motivo: é do nó onde a pessoa entrou.
+# `groups` e `user_permissions` são o mecanismo de acesso do Django, que este
+# projeto não usa: quem manda é `accounts.Role` + `accounts.Permission` (os dois
+# estão em `decisions.py` como excluídos). Ficam declarados aqui em
+# `exclude_fields` para a checagem de M2M não declarado passar por DECISÃO, e
+# não por esquecimento — a diferença entre as duas é invisível no código sem
+# isto escrito.
 _e("user", "auth.User", conflict_policy=CLOUD, flow="cloud_to_local",
-   exclude_fields=("last_login",), allow_fields=("password",))
+   exclude_fields=("last_login", "groups", "user_permissions"),
+   allow_fields=("password",))
+# `specific_permissions` é acesso de verdade: permissão dada a UMA pessoa além
+# das do perfil dela. Sem viajar, quem recebeu uma permissão extra na nuvem
+# simplesmente não a tem na loja — e o sintoma é "o sistema não deixa", sem
+# nada que explique por quê.
 _e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("user", "role", "restaurant"))
+   dependencies=("user", "role", "restaurant"),
+   m2m_fields={"specific_permissions": "code"})
 
 # 5. Terminais, caixas e operação.
-_e("cash_station", "payments.CashStation", conflict_policy=CLOUD, dependencies=("restaurant",))
+# `operators` é o vínculo operador <-> caixa, e sem ele a loja NÃO ABRE CAIXA:
+# a abertura recusa com "O operador não está vinculado a este caixa". O caixa
+# chegava (o registro sincroniza), a pessoa chegava (o usuário sincroniza) e a
+# ligação entre os dois não — que é o pior formato de falha, porque tudo que
+# se olha na tela parece presente.
+#
+# A chave natural é o `username` porque o id do usuário é um inteiro
+# sequencial: ele NÃO é o mesmo nos dois bancos, e casar por ele ligaria o
+# caixa à pessoa errada.
+_e("cash_station", "payments.CashStation", conflict_policy=CLOUD, dependencies=("restaurant", "user"),
+   m2m_fields={"operators": "username"})
 _e("pdv_terminal", "payments.PdvTerminal", conflict_policy=CLOUD, dependencies=("restaurant",))
 
 # 6-7. Cardápio, preços e fichas técnicas.
 _e("product_category", "menu.ProductCategory", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("restaurant",))
+# `restaurants` decide em QUAIS lojas o produto existe. Sem viajar, o produto
+# desce e não aparece em loja nenhuma.
 _e("product", "menu.Product", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product_category",))
+   dependencies=("product_category", "restaurant"),
+   m2m_fields={"restaurants": "id"})
 _e("product_variation", "menu.ProductVariation", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("product",))
 _e("product_addon", "menu.ProductAddon", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product",))
+   dependencies=("product",),
+   m2m_fields={"products": "id"})
 _e("ingredient", "menu.Ingredient", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("restaurant",), include_in_bootstrap=False)
 _e("recipe", "menu.Recipe", conflict_policy=CLOUD, flow="cloud_to_local",
@@ -128,8 +154,11 @@ _e("kds_column", "kitchen.KdsColumn", conflict_policy=CLOUD, dependencies=("kds_
 _e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA,
    flow="local_to_cloud", dependencies=("kds_station", "kds_column", "order_item"),
    include_in_bootstrap=False)
-_e("sla", "sla.ServiceLevelAgreement", conflict_policy=CLOUD, dependencies=("restaurant",),
-   include_in_bootstrap=False)
+# Os três M2M são o ESCOPO do acordo: sem eles o SLA desce valendo para nada.
+_e("sla", "sla.ServiceLevelAgreement", conflict_policy=CLOUD,
+   dependencies=("restaurant", "kds_station", "kds_column"),
+   include_in_bootstrap=False,
+   m2m_fields={"restaurants": "id", "stations": "id", "columns": "id"})
 
 # 10. Salão.
 _e("table_sector", "restaurants.TableSector", conflict_policy=CLOUD, dependencies=("restaurant",))

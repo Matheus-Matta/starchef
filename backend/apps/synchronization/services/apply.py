@@ -235,7 +235,13 @@ def _aplicar_m2m(model, entrada, event, fields):
             continue
 
         desejados = [str(v) for v in (fields.get(campo) or [])]
-        alvo = relacao.model._default_manager.filter(**{f"{chave}__in": desejados})
+        # `_base_manager`, e não `_default_manager`: num modelo de tenant o
+        # manager padrão é o `TenantManager`, que devolve `none()` sem conta no
+        # contexto — e aqui, aplicando um evento remoto, nunca há conta. Com o
+        # manager padrão, TODO alvo de tenant seria "desconhecido aqui", o
+        # vínculo nunca se formaria e o log encheria de aviso sobre registros
+        # que existem no banco.
+        alvo = relacao.model._base_manager.filter(**{f"{chave}__in": desejados})
         encontrados = list(alvo)
 
         faltando = set(desejados) - {str(getattr(o, chave)) for o in encontrados}
@@ -246,12 +252,46 @@ def _aplicar_m2m(model, entrada, event, fields):
                 len(faltando), campo, ", ".join(sorted(faltando))[:300],
             )
 
-        atuais = set(relacao.values_list("pk", flat=True))
-        novos = {o.pk for o in encontrados}
-        if atuais != novos:
-            relacao.set(encontrados)
+        if _casar_m2m(instancia, relacao, encontrados):
             mexeu = True
     return mexeu
+
+
+def _casar_m2m(instancia, relacao, encontrados):
+    """Deixa o vínculo igual ao desejado, mexendo na TABELA DE LIGAÇÃO.
+
+    `relacao.set()` seria o caminho óbvio e está errado aqui pelo mesmo motivo
+    da leitura: para calcular o que remover, ele consulta o manager padrão do
+    alvo — que num modelo de tenant não enxerga nada sem conta no contexto.
+    O resultado seria um `set()` que só ADICIONA: um vínculo removido na nuvem
+    ficaria para sempre na loja, e ninguém veria erro nenhum.
+
+    A tabela de ligação é o único lugar onde os dois lados da relação são
+    visíveis sem depender de conta.
+    """
+    through = relacao.through._base_manager
+    coluna_origem = f"{relacao.source_field_name}_id"
+    coluna_alvo = f"{relacao.target_field_name}_id"
+    meus = through.filter(**{coluna_origem: instancia.pk})
+
+    atuais = set(meus.values_list(coluna_alvo, flat=True))
+    novos = {o.pk for o in encontrados}
+    if atuais == novos:
+        return False
+
+    sobrando = atuais - novos
+    if sobrando:
+        meus.filter(**{f"{coluna_alvo}__in": list(sobrando)}).delete()
+    faltando = novos - atuais
+    if faltando:
+        relacao.through._base_manager.bulk_create(
+            [
+                relacao.through(**{coluna_origem: instancia.pk, coluna_alvo: alvo})
+                for alvo in faltando
+            ],
+            ignore_conflicts=True,
+        )
+    return True
 
 
 def _atualizar(instancia, kwargs):

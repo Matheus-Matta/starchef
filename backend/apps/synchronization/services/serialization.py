@@ -124,10 +124,36 @@ def serialize(instance, entry):
         relacao = getattr(instance, campo, None)
         if relacao is None:
             continue
-        dados[campo] = sorted(
-            str(valor) for valor in relacao.values_list(chave, flat=True)
-        )
+        dados[campo] = sorted(str(valor) for valor in chaves_m2m(instance, relacao, chave))
     return dados
+
+
+def chaves_m2m(instance, relacao, chave):
+    """Lê o vínculo pela TABELA DE LIGAÇÃO, não pelo manager do alvo.
+
+    `produto.restaurants.values_list(...)` passa pelo `_default_manager` do
+    modelo-alvo, e num modelo de tenant esse manager é o `TenantManager` — que
+    devolve `none()` quando não há conta no contexto.
+
+    Fora de uma requisição não há conta: é o caso da carga inicial e do worker
+    de sincronização. Ali TODO vínculo serializaria como lista vazia, e o
+    estrago não seria só "não sincronizou": o payload afirmaria que o produto
+    não pertence a restaurante nenhum, e aplicar isso do outro lado APAGARIA
+    os vínculos que existiam.
+
+    A tabela de ligação não tem conta e não depende de contexto nenhum. É por
+    isso que a leitura passa por ela, e não pelo caminho óbvio.
+    """
+    ligacao = (
+        relacao.through._base_manager.filter(
+            **{f"{relacao.source_field_name}_id": instance.pk}
+        )
+        .values_list(f"{relacao.target_field_name}_id", flat=True)
+    )
+    return (
+        relacao.model._base_manager.filter(pk__in=list(ligacao))
+        .values_list(chave, flat=True)
+    )
 
 
 def entity_version(instance):

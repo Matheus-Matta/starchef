@@ -138,7 +138,12 @@ def test_exclude_fields_aponta_para_campo_que_existe():
     """
     problemas = []
     for entrada in registry.entries.values():
+        # ManyToMany entra na conta: ele E campo, so nao e concreto. Excluir
+        # um vinculo e decisao legitima (`user.groups`, que este projeto nao
+        # usa), e sem inclui-los aqui o teste acusaria essa decisao de mirar
+        # no vazio.
         existentes = {c.name for c in entrada.model._meta.concrete_fields}
+        existentes |= {c.name for c in entrada.model._meta.many_to_many}
         for campo in entrada.exclude_fields:
             if campo not in existentes:
                 problemas.append(f"{entrada.entity_type}.{campo}")
