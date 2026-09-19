@@ -459,10 +459,19 @@ controle é disciplina apoiada por revisão, não impossibilidade.
 
 ## O que ainda não está pronto
 
-- **Homologação com duas instalações reais.** O protocolo foi exercitado ponta
-  a ponta com dois bancos PostgreSQL separados e o compose da loja no ar, mas
-  nunca com uma loja e uma nuvem em máquinas diferentes, atravessando internet
-  de verdade. A reconexão sob perda de pacote é o que falta observar.
+- **O sentido LOJA → NUVEM nunca rodou de verdade.** Medido no par real em
+  2026-09-19: a loja tem **1244 eventos de ENTRADA, todos APPLIED** — zero
+  falha, zero pendente, zero descartado. O caminho nuvem → loja está provado
+  atravessando internet de verdade, e este parágrafo dizia o contrário até
+  alguém medir.
+
+  A fila de SAÍDA, porém, está em **zero**: nenhuma venda foi feita nesse nó
+  ainda. Então tudo que sobe — venda, pagamento, movimento de caixa, documento
+  fiscal — vai estrear em produção. É o maior risco aberto, e o jeito de
+  fechá-lo é uma venda de verdade na loja antes de abrir para o movimento.
+- **Reconexão sob perda de pacote.** O worker reconecta com backoff e a outbox
+  é durável, mas a queda no meio de um lote nunca foi observada num link ruim
+  de verdade.
 - **Rotação de chave em operação** (`KEY_ROTATION_REQUIRED`). A mensagem existe
   no protocolo e `rotate_credentials` funciona, mas a troca ainda exige o nó
   reconectar — não há renegociação com a conexão de pé.
