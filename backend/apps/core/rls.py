@@ -25,6 +25,31 @@ Por isso existe `escopo_da_plataforma()`: um bloco explícito e fácil de
 procurar, no mesmo espírito do `applying_remote_event()`. A regra prática é a
 mesma: se você precisou abrir um, diga no código por quê.
 
+## LIMITE CONHECIDO: a variável mora na CONEXÃO, e ela pode escapar
+
+Medido sob carga, com RLS ligada: **uma escrita em ~500 falhou** com
+`new row violates row-level security policy for table "stock_stockmovement"`.
+O registro tinha conta válida — foi a SESSÃO do PostgreSQL que não sabia dela.
+
+A causa é estrutural, não um descuido: `aplicar_conta` grava a variável na
+conexão que o Django tem naquele instante. Sem `ATOMIC_REQUESTS`, a requisição
+não é uma transação, e com o pool nativo (`POSTGRES_POOL=True`) somado ao ASGI
+não há garantia de que a consulta seguinte use a MESMA conexão em que a
+variável foi gravada. Quando escapa, a variável chega vazia, o `NULLIF` vira
+NULL, a comparação não é verdadeira e o `WITH CHECK` recusa.
+
+Falha FECHADA, que é a direção certa — recusa a escrita, não vaza dado de
+outra conta. Mas é 500 na cara do operador, e por isso RLS **não está pronta
+para produção** enquanto isto não for resolvido.
+
+Os dois caminhos conhecidos, ambos fora do escopo de quem só liga a flag:
+
+1. `ATOMIC_REQUESTS = True` mais `set_config(..., true)` (transacional): a
+   variável passa a viver na transação, que por definição é uma conexão só.
+   Custa uma transação por requisição no sistema inteiro.
+2. Um wrapper de backend que reaplique a variável toda vez que uma conexão for
+   adquirida do pool, em vez de uma vez por requisição.
+
 ## O que falta para isto ser hermético
 
 Numa instalação endurecida, `escopo_da_plataforma()` deixaria de ser uma
@@ -267,3 +292,25 @@ def trabalho_de_plataforma(motivo=""):
         return embrulho
 
     return decorador
+
+
+@contextmanager
+def descobrindo_o_tenant():
+    """A consulta que DESCOBRE a conta não pode ser filtrada por conta.
+
+    É o ovo-e-galinha do RLS, e o primeiro que aparece ao ligar a política:
+    para saber em nome de qual conta esta sessão fala, é preciso ler o
+    `UserProfile` do usuário — e `accounts_userprofile` está protegida. Sem
+    conta na sessão a leitura devolve zero linha, o login responde "usuário sem
+    conta vinculada" e ninguém entra no sistema.
+
+    O erro é especialmente cruel porque a mensagem culpa o cadastro do usuário,
+    que está perfeito. Foi assim que este caso apareceu: a carga com RLS ligada
+    não passou do preparo, com um 401 falando de perfil.
+
+    É um escopo de plataforma como outro qualquer, mas com nome próprio porque
+    o motivo é diferente dos demais: não é trabalho que atravessa contas por
+    natureza, é a pergunta "qual é a conta?" — que precede a resposta.
+    """
+    with escopo_da_plataforma("descoberta do tenant"):
+        yield

@@ -306,8 +306,14 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
                 attrs[self.username_field] = user.get_username()
 
         data = super().validate(attrs)
-        profile = getattr(self.user, "profile", None)
-        account = profile.account if profile and profile.account_id else None
+        # Sob RLS, ler o perfil é justamente a consulta que descobre a conta —
+        # e ela não pode estar filtrada pela conta que ainda não se sabe. Ver
+        # `rls.descobrindo_o_tenant`. Sem RLS, não faz nada.
+        from apps.core import rls
+
+        with rls.descobrindo_o_tenant():
+            profile = getattr(self.user, "profile", None)
+            account = profile.account if profile and profile.account_id else None
 
         # Conta vinculada é obrigatória para TODO mundo, superusuário incluído:
         # no app ele opera como admin da própria conta (a visão de todas as
@@ -328,6 +334,18 @@ class StarChefTokenObtainPairSerializer(TokenObtainPairSerializer):
             raise AuthenticationFailed("Conta inativa.", code="account_inactive")
         if not profile.is_active:
             raise AuthenticationFailed("Perfil inativo.", code="profile_inactive")
+
+        # Descoberto o tenant, a sessão passa a falar em nome dele — e o resto
+        # da montagem da resposta (papel, permissões, restaurante) roda
+        # ESCOPADO, como qualquer outra leitura.
+        #
+        # A alternativa seria manter o login inteiro em escopo de plataforma, e
+        # ela é pior: a rota mais exposta do sistema ficaria lendo tabela de
+        # conta sem filtro nenhum por dezenas de linhas. Aqui o escopo aberto
+        # dura exatamente o tempo de responder "qual é a conta?".
+        from apps.core.tenant import set_current_account
+
+        set_current_account(account)
 
         request = self.context.get("request")
         if (

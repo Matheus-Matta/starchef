@@ -32,8 +32,16 @@ BANCO="starchef_loadtest"
 psql_dono() { docker exec -i "$PG" psql -U "$DONO" -d "$BANCO" -v ON_ERROR_STOP=1 -q "$@"; }
 
 if [ "${1:-}" = "--off" ]; then
-  docker compose -f "$COMPOSE" exec -T backend python manage.py install_rls --remove
+  # A ORDEM importa, e errá-la custou uma execução: remover política exige ser
+  # DONO das tabelas (`must be owner of relation accounts_account`), e o
+  # backend ainda está conectando como o papel de aplicação, que não é dono.
+  # Primeiro devolve a conexão ao dono, DEPOIS remove.
   docker compose -f "$COMPOSE" up -d --no-deps backend
+  for _ in $(seq 1 40); do
+    if curl -fsS "http://127.0.0.1:${LOADTEST_PORT:-8012}/health/" >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  docker compose -f "$COMPOSE" exec -T backend python manage.py install_rls --remove | tail -2
   echo "RLS desligada; backend voltou a conectar como $DONO"
   exit 0
 fi

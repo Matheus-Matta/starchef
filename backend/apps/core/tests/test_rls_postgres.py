@@ -172,3 +172,54 @@ def test_toda_tabela_de_conta_recebe_politica(com_rls):
     """Nenhuma tabela com `account` pode ficar de fora — nem a criada amanhã."""
     assert rls.faltando() == []
     assert len(rls.tabelas_multitenant()) >= 20
+
+
+# ── o ovo-e-galinha: descobrir de quem é a sessão ───────────────────────────
+
+def test_descobrir_o_tenant_precisa_de_escopo_proprio(com_rls, duas_contas):
+    """A consulta que DESCOBRE a conta não pode estar filtrada pela conta.
+
+    Este é o primeiro defeito que aparece ao ligar RLS, e foi o teste de carga
+    que o encontrou: a execução não passou do preparo, com um 401 dizendo
+    "usuário sem conta vinculada" — mensagem que culpa o cadastro do usuário,
+    que estava perfeito.
+
+    A mecânica é esta: para saber em nome de qual conta a sessão fala é preciso
+    ler o `UserProfile`, e `accounts_userprofile` está protegida. Com a sessão
+    ainda sem conta, a leitura devolve zero linha e o login conclui que o
+    usuário não tem conta. Sem `rls.descobrindo_o_tenant()`, nem o login nem
+    NENHUMA requisição passam.
+    """
+    from django.contrib.auth import get_user_model
+
+    from apps.accounts.models import UserProfile
+    from apps.accounts.role_catalog import ensure_system_roles
+
+    User = get_user_model()
+    conta_a, _conta_b = duas_contas
+
+    with rls.escopo_da_plataforma("montagem do teste"):
+        usuario = User.objects.create_user("operador-rls", "op@starchef.test", "senha-forte-123")
+        UserProfile.objects.create(
+            account=conta_a, user=usuario, role=ensure_system_roles(conta_a)["admin"]
+        )
+
+    # `all_objects` e não `objects`: o caminho real do login é
+    # `getattr(user, "profile")`, um descritor reverso que NÃO passa pelo
+    # manager de tenant. Usar `objects` aqui mediria o filtro do ORM (que
+    # devolve vazio sem conta no ContextVar) em vez da política do banco — o
+    # teste passaria pelo motivo errado, que é exatamente o que ele existe
+    # para não fazer.
+    assert UserProfile.all_objects.filter(user=usuario).count() == 0, (
+        "se isto passar a devolver linha, a política deixou de valer"
+    )
+
+    # Com o escopo de descoberta, ele aparece — e é assim que o login resolve
+    # a conta antes de ter uma para declarar.
+    with rls.descobrindo_o_tenant():
+        perfil = UserProfile.all_objects.filter(user=usuario).first()
+        assert perfil is not None
+        assert perfil.account_id == conta_a.id
+
+    # E o escopo FECHA: a descoberta não pode deixar a sessão aberta para tudo.
+    assert UserProfile.all_objects.filter(user=usuario).count() == 0

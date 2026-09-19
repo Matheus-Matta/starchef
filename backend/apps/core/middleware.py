@@ -209,10 +209,20 @@ class TenantMiddleware:
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             return None
-        profile = getattr(user, "profile", None)
-        if user.is_superuser and request.headers.get("X-Account-ID"):
-            return Account.objects.filter(id=request.headers["X-Account-ID"], is_active=True).first()
-        return profile.account if profile and profile.account_id else None
+
+        # Tudo aqui dentro é a pergunta "qual é a conta?", e ela precede a
+        # resposta: sob RLS, ler `UserProfile` (ou `Account`) com a sessão
+        # ainda sem conta devolve zero linha, e TODA requisição responderia
+        # "usuário sem conta vinculada". Ver `rls.descobrindo_o_tenant`.
+        from apps.core import rls
+
+        with rls.descobrindo_o_tenant():
+            if user.is_superuser and request.headers.get("X-Account-ID"):
+                return Account.objects.filter(
+                    id=request.headers["X-Account-ID"], is_active=True
+                ).first()
+            profile = getattr(user, "profile", None)
+            return profile.account if profile and profile.account_id else None
 
 
 class TenantResponseSafetyMiddleware:

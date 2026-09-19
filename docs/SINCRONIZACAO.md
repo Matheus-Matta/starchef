@@ -391,6 +391,45 @@ o que aconteceu na primeira execução dos testes aqui, e é por isso que
 usuário de aplicação sem SUPERUSER e sem BYPASSRLS antes de confiar no
 relatório.**
 
+### O que a carga com RLS ligada encontrou
+
+O alvo de carga com a política de pé (`loadtest/scripts/rls_target.sh`) achou
+duas coisas que nenhum teste unitário acharia:
+
+**1. O login quebrava.** É o ovo-e-galinha do RLS: a consulta que DESCOBRE a
+conta não pode estar filtrada por conta. `accounts_userprofile` está protegida,
+a sessão ainda não tem conta, a leitura volta vazia e o sistema responde
+"usuário sem conta vinculada" — culpando um cadastro que está perfeito.
+Corrigido com `rls.descobrindo_o_tenant()` no login e no middleware, e o login
+passou a FIXAR a conta assim que a descobre, para o resto da resposta rodar
+escopado em vez de manter a rota mais exposta do sistema lendo sem filtro.
+
+**2. ~1 escrita em 500 falha, e isso ainda não tem correção.** A variável de
+conta mora na CONEXÃO. Sem `ATOMIC_REQUESTS`, a requisição não é uma transação,
+e com o pool nativo somado ao ASGI não há garantia de que a escrita use a mesma
+conexão em que a variável foi gravada. Quando escapa, o `WITH CHECK` recusa com
+500. Falha FECHADA — recusa, não vaza —, mas **RLS não está pronta para
+produção enquanto isto não for resolvido**. Os dois caminhos conhecidos estão
+em `apps/core/rls.py`.
+
+Fora isso, a carga com RLS passou inteira: backend, desktop, mobile e sync, com
+todas as verificações de coerência verdes.
+
+**O custo, medido no mesmo perfil e na mesma máquina** (perfil `medio`, alvo de
+produção local, execuções sequenciais):
+
+| | sem RLS | com RLS |
+| --- | --- | --- |
+| vazão | 40,5 req/s | 30,2 req/s |
+| p50 | 946 ms | 1209 ms |
+| p95 | 2441 ms | 3109 ms |
+| 5xx | **0** | 1 (o do `WITH CHECK` acima) |
+
+Uns 25% de vazão. O número é indicativo, não preciso — as duas execuções
+dividiram a máquina com o resto do ambiente —, mas a ordem de grandeza é essa,
+e o zero na linha dos 5xx sem RLS é o que torna o 500 atribuível à política e
+não a um endpoint instável.
+
 Trabalho que legitimamente atravessa contas (o despacho, as métricas, a
 retenção) declara isso com `rls.escopo_da_plataforma()` ou o decorador
 `@trabalho_de_plataforma`. Num deploy endurecido esse escopo deixaria de ser

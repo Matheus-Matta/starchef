@@ -44,6 +44,14 @@ class Command(BaseCommand):
 
         total = rls.install(log=self.stdout.write)
         self.stdout.write(self.style.SUCCESS(f"{total} tabela(s) protegida(s)."))
+        self.stdout.write(self.style.ERROR(
+            "LIMITE CONHECIDO: medido sob carga, ~1 escrita em 500 falha com "
+            "'new row violates row-level security policy'. A variável de conta "
+            "mora na CONEXÃO, e sem ATOMIC_REQUESTS não há garantia de que a "
+            "escrita use a mesma conexão em que ela foi gravada. Falha fechada "
+            "(recusa, não vaza), mas é 500 para o operador. Ver apps/core/rls.py "
+            "antes de ligar isto em produção."
+        ))
         if not rls.esta_ligada():
             self.stdout.write(self.style.WARNING(
                 "RLS_ENABLED continua false: as políticas existem, mas a aplicação "
