@@ -457,6 +457,38 @@ controle é disciplina apoiada por revisão, não impossibilidade.
   `iterator`) com transação por registro; não existe a transação longa que a
   revisão supôs.
 
+## Vínculos ManyToMany, e o reparo que o deploy NÃO faz sozinho
+
+Um M2M não gera evento próprio: ele viaja dentro do payload do pai, e só se
+estiver declarado em `m2m_fields` com a chave natural. Nove estavam sem
+decisão — entre eles `CashStation.operators`, cujo efeito era a loja não
+conseguir abrir caixa com o caixa e o operador ambos visíveis na tela.
+
+`manage.py sync_check_registry` agora reprova M2M nem declarado nem excluído.
+Ele roda no deploy, e é a trava para isto não voltar: um M2M é invisível para
+a checagem de model porque a tabela de ligação nunca aparece em
+`get_models()`.
+
+**A chave natural importa.** `operators` casa por `username`, não por `id`: o
+id do usuário é inteiro sequencial e os dois bancos numeram independentemente
+— casar por ele ligaria o caixa à pessoa errada, e ninguém descobriria
+olhando a tela, porque haveria um nome ali.
+
+**Depois de subir a correção, os vínculos que faltam NÃO se consertam
+sozinhos.** Nada dispara reenvio: os registros já existem dos dois lados e
+nenhum deles mudou. Para cada loja, use **"Sincronizar tudo"** no Admin da
+nuvem (ou toque nos registros de origem) para regenerar a fila. Conferir
+depois, no banco da loja:
+
+```
+select s.name, u.username
+  from payments_cashstation s
+  left join payments_cashstation_operators o on o.cashstation_id = s.id
+  left join auth_user u on u.id = o.user_id;
+```
+
+Coluna `username` nula é caixa sem operador — e caixa sem operador não abre.
+
 ## O que ainda não está pronto
 
 - **O sentido LOJA → NUVEM nunca rodou de verdade.** Medido no par real em
