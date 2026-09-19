@@ -29,9 +29,20 @@ services:
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
     logging: *default-logging
 
+    # `sync_install_triggers` depois do migrate, igual ao compose da loja: é a
+    # rede de segurança do §11.2, que captura escrita feita por fora do ORM
+    # (bulk_create, QuerySet.update, SQL direto). Sem ela o sistema funciona —
+    # e é esse o problema: a escrita em massa deixa de virar evento sem barulho
+    # nenhum, e a divergência só aparece quando alguém compara os dois bancos.
+    #
+    # É idempotente e tem guarda própria (não instala nada com SYNC_ENABLED
+    # false), então é seguro deixar no boot de qualquer instalação. A nuvem
+    # ficou de fora até aqui por esquecimento, não por decisão — e ela é
+    # justamente onde escrita em massa acontece.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
+             python manage.py sync_install_triggers &&
              gunicorn config.asgi:application -c gunicorn.conf.py"
 
     env_file:
