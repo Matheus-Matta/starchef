@@ -117,7 +117,13 @@ def to_markdown(dados):
             _tabela(
                 [
                     {"suite": c["suite"], "verificacao": c["nome"],
-                     "resultado": "OK" if c["ok"] else "FALHOU", "detalhe": c["detalhe"][:160]}
+                     "resultado": "OK" if c["ok"] else "FALHOU",
+                     # `detalhe` e escrito como a EXPLICACAO DA FALHA. Imprimi-lo
+                     # numa linha OK produzia contradicao na cara do leitor —
+                     # "OK | nenhuma venda fechou" — e o efeito e pior que feio:
+                     # ensina a ignorar a coluna, que e justamente onde mora a
+                     # explicacao quando algo falha de verdade.
+                     "detalhe": "" if c["ok"] else c["detalhe"][:160]}
                     for c in dados["verificacoes"]
                 ],
                 ["suite", "verificacao", "resultado", "detalhe"],

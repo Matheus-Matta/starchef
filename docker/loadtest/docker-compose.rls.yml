@@ -1,0 +1,20 @@
+# Sobreposição: o MESMO alvo de carga, com Row Level Security LIGADA.
+#
+#   bash loadtest/scripts/rls_target.sh        # converte o alvo já no ar
+#   bash loadtest/scripts/rls_target.sh --off  # volta ao modo sem RLS
+#
+# Existe porque a pergunta que os testes unitários NÃO respondem é esta: a
+# aplicação inteira continua funcionando com a política de pé? Os testes do
+# `apps/core/tests/test_rls_postgres.py` provam o isolamento numa tabela; o que
+# quebra de verdade é um endpoint qualquer que consulta fora do contexto de
+# conta e passa a receber zero linha. Isso só aparece exercitando a API toda.
+#
+# O papel do banco é trocado junto, e isso é o ponto: com o usuário
+# SUPERUSER do contêiner a política não vale para ninguém, e a carga passaria
+# verde sem ter testado nada (ver `rls.papel_burla_rls`).
+services:
+  backend:
+    environment:
+      RLS_ENABLED: "true"
+      POSTGRES_USER: starchef_app
+      POSTGRES_PASSWORD: loadtest-only-password

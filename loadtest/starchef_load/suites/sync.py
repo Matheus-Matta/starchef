@@ -3,7 +3,7 @@
 As outras suites atacam um alvo só. Esta ataca o par, porque o que se quer
 medir aqui não existe dentro de um processo: é a fila entre eles.
 
-Cinco fases:
+Seis fases:
 
 1. **Identidade** — quem é cada alvo (LOCAL/CLOUD) e se a sincronização está
    ligada nos dois. Sem isso o resto do relatório não quer dizer nada.
@@ -15,6 +15,10 @@ Cinco fases:
    nos dois lados enquanto a fila se move.
 5. **Matrícula sob ataque** — credencial errada tem de dar 403 e o limite de
    taxa tem de segurar. É a única rota da sincronização aberta sem token.
+6. **Corrida pelo bilhete** — N matrículas SIMULTÂNEAS com o mesmo bilhete de
+   uso único. Exatamente uma pode passar. É a única forma de exercitar o
+   `select_for_update` do consumo: o teste unitário é sequencial, e no SQLite
+   ele passaria pelo motivo errado.
 
 Sem `--cloud-url` a suite roda só as fases que cabem num alvo e avisa o que
 deixou de medir — ela não inventa um segundo backend.
@@ -39,7 +43,7 @@ ROTAS_DE_GESTAO = [
 
 def fase_identidade(ctx):
     """Quem é cada alvo. Roda primeiro porque tudo depois depende disto."""
-    ctx.log(f"[{SUITE}] fase 1/5 — identidade dos dois backends")
+    ctx.log(f"[{SUITE}] fase 1/6 — identidade dos dois backends")
     papeis = {}
     for rotulo, sessao in sync_phases.alvos(ctx):
         estado = sync_phases.status(ctx, SUITE, rotulo, sessao)
@@ -69,7 +73,7 @@ def fase_identidade(ctx):
 
 def fase_enchendo_a_outbox(ctx, papeis):
     """Escrita pesada na LOJA. Cada registro tem de virar evento."""
-    ctx.log(f"[{SUITE}] fase 2/5 — escrita pesada na loja, enchendo a outbox")
+    ctx.log(f"[{SUITE}] fase 2/6 — escrita pesada na loja, enchendo a outbox")
     antes = sync_phases.fila(ctx, "loja")
     rng = ctx.rng(4242)
 
@@ -97,7 +101,7 @@ def fase_enchendo_a_outbox(ctx, papeis):
 
 def fase_convergencia(ctx, fila_apos_escrita):
     """A fila drena? Mede o tempo; não exige que zere dentro do teste."""
-    ctx.log(f"[{SUITE}] fase 3/5 — drenagem da fila")
+    ctx.log(f"[{SUITE}] fase 3/6 — drenagem da fila")
     if not sync_phases.tem_nuvem(ctx):
         ctx.note(SUITE, "sem --cloud-url: convergência não medida")
         return
@@ -132,7 +136,7 @@ def fase_convergencia(ctx, fila_apos_escrita):
 
 def fase_leitura_de_gestao(ctx):
     """A API de gerenciamento consultada nos dois lados, sob carga."""
-    ctx.log(f"[{SUITE}] fase 4/5 — API de gerenciamento sob carga nos dois alvos")
+    ctx.log(f"[{SUITE}] fase 4/6 — API de gerenciamento sob carga nos dois alvos")
     alvos = sync_phases.alvos(ctx)
     rng = ctx.rng(909)
 
@@ -150,7 +154,7 @@ def fase_leitura_de_gestao(ctx):
 
 def fase_matricula_sob_ataque(ctx):
     """A única rota sem token. Credencial errada não pode virar 500 nem 201."""
-    ctx.log(f"[{SUITE}] fase 5/5 — matrícula com credencial errada")
+    ctx.log(f"[{SUITE}] fase 5/6 — matrícula com credencial errada")
     alvo = sync_phases.alvo_nuvem(ctx) or sync_phases.alvo_loja(ctx)
     if alvo is None:
         return
@@ -178,6 +182,50 @@ def fase_matricula_sob_ataque(ctx):
     )
 
 
+def fase_corrida_do_bilhete(ctx):
+    """O bilhete de matrícula vale UMA vez — inclusive com N pedidos juntos."""
+    ctx.log(f"[{SUITE}] fase 6/6 — corrida pelo mesmo bilhete de matrícula")
+    codigo = (ctx.config.enroll_ticket or "").strip()
+    conta = (ctx.config.enroll_account or "").strip()
+    if not codigo or not conta:
+        ctx.note(
+            SUITE,
+            "sem --enroll-ticket/--enroll-account: a corrida pelo bilhete NÃO foi "
+            "medida. Emita um com `manage.py sync_issue_ticket --account <uuid>` "
+            "no alvo e passe o código aqui.",
+        )
+        return
+
+    alvo = sync_phases.alvo_nuvem(ctx) or sync_phases.alvo_loja(ctx)
+    tentativas = max(8, min(32, ctx.config.workers))
+    respostas = sync_phases.corrida_do_bilhete(
+        ctx, SUITE, alvo, codigo=codigo, conta=conta,
+        tentativas=tentativas, workers=tentativas,
+    )
+
+    aceitas = [r for r in respostas if r and r.status in (200, 201)]
+    recusadas = [r for r in respostas if r and 400 <= r.status < 500]
+    erros = [r for r in respostas if r and r.status >= 500]
+
+    # A promessa inteira do recurso, sob concorrência real.
+    ctx.check(
+        SUITE, "o mesmo bilhete matricula exatamente UMA vez",
+        len(aceitas) == 1,
+        f"{len(aceitas)} matrícula(s) aceitas em {len(respostas)} pedidos simultâneos "
+        f"— com mais de uma, duas lojas dividem a mesma fila e faltam dados dias depois",
+    )
+    ctx.check(
+        SUITE, "as demais são recusadas com erro tratado, não 500",
+        not erros,
+        f"{len(erros)} resposta(s) 5xx — corrida de lock virando erro de servidor",
+    )
+    ctx.note(
+        SUITE,
+        f"bilhete: {len(respostas)} pedidos simultâneos, {len(aceitas)} aceito(s), "
+        f"{len(recusadas)} recusado(s), {len(erros)} erro(s) de servidor",
+    )
+
+
 def run(ctx):
     inicio = time.time()
     if not sync_phases.tem_nuvem(ctx):
@@ -191,4 +239,5 @@ def run(ctx):
     fase_leitura_de_gestao(ctx)
     sync_contention.fase_contencao(ctx)
     fase_matricula_sob_ataque(ctx)
+    fase_corrida_do_bilhete(ctx)
     ctx.note(SUITE, f"suite concluída em {time.time() - inicio:.1f}s")

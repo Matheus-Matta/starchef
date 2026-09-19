@@ -26,6 +26,12 @@ class LoadConfig:
     cloud_username: str = ""
     cloud_password: str = ""
 
+    # Corrida do bilhete de matricula. Vazio = a fase e pulada e a suite diz
+    # o que deixou de medir, em vez de inventar um bilhete que nao existe.
+    # O codigo sai de `manage.py sync_issue_ticket` no alvo.
+    enroll_ticket: str = ""
+    enroll_account: str = ""
+
     profile: str = "medio"
     workers: int = 64
     rate: int = 500
@@ -56,6 +62,7 @@ class LoadConfig:
             setattr(config, chave, valor)
         for campo in (
             "base_url", "frontend_url", "cloud_url", "cloud_username", "cloud_password",
+            "enroll_ticket", "enroll_account",
             "username", "password", "workers", "rate",
             "duration", "count", "timeout", "chaos_ratio", "sloppy_ratio",
             "terminals", "waiters", "sales", "seed", "report_dir", "label",
@@ -68,6 +75,8 @@ class LoadConfig:
         config.base_url = os.environ.get("LOADTEST_BASE_URL", config.base_url)
         config.frontend_url = os.environ.get("LOADTEST_FRONTEND_URL", config.frontend_url)
         config.cloud_url = os.environ.get("LOADTEST_CLOUD_URL", config.cloud_url)
+        config.enroll_ticket = os.environ.get("LOADTEST_ENROLL_TICKET", config.enroll_ticket)
+        config.enroll_account = os.environ.get("LOADTEST_ENROLL_ACCOUNT", config.enroll_account)
         # Sem credencial própria, a nuvem usa a mesma da loja — é o caso comum
         # no ambiente de desenvolvimento, onde a conta é a mesma dos dois lados.
         config.cloud_username = config.cloud_username or config.username

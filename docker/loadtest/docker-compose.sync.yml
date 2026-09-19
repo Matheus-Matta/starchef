@@ -1,0 +1,18 @@
+# Sobreposição: o alvo de carga com a SINCRONIZAÇÃO ligada, no papel de NUVEM.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.sync.yml up -d backend
+#
+# Existe para a fase 6 da suíte `sync` — a corrida pelo mesmo bilhete de
+# matrícula. A rota `/api/v1/sync/enroll/` chama `bootstrap.start_run`, que
+# exige `SYNC_ENABLED`; sem ela a rota responde 503 e a corrida mede o
+# 503, não o lock.
+#
+# Não há worker nem beat aqui de propósito: o que se quer medir é o consumo
+# CONCORRENTE do bilhete dentro da requisição, não a fila andando. Uma carga
+# gerada e não drenada é o resultado esperado deste alvo.
+services:
+  backend:
+    environment:
+      SYNC_ENABLED: "true"
+      SYNC_ENVIRONMENT: development
+      SYNC_NODE_TYPE: cloud

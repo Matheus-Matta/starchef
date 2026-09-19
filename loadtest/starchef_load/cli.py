@@ -26,6 +26,11 @@ def build_parser():
                         help="backend da NUVEM (suite sync). Sem ela, base-url e o unico alvo")
     parser.add_argument("--cloud-username", dest="cloud_username", help="usuario na nuvem (padrao: o mesmo)")
     parser.add_argument("--cloud-password", dest="cloud_password", help="senha na nuvem (padrao: a mesma)")
+    parser.add_argument("--enroll-ticket", dest="enroll_ticket",
+                        help="codigo de `manage.py sync_issue_ticket` no alvo. "
+                             "Sem ele, a corrida do bilhete nao e medida")
+    parser.add_argument("--enroll-account", dest="enroll_account",
+                        help="UUID da conta do bilhete (a mesma passada ao comando)")
     parser.add_argument("--username", help="usuario da conta de teste")
     parser.add_argument("--password", help="senha da conta de teste")
     parser.add_argument("--workers", type=int, help="conexoes simultaneas")

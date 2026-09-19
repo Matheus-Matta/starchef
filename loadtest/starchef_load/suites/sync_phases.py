@@ -183,3 +183,40 @@ def atacar_matricula(ctx, suite, sessao, tentativas=12, workers=6):
 
     run_parallel(range(tentativas), uma, workers=workers)
     return respostas
+
+def corrida_do_bilhete(ctx, suite, sessao, *, codigo, conta, tentativas=12, workers=12):
+    """Dispara N matrículas SIMULTÂNEAS com o MESMO bilhete de uso único.
+
+    Esta é a única forma de exercitar o `select_for_update` de
+    `enrollment._consumir_bilhete`. O teste unitário é sequencial: ele prova
+    que reapresentar um bilhete gasto é recusado, e não prova nada sobre duas
+    apresentações ao mesmo tempo — que é justamente onde "uso único" se perde.
+
+    O modo de falhar é silencioso e caro: duas lojas matriculadas com o mesmo
+    convite, cada uma com seu nó, cada uma recebendo um pedaço da fila. Nada
+    estoura; só faltam dados, dias depois.
+
+    Também é a razão de isto morar no teste de CARGA e não no pytest: SQLite
+    serializa tudo e passaria por um motivo que não é o nosso.
+    """
+    corpo_base = {
+        "username": ctx.config.username,
+        "password": ctx.config.password,
+        "account_id": conta,
+        "enrollment_secret": codigo,
+    }
+    respostas = []
+
+    def uma(indice):
+        corpo = dict(corpo_base, node_name=f"LT-corrida-{indice}")
+        inicio = time.time()
+        resposta = sessao.client.request("POST", "/api/v1/sync/enroll/", body=corpo)
+        ctx.record(
+            suite, f"{suite}::bilhete", "POST", "/api/v1/sync/enroll/",
+            resposta, expectation="2xx-ou-4xx", case="corrida",
+            started=inicio, payload=f"tentativa {indice}",
+        )
+        respostas.append(resposta)
+
+    run_parallel(range(tentativas), uma, workers=workers)
+    return respostas
