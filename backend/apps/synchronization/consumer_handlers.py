@@ -11,6 +11,7 @@ from channels.db import database_sync_to_async
 from django.utils import timezone
 
 from apps.synchronization.constants import CloseCode, MessageType, PROTOCOL_VERSION, SCHEMA_VERSION
+from apps.synchronization.worker_steps import aplicar_recebidos
 from apps.synchronization.services import authentication, dispatch, inbox, nodes
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,30 @@ class HandlerMixin:
             },
             correlation_id=envelope.get("message_id"),
         )
-        await database_sync_to_async(self._enfileirar_aplicacao)([e.pk for e in aceitos])
+
+        # APLICA NA PRÓPRIA CONEXÃO, sem depender de worker nenhum.
+        #
+        # Aqui se enfileirava no Celery, com a garantia de que "o beat aplica
+        # na próxima passada" se falhasse. Só que o beat TAMBÉM é Celery: com
+        # os workers fora do ar, o enfileiramento tem SUCESSO (o Redis está
+        # bem), a tarefa fica parada na fila e nada nunca aplica. Foi assim
+        # que 98 eventos de uma loja — pagamentos incluídos — ficaram gravados
+        # na caixa de entrada e invisíveis no domínio, sem erro em lugar
+        # nenhum, até alguém rodar a tarefa à mão.
+        #
+        # O ACK de recebimento já saiu acima, então isto não atrasa a loja. E
+        # é o MESMO código que o worker da loja usa ao receber um lote — os
+        # dois lados passam a se comportar igual.
+        aplicados = await database_sync_to_async(aplicar_recebidos)(
+            [e.pk for e in aceitos]
+        )
+        if aplicados:
+            # E AVISA QUE APLICOU. A loja já sabe tratar `acknowledged`; era
+            # só a nuvem que nunca mandava, e por isso os eventos dela ficavam
+            # em RECEIVED para sempre — um estado que não distinguia "aplicado"
+            # de "perdido". Quem olhava a fila não tinha como saber qual dos
+            # dois era.
+            await self.send_envelope(MessageType.ACK, {"acknowledged": aplicados})
 
     async def handle_ack(self, _envelope, payload):
         proprio = await database_sync_to_async(nodes.self_node)()
@@ -195,29 +219,6 @@ class HandlerMixin:
             self.node.last_received_cursor = sequencia
             self.node.last_sync_at = timezone.now()
             self.node.save(update_fields=["last_received_cursor", "last_sync_at", "updated_at"])
-
-    def _enfileirar_aplicacao(self, ids):
-        """Pede a aplicação ao worker. Falhar aqui NÃO é perder nada.
-
-        Os eventos já estão commitados na inbox quando esta função roda — o
-        ACK só sai depois disso. Se o broker estiver fora do ar, enfileirar
-        falha, mas `sync.apply_pending_events` roda no beat a cada 15s e
-        encontra exatamente os mesmos eventos.
-
-        Deixar a exceção subir derrubaria a conexão da loja por causa de um
-        Redis reiniciando — com o dado seguro no banco o tempo todo.
-        """
-        if not ids:
-            return
-        from apps.synchronization.tasks.apply import apply_pending_events
-
-        try:
-            apply_pending_events.delay([str(i) for i in ids])
-        except Exception:  # noqa: BLE001 — broker fora do ar é cenário previsto
-            logger.warning(
-                "sync: não foi possível enfileirar a aplicação de %s evento(s); "
-                "o beat os aplica na próxima passada.", len(ids), exc_info=True,
-            )
 
     def _token_do_scope(self):
         """Bearer do header do handshake. Nunca da query string (§8.2)."""
