@@ -29,6 +29,28 @@ extension OrdersQueries on OrdersRepository {
 
   Future<Map<String, dynamic>> order(String id) => read('/orders/$id/');
 
+  /// As comandas EM USO do salão, para a tela inicial.
+  ///
+  /// "Em uso" é um estado que o backend mantém no primeiro lançamento, e ele
+  /// vem filtrado de lá de propósito: um salão tem centenas de cartões e só
+  /// alguns em atendimento — trazer todos para filtrar aqui gastaria a rede do
+  /// salão para jogar quase tudo fora.
+  ///
+  /// `pending_items` e `pending_total` já vêm na listagem, então o cartão
+  /// mostra quanto a comanda deve sem abrir uma por uma.
+  Future<List<Map<String, dynamic>>> commandsInUse() async => _rows(
+    await read(
+      '/commands/',
+      query: {
+        'restaurant': session.user.restaurantId,
+        'status': 'occupied',
+        'is_active': true,
+        'ordering': 'number',
+        'page_size': 100,
+      },
+    ),
+  );
+
   /// O que a comanda tem AGORA — as anotações pendentes.
   ///
   /// Não é `command.items`, que devolve o histórico INTEIRO do cartão: a

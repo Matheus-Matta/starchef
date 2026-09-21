@@ -23,13 +23,25 @@ class PendingMutation {
   final int attempts;
   final String? lastError;
 
-  String? get orderId {
+  /// O ATENDIMENTO a que esta operação pertence — um pedido ou uma comanda.
+  ///
+  /// Os dois entram aqui porque a tela de detalhe é a mesma para os dois, e é
+  /// por este id que ela acha o que ainda está na fila. Enquanto só `/orders/`
+  /// era reconhecido, a anotação que o garçom lançava sem rede subia
+  /// normalmente mas não aparecia em lugar nenhum da comanda: sem selo de
+  /// "aguardando conexão", e — pior — sem a lista de recusados, então um item
+  /// que o backend rejeitasse sumia da tela sem deixar rastro.
+  String? get subjectId {
     if (placeholderOrderId != null) return placeholderOrderId;
-    return RegExp(r'^/orders/([^/]+)/').firstMatch(path)?.group(1);
+    return _subjectPath.firstMatch(path)?.group(1);
   }
 
-  String? get itemId =>
-      RegExp(r'^/orders/[^/]+/items/([^/]+)/').firstMatch(path)?.group(1);
+  String? get itemId => _itemPath.firstMatch(path)?.group(1);
+
+  static final _subjectPath = RegExp(r'^/(?:orders|commands)/([^/]+)/');
+  static final _itemPath = RegExp(
+    r'^/(?:orders|commands)/[^/]+/items/([^/]+)/',
+  );
 
   PendingMutation withOrderIdReplaced(String placeholder, String realId) =>
       PendingMutation(
@@ -80,7 +92,7 @@ class FailedMutation {
 
   final PendingMutation mutation;
   final String reason;
-  String? get orderId => mutation.orderId;
+  String? get subjectId => mutation.subjectId;
 
   Map<String, dynamic> toJson() => {
     'mutation': mutation.toJson(),

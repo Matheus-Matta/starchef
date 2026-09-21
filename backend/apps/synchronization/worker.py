@@ -14,7 +14,7 @@ import logging
 from asgiref.sync import sync_to_async
 
 from apps.synchronization.constants import MessageType
-from apps.synchronization.services import dispatch, transport
+from apps.synchronization.services import dispatch, nodes, transport
 from apps.synchronization.worker_steps import (
     aplicar_recebidos,
     enviar_pendentes,
@@ -49,6 +49,11 @@ class LocalSyncWorker:
             try:
                 await conexao.connect()
                 await self._esperar_autenticacao(conexao)
+                # Fecha a janela de queda ANTES de receber qualquer coisa: o
+                # que chegar em seguida é justamente o que aconteceu enquanto
+                # este nó esteve fora, e a decisão de conflito precisa saber
+                # disso para não recusar o que a loja apenas perdeu.
+                await sync_to_async(nodes.registrar_reconexao)()
                 logger.info("sync: autenticado na nuvem (nó %s)", conexao.node_id)
                 tentativa = 0
                 await self._sessao(conexao)
@@ -158,6 +163,7 @@ class LocalSyncWorker:
         while not self.parar.is_set():
             await asyncio.sleep(self.heartbeat)
             await conexao.send(MessageType.HEARTBEAT, {})
+            await sync_to_async(nodes.registrar_contato)()
 
     def stop(self):
         self.parar.set()

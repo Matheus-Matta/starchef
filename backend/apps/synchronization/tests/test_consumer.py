@@ -253,10 +253,65 @@ async def test_lote_de_outra_conta_e_recusado_e_derruba(
     assert await _esperar_fechamento(com) == CloseCode.FORBIDDEN
 
 
+async def test_um_evento_mal_enderecado_nao_derruba_a_conexao(
+    como_nuvem, conta, no_loja, no_nuvem, monkeypatch
+):
+    """O bloqueio de cabeça de fila, visto de fora.
+
+    Um evento endereçado a um nó que não existe mais derrubava a conexão. A
+    origem reconectava, reenviava o MESMO lote, e batia no mesmo evento — para
+    sempre. Nada que vinha atrás dele chegava nunca.
+
+    Agora ele vai sozinho para a quarentena: a conexão fica de pé, os outros
+    eventos entram, e o ACK cobre o lote inteiro para a origem não reenviar o
+    estragado até o fim dos tempos.
+    """
+    # O enfileiramento no Celery não é o que está sob teste, e sem broker ele
+    # gasta o tempo de espera do teste SEGUINTE tentando reconectar.
+    from apps.synchronization.tasks.apply import apply_pending_events
+
+    monkeypatch.setattr(apply_pending_events, "delay", lambda *_a, **_k: None)
+
+    com = await _conectado(no_loja)
+    await _ler(com)
+
+    def _evento(seq, alvo):
+        return {
+            "event_id": str(uuid.uuid4()),
+            "account_id": str(conta.id),
+            "target_node_id": alvo, "sequence": seq,
+            "entity_type": "customer", "entity_id": str(uuid.uuid4()),
+            "operation": "UPSERT", "payload": {"fields": {}},
+        }
+
+    perdido = _evento(2, str(uuid.uuid4()))
+    envelope = protocol.build(
+        MessageType.EVENT_BATCH, source_node_id=no_loja.id, target_node_id=no_nuvem.id,
+        account_id=conta.id,
+        payload={"events": [_evento(1, str(no_nuvem.id)), perdido,
+                            _evento(3, str(no_nuvem.id))]},
+    )
+    await com.send_to(text_data=json.dumps(envelope, default=str))
+
+    tipo, payload = await _ler(com)
+
+    assert tipo == MessageType.ACK, "a conexão caiu por causa de um evento só"
+    assert payload["stored"] == 2, "o evento ruim levou os bons junto"
+    assert [r["event_id"] for r in payload["rejected"]] == [perdido["event_id"]]
+    assert perdido["event_id"] in payload["received"], (
+        "sem ACK, a origem reenvia o evento estragado para sempre"
+    )
+    await com.disconnect()
+
+
 async def test_sincronizacao_desligada_recusa_a_conexao(settings, como_nuvem, no_loja):
     settings.SYNC_ENABLED = False
     com = _comunicador()
-    conectado, codigo = await com.connect()
+    # `connect()` tem orçamento de 1s por padrão, e recusar a conexão passa por
+    # autenticação e banco. O resto do arquivo já espera 5s; aqui ficou de fora
+    # e o teste estourava por tempo quando a suíte crescia — falhando por
+    # relógio, não pela regra que ele afirma.
+    conectado, codigo = await com.connect(timeout=5)
     assert conectado is False
     assert codigo == CloseCode.WRONG_ENVIRONMENT
 

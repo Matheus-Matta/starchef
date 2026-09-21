@@ -154,7 +154,7 @@ Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusã
 - `production_status`: `idle → sent_to_kitchen → preparing → partially_ready → ready → delivered`.
 - `payment_status`: `pending → partial → paid` (ou `refunded`).
 
-Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo; retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`. Para cartão, `metadata.card_subtype` (`debit` ou `credit`) é obrigatório no fluxo de pedido, persistido em `Payment.card_subtype` e usado para gerar o meio de pagamento correto na NFC-e.
+Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo e cancela, na mesma transação, a nota fiscal vinculada (inclusive descartando a pendente para impedir emissão posterior); retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`. Para cartão, `metadata.card_subtype` (`debit` ou `credit`) é obrigatório no fluxo de pedido, persistido em `Payment.card_subtype` e usado para gerar o meio de pagamento correto na NFC-e.
 
 No fechamento, `POST /orders/{id}/close/` aceita `fiscal_customer_cpf`. O CPF é
 validado, normalizado para 11 dígitos e armazenado no pedido antes do pagamento.
@@ -240,6 +240,7 @@ Configuração operacional do restaurante (`Restaurant`): `max_commands_per_tabl
 Documentadas na íntegra em `.env.example` (produção — é o que `docker-compose.yml` lê via `.env`), na raiz do monorepo. Os grupos principais:
 
 - **Django core**: `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CORS_ALLOWED_ORIGINS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `DJANGO_FIRST_ACCESS_TOKEN`.
+- **CORS entre subdomínios**: a allowlist de cabeçalhos inclui `X-Restaurant-ID`, `X-Terminal-ID`, `X-Terminal-Name` e `X-Auth-Scope`; sem eles, o navegador bloqueia o preflight antes de a requisição chegar à API.
 - **Cookies/TLS**: `DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_AUTH_COOKIE_SECURE`, `DJANGO_AUTH_COOKIE_SAMESITE`, `DJANGO_AUTH_COOKIE_DOMAIN`. Com painel e API em subdomínios distintos, `DJANGO_AUTH_COOKIE_DOMAIN` precisa ser o domínio-pai (`.seu-dominio.com`); um valor que não cubra o host da API faz o navegador descartar os cookies (login 200, depois 401 em tudo e 400 no refresh).
 - **Banco**: `USE_SQLITE_DATABASE`, `SQLITE_DB_NAME`, `SQLITE_LOCK_TIMEOUT`, `POSTGRES_DB/USER/PASSWORD/HOST/PORT`, `POSTGRES_POOL` (padrão ligado) com `POSTGRES_POOL_MIN/MAX/TIMEOUT` — pool nativo Django 5.1 + psycopg 3, obrigatório sob ASGI: sem ele a conexão persistente vaza por thread e o Postgres estoura `max_connections` (achado do teste de carga em modo produção). `POSTGRES_CONN_MAX_AGE` só vale com o pool desligado.
 - **Redis/Celery**: `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_CONCURRENCY`.

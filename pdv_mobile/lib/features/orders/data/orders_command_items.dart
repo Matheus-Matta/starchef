@@ -28,7 +28,12 @@ extension OrdersCommandItems on OrdersRepository {
   }) => mutate(
     method: 'POST',
     path: '/commands/$commandId/items/',
-    kind: 'launch_command_item',
+    // MESMO `kind` do item de pedido, de propósito: a tela de detalhe é a
+    // mesma para os dois, e é pelo `kind` que ela sabe o que está na fila. Um
+    // nome só para comanda fazia a anotação lançada sem rede não contar em
+    // "a enviar" nem ganhar o selo de "aguardando conexão" — ela subia, e o
+    // garçom não via nada acontecer.
+    kind: 'add_item',
     summary: '${quantity}x $productName',
     body: {
       'product': productId,
@@ -43,7 +48,7 @@ extension OrdersCommandItems on OrdersRepository {
   Future<Map<String, dynamic>> sendCommandToKitchen(String commandId) => mutate(
     method: 'POST',
     path: '/commands/$commandId/send-to-kitchen/',
-    kind: 'send_command_kitchen',
+    kind: 'send_to_kitchen',
     summary: 'Enviar comanda à cozinha',
     body: const {},
   );
@@ -57,7 +62,7 @@ extension OrdersCommandItems on OrdersRepository {
   }) => mutate(
     method: 'DELETE',
     path: '/commands/$commandId/items/$itemId/void/',
-    kind: 'void_command_item',
+    kind: 'void_item',
     summary: 'Cancelar $itemLabel',
     body: {'reason': reason},
   );

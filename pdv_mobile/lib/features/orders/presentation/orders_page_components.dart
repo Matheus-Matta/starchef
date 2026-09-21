@@ -1,35 +1,82 @@
 part of 'orders_page.dart';
 
-/// Só pedidos confirmados: o que este aparelho ainda deve mandar vive atrás do
-/// contador do topo ([showPendingSheet]), onde diz em que pé está.
-class _OrdersList extends StatelessWidget {
-  const _OrdersList({
+/// A tela inicial inteira: as comandas em uso e os pedidos abertos.
+///
+/// Separados por rótulo, e não misturados, porque são coisas diferentes para
+/// quem lê: a comanda é o que está sendo consumido AGORA e ainda não virou
+/// conta; o pedido já é uma conta. É a mesma separação por rótulo que a tela
+/// de detalhe usa entre "já na cozinha" e "a enviar" — o garçom já conhece.
+///
+/// As comandas vêm primeiro: no modelo novo é nelas que ele lança o turno
+/// inteiro, e o pedido só nasce no caixa.
+///
+/// Só o que o backend confirmou aparece aqui: o que este aparelho ainda deve
+/// mandar vive atrás do contador do topo ([showPendingSheet]), onde diz em que
+/// pé está.
+class _HomeList extends StatelessWidget {
+  const _HomeList({
     required this.orders,
+    required this.commands,
     required this.repository,
-    required this.onOpen,
+    required this.onOpenOrder,
+    required this.onOpenCommand,
   });
 
   final List<Map<String, dynamic>> orders;
+  final List<Map<String, dynamic>> commands;
   final OrdersRepository repository;
-  final ValueChanged<Map<String, dynamic>> onOpen;
+  final ValueChanged<Map<String, dynamic>> onOpenOrder;
+  final ValueChanged<Map<String, dynamic>> onOpenCommand;
 
   @override
-  Widget build(BuildContext context) => ListView.separated(
+  Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
     physics: const AlwaysScrollableScrollPhysics(),
-    itemCount: orders.length,
-    separatorBuilder: (_, _) => const SizedBox(height: AppTheme.gap),
-    itemBuilder: (context, index) {
-      final order = orders[index];
-      final orderId = '${order['id'] ?? ''}';
-      return OrderCard(
-        order: order,
-        failed: repository.gateway.failedFor(orderId).length,
-        draft: repository.drafts.countFor(orderId),
-        onTap: () => onOpen(order),
-      );
-    },
+    children: [
+      if (commands.isNotEmpty) ...[
+        AppSectionLabel(
+          icon: Icons.receipt_long_outlined,
+          label: 'Comandas em uso (${commands.length})',
+        ),
+        for (final command in commands) _spaced(_commandCard(command)),
+        const SizedBox(height: AppTheme.gap),
+      ],
+      if (orders.isNotEmpty) ...[
+        AppSectionLabel(
+          icon: Icons.point_of_sale_outlined,
+          label: 'Pedidos abertos (${orders.length})',
+        ),
+        for (final order in orders) _spaced(_orderCard(order)),
+      ],
+    ],
   );
+
+  Widget _orderCard(Map<String, dynamic> order) {
+    final id = '${order['id'] ?? ''}';
+    return OrderCard(
+      order: order,
+      failed: repository.gateway.failedFor(id).length,
+      draft: repository.drafts.countFor(id),
+      onTap: () => onOpenOrder(order),
+    );
+  }
+
+  Widget _commandCard(Map<String, dynamic> command) {
+    final id = '${command['id'] ?? ''}';
+    return OrderCard(
+      order: commandRowAsSubject(command),
+      itemCount: itemCountOf(command),
+      // A listagem não diz o que já foi para a produção, então o selo afirma
+      // só o que ela garante.
+      badgeLabel: 'Em uso',
+      failed: repository.gateway.failedFor(id).length,
+      draft: repository.drafts.countFor(id),
+      onTap: () => onOpenCommand(command),
+    );
+  }
+
+  static Widget _spaced(Widget child) =>
+      Padding(padding: const EdgeInsets.only(bottom: AppTheme.gap), child: child);
 }
 
 /// Quanto este aparelho ainda deve ao backend.

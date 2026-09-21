@@ -529,11 +529,11 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
     """Emite (monta) o documento fiscal do pedido. Idempotente por pedido (OneToOne)."""
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
-
+        if order.status == Order.STATUS_CANCELLED:
+            raise ValidationError("Pedido cancelado não pode emitir nota fiscal.")
         config = _resolve_fiscal_config(order.restaurant, order.branch)
         if not config:
             raise ValidationError("Filial sem configuracao fiscal. Configure em Fiscal > Configuracao.")
-
         existing = getattr(order, "invoice", None)
         if existing and existing.status in (Invoice.STATUS_PENDING, Invoice.STATUS_ISSUED):
             raise ValidationError("Pedido ja possui nota fiscal emitida.")

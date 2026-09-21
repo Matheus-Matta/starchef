@@ -137,7 +137,7 @@ def test_o_payload_da_entrada_encolhe_mas_a_deduplicacao_continua(
         "operation": Operation.UPSERT,
         "payload": {"fields": _campos(conta, "Reenviada")},
     }
-    aceitos, _maior = inbox.store_batch(
+    aceitos, _maior, _recusados = inbox.store_batch(
         [repetido], connection_node=no_nuvem, account_id=conta.id
     )
     assert aceitos == [], "o reenvio tardio foi aceito como evento novo"
@@ -247,7 +247,7 @@ def test_lote_dentro_do_teto_continua_passando(como_loja, conta, no_nuvem, no_lo
         for i in range(10)
     ]
 
-    aceitos, _maior = inbox.store_batch(
+    aceitos, _maior, _recusados = inbox.store_batch(
         normal, connection_node=no_nuvem, account_id=conta.id
     )
     assert len(aceitos) == 10

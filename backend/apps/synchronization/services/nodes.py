@@ -108,3 +108,44 @@ def is_local():
 
 def invalidate_cache():
     cache.delete(CACHE_SELF)
+
+
+def registrar_contato():
+    """Marca que este nó acabou de falar com o outro lado.
+
+    Escrito a cada pulso da conexão, e não só na volta: é o que deixa gravado
+    o ÚLTIMO momento em que os dois estiveram em dia. Um container derrubado
+    não escreve nada, então guardar o último sucesso é a única forma de a
+    janela sobreviver a uma queda que ninguém viu chegar.
+    """
+    from django.utils import timezone
+    from apps.synchronization.models import SyncNode
+
+    proprio = self_node_or_none()
+    if proprio is None:
+        return None
+    agora = timezone.now()
+    SyncNode.objects.filter(pk=proprio.pk).update(last_seen_at=agora, updated_at=agora)
+    return agora
+
+
+def registrar_reconexao():
+    """Fecha a janela de queda: o último contato vira o começo dela.
+
+    Chamado quando a conexão volta. Daí em diante, uma linha cuja versão é
+    anterior a este instante é uma linha em que este nó não tocou enquanto
+    esteve fora — ver `conflicts._so_perdemos_a_atualizacao`.
+    """
+    from django.utils import timezone
+    from apps.synchronization.models import SyncNode
+
+    proprio = self_node_or_none()
+    if proprio is None:
+        return None
+    anterior = proprio.last_seen_at
+    agora = timezone.now()
+    SyncNode.objects.filter(pk=proprio.pk).update(
+        offline_since=anterior, last_seen_at=agora, updated_at=agora
+    )
+    invalidate_cache()
+    return anterior

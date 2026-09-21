@@ -4,7 +4,7 @@ import '../../../core/errors/failure_text.dart';
 import '../../../core/sync/pending_mutation.dart';
 import '../data/orders_repository.dart';
 
-/// O estado da lista de pedidos abertos, fora da árvore de widgets.
+/// O estado da tela inicial — pedidos abertos E comandas em uso.
 ///
 /// Mesma divisão do PDV desktop (`OrderPresenter`): a tela cuida de desenhar e
 /// de navegar, e quem sabe carregar, de onde veio o dado e o que fazer com uma
@@ -17,12 +17,26 @@ class OrdersPresenter extends ChangeNotifier {
   final OrdersRepository repository;
 
   List<Map<String, dynamic>> _orders = const [];
+  List<Map<String, dynamic>> _commands = const [];
   bool _loading = true;
   String? _error;
   ReadOrigin _origin = const ReadOrigin.live();
   bool _disposed = false;
 
   List<Map<String, dynamic>> get orders => _orders;
+
+  /// As comandas com anotação pendente — o que está sendo consumido no salão
+  /// sem que exista pedido nenhum ainda.
+  ///
+  /// Elas PRECISAM estar na tela inicial: no modelo novo o gesto do garçom é
+  /// anotar na comanda, e o pedido só nasce no caixa. Sem isto, tudo que ele
+  /// lançou durante o turno não aparecia em lugar nenhum depois que ele saía
+  /// do cartão — ele teria de lembrar o número e procurar pelo seletor.
+  List<Map<String, dynamic>> get commands => _commands;
+
+  /// Há algo no salão? Pedido ou comanda — para a tela decidir entre a lista e
+  /// o estado vazio.
+  bool get isEmpty => _orders.isEmpty && _commands.isEmpty;
   bool get loading => _loading;
   String? get error => _error;
 
@@ -35,8 +49,13 @@ class OrdersPresenter extends ChangeNotifier {
     _notify();
     try {
       final orders = await repository.openOrders();
+      final commands = await repository.commandsInUse();
+      // As duas leituras falham juntas de propósito: é o MESMO backend, e meia
+      // tela é pior que tela nenhuma — o garçom veria o salão sem as comandas
+      // e concluiria que ninguém lançou nada.
       if (_disposed) return;
       _orders = orders;
+      _commands = commands;
       _origin = repository.lastReadOrigin;
     } catch (error) {
       if (_disposed) return;

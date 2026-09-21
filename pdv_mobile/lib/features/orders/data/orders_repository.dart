@@ -5,12 +5,15 @@ import '../../../core/sync/backend_gateway.dart';
 import '../../../core/sync/operation_id.dart';
 import '../../auth/domain/waiter_session.dart';
 import 'order_drafts.dart';
+import 'order_subject.dart';
 
 export '../../../core/network/resource_page.dart';
+export 'order_subject.dart';
 
 part 'orders_command_items.dart';
 part 'orders_commands.dart';
 part 'orders_queries.dart';
+part 'orders_subject_api.dart';
 
 class OrdersRepository {
   OrdersRepository({

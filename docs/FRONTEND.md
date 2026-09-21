@@ -80,7 +80,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 ## 4. Telas principais
 
 - **`PdvView.vue`** — o coração do sistema. Fluxo em passos (`restaurant → type → context → order`), com um gate de caixa aberto (`pdvGateLoading`/`pdvBlocked`) antes de liberar a venda. Painel de catálogo de produtos à esquerda, carrinho à direita (itens já enviados vs. pendentes, totais, ações de enviar/pagar). Junto da taxa de serviço, o operador pode marcar **Incluir CPF na NFC-e**; o campo aplica máscara, valida os dígitos e grava `fiscal_customer_cpf` ao fechar o pedido. Aceita `editMode`/`orderId` para ser reaproveitada por `OrderEditView`.
-- **Notas Fiscais** — a listagem abre da nota mais recente para a mais antiga, filtra por status e tipo de emissão e permite reenviar em massa as selecionadas, ignorando documentos já emitidos. O detalhe mostra o número do pedido como link para a tela do próprio pedido.
+- **Notas Fiscais** — a listagem abre da nota mais recente para a mais antiga; os selects de status e tipo de emissão ficam alinhados à busca e permitem reenviar em massa as selecionadas, ignorando documentos já emitidos. O detalhe mostra o número do pedido como link para a tela do próprio pedido.
 - **`KdsView.vue`** — painel de cozinha: troca de estação, filtro por período, indicador "Ao vivo" com refresh manual (reforçado pelo WebSocket genérico, ver §6).
 - **`KdsStationsView.vue`** — cadastro de estações/colunas do KDS, master-detail, mão feita (não usa o CRUD genérico).
 - **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.
@@ -133,6 +133,11 @@ senha que será digitada no PDV (por exemplo, `123`). O usuário nunca copia ou
 cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
 deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
 payload do CRUD.
+
+Em **Configuração fiscal do restaurante**, o A1 para consulta direta de NF-e
+recebidas é enviado como `.pfx`/`.p12` junto da senha e fica separado do upload
+temporário que cadastra a empresa na Focus. A tela mostra se o A1 da SEFAZ está
+configurado, seus metadados e o último NSU consultado.
 
 No cadastro de **Produtos**, a seção Produção contém somente o setor que
 recebe o item (cozinha, bar ou sobremesa) e o tempo estimado em minutos. A

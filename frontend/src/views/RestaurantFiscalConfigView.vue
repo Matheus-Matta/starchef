@@ -192,52 +192,14 @@
         </div>
       </section>
 
-      <section class="rfiscal__card">
-        <div class="rfiscal__card-head">
-          <div>
-            <h2>NFC-e e certificado</h2>
-            <p>CSC emitido pela SEFAZ da UF e URLs de consulta impressas no cupom.</p>
-          </div>
-        </div>
-        <div class="rfiscal__grid">
-          <label class="rfiscal__field">
-            <span>ID do CSC (idToken)<b v-if="form.document_model === '65'">*</b></span>
-            <InputText v-model="form.csc_id" placeholder="000001" fluid />
-          </label>
-          <label class="rfiscal__field">
-            <span>CSC (segredo da NFC-e)<b v-if="form.document_model === '65'">*</b></span>
-            <SecretField
-              v-model="form.csc_token"
-              :configured="form.csc_token_configured"
-              :revealing="revealSecret.csc_token"
-              placeholder="Informe o CSC"
-              @edit="startEditingSecret('csc_token')"
-            />
-          </label>
-          <label v-if="form.provider !== 'focus_nfe'" class="rfiscal__field">
-            <span>Token/credencial do provedor</span>
-            <SecretField
-              v-model="form.provider_token"
-              :configured="form.provider_token_configured"
-              :revealing="revealSecret.provider_token"
-              placeholder="Informe a credencial"
-              @edit="startEditingSecret('provider_token')"
-            />
-          </label>
-          <label class="rfiscal__field">
-            <span>Referência do certificado A1</span>
-            <InputText v-model="form.certificate_ref" fluid />
-          </label>
-          <label class="rfiscal__field rfiscal__field--full">
-            <span>URL de consulta do QR Code (da UF)</span>
-            <InputText v-model="form.qr_base_url" placeholder="https://..." fluid />
-          </label>
-          <label class="rfiscal__field rfiscal__field--full">
-            <span>URL do portal de consulta por chave</span>
-            <InputText v-model="form.portal_url" placeholder="https://..." fluid />
-          </label>
-        </div>
-      </section>
+      <NfceCertificateSection
+        :config="form"
+        :reveal-secret="revealSecret"
+        :certificate-input-key="certificateInputKey"
+        @update-field="updateFiscalField"
+        @edit-secret="startEditingSecret"
+        @certificate-selected="onSefazCertificateSelected"
+      />
 
       <section v-if="form.provider === 'focus_nfe'" class="rfiscal__card">
         <div class="rfiscal__card-head">
@@ -341,9 +303,11 @@ import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
 import SecretField from "../components/form/SecretField.vue";
+import NfceCertificateSection from "../components/restaurant/NfceCertificateSection.vue";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
 import { normalizeApiError } from "../utils/apiError";
+import { buildFiscalConfigPayload } from "../utils/fiscalConfigPayload";
 import { formatDateTime } from "../utils/format";
 import {
   FISCAL_CRT_OPTIONS,
@@ -366,6 +330,8 @@ const configId = ref(null);
 const restaurant = ref(null);
 const deleteDialog = ref(false);
 const deleteConfirmCnpj = ref("");
+const sefazCertificateFile = ref(null);
+const certificateInputKey = ref(0);
 
 // Um segredo em edição mostra o campo real (vazio, pronto para um valor
 // novo); fora disso, mostra a máscara com o selo "Salvo" — nunca o
@@ -373,11 +339,15 @@ const deleteConfirmCnpj = ref("");
 const revealSecret = reactive({
   csc_token: false,
   provider_token: false,
+  certificate_password: false,
   focus_certificate_password: false,
 });
 function startEditingSecret(field) {
   revealSecret[field] = true;
   form[field] = "";
+}
+function updateFiscalField(field, value) {
+  form[field] = value;
 }
 
 // Só o que esta tela edita — o resto da resposta (tokens, status de
@@ -385,10 +355,10 @@ function startEditingSecret(field) {
 const EDITABLE_FIELDS = [
   "provider", "document_model", "environment", "crt", "series", "is_active",
   "corporate_name", "trade_name", "cnpj", "ie", "address_line", "address_number", "district", "city", "city_ibge", "uf", "zip_code",
-  "csc_id", "qr_base_url", "portal_url", "certificate_ref",
+  "csc_id", "qr_base_url", "portal_url", "dfe_ult_nsu",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
-const SECRET_FIELDS = ["csc_token", "provider_token", "focus_certificate_base64", "focus_certificate_password"];
+const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password", "focus_certificate_base64", "focus_certificate_password"];
 
 const form = reactive({
   provider: "manual",
@@ -416,7 +386,12 @@ const form = reactive({
   provider_token_configured: false,
   qr_base_url: "",
   portal_url: "",
-  certificate_ref: "",
+  certificate_password: "",
+  has_certificate: false,
+  has_certificate_password: false,
+  certificate_name: "",
+  certificate_valid_until: null,
+  dfe_ult_nsu: "000000000000000",
   focus_certificate_base64: "",
   focus_certificate_password: "",
   focus_certificate_password_configured: false,
@@ -481,6 +456,17 @@ function onCertificateSelected(event) {
   reader.readAsDataURL(file);
 }
 
+function onSefazCertificateSelected(event) {
+  const file = event.target.files?.[0] || null;
+  if (file && file.size > 5 * 1024 * 1024) {
+    error.value = "O certificado deve ter no máximo 5 MB.";
+    event.target.value = "";
+    sefazCertificateFile.value = null;
+    return;
+  }
+  sefazCertificateFile.value = file;
+}
+
 function copyFromRestaurant() {
   const source = restaurant.value;
   if (!source) return;
@@ -517,23 +503,28 @@ async function load() {
 }
 
 function buildPayload() {
-  const payload = {};
-  for (const field of EDITABLE_FIELDS) payload[field] = form[field];
-  payload.series = Number(form.series) || 1;
-  payload.uf = (form.uf || "").toUpperCase();
-  for (const field of SECRET_FIELDS) {
-    if (form[field]) payload[field] = form[field];
-  }
-  return payload;
+  return buildFiscalConfigPayload({
+    form,
+    editableFields: EDITABLE_FIELDS,
+    secretFields: SECRET_FIELDS,
+    certificateFile: sefazCertificateFile.value,
+  });
 }
 
 async function save() {
   if (saving.value || !configId.value) return false;
+  if (sefazCertificateFile.value && !form.certificate_password) {
+    error.value = "Informe a senha do certificado A1 selecionado.";
+    toast.add({ severity: "warn", summary: "Senha do certificado obrigatória", detail: error.value, life: 5000 });
+    return false;
+  }
   saving.value = true;
   error.value = "";
   try {
     const { data } = await api.patch(`/fiscal/config/${configId.value}/`, buildPayload());
     applyConfig(data);
+    sefazCertificateFile.value = null;
+    certificateInputKey.value += 1;
     toast.add({ severity: "success", summary: "Configuração fiscal salva", life: 3000 });
     return true;
   } catch (err) {

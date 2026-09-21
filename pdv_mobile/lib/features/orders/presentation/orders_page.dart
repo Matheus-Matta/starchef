@@ -20,7 +20,8 @@ import 'sync_banner.dart';
 
 part 'orders_page_components.dart';
 
-/// Tela inicial: os pedidos abertos do salão.
+/// Tela inicial: o que está aberto no salão — as comandas em uso e os
+/// pedidos abertos.
 ///
 /// Aqui só existe tela — carregar, saber de onde veio o dado e traduzir falha
 /// é do [OrdersPresenter]; abrir um pedido novo, do [startNewOrder].
@@ -92,7 +93,7 @@ class _OrdersPageState extends State<OrdersPage>
       widget.printAgent,
     ]),
     builder: (context, _) => AppPageScaffold(
-      title: 'Pedidos abertos',
+      title: 'Salão',
       actions: [
         _PendingCounter(
           gateway: _gateway,
@@ -133,13 +134,14 @@ class _OrdersPageState extends State<OrdersPage>
   );
 
   Widget _body() {
-    final orders = _presenter.orders;
     final creating = _presenter.creatingOrders.length;
-    if (orders.isNotEmpty) {
-      return _OrdersList(
-        orders: orders,
+    if (!_presenter.isEmpty) {
+      return _HomeList(
+        orders: _presenter.orders,
+        commands: _presenter.commands,
         repository: widget.repository,
-        onOpen: openOrder,
+        onOpenOrder: openOrder,
+        onOpenCommand: openCommand,
       );
     }
     if (_presenter.loading && creating == 0) {
@@ -176,8 +178,10 @@ class _OrdersPageState extends State<OrdersPage>
     return const AppEmptyState(
       scrollable: true,
       icon: Icons.receipt_long_outlined,
-      title: 'Nenhum pedido aberto',
-      description: 'Toque em "Novo pedido" para começar a atender uma mesa.',
+      title: 'Salão vazio',
+      description:
+          'Nenhuma comanda em uso e nenhum pedido aberto. Toque em "Novo '
+          'pedido" para começar a atender uma mesa.',
     );
   }
 }

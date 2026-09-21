@@ -15,8 +15,20 @@ import 'payment_sheet.dart';
 import 'cloud_mode_banner.dart';
 import 'stale_data_banner.dart';
 
-/// Um pedido aberto: o que já foi lançado, o que falta enviar e o que
-/// acrescentar.
+part 'order_detail_items_list.dart';
+
+/// Um atendimento aberto — PEDIDO ou COMANDA: o que já foi lançado, o que
+/// falta enviar e o que acrescentar.
+///
+/// É uma tela só para os dois de propósito. Para o garçom o gesto é o mesmo:
+/// abrir, ver o que já foi para a cozinha, acrescentar, mandar a rodada. A
+/// comanda teve tela própria por um tempo, e ela nasceu pobre — sem a
+/// separação das três listas, sem rascunho, sem os selos da fila. Quem
+/// alternava entre as duas no turno reaprendia a tela no meio do salão.
+///
+/// O que a comanda NÃO tem é recebimento: cobrar é do caixa, que puxa as
+/// anotações pendentes para um pedido. Isso cai sozinho — comanda não chega a
+/// `awaiting_payment`.
 ///
 /// O aparelho também opera como **caixa secundário** (§8, §9): fecha a conta e
 /// registra recebimentos. Ele nunca fala com a nuvem — entrega a operação ao
@@ -30,21 +42,23 @@ class OrderDetailPage extends StatefulWidget {
   const OrderDetailPage({
     super.key,
     required this.repository,
-    required this.orderId,
+    required this.subject,
     this.initialOrder,
     this.canReceivePayment = false,
   });
 
   final OrdersRepository repository;
-  final String orderId;
+
+  /// O pedido ou a comanda que esta tela está atendendo.
+  final OrderSubject subject;
 
   /// Perfil fixo "Garçom" não recebe pagamento por padrão — só quem tiver
   /// `payments.manage`/`cash.manage` liberado à parte (ver `WaiterUser`).
   final bool canReceivePayment;
 
-  /// Pedido já conhecido antes de abrir a tela — obrigatório quando [orderId]
-  /// é um id local (`offline-...`, ver [OrdersRepository]): esse pedido não
-  /// existe no servidor ainda, então não há nada para buscar até a criação
+  /// Pedido já conhecido antes de abrir a tela — obrigatório quando o id do
+  /// [subject] é local (`offline-...`, ver [OrdersRepository]): esse pedido
+  /// não existe no servidor ainda, então não há nada para buscar até a criação
   /// sincronizar.
   final Map<String, dynamic>? initialOrder;
 
@@ -55,7 +69,7 @@ class OrderDetailPage extends StatefulWidget {
 class _OrderDetailPageState extends State<OrderDetailPage> {
   late final _presenter = OrderDetailPresenter(
     repository: widget.repository,
-    orderId: widget.orderId,
+    subject: widget.subject,
     initialOrder: widget.initialOrder,
   );
 
@@ -153,7 +167,9 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     builder: (context, _) {
       final order = _presenter.order;
       return AppPageScaffold(
-        title: order == null ? 'Pedido' : orderTitle(order),
+        title: order == null
+            ? (widget.subject.isCommand ? 'Comanda' : 'Pedido')
+            : orderTitle(order),
         actions: [
           if (order?['command'] != null)
             IconButton(
@@ -201,19 +217,18 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       onSend: (_presenter.pendingToSend > 0 && !_presenter.sendQueued)
           ? () async => _report(await _presenter.sendToKitchen())
           : null,
+      // Comanda não se cobra aqui, e a checagem é explícita: `awaitingPayment`
+      // já seria falso para ela, mas depender disso deixaria o botão a uma
+      // mudança de status de distância de aparecer onde não deve.
       onReceive:
-          widget.canReceivePayment &&
+          widget.subject.canBeCharged &&
+              widget.canReceivePayment &&
               _presenter.awaitingPayment &&
               _presenter.remaining > 0.009
           ? _receivePayment
           : null,
     );
   }
-
-  /// Toque num botão que a conta agrupada desativou: dizer POR QUÊ.
-  ///
-  /// Um botão que não responde parece aparelho travado, e o garçom tenta de
-  /// novo — no meio do salão, com o prato na mão.
 
   Widget _body() {
     if (_presenter.loading && _presenter.order == null) {
@@ -231,10 +246,14 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       );
     }
     if (_presenter.isEmpty) {
-      return const AppEmptyState(
+      // Cartão reutilizado mostra VAZIO, e não o consumo de quem o usou antes:
+      // o histórico continua existindo, mas não é o que o garçom pergunta aqui.
+      return AppEmptyState(
         icon: Icons.restaurant_menu,
         title: 'Nenhum item lançado ainda',
-        description: 'Toque em "Adicionar item" para começar o pedido.',
+        description: widget.subject.isCommand
+            ? 'Toque em "Adicionar item" para anotar nesta comanda.'
+            : 'Toque em "Adicionar item" para começar o pedido.',
       );
     }
     return _ItemsList(
@@ -243,87 +262,4 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       onDiscard: _discardFailed,
     );
   }
-}
-
-/// As três listas do pedido, na ordem em que o garçom pensa: o que já está na
-/// cozinha, o que ele acabou de escolher e ainda não mandou, e o que o backend
-/// recusou. Antes era uma lista só, e "enviado" e "esperando" ficavam
-/// indistinguíveis no meio do salão.
-class _ItemsList extends StatelessWidget {
-  const _ItemsList({
-    required this.presenter,
-    required this.onVoid,
-    required this.onDiscard,
-  });
-
-  final OrderDetailPresenter presenter;
-  final ValueChanged<Map<String, dynamic>> onVoid;
-  final ValueChanged<FailedMutation> onDiscard;
-
-  @override
-  Widget build(BuildContext context) {
-    final sent = presenter.sentItems;
-    final unsent = presenter.unsentItems;
-    final drafts = presenter.draftItems;
-    final queued = presenter.pendingAdds;
-    final failures = presenter.failures;
-    final toSend = unsent.length + queued.length + drafts.length;
-    final busy = presenter.working;
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        if (sent.isNotEmpty) ...[
-          const AppSectionLabel(
-            icon: Icons.soup_kitchen_outlined,
-            label: 'Já na cozinha',
-          ),
-          for (final item in sent) _spaced(_tile(item)),
-        ],
-        if (toSend > 0) ...[
-          AppSectionLabel(
-            icon: Icons.schedule_outlined,
-            label: 'A enviar ($toSend)',
-          ),
-          for (final item in unsent) _spaced(_tile(item)),
-          for (final draft in drafts)
-            _spaced(
-              DraftItemTile(
-                item: draft,
-                onRemove: busy ? null : () => presenter.removeDraft(draft),
-              ),
-            ),
-          for (final mutation in queued)
-            _spaced(QueuedItemTile(mutation: mutation)),
-        ],
-        if (failures.isNotEmpty) ...[
-          const AppSectionLabel(
-            icon: Icons.error_outline,
-            label: 'Não aceitos pelo servidor',
-            color: AppColors.danger,
-          ),
-          for (final failure in failures)
-            _spaced(
-              FailedItemTile(
-                failure: failure,
-                onRetry: busy ? null : () => presenter.retryFailed(failure),
-                onDiscard: busy ? null : () => onDiscard(failure),
-              ),
-            ),
-        ],
-      ],
-    );
-  }
-
-  Widget _tile(Map<String, dynamic> item) {
-    final voiding = presenter.voidingItemIds.contains('${item['id']}');
-    return OrderItemTile(
-      item: item,
-      voiding: voiding,
-      onVoid: (presenter.working || voiding) ? null : () => onVoid(item),
-    );
-  }
-
-  static Widget _spaced(Widget child) =>
-      Padding(padding: const EdgeInsets.only(bottom: 8), child: child);
 }

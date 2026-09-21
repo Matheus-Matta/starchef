@@ -1,8 +1,13 @@
 <template>
-  <label v-for="field in fields" :key="field.name" class="rpro__inline-filter">
+  <label
+    v-for="field in fields"
+    :key="field.name"
+    class="rpro__inline-filter"
+    :class="{ 'rpro__inline-filter--compact': field.compact }"
+  >
     <span>{{ field.label }}</span>
-    <select :value="values[field.name] || ''" @change="change(field.name, $event.target.value)">
-      <option value="">Todos</option>
+    <select :aria-label="field.label" :value="values[field.name] || ''" @change="change(field.name, $event.target.value)">
+      <option value="">{{ field.compact ? `${field.label}: Todos` : "Todos" }}</option>
       <option v-for="option in field.options" :key="option.value" :value="option.value">
         {{ option.label }}
       </option>
@@ -22,6 +27,7 @@ const change = (name, value) => emit("change", { name, value });
 
 <style scoped>
 .rpro__inline-filter { display: flex; flex-direction: column; gap: 3px; min-width: 148px; }
+.rpro__inline-filter--compact > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .rpro__inline-filter span {
   color: var(--text-muted); font: var(--weight-bold) 10px/1 var(--font-sans);
   text-transform: uppercase; letter-spacing: var(--tracking-caps);

@@ -1069,10 +1069,9 @@ def order_within_cancellation_grace(order):
     return not order.items.exclude(status__in=_ITEM_STATUSES_NOT_IN_PRODUCTION).exists()
 
 
+@transaction.atomic
 def cancel_order(order, user, reason, authorized_by=None, authorization=None):
-    # Pedido vazio dispensa motivo: nao e um cancelamento comercial, e o
-    # descarte de uma comanda que foi aberta e nao virou venda. Exigir uma
-    # justificativa ali so ensina o operador a escrever qualquer coisa.
+    # Pedido vazio é descarte; exigir justificativa ensina a escrever qualquer coisa.
     if not reason and order_is_empty(order):
         reason = "Pedido vazio descartado"
     if not reason:
@@ -1081,8 +1080,9 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status == Order.STATUS_PAID:
             raise ValidationError("Pedidos pagos devem ser estornados, não cancelados.")
-        # Cancelar a origem enquanto o caixa monta a conta tiraria itens que
-        # ja estao na tela de pagamento — sem que a tela soubesse.
+        from apps.invoices.order_cancellation import cancel_invoice_for_order
+        cancel_invoice_for_order(order, reason=reason, user=user)
+        # Não retire itens da origem enquanto o caixa monta a conta.
         now = timezone.now()
         if not authorization:
             authorization = Order.AUTHORIZATION_DELEGATED if authorized_by is not None else Order.AUTHORIZATION_OWN

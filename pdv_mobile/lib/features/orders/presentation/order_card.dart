@@ -6,7 +6,7 @@ import '../../../core/widgets/shadcn_layout.dart';
 import 'order_formatters.dart';
 import 'pending_badge.dart';
 
-/// Uma linha da lista de pedidos abertos.
+/// Uma linha da tela inicial — um pedido aberto ou uma comanda em uso.
 ///
 /// O selo da direita mostra UM estado por vez, na ordem em que o garçom
 /// precisa reagir: primeiro o que o backend recusou, depois o que ele escolheu e
@@ -19,9 +19,25 @@ class OrderCard extends StatelessWidget {
     required this.onTap,
     this.failed = 0,
     this.draft = 0,
+    this.itemCount,
+    this.badgeLabel,
   });
 
   final Map<String, dynamic> order;
+
+  /// Quantos itens mostrar quando a origem NÃO traz a lista deles.
+  ///
+  /// A listagem de comandas devolve a contagem de anotações pendentes, não os
+  /// itens — buscar os itens de cada cartão para desenhar uma linha custaria
+  /// uma consulta por comanda do salão.
+  final int? itemCount;
+
+  /// O selo, quando o estado na cozinha não é conhecido pela origem.
+  ///
+  /// A listagem de comandas não diz quais anotações já foram para a produção,
+  /// e inventar "na cozinha" seria afirmar o que não se sabe. O cartão então
+  /// afirma só o que a listagem garante: que há conta aberta nele.
+  final String? badgeLabel;
 
   /// Itens que o backend recusou neste pedido.
   final int failed;
@@ -34,7 +50,7 @@ class OrderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final items = (order['items'] as List? ?? const []).length;
+    final items = itemCount ?? (order['items'] as List? ?? const []).length;
     return InkWell(
       onTap: onTap,
       borderRadius: AppTheme.radius,
@@ -99,6 +115,9 @@ class OrderCard extends StatelessWidget {
       );
     }
     if (order['_offline_pending'] == true) return const PendingBadge();
+    if (badgeLabel != null) {
+      return AppStatusBadge(label: badgeLabel!, color: AppColors.success);
+    }
     final pending = pendingItems(order);
     return AppStatusBadge(
       label: pending > 0 ? '$pending a enviar' : 'Na cozinha',

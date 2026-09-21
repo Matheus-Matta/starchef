@@ -5,8 +5,8 @@ const labelOptions = (labels) => Object.entries(labels).map(([value, label]) => 
 export const invoiceProConfig = {
   defaultOrdering: "-created_at",
   filterFields: [
-    { name: "status", label: "Status", options: labelOptions(INVOICE_STATUS_LABELS) },
-    { name: "emission_type", label: "Emissão", options: labelOptions(EMISSION_TYPE_LABELS) },
+    { name: "status", label: "Status", compact: true, options: labelOptions(INVOICE_STATUS_LABELS) },
+    { name: "emission_type", label: "Emissão", compact: true, options: labelOptions(EMISSION_TYPE_LABELS) },
   ],
   bulkActions: [
     {

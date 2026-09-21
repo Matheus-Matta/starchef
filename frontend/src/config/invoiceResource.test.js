@@ -9,6 +9,7 @@ describe("lista de notas fiscais", () => {
     expect(invoices.pro.defaultOrdering).toBe("-created_at");
     expect(invoices.pro.filterFields.map((field) => field.name)).toEqual(["status", "emission_type"]);
     expect(invoices.pro.filterFields.every((field) => field.options.length > 1)).toBe(true);
+    expect(invoices.pro.filterFields.every((field) => field.compact)).toBe(true);
   });
 
   it("mostra o pedido no detalhe e oferece reenvio em massa", () => {

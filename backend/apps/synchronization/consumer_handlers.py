@@ -120,9 +120,9 @@ class HandlerMixin:
         """Persiste o lote e só então responde. Nunca o contrário (§10.3)."""
         eventos = payload.get("events") or []
         try:
-            aceitos, maior = await database_sync_to_async(inbox.store_batch)(
-                eventos, connection_node=self.node, account_id=self.node.account_id
-            )
+            aceitos, maior, recusados = await database_sync_to_async(
+                inbox.store_batch
+            )(eventos, connection_node=self.node, account_id=self.node.account_id)
         except inbox.CrossTenantRejected as erro:
             logger.error("sync: lote cross-tenant recusado node=%s", self.node.id)
             await self.send_error(str(erro), code="cross_tenant",
@@ -142,8 +142,14 @@ class HandlerMixin:
         await self.send_envelope(
             MessageType.ACK,
             {
+                # O ACK cobre o lote INTEIRO, inclusive o que foi para a
+                # quarentena: aquilo não entra nunca, e deixá-lo sem
+                # confirmação faria a origem reenviar o mesmo evento estragado
+                # para sempre. `rejected` diz quais, e por quê — sem isso a
+                # quarentena seria um sumiço silencioso.
                 "received": [str(e.get("event_id")) for e in eventos],
                 "stored": len(aceitos),
+                "rejected": recusados,
                 "cursor": maior,
             },
             correlation_id=envelope.get("message_id"),

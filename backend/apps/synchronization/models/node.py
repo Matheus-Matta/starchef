@@ -57,6 +57,18 @@ class SyncNode(TimeStampedModel):
     protocol_version = models.PositiveIntegerField(default=0)
 
     last_seen_at = models.DateTimeField(null=True, blank=True)
+    #: Quando este nó perdeu contato com o outro lado na queda mais recente.
+    #:
+    #: É o `last_seen_at` de ANTES da reconexão, guardado no momento em que ela
+    #: acontece. Serve para responder a pergunta que decide um conflito: "a
+    #: loja chegou a mexer nesta linha enquanto esteve fora?". Se a versão
+    #: local é anterior a isto, ela não mexeu — o que chega da nuvem não é
+    #: edição concorrente, é atualização que a loja perdeu.
+    #:
+    #: Guardar o último contato, e não o instante da queda, é o que faz isso
+    #: sobreviver a um processo morto: ninguém escreve nada quando o container
+    #: é derrubado, mas o último contato bem-sucedido já está gravado.
+    offline_since = models.DateTimeField(null=True, blank=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
     last_sent_cursor = models.BigIntegerField(default=0)
     last_received_cursor = models.BigIntegerField(default=0)

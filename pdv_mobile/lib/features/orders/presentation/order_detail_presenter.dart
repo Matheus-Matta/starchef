@@ -10,6 +10,8 @@ import '../data/order_drafts.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
 
+part 'order_detail_payments.dart';
+
 /// O estado de UM pedido aberto: o que já foi lançado, o que falta enviar, o
 /// que o backend recusou e o que já foi recebido.
 ///
@@ -24,7 +26,7 @@ import 'order_formatters.dart';
 class OrderDetailPresenter extends ChangeNotifier {
   OrderDetailPresenter({
     required this.repository,
-    required this.orderId,
+    required this.subject,
     Map<String, dynamic>? initialOrder,
   }) : _order = initialOrder;
 
@@ -33,10 +35,19 @@ class OrderDetailPresenter extends ChangeNotifier {
   BackendGateway get gateway => repository.gateway;
   OrderDrafts get drafts => repository.drafts;
 
-  /// Id efetivamente usado para buscar/gravar este pedido. Começa igual ao
-  /// recebido e é trocado, sozinho, pelo id real assim que uma criação offline
-  /// (id `offline-...`) sincroniza — ver [_onGatewayChange].
-  String orderId;
+  /// O que está aberto: um pedido ou uma comanda.
+  ///
+  /// Tudo abaixo é igual para os dois — a separação em "já na cozinha / a
+  /// enviar / não aceitos", o rascunho, a fila offline, o cancelamento com
+  /// motivo. Só o endereço no backend muda, e disso cuida o repositório.
+  ///
+  /// Trocado sozinho pelo id real assim que uma criação offline
+  /// (id `offline-...`) sincroniza — ver [_onGatewayChange]. Isso só acontece
+  /// com pedido: comanda já existe antes de o garçom encostar nela.
+  OrderSubject subject;
+
+  /// A chave da fila offline e do rascunho — os dois guardam por atendimento.
+  String get subjectId => subject.id;
 
   Map<String, dynamic>? _order;
   Map<String, dynamic>? get order => _order;
@@ -89,7 +100,7 @@ class OrderDetailPresenter extends ChangeNotifier {
     // vez de tentar um GET que só devolveria 404.
     if (_isOffline) {
       _loading = false;
-      _lastPendingCount = gateway.pendingFor(orderId).length;
+      _lastPendingCount = gateway.pendingFor(subjectId).length;
       _notify();
       return;
     }
@@ -97,9 +108,9 @@ class OrderDetailPresenter extends ChangeNotifier {
     _error = null;
     _notify();
     try {
-      _order = await repository.order(orderId);
+      _order = await repository.subject(subject);
       _origin = repository.lastReadOrigin;
-      _lastPendingCount = gateway.pendingFor(orderId).length;
+      _lastPendingCount = gateway.pendingFor(subjectId).length;
       // Fora do caminho crítico: o pedido já está na tela e o garçom pode
       // lançar itens enquanto o contexto de recebimento carrega.
       unawaited(_loadPayments());
@@ -111,7 +122,7 @@ class OrderDetailPresenter extends ChangeNotifier {
     }
   }
 
-  bool get _isOffline => orderId.startsWith('offline-');
+  bool get _isOffline => subjectId.startsWith('offline-');
 
   /// Reage à fila offline: uma pendência a menos deste pedido é o sinal de que
   /// o backend aceitou alguma coisa — busca a versão real para
@@ -120,18 +131,18 @@ class OrderDetailPresenter extends ChangeNotifier {
   void _onGatewayChange() {
     if (_disposed) return;
     if (_isOffline) {
-      final resolved = gateway.resolvedOrderId(orderId);
+      final resolved = gateway.resolvedOrderId(subjectId);
       if (resolved != null) {
         // Os itens ainda não enviados acompanham o pedido: sem isto eles
         // ficariam apontando para um id que deixou de existir.
-        unawaited(drafts.reassign(orderId, resolved));
-        orderId = resolved;
+        unawaited(drafts.reassign(subjectId, resolved));
+        subject = OrderSubject.order(resolved);
         _notify();
         unawaited(load());
         return;
       }
     }
-    final current = gateway.pendingFor(orderId).length;
+    final current = gateway.pendingFor(subjectId).length;
     final flushed = current < _lastPendingCount;
     _lastPendingCount = current;
     if (flushed) {
@@ -143,7 +154,7 @@ class OrderDetailPresenter extends ChangeNotifier {
 
   // ------------------------------------------------------------- derivados
 
-  List<PendingMutation> get _queued => gateway.pendingFor(orderId);
+  List<PendingMutation> get _queued => gateway.pendingFor(subjectId);
 
   /// Itens lançados sem conexão: ainda não existem no pedido de verdade.
   List<PendingMutation> get pendingAdds =>
@@ -159,9 +170,9 @@ class OrderDetailPresenter extends ChangeNotifier {
   /// O envio à cozinha já está na fila, esperando o backend responder.
   bool get sendQueued => _queued.any((m) => m.kind == 'send_to_kitchen');
 
-  List<DraftItem> get draftItems => drafts.forOrder(orderId);
+  List<DraftItem> get draftItems => drafts.forOrder(subjectId);
 
-  List<FailedMutation> get failures => gateway.failedFor(orderId);
+  List<FailedMutation> get failures => gateway.failedFor(subjectId);
 
   /// Itens já lançados que foram para a produção, nesta ou em outra rodada.
   List<Map<String, dynamic>> get sentItems =>
@@ -189,19 +200,6 @@ class OrderDetailPresenter extends ChangeNotifier {
 
   static bool _alreadySent(Map<String, dynamic> item) =>
       '${item['status'] ?? ''}' != 'pending';
-
-  /// Total já recebido, somando o que o backend confirmou.
-  double get paid => _payments.fold<double>(
-    0,
-    (total, item) => total + amount(item['amount']),
-  );
-
-  double get remaining {
-    final missing = amount(_order?['total']) - paid;
-    return missing < 0 ? 0 : missing;
-  }
-
-  bool get awaitingPayment => '${_order?['status']}' == 'awaiting_payment';
 
   // -------------------------------------------------------------- escritas
 
@@ -247,10 +245,10 @@ class OrderDetailPresenter extends ChangeNotifier {
   bool _adoptIfOrder(Object? response) {
     if (response is! Map) return false;
     final data = Map<String, dynamic>.from(response);
-    if ('${data['id']}' != orderId || data['items'] is! List) return false;
+    if ('${data['id']}' != subjectId || data['items'] is! List) return false;
     _order = data;
     _origin = const ReadOrigin.live();
-    _lastPendingCount = gateway.pendingFor(orderId).length;
+    _lastPendingCount = gateway.pendingFor(subjectId).length;
     _notify();
     return true;
   }
@@ -265,7 +263,7 @@ class OrderDetailPresenter extends ChangeNotifier {
     await drafts.add(
       DraftItem(
         id: OrderDrafts.newId(),
-        orderId: orderId,
+        orderId: subjectId,
         productId: choice.productId,
         productName: choice.productName,
         quantity: choice.quantity,
@@ -299,8 +297,8 @@ class OrderDetailPresenter extends ChangeNotifier {
     try {
       for (final draft in pending) {
         try {
-          await repository.addItem(
-            orderId: orderId,
+          await repository.addSubjectItem(
+            to: subject,
             productId: draft.productId,
             productName: draft.productName,
             quantity: draft.quantity,
@@ -319,7 +317,7 @@ class OrderDetailPresenter extends ChangeNotifier {
       // encheria a cozinha de papel para a mesma rodada.
       Object? confirmed;
       try {
-        confirmed = await repository.sendToKitchen(orderId);
+        confirmed = await repository.sendSubjectToKitchen(subject);
       } on MutationQueued {
         queued++;
       }
@@ -347,8 +345,8 @@ class OrderDetailPresenter extends ChangeNotifier {
   }
 
   Future<String?> voidItem(Map<String, dynamic> item, String reason) => run(
-    () => repository.voidItem(
-      orderId: orderId,
+    () => repository.voidSubjectItem(
+      of: subject,
       itemId: '${item['id']}',
       itemLabel: '${item['product_name'] ?? 'item'}',
       reason: reason,
@@ -376,62 +374,7 @@ class OrderDetailPresenter extends ChangeNotifier {
     'Comanda desvinculada da mesa.',
   );
 
-  Future<String?> pay({
-    required String methodId,
-    required String methodName,
-    required String cardSubtype,
-    required String value,
-    required String reference,
-  }) => run(
-    () => repository.pay(
-      orderId: orderId,
-      paymentMethodId: methodId,
-      amount: value,
-      cardSubtype: cardSubtype,
-      cashRegisterId: _cashRegisterId,
-      reference: reference,
-    ),
-    'Recebimento registrado em $methodName.',
-  );
 
-  // ------------------------------------------------------------ recebimento
-
-  /// Lê o que o recebimento precisa saber, sem prender a tela.
-  ///
-  /// Só depois de a conta fechar: enquanto o pedido está aberto o garçom está
-  /// lançando item, e o que já foi recebido não muda nada na tela. Uma falha
-  /// aqui não impede o lançamento — só esconde o botão de receber.
-  Future<void> _loadPayments() async {
-    if (!awaitingPayment) return;
-    try {
-      _payments = await repository.payments(orderId);
-      _notify();
-    } catch (_) {
-      // O backend não respondeu: o pedido continua utilizável para lançamento.
-    }
-  }
-
-  /// Consulta o que só o backend sabe: quais formas de pagamento
-  /// existem e qual sessão de caixa está aberta.
-  ///
-  /// Chamada no momento em que o operador vai receber, não a cada abertura de
-  /// tela: eram três consultas ao backend por pedido — caro na rede do salão, e
-  /// inútil enquanto o garçom está só lançando itens.
-  Future<bool> loadPaymentOptions() async {
-    if (_paymentMethods.isNotEmpty) return true;
-    try {
-      final methods = await repository.paymentMethods();
-      final session = await repository.currentCashRegister();
-      _paymentMethods = methods;
-      _cashRegisterId = session == null ? null : '${session['id']}';
-      _cashRegisterOpen = _cashRegisterId != null;
-    } catch (_) {
-      _paymentMethods = const [];
-      _cashRegisterOpen = false;
-    }
-    _notify();
-    return _paymentMethods.isNotEmpty;
-  }
 
   void _notify() {
     if (!_disposed) notifyListeners();

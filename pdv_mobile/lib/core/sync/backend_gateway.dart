@@ -33,10 +33,11 @@ class BackendGateway extends ChangeNotifier {
   int get pendingCount => _pending.length;
   bool get flushing => _flushing;
 
-  List<PendingMutation> pendingFor(String orderId) =>
-      _pending.where((item) => item.orderId == orderId).toList();
-  List<FailedMutation> failedFor(String orderId) =>
-      _failed.where((item) => item.orderId == orderId).toList();
+  /// O que ainda está na fila para ESTE atendimento — pedido ou comanda.
+  List<PendingMutation> pendingFor(String subjectId) =>
+      _pending.where((item) => item.subjectId == subjectId).toList();
+  List<FailedMutation> failedFor(String subjectId) =>
+      _failed.where((item) => item.subjectId == subjectId).toList();
   String? resolvedOrderId(String placeholderId) => _resolvedIds[placeholderId];
 
   Future<void> restore() async {

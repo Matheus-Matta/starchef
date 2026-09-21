@@ -4,6 +4,8 @@ O destino só responde RECEIVED depois de autenticar, validar destino e conta,
 conferir o checksum, decifrar, gravar e commitar. Se o processo morrer entre
 o commit e o envio do ACK, a origem reenvia o mesmo `event_id` e a
 deduplicação abaixo devolve o mesmo resultado sem duplicar nada.
+
+O que pode entrar está em `inbox_guards.py`; aqui é como se grava.
 """
 import logging
 
@@ -11,35 +13,18 @@ from django.db import IntegrityError, transaction
 
 from apps.synchronization.constants import Direction, EventStatus
 from apps.synchronization.services import crypto
+from apps.synchronization.services.inbox_guards import (  # noqa: F401 — API do módulo
+    FOLGA,
+    BatchRejected,
+    CrossTenantRejected,
+    EventQuarantined,
+    _limites,
+    _validar_escopo,
+    _validar_lote,
+    _validar_tamanho,
+)
 
 logger = logging.getLogger(__name__)
-
-#: Quantas vezes o lote configurado ainda é aceito na recepção.
-FOLGA = 4
-
-
-class CrossTenantRejected(PermissionError):
-    """Evento cuja conta ou destino não bate com a conexão autenticada."""
-
-
-class BatchRejected(ValueError):
-    """Lote fora dos limites combinados — recusado antes de gravar qualquer coisa."""
-
-
-def _limites():
-    """Tetos de recepção, derivados dos de envio.
-
-    O remetente já corta em `SYNC_BATCH_MAX_EVENTS` e `SYNC_BATCH_MAX_BYTES`,
-    mas isso é disciplina de quem envia, e quem valida entrada não pode contar
-    com a boa vontade da origem — mesmo autenticada. A folga generosa existe
-    para o limite nunca recusar tráfego legítimo: ele é o teto do absurdo, não
-    um segundo corte de lote.
-    """
-    from django.conf import settings
-
-    eventos = int(getattr(settings, "SYNC_BATCH_MAX_EVENTS", 200)) * FOLGA
-    bytes_por_evento = int(getattr(settings, "SYNC_BATCH_MAX_BYTES", 1_048_576))
-    return eventos, bytes_por_evento
 
 
 def store_batch(events_payload, *, connection_node, account_id, run=None):
@@ -54,64 +39,36 @@ def store_batch(events_payload, *, connection_node, account_id, run=None):
 
     destino = nodes.self_node()
     _validar_lote(events_payload, connection_node)
-    aceitos, maior_sequencia = [], 0
-
-    with transaction.atomic():
-        for bruto in events_payload:
-            _validar_escopo(bruto, connection_node, destino, account_id)
-            evento = _gravar(SyncEvent, bruto, connection_node, destino, account_id, run)
-            if evento is not None:
-                aceitos.append(evento)
-            maior_sequencia = max(maior_sequencia, int(bruto.get("sequence") or 0))
-
-    return aceitos, maior_sequencia
-
-
-def _validar_lote(events_payload, connection_node):
-    """Recusa o lote inteiro ANTES de gravar, se vier fora do combinado.
-
-    Recusar antes importa: gravar metade e estourar no meio deixaria a inbox
-    com um pedaço de um lote que a origem considera não entregue, e ela
-    reenviaria o lote todo — a deduplicação resolveria, mas o estado
-    intermediário é exatamente o que ninguém quer ter de explicar depois.
-    """
-    max_eventos, max_bytes = _limites()
-    if len(events_payload) > max_eventos:
-        logger.error(
-            "sync: lote com %s eventos do nó %s (teto %s)",
-            len(events_payload), connection_node.id, max_eventos,
-        )
-        raise BatchRejected(
-            f"Lote com {len(events_payload)} eventos; o teto de recepção é {max_eventos}."
-        )
+    aceitos, recusados, maior_sequencia = [], [], 0
 
     for bruto in events_payload:
-        tamanho = len(crypto.canonical_json(bruto.get("payload") or {}))
-        if tamanho > max_bytes:
+        # UM SAVEPOINT POR EVENTO. É o que impede o bloqueio de cabeça de fila.
+        #
+        # O lote inteiro vinha numa transação só, e qualquer evento estragado
+        # derrubava todos: nada era gravado, a origem não recebia confirmação,
+        # reenviava o MESMO lote, e batia no mesmo evento. Para sempre — e
+        # tudo que vinha atrás dele nunca chegava.
+        try:
+            with transaction.atomic():
+                _validar_escopo(bruto, connection_node, destino, account_id)
+                _validar_tamanho(bruto, connection_node)
+                evento = _gravar(
+                    SyncEvent, bruto, connection_node, destino, account_id, run
+                )
+        except EventQuarantined as erro:
+            recusados.append({"event_id": bruto.get("event_id"), "error": str(erro)})
             logger.error(
-                "sync: evento %s do nó %s com %s bytes (teto %s)",
-                bruto.get("event_id"), connection_node.id, tamanho, max_bytes,
+                "sync: evento %s em quarentena (nó %s) — %s",
+                bruto.get("event_id"), connection_node.id, erro,
             )
-            raise BatchRejected(
-                f"Evento {bruto.get('event_id')} tem {tamanho} bytes; o teto é {max_bytes}."
-            )
+            maior_sequencia = max(maior_sequencia, int(bruto.get("sequence") or 0))
+            continue
+        if evento is not None:
+            aceitos.append(evento)
+        maior_sequencia = max(maior_sequencia, int(bruto.get("sequence") or 0))
 
+    return aceitos, maior_sequencia, recusados
 
-def _validar_escopo(bruto, connection_node, destino, account_id):
-    """Cross-tenant é rejeitado e auditado — nunca aplicado (§9.2)."""
-    alvo = str(bruto.get("target_node_id") or "")
-    if alvo and alvo != str(destino.id):
-        logger.error(
-            "sync: target_node adulterado node=%s alvo=%s", connection_node.id, alvo
-        )
-        raise CrossTenantRejected("target_node do evento não é este nó.")
-
-    conta_evento = str(bruto.get("account_id") or account_id)
-    if conta_evento != str(account_id):
-        logger.error(
-            "sync: account_id adulterado node=%s conta=%s", connection_node.id, conta_evento
-        )
-        raise CrossTenantRejected("account_id do evento não é o da conexão autenticada.")
 
 
 def _gravar(SyncEvent, bruto, origem, destino, account_id, run):
@@ -119,7 +76,11 @@ def _gravar(SyncEvent, bruto, origem, destino, account_id, run):
     payload = bruto.get("payload") or {}
     checksum_recebido = bruto.get("payload_checksum") or ""
     if checksum_recebido and crypto.checksum(payload) != checksum_recebido:
-        raise ValueError(f"Checksum divergente no evento {bruto.get('event_id')}.")
+        # Determinístico: a origem calcula do mesmo payload, então reenviar dá
+        # o mesmo resultado. Insistir só reviveria o laço.
+        raise EventQuarantined(
+            f"Checksum divergente no evento {bruto.get('event_id')}."
+        )
 
     existente = SyncEvent.objects.filter(event_id=bruto["event_id"]).first()
     if existente is not None:

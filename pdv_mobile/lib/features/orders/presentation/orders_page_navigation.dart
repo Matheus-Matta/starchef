@@ -1,44 +1,37 @@
 import 'package:flutter/material.dart';
 
 import '../data/orders_repository.dart';
-import 'command_detail_page.dart';
 import 'new_order_flow.dart';
 import 'order_detail_page.dart';
 import 'orders_presenter.dart';
 
-/// Para onde a lista de pedidos LEVA o garçom.
+/// Para onde a lista da tela inicial LEVA o garçom.
 ///
-/// Fica separado da página porque são dois assuntos: a página desenha a lista e
-/// seus estados; isto aqui decide qual tela abrir. E a decisão deixou de ser
-/// óbvia — o cartão e o pedido são coisas diferentes agora, e o fluxo de
-/// abertura pode devolver qualquer um dos dois.
+/// Fica separado da página porque são dois assuntos: a página desenha a lista
+/// e seus estados; isto aqui decide o que abrir. A tela de destino é a mesma
+/// para pedido e comanda — o que muda é o [OrderSubject] que ela recebe.
 mixin OrdersPageNavigation<T extends StatefulWidget> on State<T> {
   // ── fornecido pela página ───────────────────────────────────────────────
   OrdersRepository get repository;
   OrdersPresenter get presenter;
 
-  Future<void> openOrder(Map<String, dynamic> order) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => OrderDetailPage(
-          repository: repository,
-          orderId: '${order['id']}',
-        ),
-      ),
-    );
-    // Relê ao voltar: o pedido pode ter mudado, e a lista mostra estado.
-    if (mounted) await presenter.load();
-  }
+  Future<void> openOrder(Map<String, dynamic> order) =>
+      _open(OrderSubject.order('${order['id']}'));
 
   /// O cartão aberto. **Não é um pedido**: a comanda anota, e o pedido só
-  /// nasce no caixa com as anotações pendentes.
-  Future<void> openCommand(Map<String, dynamic> command) async {
+  /// nasce no caixa com as anotações pendentes. A TELA é a mesma; o que ela
+  /// não oferece para a comanda é receber.
+  Future<void> openCommand(Map<String, dynamic> command) =>
+      _open(OrderSubject.command('${command['id']}'));
+
+  Future<void> _open(OrderSubject subject) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) =>
-            CommandDetailPage(repository: repository, command: command),
+            OrderDetailPage(repository: repository, subject: subject),
       ),
     );
+    // Relê ao voltar: o atendimento pode ter mudado, e a lista mostra estado.
     if (mounted) await presenter.load();
   }
 

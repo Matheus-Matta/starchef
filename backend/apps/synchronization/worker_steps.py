@@ -35,7 +35,7 @@ def registrar_lote_recebido(payload, peer_node_id):
     if par is None:
         raise RuntimeError("Lote recebido sem nó de origem conhecido.")
 
-    aceitos, _maior = inbox.store_batch(
+    aceitos, _maior, _recusados = inbox.store_batch(
         payload.get("events") or [],
         connection_node=par,
         account_id=proprio.account_id,

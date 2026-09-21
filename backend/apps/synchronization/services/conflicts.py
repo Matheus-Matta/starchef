@@ -38,6 +38,8 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
             return IGNORAR
     if _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
         return APLICAR
+    if _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
+        return APLICAR
     if remote_version < local_version:
         return _decidir_versao_antiga(entity_type, receiving_node_type)
     return _decidir_versao_nova(entity_type, receiving_node_type)
@@ -84,6 +86,46 @@ def _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
     if not lado_certo or local_instance is None:
         return False
     return adoption.born_locally(entrada.model, local_instance)
+
+
+def _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
+    """Este nó ficou fora e NÃO tocou nesta linha enquanto isso?
+
+    Então o que chegou não é edição concorrente — é atualização que ele
+    perdeu, e recusá-la seria guardar um retrato velho de propósito.
+
+    É a regra que faz o desvio para a nuvem valer a pena. Com a loja fora, o
+    terminal vende pela nuvem; linha NOVA desce sem problema (não há o que
+    conflitar), mas linha que já existe na loja — a comanda que passou a estar
+    ocupada, o pedido que ganhou item — voltava como conflito e nunca era
+    aplicada. A loja seguia mostrando a comanda livre com itens dentro.
+
+    A pergunta que autoriza é estreita de propósito: *a loja mexeu nisto
+    enquanto esteve fora?* Se a versão local é anterior ao último contato com
+    o outro lado, ela não mexeu — e então não existe edição da loja para
+    proteger, que é a única coisa que LOCAL_WINS existe para defender. Mexeu
+    depois? Volta a ser conflito, e alguém decide.
+    """
+    from apps.synchronization.services import nodes
+
+    if _politica(entity_type) == ConflictResolution.MANUAL:
+        # Documento fiscal não entra na exceção, e não é só disciplina: o PDV
+        # nunca desvia o fiscal para a nuvem, então uma divergência aqui não
+        # nasceu de queda nenhuma. Veio de outro lugar — que é exatamente o
+        # que precisa de gente olhando.
+        return False
+    if receiving_node_type != NodeType.LOCAL:
+        return False
+    proprio = nodes.self_node_or_none()
+    inicio = getattr(proprio, "offline_since", None) if proprio else None
+    if inicio is None or not local_version:
+        return False
+    return local_version < _em_microssegundos(inicio)
+
+
+def _em_microssegundos(momento):
+    """A mesma escala de `entity_version`: `updated_at` em microssegundos."""
+    return int(momento.timestamp() * 1_000_000)
 
 
 def _politica(entity_type):

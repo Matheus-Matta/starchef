@@ -95,37 +95,6 @@ def test_evento_com_conta_de_outro_e_rejeitado(como_nuvem, conta, outra_conta, n
         inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
 
 
-def test_evento_para_outro_destino_e_rejeitado(como_nuvem, conta, no_loja, no_nuvem):
-    bruto = {
-        "event_id": str(uuid.uuid4()),
-        "account_id": str(conta.id),
-        "target_node_id": str(uuid.uuid4()),  # <- não é este nó
-        "sequence": 1,
-        "entity_type": "restaurant",
-        "entity_id": str(uuid.uuid4()),
-        "operation": "UPSERT",
-        "payload": {"fields": {}},
-    }
-    with pytest.raises(inbox.CrossTenantRejected):
-        inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
-
-
-def test_checksum_divergente_no_evento_e_rejeitado(como_nuvem, conta, no_loja, no_nuvem):
-    bruto = {
-        "event_id": str(uuid.uuid4()),
-        "account_id": str(conta.id),
-        "target_node_id": str(no_nuvem.id),
-        "sequence": 1,
-        "entity_type": "restaurant",
-        "entity_id": str(uuid.uuid4()),
-        "operation": "UPSERT",
-        "payload": {"fields": {"trade_name": "X"}},
-        "payload_checksum": crypto.checksum({"outra": "coisa"}),
-    }
-    with pytest.raises(ValueError, match="Checksum"):
-        inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
-
-
 def test_lote_repetido_nao_duplica_na_inbox(como_nuvem, conta, no_loja, no_nuvem):
     payload = {"fields": {"trade_name": "X"}}
     bruto = {
@@ -139,8 +108,8 @@ def test_lote_repetido_nao_duplica_na_inbox(como_nuvem, conta, no_loja, no_nuvem
         "payload": payload,
         "payload_checksum": crypto.checksum(payload),
     }
-    primeiros, _ = inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
-    repetidos, _ = inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
+    primeiros, _, _ = inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
+    repetidos, _, _ = inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
     assert len(primeiros) == 1
     assert len(repetidos) == 0  # deduplicado por event_id
 

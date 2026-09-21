@@ -405,14 +405,14 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
-# A identidade do terminal (instalação + nome) viaja em cabeçalho em toda
-# requisição — inclusive as de leitura, então precisa valer para qualquer rota,
+# A identidade do terminal e o restaurante da sidebar viajam em cabeçalhos em
+# toda requisição, inclusive leitura, então precisam valer para qualquer rota,
 # não só para abertura de caixa. Sem isso o navegador falha no preflight antes
 # mesmo de a requisição chegar à view, e o axios só reporta "CORS error".
 # `x-auth-scope` diz de qual sessão a requisição é (painel ou editor do
 # storefront). Sem ele na allowlist o preflight falha e o editor não consegue
 # nem tentar autenticar — o navegador barra antes de a view rodar.
-CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name", "x-auth-scope")
+CORS_ALLOW_HEADERS = (*_cors_default_headers, "x-terminal-id", "x-terminal-name", "x-auth-scope", "x-restaurant-id")
 # Necessário para o Django aceitar mutações vindas do front (cookies) cross-origin.
 CSRF_TRUSTED_ORIGINS = config(
     "DJANGO_CSRF_TRUSTED_ORIGINS",
