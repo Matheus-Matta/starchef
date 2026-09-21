@@ -33,8 +33,21 @@ _e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local",
 # `cash_action_password` é o hash da senha de operação do caixa. O filtro
 # global de segredos já o barrava; declarar aqui é o que torna isso uma DECISÃO
 # em vez de um efeito colateral do nome do campo.
+# O HASH da senha de ações do caixa viaja com o restaurante.
+#
+# Ela estava excluída, e a exclusão não protegia nada: o MESMO hash já sai do
+# servidor por `/restaurants/{id}/cash-auth/`, que é como o PDV o guarda para
+# verificar sem rede. O que a exclusão fazia era deixar a LOJA sem ele — e a
+# loja é justamente quem precisa autorizar sangria e cancelamento quando a
+# nuvem cai, que é a razão de ela existir.
+#
+# Mesmo argumento do hash da senha do usuário, algumas linhas abaixo: é PBKDF2
+# autocontido, não usa a `SECRET_KEY`, e já É a forma protegida da senha.
+#
+# O texto puro continua sem existir em lugar nenhum: `set_cash_action_password`
+# codifica antes de gravar.
 _e("restaurant", "restaurants.Restaurant", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account",), exclude_fields=("cash_action_password",))
+   dependencies=("account",), allow_fields=("cash_action_password",))
 _e("branch", "restaurants.Branch", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("restaurant",))
 

@@ -85,14 +85,13 @@ def test_o_filtro_de_segredos_continua_pegando_o_que_importa():
         )
 
 
-def test_o_segredo_do_caixa_e_do_fiscal_nao_viaja():
-    """As duas senhas que, se vazassem, custariam dinheiro direto.
+def test_o_segredo_FISCAL_nao_viaja():
+    """A senha e o arquivo que abrem o certificado A1 que assina a nota.
 
-    `cash_action_password` autoriza sangria e cancelamento no caixa;
-    `certificate_password` abre o certificado A1 que assina nota fiscal.
+    Nunca saem do servidor por lugar nenhum — nem por sincronização, nem por
+    endpoint. Quem assina é o backend; o terminal nunca precisa da chave.
     """
     for tipo, campo in (
-        ("restaurant", "cash_action_password"),
         ("fiscal_config", "certificate_password"),
         ("fiscal_config", "certificate_file"),
     ):
@@ -103,3 +102,32 @@ def test_o_segredo_do_caixa_e_do_fiscal_nao_viaja():
             f"{tipo}.{campo} não viaja por acidente do filtro, e não por "
             "decisão escrita — declare em `exclude_fields`"
         )
+
+
+def test_a_senha_do_caixa_viaja_COMO_HASH_e_nunca_em_texto():
+    """A senha de ações do caixa é o caso oposto, e de propósito.
+
+    Ela estava em `exclude_fields`, e a exclusão não protegia nada: o MESMO
+    hash já sai do servidor por `/restaurants/{id}/cash-auth/`, que é como o
+    PDV o guarda para verificar sem rede (`payments._cash_password_proof`
+    depende disso). O que a exclusão fazia era deixar a LOJA sem ele — e a
+    loja é quem precisa autorizar sangria e cancelamento quando a nuvem cai.
+
+    O que este teste protege é o que continua valendo: viaja o HASH, nunca o
+    texto. `set_cash_action_password` codifica antes de gravar, então o texto
+    puro não existe nem no banco.
+    """
+    from django.contrib.auth.hashers import identify_hasher
+
+    from apps.restaurants.models import Restaurant
+
+    entrada = registry.require("restaurant")
+    restaurante = Restaurant()
+    restaurante.set_cash_action_password("senha-da-casa")
+
+    payload = serialization.serialize(restaurante, entrada)
+
+    viajou = payload.get("cash_action_password")
+    assert viajou, "a loja precisa do hash para autorizar com a nuvem fora"
+    assert viajou != "senha-da-casa", "o texto puro da senha viajou"
+    assert identify_hasher(viajou), "o que viajou não é um hash reconhecível"

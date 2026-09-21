@@ -63,8 +63,20 @@ def _can_authorize_order_cancellation(request, order):
 
     cash_password = str(request.data.get("cash_password") or "")
     if cash_password:
+        # SEM SENHA GRAVADA NÃO EXISTE SENHA CERTA.
+        #
+        # Aqui havia um `else cash_password == "12345678"`: com o campo vazio,
+        # essa string fixa cancelava qualquer pedido. E vazio é o estado NORMAL
+        # da loja — a senha é excluída da sincronização, então toda instalação
+        # local nascia assim. A credencial embutida valia exatamente onde a de
+        # verdade não chegava, no lado que fica sem supervisão quando a
+        # internet cai.
+        #
+        # É o mesmo que o movimento de caixa já fazia (`payments/services.py`):
+        # sem senha gravada, recusa. Quem precisa cancelar continua tendo a
+        # autorização por LOGIN de gerente, logo abaixo — nominal e auditável.
         stored = order.restaurant.cash_action_password or ""
-        approved = check_password(cash_password, stored) if stored else cash_password == "12345678"
+        approved = bool(stored) and check_password(cash_password, stored)
         # A senha e do restaurante, nao de uma pessoa: quem autorizou e a
         # propria operacao da loja.
         return approved, None, Order.AUTHORIZATION_CASH_PASSWORD
