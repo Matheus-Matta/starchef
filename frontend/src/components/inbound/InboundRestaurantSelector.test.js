@@ -24,4 +24,14 @@ describe("seletor de unidade das notas recebidas", () => {
     expect(api.get).toHaveBeenCalledWith("/restaurants/", expect.objectContaining({ skipRestaurantScope: true }));
     expect(wrapper.emitted("update:modelValue").at(-1)).toEqual(["restaurante-b"]);
   });
+
+  it("mantém o nome acessível quando usado no cabeçalho compacto", async () => {
+    api.get.mockResolvedValue({ data: { results: [] } });
+    const wrapper = mount(InboundRestaurantSelector, { props: { modelValue: "", compact: true } });
+    await flushPromises();
+
+    expect(wrapper.get("label").classes()).toContain("inbound-unit--compact");
+    expect(wrapper.get("label span").text()).toBe("Unidade para consultar a SEFAZ");
+    expect(wrapper.text()).not.toContain("Escolha aqui a unidade");
+  });
 });

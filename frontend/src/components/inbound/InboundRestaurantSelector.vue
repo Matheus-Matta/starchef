@@ -1,5 +1,5 @@
 <template>
-  <label class="inbound-unit">
+  <label class="inbound-unit" :class="{ 'inbound-unit--compact': compact }">
     <span>Unidade para consultar a SEFAZ</span>
     <select :value="modelValue" :disabled="loading" @change="selectRestaurant">
       <option value="">Todas as unidades (somente visualizar)</option>
@@ -8,7 +8,7 @@
       </option>
     </select>
     <small v-if="error">{{ error }}</small>
-    <small v-else>Escolha aqui a unidade usada na sincronização manual.</small>
+    <small v-else-if="!compact">Escolha aqui a unidade usada na sincronização manual.</small>
   </label>
 </template>
 
@@ -18,7 +18,7 @@ import { onMounted, ref } from "vue";
 import { api } from "../../services/api";
 import { normalizeApiError } from "../../utils/apiError";
 
-const props = defineProps({ modelValue: { type: String, default: "" } });
+const props = defineProps({ modelValue: { type: String, default: "" }, compact: { type: Boolean, default: false } });
 const emit = defineEmits(["update:modelValue"]);
 const restaurants = ref([]);
 const loading = ref(false);
@@ -54,5 +54,11 @@ onMounted(loadRestaurants);
 .inbound-unit span { color: var(--text-muted); font: var(--weight-bold) 10px/1 var(--font-sans); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .inbound-unit select { height: var(--control-h); padding: 0 34px 0 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-card); color: var(--text-body); }
 .inbound-unit small { color: var(--text-muted); font-size: 11px; }
-@media (max-width: 720px) { .inbound-unit { width: 100%; } }
+.inbound-unit--compact { min-width: 0; position: relative; }
+.inbound-unit--compact span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.inbound-unit--compact select { width: 100%; height: 38px; cursor: pointer; font: var(--weight-semibold) 13px/1 var(--font-sans); }
+.inbound-unit--compact select:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
+.inbound-unit--compact select:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.inbound-unit--compact small { position: absolute; top: 100%; z-index: 1; padding: 3px 6px; background: var(--surface-card); color: var(--danger-text); }
+@media (max-width: 720px) { .inbound-unit:not(.inbound-unit--compact) { width: 100%; } }
 </style>

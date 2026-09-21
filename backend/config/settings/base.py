@@ -156,6 +156,22 @@ USE_SQLITE_DATABASE = config("USE_SQLITE_DATABASE", default=DEBUG, cast=bool)
 RLS_ENABLED = config("RLS_ENABLED", default=False, cast=bool)
 
 
+def _e_celery():
+    """Este processo é um worker Celery?
+
+    Pelo `argv` porque a decisão é do PROCESSO, não da instalação: o mesmo
+    container roda gunicorn, `manage.py` e `celery` com o mesmo `.env`, e só o
+    último não pode usar pool. Uma variável de ambiente exigiria acertar isso
+    em cada `docker-compose` de cada loja — e errar em silêncio.
+
+    `manage.py sync_worker` fica de fora de propósito: é um processo só, com
+    threads e sem `fork()`, então o pool serve.
+    """
+    import sys
+
+    return os.path.basename(sys.argv[0] if sys.argv else "").startswith("celery")
+
+
 def build_database_settings(use_sqlite):
     if use_sqlite:
         # Ancora o SQLite em BASE_DIR sempre. Um SQLITE_DB_NAME relativo seria
@@ -214,8 +230,37 @@ def build_database_settings(use_sqlite):
     # (Django 5.1 + psycopg 3), cada worker mantém no máximo POSTGRES_POOL_MAX
     # conexões e devolve ao pool no fim da request; `CONN_MAX_AGE` tem de ser
     # 0 nesse modo. Dimensione: workers × POSTGRES_POOL_MAX < max_connections.
-    usar_pool = config("POSTGRES_POOL", default=True, cast=bool)
-    if usar_pool:
+    #
+    # O POOL NÃO SOBREVIVE A UM `fork()`, E POR ISSO NÃO VALE PARA O CELERY.
+    #
+    # `DatabaseWrapper._connection_pools` é atributo de CLASSE: existe um pool
+    # por processo, e o `fork()` do Celery copia esse objeto para cada filho.
+    # Só que `ConnectionPool` abre conexões com THREADS de fundo, e `fork()`
+    # não copia thread nenhuma além da que chamou. No filho, o pool fica sem
+    # quem o abasteça: todo pedido de conexão espera por um trabalhador que
+    # nunca vai rodar, e estoura em `PoolTimeout: couldn't get a connection
+    # after 10.00 sec`. Foi exatamente o que derrubou os workers em produção —
+    # as tarefas "terminavam" em 10,003s sem ter tocado no banco.
+    #
+    # O modelo do Celery também não precisa de pool: cada filho prefork atende
+    # UMA tarefa por vez, então uma conexão persistente por processo é o
+    # desenho certo — que é o que `CONN_MAX_AGE` dá.
+    #
+    # O pool continua valendo onde ele foi feito para valer: o servidor ASGI,
+    # que é thread por request.
+    pool_pedido = config("POSTGRES_POOL", default=True, cast=bool)
+    if pool_pedido and _e_celery():
+        # O Celery fica sem pool, e NÃO herda o `POSTGRES_CONN_MAX_AGE` do
+        # ambiente: aquele valor costuma ser 0 porque o pool exige que seja —
+        # aplicá-lo aqui trocaria o travamento por uma conexão nova a cada
+        # tarefa, e o beat dispara tarefa a cada poucos segundos.
+        #
+        # Uma conexão persistente por filho é o desenho certo do prefork, e
+        # `CONN_HEALTH_CHECKS` (ligado quando não há pool) cuida de a conexão
+        # não ser reusada depois de o banco a ter derrubado.
+        pool = None
+        conn_max_age = config("POSTGRES_CELERY_CONN_MAX_AGE", default=60, cast=int)
+    elif pool_pedido:
         pool = {
             "min_size": config("POSTGRES_POOL_MIN", default=2, cast=int),
             "max_size": config("POSTGRES_POOL_MAX", default=10, cast=int),
@@ -227,6 +272,7 @@ def build_database_settings(use_sqlite):
     else:
         pool = None
         conn_max_age = config("POSTGRES_CONN_MAX_AGE", default=60, cast=int)
+    usar_pool = pool is not None
 
     return {
         "DATABASES": {

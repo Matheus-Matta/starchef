@@ -2,15 +2,16 @@
   <div class="rpro">
     <!-- ── Cabeçalho: título + ações (Export / Import / ação primária) ── -->
     <header class="rpro__head">
-      <div class="rpro__head-top">
+      <div class="rpro__head-top" :class="{ 'rpro__head-top--inbound': props.endpoint === '/inbound-nfe/' }">
         <div class="rpro__head-copy">
           <h1>{{ title }}</h1>
           <p>{{ total }} {{ total === 1 ? "registro" : "registros" }}</p>
         </div>
         <div class="rpro__head-actions">
           <template v-if="props.endpoint === '/inbound-nfe/'">
+            <InboundRestaurantSelector class="rpro__unit-select" compact :model-value="inboundRestaurantId" @update:model-value="selectInboundRestaurant" />
             <button
-              class="rpro-btn rpro-btn--ghost"
+              class="rpro-btn rpro-btn--ghost rpro__export-selected"
               type="button"
               :disabled="exportInboundLoading"
               :title="selection.length ? `Exportar ${selection.length} nota(s) selecionada(s) em XML` : 'Selecione as notas desejadas na tabela para exportar em XML'"
@@ -53,9 +54,9 @@
           <button v-if="primaryAction" class="rpro-btn rpro-btn--primary" type="button" @click="runPrimary">
             <i :class="primaryAction.icon || 'pi pi-plus'" /> {{ primaryAction.label }}
           </button>
+          <InboundHelpButton v-if="props.endpoint === '/inbound-nfe/' && proCfg.description" class="rpro__help-action" :description="proCfg.description" />
         </div>
       </div>
-      <InboundRestaurantSelector v-if="props.endpoint === '/inbound-nfe/'" :model-value="inboundRestaurantId" @update:model-value="selectInboundRestaurant" />
       <template v-if="props.endpoint === '/inbound-nfe/' && dfeSyncInfo">
         <div class="rpro__head-banner">
           <div v-if="dfeSyncInfo.is_all_restaurants" class="rpro__dfe-alert rpro__dfe-alert--info">
@@ -141,18 +142,18 @@
               </div>
             </div>
 
-            <div class="rpro__dfe-card rpro__dfe-card--action cursor-pointer hover:border-brand transition-colors" @click="openFetchNsuDialog">
-              <div class="rpro__dfe-card-icon rpro__dfe-card-icon--fetch">
+            <button class="rpro__dfe-card rpro__dfe-card--action" type="button" aria-label="Buscar nota por NSU" @click="openFetchNsuDialog">
+              <span class="rpro__dfe-card-icon rpro__dfe-card-icon--fetch">
                 <i class="pi pi-search" />
-              </div>
-              <div class="rpro__dfe-card-info">
+              </span>
+              <span class="rpro__dfe-card-info">
                 <span class="rpro__dfe-card-label">Consulta Pontual</span>
                 <strong class="rpro__dfe-card-value text-brand">Buscar por NSU</strong>
                 <small class="rpro__dfe-card-hint">
                   <span><i class="pi pi-bolt text-xs" /> Recuperar via consNSU</span>
                 </small>
-              </div>
-            </div>
+              </span>
+            </button>
           </div>
         </div>
       </template>
@@ -166,7 +167,7 @@
     </div>
 
     <!-- Descrição opcional do recurso -->
-    <div v-if="proCfg.description" class="rpro__description-box">
+    <div v-if="proCfg.description && props.endpoint !== '/inbound-nfe/'" class="rpro__description-box">
       <i class="pi pi-info-circle" />
       <p>{{ proCfg.description }}</p>
     </div>
@@ -2425,6 +2426,7 @@ import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
 import InboundRestaurantSelector from "../components/inbound/InboundRestaurantSelector.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
@@ -5568,30 +5570,6 @@ onBeforeUnmount(() => {
 .rpro__empty strong { color: var(--text-strong); font: var(--weight-bold) 15px/1.2 var(--font-sans); }
 .rpro__empty span { font: var(--weight-medium) 13px/1.4 var(--font-sans); }
 
-/* ── DF-e Sincronização & Salvaguarda ────────────────────────── */
-.rpro__dfe-banner { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-.rpro__dfe-card { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--radius-lg); }
-.rpro__dfe-card-icon { width: 44px; height: 44px; border-radius: var(--radius-md); display: grid; place-items: center; font-size: 18px; flex-shrink: 0; }
-.rpro__dfe-card-icon--nsu { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
-.rpro__dfe-card-icon--sync { background: rgba(14, 165, 233, 0.12); color: #0ea5e9; }
-.rpro__dfe-card-icon--ready { background: rgba(16, 185, 129, 0.12); color: #10b981; }
-.rpro__dfe-card-icon--blocked { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
-.rpro__dfe-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.rpro__dfe-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.rpro__dfe-card-label { font-size: 11px; font-weight: var(--weight-bold); text-transform: uppercase; color: var(--text-muted); }
-.rpro__dfe-card-value { font-size: 15px; font-weight: var(--weight-extra); color: var(--text-strong); }
-.rpro__dfe-card-hint { font-size: 11.5px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.rpro__dfe-badge {
-  font-size: 10.5px; font-weight: var(--weight-bold);
-  padding: 1px 7px; border-radius: 99px;
-  background: var(--surface-sunken); border: 1px solid var(--border);
-  color: var(--text-muted); white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
-}
-.rpro__dfe-tag { font-size: 10px; font-weight: var(--weight-bold); padding: 1px 6px; border-radius: 4px; text-transform: uppercase; }
-.rpro__dfe-tag--success { background: var(--success-subtle); color: var(--success-text); }
-.rpro__dfe-tag--danger { background: var(--danger-subtle); color: var(--danger-text); }
-.rpro__dfe-tag--info { background: var(--info-subtle); color: var(--info-text); }
-
 /* Banner de Alerta / Info para Visão Global e Falta de Certificado */
 .rpro__dfe-alert {
   display: flex; align-items: flex-start; gap: 16px;
@@ -6916,3 +6894,4 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 </style>
+<style scoped src="../styles/inbound-nfe-list.css"></style>

@@ -844,6 +844,14 @@ essa trava:
 Os três passam agora por `_printingStep` (ou try/catch direto), fora da trava.
 Falha continua sendo mostrada ao operador — o que não pode é desaparecer.
 
+Ao concluir o pagamento, o PDV confirma os recebimentos, volta imediatamente
+ao catálogo com carrinho vazio e inicia recibo e NFC-e em segundo plano,
+sempre usando os dados do pedido encerrado. Sem impressora master, mostra o
+seletor já usado nas outras impressões. A escolha vale para o recibo e o DANFE
+da mesma venda, sem pedir novamente quando a SEFAZ autorizar. A emissão da
+NFC-e começa mesmo enquanto o operador escolhe a impressora; se cancelar, o
+pedido permanece pago e os documentos podem ser reimpressos pelo histórico.
+
 **Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
 não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
 unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam

@@ -47,6 +47,8 @@ mixin _FiscalSection on _HomePageShared {
     Map<String, dynamic> order, {
     bool silentIfUnconfigured = false,
     bool automatic = false,
+    Map<String, dynamic>? customer,
+    Future<String?>? salePrinter,
   }) async {
     // A trava protege o BOTÃO de emissão manual contra duplo clique. A emissão
     // automática da venda não pode passar por ela: a tela é liberada assim que
@@ -66,7 +68,8 @@ mixin _FiscalSection on _HomePageShared {
       Map<String, dynamic>? invoice;
       try {
         final fiscalCpf = cpfDigits(order['fiscal_customer_cpf']);
-        final selectedCpf = cpfDigits(selectedCustomer?['document']);
+        final fiscalCustomer = customer ?? selectedCustomer;
+        final selectedCpf = cpfDigits(fiscalCustomer?['document']);
         invoice = await api.post(
           '/invoices/emit/',
           body: {
@@ -74,8 +77,8 @@ mixin _FiscalSection on _HomePageShared {
             if (fiscalCpf.isNotEmpty) 'cpf': fiscalCpf,
             if (fiscalCpf.isNotEmpty &&
                 fiscalCpf == selectedCpf &&
-                selectedCustomer?['name'] != null)
-              'cpf_name': selectedCustomer!['name'],
+                fiscalCustomer?['name'] != null)
+              'cpf_name': fiscalCustomer!['name'],
           },
           accessToken: token,
         );
@@ -136,6 +139,7 @@ mixin _FiscalSection on _HomePageShared {
         _showFiscalStateToast(invoice, silent: false);
         _watchFiscalAuthorization(
           invoice,
+          salePrinter: salePrinter,
           summary:
               'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
         );
@@ -155,6 +159,7 @@ mixin _FiscalSection on _HomePageShared {
         summary:
             'Pedido #${order['sequence']} · NFC-e ${invoice['number'] ?? ''}',
         automatic: true,
+        salePrinter: salePrinter,
       );
     } finally {
       if (!automatic && mounted) setState(() => emittingInvoice = false);
@@ -176,6 +181,7 @@ mixin _FiscalSection on _HomePageShared {
   void _watchFiscalAuthorization(
     Map<String, dynamic> invoice, {
     required String summary,
+    Future<String?>? salePrinter,
   }) {
     final invoiceId = '${invoice['id'] ?? ''}';
     final state = '${invoice['fiscal_state'] ?? ''}';
@@ -192,15 +198,26 @@ mixin _FiscalSection on _HomePageShared {
     // de novo — e a segunda via seria um cupom NOVO, porque o trabalho da
     // primeira já teria saído.
     if (!watchedFiscalInvoices.add(invoiceId)) return;
-    unawaited(_pollFiscalAuthorization(invoiceId: invoiceId, summary: summary));
+    unawaited(
+      _pollFiscalAuthorization(
+        invoiceId: invoiceId,
+        summary: summary,
+        salePrinter: salePrinter,
+      ),
+    );
   }
 
   Future<void> _pollFiscalAuthorization({
     required String invoiceId,
     required String summary,
+    Future<String?>? salePrinter,
   }) async {
     try {
-      await _pollFiscalAuthorizationNow(invoiceId: invoiceId, summary: summary);
+      await _pollFiscalAuthorizationNow(
+        invoiceId: invoiceId,
+        summary: summary,
+        salePrinter: salePrinter,
+      );
     } finally {
       watchedFiscalInvoices.remove(invoiceId);
     }
@@ -209,6 +226,7 @@ mixin _FiscalSection on _HomePageShared {
   Future<void> _pollFiscalAuthorizationNow({
     required String invoiceId,
     required String summary,
+    Future<String?>? salePrinter,
   }) async {
     const backoff = [
       Duration(milliseconds: 1200),
@@ -252,6 +270,7 @@ mixin _FiscalSection on _HomePageShared {
           invoiceId: invoiceId,
           summary: summary,
           automatic: true,
+          salePrinter: salePrinter,
         );
         return;
       }
@@ -329,8 +348,7 @@ mixin _FiscalSection on _HomePageShared {
     }
   }
 
-  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
-  /// Manda o DANFE para a impressora — a master do terminal, quando houver.
+  /// Manda o DANFE para a impressora escolhida na venda ou pelo operador.
   ///
   /// `automatic` é a impressão que o gesto de concluir dispara sozinho. Ela não
   /// repete um DANFE que já saiu deste terminal: o servidor pode ter criado um
@@ -341,38 +359,48 @@ mixin _FiscalSection on _HomePageShared {
     required String invoiceId,
     required String summary,
     bool automatic = false,
+    Future<String?>? salePrinter,
   }) async {
-    final printers = await _list(
-      '/printers/',
-      query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
-    );
-    if (!mounted || printers.isEmpty) {
-      AppLogger.instance.warning(
-        'danfe_sem_impressora_cadastrada',
-        data: {'nota': invoiceId, 'montado': mounted},
+    final String? printerId;
+    if (salePrinter != null) {
+      // O pagamento já mostrou o seletor para o recibo. O DANFE reutiliza a
+      // mesma decisão, mesmo se a SEFAZ autorizar minutos depois.
+      printerId = await salePrinter;
+    } else {
+      final printers = await _list(
+        '/printers/',
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
       );
-      return;
+      if (!mounted || printers.isEmpty) {
+        AppLogger.instance.warning(
+          'danfe_sem_impressora_cadastrada',
+          data: {'nota': invoiceId, 'montado': mounted},
+        );
+        return;
+      }
+      final master = widget.preferences.masterPrinterId;
+      final hasMaster = printers.any((p) => '${p['id']}' == master);
+      printerId = hasMaster
+          ? master
+          : await showDialog<String>(
+              context: context,
+              builder: (_) => PrinterSelectionDialog(
+                printers: printers,
+                title: 'Imprimir DANFE NFC-e',
+                summary: summary,
+                description:
+                    'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
+              ),
+            );
     }
-    // Se o caixa fixou uma impressora master, perguntar de novo aqui aparece
-    // para ele como "o sistema ignorou a master".
-    final master = widget.preferences.masterPrinterId;
-    final hasMaster = printers.any((p) => '${p['id']}' == master);
-    final printerId = hasMaster
-        ? master
-        : await showDialog<String>(
-            context: context,
-            builder: (_) => PrinterSelectionDialog(
-              printers: printers,
-              title: 'Imprimir DANFE NFC-e',
-              summary: summary,
-              description:
-                  'O DANFE traz a chave de acesso e o QR Code de consulta da nota.',
-            ),
-          );
-    if (printerId == null) {
+    if (!mounted || printerId == null) {
       AppLogger.instance.warning(
         'danfe_sem_impressora_escolhida',
-        data: {'nota': invoiceId, 'master': master},
+        data: {'nota': invoiceId},
       );
       return;
     }

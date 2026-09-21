@@ -65,10 +65,17 @@ mixin _PaymentSection on _HomePageShared {
 
   Future<void> _load();
   Future<void> _refreshOrder();
+  Future<String?> _chooseSalePrinter(Map<String, dynamic> order);
+  Future<void> _printSaleReceipt(
+    Map<String, dynamic> order,
+    Future<String?> printerChoice,
+  );
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured,
     bool automatic,
+    Map<String, dynamic>? customer,
+    Future<String?>? salePrinter,
   });
   bool _isOfflinePending(Map<String, dynamic>? value);
 
@@ -116,11 +123,14 @@ mixin _PaymentSection on _HomePageShared {
     // muda no meio, então lê-las juntas é seguro.
     final resultados = await Future.wait([
       _refreshOrder().then<Object?>((_) => null).catchError((Object _) => null),
-      _list('/payments/methods/', query: {
-        'restaurant': restaurantId,
-        'is_active': true,
-        'page_size': 100,
-      }),
+      _list(
+        '/payments/methods/',
+        query: {
+          'restaurant': restaurantId,
+          'is_active': true,
+          'page_size': 100,
+        },
+      ),
       // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
       // pagamentos — tratar isso como falha impediria de receber offline, que
       // é exatamente quando o operador mais precisa concluir a venda.
@@ -421,113 +431,31 @@ mixin _PaymentSection on _HomePageShared {
       );
       return;
     }
-    // O recibo é um efeito colateral: uma falha de impressão não pode reabrir
-    // uma venda concluída.
-    await _printSaleReceipt();
-    if (!mounted) return;
-    // A VENDA ESTÁ CONCLUÍDA AQUI. A NFC-e é consequência dela, não condição.
-    //
-    // Esperar a emissão para liberar a tela transformava cada problema fiscal
-    // — perfil sem NCM, provedor fora do ar, limite de requisições do servidor
-    // — em uma venda que não fecha, com o cliente parado no balcão. O
-    // documento é pedido ao servidor no gesto, mas quem espera pela
-    // autorização da SEFAZ e pelo cupom é uma espera em segundo plano, não o
-    // operador.
-    final orderForInvoice = activeOrder!;
-    setState(() {
-      activeOrder = null;
-      selectedTable = null;
-      selectedCommand = null;
-      selectedCustomer = null;
-      orderItems = [];
-      registeredPayments = [];
-      // A venda acabou: a tela volta PRONTA para a próxima, no catálogo com
-      // o carrinho vazio. Voltar para um seletor de tipo custaria um gesto a
-      // cada cliente da fila.
-      orderType = 'counter';
-      flowStep = 'order';
-    });
-    unawaited(_load());
-    unawaited(
-      _emitFiscalInvoice(
-        orderForInvoice,
+    final paidOrder = Map<String, dynamic>.from(activeOrder!);
+    final customer = selectedCustomer == null
+        ? null
+        : Map<String, dynamic>.from(selectedCustomer!);
+    startPaidOrderFollowUps(
+      showNextSale: () => setState(() {
+        activeOrder = null;
+        selectedTable = null;
+        selectedCommand = null;
+        selectedCustomer = null;
+        orderItems = [];
+        registeredPayments = [];
+        orderType = 'counter';
+        flowStep = 'order';
+      }),
+      choosePrinter: () => _chooseSalePrinter(paidOrder),
+      printReceipt: (printer) => _printSaleReceipt(paidOrder, printer),
+      emitInvoice: (printer) => _emitFiscalInvoice(
+        paidOrder,
+        customer: customer,
+        salePrinter: printer,
         silentIfUnconfigured: true,
         automatic: true,
       ),
+      refreshCatalog: _load,
     );
-  }
-
-  /// Imprime o recibo da venda no gesto de concluir o pedido.
-  ///
-  /// O cupom vem do servidor (`/orders/{id}/print/`), que é quem sabe o preço,
-  /// o imposto e o layout; este terminal escolhe a impressora e põe no papel.
-  /// `manual_only` tira o trabalho do laço automático do agente — quem
-  /// imprime é este gesto, e uma falha aqui precisa aparecer na tela em vez de
-  /// virar um cupom que ninguém sabe que existe.
-  Future<void> _printSaleReceipt() async {
-    try {
-      final printers = await _list(
-        '/printers/',
-        query: {
-          'restaurant': restaurantId,
-          'is_active': true,
-          'page_size': 100,
-        },
-      );
-      if (!mounted) return;
-      if (printers.isEmpty) {
-        _error(
-          const ApiException(
-            'Nenhuma impressora ativa foi cadastrada para este restaurante.',
-          ),
-          title: 'O pagamento foi registrado, mas o recibo não saiu',
-        );
-        return;
-      }
-      final master = widget.preferences.masterPrinterId;
-      final hasMaster = printers.any((p) => '${p['id']}' == master);
-      final printerId = hasMaster
-          ? master
-          : await showDialog<String>(
-              context: context,
-              builder: (_) => PrinterSelectionDialog(
-                printers: printers,
-                title: 'Imprimir recibo de venda',
-                summary:
-                    'Pedido #${activeOrder?['sequence']} · ${_money(activeOrder?['total'])}',
-                description:
-                    'O recibo contém itens, pagamentos e totais do pedido.',
-              ),
-            );
-      if (printerId == null || !mounted) return;
-      final chosen = printers.cast<Map<String, dynamic>?>().firstWhere(
-        (item) => '${item?['id']}' == printerId,
-        orElse: () => null,
-      );
-      final printJob = await api.post(
-        '/orders/${activeOrder!['id']}/print/',
-        body: {
-          'job_type': 'receipt',
-          'printer': printerId,
-          'manual_only': true,
-        },
-        accessToken: token,
-      );
-      final printer = printJob['printer'] as Map<String, dynamic>? ?? chosen;
-      if (printer == null) {
-        throw const ApiException(
-          'O trabalho de impressão voltou sem impressora.',
-        );
-      }
-      await deviceAgent.printJobManually(printJob, printer);
-    } catch (error) {
-      if (mounted) {
-        _error(
-          error,
-          title: 'O pagamento foi registrado, mas o recibo não saiu',
-          action: 'Reimprima pela tela de Pedidos quando quiser.',
-        );
-      }
-    }
   }
 }

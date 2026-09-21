@@ -49,6 +49,8 @@ mixin _PanelsSection on _HomePageShared {
     Map<String, dynamic> order, {
     bool silentIfUnconfigured,
     bool automatic,
+    Map<String, dynamic>? customer,
+    Future<String?>? salePrinter,
   });
   Future<void> _reprintDanfe(Map<String, dynamic> order);
 
@@ -107,7 +109,9 @@ mixin _PanelsSection on _HomePageShared {
     // Só no rascunho: com o pedido aberto, `draftTotal` é nulo e o rodapé
     // volta a ler o total do servidor, que é quem conhece taxa e desconto.
     draftTotal: _draftIsLive ? draft.total : null,
-    onPickDraftType: _draftIsLive ? (tipo) => unawaited(_pickDraftType(tipo)) : null,
+    onPickDraftType: _draftIsLive
+        ? (tipo) => unawaited(_pickDraftType(tipo))
+        : null,
     onAttachCommand: () => unawaited(_attachCommandToDraft()),
     onDetachCommand: _detachCommandFromDraft,
     draftCommands: _draftIsLive ? draft.commands : const [],

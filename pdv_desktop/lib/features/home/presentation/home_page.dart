@@ -66,6 +66,7 @@ import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
+import 'paid_order_follow_ups.dart';
 import 'table_details_panel.dart';
 
 import '../../orders/data/order_draft.dart';
@@ -89,6 +90,7 @@ part 'home_page_product.dart';
 part 'home_page_orders.dart';
 part 'home_page_orders_view.dart';
 part 'home_page_payment.dart';
+part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
@@ -146,6 +148,7 @@ class _HomePageState extends State<HomePage>
         _OrdersSection,
         _OrdersView,
         _PaymentSection,
+        _PaidReceiptSection,
         _PaymentView,
         _ReceiptSection,
         _ShellSection,
@@ -200,6 +203,7 @@ class _HomePageState extends State<HomePage>
   /// sozinha quando o turno muda — sem isso, o saldo revelado num fechamento
   /// continuaria visível no caixa seguinte, aberto por outra pessoa.
   String? _cashBalanceRevealedForSessionId;
+
   /// O carrinho antes de o pedido existir. Vive e morre com esta tela: um
   /// rascunho abandonado não deixa rastro no servidor, que é justamente o
   /// ganho de adiar a criação.
@@ -310,6 +314,7 @@ class _HomePageState extends State<HomePage>
   late final PdvInputRouter inputRouter;
   @override
   CodeLookupService? codeLookup;
+
   /// Os códigos lidos que pertencem à PÁGINA DAS COMANDAS.
   ///
   /// Ela é um widget próprio, com estado próprio, e o leitor é capturado aqui

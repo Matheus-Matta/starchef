@@ -140,11 +140,12 @@ cadastro/sincronização da empresa na Focus; não existe um segundo upload. A t
 mostra se o certificado está configurado, seus metadados e o último NSU
 consultado.
 
-Em **Notas Fiscais de Entrada**, o seletor no topo escolhe a unidade da lista e
-da consulta manual à SEFAZ. Ele carrega todas as unidades permitidas para a
-conta e não depende do restaurante selecionado na barra lateral. A opção
+Em **Notas Fiscais de Entrada**, o seletor à esquerda de “Exportar Selecionadas”
+escolhe a unidade da lista e da consulta manual à SEFAZ. Ele carrega todas as
+unidades permitidas para a conta e não depende da barra lateral. A opção
 “Todas as unidades” mantém apenas a visão consolidada; para sincronizar, o
-usuário escolhe uma unidade específica nesse seletor.
+usuário escolhe uma unidade específica nesse seletor. O botão “Ajuda” abre a
+explicação da consulta, e o card “Buscar por NSU” abre a consulta pontual.
 
 No cadastro de **Produtos**, a seção Produção contém somente o setor que
 recebe o item (cozinha, bar ou sobremesa) e o tempo estimado em minutos. A
