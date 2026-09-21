@@ -28,7 +28,12 @@ mixin _PaidReceiptSection on _HomePageShared {
       }
       final hasMaster = printers.any((p) => '${p['id']}' == masterId);
       if (hasMaster) return masterId;
-      return showDialog<String>(
+      // `await` aqui dentro do `try`, e não só `return`: sem ele o `Future`
+      // sai do bloco antes de completar, e uma falha do diálogo passa POR
+      // FORA do `catch` abaixo — que é o que transforma qualquer tropeço em
+      // "pagamento registrado, mas impressão pendente". Sem isso, o erro
+      // chegaria cru a quem chamou, depois de o pagamento já ter sido gravado.
+      return await showDialog<String>(
         context: context,
         builder: (_) => PrinterSelectionDialog(
           printers: printers,
