@@ -33,6 +33,7 @@ class KitchenOrderViewSet(ReadOnlyTenantViewSet):
         .prefetch_related("items__product", "items__addons", "items__batch")
         .exclude(status__in=_INACTIVE_ORDER_STATUSES)
         .filter(production_status__in=_ACTIVE_PRODUCTION_STATUSES)
+        .distinct()
     )
     filterset_fields = ["status", "production_status", "order_type", "items__production_sector"]
     ordering_fields = ["opened_at", "sequence"]
@@ -60,7 +61,19 @@ class KitchenItemFilter(django_filters.FilterSet):
 class KitchenItemViewSet(ReadOnlyTenantViewSet):
     serializer_class = OrderItemSerializer
     queryset = (
-        OrderItem.objects.select_related("restaurant", "branch", "order__table", "order__command", "product", "batch")
+        OrderItem.objects.select_related(
+            "restaurant",
+            "branch",
+            "order__table",
+            "order__command",
+            # A produção é lida da ORIGEM: sem estes dois, cada card do quadro
+            # faria uma consulta a mais para descobrir de que comanda ele é.
+            "origin_order__table",
+            "origin_order__command",
+            "command",
+            "product",
+            "batch",
+        )
         .prefetch_related("addons", "kds_positions")
         .all()
     )

@@ -46,7 +46,7 @@ class PdvSettingsMenuDialog extends StatelessWidget {
         children: [
           Icon(Icons.settings_outlined),
           SizedBox(width: 10),
-          Expanded(child: Text('Configurações do PDV')),
+          Expanded(child: Text('Mais opções do PDV')),
         ],
       ),
       content: SizedBox(
@@ -54,6 +54,13 @@ class PdvSettingsMenuDialog extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            _SettingsEntry(
+              icon: Icons.scale_outlined,
+              title: 'Balança rápida',
+              subtitle: 'Pesagem contínua em uma janela operacional',
+              onTap: () => _select(context, 'scale_workstation'),
+            ),
+            const Divider(),
             if (canManageDevices) ...[
               _SettingsEntry(
                 icon: Icons.print_outlined,
@@ -74,6 +81,12 @@ class PdvSettingsMenuDialog extends StatelessWidget {
               title: 'Preferências deste terminal',
               subtitle: 'Tempo da comanda, estabilidade, alertas e impressão',
               onTap: () => _select(context, 'preferences'),
+            ),
+            _SettingsEntry(
+              icon: Icons.dns_outlined,
+              title: 'Servidor do backend',
+              subtitle: 'Altere a URL usada por este terminal',
+              onTap: () => _select(context, 'api_url'),
             ),
             _SettingsEntry(
               icon: Icons.print_outlined,
@@ -101,6 +114,13 @@ class PdvSettingsMenuDialog extends StatelessWidget {
               title: isFullScreen ? 'Sair da tela cheia' : 'Usar tela cheia',
               subtitle: 'Atalho: F11',
               onTap: () => _select(context, 'fullscreen'),
+            ),
+            const Divider(),
+            _SettingsEntry(
+              icon: Icons.logout,
+              title: 'Sair do usuário',
+              subtitle: 'Encerra a sessão neste terminal',
+              onTap: () => _select(context, 'logout'),
             ),
           ],
         ),

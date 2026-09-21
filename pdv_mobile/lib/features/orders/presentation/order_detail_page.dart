@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
+import 'closing_merge_banner.dart';
 import 'order_actions_bar.dart';
 import 'order_detail_presenter.dart';
 import 'order_dialogs.dart';
@@ -174,6 +175,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
             origin: _presenter.origin,
             onRetry: _presenter.loading ? null : _presenter.load,
           ),
+          ClosingMergeBanner(merge: order?['closing_merge']),
         ],
         bottomBar: order == null ? null : _actions(order),
         body: _body(),
@@ -181,23 +183,41 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     },
   );
 
-  Widget _actions(Map<String, dynamic> order) => OrderActionsBar(
-    total: order['total'],
-    paid: _presenter.paid,
-    pending: _presenter.pendingToSend,
-    drafts: _presenter.draftItems.length,
-    busy: _presenter.working,
-    queued: _presenter.sendQueued,
-    onAdd: _addItem,
-    onSend: (_presenter.pendingToSend > 0 && !_presenter.sendQueued)
-        ? () async => _report(await _presenter.sendToKitchen())
-        : null,
-    onReceive:
-        widget.canReceivePayment &&
-            _presenter.awaitingPayment &&
-            _presenter.remaining > 0.009
-        ? _receivePayment
-        : null,
+  Widget _actions(Map<String, dynamic> order) {
+    // O caixa está fechando esta comanda numa conta agrupada: o servidor
+    // recusa lançamento com 409, e deixar o botão aceso só ensinaria o garçom
+    // a esbarrar no erro. Receber também sai — o garçom não fecha conta, e
+    // aqui quem cobra é a conta agrupada.
+    final emFechamento = ClosingMergeBanner.isClosing(order);
+    return OrderActionsBar(
+      total: order['total'],
+      paid: _presenter.paid,
+      pending: _presenter.pendingToSend,
+      drafts: _presenter.draftItems.length,
+      busy: _presenter.working || emFechamento,
+      queued: _presenter.sendQueued,
+      onAdd: emFechamento ? _warnClosing : _addItem,
+      onSend: (!emFechamento &&
+              _presenter.pendingToSend > 0 &&
+              !_presenter.sendQueued)
+          ? () async => _report(await _presenter.sendToKitchen())
+          : null,
+      onReceive:
+          !emFechamento &&
+              widget.canReceivePayment &&
+              _presenter.awaitingPayment &&
+              _presenter.remaining > 0.009
+          ? _receivePayment
+          : null,
+    );
+  }
+
+  /// Toque num botão que a conta agrupada desativou: dizer POR QUÊ.
+  ///
+  /// Um botão que não responde parece aparelho travado, e o garçom tenta de
+  /// novo — no meio do salão, com o prato na mão.
+  void _warnClosing() => _report(
+    'A comanda está em fechamento no caixa. Fale com o caixa antes de lançar.',
   );
 
   Widget _body() {

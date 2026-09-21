@@ -119,7 +119,9 @@ mixin _CommandSection on _HomePageShared {
         // assim": quem quer mais comandas edita o restaurante.
         final limit = _commandsPerTableLimit;
         final seated = (selectedTable!['active_commands'] as List? ?? const [])
-            .where((item) => item is Map && '${item['id']}' != '${command['id']}')
+            .where(
+              (item) => item is Map && '${item['id']}' != '${command['id']}',
+            )
             .length;
         if (limit > 0 && seated >= limit) {
           showAppToast(
@@ -273,9 +275,9 @@ mixin _CommandSection on _HomePageShared {
 
   /// Abre (ou retoma) o pedido de uma comanda.
   ///
-  /// Espelha [_openTable]: comanda livre cria o pedido, comanda em uso retoma
-  /// o que já existe. Quem decide é o servidor (`/orders/open-command/`), para
-  /// que dois caixas lendo a mesma comanda não criem dois pedidos.
+  /// Comanda em uso retoma o pedido. Comanda livre só prepara o contexto; o
+  /// servidor recebe o novo pedido junto da intenção de incluir o primeiro
+  /// produto, evitando rascunhos vazios ao navegar e voltar.
   Future<void> _openCommand(Map<String, dynamic> command) async {
     if (busy) return;
     final linkedTableId = command['current_table'];
@@ -289,21 +291,24 @@ mixin _CommandSection on _HomePageShared {
     final tableForCommand = table;
     // Abrir uma comanda por cima de outra é sair da anterior.
     _leaveActiveOrder(except: '${command['current_order_id'] ?? ''}');
-    await _work(() async {
-      selectedCommand = command;
-      selectedTable = tableForCommand;
-      final currentId = command['current_order_id'];
-      final order = currentId != null
-          ? await api.get('/orders/$currentId/', accessToken: token)
-          : await api.post(
-              '/orders/open-command/',
-              body: {'command': command['id']},
-              accessToken: token,
-            );
-      activeOrder = order;
-      await _refreshOrder();
-      flowStep = 'order';
-    });
+    final currentId = command['current_order_id'];
+    if (currentId == null) {
+      setState(() {
+        selectedCommand = command;
+        selectedTable = tableForCommand;
+        activeOrder = null;
+        orderItems = [];
+        flowStep = 'order';
+      });
+    } else {
+      await _work(() async {
+        selectedCommand = command;
+        selectedTable = tableForCommand;
+        activeOrder = await api.get('/orders/$currentId/', accessToken: token);
+        await _refreshOrder();
+        flowStep = 'order';
+      });
+    }
     // Fora do `_work` acima de propósito: ele marca `busy`, e o vínculo da
     // mesa faz a própria chamada de API.
     await _ensureCommandTable();
@@ -390,11 +395,13 @@ mixin _CommandSection on _HomePageShared {
       setState(() {
         selectedTable = chosen;
         command['current_table'] = chosen['id'];
-        activeOrder = {
-          ...?activeOrder,
-          'table': chosen['id'],
-          'table_number': chosen['number'],
-        };
+        if (activeOrder != null) {
+          activeOrder = {
+            ...activeOrder!,
+            'table': chosen['id'],
+            'table_number': chosen['number'],
+          };
+        }
       });
     } catch (error) {
       if (mounted) {

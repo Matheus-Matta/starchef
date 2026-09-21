@@ -32,7 +32,7 @@ class Command(BaseCommand):
                 "Banco não é PostgreSQL: RLS não existe aqui. O isolamento "
                 "continua sendo só o do ORM (TenantQuerySetMixin)."
             ))
-            return
+            return None
 
         if options["status"]:
             return self._status()
@@ -40,7 +40,7 @@ class Command(BaseCommand):
         if options["remove"]:
             total = rls.uninstall(log=self.stdout.write)
             self.stdout.write(self.style.SUCCESS(f"{total} tabela(s) liberada(s)."))
-            return
+            return None
 
         total = rls.install(log=self.stdout.write)
         self.stdout.write(self.style.SUCCESS(f"{total} tabela(s) protegida(s)."))
@@ -59,6 +59,8 @@ class Command(BaseCommand):
                 "política não deixaria passar nada. Ligue a variável no mesmo "
                 "deploy em que rodar este comando."
             ))
+            return None
+        return None
 
     def _status(self):
         protegidas = rls.installed()

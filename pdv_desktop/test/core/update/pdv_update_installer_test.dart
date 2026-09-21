@@ -57,15 +57,20 @@ void main() {
     final helper = await prepared.helperScript.readAsString();
     expect(helper, contains('rollback'));
     expect(helper, contains(install.path));
+    // O script sai da lista e ganha nome: eram quatro pedaços de UM comando,
+    // e dentro do literal pareciam quatro argumentos.
+    final caminhoDoHelper = prepared.helperScript.path.replaceAll("'", "''");
+    final verificaSintaxe =
+        r'$errors=$null; [System.Management.Automation.Language.Parser]'
+        "::ParseFile('$caminhoDoHelper',"
+        r'[ref]$null,[ref]$errors) > $null; '
+        r'if ($errors.Count -gt 0) { $errors | Out-String; exit 1 }';
     final syntax = Platform.isWindows
         ? await Process.run('powershell.exe', [
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            r'$errors=$null; [System.Management.Automation.Language.Parser]'
-                "::ParseFile('${prepared.helperScript.path.replaceAll("'", "''")}',"
-                r'[ref]$null,[ref]$errors) > $null; '
-                r'if ($errors.Count -gt 0) { $errors | Out-String; exit 1 }',
+            verificaSintaxe,
           ])
         : await Process.run('/bin/sh', ['-n', prepared.helperScript.path]);
     expect(syntax.exitCode, isZero, reason: '${syntax.stderr}${syntax.stdout}');

@@ -7,7 +7,7 @@ de onde parou — não há "refazer do zero" nem estado só na memória do proce
 import logging
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.synchronization.constants import Operation, RunStatus, RunType
@@ -117,12 +117,22 @@ def _queryset(entrada, run):
 
     if entrada.scope == "store" and run.target_node.restaurant_id and "restaurant" in campos:
         consulta = consulta.filter(restaurant_id=run.target_node.restaurant_id)
-    if entrada.essential_filter and run.run_type == RunType.BOOTSTRAP:
+    if (entrada.essential_filter or entrada.essential_filter_any) and run.run_type == RunType.BOOTSTRAP:
         # Só na carga ESSENCIAL. Ali a loja leva o que precisa para abrir a
         # porta: cadastros mais o estado vivo do salão — a comanda aberta, o
         # caixa em turno. "Sincronizar tudo" ignora este filtro de propósito,
         # porque ali a promessa é trazer todos os dados da conta.
-        consulta = consulta.filter(**entrada.essential_filter)
+        alternativas = list(entrada.essential_filter_any)
+        if entrada.essential_filter:
+            alternativas.insert(0, entrada.essential_filter)
+        # As alternativas são OU entre si: uma linha desce se casar com
+        # QUALQUER uma. Sem isso, um pedido de origem `merged` (que o item do
+        # destino referencia) nunca desceria, e a FK do payload ficaria
+        # apontando para o vazio na loja nova — em retentativa eterna.
+        condicao = Q()
+        for kwargs in alternativas:
+            condicao |= Q(**kwargs)
+        consulta = consulta.filter(condicao).distinct()
     return consulta.order_by("pk")
 
 

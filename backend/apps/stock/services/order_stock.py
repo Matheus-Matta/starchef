@@ -220,13 +220,20 @@ def _direct_components(item, skipped):
     )
 
 
-def order_stock_components(order, *, skipped=None):
+def order_stock_components(order, *, skipped=None, items=None):
     """Todo o consumo do pedido, componente a componente.
 
     Exposta para que a tela consiga pre-visualizar a baixa sem grava-la.
+
+    ``items`` existe para a rodada de cozinha: depois que uma comanda entra
+    numa conta agrupada, os itens dela passam a pertencer ao pedido
+    consolidado, e `order.items` do pedido de ORIGEM fica vazio. O despacho da
+    rodada agendada precisa baixar o que a cozinha de fato recebeu — a lista do
+    lote —, nao o que sobrou no pedido de origem (nada).
     """
     skipped = skipped if skipped is not None else []
-    items = order.items.select_related(
+    consulta = items if items is not None else order.items
+    items = consulta.select_related(
         "product", "product__stock_ingredient"
     ).prefetch_related(
         "product__recipe__items__ingredient",
@@ -242,13 +249,16 @@ def order_stock_components(order, *, skipped=None):
         yield from _direct_components(item, skipped)
 
 
-@transaction.atomic
-def deduct_order_stock(*, order, user):
-    """Baixa o estoque consumido pelo pedido. Chamar de novo nao duplica nada."""
+def deduct_order_stock(*, order, user, items=None):
+    """Baixa o estoque consumido pelo pedido. Chamar de novo nao duplica nada.
+
+    ``items`` restringe a baixa a um conjunto explicito (a rodada de cozinha).
+    Ver `order_stock_components`.
+    """
     with tenant_context(order.account):
         location = _default_location(order, user)
         skipped = []
-        components = list(order_stock_components(order, skipped=skipped))
+        components = list(order_stock_components(order, skipped=skipped, items=items))
         if not components:
             return []
 

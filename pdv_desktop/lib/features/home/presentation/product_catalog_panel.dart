@@ -1,12 +1,8 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/product_image_url.dart';
-import '../../../core/widgets/shadcn_layout.dart';
 import 'product_card_metrics.dart';
+import 'product_catalog_tile.dart';
 
 class ProductCatalogPanel extends StatelessWidget {
   const ProductCatalogPanel({
@@ -20,6 +16,7 @@ class ProductCatalogPanel extends StatelessWidget {
     required this.onSearchChanged,
     required this.onCategoryChanged,
     required this.onProductPressed,
+    this.searchFocusNode,
   });
 
   final List<Map<String, dynamic>> products;
@@ -31,171 +28,144 @@ class ProductCatalogPanel extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Map<String, dynamic>> onProductPressed;
+  final FocusNode? searchFocusNode;
 
-  /// Quantos produtos cada categoria tem, sem refazer a conta a cada build.
-  ///
-  /// O painel se reconstrói a cada tecla da busca e a cada mudança de estado
-  /// da tela de vendas — e a contagem varria o catálogo INTEIRO em todas
-  /// elas. A lista de produtos só é reatribuída quando o catálogo é
-  /// recarregado (nunca alterada no lugar), então a identidade dela basta
-  /// como chave: mesma lista, mesma conta.
-  ///
-  /// Um registro só é suficiente porque existe um catálogo por vez na tela.
-  static List<Map<String, dynamic>>? _countedSource;
-  static Map<String, int> _countedResult = const {};
-
-  static Map<String, int> _categoryCounts(List<Map<String, dynamic>> products) {
-    if (identical(products, _countedSource)) return _countedResult;
-    final counts = <String, int>{};
-    for (final product in products) {
-      final categoryId = '${product['category'] ?? ''}';
-      if (categoryId.isNotEmpty) {
-        counts.update(categoryId, (value) => value + 1, ifAbsent: () => 1);
-      }
+  Map<String, int> get _categoryCounts {
+    final result = <String, int>{};
+    for (final product in allProducts) {
+      final id = '${product['category'] ?? ''}';
+      if (id.isNotEmpty) result.update(id, (n) => n + 1, ifAbsent: () => 1);
     }
-    _countedSource = products;
-    _countedResult = counts;
-    return counts;
+    return result;
+  }
+
+  bool _available(Map<String, dynamic> product) =>
+      product['is_active'] != false &&
+      product['available'] != false &&
+      product['is_available'] != false;
+
+  Map<String, dynamic>? get _firstAvailable {
+    for (final product in products) {
+      if (_available(product)) return product;
+    }
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final counts = _categoryCounts(allProducts);
-
+    final counts = _categoryCounts;
+    final firstAvailable = _firstAvailable;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: scheme.surface,
         border: Border.all(color: scheme.outlineVariant),
         borderRadius: AppTheme.radius,
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 520;
-          final searchField = TextField(
-            onChanged: onSearchChanged,
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search_rounded),
-              hintText: 'Buscar produto, código ou categoria...',
-            ),
-          );
-          final totalBadge = ShadBadge.outline(
-            shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.inventory_2_outlined,
-                  size: 16,
-                  color: scheme.onSurfaceVariant,
+                Expanded(
+                  child: TextField(
+                    focusNode: searchFocusNode,
+                    onChanged: onSearchChanged,
+                    onSubmitted: (_) {
+                      if (firstAvailable != null) {
+                        onProductPressed(firstAvailable);
+                      }
+                    },
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search_rounded),
+                      hintText: 'Buscar produto, código ou categoria',
+                      suffixIcon: _SearchShortcut(),
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 12),
                 Text(
-                  '${products.length} itens',
+                  '${products.length} produtos',
                   style: TextStyle(
                     color: scheme.onSurfaceVariant,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
             ),
-          );
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 15, 16, 12),
-                child: compact
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          searchField,
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: totalBadge,
-                          ),
-                        ],
-                      )
-                    : Row(
-                        children: [
-                          Expanded(child: searchField),
-                          const SizedBox(width: 10),
-                          totalBadge,
-                        ],
-                      ),
-              ),
-              Divider(height: 1, color: scheme.outlineVariant),
-              SizedBox(
-                height: 44,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  children: [
-                    _CategoryButton(
-                      label: 'Todos',
-                      count: allProducts.length,
-                      selected: selectedCategory == null,
-                      onPressed: () => onCategoryChanged(null),
-                    ),
-                    for (final item in categories) ...[
-                      const SizedBox(width: 7),
-                      _CategoryButton(
-                        label: '${item['name']}',
-                        count: counts['${item['id']}'] ?? 0,
-                        selected: selectedCategory == '${item['id']}',
-                        onPressed: () => onCategoryChanged('${item['id']}'),
-                      ),
-                    ],
-                  ],
+          ),
+          Divider(height: 1, color: scheme.outlineVariant),
+          SizedBox(
+            height: 43,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              children: [
+                _CategoryButton(
+                  label: 'Todos',
+                  count: allProducts.length,
+                  selected: selectedCategory == null,
+                  onPressed: () => onCategoryChanged(null),
                 ),
-              ),
-              Divider(height: 1, color: scheme.outlineVariant),
-              Expanded(
-                child: products.isEmpty
-                    ? _EmptyCatalog(search: search)
-                    : LayoutBuilder(
-                        builder: (context, constraints) => GridView.builder(
-                          padding: const EdgeInsets.all(10),
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: ProductCardMetrics.maxCardWidth,
-                            // A ALTURA VEM DA LARGURA, e não de um número
-                            // escolhido à mão: é assim que a foto fecha
-                            // quadrada. Um número fixo aqui só acertaria o
-                            // quadrado numa largura de painel específica —
-                            // em todas as outras a foto sairia deitada ou
-                            // em pé, dependendo de quantas colunas coubessem.
-                            mainAxisExtent: ProductCardMetrics.cardHeight(
-                              constraints.maxWidth - 20,
-                            ),
-                            crossAxisSpacing: ProductCardMetrics.spacing,
-                            mainAxisSpacing: ProductCardMetrics.spacing,
-                          ),
-                          itemCount: products.length,
-                          itemBuilder: (context, index) {
-                            final product = products[index];
-                            return _ProductCard(
-                              product: product,
-                              money: money,
-                              onPressed: () => onProductPressed(product),
-                            );
-                          },
+                for (final item in categories) ...[
+                  const SizedBox(width: 6),
+                  _CategoryButton(
+                    label: '${item['name']}',
+                    count: counts['${item['id']}'] ?? 0,
+                    selected: selectedCategory == '${item['id']}',
+                    onPressed: () => onCategoryChanged('${item['id']}'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Divider(height: 1, color: scheme.outlineVariant),
+          Expanded(
+            child: products.isEmpty
+                ? ProductCatalogEmptyState(search: search)
+                : GridView.builder(
+                    padding: const EdgeInsets.all(8),
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: ProductCardMetrics.maxCardWidth,
+                          mainAxisExtent: ProductCardMetrics.cardHeight,
+                          crossAxisSpacing: ProductCardMetrics.spacing,
+                          mainAxisSpacing: ProductCardMetrics.spacing,
                         ),
-                      ),
-              ),
-            ],
-          );
-        },
+                    itemCount: products.length,
+                    itemBuilder: (_, index) => ProductCatalogTile(
+                      product: products[index],
+                      money: money,
+                      onPressed: () => onProductPressed(products[index]),
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class _SearchShortcut extends StatelessWidget {
+  const _SearchShortcut();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    widthFactor: 1,
+    child: Text(
+      'F2  /',
+      style: TextStyle(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
 }
 
 class _CategoryButton extends StatelessWidget {
@@ -212,294 +182,10 @@ class _CategoryButton extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => ShadButton.raw(
-    variant: selected ? ShadButtonVariant.primary : ShadButtonVariant.outline,
-    onPressed: onPressed,
-    height: AppTheme.controlHeight,
-    padding: const EdgeInsets.symmetric(horizontal: 10),
-    leading: Icon(
-      selected ? Icons.check_rounded : Icons.restaurant_menu_outlined,
-      size: 15,
-    ),
-    child: Text(
-      '$label · $count',
-      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
-    ),
+  Widget build(BuildContext context) => SizedBox(
+    height: 32,
+    child: selected
+        ? FilledButton(onPressed: onPressed, child: Text('$label · $count'))
+        : OutlinedButton(onPressed: onPressed, child: Text('$label · $count')),
   );
-}
-
-class _ProductCard extends StatelessWidget {
-  const _ProductCard({
-    required this.product,
-    required this.money,
-    required this.onPressed,
-  });
-
-  final Map<String, dynamic> product;
-  final String Function(dynamic) money;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final promotional = product['promotional_price'] != null;
-    final weighed =
-        product['pricing_unit'] == 'kg' || product['is_weighed'] == true;
-    final code = '${product['internal_code'] ?? ''}'.trim();
-    final imageUrl = productImageUrl(product);
-
-    return ShadCard(
-      padding: EdgeInsets.zero,
-      radius: AppTheme.radius,
-      shadows: const [],
-      columnCrossAxisAlignment: CrossAxisAlignment.stretch,
-      child: Material(
-        color: Colors.transparent,
-        clipBehavior: Clip.antiAlias,
-        shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: AppTheme.radius,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // A PROPORÇÃO DA FOTO VEM DE UM LUGAR SÓ.
-              //
-              // Aqui e na altura do card ([ProductCardMetrics.cardHeight]) —
-              // se as duas discordarem, a foto sobra ou falta espaço e o card
-              // estoura. Já foi uma faixa de 76 px fixos por toda a largura,
-              // que cortava a foto em cima e embaixo em qualquer tamanho de
-              // painel.
-              AspectRatio(
-                aspectRatio: ProductCardMetrics.photoAspect,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _ProductImage(url: imageUrl),
-                    if (promotional || weighed)
-                      Positioned(
-                        top: 7,
-                        left: 7,
-                        child: ShadBadge.raw(
-                          variant: ShadBadgeVariant.secondary,
-                          backgroundColor: scheme.surface.withValues(
-                            alpha: .92,
-                          ),
-                          foregroundColor: scheme.onSurface,
-                          shape: const RoundedRectangleBorder(
-                            borderRadius: AppTheme.radius,
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 4,
-                          ),
-                          child: Text(
-                            promotional ? 'OFERTA' : 'POR KG',
-                            style: const TextStyle(
-                              fontSize: 8,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: .5,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(9, 7, 7, 7),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // O CÓDIGO SAIU DE DENTRO DO NOME.
-                      //
-                      // Ele vinha como prefixo do título, no mesmo corpo e no
-                      // mesmo peso: comia a primeira linha do nome — que só
-                      // tem duas — e num produto de nome longo o que sobrava
-                      // na tela era o número e reticências. Agora fica na
-                      // linha de cima da categoria, no tamanho dela.
-                      Text(
-                        '${product['name']}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.15,
-                          fontWeight: FontWeight.w800,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      if (code.isNotEmpty)
-                        Text(
-                          '#$code',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      Text(
-                        '${product['category_name'] ?? 'Sem categoria'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const Spacer(),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          // O PRECO CABE EM UMA LINHA, SEMPRE.
-                          //
-                          // Era um `Wrap`: num card estreito o "/ kg" descia
-                          // para a segunda linha e o preco riscado para uma
-                          // terceira, e o card ficava mais alto do que a
-                          // grade tinha reservado — o estouro aparecia so em
-                          // algumas larguras de painel, que sao justamente as
-                          // que deixam as colunas mais estreitas. Numa linha
-                          // so, a altura do texto para de depender da largura.
-                          Expanded(
-                            child: Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: money(product['current_price']),
-                                    style: TextStyle(
-                                      color: scheme.primary,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                  if (weighed)
-                                    TextSpan(
-                                      text: ' /kg',
-                                      style: TextStyle(
-                                        color: scheme.onSurfaceVariant,
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  if (promotional &&
-                                      product['sale_price'] !=
-                                          product['promotional_price'])
-                                    TextSpan(
-                                      text: '  ${money(product['sale_price'])}',
-                                      style: TextStyle(
-                                        color: scheme.onSurfaceVariant,
-                                        fontSize: 9,
-                                        decoration: TextDecoration.lineThrough,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              color: scheme.primary,
-                              borderRadius: AppTheme.radius,
-                            ),
-                            child: const Icon(
-                              Icons.add_rounded,
-                              size: 18,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ProductImage extends StatelessWidget {
-  const _ProductImage({required this.url});
-
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final fallback = ColoredBox(
-      color: scheme.surfaceContainer,
-      child: Center(
-        child: Icon(
-          Icons.restaurant_menu_outlined,
-          size: 30,
-          color: scheme.onSurfaceVariant.withValues(alpha: .7),
-        ),
-      ),
-    );
-    if (url.isEmpty) return fallback;
-    // A imagem é DECODIFICADA no tamanho do card, não no tamanho do arquivo.
-    //
-    // Sem isso, uma foto de 2000x1500 do cardápio ocupa ~12 MB de bitmap na
-    // memória para aparecer num quadro de menos de 200 px — e o catálogo
-    // desenha dezenas deles ao mesmo tempo. O pixel ratio entra na conta para
-    // a foto continuar nítida numa tela HiDPI.
-    //
-    // UMA DIMENSÃO SÓ, e essa parte é o que estava errado. Passando
-    // `cacheWidth` E `cacheHeight` juntos, o decodificador entrega o bitmap
-    // exatamente nessa medida e ignora a proporção original: a foto chegava
-    // aqui já achatada ou esticada, e o `BoxFit.cover` não tinha como
-    // desfazer. Com a moldura quadrada o efeito virou o que se vê na tela —
-    // um prato deitado ficando em pé. Fixando só a largura, a proporção é
-    // preservada e o corte fica por conta do `cover`, que é quem sabe fazer
-    // isso sem deformar.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final ratio = MediaQuery.devicePixelRatioOf(context);
-        // Numa moldura quadrada as duas medidas são iguais; o `max` cobre o
-        // caso de a moldura deixar de ser quadrada algum dia sem que a foto
-        // volte a sair borrada.
-        final side = math.max(constraints.maxWidth, constraints.maxHeight);
-        return Image.network(
-          url,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.medium,
-          cacheWidth: side.isFinite && side > 0 ? (side * ratio).round() : null,
-          errorBuilder: (_, _, _) => fallback,
-        );
-      },
-    );
-  }
-}
-
-class _EmptyCatalog extends StatelessWidget {
-  const _EmptyCatalog({required this.search});
-
-  final String search;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppEmptyState(
-      icon: search.trim().isEmpty
-          ? Icons.inventory_2_outlined
-          : Icons.search_off_rounded,
-      title: search.trim().isEmpty
-          ? 'Nenhum produto disponível'
-          : 'Nenhum produto encontrado',
-      description: search.trim().isEmpty
-          ? 'Verifique o cardápio e a disponibilidade da unidade.'
-          : 'Tente buscar por outro nome, código ou categoria.',
-    );
-  }
 }

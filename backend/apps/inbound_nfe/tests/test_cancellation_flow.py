@@ -6,14 +6,13 @@ tratamento de patrimônio e bloqueios operacionais.
 
 from decimal import Decimal
 from django.test import TestCase
-from django.utils import timezone
 from apps.accounts.models import Account
 from apps.restaurants.models import Restaurant
 from apps.menu.models import Product
-from apps.stock.models import StockLocation, StockMovement, GoodsReceipt, InventoryLot
+from apps.stock.models import StockLocation, StockMovement, GoodsReceipt
 from apps.assets.models import Asset
 from django.contrib.auth import get_user_model
-from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, NFeEvent, NFeIssue
+from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, NFeIssue
 from apps.inbound_nfe.services.event_parser import parse_nfe_event
 from apps.inbound_nfe.services.cancellation import apply_cancellation
 from apps.inbound_nfe.services.status_query import parse_and_apply_cons_sit_response
@@ -230,7 +229,9 @@ class NFeCancellationFlowTestCase(TestCase):
             product_total=Decimal("20.00"),
             product=self.product,
         )
-        entry_movement = StockMovement.objects.create(
+        # Criado pelo efeito colateral: este teste exercita o cancelamento em
+        # cima do movimento, sem afirmar sobre o objeto devolvido.
+        StockMovement.objects.create(
             account=self.account,
             restaurant=self.restaurant,
             product=self.product,

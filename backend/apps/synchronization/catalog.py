@@ -30,8 +30,11 @@ def _e(entity_type, model_label, **kwargs):
 # "a loja não opera planos" quer dizer.
 _e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local",
    exclude_fields=("plan",))
+# `cash_action_password` é o hash da senha de operação do caixa. O filtro
+# global de segredos já o barrava; declarar aqui é o que torna isso uma DECISÃO
+# em vez de um efeito colateral do nome do campo.
 _e("restaurant", "restaurants.Restaurant", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account",))
+   dependencies=("account",), exclude_fields=("cash_action_password",))
 _e("branch", "restaurants.Branch", conflict_policy=CLOUD, flow="cloud_to_local",
    dependencies=("restaurant",))
 
@@ -47,7 +50,27 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
    # a exclusão mirava no vazio. O CSC só estava protegido por acidente, porque
    # `csc_token` contém "token" e o filtro global o pegava. Um teste agora
    # recusa `exclude_fields` apontando para campo inexistente.
-   exclude_fields=("csc_id", "csc_token", "certificate_ref"),
+   # O SEGREDO DE EMISSÃO NÃO VIAJA. Estes oito abrem a assinatura da nota:
+   # o certificado A1 em si, a senha dele e os tokens do provedor. O CSC vai
+   # por canal próprio, cifrado (ver a memória "CSC no terminal").
+   exclude_fields=("csc_id", "csc_token", "certificate_ref",
+                   "certificate_file", "certificate_password",
+                   "provider_token", "focus_token_production",
+                   "focus_token_homologation", "focus_certificate_base64",
+                   "focus_certificate_password"),
+   # OS TRÊS ABAIXO NÃO SÃO SEGREDO, e o filtro global os barrava só porque o
+   # nome contém "certificate" — um casamento por substring.
+   #
+   # O buraco era silencioso, e é o pior formato: `fiscal_config` DESCE da
+   # nuvem para a loja, então uma tela da loja avisando "seu certificado vence
+   # em 10 dias" nunca receberia a data, e ninguém saberia por quê.
+   #
+   # Nenhum dos três revela a chave privada ou a senha: é uma data, um CNPJ
+   # (que já viaja em `restaurant.cnpj`) e o nome do titular. A liberação é
+   # NOMINAL de propósito — campo a campo, aparecendo no diff —, e
+   # `CAMPOS_PROIBIDOS` continua intacto para todo o resto.
+   allow_fields=("certificate_valid_until", "certificate_cnpj",
+                 "certificate_name"),
    # `local_fiscal_url` é o endereço do Comunicador NAQUELA máquina, como o IP
    # da impressora: a nuvem não tem como saber e não pode zerar o que o
    # técnico configurou na loja.
@@ -148,7 +171,13 @@ _e("printer", "printers.Printer", conflict_policy=CLOUD, dependencies=("restaura
 # Na balança, além do endereço, a posse do agente: `agent_instance_id` e
 # `agent_lease_expires_at` dizem QUAL processo daquela loja está segurando a
 # balança agora. A nuvem não tem como saber e sobrescrever derruba a leitura.
+# `active_command`/`active_command_until` NÃO viajam: eles são o cartão que
+# está encostado NAQUELA balança, agora. Sincronizá-los deixaria o sync
+# ressuscitar na loja o cartão de um cliente que já foi embora — e o prato do
+# próximo cairia na conta dele. `weighing_mode` e `command_binding_seconds`
+# são configuração e sincronizam normalmente.
 _e("scale", "printers.Scale", conflict_policy=CLOUD, dependencies=("restaurant",),
+   exclude_fields=("active_command", "active_command_until"),
    local_only_fields=("port", "protocol", "agent_instance_id",
                       "agent_lease_expires_at"))
 _e("kds_station", "kitchen.KdsStation", conflict_policy=CLOUD, dependencies=("restaurant",))
@@ -211,26 +240,83 @@ ABERTOS = ["open", "awaiting_payment"]
 CAIXA_VIVO = ["pending_opening", "open", "blocked",
               "pending_manager_approval", "pending_closing"]
 
+# CONTA AGRUPADA: o pedido de origem fica em `merged`, que NÃO está em
+# ABERTOS. Ele mesmo assim precisa descer na carga essencial, porque o item do
+# pedido consolidado aponta para ele por `origin_order` e `OrderMergeSource`
+# também. Sem isso, a loja nova recebe um item cuja FK não encontra alvo —
+# "ainda não existe aqui", em retentativa eterna.
+#
+# Incluir `merged` global em ABERTOS traria o histórico inteiro. `MERGE_VIVO`
+# desce só o que participa de uma consolidação que ainda está de pé.
+MERGE_VIVO = ["open", "confirmed"]
+ORIGENS_VIVAS = {"merge_participations__merge__status__in": MERGE_VIVO,
+                 "merge_participations__active": True}
+
 _e("order", "orders.Order", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("restaurant", "table", "customer"),
-   seed_to_local=True, essential_filter={"status__in": ABERTOS})
+   seed_to_local=True, essential_filter={"status__in": ABERTOS},
+   essential_filter_any=(ORIGENS_VIVAS,))
 _e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("order",),
-   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS},
+   # As rodadas da origem consolidada descem junto: elas são a história de
+   # produção do prato que o cliente ainda está esperando, e o lote continua
+   # apontando para o pedido de origem de propósito.
+   essential_filter_any=({f"order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
 _e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order", "product"),
-   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
+   # `command` é nova dependência: o item agora sabe de quem ele é.
+   # `origin_order` usa a dependência `order`, que já está declarada.
+   dependencies=("order", "product", "command"),
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS},
+   essential_filter_any=({f"order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
 _e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("order_item", "product_addon"),
-   seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS})
+   seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS},
+   essential_filter_any=({f"item__order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
+# A consolidação e suas fontes nascem na loja e sobem, como o pedido. Elas
+# DESCEM na carga essencial porque uma loja que assume a operação precisa
+# herdar a conta que o caixa já está montando — inclusive com pagamento
+# parcial, senão ela recomeça a cobrança do zero com os cartões presos.
+#
+# ORDEM DE CARGA: `order_merge` depende de `order` (o destino);
+# `order_merge_source` depende das três. Errar a ordem não quebra teste
+# nenhum — quebra a carga inicial de uma loja nova, com "ainda não existe
+# aqui" em retentativa eterna.
+_e("order_merge", "orders.OrderMerge", conflict_policy=LOJA, flow="local_to_cloud",
+   dependencies=("order",),
+   seed_to_local=True, essential_filter={"status__in": MERGE_VIVO})
+_e("order_merge_source", "orders.OrderMergeSource", conflict_policy=LOJA, flow="local_to_cloud",
+   dependencies=("order_merge", "order", "command"),
+   seed_to_local=True, essential_filter={"merge__status__in": MERGE_VIVO})
 _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("restaurant", "cash_station"),
    seed_to_local=True, essential_filter={"status__in": CAIXA_VIVO})
-# Movimento é imutável: a loja insere e nunca reescreve. Ele desce junto da
-# sessão porque o saldo do caixa aberto é a soma deles — sem os movimentos, a
-# sangria e o suprimento do turno sumiriam da conferência.
+# O movimento de caixa NÃO é append-only, e dizer que era custava dinheiro.
+#
+# Ele foi declarado `immutable=True` com a frase "a loja insere e nunca
+# reescreve". A frase descreve um livro-razão; o model não é um. Ele tem ciclo
+# de vida:
+#
+#     pending  ──(o gerente aprova a sangria)──►  approved
+#     approved ──(o recebimento é cancelado)───►  cancelled
+#
+# Com `immutable`, o destino insere e nunca atualiza: as duas setas morriam na
+# chegada. E o saldo é `Sum(amount)` sobre `status="approved"`, então o efeito
+# era aritmético — **a nuvem fechava o turno com um valor diferente do da
+# loja, sempre para o mesmo lado**: a sangria aprovada continuava `pending` lá
+# (dinheiro a mais na conferência) e a venda estornada continuava `approved`
+# (dinheiro a mais de novo).
+#
+# O que protege contra reescrita não é o `immutable`, é a ordem de versão:
+# `conflicts.decide` IGNORA um evento cuja versão seja anterior à local, e a
+# entidade é de mão única (`local_to_cloud`), então a nuvem nunca empurra nada
+# para baixo. Um evento atrasado não ressuscita um movimento cancelado — há
+# teste para isso em `test_movimento_de_caixa_sincroniza.py`.
+#
+# Ele desce junto da sessão porque o saldo do caixa aberto é a soma deles —
+# sem os movimentos, a sangria e o suprimento do turno sumiriam da conferência.
 _e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("cash_register",), immutable=True,
+   dependencies=("cash_register",),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
 _e("payment", "payments.Payment", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("order", "payment_method", "cash_register"),

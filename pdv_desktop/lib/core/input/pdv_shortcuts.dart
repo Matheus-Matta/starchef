@@ -155,7 +155,8 @@ abstract final class PdvShortcuts {
     PdvShortcut(
       id: PdvAction.help,
       label: 'Ajuda e atalhos',
-      description: 'Abre esta página, com os atalhos da tela atual e do sistema.',
+      description:
+          'Abre esta página, com os atalhos da tela atual e do sistema.',
       trigger: ShortcutTrigger(LogicalKeyboardKey.f1, label: 'F1'),
       group: 'Navegação',
     ),
@@ -180,13 +181,18 @@ abstract final class PdvShortcuts {
       id: PdvAction.orders,
       label: 'Lista de pedidos',
       description: 'Abre a lista de pedidos do restaurante.',
-      trigger: ShortcutTrigger(LogicalKeyboardKey.f4, label: 'F4'),
+      trigger: ShortcutTrigger(
+        LogicalKeyboardKey.keyO,
+        control: true,
+        label: 'O',
+      ),
       group: 'Navegação',
     ),
     PdvShortcut(
       id: PdvAction.refresh,
       label: 'Atualizar e sincronizar',
-      description: 'Recarrega os dados da tela e tenta esvaziar a fila de envio.',
+      description:
+          'Recarrega os dados da tela e tenta esvaziar a fila de envio.',
       trigger: ShortcutTrigger(LogicalKeyboardKey.f5, label: 'F5'),
       group: 'Navegação',
     ),
@@ -240,6 +246,15 @@ abstract final class PdvShortcuts {
       id: PdvAction.payment,
       label: 'Ir para pagamento',
       description: 'Abre o fechamento do pedido atual.',
+      trigger: ShortcutTrigger(LogicalKeyboardKey.f4, label: 'F4'),
+      requiresOrder: true,
+      guardsRepeat: true,
+      group: 'Atendimento',
+    ),
+    PdvShortcut(
+      id: PdvAction.payment,
+      label: 'Ir para pagamento (alternativo)',
+      description: 'Mesma ação do F4, preservada para operadores habituados.',
       trigger: ShortcutTrigger(LogicalKeyboardKey.f10, label: 'F10'),
       requiresOrder: true,
       guardsRepeat: true,
@@ -265,6 +280,14 @@ abstract final class PdvShortcuts {
     PdvShortcut(
       id: PdvAction.focusSearch,
       label: 'Focar a busca (alternativo)',
+      description: 'Mesma ação do F2.',
+      trigger: ShortcutTrigger(LogicalKeyboardKey.slash, label: '/'),
+      screens: {PdvScreen.order, PdvScreen.orders, PdvScreen.context},
+      group: 'Navegação',
+    ),
+    PdvShortcut(
+      id: PdvAction.focusSearch,
+      label: 'Focar a busca (Ctrl + F)',
       description: 'Mesma ação do F2.',
       trigger: ShortcutTrigger(
         LogicalKeyboardKey.keyF,
@@ -304,15 +327,16 @@ abstract final class PdvShortcuts {
       id: PdvAction.confirm,
       label: 'Confirmar a ação principal',
       description:
-          'Confirma o que a tela está oferecendo: fechar o pedido, abrir a '
+          'Confirma o que a tela está oferecendo: adicionar o primeiro '
+          'produto filtrado, abrir a '
           'comanda filtrada, registrar o recebimento. Dentro de um campo, o '
           'Enter continua sendo dele. Nos diálogos de configuração do produto '
           'e de pesagem, o Enter é o próprio "Adicionar" — só quando a escolha '
           'obrigatória já foi feita.',
       trigger: ShortcutTrigger(LogicalKeyboardKey.enter, label: 'Enter'),
       screens: {PdvScreen.order, PdvScreen.context, PdvScreen.payment},
-      // A tecla mais fácil de segurar sem perceber — e aqui ela fecha pedido
-      // e registra recebimento.
+      // A tecla mais fácil de segurar sem perceber — e no pagamento ela
+      // registra recebimento.
       guardsRepeat: true,
       group: 'Navegação',
     ),

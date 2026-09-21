@@ -82,6 +82,16 @@ void main() {
       'restaurant': 'rest-1',
       'current_order_id': 'order-1',
     },
+    {
+      // O NÚMERO desta comanda é igual ao código interno de um produto. É a
+      // armadilha que a ordem da busca na tela de venda existe para evitar.
+      'id': 'cmd-beb01',
+      'code': 'CMD-9999',
+      'number': 'BEB-01',
+      'status': 'free',
+      'restaurant': 'rest-1',
+      'current_order_id': null,
+    },
   ];
 
   /// Imita a busca do DRF: `search` casa qualquer trecho de nome, código
@@ -93,8 +103,9 @@ void main() {
   ) => fonte
       .where(
         (item) => campos.any(
-          (campo) =>
-              '${item[campo] ?? ''}'.toLowerCase().contains(termo.toLowerCase()),
+          (campo) => '${item[campo] ?? ''}'.toLowerCase().contains(
+            termo.toLowerCase(),
+          ),
         ),
       )
       .toList();
@@ -290,5 +301,54 @@ void main() {
 
     expect(result.found, isFalse);
     expect(chamadas, isEmpty);
+  });
+
+  group('na tela de venda, um código é produto ou é comanda', () {
+    test('o EAN do cardápio vira produto, nunca cartão', () async {
+      final achado = await lookup().findForSale(
+        '7891000100103',
+        restaurantId: 'rest-1',
+      );
+
+      expect(achado.product?['id'], 'prod-refri');
+      expect(achado.command, isNull);
+    });
+
+    test('o cartão passado no leitor vira comanda', () async {
+      final achado = await lookup().findForSale(
+        'CMD-0007',
+        restaurantId: 'rest-1',
+      );
+
+      expect(achado.command?['id'], 'cmd-7');
+      expect(achado.product, isNull);
+    });
+
+    test(
+      'código que serve aos dois é PRODUTO, e essa ordem é a regra',
+      () async {
+        // `BEB-01` é o código interno de um produto e, de propósito, também o
+        // número de uma comanda. Procurando cartão primeiro, bipar o
+        // refrigerante trocaria a comanda do pedido em vez de vender o item —
+        // com o cliente na frente e sem nada na tela explicando o que houve.
+        final achado = await lookup().findForSale(
+          'BEB-01',
+          restaurantId: 'rest-1',
+        );
+
+        expect(achado.product?['id'], 'prod-refri');
+        expect(achado.command, isNull);
+      },
+    );
+
+    test('código que não é nem um nem outro não faz nada', () async {
+      final achado = await lookup().findForSale(
+        'nao-existe',
+        restaurantId: 'rest-1',
+      );
+
+      expect(achado.product, isNull);
+      expect(achado.command, isNull);
+    });
   });
 }

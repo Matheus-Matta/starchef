@@ -38,13 +38,19 @@ mixin _OrdersView on _HomePageShared {
   Future<void> _payOrder(Map<String, dynamic> order);
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
 
-  /// Dois pixels acima e abaixo, para o campo não colar na linha.
-  ///
-  /// Por fora e não por dentro: por dentro o respiro empurraria o conteúdo e o
-  /// campo ficaria mais alto que os vizinhos — a escadinha que esta barra
-  /// acabou de deixar de ter.
-  static Widget _respiro(Widget child) =>
-      Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: child);
+  static const _filterWidth = 220.0;
+  static const _filterHeight = 48.0;
+
+  static Widget _filter(Widget child) =>
+      SizedBox(width: _filterWidth, height: _filterHeight, child: child);
+
+  // O rótulo flutuante ocupa parte da altura do InputDecorator. Sem padding
+  // vertical próprio, a borda do select fica menor que a busca e o botão.
+  static const _selectPadding = EdgeInsets.symmetric(
+    horizontal: 10,
+    vertical: 12,
+  );
+  static const _filterConstraints = BoxConstraints(minHeight: _filterHeight);
 
   Widget _ordersFilterBar() {
     final range = orderDateRange;
@@ -58,18 +64,18 @@ mixin _OrdersView on _HomePageShared {
         orderStatusFilter != 'pending' ||
         orderOrdering != '-updated_at';
     return Wrap(
-      spacing: 12,
-      runSpacing: 12,
+      spacing: 8,
+      runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        SizedBox(
-          width: 300,
-          child: TextField(
+        _filter(
+          TextField(
             controller: ordersSearchController,
             focusNode: ordersSearchFocus,
             decoration: InputDecoration(
+              constraints: _filterConstraints,
               prefixIcon: const Icon(Icons.search_rounded),
-              hintText: 'Nº do pedido, cliente ou mesa...',
+              hintText: 'Pedido, cliente ou mesa',
               suffixIcon: orderSearch.isEmpty
                   ? null
                   : IconButton(
@@ -88,114 +94,117 @@ mixin _OrdersView on _HomePageShared {
             },
           ),
         ),
-        SizedBox(
-          width: 230,
-          child: _respiro(
-            DropdownButtonFormField<String>(
-              initialValue: orderStatusFilter,
-              // Sem `isExpanded` o rótulo selecionado usa a largura natural do
-              // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
-              // 230 px com o texto ampliado.
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Situação'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'pending',
-                  child: Text(
-                    'Pendentes de pagamento',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem(value: 'open', child: Text('Em aberto')),
-                DropdownMenuItem(
-                  value: 'awaiting_payment',
-                  child: Text(
-                    'Aguardando pagamento',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem(value: 'paid', child: Text('Pagos')),
-                DropdownMenuItem(value: 'all', child: Text('Todos')),
-              ],
-              onChanged: (value) {
-                setState(() => orderStatusFilter = value ?? 'pending');
-                _onOrdersFilterChanged();
-              },
+        _filter(
+          DropdownButtonFormField<String>(
+            key: ValueKey('status-$orderStatusFilter'),
+            initialValue: orderStatusFilter,
+            // Sem `isExpanded` o rótulo selecionado usa a largura natural do
+            // texto e estoura a caixa — "Pendentes de pagamento" não cabe em
+            // 220 px com o texto ampliado.
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Situação',
+              contentPadding: _selectPadding,
+              constraints: _filterConstraints,
             ),
+            items: const [
+              DropdownMenuItem(
+                value: 'pending',
+                child: Text(
+                  'Pendentes de pagamento',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(value: 'open', child: Text('Em aberto')),
+              DropdownMenuItem(
+                value: 'awaiting_payment',
+                child: Text(
+                  'Aguardando pagamento',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(value: 'paid', child: Text('Pagos')),
+              DropdownMenuItem(value: 'all', child: Text('Todos')),
+            ],
+            onChanged: (value) {
+              setState(() => orderStatusFilter = value ?? 'pending');
+              _onOrdersFilterChanged();
+            },
           ),
         ),
-        SizedBox(
-          width: 180,
-          child: _respiro(
-            DropdownButtonFormField<String?>(
-              initialValue: orderTypeFilter,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Tipo'),
-              items: const [
-                DropdownMenuItem(value: null, child: Text('Todos os tipos')),
-                DropdownMenuItem(value: 'command', child: Text('Comanda')),
-                DropdownMenuItem(value: 'counter', child: Text('Balcão')),
-                DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
-                DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
-              ],
-              onChanged: (value) {
-                setState(() => orderTypeFilter = value);
-                _onOrdersFilterChanged();
-              },
+        _filter(
+          DropdownButtonFormField<String?>(
+            key: ValueKey('type-$orderTypeFilter'),
+            initialValue: orderTypeFilter,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Tipo',
+              contentPadding: _selectPadding,
+              constraints: _filterConstraints,
             ),
+            items: const [
+              DropdownMenuItem(value: null, child: Text('Todos os tipos')),
+              DropdownMenuItem(value: 'command', child: Text('Comanda')),
+              DropdownMenuItem(value: 'counter', child: Text('Balcão')),
+              DropdownMenuItem(value: 'takeaway', child: Text('Retirada')),
+              DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
+            ],
+            onChanged: (value) {
+              setState(() => orderTypeFilter = value);
+              _onOrdersFilterChanged();
+            },
           ),
         ),
-        SizedBox(
-          width: 210,
-          child: _respiro(
-            DropdownButtonFormField<String>(
-              initialValue: orderOrdering,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Ordenar por'),
-              items: const [
-                DropdownMenuItem(
-                  value: '-updated_at',
-                  child: Text(
-                    'Última atualização',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: '-opened_at',
-                  child: Text(
-                    'Abertos recentemente',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: 'opened_at',
-                  child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
-                ),
-                DropdownMenuItem(
-                  value: '-total',
-                  child: Text('Maior valor', overflow: TextOverflow.ellipsis),
-                ),
-                DropdownMenuItem(
-                  value: 'total',
-                  child: Text('Menor valor', overflow: TextOverflow.ellipsis),
-                ),
-                DropdownMenuItem(
-                  value: '-sequence',
-                  child: Text(
-                    'Nº decrescente',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                DropdownMenuItem(
-                  value: 'sequence',
-                  child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
-                ),
-              ],
-              onChanged: (value) {
-                setState(() => orderOrdering = value ?? '-updated_at');
-                _onOrdersFilterChanged();
-              },
+        _filter(
+          DropdownButtonFormField<String>(
+            key: ValueKey('ordering-$orderOrdering'),
+            initialValue: orderOrdering,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Ordenar por',
+              contentPadding: _selectPadding,
+              constraints: _filterConstraints,
             ),
+            items: const [
+              DropdownMenuItem(
+                value: '-updated_at',
+                child: Text(
+                  'Última atualização',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
+                value: '-opened_at',
+                child: Text(
+                  'Abertos recentemente',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'opened_at',
+                child: Text('Mais antigos', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: '-total',
+                child: Text('Maior valor', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'total',
+                child: Text('Menor valor', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: '-sequence',
+                child: Text('Nº decrescente', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'sequence',
+                child: Text('Nº crescente', overflow: TextOverflow.ellipsis),
+              ),
+            ],
+            onChanged: (value) {
+              setState(() => orderOrdering = value ?? '-updated_at');
+              _onOrdersFilterChanged();
+            },
           ),
         ),
         _ordersDateRangeMenu(dateLabel),
@@ -205,8 +214,10 @@ mixin _OrdersView on _HomePageShared {
         // texto "Limpar filtros" pesava mais na barra do que a ação merece —
         // ela só existe quando há filtro aplicado.
         if (hasFilters)
-          _respiro(
-            IconButton.outlined(
+          SizedBox(
+            width: _filterHeight,
+            height: _filterHeight,
+            child: IconButton.outlined(
               tooltip: 'Limpar filtros',
               onPressed: () {
                 ordersSearchController.clear();
@@ -255,103 +266,21 @@ mixin _OrdersView on _HomePageShared {
       '${value.day.toString().padLeft(2, '0')}/'
       '${value.month.toString().padLeft(2, '0')}';
 
-  /// Menu compacto de período, ancorado no botão — em vez do seletor nativo,
-  /// que abre um diálogo grande e cobre a tela para escolher só duas datas.
-  /// Os atalhos cobrem o uso comum; "Personalizado" ainda cai no seletor
-  /// nativo, só para quem realmente precisa de datas específicas.
+  /// Menu compacto de período, inclusive a escolha personalizada.
   Widget _ordersDateRangeMenu(String label) {
-    final today = DateTime.now();
-    final startOfToday = DateTime(today.year, today.month, today.day);
-
-    DateTimeRange lastDays(int count) => DateTimeRange(
-      start: startOfToday.subtract(Duration(days: count - 1)),
-      end: startOfToday,
-    );
-
-    void apply(DateTimeRange? range) {
-      setState(() => orderDateRange = range);
-      _onOrdersFilterChanged();
-    }
-
-    // Um botão pequeno, não um campo.
-    //
-    // Chegou a ser vestido de `InputDecorator` para casar com os vizinhos, e
-    // ficou parecendo um select que não abre lista. A altura já vem certa do
-    // tema, então o alinhamento com a barra não depende mais do disfarce — e
-    // um botão diz melhor o que ele faz: abre um menu de atalhos.
-    return _respiro(
-      MenuAnchor(
-        builder: (context, controller, child) => OutlinedButton.icon(
-          onPressed: () =>
-              controller.isOpen ? controller.close() : controller.open(),
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            textStyle: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          icon: const Icon(Icons.date_range_outlined, size: 16),
-          label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    return _filter(
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OrdersDateRangeMenu(
+          label: label,
+          range: orderDateRange,
+          onChanged: (range) {
+            setState(() => orderDateRange = range);
+            _onOrdersFilterChanged();
+          },
         ),
-        menuChildren: [
-          MenuItemButton(
-            onPressed: () =>
-                apply(DateTimeRange(start: startOfToday, end: startOfToday)),
-            child: const Text('Hoje'),
-          ),
-          MenuItemButton(
-            onPressed: () {
-              final yesterday = startOfToday.subtract(const Duration(days: 1));
-              apply(DateTimeRange(start: yesterday, end: yesterday));
-            },
-            child: const Text('Ontem'),
-          ),
-          MenuItemButton(
-            onPressed: () => apply(lastDays(7)),
-            child: const Text('Últimos 7 dias'),
-          ),
-          MenuItemButton(
-            onPressed: () => apply(lastDays(30)),
-            child: const Text('Últimos 30 dias'),
-          ),
-          MenuItemButton(
-            onPressed: () => apply(
-              DateTimeRange(
-                start: DateTime(today.year, today.month, 1),
-                end: startOfToday,
-              ),
-            ),
-            child: const Text('Este mês'),
-          ),
-          const Divider(height: 1),
-          MenuItemButton(
-            onPressed: () => unawaited(_pickCustomDateRange()),
-            child: const Text('Personalizado...'),
-          ),
-          if (orderDateRange != null)
-            MenuItemButton(
-              onPressed: () => apply(null),
-              child: const Text('Limpar período'),
-            ),
-        ],
       ),
     );
-  }
-
-  Future<void> _pickCustomDateRange() async {
-    final now = DateTime.now();
-    final picked = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(now.year - 2),
-      lastDate: DateTime(now.year + 1),
-      initialDateRange: orderDateRange,
-      helpText: 'Período de abertura',
-      saveText: 'Aplicar',
-    );
-    if (picked == null || !mounted) return;
-    setState(() => orderDateRange = picked);
-    _onOrdersFilterChanged();
   }
 
   Widget _ordersPage() {

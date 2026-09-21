@@ -18,7 +18,7 @@ perder a proteção.
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-from apps.synchronization.constants import ENVIRONMENT_DEVELOPMENT, ENVIRONMENTS_ALLOWED
+from apps.synchronization.constants import ENVIRONMENTS_ALLOWED
 
 MENSAGEM = (
     "SYNC_ENVIRONMENT precisa ser um destes: "

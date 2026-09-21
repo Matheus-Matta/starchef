@@ -21,9 +21,16 @@ def parse_and_validate_certificate(pfx_data: bytes, password: str | bytes):
         private_key, cert, _ = load_key_and_certificates(pfx_data, pwd_bytes)
     except Exception as exc:
         err_msg = str(exc).lower()
+        # `from exc` mantém o erro de criptografia na cadeia: é ele que
+        # distingue "senha errada" de "arquivo corrompido" quando as duas
+        # mensagens acima parecem igualmente plausíveis no suporte.
         if "mac" in err_msg or "decrypt" in err_msg or "password" in err_msg or "verify failure" in err_msg:
-            raise serializers.ValidationError({"certificate_password": "Senha incorreta para o certificado A1."})
-        raise serializers.ValidationError({"certificate_file": "Arquivo de certificado A1 inválido ou corrompido (deve ser .pfx ou .p12)."})
+            raise serializers.ValidationError(
+                {"certificate_password": "Senha incorreta para o certificado A1."}
+            ) from exc
+        raise serializers.ValidationError(
+            {"certificate_file": "Arquivo de certificado A1 inválido ou corrompido (deve ser .pfx ou .p12)."}
+        ) from exc
 
     if not cert:
         raise serializers.ValidationError({"certificate_file": "Nenhum certificado encontrado no arquivo .pfx."})
@@ -353,6 +360,7 @@ class InvoiceItemSerializer(TenantModelSerializer):
 class InvoiceSerializer(TenantModelSerializer):
     items = InvoiceItemSerializer(many=True, read_only=True)
     access_key_formatted = serializers.SerializerMethodField()
+    order_sequence = serializers.IntegerField(source="order.sequence", read_only=True)
 
     class Meta:
         model = Invoice
@@ -369,9 +377,8 @@ class InvoiceSerializer(TenantModelSerializer):
             "status",
             "issued_at",
         ]
-        # Nota fiscal com total negativo nao existe: devolucao e outro
-        # documento, com natureza propria. Aceitar o sinal invertido aqui
-        # gravava um valor que a SEFAZ recusaria depois.
+        # Nota fiscal negativa nao existe: devolucao tem natureza propria.
+        # Aceitar o sinal invertido gravava um valor que a SEFAZ recusaria.
 
     def get_access_key_formatted(self, obj):
         return format_access_key(obj.access_key)

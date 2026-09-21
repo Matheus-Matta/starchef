@@ -41,8 +41,8 @@ mixin _CommandView on _HomePageShared {
           children: [
             TextButton.icon(
               onPressed: () => setState(() {
-                flowStep = 'type';
-                orderType = null;
+                flowStep = 'order';
+                orderType = 'counter';
               }),
               icon: const Icon(Icons.arrow_back),
               label: const Text('Voltar'),
@@ -199,8 +199,8 @@ mixin _CommandView on _HomePageShared {
             children: [
               TextButton.icon(
                 onPressed: () => setState(() {
-                  flowStep = 'type';
-                  orderType = null;
+                  flowStep = 'order';
+                  orderType = 'counter';
                 }),
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Voltar'),

@@ -134,6 +134,7 @@ router.register("menu/recipe-items", RecipeItemViewSet, basename="recipe-items")
 router.register("menu/menus", MenuViewSet, basename="menus")
 router.register("menu/menu-items", MenuItemViewSet, basename="menu-items")
 router.register("orders/items", OrderItemViewSet, basename="order-items")
+# ANTES de "orders": o roteador casa na ordem, e `orders/{pk}` engoliria
 router.register("orders", OrderViewSet, basename="orders")
 router.register("sla", ServiceLevelAgreementViewSet, basename="sla")
 router.register("kitchen/stations", KdsStationViewSet, basename="kds-stations")

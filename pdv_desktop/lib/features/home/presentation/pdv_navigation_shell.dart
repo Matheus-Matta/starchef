@@ -11,7 +11,7 @@ import '../../../core/update/pdv_update_service.dart';
 ///
 /// Delivery não está aqui de propósito: ele deixou de ser um módulo próprio e
 /// passou a existir apenas como tipo de pedido dentro do fluxo de Pedidos.
-enum PdvDestination { menu, tables, orders, finance, scale, settings }
+enum PdvDestination { sale, tables, commands, orders, finance, scale, settings }
 
 class PdvSidebar extends StatelessWidget {
   const PdvSidebar({
@@ -54,8 +54,8 @@ class PdvSidebar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final destinations = <_SidebarEntry>[
       const _SidebarEntry(
-        destination: PdvDestination.menu,
-        label: 'Menu',
+        destination: PdvDestination.sale,
+        label: 'Venda',
         icon: Icons.grid_view_rounded,
       ),
       const _SidebarEntry(
@@ -63,7 +63,12 @@ class PdvSidebar extends StatelessWidget {
         label: 'Mesas',
         icon: Icons.table_restaurant_outlined,
       ),
-      if (showOrders)
+
+      const _SidebarEntry(
+        destination: PdvDestination.commands,
+        label: 'Comandas',
+        icon: Icons.qr_code_2_outlined,
+      ),      if (showOrders)
         const _SidebarEntry(
           destination: PdvDestination.orders,
           label: 'Pedidos',

@@ -584,7 +584,7 @@ abstract final class OrderPresenter {
 
   /// Como a quantidade deste item é lida por uma pessoa.
   ///
-  /// `3x Coca-Cola` para unidade, `0,350kg Picanha` para peso. Escrever "3x"
+  /// `3x Coca-Cola` para unidade, `0,350 kg Picanha` para peso. Escrever "3x"
   /// num produto pesado passa a ideia de três peças — e é o que aparecia em
   /// toda comanda e recibo de açougue e buffet.
   ///
@@ -593,7 +593,7 @@ abstract final class OrderPresenter {
   static String quantityLabel(Map<String, dynamic> item) {
     final quantity = ValueFormatters.number(item['quantity']);
     if (isWeighedItem(item)) {
-      return '${quantity.toStringAsFixed(3).replaceAll('.', ',')}kg';
+      return '${quantity.toStringAsFixed(3).replaceAll('.', ',')} kg';
     }
     return '${_formatQuantity(item['quantity'])}x';
   }

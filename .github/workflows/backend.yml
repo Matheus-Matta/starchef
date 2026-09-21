@@ -34,6 +34,10 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements/development.txt
 
+      - name: Tamanho de arquivo (catraca de 200 linhas)
+        working-directory: ${{ github.workspace }}
+        run: python scripts/check_tamanho_de_arquivo.py
+
       - name: Lint (ruff)
         run: ruff check .
 

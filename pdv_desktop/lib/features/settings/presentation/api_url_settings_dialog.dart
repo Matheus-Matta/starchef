@@ -4,9 +4,9 @@ import '../../../core/widgets/app_dialog.dart';
 
 import '../../../core/storage/local_preferences.dart';
 
-/// Permite digitar manualmente a URL da API a partir da tela de login —
-/// escape hatch para quando o terminal foi instalado sem `--dart-define`/
-/// `.env` (ou precisa apontar para outro ambiente pontualmente). Fica salvo
+/// Permite digitar manualmente a URL da API pela tela de login ou pelo menu
+/// Mais. É um escape hatch para quando o terminal foi instalado sem
+/// `--dart-define`/`.env` (ou precisa apontar para outro ambiente). Fica salvo
 /// em `LocalPreferences` e tem prioridade sobre a configuração de build (ver
 /// `AppConfig.load`), então vale mesmo quando o instalador já veio com uma
 /// URL embutida.
@@ -96,7 +96,7 @@ class _ApiUrlSettingsDialogState extends State<ApiUrlSettingsDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'A alteração é aplicada imediatamente ao próximo login. Se '
+                'Ao salvar, o PDV aplica o endereço e volta para o login. Se '
                 'você informar apenas o domínio, o app acrescenta /api/v1.',
                 style: TextStyle(
                   fontSize: 12.5,

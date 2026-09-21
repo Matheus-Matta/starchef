@@ -6,6 +6,7 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from apps.menu.models import Product
 from apps.orders.models import Order
@@ -106,7 +107,9 @@ def test_paid_orders_are_never_touched(account, restaurant, branch, product, man
     assert order.status == Order.STATUS_PAID
     before = (order.subtotal, order.service_fee, order.total)
 
-    with pytest.raises(Exception):
+    # `CommandError`: o comando precisa RECUSAR o pedido pago. Com `Exception`,
+    # um erro de digitação no nome do parâmetro passaria pelo mesmo teste.
+    with pytest.raises(CommandError):
         call_command(
             "repair_order_totals",
             "--order",

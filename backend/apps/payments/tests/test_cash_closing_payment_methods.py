@@ -40,7 +40,9 @@ def test_fechamento_mostra_valor_de_todas_as_formas_principais(
         ("PIX", PaymentMethod.TYPE_PIX, "", "40.40"),
         ("Vale/voucher", PaymentMethod.TYPE_VOUCHER, "", "50.50"),
     ]
-    for indice, (nome, tipo, subtipo, valor) in enumerate(formas):
+    # `_nome` fica no desempacotamento para a tupla continuar legível, mas o
+    # teste nomeia os métodos por índice — o rótulo humano não entra em nada.
+    for indice, (_nome, tipo, subtipo, valor) in enumerate(formas):
         metodo = PaymentMethod.objects.create(
             account=account,
             restaurant=restaurant,

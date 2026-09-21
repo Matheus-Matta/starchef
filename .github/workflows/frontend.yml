@@ -39,6 +39,10 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Tamanho de arquivo (catraca de 200 linhas)
+        working-directory: ${{ github.workspace }}
+        run: python scripts/check_tamanho_de_arquivo.py
+
       - name: Lint
         run: npm run lint
 

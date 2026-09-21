@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
+from apps.orders.models import CommandItem, Order, OrderBatch, OrderItem, OrderItemAddon
 
 
 class OrderItemAddonSerializer(TenantModelSerializer):
@@ -29,6 +29,11 @@ class OrderItemSerializer(TenantModelSerializer):
     kds_entered_at = serializers.SerializerMethodField()
     order_table_number = serializers.SerializerMethodField()
     order_command_code = serializers.SerializerMethodField()
+    command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
+    command_code = serializers.CharField(source="command.code", read_only=True, default=None)
+    origin_order_sequence = serializers.IntegerField(
+        source="origin_order.sequence", read_only=True, default=None
+    )
     batch_number = serializers.IntegerField(source="batch.batch_number", read_only=True, default=None)
     addons = OrderItemAddonSerializer(many=True, read_only=True)
 
@@ -46,17 +51,37 @@ class OrderItemSerializer(TenantModelSerializer):
             "preparation_started_at",
             "ready_at",
             "delivered_at",
+            # `fields = "__all__"` torna GRAVÁVEL todo campo novo que não
+            # apareça aqui. Estes quatro só mudam dentro dos serviços
+            # transacionais: um PATCH que reescrevesse a comanda de um item
+            # mudaria de quem é o prato, e um que reabrisse `command_status`
+            # devolveria à comanda um item já pago.
+            "command",
+            "origin_order",
+            "command_status",
+            "command_closed_at",
         ]
 
     def get_order_table_number(self, obj):
+        """A mesa da PRODUÇÃO, não a do pedido atual.
+
+        Depois de uma consolidação `obj.order` é o pedido final — sem mesa e
+        sem comanda. Ler dali faria o card do KDS mostrar "balcão" para um
+        prato que é da mesa 7.
+        """
         try:
-            return obj.order.table.number if obj.order.table_id else None
+            order = obj.origin_order or obj.order
+            return order.table.number if order.table_id else None
         except Exception:
             return None
 
     def get_order_command_code(self, obj):
+        """A comanda do ITEM, com o pedido só como reserva histórica."""
         try:
-            return obj.order.command.code if obj.order.command_id else None
+            if obj.command_id:
+                return obj.command.code
+            order = obj.origin_order or obj.order
+            return order.command.code if order.command_id else None
         except Exception:
             return None
 
@@ -104,7 +129,6 @@ class OrderSerializer(TenantModelSerializer):
     # de pagamento le a lista pelo mesmo caminho.
     payments = serializers.SerializerMethodField()
     fiscal = serializers.SerializerMethodField()
-
     def get_payments(self, obj):
         """Recebimentos aprovados do pedido, na ordem em que entraram.
 
@@ -180,3 +204,63 @@ class OrderSerializer(TenantModelSerializer):
                 "Pedidos de salão devem ser abertos por uma comanda e depois vinculados à mesa."
             )
         return value
+
+
+class CommandItemSerializer(TenantModelSerializer):
+    """Uma anotação da comanda, como as telas leem.
+
+    O formato espelha o do item de pedido de propósito: as duas coisas são o
+    mesmo consumo, e o PDV desenha as duas no mesmo carrinho. O que muda é só
+    a ORIGEM, que a tela mostra como rótulo — item da comanda ou item do
+    pedido.
+    """
+
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    pricing_unit = serializers.CharField(source="product.pricing_unit", read_only=True)
+    command_number = serializers.IntegerField(source="command.number", read_only=True)
+    command_code = serializers.CharField(source="command.code", read_only=True)
+    table_number = serializers.IntegerField(
+        source="table.number", read_only=True, default=None
+    )
+    batch_number = serializers.IntegerField(
+        source="batch.batch_number", read_only=True, default=None
+    )
+    #: A origem, para a tela rotular o card sem adivinhar pelo formato.
+    origin = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CommandItem
+        fields = [
+            "id",
+            "command",
+            "command_number",
+            "command_code",
+            "table",
+            "table_number",
+            "product",
+            "product_name",
+            "pricing_unit",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "variations",
+            "customer_note",
+            "production_sector",
+            "status",
+            "command_status",
+            "command_closed_at",
+            "batch",
+            "batch_number",
+            "launched_at",
+            "sent_to_kitchen_at",
+            "preparation_started_at",
+            "ready_at",
+            "delivered_at",
+            "void_reason",
+            "voided_at",
+            "origin",
+        ]
+        read_only_fields = ["command_status", "command_closed_at", "launched_at"]
+
+    def get_origin(self, obj):
+        return "command"

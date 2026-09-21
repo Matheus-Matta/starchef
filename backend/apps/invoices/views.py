@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from apps.core.modules import MODULE_FINANCEIRO
 from apps.core.access import is_tenant_admin
 from apps.core.viewsets import BaseTenantViewSet
+from apps.invoices.bulk import InvoiceBulkResendMixin
 from apps.invoices.focus import (
     FocusCompanySyncResult,
     FocusNfeApiError,
@@ -256,7 +257,7 @@ class FiscalConfigViewSet(BaseTenantViewSet):
         return self._focus_action(delete_focus_company)
 
 
-class InvoiceViewSet(BaseTenantViewSet):
+class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
     required_module = MODULE_FINANCEIRO
     serializer_class = InvoiceSerializer
     queryset = Invoice.objects.select_related("restaurant", "branch", "order").prefetch_related("items").all()
@@ -267,9 +268,8 @@ class InvoiceViewSet(BaseTenantViewSet):
         return getattr(self.request, "account", None)
 
     def _serialize(self, invoice, code=status.HTTP_200_OK):
-        # `fiscal_state` e `printable` viajam SEMPRE. O PDV e o retaguarda
-        # decidem por eles se ha cupom para imprimir; sem isso, consultar a
-        # autorizacao devolvia uma nota ja autorizada que a tela continuava
+        # `fiscal_state` e `printable` viajam SEMPRE para decidir se ha cupom;
+        # sem isso, consultar a autorizacao devolvia uma nota que a tela seguia
         # tratando como "nao imprimivel".
         data = with_fiscal_state(
             InvoiceSerializer(invoice, context={"request": self.request}).data, invoice

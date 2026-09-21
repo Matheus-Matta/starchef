@@ -116,6 +116,38 @@ class Scale(TenantModel):
         on_delete=models.SET_NULL,
         help_text="Pedido corrente vinculado a balanca (usado no gatilho automatico).",
     )
+    # MODO DE OPERACAO DA BALANCA. Explicito, e nao adivinhado pelo que estiver
+    # preenchido: no modo comanda ela FALHA FECHADO — sem cartao valido nao ha
+    # cobranca nem queda para balcao. Um prato do cliente A nao pode virar uma
+    # conta avulsa silenciosa.
+    MODE_COUNTER = "counter"
+    MODE_COMMAND = "command"
+
+    MODE_CHOICES = [
+        (MODE_COUNTER, "Balcao (pedido avulso por pesagem)"),
+        (MODE_COMMAND, "Comanda (o cliente passa o cartao antes de pesar)"),
+    ]
+
+    weighing_mode = models.CharField(max_length=16, choices=MODE_CHOICES, default=MODE_COUNTER)
+    # Vinculo TEMPORARIO com a comanda que acabou de passar o cartao. E estado
+    # local e efemero: nao viaja na sincronizacao (ver `catalog.py`), senao o
+    # sync poderia ressuscitar na loja o cartao de um cliente que ja foi embora.
+    active_command = models.ForeignKey(
+        "restaurants.Command",
+        null=True,
+        blank=True,
+        related_name="bound_scales",
+        on_delete=models.SET_NULL,
+        help_text="Comanda que acabou de passar o cartao nesta balanca.",
+    )
+    # O RISCO AQUI E DE DINHEIRO: se a balanca continuar amarrada depois da
+    # pesagem, o prato do proximo cliente cai na comanda do anterior. O vinculo
+    # expira na primeira pesagem E por tempo, o que vier antes.
+    active_command_until = models.DateTimeField(null=True, blank=True)
+    command_binding_seconds = models.PositiveIntegerField(
+        default=60,
+        help_text="Validade do vinculo com a comanda depois da leitura do cartao.",
+    )
     # Ao receber uma leitura estavel, lanca o item e gera a nota automaticamente.
     auto_print = models.BooleanField(default=False)
     auto_print_delay_seconds = models.PositiveIntegerField(
@@ -168,6 +200,22 @@ class ScaleReading(TenantModel):
         on_delete=models.SET_NULL,
         help_text="Preenchido quando a leitura vira um item de pedido.",
     )
+    # A MESMA leitura, quando o peso é anotado direto na comanda.
+    #
+    # Uma das duas está preenchida, nunca as duas: é isso que impede a mesma
+    # pesagem de ser cobrada duas vezes — uma no cartão e outra no pedido.
+    command_item = models.ForeignKey(
+        "orders.CommandItem",
+        null=True,
+        blank=True,
+        related_name="scale_readings",
+        on_delete=models.SET_NULL,
+        help_text="Preenchido quando a leitura vira uma anotação na comanda.",
+    )
+    # POR QUE ESTA LEITURA NAO VIROU ITEM. No modo comanda, uma pesagem sem
+    # cartao valido nao cobra nada — e o operador precisa saber disso no
+    # terminal, senao a leitura some em silencio e o cliente leva o prato.
+    notes = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]

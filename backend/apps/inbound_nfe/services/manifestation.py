@@ -17,7 +17,6 @@ from apps.inbound_nfe.services.signer import (
     validate_no_forbidden_prefixes,
     verify_xml_signature,
     NFE_NS,
-    XMLDSIG_NS,
 )
 
 logger = logging.getLogger(__name__)
@@ -347,7 +346,7 @@ def register_science(invoice, user=None) -> tuple[bool, str]:
                 return True, f"Ciência já registrada anteriormente (Prot: {existing.protocol}). XML completo obtido com sucesso!"
             else:
                 return True, f"Ciência já registrada (Prot: {existing.protocol}). Aguardando processamento do XML completo pela SEFAZ."
-        return True, f"Ciência já registrada e XML completo já disponível."
+        return True, "Ciência já registrada e XML completo já disponível."
 
     # 2. Obter configurações fiscais do restaurante
     config = FiscalConfig.all_objects.filter(account=invoice.account)

@@ -10,20 +10,24 @@ class PdvCashCenterDialog extends StatelessWidget {
     super.key,
     required this.cashSession,
     required this.balanceLabel,
+    this.balanceVisible = false,
   });
 
   final Map<String, dynamic>? cashSession;
   final String balanceLabel;
+  final bool balanceVisible;
 
   static Future<String?> show(
     BuildContext context, {
     required Map<String, dynamic>? cashSession,
     required String balanceLabel,
+    bool balanceVisible = false,
   }) => showDialog<String>(
     context: context,
     builder: (_) => PdvCashCenterDialog(
       cashSession: cashSession,
       balanceLabel: balanceLabel,
+      balanceVisible: balanceVisible,
     ),
   );
 
@@ -91,6 +95,18 @@ class PdvCashCenterDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 18),
+            if (opened) ...[
+              OutlinedButton.icon(
+                onPressed: () => _select(context, 'toggle_balance'),
+                icon: Icon(
+                  balanceVisible
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                ),
+                label: Text(balanceVisible ? 'Ocultar saldo' : 'Ver saldo'),
+              ),
+              const SizedBox(height: 10),
+            ],
             if (!opened)
               FilledButton.icon(
                 onPressed: () => _select(context, 'open'),

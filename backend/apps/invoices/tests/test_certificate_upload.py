@@ -11,7 +11,6 @@ from cryptography.x509.oid import NameOID
 
 from apps.accounts.models import Account
 from apps.restaurants.models import Branch, Restaurant
-from apps.invoices.models import FiscalConfig
 from apps.invoices.serializers import FiscalConfigSerializer, parse_and_validate_certificate
 from apps.inbound_nfe.services.certificate import get_certificate_paths, cleanup_temp_files
 

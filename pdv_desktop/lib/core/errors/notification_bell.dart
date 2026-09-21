@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'app_error.dart';
 import 'app_error_host.dart';
 import 'error_center.dart';
+import 'notification_entry.dart';
 
 /// O sino da barra superior: onde TODA notificação fica guardada.
 ///
@@ -27,7 +27,7 @@ class NotificationBell extends StatelessWidget {
       menuChildren: [_PainelDeNotificacoes(centro: centro)],
       builder: (context, controller, _) => IconButton(
         tooltip: novas > 0
-            ? '$novas notificação${novas == 1 ? '' : 'ões'} nova${novas == 1 ? '' : 's'}'
+            ? '$novas ${novas == 1 ? 'notificação nova' : 'notificações novas'}'
             : 'Notificações',
         onPressed: () {
           if (controller.isOpen) {
@@ -49,7 +49,10 @@ class NotificationBell extends StatelessWidget {
                 right: -4,
                 top: -3,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
                   constraints: const BoxConstraints(minWidth: 17),
                   decoration: BoxDecoration(
                     color: scheme.error,
@@ -98,9 +101,9 @@ class _PainelDeNotificacoes extends StatelessWidget {
               children: [
                 Text(
                   'Notificações',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
                 if (itens.isNotEmpty)
@@ -122,93 +125,23 @@ class _PainelDeNotificacoes extends StatelessWidget {
               ),
             )
           else
-            ConstrainedBox(
-              // Teto de altura: com 20 itens a lista passaria da tela, e um
-              // menu que não cabe corta o último item sem avisar.
-              constraints: const BoxConstraints(maxHeight: 420),
+            SizedBox(
+              // MenuAnchor mede a altura intrínseca dos filhos. Uma lista
+              // shrinkWrap não fornece essa medida e lançava dezenas de
+              // exceções de layout ao abrir o sino com notificações.
+              // Altura explícita mantém o viewport virtualizado e rolável.
+              height: itens.length < 5 ? itens.length * 84.0 : 420,
               child: ListView.separated(
-                shrinkWrap: true,
+                primary: false,
                 padding: EdgeInsets.zero,
                 itemCount: itens.length,
                 separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, indice) =>
-                    _LinhaDeNotificacao(item: itens[indice]),
+                    NotificationEntry(item: itens[indice]),
               ),
             ),
         ],
       ),
     );
   }
-}
-
-class _LinhaDeNotificacao extends StatelessWidget {
-  const _LinhaDeNotificacao({required this.item});
-
-  final AppError item;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final (cor, icone) = switch (item.severity) {
-      AppErrorSeverity.failure => (scheme.error, Icons.error_outline),
-      AppErrorSeverity.warning => (
-        const Color(0xFF9A5B00),
-        Icons.warning_amber_outlined,
-      ),
-      AppErrorSeverity.success => (
-        const Color(0xFF1B7F3B),
-        Icons.check_circle_outline,
-      ),
-      AppErrorSeverity.info => (scheme.primary, Icons.info_outline),
-    };
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icone, color: cor, size: 19),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _horario(item.occurredAt),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  item.message,
-                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Hora e minuto bastam: o histórico cabe num turno, e data completa só
-  /// ocuparia a linha sem dizer nada que o operador não saiba.
-  String _horario(DateTime quando) =>
-      '${quando.hour.toString().padLeft(2, '0')}:'
-      '${quando.minute.toString().padLeft(2, '0')}';
 }

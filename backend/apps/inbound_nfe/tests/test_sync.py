@@ -1,6 +1,4 @@
 import unittest
-from unittest.mock import patch, MagicMock
-from decimal import Decimal
 from apps.inbound_nfe.services.sefaz_client import DistDFeResponse, DFeDocument
 from apps.inbound_nfe.services.xml_parser import (
     DOC_RES_NFE,

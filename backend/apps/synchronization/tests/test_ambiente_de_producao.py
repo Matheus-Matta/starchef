@@ -193,12 +193,12 @@ def test_rematricular_renomeia_o_no(como_nuvem, conta):
 
     User = get_user_model()
     root = User.objects.create_superuser("root2", "root2@starchef.test", "senha-de-teste-123")
-    comum = dict(
-        username=root.username, password="senha-de-teste-123",
-        account_id=str(conta.id),
-        enrollment_secret="segredo-de-matricula-com-tamanho-ok",
-        cloud_wss_url="wss://nuvem/ws/",
-    )
+    comum = {
+        "username": root.username, "password": "senha-de-teste-123",
+        "account_id": str(conta.id),
+        "enrollment_secret": "segredo-de-matricula-com-tamanho-ok",
+        "cloud_wss_url": "wss://nuvem/ws/",
+    }
 
     no, _env, _run = enrollment.enroll(node_name="Loja Centro", **comum)
     assert no.name == "Loja Centro"

@@ -372,11 +372,11 @@ def test_custo_medio_nao_conta_a_entrada_duas_vezes(
         account=account, restaurant=restaurant, branch=branch, name="Principal",
         created_by=manager_user, updated_by=manager_user,
     )
-    base = dict(
-        account=account, restaurant=restaurant, branch=branch, ingredient=insumo,
-        location=location, operator=manager_user, movement_type=StockMovement.TYPE_IN,
-        created_by=manager_user, updated_by=manager_user,
-    )
+    base = {
+        "account": account, "restaurant": restaurant, "branch": branch, "ingredient": insumo,
+        "location": location, "operator": manager_user, "movement_type": StockMovement.TYPE_IN,
+        "created_by": manager_user, "updated_by": manager_user,
+    }
     StockMovement.objects.create(quantity=Decimal("10"), unit_cost=Decimal("1.00"), **base)
 
     # A entrada nova ja esta gravada quando o recalculo roda (o viewset salva

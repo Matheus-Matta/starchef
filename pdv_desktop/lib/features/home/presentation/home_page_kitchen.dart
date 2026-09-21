@@ -22,7 +22,6 @@ mixin _KitchenSection on _HomePageShared {
   Map<String, dynamic>? get selectedTable;
   Map<String, dynamic>? get selectedCommand;
   Map<String, dynamic>? get selectedCustomer;
-  Map<String, dynamic>? get selectedRestaurant;
   List<Map<String, dynamic>> get orderItems;
   String? get selectedOrderItemId;
   set selectedOrderItemId(String? value);
@@ -32,6 +31,25 @@ mixin _KitchenSection on _HomePageShared {
   Future<void> _refreshOrder();
 
   Future<void> _voidItem(Map<String, dynamic> item) async {
+    // Linha de rascunho: nada foi lançado, nada foi produzido, e não há o que
+    // registrar. Pedir motivo de cancelamento para tirar um item que só
+    // existe nesta tela seria burocracia sobre coisa nenhuma.
+    if (_draftIsLive) {
+      if (item[OrderDraftCart.marcaDeJaLancado] == true) {
+        _error(
+          const ApiException(
+            'Este item já está lançado na comanda e não sai daqui. Para '
+            'cancelá-lo, abra o pedido dela.',
+          ),
+        );
+        return;
+      }
+      _removeDraftLine('${item['id']}');
+      if (mounted && '${item['id']}' == selectedOrderItemId) {
+        setState(() => selectedOrderItemId = null);
+      }
+      return;
+    }
     // Item já enviado à cozinha: o cancelamento não é só tirar da conta, sai
     // um cupom na impressora do setor para a produção parar. Avisar antes
     // evita o caixa descobrir isso pelo barulho da impressora.
@@ -81,32 +99,19 @@ mixin _KitchenSection on _HomePageShared {
     );
     if (!mounted || reason == null) return;
 
-    // Carência do restaurante: dentro dela nada chegou à produção e o
-    // servidor cancela sem senha. Quem sabe se ainda está dentro é ele (o
-    // relógio da rodada é de lá), então a primeira tentativa vai sem senha;
-    // um 403 é "já saiu da carência" e aí a senha é pedida como sempre.
     Map<String, dynamic>? cancelled;
-    final graceConfigured =
-        _number(selectedRestaurant?['cancellation_grace_seconds']).round() > 0;
-    if (graceConfigured) {
-      try {
-        cancelled = await api.post(
+    if (widget.controller.session!.user.canCancelOrders) {
+      // A permissão já veio no perfil autenticado e o servidor a confirma no
+      // mesmo request. Não há motivo para pedir uma segunda credencial.
+      cancelled = await _work(
+        () => api.post(
           '/orders/${order['id']}/cancel/',
           body: {'reason': reason},
           accessToken: token,
-        );
-      } on ApiException catch (error) {
-        if (error.statusCode != 403) {
-          if (mounted) {
-            _error(error, title: 'Não foi possível cancelar o pedido');
-          }
-          return;
-        }
-      }
-      if (!mounted) return;
-    }
-
-    if (cancelled == null) {
+        ),
+        errorTitle: 'Não foi possível cancelar o pedido',
+      );
+    } else {
       // Só a senha de ações do caixa: conferida aqui, contra o hash já
       // sincronizado, e enviada ao servidor junto do cancelamento (que é
       // quem apaga consumo já lançado).

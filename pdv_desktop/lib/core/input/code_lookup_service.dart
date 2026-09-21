@@ -1,50 +1,6 @@
 import '../network/api_client.dart';
 import '../network/api_exception.dart';
-
-/// O que um código lido representa, depois de consultado.
-class CodeResolution {
-  const CodeResolution._({
-    required this.kind,
-    this.command,
-    this.product,
-    this.matchedField = '',
-  });
-
-  const CodeResolution.none() : this._(kind: CodeResolutionKind.none);
-
-  const CodeResolution.command(Map<String, dynamic> value, {String field = ''})
-    : this._(
-        kind: CodeResolutionKind.command,
-        command: value,
-        matchedField: field,
-      );
-
-  const CodeResolution.product(Map<String, dynamic> value, {String field = ''})
-    : this._(
-        kind: CodeResolutionKind.product,
-        product: value,
-        matchedField: field,
-      );
-
-  final CodeResolutionKind kind;
-  final Map<String, dynamic>? command;
-  final Map<String, dynamic>? product;
-
-  /// Campo que casou (`ean`, `internal_code`, `code`, `number`).
-  final String matchedField;
-
-  bool get found => kind != CodeResolutionKind.none;
-
-  String get matchedFieldLabel => switch (matchedField) {
-    'ean' => 'código de barras',
-    'internal_code' => 'código interno',
-    'code' => 'código da comanda',
-    'number' => 'número da comanda',
-    _ => 'código',
-  };
-}
-
-enum CodeResolutionKind { none, command, product }
+import 'code_resolution.dart';
 
 /// Traduz um código lido em uma comanda ou em um produto.
 ///
@@ -52,14 +8,41 @@ enum CodeResolutionKind { none, command, product }
 /// produto criado há dez segundos na web já é vendável no bipe seguinte, sem
 /// esperar sincronização nenhuma.
 ///
-/// Cada tela chama só o que ela entende: o início procura comanda e o pedido
-/// procura produto. Procurar as duas coisas em toda tela é o que faria um EAN
-/// abrir uma ação inesperada — o problema que a separação por tela evita.
+/// Cada tela chama só o que ela entende, e é por isso que há três entradas em
+/// vez de uma: a lista de pedidos procura comanda, e a venda procura as duas
+/// coisas em ordem ([findForSale]). Procurar tudo em toda tela é o que faria
+/// um EAN lido por engano disparar uma ação inesperada no caixa.
 class CodeLookupService {
   CodeLookupService(this.api, {this.accessToken});
 
   final ApiClient api;
   final String? accessToken;
+
+  /// O que este código é NA TELA DE VENDA: produto, comanda, ou nada.
+  ///
+  /// A tela de venda é a única que precisa das duas respostas — ela monta o
+  /// pedido (produto) e escolhe o destino dele (comanda). Ler um cartão ali
+  /// não fazia nada: só se procurava produto, e o gesto mais natural de quem
+  /// tem a comanda na mão caía no vazio.
+  ///
+  /// **O produto vem primeiro, e a ordem é a regra.** [findCommand] tem uma
+  /// segunda volta que casa pelo NÚMERO do cartão — "12" acha a comanda 12 —,
+  /// então um código de produto curto e numérico seria engolido como comanda
+  /// se a busca de cartão viesse antes. Procurando produto primeiro, um código
+  /// que existe no cardápio nunca vira cartão.
+  Future<CodeResolution> findForSale(
+    String code, {
+    String? restaurantId,
+    String? orderType,
+  }) async {
+    final produto = await findProduct(
+      code,
+      restaurantId: restaurantId,
+      orderType: orderType,
+    );
+    if (produto.product != null) return produto;
+    return findCommand(code);
+  }
 
   /// A comanda cujo código (ou número) casa com o lido.
   Future<CodeResolution> findCommand(String code) async {

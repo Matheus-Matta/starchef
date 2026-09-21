@@ -97,6 +97,6 @@ class CsvParseView(APIView):
                 return Response({"detail": f"Limite de {MAX_ROWS} linhas excedido."}, status=status.HTTP_400_BAD_REQUEST)
             rows.append({
                 header: str(row.get(raw_header, "") or "")[:MAX_CELL_LENGTH]
-                for header, raw_header in zip(headers, reader.fieldnames)
+                for header, raw_header in zip(headers, reader.fieldnames, strict=False)
             })
         return Response({"headers": headers, "rows": rows, "count": len(rows)})

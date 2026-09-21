@@ -80,6 +80,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 ## 4. Telas principais
 
 - **`PdvView.vue`** — o coração do sistema. Fluxo em passos (`restaurant → type → context → order`), com um gate de caixa aberto (`pdvGateLoading`/`pdvBlocked`) antes de liberar a venda. Painel de catálogo de produtos à esquerda, carrinho à direita (itens já enviados vs. pendentes, totais, ações de enviar/pagar). Junto da taxa de serviço, o operador pode marcar **Incluir CPF na NFC-e**; o campo aplica máscara, valida os dígitos e grava `fiscal_customer_cpf` ao fechar o pedido. Aceita `editMode`/`orderId` para ser reaproveitada por `OrderEditView`.
+- **Notas Fiscais** — a listagem abre da nota mais recente para a mais antiga, filtra por status e tipo de emissão e permite reenviar em massa as selecionadas, ignorando documentos já emitidos. O detalhe mostra o número do pedido como link para a tela do próprio pedido.
 - **`KdsView.vue`** — painel de cozinha: troca de estação, filtro por período, indicador "Ao vivo" com refresh manual (reforçado pelo WebSocket genérico, ver §6).
 - **`KdsStationsView.vue`** — cadastro de estações/colunas do KDS, master-detail, mão feita (não usa o CRUD genérico).
 - **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.

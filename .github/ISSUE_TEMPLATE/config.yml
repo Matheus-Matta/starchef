@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Padrões de código do projeto
+    url: https://github.com/Matheus-Matta/starchef/blob/main/docs/PADROES_DE_CODIGO.md
+    about: Como este projeto escreve código, e por quê.

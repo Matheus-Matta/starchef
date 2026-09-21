@@ -15,12 +15,10 @@
 import {
   CHANNEL_OPTIONS,
   COMMAND_STATUS_LABELS,
-  EMISSION_TYPE_LABELS,
   FISCAL_CSOSN_OPTIONS,
   FISCAL_CST_ICMS_OPTIONS,
   FISCAL_CST_PIS_COFINS_OPTIONS,
   FISCAL_ORIGEM_OPTIONS,
-  INVOICE_STATUS_LABELS,
   MENU_CHANNEL_LABELS,
   MENU_ITEM_TYPE_LABELS,
   MENU_ITEM_TYPE_OPTIONS,
@@ -67,6 +65,7 @@ import {
   INVENTORY_LOT_STATUS_LABELS,
   GOODS_RECEIPT_STATUS_LABELS,
 } from "./enums";
+import { invoiceColumns, invoiceProConfig } from "./invoiceResource";
 
 export const resources = [
   // ── Operacional ────────────────────────────────────────────────────
@@ -739,6 +738,7 @@ export const resources = [
     endpoint: "/invoices/",
     globalScope: true,
     pro: {
+      ...invoiceProConfig,
       rowActions: [
         {
           key: "resend",
@@ -756,15 +756,7 @@ export const resources = [
         },
       ],
     },
-    columns: [
-      { key: "number", label: "Numero" },
-      { key: "phase", label: "Tipo" },
-      { key: "status", label: "Status", type: "status", map: INVOICE_STATUS_LABELS },
-      { key: "emission_type", label: "Emissao", type: "status", map: EMISSION_TYPE_LABELS },
-      { key: "total_amount", label: "Valor", type: "money", align: "right" },
-      { key: "issued_at", label: "Emissao em", type: "date" },
-      { key: "error_message", label: "Motivo / erro", showInList: false },
-    ],
+    columns: invoiceColumns,
   },
   {
     // Grupo tributario reutilizavel: quem escolhe o perfil e o PRODUTO (1:N),

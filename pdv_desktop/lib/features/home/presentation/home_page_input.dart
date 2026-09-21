@@ -26,6 +26,7 @@ mixin _InputSection on _HomePageShared {
   List<Map<String, dynamic>> get orderItems;
   List<Map<String, dynamic>> get commands;
   List<Map<String, dynamic>> get products;
+  List<Map<String, dynamic>> get visibleProducts;
   List<Map<String, dynamic>> get paymentMethods;
   List<Map<String, dynamic>> get registeredPayments;
   set registeredPayments(List<Map<String, dynamic>> value);
@@ -48,6 +49,7 @@ mixin _InputSection on _HomePageShared {
   double get remainingTotal;
   FocusNode get ordersSearchFocus;
   FocusNode get commandSearchFocus;
+  FocusNode get catalogSearchFocus;
 
   Future<void> _load();
   Future<void> _navigateTo(PdvDestination destination);
@@ -60,6 +62,7 @@ mixin _InputSection on _HomePageShared {
   void _goBack();
   Future<void> _openCommand(Map<String, dynamic> command);
   Future<void> _configureProduct(Map<String, dynamic> product);
+  Future<void> _ensureOrderStarted();
   Future<void> _openCashCenter();
   Future<void> _preparePaymentPage();
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
@@ -77,8 +80,9 @@ mixin _InputSection on _HomePageShared {
   PdvScreen get _currentScreen {
     if (flowStep == 'scale-workstation') return PdvScreen.scale;
     if (flowStep == 'orders') return PdvScreen.orders;
+    if (flowStep == 'commands') return PdvScreen.commands;
     if (flowStep == 'payment') return PdvScreen.payment;
-    if (activeOrder != null) return PdvScreen.order;
+    if (activeOrder != null || flowStep == 'order') return PdvScreen.order;
     if (flowStep == 'context' || flowStep == 'table_details') {
       return PdvScreen.context;
     }
@@ -120,118 +124,6 @@ mixin _InputSection on _HomePageShared {
   ///
   /// Antes do login não há a quem perguntar, e ler um código nesse momento não
   /// faz sentido nenhum — daí o nulo em vez de uma exceção.
-  CodeLookupService? get _codeLookup {
-    if (token.isEmpty) return null;
-    return codeLookup ??= CodeLookupService(api, accessToken: token);
-  }
-
-  /// Um código chegou — de onde quer que tenha vindo.
-  Future<void> _onCodeScanned(ScannedCode scanned) async {
-    switch (_currentScreen) {
-      case PdvScreen.home:
-        await _openOrderFromCommandCode(scanned.value);
-      case PdvScreen.context:
-        // A busca em memória (por número/código exato da lista já filtrada)
-        // continua servindo a aba Comandas, que tem seu próprio campo de
-        // busca e convive bem com múltiplos resultados. A aba Mesas não tem
-        // campo de busca nenhum, então usa a mesma consulta ao banco local
-        // que a tela inicial usa — robusta mesmo com `commands` desatualizado.
-        if (orderType == 'command') {
-          _onCommandSearchSubmitted(scanned.value);
-        } else {
-          await _openOrderFromCommandCode(scanned.value);
-        }
-      case PdvScreen.order:
-        await _addProductFromCode(scanned.value);
-      case PdvScreen.orders:
-        // Bipar uma comanda abre direto o pedido em aberto dela; qualquer
-        // outro código (produto, número de pedido) só preenche a busca da
-        // lista, como antes.
-        await _openOrderFromCommandCode(
-          scanned.value,
-          onNotFound: () {
-            ordersSearchController.text = scanned.value;
-            setState(() => orderSearch = scanned.value);
-          },
-        );
-      case PdvScreen.payment:
-      case PdvScreen.cash:
-      case PdvScreen.settings:
-      case PdvScreen.scale:
-        break;
-    }
-  }
-
-  /// Acha a comanda pelo código lido e abre o pedido em aberto dela.
-  ///
-  /// Usada pela tela inicial, pela aba Mesas e pela lista de Pedidos — sempre
-  /// que a tela não tem um jeito melhor de tratar um código que não é
-  /// comanda. Sem `onNotFound`, o silêncio é deliberado: um aviso a cada
-  /// leitura sem correspondência transformaria uma pilha de cartões
-  /// conferidos rapidamente em uma sequência de alertas para fechar.
-  ///
-  /// Também não procura produto aqui: um EAN lido por engano não pode
-  /// disparar uma ação inesperada nessas telas.
-  Future<void> _openOrderFromCommandCode(
-    String code, {
-    VoidCallback? onNotFound,
-  }) async {
-    final lookup = _codeLookup;
-    if (lookup == null) {
-      onNotFound?.call();
-      return;
-    }
-    final resolution = await lookup.findCommand(code);
-    final command = resolution.command;
-    if (command == null) {
-      onNotFound?.call();
-      return;
-    }
-    final orderId = '${command['current_order_id'] ?? ''}';
-    if (orderId.isEmpty) {
-      onNotFound?.call();
-      return;
-    }
-    final local = commands.cast<Map<String, dynamic>?>().firstWhere(
-      (item) => '${item?['id']}' == '${command['id']}',
-      orElse: () => null,
-    );
-    await _openCommand(local ?? command);
-  }
-
-  /// Edição do pedido: acha o produto e abre a configuração dele.
-  Future<void> _addProductFromCode(String code) async {
-    final lookup = _codeLookup;
-    if (lookup == null) return;
-    // Leitura repetida com o modal aberto: soma lá dentro.
-    if (scanningProductId != null) {
-      final repeated = await lookup.findProduct(
-        code,
-        restaurantId: restaurantId,
-        orderType: orderType,
-      );
-      if ('${repeated.product?['id'] ?? ''}' == scanningProductId) {
-        productScanRepeats?.add(null);
-      }
-      return;
-    }
-
-    final resolution = await lookup.findProduct(
-      code,
-      restaurantId: restaurantId,
-      orderType: orderType,
-    );
-    final product = resolution.product;
-    if (product == null) return;
-
-    // Quem decide entre somar uma unidade e abrir o modal é
-    // `_configureProduct`: produto sem escolha soma direto, com variação ou
-    // adicional a pergunta continua. Duplicar a regra aqui deixava a leitura
-    // do EAN pular as recusas que ela faz (pedido fechado, caixa fechado,
-    // produto por peso).
-    await _configureProduct(product);
-  }
-
   bool _productHasChoices(Map<String, dynamic> product) {
     bool active(List? list) => (list ?? const []).whereType<Map>().any(
       (item) => item['is_active'] != false,
@@ -243,7 +135,15 @@ mixin _InputSection on _HomePageShared {
   /// Soma uma unidade ao item pendente. O servidor agrupa itens pendentes
   /// iguais, e o armazenamento local passou a agrupar na mesma hora.
   Future<void> _addOneMoreOf(Map<String, dynamic> product) async {
+    // Sem pedido aberto, a linha fica no rascunho e nada sai daqui. É o
+    // caminho normal do balcão: o pedido nasce ao enviar à cozinha ou ao ir
+    // para o pagamento, não no primeiro refrigerante.
+    if (_draftIsLive) {
+      _addLineToDraft(product);
+      return;
+    }
     await _work(() async {
+      await _ensureOrderStarted();
       await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
@@ -279,11 +179,19 @@ mixin _InputSection on _HomePageShared {
       case PdvAction.cashCenter:
         await _openCashCenter();
       case PdvAction.pickCommand:
-        setState(() {
-          orderType = 'command';
-          commandSearch = '';
-          flowStep = 'context';
-        });
+        // Com o rascunho no ar, a tecla ANEXA o cartão ao que já está no
+        // carrinho. Mandar para a tela de escolha perderia o que o operador
+        // acabou de passar — e era esse o gesto: montou o pedido, e só então
+        // lembrou de perguntar a comanda ao cliente.
+        if (_draftIsLive) {
+          await _attachCommandToDraft();
+        } else {
+          setState(() {
+            orderType = 'command';
+            commandSearch = '';
+            flowStep = 'context';
+          });
+        }
       case PdvAction.back:
         _goBack();
       case PdvAction.focusSearch:
@@ -350,7 +258,41 @@ mixin _InputSection on _HomePageShared {
   /// F3 e Ctrl + N ficam ao lado de teclas usadas o tempo todo, e um toque
   /// errado apagaria da tela itens que a cozinha nunca recebeu — sem que
   /// ninguém percebesse até o cliente cobrar.
+  @override
   Future<bool> _confirmLeavingPendingItems() async {
+    // O rascunho é pior que o item pendente: ele não "continua no pedido",
+    // porque pedido nenhum existe. Sair joga fora o carrinho inteiro, e o
+    // aviso precisa dizer isso com todas as letras.
+    if (_draftIsLive) {
+      // Só as linhas NOVAS se perdem: o que já estava na comanda continua
+      // no pedido dela, e avisar sobre isso assustaria à toa.
+      if (draft.semLinhasNovas) return true;
+      final quantas = draft.itemCount;
+      final resposta = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AppDialog(
+          title: const Text('Descartar o carrinho?'),
+          content: Text(
+            quantas == 1
+                ? 'Há 1 item no carrinho que ainda não virou pedido. Sair '
+                      'agora descarta ele.'
+                : 'Há $quantas itens no carrinho que ainda não viraram '
+                      'pedido. Sair agora descarta todos.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Continuar montando'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Descartar'),
+            ),
+          ],
+        ),
+      );
+      return resposta == true;
+    }
     if (activeOrder == null) return true;
     final pending = orderItems
         .where((item) => item['status'] == 'pending')
@@ -458,6 +400,35 @@ mixin _InputSection on _HomePageShared {
   /// que fica no próprio cartão da lista — o mesmo caminho, com as mesmas
   /// recusas, para os dois gestos não divergirem.
   Future<void> _changeItemQuantity(Map<String, dynamic> item, int delta) async {
+    // No rascunho a conta é local: não há item no servidor para chamar, e o
+    // contador precisa responder na hora — é o gesto mais repetido do balcão.
+    if (_draftIsLive) {
+      // Item que já está na comanda vive no SERVIDOR, não nesta tela. O
+      // contador local não o encontraria e não faria nada — e falhar em
+      // silêncio faz o operador clicar várias vezes achando que travou.
+      if (item[OrderDraftCart.marcaDeJaLancado] == true) {
+        _error(
+          const ApiException(
+            'Este item já está lançado na comanda. Para alterá-lo, abra o '
+            'pedido dela.',
+          ),
+        );
+        return;
+      }
+      if ('${item['pricing_unit'] ?? 'unit'}' == 'kg') {
+        _error(
+          const ApiException(
+            'Produto vendido por peso: a quantidade vem da balança.',
+          ),
+        );
+        return;
+      }
+      _changeDraftQuantity(
+        '${item['id']}',
+        ValueFormatters.number(item['quantity']) + delta,
+      );
+      return;
+    }
     if (busy || activeOrder == null) return;
     if ('${item['status'] ?? ''}' != 'pending') {
       _error(
@@ -518,8 +489,16 @@ mixin _InputSection on _HomePageShared {
   Future<void> _confirmPrimaryAction() async {
     switch (_currentScreen) {
       case PdvScreen.order:
-        if (activeOrder == null || orderItems.isEmpty) return;
-        await _finishOrder();
+        for (final product in visibleProducts) {
+          final available =
+              product['is_active'] != false &&
+              product['available'] != false &&
+              product['is_available'] != false;
+          if (available) {
+            await _configureProduct(product);
+            break;
+          }
+        }
       case PdvScreen.context:
         // Uma comanda filtrada e só uma: confirmar é abrir. Com várias, o
         // Enter não escolhe por ninguém.
@@ -528,6 +507,10 @@ mixin _InputSection on _HomePageShared {
         if (visible.length == 1) await _openCommand(visible.first);
       case PdvScreen.payment:
         await _confirmPaymentFromKeyboard();
+      // A página das comandas tem os próprios campos, e o Enter é deles: o
+      // leitor manda Enter no fim de cada leitura, e um atalho global aqui
+      // dispararia uma segunda ação a cada cartão passado.
+      case PdvScreen.commands:
       case PdvScreen.home:
       case PdvScreen.orders:
       case PdvScreen.cash:
@@ -558,6 +541,10 @@ mixin _InputSection on _HomePageShared {
 
   /// Leva o cursor para a busca da tela atual.
   void _focusPageSearch() {
+    if (_currentScreen == PdvScreen.order) {
+      catalogSearchFocus.requestFocus();
+      return;
+    }
     if (_currentScreen == PdvScreen.orders) {
       ordersSearchFocus.requestFocus();
       return;
@@ -572,7 +559,12 @@ mixin _InputSection on _HomePageShared {
   /// Sem itens pendentes a tecla não faz nada — e não avisa: apertar F9 duas
   /// vezes é comum, e a segunda não pode virar um alerta.
   Future<void> _sendPendingFromShortcut() async {
-    if (activeOrder == null || busy) return;
+    if (busy) return;
+    // Primeiro dos dois gestos que fazem o pedido NASCER: a cozinha vai
+    // imprimir um ticket, e não dá para imprimir o ticket de um pedido que
+    // não existe. Falhando aqui, o rascunho fica intacto e nada é enviado.
+    if (_draftIsLive && !await _materializeDraft()) return;
+    if (activeOrder == null) return;
     final pending = orderItems
         .where((item) => item['status'] == 'pending')
         .toList();

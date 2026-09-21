@@ -1,6 +1,5 @@
 import os
 import tempfile
-from django.conf import settings
 from cryptography.hazmat.primitives.serialization.pkcs12 import load_key_and_certificates
 from cryptography.hazmat.primitives import serialization
 

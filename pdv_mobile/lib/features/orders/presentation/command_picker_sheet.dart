@@ -47,19 +47,30 @@ class _CommandTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final busy = command['status'] == 'occupied';
+    // O caixa está montando uma conta agrupada com esta comanda AGORA. Abrir
+    // o pedido dela devolve 409, e a lista precisa dizer isso antes do toque:
+    // um item lançado aqui ficaria fora do pagamento que o caixa está lendo em
+    // voz alta para o cliente.
+    final closing = fieldText(command['closing_merge']).isNotEmpty;
     final table = fieldText(command['current_table_number']);
     final customer = fieldText(command['customer_name']);
     final details = [
-      if (busy) 'em atendimento',
+      if (closing) 'em fechamento no caixa' else if (busy) 'em atendimento',
       if (table.isNotEmpty) 'mesa $table',
       if (customer.isNotEmpty) customer,
     ];
-    final color = busy ? AppColors.warning : AppColors.success;
+    final color = closing
+        ? AppColors.danger
+        : (busy ? AppColors.warning : AppColors.success);
 
     return PickerTile(
       title: 'Comanda ${command['number'] ?? ''}',
       subtitle: details.isEmpty ? 'livre' : details.join(' · '),
       onTap: onTap,
+      // `enabled: false` apaga o cartão e tira o toque: a comanda continua
+      // VISÍVEL (o garçom precisa saber que ela existe e por que não dá para
+      // usá-la), mas não é escolhível.
+      enabled: !closing,
       leading: Container(
         height: 38,
         width: 38,
@@ -69,7 +80,9 @@ class _CommandTile extends StatelessWidget {
           borderRadius: AppTheme.radius,
         ),
         child: Icon(
-          busy ? Icons.pending_actions : Icons.check_circle_outline,
+          closing
+              ? Icons.point_of_sale_outlined
+              : (busy ? Icons.pending_actions : Icons.check_circle_outline),
           size: 20,
           color: color,
         ),

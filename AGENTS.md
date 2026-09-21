@@ -1,4 +1,5 @@
 # Orientações para agentes de IA
+use linguagem simpels e explique sempre com exemplos as duvidas e perguntas de forma de facil entendimento
 
 > **Nesta branch (`release/v3.0.0`) não existem `flutter/` nem `flutter_garcom/`.**
 > Eles foram substituídos por `pdv_desktop/` (PDV Windows/Linux) e
@@ -36,7 +37,10 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
   nesta branch);
 - `docs/ANALISE_DE_RISCOS.md`: os defeitos que a carga achou, o que foi corrigido e o que segue aberto;
 - `docs/SINCRONIZACAO.md`: sincronização backend-to-backend (loja ⇄ nuvem),
-  a matrícula do nó, a outbox durável e a recuperação do que não subiu.
+  a matrícula do nó, a outbox durável e a recuperação do que não subiu;
+- `docs/CONTA_AGRUPADA_COMANDAS.md`: pagar várias comandas num pedido só —
+  `OrderMerge`, o estado do item na comanda, a cozinha lendo a origem e a
+  balança que pesa para a comanda.
 
 ## Regra da sincronização
 
@@ -152,7 +156,98 @@ Ao alterar o schema do manifesto, atualize na mesma mudança o gerador do
 Actions, o parser Flutter, os testes e o exemplo JSON da documentação.
 
 
-Sempre obrigatoriamente tente manter no maximo 200 linhas por arquivo se for passar crie outro e arquiteture para ter um classe ou funções separadas para organização e ter um projeto limpo
+## Padrões de código (vale para as quatro superfícies)
+
+O documento completo é `docs/PADROES_DE_CODIGO.md`. O que **reprova o merge**
+está abaixo; leia o documento para os porquês e os exemplos.
+
+### O critério que decide tudo
+
+> **Entra o que aponta defeito. Fica de fora o que só discorda de uma escolha.**
+
+Vale para regra de lint, para comentário de revisão e para o que se exige num
+PR. Regra que grita em cima de decisão deliberada é desligada na primeira
+urgência — e aí para de pegar até o que importava.
+
+### Máximo 200 linhas por arquivo
+
+Passou disso, quebre em módulos com **uma responsabilidade cada**. O corte é por
+assunto, não por camada.
+
+201 arquivos já passavam disso quando a regra passou a ser medida, então a
+trava é uma **catraca**, não um muro:
+
+```bash
+python scripts/check_tamanho_de_arquivo.py            # confere (roda no CI)
+python scripts/check_tamanho_de_arquivo.py --atualizar  # ao baixar a dívida
+```
+
+O que já era grande está na linha de base e não reprova ninguém. **Arquivo novo
+acima do limite não tem exceção** — quebre. Arquivo que já era grande e cresceu
+também reprova: quebre, ou rode `--atualizar` e deixe o crescimento visível no
+diff, para quem revisa poder perguntar por quê. O que não pode é crescer em
+silêncio.
+
+### As cinco que custam dinheiro
+
+1. **Dinheiro nunca é `float`.** `Decimal` ou inteiro de centavos. Arredonde
+   onde o valor nasce, não na gravação — o SQLite não trunca como o Postgres, e
+   os dois lados discordavam por um centavo.
+2. **Total que é soma de vários soma valores já arredondados.** Dois pedidos de
+   R$ 10,05 com 10% dão R$ 2,02, não R$ 2,01.
+3. **Escrita concorrente:** `transaction.atomic` + lock ordenado por UUID, e
+   **releia o estado depois do lock**. Conferir antes de travar não impede
+   corrida nenhuma.
+4. **A defesa contra dois operadores é do BANCO** (índice único condicional),
+   nunca um `if` — o `if` roda antes do lock do outro.
+5. **409 é conflito de estado; 400 é entrada errada.** O PDV reenvia 400 para
+   sempre, então um conflito devolvido como 400 vira laço infinito.
+
+### Sincronização: a regra que mais some
+
+Nada está pronto enquanto o dado novo não sincronizar.
+
+- **Model novo** precisa de decisão em `catalog.py` ou `decisions.py`
+  (`manage.py sync_check_registry` reprova o deploy).
+- **Campo novo não tem trava automática.** Confira que ele entra no payload e
+  escreva o teste — foi assim que se achou `ScaleReading.notes` nunca chegando
+  à nuvem.
+- **`QuerySet.update()` não dispara signal**, logo não gera evento.
+- **Não declare append-only o que tem ciclo de vida.** `cash_movement` era
+  `immutable=True` e tem `pending → approved → cancelled`: as transições
+  morriam na chegada e o caixa da nuvem fechava o turno com outro valor.
+
+### Comentário, nome e teste
+
+- O comentário explica **por que**, nunca **o quê**. Mudou a linha, revise o
+  comentário dela no mesmo commit.
+- O domínio é escrito em **português** (`comanda`, `sangria`, `pedido`): é o
+  vocabulário de quem opera o caixa.
+- Nome de teste é uma frase, e o docstring conta o defeito que ele impede.
+- **Escreva o teste antes da correção e veja-o falhar.** Ao corrigir um defeito,
+  reverta a correção por um instante e confirme que o teste pega. Um teste que
+  nunca falhou não provou nada.
+- `pytest.raises(Exception)` é proibido: passa até com `AttributeError` de
+  digitação. Nomeie a exceção.
+
+### Onde cada regra vive
+
+| Superfície | Configuração | Comando |
+| --- | --- | --- |
+| `backend/` | `backend/pyproject.toml` | `ruff check .` |
+| `frontend/` | `frontend/eslint.config.js` | `npm run lint` |
+| `pdv_desktop/` | `pdv_desktop/analysis_options.yaml` | `flutter analyze` |
+| `pdv_mobile/` | `pdv_mobile/analysis_options.yaml` | `flutter analyze` |
+| todas | `scripts/tamanho_de_arquivo.baseline.json` | `python scripts/check_tamanho_de_arquivo.py` |
+
+Ao ligar ou desligar uma regra, **escreva o motivo ao lado dela** no arquivo de
+configuração. Os três arquivos já seguem isso, inclusive registrando as regras
+que foram medidas, pioraram o código e por isso saíram.
+
+### Modelos de issue e PR
+
+`.github/PULL_REQUEST_TEMPLATE.md` e `.github/ISSUE_TEMPLATE/`. O PR pede o que
+foi **rodado**, com a saída — "testei" não é verificação.
 
 ## Validação mínima
 

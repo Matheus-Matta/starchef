@@ -33,6 +33,7 @@ mixin _ProductSection on _HomePageShared {
   Future<void> _refreshOrder();
   bool _productHasChoices(Map<String, dynamic> product);
   Future<void> _addOneMoreOf(Map<String, dynamic> product);
+  Future<void> _ensureOrderStarted();
 
   Future<void> _configureProduct(Map<String, dynamic> product) async {
     if (const {
@@ -53,13 +54,12 @@ mixin _ProductSection on _HomePageShared {
       );
       return;
     }
-    if (activeOrder == null) {
-      setState(() {
-        orderType = 'command';
-        commandSearch = '';
-        flowStep = 'context';
-      });
-      return;
+    // Não existe mais "escolha o tipo antes de lançar": o rascunho já nasce
+    // com destino (balcão, por padrão), e trocá-lo é a barra no topo do
+    // carrinho. Este desvio mandava o operador para outra tela no meio do
+    // primeiro gesto do atendimento.
+    if (_draftIsLive && flowStep != 'order') {
+      setState(() => flowStep = 'order');
     }
     if (!mounted) return;
     if (isProductSoldByWeight(product)) {
@@ -99,7 +99,18 @@ mixin _ProductSection on _HomePageShared {
     if (config == null) return;
     // Cópia não-nula: o `finally` acima impede o compilador de promover o tipo.
     final chosen = config;
+    if (_draftIsLive) {
+      _addLineToDraft(
+        product,
+        quantity: chosen.quantity,
+        variationId: chosen.variationId,
+        addonIds: chosen.addonIds,
+        customerNote: chosen.customerNote,
+      );
+      return;
+    }
     await _work(() async {
+      await _ensureOrderStarted();
       await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {
@@ -367,7 +378,21 @@ mixin _ProductSection on _HomePageShared {
       ),
     );
     if (accepted != true) return;
+    if (_draftIsLive) {
+      // A pesagem já aconteceu e a leitura já existe no servidor: o que fica
+      // adiado é só o PEDIDO. A linha guarda o id da leitura, e a
+      // materialização a consome como sempre.
+      _addLineToDraft(
+        product,
+        quantity: weight,
+        customerNote: note.text.trim(),
+        weightKg: weight,
+        scaleReadingId: reading?['id'] == null ? null : '${reading!['id']}',
+      );
+      return;
+    }
     await _work(() async {
+      await _ensureOrderStarted();
       await api.post(
         '/orders/${activeOrder!['id']}/items/',
         body: {

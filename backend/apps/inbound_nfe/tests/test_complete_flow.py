@@ -2,11 +2,10 @@ import datetime
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.accounts.models import Account
 from apps.assets.models import Asset, AssetDisposal, AssetLocationHistory
-from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, SupplierItemMapping
+from apps.inbound_nfe.models import InboundNFe, InboundNFeItem
 from apps.inbound_nfe.services.receiving import receive_invoice
 from apps.menu.models import Product, ProductCategory
 from apps.restaurants.models import Branch, Restaurant

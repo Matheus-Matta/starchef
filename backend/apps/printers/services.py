@@ -87,6 +87,36 @@ def _establishment_info(order):
     }
 
 
+def merged_command_labels(order):
+    """As comandas que este pedido está cobrando, sem repetir.
+
+    Lista vazia na venda de balcão, que não passou por cartão nenhum. É lida
+    do PRÓPRIO item — a cópia de `command` no `OrderItem` existe para isto:
+    uma conta com duzentos cartões responde em uma consulta.
+    """
+    from apps.orders.models import OrderItem
+
+    return list(
+        OrderItem.objects.filter(order_id=order.pk, command__isnull=False)
+        .order_by("launched_at")
+        .values_list("command__code", flat=True)
+        .distinct()
+    )
+
+
+def production_context(item):
+    """De onde o item VEIO, para a cozinha — não para onde ele foi.
+
+    Depois de uma conta agrupada, `item.order` é o pedido consolidado: a
+    comanda dele é uma só, ou nenhuma. Um ticket reimpresso ou um cupom de
+    cancelamento lidos dali sairiam com o número trocado — item de quatro
+    pessoas diferentes apareceria como sendo de uma.
+    """
+    order = getattr(item, "origin_order", None) or item.order
+    command = getattr(item, "command", None) or order.command
+    return order, command
+
+
 def _order_command_barcode(order):
     """Codigo de barras (Code128) da comanda do pedido, se houver.
 
@@ -158,6 +188,16 @@ def _order_context_lines(order, width=LARGURA_CUPOM):
                 lines.append(f"Telefone: {order.customer.phone}"[:width])
         return lines
     if order.order_type == "counter":
+        # CONTA AGRUPADA DE COMANDAS não é venda de balcão, mesmo nascendo como
+        # pedido sem comanda. Chamá-la de "Balcão" no recibo esconde do cliente
+        # exatamente o que ele quer conferir: quais comandas ele está pagando.
+        comandas = merged_command_labels(order)
+        if comandas:
+            lines = ["CONTA DE COMANDAS"]
+            lines.extend(f"Comanda: {rotulo}"[:width] for rotulo in comandas)
+            if order.customer_id:
+                lines.append(f"Cliente: {order.customer.name}"[:width])
+            return lines
         lines = ["BALCAO"]
         if order.customer_id:
             lines.append(f"Cliente: {order.customer.name}"[:width])
@@ -270,11 +310,17 @@ def render_print_html(order, job_type, **extra):
     return render_to_string(template, context)
 
 
-def active_printers_for(order):
-    """Impressoras ativas que atendem este pedido (restaurante + filial)."""
-    active = Printer.objects.filter(restaurant=order.restaurant, is_active=True)
-    if order.branch_id:
-        active = active.filter(Q(branch_id=order.branch_id) | Q(branch__isnull=True))
+def active_printers_for(owner):
+    """Impressoras ativas que atendem este dono (restaurante + filial).
+
+    `owner` é qualquer coisa com `restaurant` e `branch_id`: um pedido, uma
+    comanda. A comanda também imprime — a conferência que o cliente pede antes
+    de pagar —, e amarrar esta escolha a `Order` obrigaria a inventar um pedido
+    só para achar a impressora.
+    """
+    active = Printer.objects.filter(restaurant=owner.restaurant, is_active=True)
+    if owner.branch_id:
+        active = active.filter(Q(branch_id=owner.branch_id) | Q(branch__isnull=True))
     return active
 
 
@@ -633,7 +679,7 @@ def _kitchen_cancellation_text(*, item, original_job, reason, user=None):
     balcao aparecia sem nenhuma origem; sem o solicitante, a cozinha nao
     tinha a quem recorrer para confirmar um cancelamento duvidoso.
     """
-    order = item.order
+    order, command = production_context(item)
     batch = item.batch
     tipo = TIPO_ATENDIMENTO_COMANDA.get(order.order_type, str(order.order_type).upper())
     lines = [
@@ -646,8 +692,8 @@ def _kitchen_cancellation_text(*, item, original_job, reason, user=None):
     ]
     if order.table_id:
         lines.append(f"MESA: {order.table.number}"[:LARGURA_COMANDA])
-    if order.command_id:
-        lines.append(f"COMANDA: {order.command.code}"[:LARGURA_COMANDA])
+    if command is not None:
+        lines.append(f"COMANDA: {command.code}"[:LARGURA_COMANDA])
     produto = f"{_kitchen_quantity(item.quantity)}x {item.product.name}{item.variation_suffix}"
     lines.append(f"CANCELAR {produto}"[:LARGURA_COMANDA])
     for addon in item.addons.all():
@@ -678,8 +724,13 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason, offline_print
     fila sincronizasse.
     """
     with tenant_context(item.account):
+        production_order, _ = production_context(item)
+        # O TICKET FICOU NO PEDIDO DE ORIGEM, porque o lote ficou. Procurar por
+        # `order=item.order` depois de uma conta agrupada não acha nada: o item
+        # aponta ao destino e o papel, à origem. Resultado silencioso — o
+        # cancelamento simplesmente não imprime, e a cozinha monta o prato.
         originals = PrintJob.objects.filter(
-            order=item.order,
+            order_id__in={str(production_order.pk), str(item.order_id)},
             job_type=PrintJob.TYPE_KITCHEN,
         ).exclude(status=PrintJob.STATUS_CANCELLED)
         originals = [
@@ -699,7 +750,9 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason, offline_print
                     "restaurant": item.restaurant,
                     "branch": item.branch,
                     "printer": original.printer,
-                    "order": item.order,
+                    # O cancelamento fica no mesmo pedido do ticket que ele
+                    # cancela: os dois papéis descrevem a mesma produção.
+                    "order": production_order,
                     "job_type": PrintJob.TYPE_KITCHEN_CANCEL,
                     "status": PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_RENDERED,
                     "printed_at": timezone.now() if offline_printed else None,
@@ -707,6 +760,8 @@ def register_kitchen_item_cancellation_jobs(*, item, user, reason, offline_print
                     "payload": {
                         "account_id": str(item.account_id),
                         "order_id": str(item.order_id),
+                        "production_order_id": str(production_order.pk),
+                        "command_id": str(item.command_id or ""),
                         "original_print_serial": str(original.serial),
                         "batch_serial": str(item.batch.serial) if item.batch_id else "",
                         "cancelled_item_id": str(item.id),
@@ -836,12 +891,15 @@ def _weigh_ticket_items(order):
 
 
 def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
+    # A comanda do ITEM pesado vem primeiro: e ela que o cliente confere no
+    # papel para saber que o prato foi para o cartao certo.
+    command_obj = getattr(weighed_item, "command", None) or order.command
     command = None
-    if order.command_id:
+    if command_obj is not None:
         command = {
-            "id": str(order.command_id),
-            "number": order.command.number,
-            "code": order.command.code,
+            "id": str(command_obj.id),
+            "number": command_obj.number,
+            "code": command_obj.code,
         }
 
     serialized_items = [
@@ -895,10 +953,11 @@ def _weigh_ticket_payload(*, order, weighed_item, items, barcode):
 
 def _weigh_ticket_text(*, order, weighed_item, items, barcode):
     """Versao texto (monospace) da nota, enviada pelo agente para impressoras ESC/POS."""
+    command_obj = getattr(weighed_item, "command", None) or order.command
     where = (
-        f"Mesa {order.table.number}"
-        if order.table_id
-        else (f"Comanda {order.command.code}" if order.command_id else "Balcao")
+        f"Comanda {command_obj.code}"
+        if command_obj is not None
+        else (f"Mesa {order.table.number}" if order.table_id else "Balcao")
     )
     lines = _establishment_lines(_establishment_info(order))
     lines.extend(
@@ -907,6 +966,19 @@ def _weigh_ticket_text(*, order, weighed_item, items, barcode):
             "-" * LARGURA_CUPOM,
             f"Pedido #{order.sequence}  {where}",
             timezone.localtime(weighed_item.created_at).strftime("%d/%m/%Y %H:%M"),
+            "-" * LARGURA_CUPOM,
+        ]
+    )
+    # O PESO DESTA PESAGEM, em destaque e junto da comanda. O cliente sai da
+    # balanca sabendo quanto ja tem no cartao — e e essa conferencia imediata
+    # que pega o prato lancado na comanda errada, antes de virar discussao no
+    # caixa.
+    if command_obj is not None:
+        lines.append(f"COMANDA {command_obj.number}".center(LARGURA_CUPOM))
+    lines.extend(
+        [
+            _linha_valor("ESTA PESAGEM", weighed_item.total_price),
+            f"{Decimal(weighed_item.quantity):.3f} kg x R$ {weighed_item.unit_price}/kg",
             "-" * LARGURA_CUPOM,
         ]
     )
@@ -1031,3 +1103,48 @@ def weigh_to_order(*, scale, order, user, scale_reading=None, weight_kg=None, do
     )
     job = register_weigh_print(order=order, item=item, scale=scale, user=user) if do_print else None
     return item, job
+
+
+def register_command_bill_print(*, command, items, total, user):
+    """Enfileira a conferência de UMA comanda.
+
+    **Não é documento fiscal** e o cupom diz isso: a nota é uma só, do pedido
+    que cobrar a conta. Este papel responde "e a comanda 13, quanto deu?" numa
+    mesa que vai pagar junto.
+    """
+    from apps.printers.command_receipt import TYPE_TABLE_BILL
+
+    with tenant_context(command.account):
+        printer = active_printers_for(command).order_by("name").first()
+        if printer is None:
+            raise ValidationError("Nenhuma impressora ativa para este restaurante.")
+
+        linhas = [
+            f"{item.quantity:g} x {item.product.name}{item.variation_suffix}"
+            f"  {item.total_price}"
+            for item in items
+        ]
+        conteudo = "\n".join(
+            [
+                f"COMANDA {command.number}",
+                *( [f"MESA {command.current_table.number}"] if command.current_table_id else [] ),
+                "-" * 32,
+                *linhas,
+                "-" * 32,
+                f"TOTAL  {total}",
+                "",
+                "NAO E DOCUMENTO FISCAL",
+                "Conferencia de consumo da comanda.",
+            ]
+        )
+        return PrintJob.objects.create(
+            account=command.account,
+            restaurant=command.restaurant,
+            branch=command.branch,
+            printer=printer,
+            job_type=TYPE_TABLE_BILL,
+            status=PrintJob.STATUS_PENDING,
+            payload={"text": conteudo, "command": str(command.id)},
+            created_by=user,
+            updated_by=user,
+        )

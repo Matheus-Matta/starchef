@@ -15,6 +15,7 @@ from apps.core.viewsets import BaseTenantViewSet
 from apps.core.access import is_tenant_admin
 from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
+from apps.orders.command_billing import attach_commands_to_order, detach_commands_from_order
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.printers.models import ScaleReading
 from apps.orders.serializers import OrderBatchSerializer, OrderItemSerializer, OrderSerializer
@@ -173,86 +174,63 @@ class OrderViewSet(BaseTenantViewSet):
             recalculate_order(serializer.instance)
             serializer.instance.refresh_from_db()
 
-    @action(detail=False, methods=["post"], url_path="open-command")
-    def open_command(self, request):
-        """Abre (ou retoma) o pedido de uma comanda. Espelha `open_table`.
+    @action(detail=True, methods=["post"], url_path="attach-commands")
+    def attach_commands(self, request, pk=None):
+        """Inclui o consumo de uma ou mais comandas neste pedido.
 
-        Comanda livre → cria pedido (201). Comanda em uso → retoma o pedido aberto
-        (200). Resolve o restaurante pela própria comanda (sem filtros).
+        Substitui a antiga conta agrupada. Antes, pagar quatro cartões juntos
+        exigia quatro PEDIDOS e uma consolidação que movia item por item entre
+        eles — o caminho que não aguentava uma mesa grande. Agora a comanda não
+        tem pedido: ela anota, e o pedido do caixa recebe as anotações
+        pendentes.
         """
-        command_id = request.data.get("command")
-        if not command_id:
+        order = self.get_object()
+        referencias = request.data.get("commands") or []
+        if not isinstance(referencias, list) or not referencias:
             return Response(
-                {"detail": "Selecione uma comanda para abrir o pedido."},
+                {"detail": "Informe as comandas a incluir nesta conta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        command = (
-            Command.objects.select_related("restaurant")
-            .filter(pk=command_id, account=getattr(request, "account", None), is_active=True)
-            .first()
-        )
-        if command is None:
-            return Response(
-                {"detail": "A comanda selecionada não existe ou está inativa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        profile = getattr(request.user, "profile", None)
-        from apps.core.access import is_tenant_admin
-
-        if not is_tenant_admin(request.user) and getattr(profile, "restaurant_id", None) != command.restaurant_id:
-            return Response(
-                {"detail": "A comanda selecionada pertence a outro restaurante."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if command.current_order_id:
-            existing = Order.objects.filter(
-                pk=command.current_order_id,
-                account=getattr(request, "account", None),
-                restaurant=command.restaurant,
-                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
-            ).first()
-            if existing:
-                return Response(self.get_serializer(existing).data)
-
         try:
-            order = create_order(
-                restaurant=command.restaurant,
-                branch=None,
-                order_type=Order.TYPE_COMMAND,
-                command=command,
-                user=request.user,
-                responsible_user=self._attending_user(command.restaurant),
+            attach_commands_to_order(
+                order=order, command_ids=referencias, user=request.user
             )
         except ValidationError as exc:
+            # 409, e não 400: o corpo está certo — o que mudou foi o estado do
+            # cartão. O PDV trata 400 como erro de preenchimento e reenvia o
+            # mesmo corpo para sempre.
+            return Response({"detail": exc.messages}, status=status.HTTP_409_CONFLICT)
+        order.refresh_from_db()
+        return Response(self.get_serializer(order).data)
+
+    @action(detail=True, methods=["post"], url_path="detach-commands")
+    def detach_commands(self, request, pk=None):
+        """Tira comandas desta conta SEM cancelar nada.
+
+        O desfazer do caixa: incluiu o cartão errado, ou o cliente resolveu
+        pagar separado. As anotações voltam a pendentes e o cartão volta a ter
+        o que cobrar — cancelar a conta inteira para corrigir uma inclusão
+        seria caro demais para um engano de um toque.
+        """
+        order = self.get_object()
+        referencias = request.data.get("commands") or []
+        if not isinstance(referencias, list) or not referencias:
             return Response(
-                {"detail": " ".join(exc.messages)},
+                {"detail": "Informe as comandas a remover desta conta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(self.get_serializer(order).data, status=status.HTTP_201_CREATED)
-
-    def _attending_user(self, restaurant):
-        """Quem esta atendendo, quando nao e quem gravou.
-
-        O Caixa Principal executa as operacoes do app do garcom com as
-        proprias credenciais — e ele quem tem a sessao com a nuvem. Sem esta
-        atribuicao o pedido nascia no nome do caixa e a comanda saia na cozinha
-        com "ATENDENTE: <caixa>", escondendo quem de fato atendeu a mesa.
-
-        `created_by` continua sendo quem gravou (verdade de auditoria); so o
-        atendimento e atribuido, e apenas a um usuario do mesmo restaurante.
-        """
-        raw = str(self.request.data.get("responsible_user") or "").strip()
-        if not raw:
-            return None
         try:
-            return (
-                get_user_model()
-                .objects.filter(pk=raw, profile__restaurant=restaurant)
-                .first()
+            resumo = detach_commands_from_order(
+                order=order, command_ids=referencias, user=request.user
             )
-        except (ValueError, ValidationError):
-            return None
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_409_CONFLICT)
+        order.refresh_from_db()
+        dados = dict(self.get_serializer(order).data)
+        # Quem já foi para a produção volta para a comanda com o prato feito —
+        # o cozinheiro não desfaz, e o operador precisa saber disso.
+        dados["detached"] = resumo
+        return Response(dados)
 
     @action(detail=False, methods=["post"], url_path="create-with-item")
     def create_with_item(self, request):
@@ -396,6 +374,7 @@ class OrderViewSet(BaseTenantViewSet):
             serializer = OrderItemSerializer(order.items.all(), many=True)
             return Response(serializer.data)
 
+
         # Ler o corpo com `[]` e resolver o produto com `.get()` transformava
         # dois erros de CLIENTE em 500: item sem `product` virava `KeyError`, e
         # produto inexistente (ou de outro restaurante) virava `DoesNotExist`.
@@ -527,9 +506,10 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="close")
     def close(self, request, pk=None):
+        order_to_close = self.get_object()
         try:
             order = close_order(
-                self.get_object(),
+                order_to_close,
                 request.user,
                 discount=request.data.get("discount", 0),
                 service_fee=request.data.get("service_fee"),
@@ -660,6 +640,7 @@ class OrderViewSet(BaseTenantViewSet):
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)
+
 
     @action(detail=True, methods=["post"], url_path="print")
     def print_order(self, request, pk=None):

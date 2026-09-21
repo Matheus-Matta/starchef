@@ -441,8 +441,11 @@ mixin _PaymentSection on _HomePageShared {
       selectedCustomer = null;
       orderItems = [];
       registeredPayments = [];
-      orderType = null;
-      flowStep = 'type';
+      // A venda acabou: a tela volta PRONTA para a próxima, no catálogo com
+      // o carrinho vazio. Voltar para um seletor de tipo custaria um gesto a
+      // cada cliente da fila.
+      orderType = 'counter';
+      flowStep = 'order';
     });
     unawaited(_load());
     unawaited(

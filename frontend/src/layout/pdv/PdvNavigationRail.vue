@@ -37,13 +37,20 @@ const props = defineProps({
   active: { type: String, default: "venda" },
   showOrders: { type: Boolean, default: true },
   showFinance: { type: Boolean, default: true },
+  showMerge: { type: Boolean, default: false },
+  showCommands: { type: Boolean, default: true },
 });
 
 defineEmits(["navigate", "exit"]);
 
 const entries = computed(() => [
-  { key: "venda", label: "Venda", icon: "pi pi-shopping-cart" },
+  { key: "venda", label: "Venda", icon: "pi pi-th-large" },
   ...(props.showOrders ? [{ key: "pedidos", label: "Pedidos", icon: "pi pi-receipt" }] : []),
+  // "Juntar" fica ao lado da venda de propósito: é para onde o caixa vai
+  // quando a família chega com quatro cartões, e ele não deve ter de
+  // procurar num menu com o cliente esperando.
+  ...(props.showCommands ? [{ key: "comandas", label: "Comandas", icon: "pi pi-qrcode" }] : []),
+  ...(props.showMerge ? [{ key: "conta-agrupada", label: "Juntar", icon: "pi pi-link" }] : []),
   { key: "mesas", label: "Mesas", icon: "pi pi-th-large" },
   ...(props.showFinance ? [{ key: "caixa", label: "Caixa", icon: "pi pi-wallet" }] : []),
 ]);

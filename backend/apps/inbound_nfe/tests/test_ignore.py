@@ -178,7 +178,8 @@ class InboundNFeIgnoreTestCase(TestCase):
         self.assertEqual(invoice.status, InboundNFe.STATUS_PENDING_RECEIPT)
 
         # Dar entrada no estoque via receive_invoice
-        receipt_data = receive_invoice(
+        # Chamada pelo efeito no estoque; o retorno nao entra nas assercoes.
+        receive_invoice(
             invoice=invoice,
             received_by=self.user,
             location=self.storage_location,

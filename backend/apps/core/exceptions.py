@@ -104,7 +104,7 @@ def api_exception_handler(exc, context):
             {"detail": _integrity_message(exc)},
             status=status.HTTP_409_CONFLICT,
         )
-        setattr(exc, "default_code", "conflict")
+        exc.default_code = "conflict"
 
     # Serviços de domínio levantam django.core.exceptions.ValidationError (ex.:
     # "Table already has an open order."). O handler padrão do DRF não trata isso
@@ -119,11 +119,11 @@ def api_exception_handler(exc, context):
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={"Retry-After": "2"},
         )
-        setattr(exc, "default_code", "service_unavailable")
+        exc.default_code = "service_unavailable"
 
     if response is None and isinstance(exc, DjangoValidationError):
         response = Response(_django_validation_detail(exc), status=status.HTTP_400_BAD_REQUEST)
-        setattr(exc, "default_code", "invalid")
+        exc.default_code = "invalid"
 
     if response is None:
         request = context.get("request")

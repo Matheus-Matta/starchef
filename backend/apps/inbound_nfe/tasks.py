@@ -712,8 +712,8 @@ def fetch_full_xml_task(self, invoice_id: str):
                 f"fetch_full_xml_task: procNFe ainda não liberado pela SEFAZ para "
                 f"{invoice.access_key}. Tentativa {self.request.retries + 1}/5."
             )
-            raise self.retry(countdown=45 * (2 ** self.request.retries))
+            raise self.retry(countdown=45 * (2 ** self.request.retries)) from None
     except Exception as exc:
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc, countdown=45 * (2 ** self.request.retries))
+            raise self.retry(exc=exc, countdown=45 * (2 ** self.request.retries)) from exc
         logger.error(f"fetch_full_xml_task: Falha definitiva ao obter procNFe para {invoice_id}: {exc}")

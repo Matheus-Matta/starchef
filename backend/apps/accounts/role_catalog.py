@@ -38,6 +38,7 @@ _CASHIER_CODES = _WAITER_CODES + [
     # A tela do PDV começa aqui e sobe (gerente herda do caixa, admin leva
     # tudo). O garçom fica de fora de propósito: ele lança pelo aplicativo.
     "pdv.operate",
+    "orders.merge",
     "orders.view",
     "cash.view.own",
     "cash.open",

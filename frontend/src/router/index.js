@@ -12,6 +12,9 @@ const HelpCenterView = () => import("../views/HelpCenterView.vue");
 const LoginScreen = () => import("../views/LoginScreen.vue");
 const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
 const PdvView = () => import("../views/PdvView.vue");
+const PdvMergeView = () => import("../views/PdvMergeView.vue");
+const PdvCommandsView = () => import("../views/PdvCommandsView.vue");
+const PdvVendaView = () => import("../views/PdvVendaView.vue");
 const OrderEditView = () => import("../views/OrderEditView.vue");
 const CashRegisterView = () => import("../views/CashRegisterView.vue");
 const CashSessionDetailView = () => import("../views/CashSessionDetailView.vue");
@@ -132,11 +135,53 @@ export const router = createRouter({
       component: PdvLayout,
       meta: { requiresAuth: true, permission: "pdv.operate" },
       children: [
+        // A ENTRADA do posto é o cardápio, como num PDV de mercado: produtos à
+        // esquerda, carrinho à direita, e nenhum pedido aberto até alguém
+        // precisar dele. `/pdv` continua existindo como a tela do pedido JÁ
+        // aberto — é ela que recebe, emite e imprime.
         {
           path: "",
+          name: "pdv-venda",
+          component: PdvVendaView,
+          meta: { requiresAuth: true, title: "PDV — Venda", nav: "pdv", pdvNav: "venda" },
+        },
+        {
+          path: "pedido",
           name: "pdv",
           component: PdvView,
-          meta: { requiresAuth: true, title: "PDV — Ponto de Venda", nav: "pdv", pdvNav: "venda" },
+          meta: { requiresAuth: true, title: "PDV — Pedido", nav: "pdv", pdvNav: "venda" },
+        },
+        // A conta agrupada tem rota própria, e não uma aba dentro da venda:
+        // ela tem um ciclo de vida inteiro (abrir → incluir → confirmar →
+        // receber) e um estado de conflito entre dois caixas que a tela de
+        // venda não conhece. `orders.merge` é o código de permissão: juntar
+        // quatro comandas numa conta é operação de caixa, não de garçom.
+        // Página das comandas: o que cada cartão tem, o histórico dele e a
+        // conferência em papel. Mesma casca da venda e da conta agrupada —
+        // quem alterna entre as três no turno não deve sentir a troca.
+        {
+          path: "comandas",
+          name: "pdv-comandas",
+          component: PdvCommandsView,
+          meta: {
+            requiresAuth: true,
+            permission: "tables.view",
+            title: "Comandas",
+            nav: "pdv",
+            pdvNav: "comandas",
+          },
+        },
+        {
+          path: "conta-agrupada",
+          name: "pdv-conta-agrupada",
+          component: PdvMergeView,
+          meta: {
+            requiresAuth: true,
+            permission: "orders.merge",
+            title: "Conta agrupada de comandas",
+            nav: "pdv",
+            pdvNav: "conta-agrupada",
+          },
         },
       ],
     },

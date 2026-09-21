@@ -44,4 +44,36 @@ mixin _HomePageShared on State<HomePage> {
     required String title,
   });
   void _error(Object error, {String? title, String? action});
+
+  /// O tradutor de códigos lidos, provido por `_ScanSection`. Está aqui
+  /// porque a seção de ENTRADA também o usa, no painel que testa um código.
+  CodeLookupService? get _codeLookup;
+
+  // ── o rascunho, provido por `_DraftSection` ─────────────────────────────
+  //
+  // Estão AQUI, e não repetidos em cada seção, porque quatro delas consomem os
+  // mesmos membros: lançamento por clique, por leitor, por configuração e por
+  // pesagem. Quatro cópias da mesma assinatura divergem com o tempo, e o Dart
+  // recusa a classe quando isso acontece — é o motivo de este mixin existir.
+  bool get _draftIsLive;
+  List<Map<String, dynamic>> get _cartItems;
+  OrderDraftCart get draft;
+  void _addLineToDraft(
+    Map<String, dynamic> product, {
+    double quantity,
+    String? variationId,
+    List<String> addonIds,
+    String customerNote,
+    double? weightKg,
+    String? scaleReadingId,
+  });
+  void _changeDraftQuantity(String id, double quantity);
+  void _removeDraftLine(String id);
+  Future<void> _pickDraftType(String type);
+  Future<void> _attachCommandToDraft();
+  void _attachCommandToDraftDirectly(Map<String, dynamic> command);
+  void _detachCommandFromDraft([String? commandId]);
+  Future<bool> _materializeDraft();
+  void _discardDraft();
+  Future<bool> _confirmLeavingPendingItems();
 }

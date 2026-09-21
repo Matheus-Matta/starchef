@@ -13,6 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from apps.core.audit import record_audit
+from apps.core.models import AuditLog
 from apps.core.numbers import MAX_WEIGHT, parse_decimal
 from apps.core.viewsets import BaseTenantViewSet
 from apps.core.permissions import CanOperateScale, CanUseOrManageDevices
@@ -100,7 +102,7 @@ class ScaleViewSet(BaseTenantViewSet):
     search_fields = ["name", "port"]
 
     def get_permissions(self):
-        if self.action == "checkout_command":
+        if self.action in {"checkout_command", "bind_command", "release_command"}:
             return [CanOperateScale()]
         if self.action in {"claim_agent", "release_agent"}:
             return [IsAuthenticated()]
@@ -110,6 +112,36 @@ class ScaleViewSet(BaseTenantViewSet):
         if self.action in {"latest_reading", "claim_agent", "release_agent"}:
             return [DevicePollingRateThrottle()]
         return super().get_throttles()
+
+    @action(detail=True, methods=["post"], url_path="bind-command")
+    def bind_command(self, request, pk=None):
+        """O cliente passou o cartão: amarra a comanda por um tempo curto.
+
+        O vínculo expira na primeira pesagem e também por tempo, o que vier
+        antes — sem isso, o prato do próximo cliente cai na comanda do
+        anterior, que é o defeito de dinheiro deste desenho.
+        """
+        from apps.printers.scale_command import bind_command_to_scale
+
+        try:
+            scale = bind_command_to_scale(
+                scale=self.get_object(),
+                reference=request.data.get("command") or request.data.get("code"),
+                user=request.user,
+            )
+        except ValidationError as exc:
+            return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(scale).data)
+
+    @action(detail=True, methods=["post"], url_path="release-command")
+    def release_command(self, request, pk=None):
+        """Solta o cartão sem pesar (o cliente desistiu, leu o cartão errado)."""
+        from apps.printers.scale_command import release_command_binding
+
+        with transaction.atomic():
+            scale = Scale.objects.select_for_update().get(pk=self.get_object().pk)
+            release_command_binding(scale)
+        return Response(self.get_serializer(scale).data)
 
     @action(detail=True, methods=["post"], url_path="claim-agent")
     def claim_agent(self, request, pk=None):
@@ -441,11 +473,79 @@ class ScaleReadingViewSet(BaseTenantViewSet):
         if scale is not None:
             serializer.validated_data.setdefault("restaurant", scale.restaurant)
             serializer.validated_data.setdefault("branch", scale.branch)
-        super().perform_create(serializer)
-        self._maybe_auto_weigh(serializer.instance)
 
-    def _maybe_auto_weigh(self, reading):
-        """Gatilho automatico: leitura estavel + balanca com auto_print/produto/pedido -> nota."""
+        # A RECUSA NASCE COM A LINHA, e nao num segundo `save()`.
+        #
+        # `scale_reading` e append-only na sincronizacao (`immutable=True`): o
+        # destino INSERE e nunca atualiza. Um motivo gravado depois viraria um
+        # evento de UPDATE que a nuvem descarta — e a leitura ficaria la com o
+        # motivo em branco para sempre. Quem fosse investigar "por que o prato
+        # deste cliente nao foi cobrado?" nao acharia resposta exatamente onde
+        # a pergunta e feita.
+        comanda, recusa = self.command_mode_refusal(scale, serializer.validated_data)
+        if recusa:
+            serializer.validated_data["notes"] = recusa
+
+        super().perform_create(serializer)
+        if not recusa:
+            self._maybe_auto_weigh(serializer.instance, command=comanda)
+
+    def command_mode_refusal(self, scale, dados):
+        """Consome o vinculo do cartao e diz por que a pesagem nao vai cobrar.
+
+        Devolve `(comanda, motivo)`. Roda ANTES do INSERT da leitura de
+        proposito — ver `perform_create`.
+
+        No modo balcao devolve `(None, "")`: quem decide ali e
+        `_maybe_auto_weigh`, e o caminho nao mudou.
+        """
+        if scale is None or scale.weighing_mode != Scale.MODE_COMMAND:
+            return None, ""
+        if not scale.auto_print or not scale.product_id:
+            return None, ""
+        if not dados.get("is_stable", True):
+            return None, ""
+
+        from apps.printers.scale_command import consume_command_binding
+
+        comanda = consume_command_binding(scale)
+        if comanda is None:
+            # FALHA FECHADO: nada de queda para balcao. Um prato do cliente A
+            # nao pode virar conta avulsa silenciosa.
+            return None, "Pesagem sem comanda: passe o cartao antes de pesar."
+        return comanda, ""
+
+    def _register_weigh_failure(self, reading, motivo):
+        """Grava por que a pesagem falhou DEPOIS que a leitura ja existia.
+
+        Sao as falhas que so aparecem ao lancar o item: impressora inativa,
+        produto fora do cardapio, comanda em fechamento. A nota vai para a
+        leitura (o terminal le a resposta e avisa o operador) e TAMBEM para a
+        auditoria — que e append-only e sincroniza, e por isso e a unica copia
+        que chega a nuvem. Ver `command_mode_refusal` para o porque.
+        """
+        reading.notes = motivo[:255]
+        reading.save(update_fields=["notes", "updated_at"])
+        record_audit(
+            action=AuditLog.ACTION_UPDATED,
+            instance=reading,
+            actor=self.request.user,
+            reason=motivo,
+            metadata={"event": "scale_reading_not_charged", "scale": str(reading.scale_id or "")},
+        )
+
+    def _maybe_auto_weigh(self, reading, *, command=None):
+        """Gatilho automatico da leitura estavel, na ORDEM que importa.
+
+        1. modo comanda com cartao valido -> lanca na comanda (abre o pedido de
+           trabalho dela se for a primeira pesagem);
+        2. modo comanda SEM cartao valido -> a recusa ja foi gravada no INSERT
+           por `command_mode_refusal`, e esta funcao nem e chamada. Nao ha
+           queda para balcao: um prato do cliente A virando conta avulsa
+           silenciosa e pior que um erro visivel no terminal;
+        3. modo balcao -> comportamento de sempre (pedido amarrado, ou pedido
+           de balcao automatico).
+        """
         scale = reading.scale
         if not scale or not scale.auto_print or not reading.is_stable:
             return
@@ -454,6 +554,19 @@ class ScaleReadingViewSet(BaseTenantViewSet):
 
         from apps.orders.models import Order
         from apps.orders.services import create_order
+        from apps.printers.scale_command import weigh_into_command
+
+        if scale.weighing_mode == Scale.MODE_COMMAND:
+            if command is None:
+                return
+            try:
+                # A comanda ANOTA o peso; nenhum pedido é aberto aqui.
+                weigh_into_command(
+                    scale=scale, command=command, user=self.request.user, scale_reading=reading
+                )
+            except ValidationError as exc:
+                self._register_weigh_failure(reading, " ".join(exc.messages))
+            return
 
         order = None
         auto_created = False

@@ -39,6 +39,15 @@ PERMISSION_GROUPS = [
             # deste catálogo, e a primeira a envelhecer quando alguém criar um
             # perfil novo.
             ("pdv.operate", "Operar o PDV", "Abrir a tela de ponto de venda (caixa, gerente e admin)."),
+            # Juntar quatro comandas numa conta só move dinheiro entre pedidos
+            # e prende cartões enquanto o caixa monta a conta. É operação de
+            # caixa, não de garçom — que lança pelo aplicativo e não fecha
+            # conta de ninguém.
+            (
+                "orders.merge",
+                "Agrupar comandas numa conta",
+                "Montar, confirmar e desfazer a conta agrupada de várias comandas.",
+            ),
         ],
     ),
     (

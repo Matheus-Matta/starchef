@@ -20,6 +20,7 @@ from apps.core.numbers import (
 from apps.core.tenant import tenant_context
 from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
+from apps.orders.command_billing import conclude_items_of_order
 from apps.menu.models import ProductVariation
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 from apps.restaurants.models import Command, Table
@@ -95,45 +96,43 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
         return order
 
 
-def free_command_for_order(order):
-    """Zera e libera a comanda vinculada ao pedido (reuso). No-op se sem comanda.
+def _concluir_anotacao_do_item(item, *, when=None):
+    """Um item de pedido saiu da conta: a anotação dele na comanda sai também.
 
-    Espelha a liberação da mesa; chamado no pagamento total e no cancelamento.
+    Nulo quando o item foi lançado direto no pedido (balcão, entrega, retirada)
+    — aí não há cartão nenhum a atualizar.
+    """
+    if item.command_item_id is None:
+        return
+    from apps.orders.command_items import conclude_item
+
+    conclude_item(item.command_item, when=when)
+
+
+def free_command_for_order(order):
+    """Devolve para a gaveta TODAS as comandas que este pedido cobrou.
+
+    Um pedido pode ter incluído duzentos cartões — a mesa grande que paga
+    junto é o caso, não a exceção. A liberação é por cartão e só acontece
+    quando ele não tem mais nada pendente: outro garçom pode ter lançado uma
+    sobremesa enquanto o caixa fechava a conta, e esse consumo não pode sumir.
+
     Assume estar dentro de transação/tenant_context do chamador.
     """
-    if not order.command_id:
+    from apps.orders.command_items import free_command_if_empty
+    from apps.restaurants.models import Command
+
+    ids = set(
+        OrderItem.objects.filter(order_id=order.pk)
+        .exclude(command_id__isnull=True)
+        .values_list("command_id", flat=True)
+    )
+    if not ids:
         return
-    command = Command.objects.select_for_update().get(pk=order.command_id)
-    old_table_id = command.current_table_id
-
-    command.status = Command.STATUS_FREE
-    command.current_order_id = None
-    command.customer_name = ""
-    command.current_table = None
-    command.save(update_fields=["status", "current_order_id", "customer_name", "current_table", "updated_at"])
-
-    if old_table_id:
-        from apps.restaurants.models import CommandMovementLog, Table
-
-        CommandMovementLog.objects.create(
-            account=command.account,
-            restaurant=command.restaurant,
-            branch=command.branch,
-            command=command,
-            action=CommandMovementLog.ACTION_UNLINKED,
-            from_table_id=old_table_id,
-            waiter=order.updated_by,
-        )
-
-        # A ocupação da mesa é determinada exclusivamente pelas comandas
-        # vinculadas. O pedido mantém `table` apenas como histórico.
-        table = Table.objects.select_for_update().get(pk=old_table_id)
-        active_commands = table.active_commands.exists()
-
-        if not active_commands:
-            table.status = Table.STATUS_FREE
-            table.current_order_id = None
-            table.save(update_fields=["status", "current_order_id", "updated_at"])
+    # Ordenado por id: dois caixas fechando as mesmas mesas em ordens
+    # diferentes é o formato clássico de impasse no banco.
+    for command in Command.objects.filter(pk__in=ids).order_by("pk"):
+        free_command_if_empty(command, user=order.updated_by)
 
 
 def free_table_if_empty(table):
@@ -223,6 +222,10 @@ def add_order_item(
             raise ValidationError("O produto não está disponível neste restaurante.")
         if order.is_locked:
             raise ValidationError("Pedidos pagos, cancelados ou estornados não podem ser alterados.")
+        # A lista que o caixa esta lendo em voz alta para o cliente nao pode
+        # mudar embaixo dele — e um item lancado agora ficaria fora do
+        # pagamento, que e o pior defeito possivel aqui: a comida sai e
+        # ninguem cobra.
         if not product.is_active:
             raise ValidationError("Um produto inativo não pode ser adicionado ao pedido.")
 
@@ -317,6 +320,11 @@ def add_order_item(
             restaurant=order.restaurant,
             branch=order.branch,
             order=order,
+            # DE QUEM E O ITEM, gravado no lancamento. Depois da consolidacao
+            # todos os itens vivem no mesmo pedido: se a comanda nao estiver
+            # aqui, "de quem e este prato" se perde — na conferencia com o
+            # cliente e na cozinha.
+            command=order.command,
             product=product,
             quantity=quantity,
             unit_price=unit_price,
@@ -596,6 +604,20 @@ def dispatch_kitchen_batch(batch, *, now=None):
         order.updated_by = batch.sent_by
         order.save(update_fields=["production_status", "updated_by", "updated_at"])
 
+        # DEPOIS DE UMA CONSOLIDACAO o lote fica na origem como historia de
+        # producao, mas os itens ja pertencem ao pedido final. O quadro e o
+        # resumo por pedido leem `item.order`: sem avancar o destino tambem,
+        # a comida some do pedido que o cliente esta pagando.
+        destinos = {
+            item.order_id for item in items if item.order_id and item.order_id != order.id
+        }
+        for destino_id in sorted(str(value) for value in destinos):
+            destino = Order.objects.select_for_update().filter(pk=destino_id).first()
+            if destino is None or destino.production_status != Order.PROD_IDLE:
+                continue
+            destino.production_status = Order.PROD_SENT
+            destino.save(update_fields=["production_status", "updated_at"])
+
         from apps.printers.models import PrintJob
 
         PrintJob.objects.filter(
@@ -606,7 +628,11 @@ def dispatch_kitchen_batch(batch, *, now=None):
         if order.restaurant.stock_deduction_timing == "kitchen":
             from apps.stock.services import deduct_order_stock
 
-            deduct_order_stock(order=order, user=batch.sent_by)
+            # A BAIXA E DO LOTE, nao do pedido. Quando a comanda ja entrou numa
+            # conta agrupada, `order.items` do pedido de origem esta vazio e a
+            # baixa nao encontrava nada para dar: a cozinha recebia o prato e o
+            # insumo continuava no estoque.
+            deduct_order_stock(order=order, user=batch.sent_by, items=batch.items)
 
         record_audit(
             action=AuditLog.ACTION_UPDATED,
@@ -727,6 +753,10 @@ def void_order_item(item, user, reason="", offline_printed=False):
         item.voided_by = user
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "voided_at", "voided_by", "updated_by", "updated_at"])
+        # Cancelar na cozinha e sair da comanda sao coisas diferentes, mas um
+        # item cancelado precisa sair da comanda TAMBEM: senao ele continua
+        # ocupando o cartao do proximo cliente.
+        _concluir_anotacao_do_item(item, when=item.voided_at)
         recalculate_order(item.order)
         if within_grace and item.batch_id:
             from apps.printers.services import refresh_scheduled_kitchen_batch_jobs
@@ -773,6 +803,7 @@ def comp_order_item(item, user, reason=""):
         item.voided_by = user
         item.updated_by = user
         item.save(update_fields=["status", "void_reason", "voided_at", "voided_by", "updated_by", "updated_at"])
+        _concluir_anotacao_do_item(item, when=item.voided_at)
         recalculate_order(item.order)
         record_audit(
             action=AuditLog.ACTION_UPDATED, instance=item, actor=user, reason=reason, metadata={"event": "comp"}
@@ -962,6 +993,8 @@ def close_order(
             order.payment_status = Order.PAYMENT_PENDING
         order.save(update_fields=["payment_status", "status", "updated_by"])
         if paid_in_full:
+            # Pago: as anotações saem da comanda como VENDA.
+            conclude_items_of_order(order, billed=True)
             if order.table_id:
                 free_table_if_empty(order.table)
             free_command_for_order(order)
@@ -1040,6 +1073,13 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status == Order.STATUS_PAID:
             raise ValidationError("Pedidos pagos devem ser estornados, não cancelados.")
+        if order.status == Order.STATUS_MERGED:
+            raise ValidationError(
+                "Os itens deste pedido já estão numa conta agrupada. "
+                "Desfaça a consolidação antes de cancelar."
+            )
+        # Cancelar a origem enquanto o caixa monta a conta tiraria itens que
+        # ja estao na tela de pagamento — sem que a tela soubesse.
         now = timezone.now()
         if not authorization:
             authorization = Order.AUTHORIZATION_DELEGATED if authorized_by is not None else Order.AUTHORIZATION_OWN
@@ -1065,6 +1105,9 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).update(
             status=OrderItem.STATUS_CANCELLED, void_reason=reason, voided_at=now, voided_by=user
         )
+        # Conta cancelada: as anotações saem como PERDA, não como venda. É a
+        # distinção que o fechamento do mês precisa, e que um estado só apagaria.
+        conclude_items_of_order(order, when=now, billed=False)
         if order.table_id:
             free_table_if_empty(order.table)
         free_command_for_order(order)
@@ -1118,15 +1161,27 @@ def sync_production_status(order):
 
 
 def serialize_kitchen_item(item):
-    order = item.order
+    """O item como a cozinha o enxerga, com a ORIGEM dele, nao com o destino.
+
+    Depois de uma consolidacao `item.order` e o pedido final — cuja comanda e
+    uma so, ou nenhuma. Ler a comanda dali faria o card do KDS mostrar a
+    comanda errada: item de quatro pessoas diferentes apareceria como sendo de
+    uma. Mesa, tipo e numero de pedido tambem vem da origem, que e onde a
+    producao aconteceu.
+    """
+    order = item.origin_order or item.order
+    command = item.command or order.command
     return {
         "id": str(item.id),
         "account_id": str(item.account_id),
-        "order_id": str(order.id),
+        # O pedido ATUAL e o que a tela de pagamento conhece; o de producao e o
+        # que a cozinha imprimiu. Os dois viajam para ninguem ter de adivinhar.
+        "order_id": str(item.order_id),
+        "production_order_id": str(order.id),
         "order_sequence": order.sequence,
         "order_type": order.order_type,
         "table": order.table.number if order.table_id else None,
-        "command": order.command.code if order.command_id else None,
+        "command": command.code if command else None,
         "customer": order.customer.name if order.customer_id else None,
         "product": item.product.name,
         "quantity": str(item.quantity),

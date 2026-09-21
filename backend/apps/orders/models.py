@@ -1,10 +1,10 @@
-import uuid
 
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
 from apps.core.models import TenantModel
+from apps.orders.models_consumption import ConsumptionItem, ProductionBatch
 
 
 class Order(TenantModel):
@@ -29,6 +29,9 @@ class Order(TenantModel):
     STATUS_PAID = "paid"
     STATUS_CANCELLED = "cancelled"
     STATUS_REFUNDED = "refunded"
+    # Pedido de trabalho cujos itens foram para um pedido consolidado. Ele
+    # continua existindo como histórico (lotes de cozinha, tickets impressos,
+    # snapshot de valor), mas NÃO fatura e não aceita mais escrita.
 
     STATUS_CHOICES = [
         (STATUS_OPEN, "Open"),
@@ -215,30 +218,27 @@ class Order(TenantModel):
 
     @property
     def is_locked(self):
-        return self.status in {self.STATUS_PAID, self.STATUS_CANCELLED, self.STATUS_REFUNDED}
+        """Nada mais pode ser gravado neste pedido.
+
+        `merged` entra aqui: os itens dele já estão no pedido consolidado, e
+        aceitar lançamento, fechamento ou cancelamento na origem produziria
+        uma venda que ninguém cobra — ou cobraria duas vezes.
+        """
+        return self.status in {
+            self.STATUS_PAID,
+            self.STATUS_CANCELLED,
+            self.STATUS_REFUNDED,
+        }
 
 
-class OrderBatch(TenantModel):
-    """Production round — group of items sent to kitchen at once within a single order."""
+class OrderBatch(ProductionBatch):
+    """A rodada de produção DE UM PEDIDO.
 
-    STATUS_SCHEDULED = "scheduled"
-    STATUS_SENT = "sent"
-    STATUS_DONE = "done"
-    STATUS_CANCELLED = "cancelled"
-
-    STATUS_CHOICES = [
-        (STATUS_SCHEDULED, "Scheduled"),
-        (STATUS_SENT, "Sent"),
-        (STATUS_DONE, "Done"),
-        (STATUS_CANCELLED, "Cancelled"),
-    ]
+    O número, o serial, a carência e o estado vêm de `ProductionBatch`,
+    compartilhado com a rodada da comanda.
+    """
 
     order = models.ForeignKey(Order, related_name="batches", on_delete=models.CASCADE)
-    serial = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    batch_number = models.PositiveIntegerField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SCHEDULED)
-    sent_at = models.DateTimeField()
-    dispatch_at = models.DateTimeField(null=True, blank=True, db_index=True)
     sent_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -246,10 +246,8 @@ class OrderBatch(TenantModel):
         related_name="batches_sent",
         on_delete=models.SET_NULL,
     )
-    printed_at = models.DateTimeField(null=True, blank=True)
 
-    class Meta:
-        ordering = ["batch_number"]
+    class Meta(ProductionBatch.Meta):
         constraints = [
             models.UniqueConstraint(fields=["order", "batch_number"], name="unique_batch_number_per_order"),
         ]
@@ -258,28 +256,49 @@ class OrderBatch(TenantModel):
         return f"Rodada #{self.batch_number} — Pedido {self.order_id}"
 
 
-class OrderItem(TenantModel):
-    STATUS_PENDING = "pending"
-    STATUS_QUEUED = "queued"
-    STATUS_SENT = "sent"
-    STATUS_PREPARING = "preparing"
-    STATUS_READY = "ready"
-    STATUS_DELIVERED = "delivered"
-    STATUS_CANCELLED = "cancelled"
-    STATUS_COMPED = "comped"
+class OrderItem(ConsumptionItem):
+    """O item DENTRO DE UM PEDIDO — o que vai ser cobrado.
 
-    STATUS_CHOICES = [
-        (STATUS_PENDING, "Pending"),
-        (STATUS_QUEUED, "Queued during grace period"),
-        (STATUS_SENT, "Sent"),
-        (STATUS_PREPARING, "Preparing"),
-        (STATUS_READY, "Ready"),
-        (STATUS_DELIVERED, "Delivered"),
-        (STATUS_CANCELLED, "Cancelled"),
-        (STATUS_COMPED, "Comped"),
-    ]
+    O que ele é, quanto custa e em que pé está na produção vem de
+    `ConsumptionItem`, compartilhado com o item da comanda. Aqui fica só o que
+    é do pedido: de qual pedido é, de qual comanda veio, e a rodada de cozinha.
+    """
 
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
+    # DE QUAL COMANDA este item veio. Nulo no balcão, na entrega e na retirada.
+    #
+    # Redundante com `command_item.command`, e de propósito: um pedido que paga
+    # 200 comandas responde "quais cartões estão nesta conta" sem visitar 200
+    # anotações, e o cupom por comanda é uma consulta só. A cópia nasce junto
+    # com o item e nunca muda.
+    #
+    # `related_name="items"` devolve o HISTÓRICO INTEIRO do cartão, inclusive
+    # almoços de semanas atrás. "O que a comanda tem AGORA" são os
+    # `CommandItem` pendentes dela — nenhuma tela pode usar `command.items`
+    # cru.
+    command = models.ForeignKey(
+        "restaurants.Command",
+        null=True,
+        blank=True,
+        related_name="items",
+        on_delete=models.PROTECT,
+    )
+    # DE QUAL ANOTAÇÃO DA COMANDA este item veio.
+    #
+    # O caixa inclui a comanda 13 no pedido: cada `CommandItem` pendente vira um
+    # `OrderItem` aqui, e este campo é o fio entre os dois. É por ele que, ao
+    # encerrar o pedido — pago, cancelado, estornado —, a anotação correspondente
+    # é marcada como concluída e some da comanda.
+    #
+    # Nulo no item lançado direto no pedido (balcão, entrega, retirada), que
+    # nunca passou por cartão nenhum.
+    command_item = models.ForeignKey(
+        "orders.CommandItem",
+        null=True,
+        blank=True,
+        related_name="order_items",
+        on_delete=models.PROTECT,
+    )
     batch = models.ForeignKey(
         OrderBatch,
         null=True,
@@ -288,13 +307,6 @@ class OrderItem(TenantModel):
         on_delete=models.SET_NULL,
     )
     product = models.ForeignKey("menu.Product", related_name="order_items", on_delete=models.PROTECT)
-    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=1)
-    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
-    total_price = models.DecimalField(max_digits=12, decimal_places=2)
-    variations = models.JSONField(default=list, blank=True)
-    customer_note = models.TextField(blank=True)
-    production_sector = models.CharField(max_length=20, db_index=True)
-    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
     # Coluna atual no quadro do KDS (Kanban). Nulo = ainda não posicionado
     # (o card aparece na coluna de entrada da estação). Ref. por string p/ evitar
     # ciclo de import entre orders <-> kitchen.
@@ -312,44 +324,28 @@ class OrderItem(TenantModel):
         related_name="order_items_launched",
         on_delete=models.SET_NULL,
     )
-    launched_at = models.DateTimeField(auto_now_add=True)
-    sent_to_kitchen_at = models.DateTimeField(null=True, blank=True)
-    preparation_started_at = models.DateTimeField(null=True, blank=True)
-    ready_at = models.DateTimeField(null=True, blank=True)
-    delivered_at = models.DateTimeField(null=True, blank=True)
-    void_reason = models.TextField(blank=True)
-    voided_at = models.DateTimeField(null=True, blank=True)
     voided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, related_name="order_items_voided", on_delete=models.SET_NULL
     )
 
-    class Meta:
-        ordering = ["launched_at"]
+    class Meta(ConsumptionItem.Meta):
         indexes = [
             models.Index(fields=["branch", "production_sector", "status"]),
             models.Index(fields=["order", "status"]),
         ]
-
-    def __str__(self):
-        return f"{self.quantity} x {self.product}"
-
-    @property
-    def variation_suffix(self):
-        """Sufixo ' - Variacao A, Variacao B' para colar no nome do produto.
-
-        A variacao descreve QUAL produto e (sabor, tamanho, ponto da carne),
-        entao sai na mesma linha dele em toda nota impressa; quem vai para
-        uma linha propria abaixo e o adicional. Fica no modelo, e nao no
-        modulo de impressao, porque os templates HTML precisam do mesmo
-        texto — duplicar a regra la ja tinha feito o cupom e o HTML da mesma
-        nota divergirem.
-        """
-        nomes = []
-        for variation in self.variations or []:
-            nome = variation.get("name") if isinstance(variation, dict) else variation
-            if nome:
-                nomes.append(str(nome))
-        return f" - {', '.join(nomes)}" if nomes else ""
+        constraints = [
+            # UMA anotação da comanda gera UM item de pedido.
+            #
+            # É a defesa de verdade contra dois caixas incluindo o mesmo cartão
+            # em duas contas ao mesmo tempo: a conferência em Python só dá a
+            # impressão de impedir, porque entre a leitura e a escrita cabe a
+            # outra transação. Aqui o segundo perde, e o cliente não paga duas
+            # vezes pelo mesmo prato.
+            models.UniqueConstraint(
+                fields=["command_item"],
+                name="unique_order_item_per_command_item",
+            ),
+        ]
 
 
 class OrderItemAddon(TenantModel):
@@ -361,3 +357,9 @@ class OrderItemAddon(TenantModel):
 
     def __str__(self):
         return f"{self.addon} ({self.item})"
+
+
+# Os models da consolidação vivem em `models_merge.py` (arquivo próprio, como
+# manda a organização do repositório). O import precisa ficar AQUI para o
+# Django registrá-los junto da app.
+from apps.orders.models_command_item import CommandBatch, CommandItem  # noqa: E402,F401

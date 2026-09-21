@@ -18,6 +18,9 @@ enum PdvScreen {
   /// Lista de pedidos.
   orders,
 
+  /// A página das comandas: consulta e conferência, não venda.
+  commands,
+
   /// Fechamento e recebimento.
   payment,
 
@@ -40,6 +43,7 @@ enum PdvScreen {
     PdvScreen.context ||
     PdvScreen.order ||
     PdvScreen.orders ||
+    PdvScreen.commands ||
     PdvScreen.scale => true,
     PdvScreen.payment || PdvScreen.cash || PdvScreen.settings => false,
   };
@@ -53,6 +57,7 @@ enum PdvScreen {
     PdvScreen.context => 'Comandas e mesas',
     PdvScreen.order => 'Edição do pedido',
     PdvScreen.orders => 'Pedidos',
+    PdvScreen.commands => 'Comandas',
     PdvScreen.payment => 'Pagamento',
     PdvScreen.cash => 'Caixa',
     PdvScreen.settings => 'Configurações',
@@ -67,11 +72,15 @@ enum PdvScreen {
     PdvScreen.context =>
       'Procura a comanda e abre o pedido em aberto dela.',
     PdvScreen.order =>
-      'Procura o produto pelo código de barras e depois pelo código interno, '
-          'e abre a configuração do item.',
+      'Procura o produto pelo código de barras e depois pelo código interno. '
+          'Não sendo produto, procura a comanda: com o carrinho ainda montando '
+          'ela é anexada ao pedido; com o pedido já aberto, abre o pedido dela.',
     PdvScreen.orders =>
       'Procura a comanda e abre o pedido em aberto dela; não encontrando, '
           'preenche a busca da lista.',
+    PdvScreen.commands =>
+      'Abre a comanda do cartão NESTA tela, sem sair para o pedido dela: aqui '
+          'se consulta e se confere, não se vende.',
     PdvScreen.payment => 'Códigos são ignorados.',
     PdvScreen.cash => 'Códigos são ignorados.',
     PdvScreen.settings => 'Códigos são ignorados.',

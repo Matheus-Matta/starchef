@@ -5,7 +5,7 @@ e reconciliar notas previamente importadas.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
 import requests
 import urllib3

@@ -163,6 +163,30 @@ class CommandSerializer(TenantModelSerializer):
     code = serializers.CharField(required=False, allow_blank=True, max_length=40)
     current_table_number = serializers.CharField(source="current_table.number", read_only=True, default=None)
 
+    # QUANTAS anotações pendentes o cartão tem, e quanto elas somam.
+    #
+    # Vem na listagem de propósito: sem isto, a tela precisaria abrir cada
+    # cartão para saber se ele está em uso — duzentas chamadas para desenhar
+    # uma grade. "Em uso" é ter item pendente, não um campo de estado.
+    pending_items = serializers.SerializerMethodField()
+    pending_total = serializers.SerializerMethodField()
+
+    def get_pending_items(self, obj):
+        # A anotação do queryset vem primeiro: sem ela, desenhar uma grade de
+        # duzentos cartões custaria duzentas consultas.
+        anotado = getattr(obj, "pendentes", None)
+        if anotado is not None:
+            return anotado
+        return obj.command_items.filter(command_status="pending").count()
+
+    def get_pending_total(self, obj):
+        anotado = getattr(obj, "pendente_total", None)
+        if anotado is not None:
+            return str(anotado)
+        from apps.orders.command_billing import total_pendente
+
+        return str(total_pendente(obj.pk))
+
     class Meta:
         model = Command
         fields = "__all__"

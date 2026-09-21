@@ -1,0 +1,59 @@
+name: Funcionalidade
+description: Algo novo que o sistema precisa fazer.
+labels: ["funcionalidade"]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: O problema de operação
+      description: >
+        O que hoje NÃO dá para fazer, e o que acontece na loja por causa disso.
+        Descreva a situação, não a solução — a solução é o que a discussão
+        decide.
+      placeholder: |
+        Uma família com quatro comandas paga quatro vezes. O caixa faz quatro
+        cobranças, o cliente recebe quatro cupons, e a fila para atrás.
+    validations:
+      required: true
+
+  - type: textarea
+    id: quem
+    attributes:
+      label: Quem precisa disso
+      placeholder: "Caixa; gerente; garçom; cliente final"
+    validations:
+      required: true
+
+  - type: textarea
+    id: pronto
+    attributes:
+      label: Como saber que está pronto
+      description: Critérios de aceite verificáveis, um por linha.
+      placeholder: |
+        - As quatro comandas entram num pedido só
+        - A taxa é a soma das taxas de cada comanda, não um percentual sobre o total
+        - Pagar libera os quatro cartões
+    validations:
+      required: true
+
+  - type: dropdown
+    id: superficie
+    attributes:
+      label: Superfícies envolvidas
+      multiple: true
+      options:
+        - backend
+        - frontend
+        - pdv_desktop
+        - pdv_mobile
+        - storefront
+    validations:
+      required: true
+
+  - type: textarea
+    id: fora
+    attributes:
+      label: O que fica de fora
+      description: >
+        O escopo que NÃO entra. Escrever isto agora evita a discussão no meio
+        da revisão.

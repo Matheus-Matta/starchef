@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/data/order_item_status.dart';
+import 'draft_destination_bar.dart';
 import 'order_presenter.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
@@ -16,6 +17,7 @@ class OrderCartPanel extends StatelessWidget {
     required this.order,
     required this.table,
     this.command,
+    this.draftOrderType,
     required this.customer,
     required this.items,
     required this.money,
@@ -24,6 +26,8 @@ class OrderCartPanel extends StatelessWidget {
     required this.onSendToKitchen,
     required this.onPrint,
     this.onCancel,
+    this.onMergeCommands,
+    this.onRefundMerge,
     this.onEmitInvoice,
     this.onPrintInvoice,
     required this.printing,
@@ -31,15 +35,39 @@ class OrderCartPanel extends StatelessWidget {
     this.selectedItemId,
     this.onSelectItem,
     this.onChangeQuantity,
+    this.draftTotal,
+    this.onPickDraftType,
+    this.onAttachCommand,
+    this.onDetachCommand,
+    this.draftCommands = const [],
+    this.draftCommandTotals = const {},
   });
 
   final Map<String, dynamic>? order;
   final Map<String, dynamic>? table;
   final Map<String, dynamic>? command;
+  final String? draftOrderType;
   final Map<String, dynamic>? customer;
   final List<Map<String, dynamic>> items;
   final String Function(dynamic) money;
   final ValueChanged<Map<String, dynamic>> onVoidItem;
+
+  /// O total do RASCUNHO, quando ainda não existe pedido no servidor.
+  ///
+  /// Não dá para tirar de `order`: ele é nulo justamente porque o pedido ainda
+  /// não nasceu. E é só conferência — quem soma para cobrar é o servidor, que
+  /// conhece taxa de serviço, desconto e o preço em vigor no lançamento.
+  final double? draftTotal;
+
+  /// A barra de destino no topo. Nula quando o pedido já existe: aí o destino
+  /// está decidido, e trocá-lo não é mais um gesto de tela.
+  final ValueChanged<String>? onPickDraftType;
+  final VoidCallback? onAttachCommand;
+  final ValueChanged<String>? onDetachCommand;
+
+  /// Os cartões anexados ao rascunho e o que cada um já tem lançado.
+  final List<Map<String, dynamic>> draftCommands;
+  final Map<String, double> draftCommandTotals;
 
   /// Leva ao pagamento. Nulo para quem não tem a permissão de caixa — e aí o
   /// botão aparece desligado, em vez de sumir ou de não fazer nada ao clique.
@@ -54,6 +82,21 @@ class OrderCartPanel extends StatelessWidget {
 
   final VoidCallback onPrint;
   final VoidCallback? onCancel;
+
+  /// Juntar esta comanda com outras numa conta só.
+  ///
+  /// `null` quando não faz sentido (não é comanda, o operador não tem
+  /// `orders.merge`, ou o pedido já está fechado): a família com quatro
+  /// cartões chega ao caixa, e o botão precisa estar do lado do carrinho —
+  /// não dentro de um menu, com o cliente esperando.
+  final VoidCallback? onMergeCommands;
+
+  /// Estornar a conta agrupada JÁ PAGA de que este pedido é o destino.
+  ///
+  /// `null` em toda venda comum. Ele aparece no lugar de "Juntar comandas",
+  /// que do outro lado do ciclo não teria o que juntar.
+  final VoidCallback? onRefundMerge;
+
   final VoidCallback? onEmitInvoice;
 
   /// Imprime o DANFE de uma nota que JA existe e esta autorizada.
@@ -83,7 +126,7 @@ class OrderCartPanel extends StatelessWidget {
   ///
   /// Eram 54 para o principal e 44 para o resto, e a diferença não queria
   /// dizer nada além de um ter sido escrito depois do outro.
-  static const _alturaBotao = 38.0;
+  static const _alturaBotao = 44.0;
 
   /// Existe algo para mandar para a produção?
   ///
@@ -114,12 +157,22 @@ class OrderCartPanel extends StatelessWidget {
         child: Column(
           children: [
             Container(height: 3, color: scheme.primary),
-            // Sem pedido não há tipo, nem pendência, nem ação: a faixa some
-            // em vez de aparecer vazia com um "BALCÃO" que não quer dizer nada.
-            if (order != null) ...[
-              _header(context),
-              Divider(height: 1, color: scheme.outlineVariant),
-            ],
+            _header(context),
+            // Só no rascunho: com o pedido aberto o destino já está gravado no
+            // servidor, e uma aba que parecesse trocá-lo mentiria.
+            if (onPickDraftType != null)
+              DraftDestinationBar(
+                orderType: draftOrderType ?? 'counter',
+                commands: draftCommands,
+                totalPorComanda: draftCommandTotals,
+                table: table,
+                customer: customer,
+                enabled: !_readOnly,
+                onPickType: onPickDraftType!,
+                onAttachCommand: onAttachCommand ?? () {},
+                onDetachCommand: onDetachCommand ?? (_) {},
+              ),
+            Divider(height: 1, color: scheme.outlineVariant),
             Expanded(child: items.isEmpty ? _empty(context) : _items(context)),
             Divider(height: 1, color: scheme.outlineVariant),
             _footer(context),
@@ -170,96 +223,95 @@ class OrderCartPanel extends StatelessWidget {
     );
   }
 
-  /// O que sobrou do cabeçalho: tipo, aviso de pendência e o menu.
-  ///
-  /// O número do pedido, o contexto (comanda, mesa, cliente) e o ícone saíram
-  /// daqui e foram para a BARRA DO APLICATIVO. Eram a mesma informação que a
-  /// barra já mostrava logo acima, repetida em corpo maior, ocupando a
-  /// primeira faixa do painel — o lugar onde deveria começar a lista de itens.
   Widget _header(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final pendingOffline = order?['_offline_pending'] == true;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
-      child: Row(
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ShadBadge.outline(
-            shape: const RoundedRectangleBorder(borderRadius: AppTheme.radius),
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            child: Text(
-              _typeLabel('${order?['order_type'] ?? ''}').toUpperCase(),
-              style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w900),
-            ),
-          ),
-          const Spacer(),
-          if (pendingOffline)
-            Tooltip(
-              message: 'Pedido salvo localmente e aguardando sincronização.',
-              child: ShadBadge.secondary(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                backgroundColor: scheme.tertiaryContainer,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: AppTheme.radius,
-                ),
-                child: const Text(
-                  'LOCAL',
-                  style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      order == null
+                          ? 'Novo pedido'
+                          : 'Pedido #${order?['sequence'] ?? order?['number'] ?? '—'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _contextLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-          // O menu aparece para qualquer operador; o que a permissão controla é
-          // se o item DENTRO dele funciona.
-          //
-          // Antes o menu inteiro sumia quando faltava `orders.cancel`, e com
-          // ele sumia a única pista de que cancelar um pedido é possível: o
-          // operador concluía que o PDV não faz isso, em vez de saber que
-          // precisa chamar alguém que pode. Desabilitado, ele diz o que existe
-          // e por que está fora de alcance — sem afrouxar nada, porque quem
-          // não tem a permissão continua sem cancelar.
-          if (order != null && !_readOnly)
-            PopupMenuButton<String>(
-              tooltip: 'Mais ações do pedido',
-              icon: const Icon(Icons.more_vert),
-              onSelected: (_) => onCancel?.call(),
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'cancel',
-                  enabled: onCancel != null,
-                  child: _cancelEntry(scheme, allowed: onCancel != null),
+              if (!_readOnly && onMergeCommands != null)
+                TextButton.icon(
+                  onPressed: onMergeCommands,
+                  icon: const Icon(Icons.call_merge_rounded, size: 17),
+                  label: const Text('Juntar comandas'),
+                ),
+              if (onRefundMerge != null)
+                TextButton.icon(
+                  onPressed: onRefundMerge,
+                  icon: const Icon(Icons.undo_rounded, size: 17),
+                  label: const Text('Estornar conta'),
+                ),
+              if (!_readOnly)
+                TextButton.icon(
+                  onPressed: onCancel,
+                  icon: const Icon(Icons.cancel_outlined, size: 17),
+                  label: const Text('Cancelar'),
+                ),
+            ],
+          ),
+          if (pendingOffline) ...[
+            const SizedBox(height: 7),
+            Row(
+              children: [
+                const Icon(Icons.cloud_upload_outlined, size: 15),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Salvo neste caixa — sincronização pendente',
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ],
             ),
+          ],
         ],
       ),
     );
   }
 
-  /// "Cancelar pedido" — em vermelho quando é possível, apagado e explicado
-  /// quando o operador não tem `orders.cancel`.
-  Widget _cancelEntry(ColorScheme scheme, {required bool allowed}) {
-    final color = allowed ? scheme.error : scheme.onSurfaceVariant;
-    return Row(
-      children: [
-        Icon(Icons.cancel_outlined, size: 18, color: color),
-        const SizedBox(width: 9),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Cancelar pedido',
-              style: TextStyle(color: color, fontWeight: FontWeight.w700),
-            ),
-            if (!allowed)
-              Text(
-                'Seu perfil não tem permissão',
-                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
+  String get _contextLabel => [
+    _typeLabel('${order?['order_type'] ?? draftOrderType ?? ''}'),
+    if (command != null) 'Comanda ${command?['number']}',
+    if (table != null) 'Mesa ${table?['number']}',
+    if (customer != null) '${customer?['name'] ?? customer?['display_name']}',
+  ].join(' · ');
 
   Widget _footer(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -271,7 +323,11 @@ class OrderCartPanel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(17, 13, 17, 16),
       child: Column(
         children: [
-          _summaryRow(context, 'Subtotal', money(subtotal ?? order?['total'])),
+          _summaryRow(
+            context,
+            'Subtotal',
+            money(subtotal ?? order?['total'] ?? draftTotal),
+          ),
           if (serviceFee.abs() > .009)
             _summaryRow(context, 'Taxa de serviço', money(serviceFee)),
           if (deliveryFee.abs() > .009)
@@ -294,24 +350,17 @@ class OrderCartPanel extends StatelessWidget {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
               ),
               Text(
-                money(order?['total']),
+                money(order?['total'] ?? draftTotal),
                 style: TextStyle(
                   color: scheme.primary,
                   fontSize: 25,
                   fontWeight: FontWeight.w900,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          // AS DUAS AÇÕES DO PEDIDO ABERTO, LADO A LADO E DO MESMO TAMANHO.
-          //
-          // Antes havia um botão só, "Revisar pedido", que abria um diálogo de
-          // onde saíam os dois caminhos: mandar para a produção e ir para o
-          // pagamento. Mandar comida para a cozinha passava por uma tela que
-          // fala de dinheiro, e quem não sabia disso usava F9 — ou não usava.
-          // Agora cada caminho é um botão, e o diálogo do pagamento pergunta
-          // só o que ainda precisa ser decidido: a taxa de serviço.
           if (_readOnly)
             SizedBox(
               width: double.infinity,
@@ -325,7 +374,7 @@ class OrderCartPanel extends StatelessWidget {
                 ),
               ),
             )
-          else
+          else ...[
             Row(
               children: [
                 Expanded(
@@ -335,7 +384,7 @@ class OrderCartPanel extends StatelessWidget {
                       onPressed: _hasPendingItems ? onSendToKitchen : null,
                       child: _acaoDoBotao(
                         const Icon(Icons.outdoor_grill_outlined, size: 17),
-                        'Enviar pedidos',
+                        'Enviar cozinha',
                         tecla: 'F9',
                         fontSize: 12,
                       ),
@@ -346,14 +395,22 @@ class OrderCartPanel extends StatelessWidget {
                 Expanded(
                   child: SizedBox(
                     height: _alturaBotao,
-                    child: FilledButton(
-                      onPressed: order != null && items.isNotEmpty
-                          ? onFinish
+                    child: OutlinedButton(
+                      onPressed: order != null && items.isNotEmpty && !printing
+                          ? onPrint
                           : null,
                       child: _acaoDoBotao(
-                        const Icon(Icons.payments_outlined, size: 17),
-                        'Pagamento',
-                        tecla: 'F10',
+                        printing
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.print_outlined, size: 17),
+                        printing ? 'Gerando...' : 'Recibo',
+                        tecla: printing ? null : 'F12',
                         fontSize: 12,
                       ),
                     ),
@@ -361,28 +418,24 @@ class OrderCartPanel extends StatelessWidget {
                 ),
               ],
             ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            height: _alturaBotao,
-            child: OutlinedButton(
-              onPressed: order != null && items.isNotEmpty && !printing
-                  ? onPrint
-                  : null,
-              child: _acaoDoBotao(
-                printing
-                    ? const SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.print_outlined, size: 17),
-                printing ? 'Gerando recibo...' : 'Imprimir recibo',
-                tecla: printing ? null : 'F12',
-                fontSize: 12,
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: _alturaBotao,
+              child: FilledButton(
+                // `order` pode ser nulo aqui: ir para o pagamento é um
+                // dos dois gestos que FAZEM o pedido nascer. Exigir pedido
+                // aberto deixaria o botão apagado justamente no rascunho, que
+                // é quando ele mais precisa funcionar.
+                onPressed: items.isNotEmpty ? onFinish : null,
+                child: _acaoDoBotao(
+                  const Icon(Icons.payments_outlined, size: 18),
+                  'Ir para pagamento',
+                  tecla: 'F4',
+                ),
               ),
             ),
-          ),
+          ],
           if ('${order?['payment_status']}' == 'paid') ...[
             const SizedBox(height: 8),
             _invoiceAction(),
@@ -477,7 +530,7 @@ class OrderCartPanel extends StatelessWidget {
     return AppEmptyState(
       icon: Icons.shopping_basket_outlined,
       title: 'O pedido está vazio',
-      description: 'Toque em um produto do cardápio para começar.',
+      description: 'Selecione um produto ou pressione F2 para buscar.',
     );
   }
 
@@ -749,6 +802,7 @@ class _CartItem extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w900,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                   decoration: outOfBill ? TextDecoration.lineThrough : null,
                   color: outOfBill ? scheme.onSurfaceVariant : null,
                 ),
@@ -880,12 +934,10 @@ class _CartItem extends StatelessWidget {
 
   /// A mesma regra da comanda e do recibo — ver `OrderPresenter.quantityLabel`.
   ///
-  /// O `×` no fim liga a quantidade ao preço unitário que vem logo depois
-  /// ("3x R$ 5,00", "0,350kg × R$ 79,90/kg"), então ele fica aqui e não na
-  /// regra compartilhada.
+  /// Peso usa um separador neutro: nunca parece quantidade de peças.
   String _quantityLabel() {
     final label = OrderPresenter.quantityLabel(item);
-    return OrderPresenter.isWeighedItem(item) ? '$label ×' : label;
+    return OrderPresenter.isWeighedItem(item) ? '$label ·' : label;
   }
 
   /// Variações e adicionais em uma linha, como o frontend web faz.

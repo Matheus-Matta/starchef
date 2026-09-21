@@ -129,7 +129,7 @@ class CookieTokenRefreshView(JsonObjectBodyMixin, TokenRefreshView):
         try:
             serializer.is_valid(raise_exception=True)
         except TokenError as exc:
-            raise InvalidToken(exc.args[0])
+            raise InvalidToken(exc.args[0]) from exc
 
         response = Response(serializer.validated_data, status=status.HTTP_200_OK)
         set_auth_cookies(response, access=serializer.validated_data.get("access"), refresh=serializer.validated_data.get("refresh"))

@@ -3,7 +3,6 @@ from apps.core.serializers import TenantModelSerializer
 from apps.inbound_nfe.models import (
     InboundNFe,
     InboundNFeItem,
-    SupplierItemMapping,
     DFeDistributionDocument,
     DFeSyncState,
     NFeManifestation,

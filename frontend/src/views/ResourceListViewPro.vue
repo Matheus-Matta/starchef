@@ -213,9 +213,10 @@
           :default-current-month="props.endpoint === '/inbound-nfe/' ? false : (dateField.defaultCurrentMonth ?? true)"
           @change="onDateRange"
         />
+        <ResourceDirectFilters :fields="directFilterFields" :values="advancedFilters" @change="onDirectFilterChange" />
       </div>
       <div class="rpro__toolbar-right">
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="advancedFiltersVisible = true">
+        <button v-if="advancedFilterFields.length" class="rpro-btn rpro-btn--ghost" type="button" @click="advancedFiltersVisible = true">
           <i class="pi pi-sliders-h" /> Mais filtros
         </button>
       </div>
@@ -319,15 +320,16 @@
           >
             <i :class="bulkIgnoreLoading ? 'pi pi-spin pi-spinner' : 'pi pi-eye-slash'" /> Ignorar Notas ({{ selection.length }})
           </button>
-          <button
-            v-for="bulkAction in bulkActions"
-            :key="bulkAction.key"
-            class="rpro-btn rpro-btn--ghost rpro-btn--sm"
-            type="button"
-            @click="runBulkAction(bulkAction)"
-          >
-            <i :class="bulkAction.icon || 'pi pi-bolt'" /> {{ bulkAction.label }}
-          </button>
+          <template v-for="bulkAction in bulkActions" :key="bulkAction.key">
+            <InvoiceBulkResendButton
+              v-if="bulkAction.type === 'invoice-bulk-resend'"
+              :selection="selection"
+              @completed="onInvoiceBulkCompleted"
+            />
+            <button v-else class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="runBulkAction(bulkAction)">
+              <i :class="bulkAction.icon || 'pi pi-bolt'" /> {{ bulkAction.label }}
+            </button>
+          </template>
           <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="selection = []">Limpar</button>
         </div>
       </div>
@@ -949,27 +951,7 @@
       </div>
     </section>
 
-    <Dialog v-model:visible="advancedFiltersVisible" modal header="Filtros avançados" :style="{ width: 'min(620px, 94vw)' }">
-      <div class="rpro__advanced-grid">
-        <label v-for="field in advancedFilterFields" :key="field.name">
-          <span>{{ field.label }}</span>
-          <select v-if="field.options?.length" v-model="advancedFilters[field.name]">
-            <option value="">Todos</option>
-            <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-          <select v-else-if="field.type === 'boolean'" v-model="advancedFilters[field.name]">
-            <option value="">Todos</option>
-            <option value="true">Sim</option>
-            <option value="false">Não</option>
-          </select>
-          <InputText v-else v-model="advancedFilters[field.name]" :type="field.type === 'number' || field.type === 'decimal' ? 'number' : 'text'" />
-        </label>
-      </div>
-      <template #footer>
-        <button class="rpro-btn rpro-btn--ghost" type="button" @click="clearAdvancedFilters">Limpar</button>
-        <button class="rpro-btn rpro-btn--primary" type="button" @click="applyAdvancedFilters">Aplicar filtros</button>
-      </template>
-    </Dialog>
+    <ResourceAdvancedFiltersDialog v-model="advancedFiltersVisible" :fields="advancedFilterFields" :values="advancedFilters" @change="setAdvancedFilter" @clear="clearAdvancedFilters" @apply="applyAdvancedFilters" />
 
     <Dialog v-model:visible="importVisible" modal :header="`Importar ${title}`" :style="{ width: 'min(560px, 94vw)' }">
       <div class="rpro__import">
@@ -2446,6 +2428,9 @@ import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bul
 import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
+import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
+import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
 import { ASSET_STATUS_OPTIONS } from "../config/enums";
 
 const route = useRoute();
@@ -2468,6 +2453,7 @@ const props = defineProps({
 
 const proCfg = computed(() => props.pro || {});
 const dateField = computed(() => proCfg.value.dateField || null);
+const directFilterFields = computed(() => proCfg.value.filterFields || []);
 // Ação primária: explícita no config, senão "Novo" quando o recurso tem formulário.
 const primaryAction = computed(() => {
   if (proCfg.value.primaryAction) return proCfg.value.primaryAction;
@@ -2640,8 +2626,9 @@ const loadRows = async () => {
     fetchInboundStatusCounts();
   }
 };
-if (props.endpoint === "/orders/") ordering.value = "-updated_at";
-if (props.endpoint === "/inbound-nfe/") ordering.value = "-issue_date";
+if (proCfg.value.defaultOrdering) ordering.value = proCfg.value.defaultOrdering;
+else if (props.endpoint === "/orders/") ordering.value = "-updated_at";
+else if (props.endpoint === "/inbound-nfe/") ordering.value = "-issue_date";
 const realtimeModelByEndpoint = {
   "/orders/": "orders.order",
   "/tables/": "restaurants.table",
@@ -2705,6 +2692,11 @@ function onDateRange(value) {
   if (props.endpoint === "/inbound-nfe/") fetchInboundStatusCounts();
 }
 
+function onDirectFilterChange({ name, value }) {
+  advancedFilters[name] = value;
+  selection.value = [];
+  reload();
+}
 function applyMobileFilters() {
   reload();
   mobileFiltersOpen.value = false;
@@ -4276,6 +4268,15 @@ function runBulkAction(bulkAction) {
   }
 }
 
+function setAdvancedFilter({ name, value }) {
+  advancedFilters[name] = value;
+}
+
+function onInvoiceBulkCompleted() {
+  selection.value = [];
+  reload();
+}
+
 async function executeBulkMutation(action) {
   const selected = [...selection.value];
   if (!selected.length) return;
@@ -5625,7 +5626,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
-  .rpro__advanced-grid { grid-template-columns: 1fr; }
   .rpro__toolbar-left { flex: 1 1 100%; gap: 8px; }
   .rpro__search, .rpro__daterange { flex: 1 1 100%; width: 100%; }
   .rpro__toolbar-right { width: 100%; justify-content: space-between; }

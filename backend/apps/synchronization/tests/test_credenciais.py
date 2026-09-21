@@ -7,6 +7,7 @@ disco. O segredo ficava legível na tabela de eventos da nuvem, na de cada loja,
 e em todo backup dos dois, para sempre.
 """
 import pytest
+from cryptography.exceptions import InvalidTag
 from django.urls import reverse
 
 from apps.invoices.models import FiscalConfig
@@ -70,7 +71,10 @@ def test_o_envelope_de_outra_loja_nao_abre_aqui(como_nuvem, no_loja, no_nuvem,
     outra loja, mesmo com a chave do ambiente correta."""
     envelope = credentials.cifrar_para(no_loja, credentials.montar_pacote(no_loja))
 
-    with pytest.raises(Exception):
+    # `InvalidTag`, e não `Exception`: a recusa precisa vir da AUTENTICAÇÃO do
+    # AES-GCM. Com `Exception`, um `KeyError` de digitação no envelope faria o
+    # teste passar dizendo que a criptografia protegeu — quando ela nem rodou.
+    with pytest.raises(InvalidTag):
         credentials.abrir(envelope, no_nuvem.id)
 
 

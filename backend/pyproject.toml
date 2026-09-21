@@ -4,8 +4,61 @@ target-version = "py312"
 exclude = ["migrations"]
 
 [tool.ruff.lint]
-# Começa só com pyflakes (bugs reais: imports/variáveis não usadas, nomes indefinidos).
-# E501/I001 (linha longa/ordem de import) ficam de fora por ora — o código existente
-# não segue essas convenções e reformatar tudo de uma vez é um diff enorme e arriscado
-# fora do escopo deste ajuste. Apertar depois, incrementalmente.
-select = ["F"]
+# As regras que valem a pena, e o motivo de cada família estar ou não aqui.
+#
+# O critério não é "quanto mais, melhor": um linter que grita em cima de
+# convenção deliberada do projeto é desligado na primeira urgência, e aí ele
+# para de pegar até o que importava. Entra o que aponta DEFEITO ou confusão
+# real; fica de fora o que só discorda de uma escolha.
+select = [
+    "F",    # pyflakes: import/variável sem uso, nome indefinido. Bug de verdade.
+    "W",    # pycodestyle warnings: espaço em branco no fim, linha final ausente.
+    "B",    # bugbear: armadilhas reais (mutável como default, except sem uso...).
+    "C4",   # comprehensions: `list(x for x in ...)` em vez de `[x for x in ...]`.
+    "SIM",  # simplify: `if x: return True else: return False` e parentes.
+    # Do grupo `RET`, só este: a função devolve valor num ramo e CAI NO FIM no
+    # outro, então quem chama recebe `None` sem nada dizendo isso. Os demais
+    # (`return None` explícito, nome antes do `return`) são estilo, e o estilo
+    # explícito é o que este projeto escolheu.
+    "RET503",
+]
+
+# O QUE FICA DE FORA, e por quê — para ninguém reabrir a discussão sem contexto:
+#
+# * `E501` (linha longa): 296 ocorrências. A régua já é 120, e o que passa
+#   disso costuma ser string de mensagem ao operador, que quebrar piora.
+# * `I` (ordem de import): 113 arquivos. É auto-corrigível, mas o diff pega
+#   arquivo que ninguém está tocando e atrapalha a revisão do que importa.
+#   Candidato natural para a próxima limpeza dedicada.
+# * `N` (nomes): este projeto escreve domínio em PORTUGUÊS de propósito
+#   (`_apagar_o_lado_da_loja`, `confirmar`, `comanda`). A regra brigaria com
+#   uma escolha consciente, não com um descuido.
+# * `ARG` (argumento sem uso): 919 ocorrências, quase todas em assinatura que
+#   o Django/DRF exige (`def handler(sender, instance, **kwargs)`). Ruído puro.
+ignore = [
+    # As três abaixo caem no mesmo critério do parágrafo acima: elas discordam
+    # de um estilo que este projeto escolheu, não apontam defeito.
+    #
+    # * `SIM102` (if aninhado): o aninhamento costuma ser guarda + condição
+    #   específica, cada uma com o comentário do porquê. Fundir as duas junta
+    #   também os motivos.
+    # * `SIM103`/`SIM108`/`C416` (reescreva esta expressão): medido, não
+    #   suposto — ao aplicá-las, `HasTenantAccess` virou um `return not (a and
+    #   b and c)` de negação tripla, e `_eventos` trocou uma compreensão legível
+    #   por um `dict(...)` de indentação quebrada. A regra pede menos linhas; o
+    #   preço foi menos clareza, que é o oposto do que este arquivo existe para
+    #   cobrar.
+    # * `SIM105` (use contextlib.suppress): o `try/except: pass` daqui quase
+    #   sempre tem comentário explicando o que se está engolindo e por quê —
+    #   `suppress` esconde isso atrás de uma linha.
+    "SIM102",
+    "SIM103",
+    "SIM105",
+    "SIM108",
+    "C416",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Teste pode repetir montagem e usar nome longo; o que importa nele é ler como
+# uma frase. `B011` (assert False) e `SIM` atrapalham mais do que ajudam ali.
+"**/tests/**" = ["SIM"]

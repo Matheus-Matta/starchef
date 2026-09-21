@@ -1,15 +1,12 @@
-import unittest
 from unittest.mock import patch, MagicMock
 from apps.inbound_nfe.services.manifestation import (
     build_event_xml,
-    build_soap_envelope,
     parse_event_response,
     manifest_nfe,
     register_science,
-    fetch_full_xml,
 )
-from apps.inbound_nfe.services.sefaz_client import NFeDistribuicaoClient, DFeDocument
-from apps.inbound_nfe.models import InboundNFe, NFeManifestation, InboundNFeItem
+from apps.inbound_nfe.services.sefaz_client import NFeDistribuicaoClient
+from apps.inbound_nfe.models import InboundNFe, NFeManifestation
 from apps.accounts.models import Account
 from apps.restaurants.models import Restaurant
 from apps.invoices.models import FiscalConfig
@@ -18,7 +15,6 @@ from cryptography.hazmat.primitives import hashes
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 import datetime
-import xml.etree.ElementTree as ET
 from django.test import TestCase
 
 

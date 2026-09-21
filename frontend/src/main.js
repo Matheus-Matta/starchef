@@ -2,6 +2,10 @@ import "primeicons/primeicons.css";
 import "primevue/resources/themes/aura-light-teal/theme.css";
 import "primevue/resources/primevue.min.css";
 import "./styles.css";
+// O vocabulário visual das telas do PDV (venda, comandas, conta agrupada).
+// Global de propósito: estilo `scoped` não atravessa a fronteira do
+// componente, e atravessar é justamente o ponto.
+import "./styles/pdv-panels.css";
 
 import { createApp } from "vue";
 import { createPinia } from "pinia";

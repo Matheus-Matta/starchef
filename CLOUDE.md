@@ -9,7 +9,14 @@ Read the relevant docs: `docs/BACKEND.md`, `docs/FRONTEND.md`, `docs/FLUTTER_DES
 Load-test references: `docs/TESTE_CARGA.md`, `docs/TESTE_CARGA_PDV.md`, and `docs/ANALISE_DE_RISCOS.md`.
 Before update/release work, read `docs/PDV_UPDATE_RELEASE.md` in full. Keep release instructions there, not in `DOC.md`.
 Preserve tenant isolation, permissions, financial consistency, offline synchronization and printing behavior.
-Aim for at most 200 lines per file; split responsibilities when necessary, without unrelated refactoring.
+Code standards live in `docs/PADROES_DE_CODIGO.md`; `AGENTS.md` carries the merge-blocking subset. Read the standards doc before writing code in an unfamiliar surface.
+The criterion behind every rule: a rule earns its place by catching a defect, not by disagreeing with a deliberate choice. When you enable or disable a lint rule, write the reason next to it — the three config files already do this, including rules that were measured, made the code worse, and were removed for that reason.
+Aim for at most 200 lines per file; split responsibilities by subject, not by layer. 201 files already exceeded this when the rule started being measured, so the gate is a ratchet (`python scripts/check_tamanho_de_arquivo.py`): pre-existing files sit in a baseline and block nobody, while new or growing files fail CI. A new file over the limit has no exception: split it. An already-large file that grew also fails; split it, or run `--atualizar` so the growth is visible in the diff and a reviewer can ask why. What it must never do is grow silently.
+Money is never `float` (`Decimal` or integer cents), and a total that sums several parts sums the already-rounded values. Concurrent writes use `transaction.atomic` plus locks ordered by UUID, and re-read state after the lock. The defence against two operators is a database constraint, never an `if`.
+Return **409** for state conflicts and **400** only for bad input: the PDV retries 400 forever, so a conflict sent as 400 becomes an infinite loop. Error messages tell the operator what to do, not only what happened.
+Synchronization is part of "done": a new model needs a decision in `catalog.py` or `decisions.py`, and a new *field* has no automatic guard — verify it reaches the payload and write the test. `QuerySet.update()` fires no signal, so it emits no event; never declare append-only something that has a lifecycle.
+Write the test before the fix and watch it fail. When fixing a defect, revert the fix briefly and confirm the test catches it — a test that never failed proved nothing. `pytest.raises(Exception)` is banned; name the exception.
+Comments explain **why**, never **what**, and the domain is written in Portuguese (`comanda`, `sangria`, `pedido`) because that is the vocabulary of the people operating the till.
 
 How to work (high-level mindset)
 Maintain these principles unless the user requests an adjustment.

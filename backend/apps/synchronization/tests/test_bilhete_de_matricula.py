@@ -55,11 +55,11 @@ def test_matricular_gasta_o_bilhete(como_nuvem, conta, superusuario):
 def test_o_mesmo_bilhete_nao_matricula_duas_vezes(como_nuvem, conta, superusuario):
     """A promessa inteira do recurso em um assert."""
     codigo = _codigo(conta, label="Loja Centro")
-    dados = dict(
-        username=superusuario.username, password="senha-de-teste-123",
-        account_id=str(conta.id), enrollment_secret=codigo,
-        cloud_wss_url="wss://dev-sync.local/ws/sync/v1/",
-    )
+    dados = {
+        "username": superusuario.username, "password": "senha-de-teste-123",
+        "account_id": str(conta.id), "enrollment_secret": codigo,
+        "cloud_wss_url": "wss://dev-sync.local/ws/sync/v1/",
+    }
 
     enrollment.enroll(node_name="Loja Centro", **dados)
 

@@ -46,8 +46,9 @@ void main() {
         ),
       );
 
-      expect(find.text('Configurações do PDV'), findsOneWidget);
+      expect(find.text('Mais opções do PDV'), findsOneWidget);
       expect(find.text('Preferências deste terminal'), findsOneWidget);
+      expect(find.text('Servidor do backend'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -134,7 +135,6 @@ void main() {
       expect(find.text('Imprimir recibo de venda'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
-
   });
 
   testWidgets('cabeçalho compartilhado empilha ações em largura compacta', (

@@ -96,7 +96,7 @@ def test_station_session_lock_targets_only_cash_register(station):
     def capture_first(queryset):
         captured["select_for_update"] = queryset.query.select_for_update
         captured["select_for_update_of"] = queryset.query.select_for_update_of
-        return None
+        return
 
     with patch("django.db.models.query.QuerySet.first", capture_first):
         active_session_for_station(station, for_update=True)

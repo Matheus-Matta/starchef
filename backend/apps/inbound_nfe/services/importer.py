@@ -1,7 +1,7 @@
 import io
 import zipfile
 import logging
-from typing import List, Dict, Any
+from typing import Dict, Any
 from django.db import transaction
 from django.utils import timezone
 from apps.inbound_nfe.models import (

@@ -104,20 +104,30 @@ void main() {
     expect(await press([LogicalKeyboardKey.enter]), [PdvAction.confirm]);
   });
 
-  test('Enter não é confirmação nas telas que não têm ação principal', () async {
-    for (final screen in [
-      PdvScreen.home,
-      PdvScreen.orders,
-      PdvScreen.cash,
-      PdvScreen.settings,
-    ]) {
-      context = PdvInputContext(screen: screen, hasOrder: true);
-      router.handleKeyEvent(keyOf(LogicalKeyboardKey.enter));
-    }
-    await Future<void>.delayed(Duration.zero);
-
-    expect(fired, isEmpty);
+  test('F4 paga e barra leva à pesquisa do catálogo', () async {
+    expect(await press([LogicalKeyboardKey.f4, LogicalKeyboardKey.slash]), [
+      PdvAction.payment,
+      PdvAction.focusSearch,
+    ]);
   });
+
+  test(
+    'Enter não é confirmação nas telas que não têm ação principal',
+    () async {
+      for (final screen in [
+        PdvScreen.home,
+        PdvScreen.orders,
+        PdvScreen.cash,
+        PdvScreen.settings,
+      ]) {
+        context = PdvInputContext(screen: screen, hasOrder: true);
+        router.handleKeyEvent(keyOf(LogicalKeyboardKey.enter));
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fired, isEmpty);
+    },
+  );
 
   test('dentro de um campo, o Enter é do campo', () async {
     context = const PdvInputContext(
@@ -142,8 +152,8 @@ void main() {
   test('Enter segurado não confirma duas vezes', () async {
     final ids = await press(List.filled(5, LogicalKeyboardKey.enter));
 
-    // É a tecla mais fácil de segurar sem perceber, e aqui ela fecha pedido e
-    // registra recebimento.
+    // É a tecla mais fácil de segurar sem perceber, então uma inclusão ou um
+    // recebimento nunca pode duplicar.
     expect(ids, [PdvAction.confirm]);
   });
 
@@ -171,17 +181,20 @@ void main() {
   // ── a ajuda acompanha o registro ─────────────────────────────────────
 
   test('as novas teclas aparecem na ajuda da edição do pedido', () {
-    final labels = PdvShortcuts.forScreen(PdvScreen.order)
-        .map((item) => item.keysLabel)
-        .toList();
+    final labels = PdvShortcuts.forScreen(
+      PdvScreen.order,
+    ).map((item) => item.keysLabel).toList();
 
-    expect(labels, containsAll(['Seta ↑', 'Seta ↓', '+', '-', 'Delete', 'Enter']));
+    expect(
+      labels,
+      containsAll(['Seta ↑', 'Seta ↓', '+', '-', 'Delete', 'Enter']),
+    );
   });
 
   test('e não aparecem onde não valem', () {
-    final labels = PdvShortcuts.forScreen(PdvScreen.cash)
-        .map((item) => item.keysLabel)
-        .toList();
+    final labels = PdvShortcuts.forScreen(
+      PdvScreen.cash,
+    ).map((item) => item.keysLabel).toList();
 
     expect(labels, isNot(contains('Delete')));
     expect(labels, isNot(contains('Enter')));

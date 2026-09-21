@@ -11,20 +11,31 @@ def _minutes_since(value, now):
 
 
 def _context(item, position, now):
-    order = item.order
+    """O contexto que as regras da estação avaliam.
+
+    `order` aqui é o pedido de PRODUÇÃO: numa conta agrupada, `item.order`
+    passa a ser o pedido consolidado, que não tem mesa nem comanda. Uma regra
+    como "atrasa se for comanda" viraria "é balcão" no instante em que o caixa
+    começa a fechar a conta — e fechar a conta é justamente quando a cozinha
+    ainda pode estar montando a sobremesa.
+
+    O financeiro continua vindo do pedido ATUAL (é ele que está sendo pago).
+    """
+    production_order = item.origin_order or item.order
+    current_order = item.order
     return {
-        "order_type": order.order_type,
+        "order_type": production_order.order_type,
         "production_sector": item.production_sector,
         "item_status": item.status,
-        "order_status": order.status,
-        "payment_status": order.payment_status,
-        "production_status": order.production_status,
-        "delivery_status": order.delivery_status,
+        "order_status": current_order.status,
+        "payment_status": current_order.payment_status,
+        "production_status": current_order.production_status,
+        "delivery_status": current_order.delivery_status,
         "minutes_since_sent": _minutes_since(item.sent_to_kitchen_at or item.launched_at, now),
         "minutes_in_column": _minutes_since(position.entered_at if position else None, now),
         "has_customer_note": bool(item.customer_note),
-        "has_table": bool(order.table_id),
-        "has_command": bool(order.command_id),
+        "has_table": bool(production_order.table_id),
+        "has_command": bool(item.command_id or production_order.command_id),
     }
 
 

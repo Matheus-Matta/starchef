@@ -18,7 +18,7 @@ void main() {
           size: const Size(800, 640),
           child: PdvSidebar(
             expanded: true,
-            selected: PdvDestination.menu,
+            selected: PdvDestination.sale,
             onToggle: () {},
             onSelected: (_) {},
             userName: 'Operador',
@@ -52,7 +52,7 @@ void main() {
         size: const Size(800, 640),
         child: PdvSidebar(
           expanded: true,
-          selected: PdvDestination.menu,
+          selected: PdvDestination.sale,
           onToggle: () {},
           onSelected: (_) {},
           userName: 'Operador',
@@ -82,7 +82,7 @@ void main() {
         size: const Size(800, 640),
         child: PdvSidebar(
           expanded: true,
-          selected: PdvDestination.menu,
+          selected: PdvDestination.sale,
           onToggle: () => toggles++,
           onSelected: (destination) => selected = destination,
           userName: 'Ana Souza',
@@ -92,7 +92,7 @@ void main() {
       );
 
       expect(find.text('STARCHEF'), findsOneWidget);
-      expect(find.text('Menu'), findsOneWidget);
+      expect(find.text('Venda'), findsOneWidget);
       expect(find.text('Mesas'), findsOneWidget);
       expect(find.text('Balança rápida'), findsOneWidget);
       expect(find.text('AS'), findsOneWidget);
@@ -198,7 +198,7 @@ void main() {
         ),
       );
 
-      expect(find.text('2 itens'), findsAtLeastNWidgets(1));
+      expect(find.text('2 produtos'), findsOneWidget);
       expect(find.text('Suco de laranja'), findsOneWidget);
       expect(find.text('Hambúrguer artesanal'), findsOneWidget);
 
@@ -233,10 +233,10 @@ void main() {
         ),
       );
 
-      expect(find.text('0 itens'), findsAtLeastNWidgets(1));
+      expect(find.text('0 produtos'), findsOneWidget);
       expect(find.text('Nenhum produto encontrado'), findsOneWidget);
       expect(
-        find.text('Tente buscar por outro nome, código ou categoria.'),
+        find.text('Tente outro nome, código ou categoria.'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
@@ -327,24 +327,15 @@ void main() {
         of: find.byType(GridView),
         matching: find.text(texto),
       );
-      final codigo = noCard('#104');
-      final categoria = noCard('Bebidas');
+      final metadados = noCard('#104 · Bebidas');
       final titulo = noCard('Suco de laranja');
-      expect(codigo, findsOneWidget);
+      expect(metadados, findsOneWidget);
       expect(
         titulo,
         findsOneWidget,
         reason: 'o nome não carrega mais o código',
       );
 
-      expect(
-        tester.getTopLeft(codigo).dy,
-        lessThan(tester.getTopLeft(categoria).dy),
-      );
-      expect(
-        tester.widget<Text>(codigo).style?.fontSize,
-        tester.widget<Text>(categoria).style?.fontSize,
-      );
       expect(tester.takeException(), isNull);
     });
   });
@@ -372,17 +363,16 @@ void main() {
 
       expect(find.text('O pedido está vazio'), findsOneWidget);
       expect(
-        find.text('Toque em um produto do cardápio para começar.'),
+        find.text('Selecione um produto ou pressione F2 para buscar.'),
         findsOneWidget,
       );
-      // O número do pedido e o contexto saíram daqui para a barra do
-      // aplicativo — a regra de como essa linha é montada está em
-      // `order_presenter_test.dart`.
-      expect(find.text('Novo pedido'), findsNothing);
+      // Antes do primeiro item há apenas contexto visual; nenhum número de
+      // pedido foi persistido ainda.
+      expect(find.text('Novo pedido'), findsOneWidget);
       expect(
         tester
             .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Pagamento'),
+              find.widgetWithText(FilledButton, 'Ir para pagamento'),
             )
             .onPressed,
         isNull,
@@ -390,7 +380,7 @@ void main() {
       expect(
         tester
             .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Enviar pedidos'),
+              find.widgetWithText(OutlinedButton, 'Enviar cozinha'),
             )
             .onPressed,
         isNull,
@@ -399,7 +389,7 @@ void main() {
       expect(
         tester
             .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Imprimir recibo'),
+              find.widgetWithText(OutlinedButton, 'Recibo'),
             )
             .onPressed,
         isNull,
@@ -451,7 +441,10 @@ void main() {
         ),
       );
 
-      expect(find.text('LOCAL'), findsOneWidget);
+      expect(
+        find.text('Salvo neste caixa — sincronização pendente'),
+        findsOneWidget,
+      );
       expect(find.text('Prato executivo'), findsOneWidget);
       expect(find.text('Sem cebola'), findsOneWidget);
       expect(find.text('Taxa de serviço'), findsOneWidget);
@@ -459,11 +452,9 @@ void main() {
       expect(find.text('R\$ 21,00'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Cancelar item'));
-      await tester.tap(find.widgetWithText(FilledButton, 'Pagamento'));
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Imprimir recibo'));
-      await tester.tap(find.byTooltip('Mais ações do pedido'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Cancelar pedido'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Ir para pagamento'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Recibo'));
+      await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
       await tester.pumpAndSettle();
 
       expect(voidedItem?['id'], 'item-1');

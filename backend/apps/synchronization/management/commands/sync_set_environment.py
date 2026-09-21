@@ -83,11 +83,12 @@ class Command(BaseCommand):
 
         if options["dry_run"]:
             self.stdout.write(self.style.WARNING(f"\n--dry-run: {total} ficha(s) NÃO foram alteradas."))
-            return
+            return None
 
         movidas = pendentes.update(environment=destino)
         self.stdout.write(self.style.SUCCESS(f"\n{movidas} ficha(s) movida(s) para '{destino}'."))
         self._avisar_variavel(destino)
+        return None
 
     def _avisar_variavel(self, destino):
         """A ficha é metade do par. A outra metade é o `.env` de cada ponta."""

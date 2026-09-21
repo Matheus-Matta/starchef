@@ -1,0 +1,75 @@
+name: Defeito
+description: Algo funciona errado em produção, homologação ou no ambiente local.
+labels: ["defeito"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Um defeito só é consertável se for reproduzível. As três primeiras
+        caixas são o que separa "está estranho" de um relato acionável.
+
+  - type: textarea
+    id: o-que-acontece
+    attributes:
+      label: O que acontece
+      description: O comportamento errado, como quem opera o vê.
+      placeholder: |
+        O caixa bipa a segunda comanda da mesa e recebe "comanda ocupada".
+        A conta agrupada fica com uma comanda só e ele não sabe o que fazer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: como-reproduzir
+    attributes:
+      label: Como reproduzir
+      description: Passo a passo, a partir de um estado conhecido.
+      placeholder: |
+        1. Abrir duas comandas na mesa 7, cada uma com um item
+        2. No PDV, abrir a conta agrupada pela comanda 12
+        3. Bipar a comanda 13
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que deveria acontecer
+    validations:
+      required: true
+
+  - type: dropdown
+    id: superficie
+    attributes:
+      label: Onde aparece
+      multiple: true
+      options:
+        - backend (API, serviços, sincronização)
+        - frontend (retaguarda web / PDV web)
+        - pdv_desktop (Windows/Linux)
+        - pdv_mobile (atendimento)
+        - storefront (cardápio digital)
+        - impressão / balança / periférico
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dinheiro
+    attributes:
+      label: Envolve dinheiro, caixa, fiscal ou sincronização?
+      description: >
+        Estes quatro não se desfazem com um revert. A resposta muda a
+        prioridade e quem revisa.
+      options:
+        - "Não"
+        - "Sim — valor cobrado ou saldo de caixa"
+        - "Sim — nota fiscal"
+        - "Sim — dado que não chegou à nuvem, ou chegou errado"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidencia
+    attributes:
+      label: Evidência
+      description: Log, print, número do pedido/comanda, id da sessão de caixa.

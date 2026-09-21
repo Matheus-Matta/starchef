@@ -63,6 +63,16 @@ class SyncEntry:
     #: provisionada por código é diferente em cada instalação; o `code` é o
     #: mesmo em todas, por ser único e nascer da mesma lista.
     m2m_fields: dict = field(default_factory=dict)
+    #: Alternativas OR do filtro essencial, cada uma como kwargs de `filter`.
+    #:
+    #: Existe porque `essential_filter` é um `dict` e um dict só sabe dizer E.
+    #: A conta agrupada precisa de OU: o pedido de origem fica em `merged`,
+    #: que NÃO está em "abertos", mas ele precisa descer mesmo assim — o item
+    #: do destino aponta para ele por `origin_order`, e a FK ficaria sem alvo
+    #: na loja nova. Incluir `merged` globalmente em ABERTOS carregaria o
+    #: histórico inteiro; aqui desce só o que participa de uma consolidação
+    #: VIVA.
+    essential_filter_any: tuple = ()
     #: Filtro aplicado SÓ na carga essencial, como kwargs de `QuerySet.filter`.
     #:
     #: "Dados essenciais" leva o que a loja precisa para abrir a porta e

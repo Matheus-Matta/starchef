@@ -84,6 +84,18 @@ class AuthUser {
       permissions.contains('*') ||
       permissions.contains('payments.manage');
 
+  /// Juntar várias comandas numa conta só.
+  ///
+  /// Código próprio (`orders.merge`), e não `payments.manage`: montar a conta
+  /// move dinheiro ENTRE pedidos e prende os cartões enquanto o caixa a monta.
+  /// É operação de caixa; o garçom lança pelo aplicativo e não fecha conta.
+  bool get canMergeCommands =>
+      isSuperuser ||
+      profileType == 'admin' ||
+      profileType == 'owner' ||
+      permissions.contains('*') ||
+      permissions.contains('orders.merge');
+
   /// Alguma permissão de caixa (abrir/fechar/sangria/suprimento/aprovar) —
   /// controla se o destino "Financeiro" aparece no PDV.
   bool get canAccessCash =>

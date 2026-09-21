@@ -1,5 +1,6 @@
 """Matrícula do nó local: autenticação, cifra e carga inicial automática."""
 import pytest
+from cryptography.exceptions import InvalidTag
 from django.contrib.auth import get_user_model
 
 from apps.accounts.models import UserProfile
@@ -85,7 +86,8 @@ def test_segredo_curto_e_recusado(como_nuvem, conta, superadmin):
 
 def test_segredo_errado_nao_abre_o_pacote(como_nuvem, conta, superadmin):
     _no, envelope, _run = _matricular(conta, superadmin)
-    with pytest.raises(Exception):
+    # `InvalidTag`: o segredo errado tem de morrer na autenticação do AES-GCM.
+    with pytest.raises(InvalidTag):
         enrollment.decifrar(envelope, "outro-segredo-de-matricula-qualquer")
 
 

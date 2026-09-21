@@ -47,13 +47,31 @@ export function mapLabel(value, map) {
 }
 
 /**
- * Arredonda para 2 casas decimais, sempre arredondando 1 centavo para cima
- * caso o valor possua mais de 2 casas decimais (fração de centavo).
+ * Arredonda para cima até o centavo — **para EXIBIR, nunca para gravar**.
+ *
  * Ex.: 4.16 -> 4.16 | 4.1601 -> 4.17 | 4.1667 -> 4.17 | 10.00 -> 10.00
+ *
+ * A regra do projeto é que dinheiro nunca é `float` (ver
+ * `docs/PADROES_DE_CODIGO.md`), e o JavaScript só tem `Number`. Por isso esta
+ * função é de APRESENTAÇÃO: ela serve para mostrar um custo unitário derivado
+ * de uma divisão (total ÷ quantidade dá 4,1667 e o operador precisa ler 4,17).
+ *
+ * **O valor que sai daqui não pode ser enviado ao servidor nem persistido.**
+ * Quem decide preço é o backend, em `Decimal` — mandar de volta um número que
+ * passou por float é como o total do PDV e o do servidor divergem por um
+ * centavo, que é um defeito que este projeto já pagou uma vez.
+ *
+ * Valor negativo ou inválido devolve `0` de propósito: a função existe para um
+ * custo unitário, que não é negativo. Se algum dia ela precisar de desconto ou
+ * crédito, o contrato muda e este comentário tem de mudar junto — não passe um
+ * negativo esperando `-4,17`.
  */
 export function roundUpToCent(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return 0;
+  // O `Math.round` em 1e6 absorve o ruído do float ANTES do arredondamento de
+  // centavo: sem ele, `4.16 * 100` vira 415.99999999999994 e `Math.ceil`
+  // devolveria 4,16 num caso e 4,17 no outro, sem regra visível.
   const scaled = Math.round(num * 1e6) / 1e4;
   return Math.ceil(scaled) / 100;
 }

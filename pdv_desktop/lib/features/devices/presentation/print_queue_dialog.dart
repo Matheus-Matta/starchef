@@ -331,9 +331,7 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
             [
               printer.label,
               _statusLabel(entry),
-              if (entry.attempts > 0)
-                '${entry.attempts}/${PrintQueueService.maximumAttempts} '
-                    'tentativa(s)',
+              if (entry.attempts > 0) _tentativas(entry),
               _createdAt(entry),
             ].where((part) => part.isNotEmpty).join(' · '),
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
@@ -438,6 +436,13 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
     if (wait.isNegative) return 'Na fila';
     return 'Nova tentativa em ${wait.inSeconds + 1}s';
   }
+
+  /// "2/3 tentativa(s)" — quantas vezes este cupom já foi tentado.
+  ///
+  /// Vive aqui, e não dentro do literal de lista, porque lá as duas metades da
+  /// frase pareciam dois itens com uma vírgula faltando entre eles.
+  static String _tentativas(PrintQueueEntry entry) =>
+      '${entry.attempts}/${PrintQueueService.maximumAttempts} tentativa(s)';
 
   static String _createdAt(PrintQueueEntry entry) {
     final created = entry.createdAt.toLocal();

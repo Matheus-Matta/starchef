@@ -1,10 +1,11 @@
 from decimal import Decimal
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from apps.core.viewsets import BaseTenantViewSet
+from apps.inbound_nfe.tenant_scope import restaurante_escolhido
 from apps.inbound_nfe.models import (
     InboundNFe,
     InboundNFeItem,
@@ -18,7 +19,6 @@ from apps.inbound_nfe.serializers import (
     InboundNFeItemMapRequestSerializer,
     ReceiveInvoiceRequestSerializer,
     DFeDistributionDocumentSerializer,
-    DFeSyncStateSerializer,
 )
 from apps.inbound_nfe.services.receiving import receive_invoice
 from apps.inbound_nfe.services.manifestation import manifest_nfe
@@ -162,17 +162,10 @@ class InboundNFeViewSet(BaseTenantViewSet):
         from django.utils import timezone
         from datetime import timedelta
         from apps.invoices.models import FiscalConfig
-        from apps.inbound_nfe.models import DFeSyncState, DFeGlobalConfig
+        from apps.inbound_nfe.models import DFeGlobalConfig
         from apps.inbound_nfe.tasks import _perform_sync
 
-        restaurant_id = (
-            request.data.get("restaurant")
-            or request.query_params.get("restaurant")
-            or request.headers.get("X-Restaurant-ID")
-            or request.headers.get("x-restaurant-id")
-            or request.META.get("HTTP_X_RESTAURANT_ID")
-            or getattr(getattr(request.user, "profile", None), "restaurant_id", None)
-        )
+        restaurant_id = restaurante_escolhido(request)
 
         from apps.restaurants.models import Restaurant
 
@@ -363,7 +356,6 @@ class InboundNFeViewSet(BaseTenantViewSet):
         """Atualiza manualmente o NSU de consulta e limpa bloqueios de cooldown."""
         import re
         from apps.invoices.models import FiscalConfig
-        from apps.inbound_nfe.models import DFeSyncState
 
         nsu_raw = request.data.get("ult_nsu") or request.data.get("nsu")
         if nsu_raw is None:
@@ -371,12 +363,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
         clean_nsu = str(nsu_raw).strip().zfill(15)
 
-        restaurant_id = (
-            request.data.get("restaurant")
-            or request.query_params.get("restaurant")
-            or request.headers.get("X-Restaurant-ID")
-            or getattr(getattr(request.user, "profile", None), "restaurant_id", None)
-        )
+        restaurant_id = restaurante_escolhido(request)
 
         config = None
         if restaurant_id:
@@ -414,6 +401,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
         state.next_allowed_at = None
         state.sync_error_count = 0
         state.save(update_fields=['ult_nsu', 'next_allowed_at', 'sync_error_count'])
+        return None
 
     @action(detail=False, methods=["post"], url_path="fetch-nsu")
     def fetch_nsu(self, request, *args, **kwargs):
@@ -431,14 +419,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        restaurant_id = (
-            request.data.get("restaurant")
-            or request.query_params.get("restaurant")
-            or request.headers.get("X-Restaurant-ID")
-            or request.headers.get("x-restaurant-id")
-            or request.META.get("HTTP_X_RESTAURANT_ID")
-            or getattr(getattr(request.user, "profile", None), "restaurant_id", None)
-        )
+        restaurant_id = restaurante_escolhido(request)
 
         restaurant = None
         if restaurant_id:
@@ -506,12 +487,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        restaurant_id = (
-            request.data.get("restaurant")
-            or request.query_params.get("restaurant")
-            or request.headers.get("X-Restaurant-ID")
-            or getattr(getattr(request.user, "profile", None), "restaurant_id", None)
-        )
+        restaurant_id = restaurante_escolhido(request)
 
         restaurant = None
         if restaurant_id:
@@ -864,11 +840,9 @@ class InboundNFeViewSet(BaseTenantViewSet):
         if not export_all and ids:
             qs = qs.filter(id__in=ids)
         else:
-            restaurant_id = (
-                request.data.get("restaurant")
-                or request.query_params.get("restaurant")
-                or request.headers.get("X-Restaurant-ID")
-            )
+            # `cair_no_perfil=False`: sem restaurante escolhido, este
+            # relatório é o consolidado da conta e não recebe filtro nenhum.
+            restaurant_id = restaurante_escolhido(request, cair_no_perfil=False)
             if restaurant_id:
                 qs = qs.filter(restaurant_id=restaurant_id)
 

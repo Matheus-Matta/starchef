@@ -1,8 +1,13 @@
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework import status
 
 from apps.accounts.limits import assert_can_create_restaurant
 from apps.core.codes import barcode_data_uri, qr_data_uri
@@ -155,8 +160,8 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         try:
             to_number = int(to_number)
             from_number = int(request.data.get("from_number") or 1)
-        except (TypeError, ValueError):
-            raise ValidationError({"detail": "from_number/to_number devem ser inteiros."})
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"detail": "from_number/to_number devem ser inteiros."}) from exc
 
         if from_number < 1 or to_number < from_number:
             raise ValidationError({"detail": "Intervalo inválido (from_number ≤ to_number, ambos ≥ 1)."})
@@ -274,7 +279,29 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     """Cadastro de comandas reutilizáveis (padrão self-service / Graal)."""
 
     serializer_class = CommandSerializer
-    queryset = Command.objects.select_related("restaurant", "branch").all()
+
+    # "Em uso" é ter anotação PENDENTE, e a grade precisa disso em TODA linha.
+    # Contado aqui, numa consulta só, e não por cartão: uma tela com duzentas
+    # comandas faria duzentas idas ao banco só para pintar o selo de estado.
+    queryset = (
+        Command.objects.select_related("restaurant", "branch")
+        .annotate(
+            pendentes=Count(
+                "command_items",
+                filter=Q(command_items__command_status="pending"),
+                distinct=True,
+            ),
+            pendente_total=Coalesce(
+                Sum(
+                    "command_items__total_price",
+                    filter=Q(command_items__command_status="pending")
+                    & ~Q(command_items__status__in=["cancelled", "comped"]),
+                ),
+                Decimal("0.00"),
+            ),
+        )
+        .all()
+    )
     filterset_fields = ["status", "is_active"]
     search_fields = ["number", "code", "customer_name"]
     ordering_fields = ["number", "status", "updated_at"]
@@ -296,6 +323,127 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if not command:
             return Response({"detail": "Comanda não encontrada."}, status=404)
         return Response(self.get_serializer(command).data)
+
+    @action(detail=True, methods=["get"], url_path="items")
+    def items(self, request, pk=None):
+        """O que esta comanda tem AGORA — e, com `history=1`, o que ela já teve.
+
+        As duas perguntas são diferentes, e misturá-las faz o cartão
+        reutilizado reaparecer cheio com a conta do cliente anterior. "Agora"
+        são as anotações PENDENTES; o histórico é tudo, sem filtro de estado.
+        """
+        from apps.orders.command_items import history_items_of_command, open_items_of_command
+        from apps.orders.serializers import CommandItemSerializer
+
+        command = self.get_object()
+        historico = str(request.query_params.get("history") or "").lower() in {"1", "true", "yes"}
+        itens = (
+            history_items_of_command(command.pk) if historico else open_items_of_command(command.pk)
+        )
+        return Response(
+            {
+                "command": self.get_serializer(command).data,
+                "history": historico,
+                "items": CommandItemSerializer(itens, many=True).data,
+            }
+        )
+
+    @items.mapping.post
+    def launch_item(self, request, pk=None):
+        """Anota um consumo NA COMANDA. Nenhum pedido é aberto.
+
+        É o lançamento do garçom e o do balcão na tela de comandas: o cartão é
+        um bloco de notas, e o pedido só nasce no caixa.
+        """
+        from apps.orders.command_items import launch_item
+        from apps.orders.serializers import CommandItemSerializer
+
+        command = self.get_object()
+        if not request.data.get("product"):
+            return Response(
+                {"detail": "Selecione o produto a lançar na comanda."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            item = launch_item(
+                command=command,
+                product=request.data["product"],
+                user=request.user,
+                quantity=request.data.get("quantity") or 1,
+                unit_price=request.data.get("unit_price"),
+                customer_note=request.data.get("customer_note") or "",
+                variations=request.data.get("variations") or [],
+            )
+        except ValidationError as exc:
+            detalhe = getattr(exc, "messages", None) or [str(exc)]
+            return Response({"detail": " ".join(detalhe)}, status=400)
+        return Response(CommandItemSerializer(item).data, status=201)
+
+    @action(detail=True, methods=["post"], url_path="send-to-kitchen")
+    def send_to_kitchen(self, request, pk=None):
+        """Manda a rodada pendente desta comanda para a produção."""
+        from apps.orders.command_kitchen import send_command_to_kitchen
+
+        command = self.get_object()
+        try:
+            lote = send_command_to_kitchen(
+                command,
+                request.user,
+                client_batch_serial=request.data.get("client_batch_serial"),
+                offline_printed=bool(request.data.get("offline_printed")),
+            )
+        except ValidationError as exc:
+            detalhe = getattr(exc, "messages", None) or [str(exc)]
+            return Response({"detail": " ".join(detalhe)}, status=400)
+        return Response(
+            {"batch": str(lote.id), "batch_number": lote.batch_number},
+            status=200,
+        )
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"items/(?P<item_pk>[^/.]+)/void",
+    )
+    def void_item(self, request, pk=None, item_pk=None):
+        """Cancela uma anotação. Ela sai da comanda como PERDA."""
+        from apps.orders.command_kitchen import void_command_item
+        from apps.orders.models import CommandItem
+
+        command = self.get_object()
+        item = CommandItem.objects.filter(pk=item_pk, command=command).first()
+        if item is None:
+            return Response({"detail": "Item não encontrado nesta comanda."}, status=404)
+        try:
+            void_command_item(item, user=request.user, reason=request.data.get("reason") or "")
+        except ValidationError as exc:
+            detalhe = getattr(exc, "messages", None) or [str(exc)]
+            return Response({"detail": " ".join(detalhe)}, status=400)
+        return Response(status=204)
+
+    @action(detail=True, methods=["post"], url_path="receipt")
+    def receipt(self, request, pk=None):
+        """Imprime a conferência DESTA comanda.
+
+        É o papel que o caixa entrega ao cliente que pergunta "e a comanda 13,
+        quanto deu?" dentro de uma mesa que vai pagar junto. **Não é documento
+        fiscal**, e o cupom diz isso: a nota é uma só, do pedido que cobrar.
+        """
+        from apps.printers.command_receipt import register_command_receipt
+        from apps.printers.serializers import PrintJobSerializer
+
+        try:
+            job, data = register_command_receipt(command=self.get_object(), user=request.user)
+        except ValidationError as exc:
+            detalhe = getattr(exc, "messages", None) or [str(exc)]
+            return Response({"detail": " ".join(detalhe)}, status=400)
+        return Response(
+            {
+                "print_job": PrintJobSerializer(job, context={"request": request}).data,
+                "total": str(data["total"]),
+            },
+            status=201,
+        )
 
     @action(detail=True, methods=["post"], url_path="link-table")
     @transaction.atomic
@@ -457,8 +605,8 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         try:
             to_number = int(to_number)
             from_number = int(request.data.get("from_number") or next_command_number(restaurant))
-        except (TypeError, ValueError):
-            raise ValidationError({"detail": "from_number/to_number devem ser inteiros."})
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"detail": "from_number/to_number devem ser inteiros."}) from exc
         if from_number < 1 or to_number < from_number:
             raise ValidationError({"detail": "Intervalo inválido (from_number ≤ to_number, ambos ≥ 1)."})
         if to_number - from_number + 1 > self.MAX_BULK_COMMANDS:

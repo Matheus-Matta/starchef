@@ -46,6 +46,9 @@ jobs:
       - name: Instalar dependências
         run: flutter pub get
 
+      - name: Tamanho de arquivo (catraca de 200 linhas)
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/check_tamanho_de_arquivo.py
       - name: Analyze
         run: flutter analyze
 

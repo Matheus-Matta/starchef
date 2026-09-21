@@ -15,6 +15,7 @@ part of 'home_page.dart';
 /// Os métodos foram MOVIDOS, não reescritos.
 mixin _OrderSection on _HomePageShared {
   void _leaveActiveOrder({String? except});
+  Future<void> _load();
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
 
@@ -53,30 +54,22 @@ mixin _OrderSection on _HomePageShared {
     List<Map<String, dynamic>> pending,
   );
 
-  Future<void> _selectOrderType(String type) async {
-    orderType = type;
-    if (type == 'command') {
-      setState(() {
-        commandSearch = '';
-        flowStep = 'context';
-      });
-      return;
+  /// Persiste o pedido somente quando o primeiro produto vai ser incluído.
+  /// Escolher tipo, cliente, mesa ou comanda prepara o contexto sem deixar
+  /// pedidos vazios abandonados no servidor.
+  Future<void> _ensureOrderStarted() async {
+    if (activeOrder != null) return;
+    final type = orderType;
+    if (type == null) {
+      throw const ApiException('Escolha o tipo de atendimento.');
     }
-    if (type == 'takeaway' || type == 'delivery') {
-      final customer = await _chooseCustomer(type);
-      if (customer == null) {
-        setState(() => orderType = null);
-        return;
-      }
-      selectedCustomer = customer;
-    }
-    await _startOrder(type);
-  }
-
-  Future<void> _startOrder(String type) async {
-    _leaveActiveOrder();
-    await _work(() async {
-      selectedTable = null;
+    if (selectedCommand != null) {
+      activeOrder = await api.post(
+        '/orders/open-command/',
+        body: {'command': selectedCommand!['id']},
+        accessToken: token,
+      );
+    } else {
       activeOrder = await api.post(
         '/orders/',
         body: {
@@ -86,10 +79,13 @@ mixin _OrderSection on _HomePageShared {
         },
         accessToken: token,
       );
-      activeOrder = _completeOfflineOrder(activeOrder!, type: type);
-      await _refreshOrder();
-      flowStep = 'order';
-    });
+    }
+    activeOrder = _completeOfflineOrder(
+      activeOrder!,
+      type: type,
+      table: selectedTable,
+      command: selectedCommand,
+    );
   }
 
   /// Relê o pedido no servidor.
@@ -131,6 +127,72 @@ mixin _OrderSection on _HomePageShared {
     );
   }
 
+  /// A família com quatro cartões chegou ao caixa: uma conta só.
+  ///
+  /// A comanda ATUAL é a primeira origem. O destino é um pedido NOVO, criado
+  /// pelo servidor — nunca este: esta comanda também precisa preservar o
+  /// pedido e os lotes dela, e ser origem e destino ao mesmo tempo duplicaria
+  /// ou perderia itens e taxa.
+  ///
+  /// Confirmada a conta, a tela troca para o pedido de destino e segue pelo
+  /// caminho de pagamento de sempre.
+  Future<void> _mergeCommands() async {
+    final order = activeOrder;
+    if (order == null || order['command'] == null) return;
+    if (!widget.controller.session!.user.canMergeCommands) return;
+
+    final destino = await showOrderMergeDialog(
+      context,
+      repository: OrderMergeRepository(api, accessToken: token),
+      orderId: '${order['id']}',
+    );
+    if (!mounted) return;
+    // Desfeita ou abandonada: o estado do salão mudou de qualquer jeito (a
+    // comanda pode ter saído e voltado), então a tela recarrega antes de
+    // continuar com o que o operador tinha na mão.
+    await _load();
+    if (!mounted || destino == null || destino.isEmpty) return;
+
+    final consolidado = await _work(
+      () => api.get('/orders/$destino/', accessToken: token),
+    );
+    if (consolidado == null || !mounted) return;
+    setState(() {
+      activeOrder = consolidado;
+      selectedCommand = null;
+      selectedTable = null;
+      orderType = '${consolidado['order_type'] ?? 'counter'}';
+      orderItems = List<Map<String, dynamic>>.from(
+        (consolidado['items'] as List? ?? const []).map(
+          (item) => Map<String, dynamic>.from(item as Map),
+        ),
+      );
+      flowStep = 'order';
+    });
+    await _paymentDialog();
+  }
+
+  /// Abre a conta agrupada JÁ PAGA deste pedido, para estorná-la.
+  ///
+  /// O destino de uma consolidação carrega `closing_merge` com `role: target`.
+  /// É por ele que o caixa chega ao estorno sem precisar saber o id da conta.
+  Future<void> _refundMergedSale() async {
+    final merge = activeOrder?['closing_merge'];
+    if (merge is! Map || merge['role'] != 'target') return;
+    if (!widget.controller.session!.user.canMergeCommands) return;
+
+    await showOrderMergeDialog(
+      context,
+      repository: OrderMergeRepository(api, accessToken: token),
+      mergeId: '${merge['id']}',
+    );
+    if (!mounted) return;
+    // O estorno muda pedido, comandas e mesas de uma vez: a tela recarrega
+    // inteira em vez de tentar remendar o que ela tinha na mão.
+    _leaveActiveOrder();
+    await _load();
+  }
+
   /// O caminho do PAGAMENTO. Pergunta só o que falta decidir.
   ///
   /// Este diálogo já foi uma revisão inteira do pedido: subtotal, taxa, total
@@ -140,8 +202,13 @@ mixin _OrderSection on _HomePageShared {
   /// do pedido mostra ao lado. O envio à produção virou botão próprio, e o que
   /// sobrou aqui são as duas escolhas da nota: taxa de serviço e CPF.
   Future<void> _finishOrder() async {
-    if (activeOrder == null || orderItems.isEmpty) return;
     if (!widget.controller.session!.user.canProcessPayments) return;
+    // O outro gesto que faz o pedido nascer: o caixa vai anexar um
+    // recebimento, e recebimento se anexa a pedido. A permissão é conferida
+    // ANTES de materializar — abrir um pedido para em seguida recusar o
+    // pagamento deixaria para trás exatamente o lixo que adiar evita.
+    if (_draftIsLive && !await _materializeDraft()) return;
+    if (activeOrder == null || orderItems.isEmpty) return;
     await _refreshOrder();
     if (!mounted || activeOrder == null) return;
 
@@ -206,7 +273,6 @@ mixin _OrderSection on _HomePageShared {
     await _paymentDialog();
   }
 }
-
 
 /// O que o operador decidiu no diálogo de "ir para o pagamento".
 class _FinishOrderChoice {

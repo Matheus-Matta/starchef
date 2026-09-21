@@ -32,6 +32,8 @@ mixin _OrdersSection on _HomePageShared {
   set orderOrdering(String value);
   String? get orderTypeFilter;
   set orderTypeFilter(String? value);
+  String? get selectedOrderItemId;
+  set selectedOrderItemId(String? value);
   DateTimeRange? get orderDateRange;
   set orderDateRange(DateTimeRange? value);
   Timer? get ordersSearchDebounce;
@@ -61,7 +63,6 @@ mixin _OrdersSection on _HomePageShared {
   Future<void> _refreshOrder();
   Future<void> _ensureCommandTable();
   Future<void> _printCustomerReceipt([Map<String, dynamic>? target]);
-  Widget _operationStat(String label, String value, IconData icon);
 
   /// Página de pedidos guardada localmente.
   ///
@@ -250,6 +251,7 @@ mixin _OrdersSection on _HomePageShared {
     final detail = await _orderDetail(order);
     if (detail == null) return;
     activeOrder = detail;
+    selectedOrderItemId = null;
     orderType = '${detail['order_type']}';
     selectedTable = detail['table'] == null
         ? null

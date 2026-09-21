@@ -1,33 +1,76 @@
-# This file configures the analyzer, which statically analyzes Dart code to
-# check for errors, warnings, and lints.
+# Análise estática do Dart. Roda no CI (`flutter analyze`) e no editor.
 #
-# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
-# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
-# invoked from the command line by running `flutter analyze`.
-
-# The following line activates a set of recommended lints for Flutter apps,
-# packages, and plugins designed to encourage good coding practices.
+# ── O padrão desta pasta, e por que cada regra está aqui ─────────────────────
+#
+# O critério é o mesmo de `backend/pyproject.toml` e `frontend/eslint.config.js`:
+# entra o que aponta DEFEITO, fica de fora o que só discorda de uma escolha. Um
+# linter que grita em cima de decisão deliberada é desligado na primeira
+# urgência — e aí para de pegar até o que importava.
+#
+# Todas as regras ligadas abaixo foram MEDIDAS antes de entrar: já estavam em
+# zero. Elas fecham a porta sem pedir um mutirão de correção agora.
 include: package:flutter_lints/flutter.yaml
 
 linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    # ── Bug de verdade, esperando acontecer ────────────────────────────────
+    # Recurso que fica aberto: assinatura de stream e sink vazam memória e
+    # seguram porta serial/socket — num PDV que roda o turno inteiro, isso é a
+    # diferença entre "funciona" e "trava às 22h".
+    cancel_subscriptions: true
+    close_sinks: true
+
+    # `==` entre tipos que nunca podem ser iguais: o código compila, a
+    # comparação é sempre falsa, e o ramo nunca executa.
+    unrelated_type_equality_checks: true
+    test_types_in_equals: true
+    hash_and_equals: true
+
+    # `case 1: ... case 1:` — o segundo é inalcançável e ninguém percebe.
+    no_duplicate_case_values: true
+
+    # Vírgula esquecida numa lista de strings: `['a' 'b']` vira `['ab']` em
+    # silêncio. Os três pontos do repositório que concatenam de propósito estão
+    # marcados com `// ignore:` e o motivo.
+    no_adjacent_strings_in_list: true
+
+    # `finally` que retorna, quebra ou lança ENGOLE a exceção original.
+    control_flow_in_finally: true
+    throw_in_finally: true
+
+    # `if (x);` — o ponto-e-vírgula fecha o if e o bloco seguinte roda sempre.
+    empty_statements: true
+    avoid_empty_else: true
+
+    # Expressão calculada e jogada fora: quase sempre um `await` esquecido.
+    unnecessary_statements: true
+
+    # Regex inválida só falha em tempo de execução, no caminho que ninguém testou.
+    valid_regexps: true
+
+    # `BuildContext` usado depois de um `await`: o widget pode ter saído da
+    # árvore, e o app quebra num caminho que só aparece com a rede lenta.
+    use_build_context_synchronously: true
+
+    # Import relativo entrando em `lib/` cria duas identidades do mesmo tipo.
+    avoid_relative_lib_imports: true
+
+    # ── Clareza que evita erro de leitura ──────────────────────────────────
+    always_declare_return_types: true
+    avoid_returning_null_for_void: true
+    prefer_void_to_null: true
+
+    # ── O que fica de fora, e por quê ──────────────────────────────────────
+    #
+    # `avoid_slow_async_io`: 46 ocorrências, e a regra está ERRADA para este
+    # projeto. Ela manda trocar `await File.exists()` por `existsSync()`; num
+    # app Flutter isso põe I/O de disco na thread da interface, que é
+    # exatamente o que trava a tela do caixa no meio da venda.
+
     # Campo privado atribuído a partir de um parâmetro nomeado público
     # (ex.: `required String restaurantId` -> `_restaurantId`): o formal de
     # inicialização exigiria renomear o parâmetro pro nome privado, quebrando
     # os call sites (`restaurantId:`) em outros arquivos.
     prefer_initializing_formals: false
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+# Lista completa das regras: https://dart.dev/tools/linter-rules

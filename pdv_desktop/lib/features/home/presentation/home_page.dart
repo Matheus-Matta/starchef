@@ -14,10 +14,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
-import '../../../core/errors/notification_bell.dart';
+import '../../../core/config/app_config.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
+import '../../../core/errors/notification_bell.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/cpf_formatter.dart';
@@ -38,10 +39,15 @@ import '../../../core/data/order_item_status.dart';
 import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/orders_table_metrics.dart';
+import '../../commands/data/command_repository.dart';
+import '../../commands/presentation/commands_page.dart';
 import '../../orders/presentation/order_cart_panel.dart';
+import '../../orders/data/order_merge_repository.dart';
+import '../../orders/presentation/order_merge_dialog.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../../scale/presentation/scale_workstation_page.dart';
+import '../../settings/presentation/api_url_settings_dialog.dart';
 import '../../settings/presentation/terminal_preferences_dialog.dart';
 import '../../scale/services/scale_window_launcher.dart';
 import '../../../core/input/code_lookup_service.dart';
@@ -51,13 +57,23 @@ import '../../../core/input/pdv_shortcuts.dart';
 import 'pdv_help_dialog.dart';
 import '../data/pdv_repository.dart';
 import 'pdv_navigation_shell.dart';
+import 'pdv_navigation_rail.dart';
+import 'pdv_operational_chrome.dart';
+import 'pdv_shortcut_bar.dart';
 import '../../cash/domain/cash_session_label.dart';
 import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
+import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'table_details_panel.dart';
+
+import '../../orders/data/order_draft.dart';
+import '../../orders/data/order_draft_cart.dart';
+import '../../orders/data/order_draft_commands.dart';
+import '../../orders/data/order_draft_materializer.dart';
+import '../../orders/presentation/command_attach_dialog.dart';
 
 part 'home_page_cash.dart';
 part 'home_page_cash_ops.dart';
@@ -66,6 +82,9 @@ part 'home_page_commands.dart';
 part 'home_page_commands_view.dart';
 part 'home_page_customer.dart';
 part 'home_page_kitchen.dart';
+part 'home_page_draft.dart';
+part 'home_page_draft_flow.dart';
+part 'home_page_draft_items.dart';
 part 'home_page_order.dart';
 part 'home_page_product.dart';
 part 'home_page_orders.dart';
@@ -79,6 +98,8 @@ part 'home_page_shell.dart';
 part 'home_page_sidebar.dart';
 part 'home_page_fiscal.dart';
 part 'home_page_input.dart';
+part 'home_page_scan.dart';
+part 'home_page_scan_actions.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -114,7 +135,12 @@ class _HomePageState extends State<HomePage>
         _CommandView,
         _FiscalSection,
         _InputSection,
+        _ScanSection,
+        _ScanActionsSection,
         _CustomerSection,
+        _DraftSection,
+        _DraftFlowSection,
+        _DraftCommandItemsSection,
         _KitchenSection,
         _OrderSection,
         _ProductSection,
@@ -160,9 +186,9 @@ class _HomePageState extends State<HomePage>
   @override
   bool movementApprovalDialogOpen = false;
   @override
-  String flowStep = 'type';
+  String flowStep = 'order';
   @override
-  String? orderType;
+  String? orderType = 'counter';
   @override
   String search = '';
   @override
@@ -175,6 +201,11 @@ class _HomePageState extends State<HomePage>
   /// sozinha quando o turno muda — sem isso, o saldo revelado num fechamento
   /// continuaria visível no caixa seguinte, aberto por outra pessoa.
   String? _cashBalanceRevealedForSessionId;
+  /// O carrinho antes de o pedido existir. Vive e morre com esta tela: um
+  /// rascunho abandonado não deixa rastro no servidor, que é justamente o
+  /// ganho de adiar a criação.
+  @override
+  final OrderDraftCart draft = OrderDraftCart();
   @override
   Map<String, dynamic>? activeOrder;
   @override
@@ -242,6 +273,8 @@ class _HomePageState extends State<HomePage>
   @override
   final commandSearchFocus = FocusNode(debugLabel: 'command-search');
   @override
+  final catalogSearchFocus = FocusNode(debugLabel: 'catalog-search');
+  @override
   Timer? ordersSearchDebounce;
   @override
   String? selectedPaymentMethod;
@@ -271,12 +304,23 @@ class _HomePageState extends State<HomePage>
   final Set<String> pendingRealtimeTopics = {};
   bool realtimeRefreshRunning = false;
   bool realtimeRefreshQueued = false;
+
   /// O controlador central de entrada: teclado, leitor USB, leitor serial e
   /// área de transferência entram por aqui e saem como o MESMO evento.
   @override
   late final PdvInputRouter inputRouter;
   @override
   CodeLookupService? codeLookup;
+  /// Os códigos lidos que pertencem à PÁGINA DAS COMANDAS.
+  ///
+  /// Ela é um widget próprio, com estado próprio, e o leitor é capturado aqui
+  /// na casca — o teclado não tem dono quando nenhum campo está focado. Este
+  /// canal é a ponte: sem ele, o operador teria de clicar no campo "Passe o
+  /// cartão" antes de cada leitura, que é justamente o gesto que o leitor
+  /// existe para eliminar.
+  @override
+  final StreamController<String> commandPageCodes =
+      StreamController<String>.broadcast();
   StreamSubscription<ScannedCode>? codeSubscription;
   StreamSubscription<PdvShortcut>? shortcutSubscription;
 
@@ -868,9 +912,9 @@ class _HomePageState extends State<HomePage>
       selectedOrderItemId = null;
       registeredPayments = [];
       paymentMethods = [];
-      orderType = null;
+      orderType = 'counter';
       category = null;
-      flowStep = 'type';
+      flowStep = 'order';
       // Aqui o conteúdo antigo precisa sair: manter o cardápio e as mesas do
       // restaurante anterior na tela levaria alguém a lançar no lugar errado.
       // É a única troca que ainda mostra "carregando".
@@ -925,18 +969,19 @@ class _HomePageState extends State<HomePage>
   @override
   PdvDestination get _selectedDestination {
     if (flowStep == 'scale-workstation') return PdvDestination.scale;
+    if (flowStep == 'commands') return PdvDestination.commands;
     if (flowStep == 'orders') return PdvDestination.orders;
     if (flowStep == 'table_details' ||
         (flowStep == 'context' && orderType != 'command')) {
       return PdvDestination.tables;
     }
-    return PdvDestination.menu;
+    return PdvDestination.sale;
   }
 
   @override
   Future<void> _navigateTo(PdvDestination destination) async {
     switch (destination) {
-      case PdvDestination.menu:
+      case PdvDestination.sale:
         if (activeOrder != null) {
           setState(() => flowStep = 'order');
         } else {
@@ -944,7 +989,13 @@ class _HomePageState extends State<HomePage>
         }
         return;
       case PdvDestination.tables:
+        // Trocar de destino no trilho é sair desta venda. Com carrinho
+        // montado, o operador confirma antes — o rascunho não sobrevive à
+        // troca, e perdê-lo em silêncio por um toque no trilho seria digitar
+        // tudo de novo com o cliente na frente.
+        if (!await _confirmLeavingPendingItems()) return;
         _leaveActiveOrder();
+        _discardDraft();
         setState(() {
           activeOrder = null;
           selectedTable = null;
@@ -954,6 +1005,17 @@ class _HomePageState extends State<HomePage>
           registeredPayments = [];
           orderType = 'table_view';
           flowStep = 'context';
+        });
+        return;
+      case PdvDestination.commands:
+        if (!await _confirmLeavingPendingItems()) return;
+        _leaveActiveOrder();
+        _discardDraft();
+        setState(() {
+          activeOrder = null;
+          selectedCommand = null;
+          orderItems = [];
+          flowStep = 'commands';
         });
         return;
       case PdvDestination.orders:
@@ -978,8 +1040,14 @@ class _HomePageState extends State<HomePage>
       context,
       cashSession: cashSession,
       balanceLabel: _cashBalanceLabel,
+      balanceVisible: _canSeeCashBalance,
     );
     if (!mounted || action == null) return;
+    if (action == 'toggle_balance') {
+      await _toggleCashBalanceVisibility();
+      if (mounted) await _openCashCenter();
+      return;
+    }
     if (action == 'open') await _openCash();
     if (action == 'supply' || action == 'withdrawal') {
       await _cashMovement(action);
@@ -1001,6 +1069,7 @@ class _HomePageState extends State<HomePage>
       isFullScreen: widget.isFullScreen,
     );
     if (!mounted || selection == null) return;
+    if (selection == 'scale_workstation') await _openScaleWindow();
     if (selection == 'printer') _openDeviceSettings(DeviceKind.printer);
     if (selection == 'scale') _openDeviceSettings(DeviceKind.scale);
     if (selection == 'preferences' && mounted) {
@@ -1034,8 +1103,26 @@ class _HomePageState extends State<HomePage>
     if (selection == 'print_queue' && mounted) {
       await PrintQueueDialog.show(context, deviceAgent);
     }
+    if (selection == 'api_url' && mounted) {
+      final saved = await ApiUrlSettingsDialog.show(
+        context,
+        widget.preferences,
+        widget.controller.apiBaseUrl,
+      );
+      if (!mounted || !saved) return;
+
+      final config = await AppConfig.load(
+        manualOverrideUrl: widget.preferences.apiBaseUrlOverride,
+      );
+      await widget.controller.updateApiBaseUrl(config.apiBaseUrl);
+      // O token pertence ao servidor anterior. Encerrar a sessão força a
+      // página a ser recriada no login e impede misturar dados dos backends.
+      await widget.controller.logout();
+      return;
+    }
     if (selection == 'theme') widget.onToggleTheme();
     if (selection == 'fullscreen') widget.onToggleFullScreen();
+    if (selection == 'logout') widget.controller.logout();
   }
 
   /// Volta à tela inicial do atendimento.
@@ -1062,11 +1149,10 @@ class _HomePageState extends State<HomePage>
 
   /// Descarta o pedido que foi aberto e não virou nada.
   ///
-  /// Abrir uma comanda cria o pedido na hora — é ele que ocupa a comanda. Se o
-  /// operador sai sem lançar item nenhum, esse pedido vazio fica no sistema
-  /// segurando a comanda, e o próximo cliente que pegar a mesma não consegue
-  /// usá-la. Não é um cancelamento comercial (não há consumo a estornar nem
-  /// motivo a registrar), então não pede senha nem justificativa.
+  /// O fluxo atual só cria ao incluir o primeiro item, mas pedidos vazios de
+  /// versões anteriores ou retomados de outro terminal ainda podem existir.
+  /// Eles prendem a comanda sem representar consumo; por isso o descarte não
+  /// pede senha nem justificativa comercial.
   ///
   /// É melhor-esforço de propósito: se o descarte não subir, a venda vazia é o
   /// menor dos problemas e nada disso pode atrapalhar o operador que só quis
@@ -1131,11 +1217,7 @@ class _HomePageState extends State<HomePage>
         // valores sao open/awaiting_payment/paid/cancelled/refunded. A
         // consulta voltava 400, o `catch` de baixo engolia, e esta varredura
         // passou a producao inteira sem apagar um unico rascunho orfao.
-        query: {
-          'restaurant': restaurant,
-          'status': 'open',
-          'page_size': 50,
-        },
+        query: {'restaurant': restaurant, 'status': 'open', 'page_size': 50},
       );
       final keep = '${activeOrder?['id'] ?? ''}';
       var removed = 0;
@@ -1171,8 +1253,17 @@ class _HomePageState extends State<HomePage>
   }
 
   @override
+  /// Volta para o começo de um atendimento novo: catálogo à esquerda,
+  /// carrinho vazio à direita.
+  ///
+  /// Antes isto caía numa tela de "escolha o tipo de atendimento". Ela custava
+  /// um gesto a cada venda para responder o que é quase sempre balcão, e a
+  /// opção "comanda" abria o cartão de verdade ali mesmo. Agora o destino já
+  /// nasce escolhido e trocá-lo é a barra no topo do carrinho — sem nada no
+  /// servidor até o pedido precisar existir.
   Future<void> _goHome() async {
     _leaveActiveOrder();
+    _discardDraft();
     setState(() {
       activeOrder = null;
       selectedTable = null;
@@ -1180,8 +1271,8 @@ class _HomePageState extends State<HomePage>
       selectedCustomer = null;
       orderItems = [];
       registeredPayments = [];
-      orderType = null;
-      flowStep = 'type';
+      orderType = 'counter';
+      flowStep = 'order';
     });
     unawaited(_load());
   }
@@ -1200,7 +1291,16 @@ class _HomePageState extends State<HomePage>
     } else if (flowStep == 'table_details') {
       setState(() => flowStep = 'context');
     } else if (flowStep == 'context') {
-      setState(() => flowStep = 'type');
+      setState(() {
+        orderType = 'counter';
+        flowStep = 'order';
+      });
+    } else if (flowStep == 'order' && activeOrder == null) {
+      if (orderType == 'command') {
+        setState(() => flowStep = 'context');
+      } else {
+        unawaited(_goHome());
+      }
     } else if (activeOrder != null) {
       _goHome();
     }
@@ -1217,6 +1317,7 @@ class _HomePageState extends State<HomePage>
     syncStatusSubscription?.cancel();
     HardwareKeyboard.instance.removeHandler(inputRouter.handleKeyEvent);
     codeSubscription?.cancel();
+    commandPageCodes.close();
     shortcutSubscription?.cancel();
     productScanRepeats?.close();
     inputRouter.dispose();
@@ -1226,6 +1327,7 @@ class _HomePageState extends State<HomePage>
     ordersSearchController.dispose();
     ordersSearchFocus.dispose();
     commandSearchFocus.dispose();
+    catalogSearchFocus.dispose();
     updateService.dispose();
     super.dispose();
   }

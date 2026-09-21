@@ -182,4 +182,18 @@ def test_a_lista_de_segredos_liberados_e_esta_e_nenhuma_outra():
         # Sem o hash, a loja recebe os usuários e ninguém entra no backend
         # local — o que apaga a razão de ele existir.
         "user.password",
+        # ── Os três abaixo NÃO são segredo. ──────────────────────────────────
+        #
+        # Eles estão aqui porque `CAMPOS_PROIBIDOS` casa por SUBSTRING, e os
+        # três contêm "certificate" no nome: uma data de validade, um CNPJ (que
+        # já viaja em `restaurant.cnpj`) e o nome do titular. Nenhum revela a
+        # chave privada nem a senha — essas continuam em `exclude_fields`.
+        #
+        # O buraco que isso fecha era silencioso, e é o pior formato:
+        # `fiscal_config` DESCE da nuvem para a loja, então uma tela da loja
+        # avisando "seu certificado vence em 10 dias" nunca receberia a data, e
+        # ninguém saberia por quê.
+        "fiscal_config.certificate_valid_until",
+        "fiscal_config.certificate_cnpj",
+        "fiscal_config.certificate_name",
     }, f"liberação de segredo não declarada neste teste: {liberados}"

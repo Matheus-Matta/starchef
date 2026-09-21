@@ -672,6 +672,11 @@ def register_payment(
             from apps.orders.services import free_command_for_order
 
             free_command_for_order(order)
+            # CONTA AGRUPADA: o destino nao tem comanda, entao a linha acima e
+            # um no-op nele. Sem isto, os quatro cartoes da familia ficariam
+            # ocupados para sempre — a venda paga e o salao travado. Roda DENTRO
+            # desta transacao de proposito: liberar num segundo commit abriria a
+            # janela "pago mas preso".
             if order.restaurant.stock_deduction_timing == "payment":
                 from apps.stock.services import deduct_order_stock
 
@@ -710,6 +715,26 @@ def register_payment(
         return payment
 
 
+def cancel_cash_movements_of(payment, *, user):
+    """Cancela os movimentos de caixa de um recebimento, UM A UM.
+
+    Um a um, e não por `QuerySet.update()`, porque a atualização em massa não
+    dispara `post_save` — e sem o signal a sincronização não registra evento
+    nenhum (ver o docstring de `apps/synchronization/signals.py`). O
+    cancelamento ficava só na loja, e a nuvem seguia somando uma venda que foi
+    desfeita.
+
+    O custo é irrisório: um recebimento tem no máximo dois movimentos (a venda
+    em dinheiro e, quando há, a retirada do troco).
+    """
+    movimentos = list(payment.cash_movements.select_for_update().filter(status="approved"))
+    for movimento in movimentos:
+        movimento.status = "cancelled"
+        movimento.updated_by = user
+        movimento.save(update_fields=["status", "updated_by", "updated_at"])
+    return movimentos
+
+
 @transaction.atomic
 def cancel_payment(*, payment, user):
     """Cancela um recebimento lançado no PDV e desfaz seus efeitos operacionais."""
@@ -732,7 +757,7 @@ def cancel_payment(*, payment, user):
         payment.status = Payment.STATUS_CANCELLED
         payment.updated_by = user
         payment.save(update_fields=["status", "updated_by", "updated_at"])
-        payment.cash_movements.filter(status="approved").update(status="cancelled", updated_by=user)
+        cancel_cash_movements_of(payment, user=user)
 
         paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
             "value"
@@ -775,38 +800,17 @@ def cancel_payment(*, payment, user):
                     table.save(update_fields=["status", "current_order_id", "updated_at"])
 
             if order.restaurant.stock_deduction_timing == "payment":
-                from apps.stock.models import StockMovement
+                # `revert_order_stock` vive em `apps.stock.services` e é a
+                # ÚNICA reversão: ela casa os movimentos por tipo (não por
+                # texto do motivo), grava `reversal_of` e é idempotente por
+                # construção. O estorno da conta agrupada usa a mesma.
+                from apps.stock.services import revert_order_stock
 
-                stock_effects = (
-                    StockMovement.objects.filter(
-                        order_item__order=order,
-                        reason__in=[
-                            f"Auto deduction from order {order.sequence}",
-                            f"Payment cancellation from order {order.sequence}",
-                        ],
-                    )
-                    .values("account", "restaurant", "branch", "ingredient", "location", "order_item", "unit_cost")
-                    .annotate(quantity_total=Sum("quantity"), cost_total=Sum("total_cost"))
+                revert_order_stock(
+                    order=order,
+                    user=user,
+                    reason=f"Cancelamento do recebimento do pedido {order.sequence}",
                 )
-                for effect in stock_effects:
-                    if not effect["quantity_total"] and not effect["cost_total"]:
-                        continue
-                    StockMovement.objects.create(
-                        account_id=effect["account"],
-                        restaurant_id=effect["restaurant"],
-                        branch_id=effect["branch"],
-                        ingredient_id=effect["ingredient"],
-                        location_id=effect["location"],
-                        order_item_id=effect["order_item"],
-                        operator=user,
-                        movement_type=StockMovement.TYPE_ADJUSTMENT,
-                        quantity=-effect["quantity_total"],
-                        unit_cost=effect["unit_cost"],
-                        total_cost=-effect["cost_total"],
-                        reason=f"Payment cancellation from order {order.sequence}",
-                        created_by=user,
-                        updated_by=user,
-                    )
 
         record_audit(
             action=AuditLog.ACTION_CANCELLED,

@@ -27,7 +27,7 @@ class Command(BaseCommand):
                 "Banco não é PostgreSQL: as triggers não existem aqui. "
                 "A captura continua pelos signals (não cobre bulk/SQL direto)."
             ))
-            return
+            return None
 
         if options["status"]:
             return self._status()
@@ -47,14 +47,15 @@ class Command(BaseCommand):
                 "gravariam uma marca por escrita que ninguém consumiria. "
                 "Use --force para instalar assim mesmo."
             ))
-            return
+            return None
 
         if options["remove"]:
             triggers.uninstall(log=self.stdout.write)
-            return
+            return None
 
         triggers.install(log=self.stdout.write)
         self.stdout.write(self.style.SUCCESS("Rede de segurança ativa."))
+        return None
 
     def _status(self):
         existentes = triggers.installed()

@@ -4,7 +4,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from django.contrib.auth import get_user_model
 from apps.accounts.models import Account
 from apps.restaurants.models import Restaurant
-from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, DFeDistributionDocument
+from apps.inbound_nfe.models import InboundNFe, InboundNFeItem
 from apps.inbound_nfe.views import InboundNFeViewSet
 
 User = get_user_model()

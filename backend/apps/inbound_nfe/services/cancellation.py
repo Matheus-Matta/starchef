@@ -12,7 +12,6 @@ from django.utils import timezone
 from apps.inbound_nfe.models import InboundNFe, NFeEvent, NFeIssue
 from apps.stock.models import (
     GoodsReceipt,
-    GoodsReceiptItem,
     InventoryLot,
     StockMovement,
 )
@@ -213,7 +212,7 @@ def apply_cancellation(
         reversal_qty = -entry_qty
         reversal_total_cost = -abs(entry_mov.total_cost)
 
-        reason_text = f"Estorno por Cancelamento de NF-e na SEFAZ"
+        reason_text = "Estorno por Cancelamento de NF-e na SEFAZ"
         if cancellation_protocol:
             reason_text += f" (Prot: {cancellation_protocol})"
 

@@ -8,7 +8,6 @@ from rest_framework.response import Response
 from apps.core.viewsets import BaseTenantViewSet
 from apps.assets.models import Asset, AssetDisposal, AssetLocationHistory
 from apps.assets.serializers import (
-    AssetDisposalSerializer,
     AssetLocationHistorySerializer,
     AssetSerializer,
     ReusableAssetMovementSerializer,

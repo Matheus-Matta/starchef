@@ -151,7 +151,7 @@ function createFromCurrentRoute() {
   const resource = currentResource.value;
   if (!resource) {
     if (!canCreateHere.value) return;
-    router.push({ name: "pdv", query: { new: Date.now() } });
+    router.push({ name: "pdv-venda", query: { new: Date.now() } });
     return;
   }
   const primary = resource.pro?.primaryAction;

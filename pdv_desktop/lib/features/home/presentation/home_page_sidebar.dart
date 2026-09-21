@@ -52,8 +52,6 @@ mixin _SidebarSection on _HomePageShared {
   Future<void> _toggleCashBalanceVisibility();
   Future<void> _changeRestaurant(String value);
   Future<void> _changeScaleRestaurant(String value);
-  Widget _operationStat(String label, String value, IconData icon);
-
   Widget _sidebarOperationPanel({bool compact = false}) {
     final scheme = Theme.of(context).colorScheme;
     if (compact) {

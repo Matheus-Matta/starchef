@@ -9,14 +9,14 @@ import 'app_colors.dart';
 /// Manter os dois temas alinhados permite migrar tela por tela sem alterar os
 /// fluxos de operação.
 abstract final class AppTheme {
-  static const radius = BorderRadius.all(Radius.circular(4));
+  static const radius = BorderRadius.all(Radius.circular(8));
 
   /// Altura de TODO controle de uma linha: campo, select, data e botão.
   ///
   /// Um número só. Quando cada tipo escolhia a própria altura, a barra de
   /// filtros saía em escadinha — um campo de busca, três selects e um botão de
   /// data, cada um parando num lugar.
-  static const controlHeight = 34.0;
+  static const controlHeight = 40.0;
 
   /// Altura de uma linha de tabela e do cabeçalho dela.
   ///
@@ -43,41 +43,6 @@ abstract final class AppTheme {
   static const _buttonDensity = VisualDensity.standard;
   static const _buttonTapTarget = MaterialTapTargetSize.shrinkWrap;
 
-  /// Um ponto a menos em toda a tipografia: corpo 13, apoio 11, título 21.
-  ///
-  /// Um ponto fixo, e não uma porcentagem: a porcentagem produzia tamanhos
-  /// quebrados (12,88 px) e encolhia o texto grande muito mais que o pequeno —
-  /// justamente onde a legibilidade já era o limite.
-  ///
-  /// O atalho seria `TextTheme.apply(fontSizeDelta: -1)`, mas ele exige que
-  /// TODO estilo do tema declare tamanho, e o tema padrão do Material traz
-  /// slots sem tamanho: o atalho estourava numa asserção antes de a primeira
-  /// tela aparecer. Aqui quem não declara tamanho passa intacto.
-  static TextTheme _umPontoMenor(TextTheme base) {
-    TextStyle? menor(TextStyle? style) {
-      final size = style?.fontSize;
-      return size == null ? style : style!.copyWith(fontSize: size - 1);
-    }
-
-    return base.copyWith(
-      displayLarge: menor(base.displayLarge),
-      displayMedium: menor(base.displayMedium),
-      displaySmall: menor(base.displaySmall),
-      headlineLarge: menor(base.headlineLarge),
-      headlineMedium: menor(base.headlineMedium),
-      headlineSmall: menor(base.headlineSmall),
-      titleLarge: menor(base.titleLarge),
-      titleMedium: menor(base.titleMedium),
-      titleSmall: menor(base.titleSmall),
-      bodyLarge: menor(base.bodyLarge),
-      bodyMedium: menor(base.bodyMedium),
-      bodySmall: menor(base.bodySmall),
-      labelLarge: menor(base.labelLarge),
-      labelMedium: menor(base.labelMedium),
-      labelSmall: menor(base.labelSmall),
-    );
-  }
-
   static ThemeData light() => _buildMaterial(Brightness.light);
   static ThemeData dark() => _buildMaterial(Brightness.dark);
 
@@ -94,34 +59,34 @@ abstract final class AppTheme {
       radius: radius,
       disableSecondaryBorder: true,
       colorScheme: base.copyWith(
-        background: dark ? AppColors.zinc950 : AppColors.zinc50,
-        foreground: dark ? AppColors.zinc50 : AppColors.zinc950,
-        card: dark ? AppColors.zinc900 : Colors.white,
-        cardForeground: dark ? AppColors.zinc50 : AppColors.zinc950,
-        popover: dark ? AppColors.zinc900 : Colors.white,
-        popoverForeground: dark ? AppColors.zinc50 : AppColors.zinc950,
-        primary: dark ? const Color(0xFFF97316) : AppColors.orange,
+        background: dark ? AppColors.zinc950 : AppColors.stone150,
+        foreground: dark ? AppColors.zinc50 : AppColors.stone900,
+        card: dark ? AppColors.zinc900 : AppColors.stone100,
+        cardForeground: dark ? AppColors.zinc50 : AppColors.stone900,
+        popover: dark ? AppColors.zinc900 : AppColors.stone100,
+        popoverForeground: dark ? AppColors.zinc50 : AppColors.stone900,
+        primary: dark ? const Color(0xFFF97316) : AppColors.orangeDark,
         primaryForeground: Colors.white,
-        secondary: dark ? AppColors.zinc800 : const Color(0xFFF4F4F5),
+        secondary: dark ? AppColors.zinc800 : AppColors.stone150,
         secondaryForeground: dark ? AppColors.zinc50 : AppColors.zinc900,
-        muted: dark ? AppColors.zinc800 : const Color(0xFFF4F4F5),
-        mutedForeground: dark ? AppColors.zinc400 : const Color(0xFF71717A),
-        accent: dark ? AppColors.zinc800 : const Color(0xFFF4F4F5),
+        muted: dark ? AppColors.zinc800 : AppColors.stone150,
+        mutedForeground: dark ? AppColors.zinc400 : AppColors.stone500,
+        accent: dark ? AppColors.zinc800 : AppColors.stone150,
         accentForeground: dark ? AppColors.zinc50 : AppColors.zinc900,
-        border: dark ? AppColors.zinc800 : AppColors.zinc200,
-        input: dark ? AppColors.zinc800 : AppColors.zinc200,
-        ring: dark ? const Color(0xFFF97316) : AppColors.orange,
+        border: dark ? AppColors.zinc800 : AppColors.stone300,
+        input: dark ? AppColors.zinc800 : AppColors.stone300,
+        ring: dark ? const Color(0xFFF97316) : AppColors.orangeDark,
       ),
     );
   }
 
   static ThemeData _buildMaterial(Brightness brightness) {
     final dark = brightness == Brightness.dark;
-    final primary = dark ? const Color(0xFFF97316) : AppColors.orange;
-    final surface = dark ? AppColors.zinc900 : Colors.white;
-    final ground = dark ? AppColors.zinc950 : AppColors.zinc50;
-    final border = dark ? AppColors.zinc800 : AppColors.zinc200;
-    final muted = dark ? AppColors.zinc400 : const Color(0xFF71717A);
+    final primary = dark ? const Color(0xFFF97316) : AppColors.orangeDark;
+    final surface = dark ? AppColors.zinc900 : AppColors.stone100;
+    final ground = dark ? AppColors.zinc950 : AppColors.stone150;
+    final border = dark ? AppColors.zinc800 : AppColors.stone300;
+    final muted = dark ? AppColors.zinc400 : AppColors.stone500;
     final scheme =
         ColorScheme.fromSeed(
           seedColor: primary,
@@ -130,36 +95,32 @@ abstract final class AppTheme {
           primary: primary,
           onPrimary: Colors.white,
           surface: surface,
-          onSurface: dark ? AppColors.zinc50 : AppColors.zinc950,
+          onSurface: dark ? AppColors.zinc50 : AppColors.stone900,
           onSurfaceVariant: muted,
           surfaceContainerLowest: ground,
           surfaceContainerLow: surface,
-          surfaceContainer: dark ? AppColors.zinc850 : const Color(0xFFF4F4F5),
-          surfaceContainerHigh: dark
-              ? AppColors.zinc800
-              : const Color(0xFFE4E4E7),
+          surfaceContainer: dark ? AppColors.zinc850 : AppColors.stone150,
+          surfaceContainerHigh: dark ? AppColors.zinc800 : AppColors.stone200,
           surfaceContainerHighest: dark
               ? AppColors.zinc800
-              : const Color(0xFFD4D4D8),
+              : AppColors.stone300,
           primaryContainer: dark
               ? const Color(0xFF431E0B)
               : const Color(0xFFFFF1E8),
           onPrimaryContainer: dark
               ? const Color(0xFFFFB27A)
               : AppColors.orangeDark,
-          secondary: dark ? AppColors.zinc800 : const Color(0xFFF4F4F5),
+          secondary: dark ? AppColors.zinc800 : AppColors.stone150,
           onSecondary: dark ? AppColors.zinc50 : AppColors.zinc900,
           outline: border,
           outlineVariant: border,
           error: dark ? const Color(0xFFEF4444) : AppColors.danger,
         );
 
-    final textTheme = _umPontoMenor(
-      ThemeData(brightness: brightness).textTheme.apply(
-        fontFamily: 'Segoe UI',
-        bodyColor: scheme.onSurface,
-        displayColor: scheme.onSurface,
-      ),
+    final textTheme = ThemeData(brightness: brightness).textTheme.apply(
+      fontFamily: 'Segoe UI',
+      bodyColor: scheme.onSurface,
+      displayColor: scheme.onSurface,
     );
 
     return ThemeData(
@@ -194,7 +155,7 @@ abstract final class AppTheme {
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: dark ? AppColors.zinc850 : Colors.white,
+        backgroundColor: dark ? AppColors.zinc850 : AppColors.stone100,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: const RoundedRectangleBorder(borderRadius: radius),

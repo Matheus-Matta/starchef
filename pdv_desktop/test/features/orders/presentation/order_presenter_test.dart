@@ -43,7 +43,7 @@ void main() {
           'quantity': 3,
           'pricing_unit': 'kg',
         }),
-        '3,000kg',
+        '3,000 kg',
       );
     });
 
@@ -53,14 +53,14 @@ void main() {
           'quantity': 0.5,
           'pricing_unit': 'kg',
         }),
-        '0,500kg',
+        '0,500 kg',
       );
       expect(
         OrderPresenter.quantityLabel(const {
           'quantity': 0.35,
           'product_is_weighed': true,
         }),
-        '0,350kg',
+        '0,350 kg',
       );
     });
 
@@ -75,7 +75,10 @@ void main() {
         }),
         '2x',
       );
-      expect(OrderPresenter.isWeighedItem(const {'pricing_unit': 'kg'}), isTrue);
+      expect(
+        OrderPresenter.isWeighedItem(const {'pricing_unit': 'kg'}),
+        isTrue,
+      );
       expect(
         OrderPresenter.isWeighedItem(const {'product_is_weighed': true}),
         isTrue,

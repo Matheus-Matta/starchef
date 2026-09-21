@@ -388,12 +388,16 @@ class SpoolPrinterTransport extends PrinterTransport {
         } else {
           final safePath = temp.path.replaceAll("'", "''");
           final safePrinter = target.endpoint.replaceAll("'", "''");
+          // O comando sai da lista e ganha nome: dentro do literal, as duas
+          // metades pareciam dois argumentos com uma vírgula faltando.
+          final comandoDeImpressao =
+              "Get-Content -LiteralPath '$safePath' -Raw | "
+              "Out-Printer -Name '$safePrinter'";
           result = await Process.run('powershell.exe', [
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            "Get-Content -LiteralPath '$safePath' -Raw | "
-                "Out-Printer -Name '$safePrinter'",
+            comandoDeImpressao,
           ]).timeout(const Duration(seconds: 20));
         }
       } else {
