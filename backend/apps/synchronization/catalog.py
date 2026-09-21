@@ -63,14 +63,13 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
    # a exclusão mirava no vazio. O CSC só estava protegido por acidente, porque
    # `csc_token` contém "token" e o filtro global o pegava. Um teste agora
    # recusa `exclude_fields` apontando para campo inexistente.
-   # O SEGREDO DE EMISSÃO NÃO VIAJA. Estes oito abrem a assinatura da nota:
+   # O SEGREDO DE EMISSÃO NÃO VIAJA. Estes campos abrem a assinatura da nota:
    # o certificado A1 em si, a senha dele e os tokens do provedor. O CSC vai
    # por canal próprio, cifrado (ver a memória "CSC no terminal").
    exclude_fields=("csc_id", "csc_token", "certificate_ref",
                    "certificate_file", "certificate_password",
                    "provider_token", "focus_token_production",
-                   "focus_token_homologation", "focus_certificate_base64",
-                   "focus_certificate_password"),
+                   "focus_token_homologation"),
    # OS TRÊS ABAIXO NÃO SÃO SEGREDO, e o filtro global os barrava só porque o
    # nome contém "certificate" — um casamento por substring.
    #

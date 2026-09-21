@@ -75,7 +75,6 @@ const disponiveisNoServidor = ref([]);
 const carregando = ref(false);
 const erro = ref("");
 
-/** Comanda em fechamento não entra: o caixa está cobrando aquele cartão. */
 const disponiveis = computed(() =>
   // Cartão sem valor não entra: ele não acrescenta um centavo à conta, e
   // anexá-lo só prende um pedido a um cartão que não cobra nada.
@@ -110,10 +109,6 @@ async function escolherPorCodigo(codigo) {
 }
 
 function escolher(comanda) {
-  if (comanda?.closing_merge) {
-    erro.value = `A comanda ${comanda.number} está em fechamento no caixa.`;
-    return;
-  }
   abrir.value = false;
   emit("attach", comanda);
 }

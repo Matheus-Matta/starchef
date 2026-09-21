@@ -66,7 +66,6 @@ import {
   GOODS_RECEIPT_STATUS_LABELS,
 } from "./enums";
 import { invoiceColumns, invoiceProConfig } from "./invoiceResource";
-
 export const resources = [
   // ── Operacional ────────────────────────────────────────────────────
   {
@@ -985,6 +984,7 @@ export const resources = [
     name: "inbound-nfe",
     title: "Notas Fiscais de Entrada",
     endpoint: "/inbound-nfe/",
+    globalScope: true,
     module: "logistica",
     pro: {
       pageSize: 20,

@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import FocusNfeConfig
+from apps.invoices.certificate_data import certificate_base64
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
 
@@ -150,15 +151,15 @@ def _company_validation_issues(config, payload):
         or config.focus_token_homologation
     )
     if not company_already_linked:
-        if not config.focus_certificate_base64:
+        if not (config.certificate_file or config.certificate_ref):
             invalid(
-                "focus_certificate_base64",
+                "certificate_file",
                 "Certificado A1",
                 "Certificado A1: obrigatorio na primeira sincronizacao da empresa.",
             )
-        if not config.focus_certificate_password:
+        if not config.certificate_password:
             invalid(
-                "focus_certificate_password",
+                "certificate_password",
                 "Senha do certificado A1",
                 "Senha do certificado A1: obrigatoria na primeira sincronizacao da empresa.",
             )
@@ -173,7 +174,7 @@ def company_payload_missing_fields(config):
     demais para montar o payload vira "tudo pendente", nao um erro.
     """
     try:
-        payload = build_focus_company_payload(config)
+        payload = build_focus_company_payload(config, include_certificate=False)
     except Exception:  # noqa: BLE001 - leitura defensiva; ver docstring
         payload = {}
     return _company_validation_issues(config, payload)
@@ -195,7 +196,7 @@ def validate_focus_company_config(config):
     return payload
 
 
-def build_focus_company_payload(config):
+def build_focus_company_payload(config, *, include_certificate=True):
     """Converte o cadastro fiscal local no contrato de empresa da Focus."""
     restaurant = config.restaurant
     branch = config.branch
@@ -223,9 +224,11 @@ def build_focus_company_payload(config):
         "habilita_contingencia_offline_nfce": is_nfce,
         "reaproveita_numero_nfce_contingencia": is_nfce,
     }
-    if config.focus_certificate_base64:
-        payload["arquivo_certificado_base64"] = config.focus_certificate_base64
-        payload["senha_certificado"] = config.focus_certificate_password
+    if include_certificate:
+        encoded_certificate = certificate_base64(config)
+        if encoded_certificate:
+            payload["arquivo_certificado_base64"] = encoded_certificate
+            payload["senha_certificado"] = config.certificate_password
     if is_nfe:
         suffix = "producao" if is_production else "homologacao"
         payload[f"serie_nfe_{suffix}"] = str(config.series)
@@ -402,11 +405,6 @@ def _store_focus_company(config, company):
         "focus_remote_data": safe_remote_data,
         "updated_at": timezone.now(),
     }
-    if config.focus_certificate_base64:
-        # O PFX e sua senha so permanecem no banco enquanto a tarefa precisa
-        # deles para criar/atualizar a empresa. Apos sucesso, sao descartados.
-        updates["focus_certificate_base64"] = ""
-        updates["focus_certificate_password"] = ""
     if company.get("token_producao"):
         updates["focus_token_production"] = company["token_producao"]
     if company.get("token_homologacao"):
@@ -543,8 +541,6 @@ def delete_focus_company(config, *, client=None):
         focus_company_id="",
         focus_token_production="",
         focus_token_homologation="",
-        focus_certificate_base64="",
-        focus_certificate_password="",
         focus_sync_status=FiscalConfig.FOCUS_SYNC_NOT_CONFIGURED,
         focus_sync_error="",
         focus_synced_at=None,

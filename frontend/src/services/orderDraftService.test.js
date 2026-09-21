@@ -108,12 +108,58 @@ describe("materializeDraft", () => {
     expect(anexos).toHaveLength(0);
   });
 
-  it("rascunho vazio não abre pedido nenhum", async () => {
+  it("rascunho vazio de tudo não abre pedido nenhum", async () => {
     await expect(
       materializeDraft({ orderType: "counter", restaurantId: "rest-1", items: [] }),
     ).rejects.toThrow();
 
     expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("SO comandas abre a conta, sem exigir item novo", async () => {
+    // O caso central do modelo novo: a mesa com dois cartões chega no caixa e
+    // o operador não tem nada para passar — o consumo já está anotado neles.
+    // Exigir um item aqui fazia a conta simplesmente não abrir.
+    api.post.mockResolvedValue({ data: { id: "order-1" } });
+
+    await materializeDraft({
+      orderType: "counter",
+      restaurantId: "rest-1",
+      commandIds: ["c-1", "c-2"],
+      items: [],
+    });
+
+    const [criacao, anexo] = api.post.mock.calls;
+    expect(criacao[0]).toBe("/orders/");
+    expect(criacao[1]).toMatchObject({ order_type: "command", restaurant: "rest-1" });
+    expect(anexo[0]).toBe("/orders/order-1/attach-commands/");
+    expect(anexo[1]).toEqual({ commands: ["c-1", "c-2"] });
+  });
+
+  it("so comandas NAO passa por create-with-item", async () => {
+    // `create-with-item` é atômico porque leva um item. Sem item ele não tem
+    // o que criar, e chamá-lo assim seria pedir 400 ao servidor.
+    await materializeDraft({
+      orderType: "counter",
+      restaurantId: "rest-1",
+      commandIds: ["c-1"],
+      items: [],
+    });
+
+    const caminhos = api.post.mock.calls.map(([caminho]) => caminho);
+    expect(caminhos).not.toContain("/orders/create-with-item/");
+  });
+
+  it("so comandas com cliente leva o cliente junto", async () => {
+    await materializeDraft({
+      orderType: "counter",
+      restaurantId: "rest-1",
+      commandIds: ["c-1"],
+      customerId: "cli-9",
+      items: [],
+    });
+
+    expect(api.post.mock.calls[0][1]).toMatchObject({ customer: "cli-9" });
   });
 
   it("o peso da balança viaja com o item", async () => {

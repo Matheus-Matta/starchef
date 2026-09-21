@@ -32,15 +32,22 @@ class OrderDraftMaterializer {
     OrderDraftCart draft, {
     required String? restaurantId,
   }) async {
-    // O pedido nasce com o primeiro item, e sem item não há o que nascer.
-    // Mesmo cobrando só comandas é preciso UM item para o pedido existir — por
-    // isso a tela exige que algo seja passado antes de fechar a conta.
-    if (draft.semLinhasNovas) {
-      throw const ApiException('Não há itens para abrir o pedido.');
+    // Sem item E sem comanda não há o que abrir. Com um dos dois, há.
+    //
+    // Exigir um item mesmo cobrando só comandas quebrava o caso CENTRAL do
+    // modelo novo: a mesa com dois cartões que chega no caixa para pagar. O
+    // operador não tem nada para passar — o consumo já está anotado nos
+    // cartões —, e a conta simplesmente não abria.
+    if (draft.isEmpty) {
+      throw const ApiException('Não há itens nem comandas para abrir o pedido.');
     }
 
     // `create-with-item` é atômico: uma falha no meio não deixa pedido vazio.
-    final pedido = await _criarComPrimeiroItem(draft, restaurantId: restaurantId);
+    // Sem item nenhum ele não serve, e aí o pedido nasce vazio mesmo — o que
+    // o enche em seguida são as anotações das comandas.
+    final pedido = draft.semLinhasNovas
+        ? await _criarParaComandas(draft, restaurantId: restaurantId)
+        : await _criarComPrimeiroItem(draft, restaurantId: restaurantId);
     for (final linha in draft.lines.skip(1)) {
       await api.post(
         '/orders/${pedido['id']}/items/',
@@ -74,6 +81,30 @@ class OrderDraftMaterializer {
     accessToken: accessToken,
   );
 
+  /// Só comandas: o pedido nasce VAZIO e as anotações o preenchem.
+  ///
+  /// É o caminho da mesa que chega no caixa sem nada novo para passar. O
+  /// `create-with-item` não serve aqui porque não há item; o pedido vazio dura
+  /// o tempo de uma chamada, até `attach-commands` puxar o que os cartões
+  /// anotaram.
+  ///
+  /// `order_type` é `command` — igual ao que a tela web manda no mesmo caso.
+  /// Os dois PDVs precisam gravar o mesmo formato: um pedido com tipo
+  /// diferente conforme o caixa em que foi aberto quebra qualquer relatório
+  /// que agrupe por tipo.
+  Future<Map<String, dynamic>> _criarParaComandas(
+    OrderDraftCart draft, {
+    required String? restaurantId,
+  }) => api.post(
+    '/orders/',
+    body: {
+      'order_type': 'command',
+      'restaurant': restaurantId,
+      if (draft.customer != null) 'customer': draft.customer!['id'],
+    },
+    accessToken: accessToken,
+  );
+
   /// Balcão, entrega e retirada: o pedido nasce COM o primeiro item.
   ///
   /// `create-with-item` é atômico — pedido e item na mesma transação. É o que
@@ -86,7 +117,9 @@ class OrderDraftMaterializer {
     return await api.post(
       '/orders/create-with-item/',
       body: {
-        'order_type': draft.orderType,
+        // Com cartão anexado o pedido é de comanda, mesmo que o operador tenha
+        // passado itens novos junto. É o que a tela web já fazia.
+        'order_type': draft.commands.isEmpty ? draft.orderType : 'command',
         'restaurant': restaurantId,
         if (draft.customer != null) 'customer': draft.customer!['id'],
         'item': primeiro.toItemPayload(),

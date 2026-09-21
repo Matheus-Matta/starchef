@@ -147,7 +147,7 @@
     "pdv_desktop/lib/core/hardware/scale/serial_scale_reader.dart": 530,
     "pdv_desktop/lib/core/input/pdv_input_router.dart": 265,
     "pdv_desktop/lib/core/input/pdv_shortcuts.dart": 450,
-    "pdv_desktop/lib/core/network/api_client.dart": 707,
+    "pdv_desktop/lib/core/network/api_client.dart": 709,
     "pdv_desktop/lib/core/storage/durable_secure_store.dart": 328,
     "pdv_desktop/lib/core/storage/local_preferences.dart": 220,
     "pdv_desktop/lib/core/theme/app_theme.dart": 401,

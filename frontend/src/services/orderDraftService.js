@@ -32,16 +32,27 @@ export async function materializeDraft({
   customerId = null,
   items = [],
 }) {
-  if (!items.length) throw new Error("Não há itens para abrir o pedido.");
+  // Sem item E sem comanda não há o que abrir. Com um dos dois, há.
+  //
+  // Exigir um item mesmo cobrando só comandas quebrava o caso CENTRAL do
+  // modelo novo: a mesa com dois cartões que chega no caixa para pagar. O
+  // operador não tem nada para passar — o consumo já está anotado nos
+  // cartões —, e a conta simplesmente não abria.
+  if (!items.length && !commandIds.length) {
+    throw new Error("Não há itens nem comandas para abrir o pedido.");
+  }
 
-  const pedido = await _criarComPrimeiroItem({
-    orderType: commandIds.length ? "command" : orderType,
-    restaurantId,
-    customerId,
-    items,
-  });
+  const pedido = items.length
+    ? await _criarComPrimeiroItem({
+        orderType: commandIds.length ? "command" : orderType,
+        restaurantId,
+        customerId,
+        items,
+      })
+    : await _criarParaComandas({ restaurantId, customerId });
 
   // O primeiro item já entrou junto com o pedido; os outros vão em seguida.
+  // Sem item nenhum, `slice(1)` é vazio e o laço não roda.
   for (const item of items.slice(1)) {
     await api.post(`/orders/${pedido.id}/items/`, _corpoDoItem(item));
   }
@@ -54,6 +65,22 @@ export async function materializeDraft({
     return data;
   }
   return pedido;
+}
+
+/**
+ * Só comandas: o pedido nasce VAZIO e as anotações o preenchem.
+ *
+ * É o caminho da mesa que chega no caixa sem nada novo para passar.
+ * `create-with-item` não serve aqui porque não há item; o pedido vazio dura o
+ * tempo de uma chamada, até `attach-commands` puxar o que os cartões anotaram.
+ */
+async function _criarParaComandas({ restaurantId, customerId }) {
+  const { data } = await api.post("/orders/", {
+    order_type: "command",
+    restaurant: restaurantId,
+    ...(customerId ? { customer: customerId } : {}),
+  });
+  return data;
 }
 
 /**

@@ -17,13 +17,9 @@ import { api } from "./api";
 /**
  * Itens da comanda.
  *
- * `history: false` (padrão) devolve o que está ABERTO no pedido de trabalho
- * atual ou na consolidação viva. `history: true` devolve tudo o que o cartão
- * já teve, sem filtro de estado — é o modo "relatório".
- *
- * A resposta traz `closing_merge`: o id da conta agrupada que está segurando
- * esta comanda, ou `null`. "Em fechamento" é derivado disso, nunca de um campo
- * gravado na comanda.
+ * `history: false` (padrão) devolve só as anotações PENDENTES — o que a
+ * comanda deve agora. `history: true` devolve tudo o que o cartão já teve,
+ * pendente ou não, que é o que a tela de detalhe mostra.
  */
 export async function fetchCommandItems(commandId, { history = false } = {}) {
   const { data } = await api.get(`/commands/${commandId}/items/`, {

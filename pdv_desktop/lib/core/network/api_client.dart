@@ -85,11 +85,13 @@ class ApiClient {
        cloudFallback = cloudFallback ?? CloudFallback(),
        _client = client ?? http.Client();
 
-  /// A nuvem como SEGUNDA leitura, quando o backend da loja não responde.
+  /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.
   ///
-  /// Só leitura: escrita não atravessa, porque a deduplicação por
-  /// `Idempotency-Key` vive no banco de cada backend e a nuvem nunca viu a
-  /// chave que a loja consumiu. Ver `CloudFallback`.
+  /// Leitura e escrita desviam — o salão não para porque a máquina da loja
+  /// caiu. O que não desvia é a escrita cuja resposta se PERDEU: a loja pode
+  /// tê-la gravado, e repetir na nuvem cobraria de novo, porque a chave de
+  /// idempotência que a loja consumiu a nuvem nunca viu. Ver `CloudFallback`,
+  /// onde cada regra tem um teste.
   final CloudFallback cloudFallback;
 
   /// De onde veio a ÚLTIMA leitura que chegou à tela.

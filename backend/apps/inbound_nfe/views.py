@@ -173,7 +173,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
         if not restaurant_id:
             if request.method == "POST":
                 return Response(
-                    {"error": "Selecione um restaurante específico na barra lateral para sincronizar com a SEFAZ."},
+                    {"error": "Informe uma unidade específica para sincronizar com a SEFAZ."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             latest_state = DFeSyncState.all_objects.filter(account=request.account).order_by("-last_sync_at").first()

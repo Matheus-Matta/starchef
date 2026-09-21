@@ -168,8 +168,6 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
             "provider": FiscalConfig.PROVIDER_FOCUS_NFE,
             "provider_token": "segredo-super-secreto",
             "csc_token": "csc-secreto",
-            "focus_certificate_base64": "certificado-base64",
-            "focus_certificate_password": "senha-certificado",
         },
         format="json",
     )
@@ -178,12 +176,9 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
     assert "csc_token" not in resp.data
     assert "focus_token_production" not in resp.data
     assert "focus_token_homologation" not in resp.data
-    assert "focus_certificate_base64" not in resp.data
-    assert "focus_certificate_password" not in resp.data
+    assert "certificate_password" not in resp.data
     assert resp.data["provider_token_configured"] is True
     assert resp.data["csc_token_configured"] is True
-    assert resp.data["focus_certificate_configured"] is True
-    assert resp.data["focus_certificate_password_configured"] is True
 
     listed = api_client.get("/api/v1/fiscal/config/")
     assert listed.status_code == 200
@@ -192,8 +187,7 @@ def test_fiscal_config_create_hides_secrets_on_read(api_client, account_with_fin
         and "csc_token" not in row
         and "focus_token_production" not in row
         and "focus_token_homologation" not in row
-        and "focus_certificate_base64" not in row
-        and "focus_certificate_password" not in row
+        and "certificate_password" not in row
         for row in listed.data["results"]
     )
 

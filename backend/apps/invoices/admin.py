@@ -27,8 +27,6 @@ class FiscalConfigAdmin(TenantModelAdmin):
         "csc_token",
         "focus_token_production",
         "focus_token_homologation",
-        "focus_certificate_base64",
-        "focus_certificate_password",
     )
     readonly_fields = ("focus_company_id", "focus_sync_status", "focus_sync_error", "focus_synced_at")
 

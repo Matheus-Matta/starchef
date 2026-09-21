@@ -229,8 +229,6 @@ class FiscalConfig(TenantModel):
     focus_company_id = models.CharField(max_length=80, blank=True, db_index=True)
     focus_token_production = models.CharField(max_length=255, blank=True)
     focus_token_homologation = models.CharField(max_length=255, blank=True)
-    focus_certificate_base64 = models.TextField(blank=True)
-    focus_certificate_password = models.CharField(max_length=255, blank=True)
     focus_sync_status = models.CharField(
         max_length=24,
         choices=FOCUS_SYNC_CHOICES,

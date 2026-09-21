@@ -5,54 +5,31 @@
         <h2 class="pdv-page__title painel__titulo">{{ titulo }}</h2>
         <p v-if="subtitulo" class="pdv-page__subtitle">{{ subtitulo }}</p>
       </div>
-      <span v-if="emFechamento" class="pdv-badge">em fechamento</span>
     </header>
 
     <p v-if="erro" class="pdv-notice pdv-notice--error" role="alert">{{ erro }}</p>
 
-    <nav class="pdv-tabs">
-      <button
-        type="button"
-        :class="['pdv-tab', { 'pdv-tab--active': !historico }]"
-        @click="trocar(false)"
-      >
-        O que tem agora
-      </button>
-      <!-- A segunda aba é o que sobrevive à venda: nada é apagado quando a
-           comanda é paga, só marcado como fechado. -->
-      <button
-        type="button"
-        :class="['pdv-tab', { 'pdv-tab--active': historico }]"
-        @click="trocar(true)"
-      >
-        Histórico do cartão
-      </button>
-    </nav>
-
     <div class="pdv-scroll painel__lista">
       <p v-if="carregando" class="pdv-empty">Carregando…</p>
-      <p v-else-if="!itens.length" class="pdv-empty">
-        {{ historico ? "Este cartão nunca foi usado." : "Nenhum item aberto nesta comanda." }}
-      </p>
-      <ul v-else class="painel__itens">
-        <CommandItemRow
-          v-for="item in itens"
-          :key="item.id"
-          :item="item"
-          :mostrar-estado="historico"
-        />
-      </ul>
+      <p v-else-if="!itens.length" class="pdv-empty">Este cartão nunca foi usado.</p>
+      <CommandItemsGroups v-else :pendentes="pendentes" :fechados="fechados" />
     </div>
 
     <footer class="painel__rodape">
       <p class="painel__total">
-        <span>{{ historico ? "Total do histórico" : "Total aberto" }}</span>
+        <span>Total aberto</span>
         <strong class="pdv-num">{{ dinheiro(total) }}</strong>
+      </p>
+      <!-- O histórico fica em letra menor de propósito: ele é conferência, e
+           somá-lo ao aberto seria cobrar duas vezes o que já foi pago. -->
+      <p v-if="fechados.length" class="pdv-muted painel__total painel__total--passado">
+        <span>Já fechado neste cartão</span>
+        <span class="pdv-num">{{ dinheiro(totalHistorico) }}</span>
       </p>
       <button
         class="pdv-btn pdv-btn--primary"
         type="button"
-        :disabled="carregando || imprimindo || !itens.length"
+        :disabled="carregando || imprimindo || !pendentes.length"
         @click="imprimir"
       >
         {{ imprimindo ? "Enviando…" : "Imprimir conferência" }}
@@ -72,14 +49,16 @@
  * cabeçalho, o trilho e a barra de estado do PDV, e repetir essa moldura aqui
  * dentro daria duas bordas para a mesma coisa.
  *
- * A consulta vive em `useCommandItems`: ela responde a uma pergunta de
- * DOMÍNIO ("o que tem agora" × "o que já teve"), e o componente cuida só de
- * mostrar. Ver o composable para o porquê de as duas abas serem consultas
- * separadas, e não um filtro sobre a mesma lista.
+ * Mostra o cartão INTEIRO: o que está aberto e o que já passou por ele. Eram
+ * duas abas, e quem abria a comanda via só a primeira — mas a pergunta do
+ * operador é a mesma nas duas, e é conferindo o que já foi que ele resolve
+ * uma reclamação de conta ou descobre que o item foi cancelado, não sumiu.
+ *
+ * A consulta vive em `useCommandItems`; aqui só se desenha.
  */
 import { computed, toRef } from "vue";
 
-import CommandItemRow from "./CommandItemRow.vue";
+import CommandItemsGroups from "./CommandItemsGroups.vue";
 import { useCommandItems } from "../../composables/useCommandItems";
 
 const props = defineProps({
@@ -90,13 +69,13 @@ const emit = defineEmits(["printed"]);
 
 const {
   itens,
+  pendentes,
+  fechados,
   carregando,
   imprimindo,
-  historico,
   erro,
-  emFechamento,
   total,
-  trocarAba: trocar,
+  totalHistorico,
   imprimir: enviarConferencia,
 } = useCommandItems(toRef(props, "command"));
 
@@ -115,8 +94,9 @@ function dinheiro(valor) {
 </script>
 
 <style scoped>
-/* Só o que é DESTE painel: a moldura e a pilha. O vocabulário visual
-   (avisos, abas, item, selo) vive em `styles/pdv-panels.css`. */
+/* Só o que é DESTE painel: a moldura, o rodapé e os totais. Os grupos levaram
+   o próprio CSS junto; o vocabulário visual (avisos, item, selo) vive em
+   `styles/pdv-panels.css`. */
 .painel {
   display: flex;
   flex-direction: column;
@@ -145,10 +125,9 @@ function dinheiro(valor) {
   flex: 1;
 }
 
-.painel__itens {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+
+.painel__total--passado {
+  font-size: 12px;
 }
 
 .painel__rodape {

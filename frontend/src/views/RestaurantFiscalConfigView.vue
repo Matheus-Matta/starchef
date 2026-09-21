@@ -228,23 +228,9 @@
           </span>
         </div>
 
-        <div class="rfiscal__grid rfiscal__grid--spaced">
-          <label class="rfiscal__field">
-            <span>Certificado A1 (.pfx/.p12)</span>
-            <input class="rfiscal__file" type="file" accept=".pfx,.p12,application/x-pkcs12" @change="onCertificateSelected" />
-            <small>Enviado somente à Focus e descartado do StarChef assim que a empresa sincroniza.</small>
-          </label>
-          <label class="rfiscal__field">
-            <span>Senha do certificado A1</span>
-            <SecretField
-              v-model="form.focus_certificate_password"
-              :configured="form.focus_certificate_password_configured"
-              :revealing="revealSecret.focus_certificate_password"
-              placeholder="Senha do PFX/P12"
-              @edit="startEditingSecret('focus_certificate_password')"
-            />
-            <small>Certificado e senha viajam sempre juntos, na mesma gravação.</small>
-          </label>
+        <div class="rfiscal__inline-warning">
+          <i class="pi pi-shield" />
+          <span>A Focus usa o mesmo certificado A1 configurado na seção acima. Não é necessário enviar outro arquivo.</span>
         </div>
 
         <div class="rfiscal__actions">
@@ -302,7 +288,6 @@ import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
-import SecretField from "../components/form/SecretField.vue";
 import NfceCertificateSection from "../components/restaurant/NfceCertificateSection.vue";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
@@ -340,7 +325,6 @@ const revealSecret = reactive({
   csc_token: false,
   provider_token: false,
   certificate_password: false,
-  focus_certificate_password: false,
 });
 function startEditingSecret(field) {
   revealSecret[field] = true;
@@ -358,7 +342,7 @@ const EDITABLE_FIELDS = [
   "csc_id", "qr_base_url", "portal_url", "dfe_ult_nsu",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
-const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password", "focus_certificate_base64", "focus_certificate_password"];
+const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password"];
 
 const form = reactive({
   provider: "manual",
@@ -392,9 +376,6 @@ const form = reactive({
   certificate_name: "",
   certificate_valid_until: null,
   dfe_ult_nsu: "000000000000000",
-  focus_certificate_base64: "",
-  focus_certificate_password: "",
-  focus_certificate_password_configured: false,
   focus_company_id: "",
   focus_connected: false,
   focus_sync_status: "not_configured",
@@ -440,20 +421,6 @@ function applyConfig(data) {
   // Toda recarga do servidor é um estado "recém-salvo": volta para a máscara
   // em vez de deixar o campo preso em modo de edição depois de um save.
   for (const field of Object.keys(revealSecret)) revealSecret[field] = false;
-}
-
-function onCertificateSelected(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  if (file.size > 5 * 1024 * 1024) {
-    error.value = "O certificado deve ter no máximo 5 MB.";
-    event.target.value = "";
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => { form.focus_certificate_base64 = String(reader.result || "").split(",").pop() || ""; };
-  reader.onerror = () => { error.value = "Não foi possível ler o certificado."; };
-  reader.readAsDataURL(file);
 }
 
 function onSefazCertificateSelected(event) {

@@ -3,28 +3,42 @@ import { computed, ref, watch } from "vue";
 import { fetchCommandItems, printCommandReceipt } from "../services/commandService";
 
 /**
- * O que uma comanda tem, e o que ela já teve.
+ * Tudo o que uma comanda tem e já teve, numa consulta só.
  *
- * A lógica sai do componente porque ela responde a uma pergunta de DOMÍNIO, e
- * a pergunta é sutil: `command.items` no backend devolve o histórico inteiro
- * do cartão. "O que tem agora" e "o que este cartão já consumiu" são duas
- * consultas diferentes, e misturá-las faz a comanda reutilizada reaparecer
- * cheia com a conta do cliente anterior.
+ * Eram duas abas e duas consultas — "o que tem agora" e "histórico do cartão"
+ * —, e quem abria o cartão via só a primeira. Só que a pergunta do operador é
+ * a mesma nas duas: *o que passou por aqui?* Ele precisa do que está aberto
+ * (é o que vai ser cobrado) E do que já foi, porque é assim que ele confere
+ * uma reclamação de conta ou descobre que o item foi cancelado e não sumiu.
  *
- * `emFechamento` vem de `closing_merge` na resposta — derivado, nunca um
- * estado gravado na comanda.
+ * O cuidado que as duas abas protegiam continua valendo e ficou mais visível:
+ * o que está ABERTO nunca se mistura com o que já foi fechado. São dois grupos
+ * rotulados, e o total que importa — o que vai para a conta — é só o do
+ * primeiro. Um cartão reutilizado mostra o grupo aberto vazio e o histórico do
+ * cliente anterior claramente marcado como passado.
  */
 export function useCommandItems(commandRef) {
   const itens = ref([]);
   const carregando = ref(false);
   const imprimindo = ref(false);
-  const historico = ref(false);
   const erro = ref("");
-  const emFechamento = ref(false);
 
-  const total = computed(() =>
-    itens.value.reduce((soma, item) => soma + Number(item.total_price || 0), 0),
+  /** O que entra na próxima conta. É o único total que vira dinheiro. */
+  const pendentes = computed(() =>
+    itens.value.filter((item) => item.command_status === "pending"),
   );
+
+  /** O que já foi cobrado ou cancelado — não entra em conta nenhuma. */
+  const fechados = computed(() =>
+    itens.value.filter((item) => item.command_status !== "pending"),
+  );
+
+  const total = computed(() => somar(pendentes.value));
+  const totalHistorico = computed(() => somar(fechados.value));
+
+  function somar(lista) {
+    return lista.reduce((soma, item) => soma + Number(item.total_price || 0), 0);
+  }
 
   function idAtual() {
     return commandRef.value?.id || null;
@@ -36,22 +50,16 @@ export function useCommandItems(commandRef) {
     carregando.value = true;
     erro.value = "";
     try {
-      const dados = await fetchCommandItems(id, { history: historico.value });
+      // `history` traz TUDO, inclusive os pendentes — a separação é feita
+      // aqui, e não por duas idas ao servidor.
+      const dados = await fetchCommandItems(id, { history: true });
       itens.value = dados?.items || [];
-      emFechamento.value = Boolean(dados?.closing_merge);
     } catch (exc) {
       erro.value = exc?.response?.data?.detail || "Não foi possível ler a comanda.";
       itens.value = [];
     } finally {
       carregando.value = false;
     }
-  }
-
-  /** Trocar de aba é uma consulta nova, não um filtro sobre o que já veio. */
-  function trocarAba(valor) {
-    if (historico.value === valor) return;
-    historico.value = valor;
-    carregar();
   }
 
   /**
@@ -75,27 +83,18 @@ export function useCommandItems(commandRef) {
     }
   }
 
-  // Trocar de comanda volta para "o que tem agora": o histórico é uma consulta
-  // que o operador pediu para AQUELE cartão, não um modo da tela.
-  watch(
-    () => commandRef.value?.id,
-    () => {
-      historico.value = false;
-      carregar();
-    },
-    { immediate: true },
-  );
+  watch(() => commandRef.value?.id, carregar, { immediate: true });
 
   return {
     itens,
+    pendentes,
+    fechados,
     carregando,
     imprimindo,
-    historico,
     erro,
-    emFechamento,
     total,
+    totalHistorico,
     carregar,
-    trocarAba,
     imprimir,
   };
 }

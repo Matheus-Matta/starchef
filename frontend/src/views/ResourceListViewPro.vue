@@ -55,10 +55,9 @@
           </button>
         </div>
       </div>
-      <!-- ── Banner DF-e de Sincronização & Salvaguarda SEFAZ (inbound-nfe) ── -->
+      <InboundRestaurantSelector v-if="props.endpoint === '/inbound-nfe/'" :model-value="inboundRestaurantId" @update:model-value="selectInboundRestaurant" />
       <template v-if="props.endpoint === '/inbound-nfe/' && dfeSyncInfo">
         <div class="rpro__head-banner">
-          <!-- Caso 1: Todas as Unidades (Visão Consolidada) -->
           <div v-if="dfeSyncInfo.is_all_restaurants" class="rpro__dfe-alert rpro__dfe-alert--info">
             <div class="rpro__dfe-alert-icon"><i class="pi pi-building" /></div>
             <div class="rpro__dfe-alert-info">
@@ -76,7 +75,6 @@
             </div>
           </div>
 
-          <!-- Caso 2: Restaurante Selecionado, porém sem Certificado A1 -->
           <div v-else-if="dfeSyncInfo.has_certificate === false" class="rpro__dfe-alert rpro__dfe-alert--warning">
             <div class="rpro__dfe-alert-icon"><i class="pi pi-shield" /></div>
             <div class="rpro__dfe-alert-info">
@@ -90,7 +88,6 @@
             </div>
           </div>
 
-          <!-- Caso 3: Restaurante Selecionado com Certificado A1 -->
           <div v-else class="rpro__dfe-banner">
             <div class="rpro__dfe-card">
               <div class="rpro__dfe-card-icon rpro__dfe-card-icon--nsu">
@@ -2415,7 +2412,6 @@ import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
 import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
-
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
@@ -2429,6 +2425,7 @@ import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import InboundRestaurantSelector from "../components/inbound/InboundRestaurantSelector.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
 import { ASSET_STATUS_OPTIONS } from "../config/enums";
@@ -2506,6 +2503,7 @@ function dateParams() {
 
 const inboundStatusFilter = ref("all");
 const inboundStatusCounts = ref({});
+const inboundRestaurantId = ref("");
 
 const INBOUND_FILTER_OPTIONS = [
   { value: "all", label: "Todas as Notas", icon: "pi pi-list" },
@@ -2523,9 +2521,8 @@ async function fetchInboundStatusCounts() {
     const params = {
       ...dateParams(),
     };
-    const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope");
-    if (scopedRestaurant) params.restaurant = scopedRestaurant;
-    const { data } = await api.get("/inbound-nfe/status-counts/", { params });
+    if (inboundRestaurantId.value) params.restaurant = inboundRestaurantId.value;
+    const { data } = await api.get("/inbound-nfe/status-counts/", { params, skipRestaurantScope: true });
     inboundStatusCounts.value = data || {};
   } catch (err) {
     console.warn("Falha ao buscar contagens de status:", err);
@@ -2553,6 +2550,7 @@ function buildProParams() {
   if (props.endpoint === "/inbound-nfe/" && inboundStatusFilter.value && inboundStatusFilter.value !== "all") {
     params.mapping_filter = inboundStatusFilter.value;
   }
+  if (props.endpoint === "/inbound-nfe/" && inboundRestaurantId.value) params.restaurant = inboundRestaurantId.value;
   return params;
 }
 
@@ -2753,7 +2751,10 @@ const dfeSyncInfo = ref(null);
 const dfeSyncLoading = ref(false);
 const nowTick = ref(Date.now());
 let dfeTimerInterval = null;
-
+async function selectInboundRestaurant(restaurantId) {
+  inboundRestaurantId.value = restaurantId || ""; selection.value = [];
+  await Promise.all([reload(), loadDfeSyncInfo(), fetchInboundStatusCounts()]);
+}
 const dfeMinutesRemaining = computed(() => {
   if (!dfeSyncInfo.value?.next_allowed_at) {
     return dfeSyncInfo.value?.minutes_remaining || 0;
@@ -2774,9 +2775,8 @@ async function loadDfeSyncInfo() {
   if (props.endpoint !== "/inbound-nfe/") return;
   dfeSyncLoading.value = true;
   try {
-    const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || "";
-    const params = scopedRestaurant ? { restaurant: scopedRestaurant } : {};
-    const { data } = await api.get("/inbound-nfe/sync/", { params });
+    const params = inboundRestaurantId.value ? { restaurant: inboundRestaurantId.value } : {};
+    const { data } = await api.get("/inbound-nfe/sync/", { params, skipRestaurantScope: true });
     dfeSyncInfo.value = data;
     nowTick.value = Date.now();
   } catch (err) {
@@ -2805,12 +2805,11 @@ function formatDfeDate(isoString) {
 }
 
 async function triggerSefazSync() {
-  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || "";
-  if (!scopedRestaurant) {
+  if (!inboundRestaurantId.value) {
     toast.add({
       severity: "warn",
       summary: "Selecione uma Unidade",
-      detail: "Selecione um restaurante específico na barra lateral para sincronizar notas com a SEFAZ.",
+      detail: "Escolha uma unidade no seletor exibido no topo desta página.",
       life: 5000,
     });
     return;
@@ -2835,7 +2834,7 @@ async function triggerSefazSync() {
   }
   syncingSefaz.value = true;
   try {
-    const { data } = await api.post("/inbound-nfe/sync/", { restaurant: scopedRestaurant });
+    const { data } = await api.post("/inbound-nfe/sync/", { restaurant: inboundRestaurantId.value }, { skipRestaurantScope: true });
     toast.add({
       severity: data.cstat === "138" ? "success" : data.cstat === "656" ? "warn" : "info",
       summary: "Sincronização SEFAZ",
@@ -3341,7 +3340,7 @@ async function submitQuickCreateAndMap() {
     else if (quickCreateForm.requires_lot_control) tracking_mode = "LOT";
 
     const gtinVal = (mappingItem.value?.ean && mappingItem.value.ean !== "Sem GTIN") ? mappingItem.value.ean.trim() : "";
-    const targetRestaurant = inboundDetailData.value?.restaurant || localStorage.getItem("starchef-restaurant-scope");
+    const targetRestaurant = inboundDetailData.value?.restaurant || inboundRestaurantId.value;
     const stockUnit = (mappingForm.stock_unit || quickCreateForm.stock_unit || "UN").toUpperCase();
 
     if (quickCreateForm.item_type === "INGREDIENT") {
@@ -3487,7 +3486,7 @@ async function submitQuickAssetAndMap() {
   mappingSubmitting.value = true;
   try {
     const gtinVal = (mappingItem.value?.ean && mappingItem.value.ean !== "Sem GTIN") ? mappingItem.value.ean.trim() : "";
-    const targetRestaurant = inboundDetailData.value?.restaurant || localStorage.getItem("starchef-restaurant-scope");
+    const targetRestaurant = inboundDetailData.value?.restaurant || inboundRestaurantId.value;
     const payload = {
       name: quickAssetForm.name.trim(),
       item_type: quickAssetForm.item_type,
@@ -3706,13 +3705,13 @@ function openFetchNsuDialog() {
 
 async function submitFetchSpecificNsu() {
   if (!fetchNsuInput.value || !fetchNsuInput.value.trim()) return;
-  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || "";
+  const scopedRestaurant = inboundRestaurantId.value;
   fetchingNsu.value = true;
   try {
     const { data } = await api.post("/inbound-nfe/fetch-nsu/", {
       nsu: fetchNsuInput.value.trim(),
       restaurant: scopedRestaurant,
-    });
+    }, { skipRestaurantScope: true });
     toast.add({
       severity: data.summary?.cstat === "138" ? "success" : "info",
       summary: `NSU ${fetchNsuInput.value} consultado`,
@@ -3736,13 +3735,13 @@ async function submitFetchSpecificNsu() {
 
 async function fetchSpecificNsuDirect(nsu) {
   if (!nsu) return;
-  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || "";
+  const scopedRestaurant = inboundRestaurantId.value;
   fetchingNsu.value = true;
   try {
     const { data } = await api.post("/inbound-nfe/fetch-nsu/", {
       nsu: String(nsu).trim(),
       restaurant: scopedRestaurant,
-    });
+    }, { skipRestaurantScope: true });
     toast.add({
       severity: data.summary?.cstat === "138" ? "success" : "info",
       summary: `NSU ${Number(nsu)} consultado`,
@@ -4201,7 +4200,7 @@ function onFilesDropped(event) {
 
 async function submitUploadXmlFiles() {
   if (!selectedXmlFiles.value.length) return;
-  const scopedRestaurant = localStorage.getItem("starchef-restaurant-scope") || "";
+  const scopedRestaurant = inboundRestaurantId.value;
   uploadingXml.value = true;
   uploadXmlResult.value = null;
 
@@ -4216,6 +4215,7 @@ async function submitUploadXmlFiles() {
 
     const { data } = await api.post("/inbound-nfe/upload-xml/", formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      skipRestaurantScope: true,
     });
 
     uploadXmlResult.value = data;

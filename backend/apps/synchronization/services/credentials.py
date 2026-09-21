@@ -70,6 +70,8 @@ def montar_pacote(no):
             "Nenhuma configuração fiscal ativa para a loja deste nó."
         )
 
+    from apps.invoices.certificate_data import certificate_base64
+
     pacote = {
         "fiscal_config_id": str(config.id),
         "environment": config.environment,
@@ -79,8 +81,8 @@ def montar_pacote(no):
         "csc_token": config.csc_token or "",
         # O certificado A1 e sua senha, para a assinatura local quando o
         # Comunicador estiver em uso.
-        "certificate_base64": config.focus_certificate_base64 or "",
-        "certificate_password": config.focus_certificate_password or "",
+        "certificate_base64": certificate_base64(config),
+        "certificate_password": config.certificate_password or "",
     }
     disponiveis = sorted(chave for chave, valor in pacote.items() if valor)
     logger.info(

@@ -34,7 +34,7 @@
       </label>
 
       <div class="nfce-cert__field nfce-cert__field--full">
-        <span>Certificado A1 para consulta direta à SEFAZ</span>
+        <span>Certificado A1 para SEFAZ e Focus NFe</span>
         <div class="nfce-cert__status">
           <Tag
             :value="config.has_certificate ? 'Certificado configurado' : 'Certificado pendente'"
@@ -46,7 +46,7 @@
             <template v-if="config.certificate_valid_until"> · válido até {{ formatDateTime(config.certificate_valid_until) }}</template>
           </small>
         </div>
-        <small>Este A1 busca NF-e recebidas. Ele é separado do envio temporário para a Focus, abaixo.</small>
+        <small>Este mesmo A1 busca NF-e recebidas e cadastra ou atualiza a empresa na Focus NFe.</small>
       </div>
       <label class="nfce-cert__field">
         <span>{{ config.has_certificate ? "Substituir certificado A1 (.pfx/.p12)" : "Certificado A1 (.pfx/.p12)" }}</span>

@@ -12,9 +12,6 @@
     >
       <span class="pdv-card__top">
         <strong>{{ comanda.number }}</strong>
-        <!-- "Em fechamento" é DERIVADO do backend (`closing_merge`), nunca um
-             estado gravado na comanda: um terceiro estado no banco seria mais
-             uma coisa a sincronizar e a divergir. -->
         <span class="pdv-badge" :class="`pdv-badge--${estado(comanda)}`">
           {{ rotulo(comanda) }}
         </span>
@@ -38,20 +35,13 @@ defineProps({
 
 defineEmits(["pick"]);
 
-/**
- * O estado da comanda, na ordem que importa.
- *
- * "Em fechamento" vem ANTES de "ocupada": as duas são verdade ao mesmo tempo,
- * e a que muda o que o operador pode fazer é a primeira — um cartão que o
- * caixa está cobrando não aceita lançamento.
- */
+/** Ocupada é ter anotação PENDENTE — o backend mantém esse retrato. */
 function estado(comanda) {
-  if (comanda.closing_merge) return "fechamento";
   return comanda.status === "occupied" ? "ocupada" : "livre";
 }
 
 function rotulo(comanda) {
-  return { fechamento: "em fechamento", ocupada: "ocupada", livre: "livre" }[
+  return { ocupada: "ocupada", livre: "livre" }[
     estado(comanda)
   ];
 }

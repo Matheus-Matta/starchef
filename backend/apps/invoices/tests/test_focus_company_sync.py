@@ -1,6 +1,8 @@
+import base64
 from unittest.mock import Mock, patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from apps.invoices.focus import (
     FocusNfeApiError,
@@ -12,6 +14,8 @@ from apps.invoices.focus import (
 from apps.invoices.models import FiscalConfig
 
 pytestmark = pytest.mark.django_db
+
+CERTIFICATE_BYTES = b"certificado-focus-compartilhado"
 
 
 class FakeCompanyClient:
@@ -75,8 +79,8 @@ def make_config(account, restaurant, branch, **kwargs):
         "zip_code": "01001-000",
         "csc_id": "00001",
         "csc_token": "CSC-TESTE",
-        "focus_certificate_base64": "BASE64-PFX",
-        "focus_certificate_password": "senha-pfx",
+        "certificate_file": SimpleUploadedFile("certificado.pfx", CERTIFICATE_BYTES),
+        "certificate_password": "senha-pfx",
         "environment": FiscalConfig.ENV_HOMOLOGATION,
         "document_model": FiscalConfig.MODEL_NFCE,
         "series": 3,
@@ -165,13 +169,7 @@ def test_sync_rejects_invalid_ie_and_cep_without_calling_client(account, restaur
 
 
 def test_sync_creates_company_and_stores_environment_tokens(account, restaurant, branch):
-    config = make_config(
-        account,
-        restaurant,
-        branch,
-        focus_certificate_base64="BASE64-PFX",
-        focus_certificate_password="senha-pfx",
-    )
+    config = make_config(account, restaurant, branch)
     client = FakeCompanyClient(
         created={
             "id": 123,
@@ -188,10 +186,10 @@ def test_sync_creates_company_and_stores_environment_tokens(account, restaurant,
     assert config.focus_token_production == "prod-token"
     assert config.focus_token_homologation == "hom-token"
     assert config.focus_sync_status == FiscalConfig.FOCUS_SYNC_SYNCED
-    assert config.focus_certificate_base64 == ""
-    assert config.focus_certificate_password == ""
+    assert config.certificate_file
+    assert config.certificate_password == "senha-pfx"
     create_payload = next(call[1] for call in client.calls if call[0] == "create")
-    assert create_payload["arquivo_certificado_base64"] == "BASE64-PFX"
+    assert create_payload["arquivo_certificado_base64"] == base64.b64encode(CERTIFICATE_BYTES).decode()
     assert create_payload["senha_certificado"] == "senha-pfx"
     assert "token_producao" not in config.focus_remote_data
     assert [call[0] for call in client.calls] == ["list", "create", "webhook"]

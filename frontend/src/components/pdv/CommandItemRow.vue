@@ -39,10 +39,25 @@ const valor = computed(() =>
  *
  * Um item pode estar `delivered` na cozinha (o prato está na mesa) e continuar
  * ABERTO aqui, porque ninguém pagou. É o caso normal durante a refeição.
+ *
+ * VENDA E PERDA SÃO COISAS DIFERENTES, e o cartão precisa dizer qual foi.
+ * Aqui se comparava com `"closed"`, um valor que o modelo não usa mais — o
+ * resultado é que item cobrado e item cancelado apareciam os dois como
+ * "aberto", e quem conferia uma reclamação não tinha como distinguir o que
+ * foi pago do que foi jogado fora.
  */
-const estado = computed(() =>
-  props.item.command_status === "closed" ? "fechado" : "aberto",
-);
+const estado = computed(() => {
+  switch (props.item.command_status) {
+    case "billed":
+      return "cobrado";
+    case "cancelled":
+      return props.item.void_reason
+        ? `cancelado — ${props.item.void_reason}`
+        : "cancelado";
+    default:
+      return "aberto";
+  }
+});
 </script>
 
 <style scoped>

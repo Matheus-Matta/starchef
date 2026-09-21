@@ -54,6 +54,12 @@ Cada app de domínio segue o padrão: `models.py`, `serializers.py`, `views.py` 
 
 As credenciais da Focus NFe ficam em `accounts.FocusNfeConfig`, numa relação `OneToOne` com `Account`. O `.env` apenas provisiona esse registro na migration/criação da conta; chamadas externas nunca usam o `.env` como fallback.
 
+O certificado A1 e sua senha ficam somente nos campos canônicos
+`FiscalConfig.certificate_file` e `certificate_password`. A consulta direta à
+SEFAZ e a sincronização da empresa na Focus leem esses mesmos campos. A migration
+`invoices.0010_unifica_certificado_focus` copia os valores legados da Focus para
+o cadastro canônico e remove os dois campos duplicados.
+
 As credenciais da Bluesoft Cosmos ficam em `accounts.CosmosConfig`, também em
 `OneToOne` com `Account`. A integração nasce desativada e não usa fallback do
 `.env`: cada conta informa seu próprio `X-Cosmos-Token` e `User-Agent`. O token

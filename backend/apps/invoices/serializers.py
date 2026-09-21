@@ -65,8 +65,6 @@ class FiscalConfigSerializer(TenantModelSerializer):
     focus_missing_fields = serializers.SerializerMethodField()
     provider_token_configured = serializers.SerializerMethodField()
     csc_token_configured = serializers.SerializerMethodField()
-    focus_certificate_configured = serializers.SerializerMethodField()
-    focus_certificate_password_configured = serializers.SerializerMethodField()
     focus_account_configured = serializers.SerializerMethodField()
     focus_company_dry_run = serializers.SerializerMethodField()
     has_certificate = serializers.SerializerMethodField()
@@ -110,8 +108,6 @@ class FiscalConfigSerializer(TenantModelSerializer):
             "provider_token": {"write_only": True},
             "focus_token_production": {"write_only": True},
             "focus_token_homologation": {"write_only": True},
-            "focus_certificate_base64": {"write_only": True},
-            "focus_certificate_password": {"write_only": True},
             "certificate_password": {"write_only": True},
         }
 
@@ -135,12 +131,6 @@ class FiscalConfigSerializer(TenantModelSerializer):
 
     def get_csc_token_configured(self, obj):
         return bool(obj.csc_token)
-
-    def get_focus_certificate_configured(self, obj):
-        return bool(obj.focus_certificate_base64)
-
-    def get_focus_certificate_password_configured(self, obj):
-        return bool(obj.focus_certificate_password)
 
     def _focus_account_config(self, obj):
         return getattr(obj.account, "focus_nfe_config", None)
@@ -183,16 +173,6 @@ class FiscalConfigSerializer(TenantModelSerializer):
         document_model = attrs.get("document_model", getattr(self.instance, "document_model", FiscalConfig.MODEL_NFCE))
         if provider == FiscalConfig.PROVIDER_FOCUS_NFE and document_model == FiscalConfig.MODEL_SAT:
             raise serializers.ValidationError({"document_model": "A Focus NFe desta integracao aceita NF-e ou NFC-e."})
-        certificate = attrs.get("focus_certificate_base64")
-        certificate_password = attrs.get("focus_certificate_password")
-        if certificate and provider != FiscalConfig.PROVIDER_FOCUS_NFE:
-            raise serializers.ValidationError(
-                {"focus_certificate_base64": "O envio automatico do certificado exige o provedor Focus NFe."}
-            )
-        if bool(certificate) != bool(certificate_password):
-            raise serializers.ValidationError(
-                {"focus_certificate_base64": "Envie o certificado A1 e sua senha na mesma operacao."}
-            )
         csc_id = attrs.get("csc_id")
         if csc_id and not csc_id.isdigit():
             raise serializers.ValidationError({"csc_id": "Informe apenas numeros no ID do CSC."})

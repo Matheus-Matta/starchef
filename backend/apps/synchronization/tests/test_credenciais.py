@@ -8,6 +8,7 @@ e em todo backup dos dois, para sempre.
 """
 import pytest
 from cryptography.exceptions import InvalidTag
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 
 from apps.invoices.models import FiscalConfig
@@ -32,7 +33,8 @@ def config_fiscal(conta, db):
         account=conta, restaurant=restaurante, branch=filial, is_active=True,
         provider=FiscalConfig.PROVIDER_FOCUS_NFE,
         csc_id="000001", csc_token="CSC-SECRETO",
-        focus_certificate_base64=CERTIFICADO, focus_certificate_password=SENHA,
+        certificate_file=SimpleUploadedFile("certificado.pfx", b"certificado-falso"),
+        certificate_password=SENHA,
     )
 
 

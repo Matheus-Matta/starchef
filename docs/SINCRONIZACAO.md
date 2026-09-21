@@ -111,6 +111,12 @@ Rematricular reaproveita o mesmo nó (mesmo `pair_id`, credencial nova) e
 cancela a carga anterior — uma loja que caiu no meio do primeiro bootstrap
 recomeça em vez de travar.
 
+Quando uma loja precisa das credenciais fiscais, o canal cifrado usa o A1
+canônico de `FiscalConfig.certificate_file` e sua `certificate_password`. Esse
+é o mesmo certificado usado pela consulta direta à SEFAZ e pela Focus NFe; não
+há mais uma segunda cópia específica do provedor. Arquivo e senha continuam
+fora dos eventos comuns do catálogo e só passam nesse envelope temporário.
+
 ## Multi-tenant
 
 `account_id` viaja no envelope só para rastreabilidade. **Quem autoriza é a

@@ -134,10 +134,17 @@ cola uma hash: a API gera PBKDF2-SHA256. Em uma edição, o campo volta vazio e
 deixá-lo assim preserva a senha atual, pois o texto e a hash nunca retornam no
 payload do CRUD.
 
-Em **Configuração fiscal do restaurante**, o A1 para consulta direta de NF-e
-recebidas é enviado como `.pfx`/`.p12` junto da senha e fica separado do upload
-temporário que cadastra a empresa na Focus. A tela mostra se o A1 da SEFAZ está
-configurado, seus metadados e o último NSU consultado.
+Em **Configuração fiscal do restaurante**, o A1 é enviado como `.pfx`/`.p12`
+junto da senha. O mesmo arquivo atende à consulta direta de NF-e recebidas e ao
+cadastro/sincronização da empresa na Focus; não existe um segundo upload. A tela
+mostra se o certificado está configurado, seus metadados e o último NSU
+consultado.
+
+Em **Notas Fiscais de Entrada**, o seletor no topo escolhe a unidade da lista e
+da consulta manual à SEFAZ. Ele carrega todas as unidades permitidas para a
+conta e não depende do restaurante selecionado na barra lateral. A opção
+“Todas as unidades” mantém apenas a visão consolidada; para sincronizar, o
+usuário escolhe uma unidade específica nesse seletor.
 
 No cadastro de **Produtos**, a seção Produção contém somente o setor que
 recebe o item (cozinha, bar ou sobremesa) e o tempo estimado em minutos. A
