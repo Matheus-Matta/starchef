@@ -29,6 +29,13 @@ extension OrdersQueries on OrdersRepository {
 
   Future<Map<String, dynamic>> order(String id) => read('/orders/$id/');
 
+  /// O que a comanda tem AGORA — as anotações pendentes.
+  ///
+  /// Não é `command.items`, que devolve o histórico INTEIRO do cartão: a
+  /// comanda reutilizada apareceria cheia com a conta do cliente anterior.
+  Future<Map<String, dynamic>> commandItems(String commandId) =>
+      read('/commands/$commandId/items/');
+
   Future<List<Map<String, dynamic>>> tables() async => _rows(
     await read(
       '/tables/',

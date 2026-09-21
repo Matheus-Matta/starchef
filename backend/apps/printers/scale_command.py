@@ -101,7 +101,7 @@ def consume_command_binding(scale, *, now=None):
 
 
 @transaction.atomic
-def weigh_into_command(*, scale, command, user, scale_reading):
+def weigh_into_command(*, scale, command, user, scale_reading, do_print=True):
     """Anota a pesagem NA COMANDA. Nenhum pedido é aberto.
 
     Antes, a primeira pesagem abria um pedido para o cartão — e era esse gesto
@@ -125,4 +125,11 @@ def weigh_into_command(*, scale, command, user, scale_reading):
     # segunda anotação — o cliente pagando duas vezes pelo mesmo corte.
     scale_reading.command_item = item
     scale_reading.save(update_fields=["command_item", "updated_at"])
+
+    if do_print:
+        from apps.printers.services import register_command_weigh_print
+
+        register_command_weigh_print(
+            command=command, item=item, scale=scale, user=user
+        )
     return item

@@ -47,46 +47,65 @@ describe("materializeDraft", () => {
     );
   });
 
-  it("comanda usa open-command, que CRIA ou RETOMA", async () => {
-    // `create-with-item` recusaria com "a comanda já está em uso" no caso
-    // normal de o garçom já ter lançado algo nela pelo aplicativo.
+  it("as comandas são PUXADAS para o pedido, não o contrário", async () => {
+    // A comanda não abre pedido — ela anota. O pedido nasce aqui e recebe as
+    // anotações pendentes dos cartões.
     await materializeDraft({
       orderType: "command",
       restaurantId: "rest-1",
-      commandId: "cmd-1",
+      commandIds: ["cmd-1"],
       items: [ITEM("p1")],
     });
 
-    expect(api.post).toHaveBeenCalledWith("/orders/open-command/", { command: "cmd-1" });
+    expect(api.post).toHaveBeenCalledWith("/orders/order-1/attach-commands/", {
+      commands: ["cmd-1"],
+    });
   });
 
-  it("na comanda TODOS os itens são acrescentados — nenhum foi junto", async () => {
+  it("varias comandas entram numa conta so", async () => {
+    // A mesa que paga junto é o caso, não a exceção — e é UMA chamada, não
+    // uma por cartão: duzentas idas ao servidor com o cliente esperando.
     await materializeDraft({
       orderType: "command",
       restaurantId: "rest-1",
-      commandId: "cmd-1",
+      commandIds: ["cmd-1", "cmd-2", "cmd-3"],
+      items: [ITEM("p1")],
+    });
+
+    const anexos = api.post.mock.calls.filter(([rota]) =>
+      rota.endsWith("/attach-commands/"),
+    );
+    expect(anexos).toHaveLength(1);
+    expect(anexos[0][1]).toEqual({ commands: ["cmd-1", "cmd-2", "cmd-3"] });
+  });
+
+  it("o pedido nasce com o primeiro item mesmo havendo comanda", async () => {
+    // `create-with-item` é atômico: uma falha no meio não deixa pedido vazio.
+    await materializeDraft({
+      orderType: "command",
+      restaurantId: "rest-1",
+      commandIds: ["cmd-1"],
       items: [ITEM("p1"), ITEM("p2")],
     });
 
+    expect(api.post.mock.calls[0][0]).toBe("/orders/create-with-item/");
     const acrescimos = api.post.mock.calls.filter(([rota]) =>
       rota.endsWith("/items/"),
     );
-    expect(acrescimos).toHaveLength(2);
+    expect(acrescimos).toHaveLength(1);
   });
 
-  it("comanda com mesa escolhida vincula antes de abrir", async () => {
+  it("sem comanda o pedido nao chama o anexo", async () => {
     await materializeDraft({
-      orderType: "command",
+      orderType: "counter",
       restaurantId: "rest-1",
-      commandId: "cmd-1",
-      tableId: "mesa-7",
       items: [ITEM("p1")],
     });
 
-    expect(api.post.mock.calls[0]).toEqual([
-      "/commands/cmd-1/link-table/",
-      { table_id: "mesa-7" },
-    ]);
+    const anexos = api.post.mock.calls.filter(([rota]) =>
+      rota.endsWith("/attach-commands/"),
+    );
+    expect(anexos).toHaveLength(0);
   });
 
   it("rascunho vazio não abre pedido nenhum", async () => {

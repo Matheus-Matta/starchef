@@ -1,14 +1,6 @@
 part of 'orders_repository.dart';
 
 extension OrdersCommands on OrdersRepository {
-  Future<Map<String, dynamic>> openCommandOrder(String commandId) =>
-      _mutateCreate(
-        path: '/orders/open-command/',
-        summary: 'Abrir comanda',
-        body: {'command': commandId},
-        optimisticFields: {'order_type': 'command', 'command': commandId},
-      );
-
   Future<Map<String, dynamic>> createOrder(String orderType) => _mutateCreate(
     path: '/orders/',
     summary: 'Novo pedido',

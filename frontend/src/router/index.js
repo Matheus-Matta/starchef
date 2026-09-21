@@ -12,7 +12,6 @@ const HelpCenterView = () => import("../views/HelpCenterView.vue");
 const LoginScreen = () => import("../views/LoginScreen.vue");
 const PasswordRecoveryView = () => import("../views/PasswordRecoveryView.vue");
 const PdvView = () => import("../views/PdvView.vue");
-const PdvMergeView = () => import("../views/PdvMergeView.vue");
 const PdvCommandsView = () => import("../views/PdvCommandsView.vue");
 const PdvVendaView = () => import("../views/PdvVendaView.vue");
 const OrderEditView = () => import("../views/OrderEditView.vue");
@@ -151,11 +150,6 @@ export const router = createRouter({
           component: PdvView,
           meta: { requiresAuth: true, title: "PDV — Pedido", nav: "pdv", pdvNav: "venda" },
         },
-        // A conta agrupada tem rota própria, e não uma aba dentro da venda:
-        // ela tem um ciclo de vida inteiro (abrir → incluir → confirmar →
-        // receber) e um estado de conflito entre dois caixas que a tela de
-        // venda não conhece. `orders.merge` é o código de permissão: juntar
-        // quatro comandas numa conta é operação de caixa, não de garçom.
         // Página das comandas: o que cada cartão tem, o histórico dele e a
         // conferência em papel. Mesma casca da venda e da conta agrupada —
         // quem alterna entre as três no turno não deve sentir a troca.
@@ -169,18 +163,6 @@ export const router = createRouter({
             title: "Comandas",
             nav: "pdv",
             pdvNav: "comandas",
-          },
-        },
-        {
-          path: "conta-agrupada",
-          name: "pdv-conta-agrupada",
-          component: PdvMergeView,
-          meta: {
-            requiresAuth: true,
-            permission: "orders.merge",
-            title: "Conta agrupada de comandas",
-            nav: "pdv",
-            pdvNav: "conta-agrupada",
           },
         },
       ],

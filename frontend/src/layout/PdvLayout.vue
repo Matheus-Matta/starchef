@@ -4,7 +4,6 @@
       :active="activeDestination"
       :show-orders="canViewOrders"
       :show-finance="canAccessCash"
-      :show-merge="canMergeCommands"
       :show-commands="canViewCommands"
       @navigate="goTo"
       @exit="leavePdv"
@@ -88,7 +87,6 @@ const shiftLabel = computed(() => (cashOpen.value ? "Turno em andamento" : "Turn
 
 const canViewOrders = computed(() => auth.hasPermission("orders.view") || auth.hasPermission("orders.view.own"));
 const canAccessCash = computed(() => auth.hasPermission("cash.view.own") || auth.hasPermission("cash.view"));
-const canMergeCommands = computed(() => auth.hasPermission("orders.merge"));
 const canViewCommands = computed(() => auth.hasPermission("tables.view"));
 
 const activeDestination = computed(() => route.meta.pdvNav || "venda");
@@ -97,7 +95,6 @@ function goTo(destination) {
   const alvo = {
     venda: { name: "pdv-venda" },
     comandas: { name: "pdv-comandas" },
-    "conta-agrupada": { name: "pdv-conta-agrupada" },
     pedidos: { name: "pedidos" },
     mesas: { name: "mesas" },
     caixa: { name: "caixa" },

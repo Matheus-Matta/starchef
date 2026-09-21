@@ -10,11 +10,11 @@ import '../../printing/presentation/print_status_page.dart';
 import '../../printing/services/mobile_print_agent.dart';
 import '../../settings/presentation/api_settings_page.dart';
 import '../data/orders_repository.dart';
-import 'new_order_flow.dart';
+import 'orders_page_navigation.dart';
 import 'order_card.dart';
-import 'order_detail_page.dart';
 import 'orders_presenter.dart';
 import 'pending_sheet.dart';
+import 'cloud_mode_banner.dart';
 import 'stale_data_banner.dart';
 import 'sync_banner.dart';
 
@@ -42,7 +42,13 @@ class OrdersPage extends StatefulWidget {
   State<OrdersPage> createState() => _OrdersPageState();
 }
 
-class _OrdersPageState extends State<OrdersPage> {
+class _OrdersPageState extends State<OrdersPage>
+    with OrdersPageNavigation<OrdersPage> {
+  @override
+  OrdersRepository get repository => widget.repository;
+  @override
+  OrdersPresenter get presenter => _presenter;
+
   late final _presenter = OrdersPresenter(repository: widget.repository);
 
   BackendGateway get _gateway => widget.repository.gateway;
@@ -57,26 +63,6 @@ class _OrdersPageState extends State<OrdersPage> {
   void dispose() {
     _presenter.dispose();
     super.dispose();
-  }
-
-  Future<void> _openOrder(Map<String, dynamic> order) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => OrderDetailPage(
-          repository: widget.repository,
-          orderId: '${order['id']}',
-          initialOrder: order,
-          canReceivePayment:
-              widget.controller.session?.user.canReceivePayment ?? false,
-        ),
-      ),
-    );
-    if (mounted) await _presenter.load();
-  }
-
-  Future<void> _newOrder() async {
-    final order = await startNewOrder(context, widget.repository);
-    if (order != null && mounted) await _openOrder(order);
   }
 
   Future<void> _openApiSettings() async {
@@ -124,6 +110,10 @@ class _OrdersPageState extends State<OrdersPage> {
         ),
       ],
       banners: [
+        // Antes do aviso de dado velho: "a escrita está indo para outro
+        // servidor" muda mais o que o garçom pode fazer do que "a tela mostra
+        // um retrato".
+        CloudModeBanner(origin: widget.repository.api.lastServerOrigin),
         StaleDataBanner(
           origin: _presenter.origin,
           onRetry: _presenter.loading ? null : _presenter.load,
@@ -134,7 +124,7 @@ class _OrdersPageState extends State<OrdersPage> {
         ),
       ],
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _newOrder,
+        onPressed: openNewFlowResult,
         icon: const Icon(Icons.add),
         label: const Text('Novo pedido'),
       ),
@@ -149,7 +139,7 @@ class _OrdersPageState extends State<OrdersPage> {
       return _OrdersList(
         orders: orders,
         repository: widget.repository,
-        onOpen: _openOrder,
+        onOpen: openOrder,
       );
     }
     if (_presenter.loading && creating == 0) {

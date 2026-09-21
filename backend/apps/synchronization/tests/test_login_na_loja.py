@@ -124,16 +124,37 @@ def test_sem_hash_a_senha_nasce_inutilizavel_e_nao_vazia(como_loja, conta, no_nu
 # "já apliquei, ignore": depois do primeiro apply, NENHUM evento de usuário
 # voltava a ser aplicado. A nuvem podia mandar o hash para sempre que a loja
 # descartaria, e o operador continuaria sem conseguir entrar.
-def test_o_usuario_e_a_unica_entidade_sem_fonte_de_versao():
-    """Se outra aparecer, ela herda o mesmo problema — e este teste avisa."""
-    sem_versao = [
+#: Entidades sem fonte de versão que já foram examinadas e são seguras.
+#:
+#: `user` NÃO é segura — é o defeito descrito acima, tratado por conteúdo.
+#:
+#: `idempotency_record` é: ele nunca PREEXISTE no nó que recebe. O registro
+#: nasce no nó que atendeu a operação, e chega ao outro como linha nova — com
+#: `local_version=0` contra `remote_version=1`, que a decisão aplica. A
+#: armadilha de "versão igual = já apliquei" precisa dos dois lados terem a
+#: linha, e aqui só um tem. Se ela já existir, `immutable=True` a preserva,
+#: que é exatamente o certo: a resposta de uma operação encerrada não se
+#: reescreve.
+SEM_FONTE_DE_VERSAO_EXAMINADAS = {"user", "idempotency_record"}
+
+
+def test_toda_entidade_sem_fonte_de_versao_foi_examinada():
+    """Se uma nova aparecer, ela herda o problema — e este teste avisa.
+
+    Sem `updated_at` nem `sync_version`, `entity_version` devolve 1 dos dois
+    lados. O resolvedor lê "versão igual" como "já apliquei, ignore", e o
+    evento nunca mais é aplicado depois da primeira vez.
+    """
+    sem_versao = {
         e.entity_type for e in registry.entries.values()
         if "sync_version" not in {c.name for c in e.model._meta.concrete_fields}
         and "updated_at" not in {c.name for c in e.model._meta.concrete_fields}
-    ]
-    assert sem_versao == ["user"], (
-        "entidade nova sem `updated_at`: confira se ela também precisa que o "
-        "conteúdo decida, e não a versão"
+    }
+    novas = sem_versao - SEM_FONTE_DE_VERSAO_EXAMINADAS
+    assert not novas, (
+        f"entidade nova sem `updated_at`: {sorted(novas)}. Confira se ela "
+        "também precisa que o CONTEÚDO decida, e não a versão — e acrescente "
+        "aqui com a razão."
     )
 
 

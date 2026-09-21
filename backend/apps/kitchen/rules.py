@@ -21,7 +21,7 @@ def _context(item, position, now):
 
     O financeiro continua vindo do pedido ATUAL (é ele que está sendo pago).
     """
-    production_order = item.origin_order or item.order
+    production_order = item.order
     current_order = item.order
     return {
         "order_type": production_order.order_type,

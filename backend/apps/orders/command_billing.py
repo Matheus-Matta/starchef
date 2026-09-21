@@ -57,16 +57,28 @@ def pending_items_of(command_ids):
     )
 
 
+def billable_items_of(command_ids):
+    """O que há de fato A COBRAR nestas comandas.
+
+    Pendente NÃO basta: um item cancelado ou de cortesia continua pendente na
+    comanda mas não soma um centavo. Um cartão só com esses está livre na
+    prática, e tratá-lo como ocupado prende a mesa e deixa o operador
+    procurando uma conta que não existe.
+    """
+    return pending_items_of(command_ids).exclude(
+        status__in=[CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
+    )
+
+
 def command_has_pending_items(command_id):
     """A comanda está EM USO?
 
-    Em uso é ter o que cobrar — não é um campo de estado. Um cartão marcado
-    como ocupado sem nenhum item pendente não tem nada a receber, e deixá-lo
-    entrar numa conta só produz um pedido preso a um cartão vazio.
+    Em uso é ter o que COBRAR — não é um campo de estado, e não é a contagem
+    de pendentes. Um cartão marcado como ocupado sem nada a receber não tem
+    conta nenhuma, e deixá-lo entrar num pedido só produz uma venda presa a um
+    cartão vazio.
     """
-    return CommandItem.objects.filter(
-        command_id=command_id, command_status=CommandItem.STATUS_PENDENTE
-    ).exists()
+    return billable_items_of([command_id]).exists()
 
 
 def attach_commands_to_order(*, order, command_ids, user):
@@ -110,7 +122,11 @@ def attach_commands_to_order(*, order, command_ids, user):
         # RELER DEPOIS DA TRAVA. Conferir antes só dá a impressão de
         # impedir a corrida: entre a leitura e a escrita, outro caixa
         # cobra o mesmo cartão.
-        pendentes = list(pending_items_of(ids).select_for_update(of=("self",)))
+        # Só o que TEM VALOR entra na conta. O item cancelado ou de cortesia
+        # continua pendente no cartão, mas levá-lo ao pedido acrescentaria uma
+        # linha de R$ 0,00 que ninguém sabe explicar — ele é encerrado junto
+        # com o cartão, na liberação.
+        pendentes = list(billable_items_of(ids).select_for_update(of=("self",)))
         ja_cobrados = set(
             OrderItem.objects.filter(
                 command_item_id__in=[p.pk for p in pendentes]
@@ -204,10 +220,10 @@ def total_pendente(command_id):
 
     Cancelado e cortesia continuam existindo na anotação, mas não somam.
     """
-    itens = pending_items_of([command_id]).exclude(
-        status__in=[CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
+    return sum(
+        (item.total_price for item in billable_items_of([command_id])),
+        Decimal("0.00"),
     )
-    return sum((item.total_price for item in itens), Decimal("0.00"))
 
 
 def detach_commands_from_order(*, order, command_ids, user):

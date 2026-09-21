@@ -240,54 +240,83 @@ ABERTOS = ["open", "awaiting_payment"]
 CAIXA_VIVO = ["pending_opening", "open", "blocked",
               "pending_manager_approval", "pending_closing"]
 
-# CONTA AGRUPADA: o pedido de origem fica em `merged`, que NÃO está em
-# ABERTOS. Ele mesmo assim precisa descer na carga essencial, porque o item do
-# pedido consolidado aponta para ele por `origin_order` e `OrderMergeSource`
-# também. Sem isso, a loja nova recebe um item cuja FK não encontra alvo —
-# "ainda não existe aqui", em retentativa eterna.
+# ── A VENDA VIAJA NOS DOIS SENTIDOS ────────────────────────────────────────
 #
-# Incluir `merged` global em ABERTOS traria o histórico inteiro. `MERGE_VIVO`
-# desce só o que participa de uma consolidação que ainda está de pé.
-MERGE_VIVO = ["open", "confirmed"]
-ORIGENS_VIVAS = {"merge_participations__merge__status__in": MERGE_VIVO,
-                 "merge_participations__active": True}
-
-_e("order", "orders.Order", conflict_policy=LOJA, flow="local_to_cloud",
+# Estas entidades eram de mão única (`local_to_cloud`), e estava certo: só a
+# loja atendia, então a venda nascia lá e subia para a nuvem ver. Não havia
+# caminho de volta porque não havia venda nascendo na nuvem.
+#
+# Deixou de ser verdade. O terminal agora desvia para a nuvem quando a loja
+# está comprovadamente fora (`CloudFallback` nos dois PDVs), e o que ele grava
+# lá precisa DESCER quando a loja voltar. Sem isto o evento nem é gerado — o
+# portão de `outbox._deve_gerar` recusa na origem —, e a venda fica presa na
+# nuvem para sempre: o salão volta e nunca vê aquele pedido.
+#
+# O conflito não fica mais frouxo por causa disso. Os dois nós nunca escrevem o
+# mesmo registro ao mesmo tempo (quando a nuvem escreve, a loja está fora), e
+# as faixas de numeração (`orders/sequence_ranges.py`) garantem que os
+# registros dos dois lados não colidem em número. `LOJA` continua sendo o
+# desempate quando as versões empatam.
+#
+# Fiscal e caixa NÃO entram aqui, e não é esquecimento: eles não desviam
+# (`CloudFallback.caminhosQueNuncaDesviam`), então não há o que descer.
+_e("order", "orders.Order", conflict_policy=LOJA, flow="both",
    dependencies=("restaurant", "table", "customer"),
-   seed_to_local=True, essential_filter={"status__in": ABERTOS},
-   essential_filter_any=(ORIGENS_VIVAS,))
-_e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="local_to_cloud",
+   seed_to_local=True, essential_filter={"status__in": ABERTOS})
+_e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="both",
    dependencies=("order",),
-   seed_to_local=True, essential_filter={"order__status__in": ABERTOS},
-   # As rodadas da origem consolidada descem junto: elas são a história de
-   # produção do prato que o cliente ainda está esperando, e o lote continua
-   # apontando para o pedido de origem de propósito.
-   essential_filter_any=({f"order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
-_e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="local_to_cloud",
-   # `command` é nova dependência: o item agora sabe de quem ele é.
-   # `origin_order` usa a dependência `order`, que já está declarada.
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
+_e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="both",
+   # `command` é a comanda de onde o item veio, copiada no lançamento: um
+   # pedido que paga 200 cartões responde "quais estão nesta conta" sem visitar
+   # 200 anotações.
    dependencies=("order", "product", "command"),
-   seed_to_local=True, essential_filter={"order__status__in": ABERTOS},
-   essential_filter_any=({f"order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
-_e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="local_to_cloud",
+   seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
+_e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="both",
    dependencies=("order_item", "product_addon"),
-   seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS},
-   essential_filter_any=({f"item__order__{k}": v for k, v in ORIGENS_VIVAS.items()},))
-# A consolidação e suas fontes nascem na loja e sobem, como o pedido. Elas
-# DESCEM na carga essencial porque uma loja que assume a operação precisa
-# herdar a conta que o caixa já está montando — inclusive com pagamento
-# parcial, senão ela recomeça a cobrança do zero com os cartões presos.
+   seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS})
+# A COMANDA COMO BLOCO DE NOTAS. Ela anota o consumo sem pedido nenhum, e o
+# pedido só nasce no caixa — então a anotação precisa descer na carga
+# essencial por conta própria: uma loja que assume a operação herda cartões
+# com consumo em aberto, e sem isto o garçom encontra a mesa vazia.
 #
-# ORDEM DE CARGA: `order_merge` depende de `order` (o destino);
-# `order_merge_source` depende das três. Errar a ordem não quebra teste
-# nenhum — quebra a carga inicial de uma loja nova, com "ainda não existe
-# aqui" em retentativa eterna.
-_e("order_merge", "orders.OrderMerge", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order",),
-   seed_to_local=True, essential_filter={"status__in": MERGE_VIVO})
-_e("order_merge_source", "orders.OrderMergeSource", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order_merge", "order", "command"),
-   seed_to_local=True, essential_filter={"merge__status__in": MERGE_VIVO})
+# Só o PENDENTE desce. O histórico do cartão fica na nuvem: ele é grande (todo
+# almoço de todo cliente) e a loja não precisa dele para atender.
+PENDENTE_NA_COMANDA = {"command_status": "pending"}
+
+# ORDEM DE CARGA: `command_batch` depende de `command`; `command_item` das
+# duas. Errar a ordem não quebra teste nenhum — quebra a carga inicial de uma
+# loja nova, com "ainda não existe aqui" em retentativa eterna.
+_e("command_batch", "orders.CommandBatch", conflict_policy=LOJA, flow="both",
+   dependencies=("command",),
+   seed_to_local=True,
+   essential_filter={"items__command_status": "pending"})
+_e("command_item", "orders.CommandItem", conflict_policy=LOJA, flow="both",
+   # `table` é o retrato de onde o item foi consumido, e a comanda anda pelo
+   # salão: a dependência é real, não decorativa.
+   dependencies=("command", "product", "command_batch", "table"),
+   seed_to_local=True, essential_filter=PENDENTE_NA_COMANDA)
+# A CHAVE DE IDEMPOTÊNCIA ATRAVESSA OS NÓS.
+#
+# Ela já foi excluída daqui, com a razão "vale só no nó que atendeu" — e era
+# verdade enquanto UM nó atendia. Deixou de ser: quando a loja cai, o terminal
+# desvia para a nuvem, e o mesmo gesto pode ser tentado nos dois lugares.
+#
+# Sem isto, a loja volta, a fila do terminal reenvia a operação que a NUVEM já
+# executou, e a loja não reconhece a chave — porque nunca a viu. Vira uma
+# segunda venda, um segundo pagamento, um segundo envio à cozinha.
+#
+# A impressão digital (`request_fingerprint`) é método + caminho + corpo: ela é
+# IDÊNTICA nos dois nós, e é o que faz a mesma chave reconhecer a mesma
+# operação do outro lado.
+#
+# `immutable` porque o registro nasce pronto e nunca muda: ele é a resposta já
+# produzida. Reescrevê-lo seria trocar a resposta de uma operação encerrada.
+_e("idempotency_record", "core.IdempotencyRecord", conflict_policy=LOJA,
+   flow="bidirectional", dependencies=("account",), immutable=True,
+   # Não desce na carga inicial: uma loja nova não tem operação pendente para
+   # deduplicar, e o histórico de chaves é grande e sem uso lá.
+   seed_to_local=False)
 _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("restaurant", "cash_station"),
    seed_to_local=True, essential_filter={"status__in": CAIXA_VIVO})
@@ -318,7 +347,7 @@ _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_t
 _e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("cash_register",),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
-_e("payment", "payments.Payment", conflict_policy=LOJA, flow="local_to_cloud",
+_e("payment", "payments.Payment", conflict_policy=LOJA, flow="both",
    dependencies=("order", "payment_method", "cash_register"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 

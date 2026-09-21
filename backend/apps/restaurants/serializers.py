@@ -177,7 +177,11 @@ class CommandSerializer(TenantModelSerializer):
         anotado = getattr(obj, "pendentes", None)
         if anotado is not None:
             return anotado
-        return obj.command_items.filter(command_status="pending").count()
+        return (
+            obj.command_items.filter(command_status="pending")
+            .exclude(status__in=["cancelled", "comped"])
+            .count()
+        )
 
     def get_pending_total(self, obj):
         anotado = getattr(obj, "pendente_total", None)

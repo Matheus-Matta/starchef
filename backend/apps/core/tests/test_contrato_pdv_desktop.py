@@ -44,9 +44,15 @@ ROTAS_DO_PDV = [
     ("POST", "/invoices/{id}/refresh-status/"),
     ("GET", "/menu/categories/"),
     ("GET", "/menu/products/"),
+    ("POST", "/commands/{id}/items/"),
+    ("POST", "/commands/{id}/send-to-kitchen/"),
+    ("DELETE", "/commands/{id}/items/{id}/void/"),
     ("GET", "/orders/"),
     ("POST", "/orders/"),
-    ("POST", "/orders/open-command/"),
+    # A comanda não abre mais pedido: ela ANOTA, e o pedido do caixa puxa as
+    # anotações pendentes. `open-command` saiu; estas três entraram.
+    ("POST", "/orders/{id}/attach-commands/"),
+    ("POST", "/orders/{id}/detach-commands/"),
     ("GET", "/orders/{id}/"),
     ("DELETE", "/orders/{id}/"),
     ("POST", "/orders/{id}/cancel/"),

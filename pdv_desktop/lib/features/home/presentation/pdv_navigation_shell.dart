@@ -465,6 +465,19 @@ class _ConnectionBadgeView extends StatelessWidget {
         Colors.white,
         const Color(0xFF166534),
       ),
+      // A loja está fora e quem atende é a NUVEM.
+      //
+      // Cor forte de propósito, e não o verde de "online": não é o estado
+      // normal. O que o operador lançar agora vive do outro lado até a loja
+      // voltar, e outro terminal que ainda alcance a loja enxerga um salão
+      // diferente do dele. Sem isto na tela, os dois acham que estão vendo a
+      // mesma coisa.
+      NetworkPhase.cloud => (
+        'Na nuvem',
+        Icons.cloud_outlined,
+        Colors.white,
+        const Color(0xFF1D4ED8),
+      ),
     };
     final hoverBackground = status.phase == NetworkPhase.online
         ? const Color(0xFF14532D)

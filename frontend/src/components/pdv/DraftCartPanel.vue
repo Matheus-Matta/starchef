@@ -9,7 +9,7 @@
          atributo do pedido que está sendo montado, na mesma altura em que o
          operador confere o que vai cobrar. -->
     <DraftCommandAttach
-      :comanda="comanda"
+      :comandas="comandas"
       :mesa="mesa"
       :disabled="ocupado"
       @attach="$emit('attach', $event)"
@@ -73,7 +73,7 @@ import DraftCommandAttach from "./DraftCommandAttach.vue";
 
 defineProps({
   itens: { type: Array, default: () => [] },
-  comanda: { type: Object, default: null },
+  comandas: { type: Array, default: () => [] },
   mesa: { type: Object, default: null },
   total: { type: Number, default: 0 },
   quantidade: { type: Number, default: 0 },

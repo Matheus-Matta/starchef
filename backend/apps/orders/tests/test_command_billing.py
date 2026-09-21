@@ -317,3 +317,90 @@ def test_pedido_encerrado_nao_solta_mais_comanda(
         detach_commands_from_order(
             order=pedido, command_ids=[comanda.pk], user=manager_user
         )
+
+
+@pytest.mark.django_db
+def test_cartao_so_com_cortesia_esta_LIVRE(restaurant, branch, manager_user, produto):
+    """Pendente não basta: o que decide é ter o que COBRAR.
+
+    Um cartão cujos pendentes são todos cortesia não tem conta nenhuma.
+    Tratá-lo como ocupado prende a mesa e manda o operador procurar uma conta
+    que não existe.
+    """
+    comanda = _comanda(restaurant, branch, 30)
+    cortesia = launch_item(command=comanda, product=produto, user=manager_user)
+    cortesia.status = CommandItem.STATUS_COMPED
+    cortesia.save(update_fields=["status"])
+
+    assert command_has_pending_items(comanda.pk) is False
+
+
+@pytest.mark.django_db
+def test_cartao_sem_valor_nao_entra_numa_conta(restaurant, branch, manager_user, produto):
+    comanda = _comanda(restaurant, branch, 31)
+    cancelado = launch_item(command=comanda, product=produto, user=manager_user)
+    cancelado.status = CommandItem.STATUS_CANCELLED
+    cancelado.save(update_fields=["status"])
+    pedido = _pedido(restaurant, branch, manager_user)
+
+    with pytest.raises(ValidationError):
+        attach_commands_to_order(
+            order=pedido, command_ids=[comanda.pk], user=manager_user
+        )
+
+
+@pytest.mark.django_db
+def test_liberar_o_cartao_ENCERRA_o_que_sobrou_sem_valor(
+    restaurant, branch, manager_user, produto
+):
+    """O vazamento que o estado concluído existe para impedir.
+
+    Sem isto, a cortesia ficaria pendente para sempre num cartão "livre" — e
+    entraria na conta do PRÓXIMO cliente, que veria o consumo de quem esteve
+    na mesa antes.
+    """
+    comanda = _comanda(restaurant, branch, 32)
+    cobravel = launch_item(command=comanda, product=produto, user=manager_user)
+    cortesia = launch_item(command=comanda, product=produto, user=manager_user)
+    cortesia.status = CommandItem.STATUS_COMPED
+    cortesia.save(update_fields=["status"])
+
+    pedido = _pedido(restaurant, branch, manager_user)
+    criados = attach_commands_to_order(
+        order=pedido, command_ids=[comanda.pk], user=manager_user
+    )
+    # Só o que tem valor foi para a conta.
+    assert [item.command_item_id for item in criados] == [cobravel.pk]
+
+    conclude_items_of_order(pedido, billed=True)
+    with tenant_context(restaurant.account):
+        free_command_if_empty(comanda, user=manager_user)
+
+    comanda.refresh_from_db()
+    assert comanda.status == Command.STATUS_FREE
+    # A cortesia NÃO ficou pendente para o próximo cliente.
+    cortesia.refresh_from_db()
+    assert cortesia.command_status == CommandItem.STATUS_CANCELADO
+    assert list(open_items_of_command(comanda.pk)) == []
+
+
+@pytest.mark.django_db
+def test_o_proximo_cliente_nao_herda_nada(restaurant, branch, manager_user, produto):
+    """O cartão volta para a gaveta e é entregue a outra pessoa."""
+    comanda = _comanda(restaurant, branch, 33)
+    cortesia = launch_item(command=comanda, product=produto, user=manager_user)
+    cortesia.status = CommandItem.STATUS_COMPED
+    cortesia.save(update_fields=["status"])
+
+    with tenant_context(restaurant.account):
+        free_command_if_empty(comanda, user=manager_user)
+
+    # Cliente novo, mesmo cartão.
+    nova = launch_item(command=comanda, product=produto, user=manager_user)
+    pedido = _pedido(restaurant, branch, manager_user)
+    criados = attach_commands_to_order(
+        order=pedido, command_ids=[comanda.pk], user=manager_user
+    )
+
+    assert [item.command_item_id for item in criados] == [nova.pk]
+

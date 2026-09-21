@@ -112,7 +112,7 @@ def production_context(item):
     cancelamento lidos dali sairiam com o número trocado — item de quatro
     pessoas diferentes apareceria como sendo de uma.
     """
-    order = getattr(item, "origin_order", None) or item.order
+    order = item.order
     command = getattr(item, "command", None) or order.command
     return order, command
 
@@ -859,6 +859,11 @@ def _resolve_weigh_printer(*, order, scale):
     ``Printer`` ainda nao possui campo/constraint de impressora padrao. Escolher
     a primeira impressora ativa do restaurante seria ambiguo e poderia enviar a
     nota para outro caixa ou setor.
+
+    `order` e qualquer dono com `account` e `restaurant`: um pedido ou uma
+    COMANDA. A comanda tambem pesa — o cliente leva a etiqueta ao caixa —, e
+    amarrar isto a `Order` obrigaria a inventar um pedido so para achar a
+    impressora.
     """
     if scale is None or not scale.printer_id:
         raise ValidationError(
@@ -1145,6 +1150,48 @@ def register_command_bill_print(*, command, items, total, user):
             job_type=TYPE_TABLE_BILL,
             status=PrintJob.STATUS_PENDING,
             payload={"text": conteudo, "command": str(command.id)},
+            created_by=user,
+            updated_by=user,
+        )
+
+
+def register_command_weigh_print(*, command, item, scale, user=None):
+    """A etiqueta de pesagem de um item anotado NA COMANDA.
+
+    É o papel que o cliente leva ao caixa. O ticket do pedido é montado por um
+    template HTML que pressupõe pedido (total, taxa, desconto) — aqui não há
+    pedido nenhum, e inventar um só para imprimir seria exatamente o gesto que
+    este modelo existe para eliminar.
+
+    Por isso o conteúdo é texto: produto, peso, preço e o número do cartão. É
+    o que a etiqueta precisa dizer.
+    """
+    from apps.printers.command_receipt import TYPE_TABLE_BILL  # noqa: F401
+
+    with tenant_context(command.account):
+        printer = _resolve_weigh_printer(order=command, scale=scale)
+        linhas = [
+            f"COMANDA {command.number}",
+            "-" * 32,
+            f"{item.product.name}",
+            f"{item.quantity} kg x {item.unit_price}",
+            f"TOTAL  {item.total_price}",
+            "",
+            "Leve esta etiqueta ao caixa.",
+        ]
+        return PrintJob.objects.create(
+            account=command.account,
+            restaurant=command.restaurant,
+            branch=command.branch,
+            printer=printer,
+            job_type=PrintJob.TYPE_WEIGH,
+            status=PrintJob.STATUS_PENDING,
+            payload={
+                "text_content": "\n".join(linhas),
+                "command": str(command.id),
+                "command_number": command.number,
+                "item": str(item.id),
+            },
             created_by=user,
             updated_by=user,
         )

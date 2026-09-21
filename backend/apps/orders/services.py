@@ -30,9 +30,17 @@ THREE_PLACES = Decimal("0.001")
 
 
 def next_order_sequence(restaurant):
+    """O próximo número de pedido deste restaurante, NA FAIXA DESTE NÓ.
+
+    A loja e a nuvem numeram faixas separadas: as duas atendem o mesmo
+    restaurante, e enquanto a loja está fora ela não enxerga o que a nuvem
+    emitiu. Sem faixas, as duas entregariam o mesmo número, e a conferência de
+    caixa do dia encontraria dois "pedido 17". Ver `sequence_ranges`.
+    """
+    from apps.orders.sequence_ranges import proximo_numero
+
     with tenant_context(restaurant.account):
-        last_sequence = Order.objects.filter(restaurant=restaurant).aggregate(value=Max("sequence"))["value"] or 0
-        return last_sequence + 1
+        return proximo_numero(Order.objects.filter(restaurant=restaurant))
 
 
 @transaction.atomic
@@ -1073,11 +1081,6 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.status == Order.STATUS_PAID:
             raise ValidationError("Pedidos pagos devem ser estornados, não cancelados.")
-        if order.status == Order.STATUS_MERGED:
-            raise ValidationError(
-                "Os itens deste pedido já estão numa conta agrupada. "
-                "Desfaça a consolidação antes de cancelar."
-            )
         # Cancelar a origem enquanto o caixa monta a conta tiraria itens que
         # ja estao na tela de pagamento — sem que a tela soubesse.
         now = timezone.now()
@@ -1166,10 +1169,9 @@ def serialize_kitchen_item(item):
     Depois de uma consolidacao `item.order` e o pedido final — cuja comanda e
     uma so, ou nenhuma. Ler a comanda dali faria o card do KDS mostrar a
     comanda errada: item de quatro pessoas diferentes apareceria como sendo de
-    uma. Mesa, tipo e numero de pedido tambem vem da origem, que e onde a
-    producao aconteceu.
+    uma. O item guarda a propria comanda desde o lancamento, e e ela que manda.
     """
-    order = item.origin_order or item.order
+    order = item.order
     command = item.command or order.command
     return {
         "id": str(item.id),

@@ -68,8 +68,6 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
             "order__command",
             # A produção é lida da ORIGEM: sem estes dois, cada card do quadro
             # faria uma consulta a mais para descobrir de que comanda ele é.
-            "origin_order__table",
-            "origin_order__command",
             "command",
             "product",
             "batch",

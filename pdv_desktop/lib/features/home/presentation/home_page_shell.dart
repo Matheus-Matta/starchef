@@ -209,6 +209,9 @@ mixin _ShellSection on _HomePageShared {
                   // são gravados no histórico e nunca vistos por ninguém.
                   trailing: const NotificationBell(),
                 ),
+                // Logo abaixo da barra de estado e ACIMA do conteúdo: uma
+                // mudança de onde a venda é gravada não cabe num selo.
+                PdvCloudBanner(visible: networkStatus.servidoPelaNuvem),
                 Expanded(
                   child: Stack(
                     children: [

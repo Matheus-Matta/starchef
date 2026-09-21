@@ -110,11 +110,54 @@ def test_sequencia_e_crescente_e_unica_por_origem(como_nuvem, conta):
 
 
 def test_entidade_que_so_sobe_nao_desce(como_nuvem, conta, no_loja):
-    """`order` é local_to_cloud: a nuvem não gera evento de pedido para a loja."""
+    """Catálogo de conta é de mão única: a loja não edita, então não sobe."""
     from apps.synchronization.services.registry import registry
 
-    assert not registry.flows_to_local("order")
-    assert registry.flows_to_cloud("order")
+    assert registry.flows_to_local("restaurant")
+    assert not registry.flows_to_cloud("restaurant")
+
+
+def test_a_venda_desce_para_a_loja(como_nuvem, conta, no_loja):
+    """O terminal pode gravar na NUVEM quando a loja está fora.
+
+    O que ele gravar lá precisa descer quando a loja voltar. Enquanto `order`
+    era `local_to_cloud`, o portão de `_deve_gerar` recusava o evento na
+    origem — e a venda ficava presa na nuvem para sempre: o salão voltava e
+    nunca via aquele pedido.
+    """
+    from apps.synchronization.services.registry import registry
+
+    for entidade in [
+        "order",
+        "order_item",
+        "order_item_addon",
+        "order_batch",
+        "command_item",
+        "command_batch",
+        "payment",
+    ]:
+        assert registry.flows_to_local(entidade), (
+            f"`{entidade}` pode nascer na nuvem durante uma queda e precisa "
+            "descer para a loja"
+        )
+        assert registry.flows_to_cloud(entidade)
+
+
+def test_fiscal_e_caixa_NAO_descem(como_nuvem, conta, no_loja):
+    """E não é esquecimento: eles não desviam, então não há o que descer.
+
+    Nota fiscal e sessão de caixa nunca são gravadas na nuvem pelo terminal
+    (`CloudFallback.caminhosQueNuncaDesviam`), porque dois emissores de número
+    de nota ou duas sessões no mesmo turno não se resolvem com sincronização.
+    """
+    from apps.synchronization.services.registry import registry
+
+    for entidade in ["invoice", "cash_register"]:
+        if registry.get(entidade) is None:
+            continue
+        assert not registry.flows_to_local(entidade), (
+            f"`{entidade}` não deve descer: ela nunca nasce na nuvem"
+        )
 
 
 def test_delete_vira_evento_de_exclusao(como_nuvem, conta):

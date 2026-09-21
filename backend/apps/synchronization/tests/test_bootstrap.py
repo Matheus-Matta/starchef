@@ -180,8 +180,11 @@ def test_pedido_aberto_desce_na_carga(como_nuvem, no_loja, cenario):
 
     entrada = registry.require("order")
     assert entrada.seed_to_local, "pedido aberto precisa descer na carga"
-    assert entrada.flow == "local_to_cloud", (
-        "a direção CONTÍNUA segue sendo só para cima; o que muda é a semeadura"
+    # A direção contínua PASSOU a ser dos dois lados, e não é o mesmo que a
+    # semeadura: o terminal grava na nuvem quando a loja está fora, e essa
+    # venda precisa descer depois — não só na carga de uma loja nova.
+    assert entrada.flow == "both", (
+        "pedido nasce nos dois nós desde o fallback de escrita"
     )
 
 

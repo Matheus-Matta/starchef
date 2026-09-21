@@ -5,7 +5,11 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'api_exception.dart';
+import 'cloud_fallback.dart';
 import 'api_response.dart';
+
+part 'api_client_fallback.dart';
+part 'api_client_transport.dart';
 
 typedef TokensChanged = Future<void> Function(String access, String refresh);
 
@@ -15,6 +19,12 @@ class ApiClient {
 
   static const _timeout = Duration(seconds: 15);
   final String Function() baseUrlProvider;
+
+  /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.
+  final CloudFallback cloudFallback = CloudFallback();
+
+  /// De onde veio a última resposta que chegou à tela.
+  ServerOrigin lastServerOrigin = ServerOrigin.loja;
   final http.Client _http;
 
   String? _accessToken;
@@ -83,78 +93,14 @@ class ApiClient {
     String? accessToken,
     String? idempotencyKey,
   }) async {
-    final explicitToken = accessToken != null;
-    try {
-      return await _send(
-        method,
-        path,
-        query: query,
-        body: body,
-        token: accessToken ?? _accessToken,
-        idempotencyKey: idempotencyKey,
-      );
-    } on ApiException catch (error) {
-      final canRefresh =
-          error.statusCode == 401 &&
-          !explicitToken &&
-          !path.startsWith('/auth/') &&
-          (_refreshToken?.isNotEmpty ?? false);
-      if (!canRefresh || !await _refresh()) rethrow;
-      return _send(
-        method,
-        path,
-        query: query,
-        body: body,
-        token: _accessToken,
-        idempotencyKey: idempotencyKey,
-      );
-    }
-  }
-
-  Future<Map<String, dynamic>> _send(
-    String method,
-    String path, {
-    Map<String, dynamic>? query,
-    Map<String, dynamic>? body,
-    String? token,
-    String? idempotencyKey,
-  }) async {
-    final uri = Uri.parse('$baseUrl$path').replace(
-      queryParameters: query?.map((key, value) => MapEntry(key, '$value')),
+    return _comPlanoB(
+      method,
+      path,
+      query: query,
+      body: body,
+      accessToken: accessToken,
+      idempotencyKey: idempotencyKey,
     );
-    final request = http.Request(method, uri)
-      ..headers['accept'] = 'application/json';
-    if (token?.isNotEmpty ?? false) {
-      request.headers['authorization'] = 'Bearer $token';
-    }
-    if (_terminalId?.isNotEmpty ?? false) {
-      request.headers['X-Terminal-Id'] = _terminalId!;
-      request.headers['X-Terminal-Name'] = 'PDV Mobile';
-    }
-    if (idempotencyKey?.isNotEmpty ?? false) {
-      request.headers['Idempotency-Key'] = idempotencyKey!;
-    }
-    if (body != null) {
-      request.headers['content-type'] = 'application/json';
-      request.body = jsonEncode(body);
-    }
-    try {
-      final streamed = await _http.send(request).timeout(_timeout);
-      final response = await http.Response.fromStream(streamed);
-      return decodeApiResponse(response.statusCode, response.body);
-    } on TimeoutException {
-      throw const ApiException(
-        'O servidor demorou demais para responder.',
-        isConnectivity: true,
-      );
-    } on SocketException catch (error) {
-      throw ApiException(
-        'Sem conexão com o servidor (${error.message}).',
-        isConnectivity: true,
-      );
-    } on http.ClientException catch (error) {
-      throw ApiException(error.message, isConnectivity: true);
-    }
   }
 
   Future<bool> _refresh() {

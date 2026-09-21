@@ -42,8 +42,6 @@ mixin _PanelsSection on _HomePageShared {
   Future<void> _changeItemQuantity(Map<String, dynamic> item, int delta);
   Future<void> _voidItem(Map<String, dynamic> item);
   Future<void> _finishOrder();
-  Future<void> _mergeCommands();
-  Future<void> _refundMergedSale();
   Future<void> _sendPendingFromShortcut();
   Future<void> _printCustomerReceipt([Map<String, dynamic>? selectedOrder]);
   Future<void> _cancelOrder();
@@ -124,21 +122,6 @@ mixin _PanelsSection on _HomePageShared {
     // apenas se `_cancelOrder` pode seguir direto ou precisa pedir a senha do
     // restaurante para esta operação.
     onCancel: _cancelOrder,
-    // Só numa comanda: agrupar é juntar CARTÕES. Um pedido de balcão não tem
-    // o que juntar, e o pedido já consolidado é o destino — não uma origem.
-    onMergeCommands:
-        activeOrder != null &&
-            activeOrder!['command'] != null &&
-            widget.controller.session!.user.canMergeCommands
-        ? () => unawaited(_mergeCommands())
-        : null,
-    // O mesmo botão, do outro lado do ciclo: no pedido de DESTINO de uma conta
-    // agrupada já paga, "juntar" não faz sentido — o que falta ali é poder
-    // estornar a venda inteira.
-    onRefundMerge:
-        _isPaidMergeTarget && widget.controller.session!.user.canMergeCommands
-        ? () => unawaited(_refundMergedSale())
-        : null,
     onEmitInvoice:
         activeOrder == null ||
             !widget.controller.session!.user.canProcessPayments

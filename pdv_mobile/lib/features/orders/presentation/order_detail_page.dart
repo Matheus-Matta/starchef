@@ -6,13 +6,13 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
-import 'closing_merge_banner.dart';
 import 'order_actions_bar.dart';
 import 'order_detail_presenter.dart';
 import 'order_dialogs.dart';
 import 'order_formatters.dart';
 import 'order_item_tiles.dart';
 import 'payment_sheet.dart';
+import 'cloud_mode_banner.dart';
 import 'stale_data_banner.dart';
 
 /// Um pedido aberto: o que já foi lançado, o que falta enviar e o que
@@ -171,11 +171,14 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
           ),
         ],
         banners: [
+          // Antes do aviso de dado velho: "a escrita está indo para outro
+          // servidor" muda mais o que o garçom pode fazer do que "a tela
+          // mostra um retrato".
+          CloudModeBanner(origin: widget.repository.api.lastServerOrigin),
           StaleDataBanner(
             origin: _presenter.origin,
             onRetry: _presenter.loading ? null : _presenter.load,
           ),
-          ClosingMergeBanner(merge: order?['closing_merge']),
         ],
         bottomBar: order == null ? null : _actions(order),
         body: _body(),
@@ -184,27 +187,22 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   );
 
   Widget _actions(Map<String, dynamic> order) {
-    // O caixa está fechando esta comanda numa conta agrupada: o servidor
-    // recusa lançamento com 409, e deixar o botão aceso só ensinaria o garçom
-    // a esbarrar no erro. Receber também sai — o garçom não fecha conta, e
-    // aqui quem cobra é a conta agrupada.
-    final emFechamento = ClosingMergeBanner.isClosing(order);
+    // A conta agrupada não existe mais: a comanda é um bloco de notas, e o
+    // pedido do caixa puxa as anotações pendentes dela. Não há mais um estado
+    // "em fechamento" travando o lançamento do garçom no meio do atendimento.
     return OrderActionsBar(
       total: order['total'],
       paid: _presenter.paid,
       pending: _presenter.pendingToSend,
       drafts: _presenter.draftItems.length,
-      busy: _presenter.working || emFechamento,
+      busy: _presenter.working,
       queued: _presenter.sendQueued,
-      onAdd: emFechamento ? _warnClosing : _addItem,
-      onSend: (!emFechamento &&
-              _presenter.pendingToSend > 0 &&
-              !_presenter.sendQueued)
+      onAdd: _addItem,
+      onSend: (_presenter.pendingToSend > 0 && !_presenter.sendQueued)
           ? () async => _report(await _presenter.sendToKitchen())
           : null,
       onReceive:
-          !emFechamento &&
-              widget.canReceivePayment &&
+          widget.canReceivePayment &&
               _presenter.awaitingPayment &&
               _presenter.remaining > 0.009
           ? _receivePayment
@@ -216,9 +214,6 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   ///
   /// Um botão que não responde parece aparelho travado, e o garçom tenta de
   /// novo — no meio do salão, com o prato na mão.
-  void _warnClosing() => _report(
-    'A comanda está em fechamento no caixa. Fale com o caixa antes de lançar.',
-  );
 
   Widget _body() {
     if (_presenter.loading && _presenter.order == null) {

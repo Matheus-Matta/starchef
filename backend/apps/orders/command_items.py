@@ -108,7 +108,12 @@ def conclude_item(item, *, when=None, billed=False):
 
 
 def free_command_if_empty(command, *, user=None):
-    """Devolve o cartão para a gaveta quando não sobrou nada pendente.
+    """Devolve o cartão para a gaveta quando não sobrou nada A COBRAR.
+
+    Não é "nada pendente": um item cancelado ou de cortesia continua pendente e
+    não soma um centavo. Um cartão só com esses está livre na prática, e
+    tratá-lo como ocupado prende a mesa e deixa o operador procurando uma conta
+    que não existe.
 
     Libera também a mesa, se nenhuma outra comanda estiver sentada nela: a
     ocupação do salão é decidida pelas comandas vinculadas, e o pedido guarda a
@@ -120,18 +125,39 @@ def free_command_if_empty(command, *, user=None):
     if command_has_pending_items(command.pk):
         return False
 
+    # O QUE SOBROU SEM VALOR É ENCERRADO AQUI.
+    #
+    # Sem isto, o item de cortesia ficaria pendente para sempre num cartão
+    # "livre" — e entraria na conta do PRÓXIMO cliente, que pagaria (ou veria)
+    # o consumo de quem esteve na mesa antes. É o vazamento que o estado
+    # concluído existe para impedir.
+    agora = timezone.now()
+    CommandItem.objects.filter(
+        command_id=command.pk, command_status=CommandItem.STATUS_PENDENTE
+    ).update(
+        command_status=CommandItem.STATUS_CANCELADO,
+        command_closed_at=agora,
+        updated_at=agora,
+    )
+
     command = Command.objects.select_for_update().get(pk=command.pk)
     mesa_anterior = command.current_table_id
 
     command.status = Command.STATUS_FREE
     command.customer_name = ""
     command.current_table = None
+    # `current_order_id` é resto do modelo antigo, em que a comanda ABRIA
+    # pedido. Ele não é mais escrito no fluxo novo, mas um cartão que passou
+    # pelo fluxo velho carrega o valor — e deixá-lo aqui faria o cartão livre
+    # apontar para o pedido do cliente ANTERIOR.
+    command.current_order_id = None
     command.updated_by = user
     command.save(
         update_fields=[
             "status",
             "customer_name",
             "current_table",
+            "current_order_id",
             "updated_by",
             "updated_at",
         ]

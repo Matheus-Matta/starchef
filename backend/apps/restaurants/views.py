@@ -286,9 +286,13 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     queryset = (
         Command.objects.select_related("restaurant", "branch")
         .annotate(
+            # Conta só o que TEM VALOR. Um cartão cujos pendentes são todos
+            # cortesia ou cancelados não tem conta nenhuma, e pintá-lo de
+            # ocupado manda o operador procurar o que não existe.
             pendentes=Count(
                 "command_items",
-                filter=Q(command_items__command_status="pending"),
+                filter=Q(command_items__command_status="pending")
+                & ~Q(command_items__status__in=["cancelled", "comped"]),
                 distinct=True,
             ),
             pendente_total=Coalesce(

@@ -10,13 +10,16 @@ import { api } from "./api";
  * * a **cozinha**, que vai imprimir um ticket e produzir;
  * * o **caixa**, que vai anexar um recebimento.
  *
- * Criar antes disso enche o banco de pedidos vazios e prende comandas que
- * ninguém está usando — é o defeito que `order_is_empty` existe para varrer, e
- * ele some quando o pedido não nasce cedo demais.
+ * Criar antes disso enche o banco de pedidos vazios — e a COMANDA nunca cria:
+ * ela é um bloco de notas, e o pedido do caixa é que puxa o que ela anotou.
  */
 
 /**
- * Cria (ou retoma) o pedido e põe todos os itens do rascunho dentro dele.
+ * Cria o pedido, põe os itens do rascunho dentro e PUXA as comandas escolhidas.
+ *
+ * A comanda não abre pedido — ela anota. O pedido nasce aqui, no caixa, e
+ * recebe as anotações PENDENTES dos cartões que vão ser pagos juntos. São
+ * vários de propósito: a mesa grande que paga junto é o caso, não a exceção.
  *
  * Devolve o pedido do servidor. Lança a exceção da API para quem chamou
  * decidir — o rascunho continua intacto na tela, então o operador não perde o
@@ -25,39 +28,32 @@ import { api } from "./api";
 export async function materializeDraft({
   orderType,
   restaurantId,
-  commandId = null,
-  tableId = null,
+  commandIds = [],
   customerId = null,
   items = [],
 }) {
   if (!items.length) throw new Error("Não há itens para abrir o pedido.");
 
-  const pedido = commandId
-    ? await _abrirPelaComanda({ commandId, tableId })
-    : await _criarComPrimeiroItem({ orderType, restaurantId, customerId, items });
+  const pedido = await _criarComPrimeiroItem({
+    orderType: commandIds.length ? "command" : orderType,
+    restaurantId,
+    customerId,
+    items,
+  });
 
-  // Na comanda, TODOS os itens são acrescentados; no balcão, o primeiro já
-  // entrou junto com o pedido.
-  const restantes = commandId ? items : items.slice(1);
-  for (const item of restantes) {
+  // O primeiro item já entrou junto com o pedido; os outros vão em seguida.
+  for (const item of items.slice(1)) {
     await api.post(`/orders/${pedido.id}/items/`, _corpoDoItem(item));
   }
-  return pedido;
-}
 
-/**
- * Comanda: `open-command` cria se o cartão está livre e RETOMA se já há pedido
- * aberto nele.
- *
- * `create-with-item` não serve aqui: ele recusaria com "a comanda já está em
- * uso" no caso normal de o garçom já ter lançado algo nela pelo aplicativo.
- */
-async function _abrirPelaComanda({ commandId, tableId }) {
-  if (tableId) {
-    await api.post(`/commands/${commandId}/link-table/`, { table_id: tableId });
+  // E então as comandas: o pedido PUXA as anotações pendentes dos cartões.
+  if (commandIds.length) {
+    const { data } = await api.post(`/orders/${pedido.id}/attach-commands/`, {
+      commands: commandIds,
+    });
+    return data;
   }
-  const { data } = await api.post("/orders/open-command/", { command: commandId });
-  return data;
+  return pedido;
 }
 
 /**

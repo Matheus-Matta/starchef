@@ -21,31 +21,61 @@ def test_direct_table_order_is_rejected(api_client, manager_user, restaurant, ta
 
 
 @pytest.mark.django_db
-def test_command_linked_to_table_creates_and_resumes_order(api_client, manager_user, table, command):
+def test_comanda_vinculada_a_mesa_ocupa_a_mesa_sem_abrir_pedido(
+    api_client, manager_user, table, command, product
+):
+    """A comanda NÃO abre pedido — ela anota, e a mesa fica ocupada por ela.
+
+    Antes isto era `POST /orders/open-command/`, que criava um pedido para o
+    cartão. Era esse gesto que prendia a comanda: desistir deixava um pedido
+    vazio que alguém tinha de cancelar, e a mesa continuava ocupada por ele.
+    """
     api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
 
-    link = api_client.post(
+    vinculo = api_client.post(
         f"/api/v1/commands/{command.id}/link-table/",
         {"table_id": str(table.id)},
         format="json",
     )
-    first = api_client.post(
-        "/api/v1/orders/open-command/",
-        {"command": str(command.id)},
-        format="json",
-    )
-    second = api_client.post(
-        "/api/v1/orders/open-command/",
-        {"command": str(command.id)},
+    lancamento = api_client.post(
+        f"/api/v1/commands/{command.id}/items/",
+        {"product": str(product.id), "quantity": 2},
         format="json",
     )
 
-    assert link.status_code == 200, link.data
-    assert first.status_code == 201, first.data
-    assert second.status_code == 200, second.data
-    assert second.data["id"] == first.data["id"]
-    assert first.data["order_type"] == "command"
-    assert str(first.data["table"]) == str(table.id)
+    assert vinculo.status_code == 200, vinculo.data
+    assert lancamento.status_code == 201, lancamento.data
+    assert lancamento.data["command_status"] == "pending"
+    # A ocupação do salão é decidida pelas comandas vinculadas.
     table.refresh_from_db()
     assert table.status == "occupied"
-    assert table.current_order_id is None
+
+    from apps.orders.models import Order
+
+    assert Order.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_lancar_de_novo_no_mesmo_cartao_acrescenta(
+    api_client, manager_user, command, product
+):
+    """Duas anotações no mesmo cartão, e nenhum pedido."""
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}")
+
+    primeira = api_client.post(
+        f"/api/v1/commands/{command.id}/items/",
+        {"product": str(product.id)},
+        format="json",
+    )
+    segunda = api_client.post(
+        f"/api/v1/commands/{command.id}/items/",
+        {"product": str(product.id)},
+        format="json",
+    )
+
+    assert primeira.status_code == 201
+    assert segunda.status_code == 201
+    assert primeira.data["id"] != segunda.data["id"]
+
+    itens = api_client.get(f"/api/v1/commands/{command.id}/items/")
+    assert len(itens.data["items"]) == 2

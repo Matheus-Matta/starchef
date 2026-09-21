@@ -32,10 +32,16 @@ Future<Map<String, dynamic>?> startNewOrder(
   return _create(context, repository, orderType: kind.orderType, item: item);
 }
 
-/// Comanda: pode já estar em atendimento, e aí o pedido é o que já existe.
+/// Comanda: o garçom ANOTA nela. Nenhum pedido é aberto.
 ///
-/// Comanda ocupada é selecionável de propósito — é assim que o garçom volta a
-/// uma mesa para lançar mais itens.
+/// Era `open-command`, que criava um pedido para o cartão — e era esse gesto
+/// que prendia a comanda: desistir deixava um pedido vazio que alguém tinha de
+/// cancelar, e a mesa continuava ocupada por ele.
+///
+/// Comanda ocupada é selecionável de propósito: é assim que o garçom volta a
+/// uma mesa para lançar mais.
+///
+/// Devolve a COMANDA (não um pedido), para a tela abrir o cartão.
 Future<Map<String, dynamic>?> _fromCommand(
   BuildContext context,
   OrdersRepository repository,
@@ -43,27 +49,46 @@ Future<Map<String, dynamic>?> _fromCommand(
   final command = await showCommandPicker(context, repository);
   if (command == null || !context.mounted) return null;
 
-  final current = fieldText(command['current_order_id']);
-  if (current.isNotEmpty) return {'id': current};
-
   // A mesa só é perguntada quando a comanda ainda não tem uma: o vínculo é do
-  // atendimento, não a forma de abrir o pedido.
-  Map<String, dynamic>? table;
+  // atendimento, não a forma de lançar.
   if (fieldText(command['current_table']).isEmpty) {
-    table = await _chooseTable(context, repository, command);
+    final table = await _chooseTable(context, repository, command);
     if (!context.mounted) return null;
+    if (table != null) {
+      try {
+        await repository.linkTable(
+          commandId: '${command['id']}',
+          tableId: '${table['id']}',
+          tableLabel: '${table['number'] ?? ''}',
+        );
+      } catch (error) {
+        if (!context.mounted) return null;
+        showToast(context, describeFailure(error));
+        return null;
+      }
+    }
   }
+  // O vínculo da mesa é `await`: o contexto precisa ser conferido de novo
+  // antes da folha seguinte, senão a tela pode já ter saído.
+  if (!context.mounted) return null;
 
   final item = await showProductPicker(context, repository);
   if (item == null || !context.mounted) return null;
-  return _create(
-    context,
-    repository,
-    orderType: 'command',
-    item: item,
-    commandId: '${command['id']}',
-    tableId: table == null ? null : '${table['id']}',
-  );
+  try {
+    await repository.launchCommandItem(
+      commandId: '${command['id']}',
+      productId: item.productId,
+      productName: item.productName,
+      quantity: item.quantity,
+      variationId: item.variationId,
+      addonIds: item.addonIds,
+      customerNote: item.note,
+    );
+  } catch (error) {
+    if (context.mounted) showToast(context, describeFailure(error));
+    return null;
+  }
+  return {...command, '_kind': 'command'};
 }
 
 Future<Map<String, dynamic>?> _chooseTable(

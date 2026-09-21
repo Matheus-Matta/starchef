@@ -53,28 +53,50 @@ describe("useOrderDraft", () => {
     expect(rascunho.tipo.value).toBe("command");
   });
 
-  it("soltar a comanda devolve o rascunho para balcão", () => {
+  it("soltar o ultimo cartao devolve o rascunho para balcão", () => {
     const rascunho = useOrderDraft();
     rascunho.anexarComanda({ id: "cmd-1", number: 13 });
 
-    rascunho.soltarComanda();
+    rascunho.soltarComanda("cmd-1");
 
-    expect(rascunho.comanda.value).toBeNull();
+    expect(rascunho.comandas.value).toHaveLength(0);
     expect(rascunho.tipo.value).toBe("counter");
   });
 
-  it("o pedido só nasce ao materializar, e leva a comanda junto", async () => {
+  it("varios cartoes na mesma conta, e o mesmo nao duplica", () => {
+    // A mesa que paga junto é o caso, não a exceção. E o leitor dispara duas
+    // leituras com frequência: duas linhas do mesmo cartão cobrariam em dobro.
+    const rascunho = useOrderDraft();
+    rascunho.anexarComanda({ id: "cmd-1", number: 13 });
+    rascunho.anexarComanda({ id: "cmd-2", number: 14 });
+    rascunho.anexarComanda({ id: "cmd-1", number: 13 });
+
+    expect(rascunho.comandas.value.map((c) => c.id)).toEqual(["cmd-1", "cmd-2"]);
+  });
+
+  it("soltar um de dois NAO devolve o pedido ao balcão", () => {
+    const rascunho = useOrderDraft();
+    rascunho.anexarComanda({ id: "cmd-1", number: 13 });
+    rascunho.anexarComanda({ id: "cmd-2", number: 14 });
+
+    rascunho.soltarComanda("cmd-1");
+
+    expect(rascunho.comandas.value).toHaveLength(1);
+    expect(rascunho.tipo.value).toBe("command");
+  });
+
+  it("o pedido só nasce ao materializar, e leva as comandas junto", async () => {
     const rascunho = useOrderDraft();
     rascunho.adicionar(REFRI);
     rascunho.anexarComanda({ id: "cmd-1", number: 13 }, { id: "mesa-7" });
+    rascunho.anexarComanda({ id: "cmd-2", number: 14 });
 
     await rascunho.materializar("rest-1");
 
     expect(materializeDraft).toHaveBeenCalledWith(
       expect.objectContaining({
         orderType: "command",
-        commandId: "cmd-1",
-        tableId: "mesa-7",
+        commandIds: ["cmd-1", "cmd-2"],
         restaurantId: "rest-1",
       }),
     );

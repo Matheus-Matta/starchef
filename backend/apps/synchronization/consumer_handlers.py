@@ -78,6 +78,24 @@ class HandlerMixin:
             correlation_id=envelope.get("message_id"),
         )
 
+        # Havendo fila para este nó, ele é avisado AGORA — e DEPOIS do
+        # `AUTHENTICATED`.
+        #
+        # O agendador avisa de dez em dez segundos, e era assim que a loja
+        # ficava sabendo. Mas a reconexão é exatamente o instante em que ela
+        # MAIS tem fila — é o que a nuvem gravou enquanto ela estava fora —, e
+        # esperar o próximo tique deixa o salão cego com alguém de pé no caixa
+        # esperando a conta.
+        #
+        # A ORDEM importa: avisada antes de se saber autenticada, a loja
+        # receberia um "tem novidade" sem ter confirmado quem é, e o cliente
+        # dela descartaria a mensagem fora de sequência.
+        if await database_sync_to_async(dispatch.tem_fila_para)(no):
+            await self.send_envelope(
+                MessageType.SYNC_AVAILABLE,
+                {"reason": "reconnect"},
+            )
+
     async def sync_displace(self, event):
         """Outra conexão assumiu esta identidade de nó. Esta sai."""
         if event.get("channel") == self.channel_name:

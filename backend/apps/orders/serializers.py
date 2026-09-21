@@ -31,9 +31,6 @@ class OrderItemSerializer(TenantModelSerializer):
     order_command_code = serializers.SerializerMethodField()
     command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
     command_code = serializers.CharField(source="command.code", read_only=True, default=None)
-    origin_order_sequence = serializers.IntegerField(
-        source="origin_order.sequence", read_only=True, default=None
-    )
     batch_number = serializers.IntegerField(source="batch.batch_number", read_only=True, default=None)
     addons = OrderItemAddonSerializer(many=True, read_only=True)
 
@@ -57,7 +54,6 @@ class OrderItemSerializer(TenantModelSerializer):
             # mudaria de quem é o prato, e um que reabrisse `command_status`
             # devolveria à comanda um item já pago.
             "command",
-            "origin_order",
             "command_status",
             "command_closed_at",
         ]
@@ -65,12 +61,11 @@ class OrderItemSerializer(TenantModelSerializer):
     def get_order_table_number(self, obj):
         """A mesa da PRODUÇÃO, não a do pedido atual.
 
-        Depois de uma consolidação `obj.order` é o pedido final — sem mesa e
-        sem comanda. Ler dali faria o card do KDS mostrar "balcão" para um
-        prato que é da mesa 7.
+        O pedido guarda a mesa como histórico; quem responde "onde este prato
+        vai" é o próprio item, que carrega a comanda desde o lançamento.
         """
         try:
-            order = obj.origin_order or obj.order
+            order = obj.order
             return order.table.number if order.table_id else None
         except Exception:
             return None
@@ -80,7 +75,7 @@ class OrderItemSerializer(TenantModelSerializer):
         try:
             if obj.command_id:
                 return obj.command.code
-            order = obj.origin_order or obj.order
+            order = obj.order
             return order.command.code if order.command_id else None
         except Exception:
             return None

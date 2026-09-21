@@ -138,6 +138,23 @@ def apply_ack(source_node, ack_payload, *, target_node=None):
     return len(confirmados) + len(recebidos) + len(falhos)
 
 
+def tem_fila_para(node):
+    """Há evento esperando por este nó AGORA?
+
+    Usado na reconexão: a loja voltou, e o que a nuvem gravou enquanto ela
+    estava fora precisa descer JÁ, não no próximo tique do agendador. Entre
+    "voltei" e "recebi" havia até dez segundos de salão cego — e é justamente
+    o momento em que alguém está de pé no caixa esperando a conta.
+    """
+    from apps.synchronization.models import SyncEvent
+
+    return SyncEvent.objects.filter(
+        direction=Direction.OUTBOUND,
+        target_node=node,
+        status__in=[EventStatus.PENDING, EventStatus.FAILED],
+    ).exists()
+
+
 def resend_unconfirmed(node):
     """Reconexão: o que saiu e ninguém confirmou volta para PENDING.
 

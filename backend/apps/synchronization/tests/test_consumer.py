@@ -95,6 +95,50 @@ async def test_hello_marca_o_no_como_ativo(como_nuvem, no_loja):
     await com.disconnect()
 
 
+async def test_a_reconexao_avisa_da_fila_NA_HORA(como_nuvem, conta, no_loja, no_nuvem):
+    """A loja volta e recebe o aviso no mesmo handshake.
+
+    Este é o fecho do desvio para a nuvem: o terminal grava lá enquanto a loja
+    está fora, e essa venda precisa descer assim que a loja der sinal de vida.
+    O agendador avisa de dez em dez segundos — e a reconexão é exatamente o
+    instante em que a loja MAIS tem fila. Esperar o próximo tique deixa o
+    salão cego com alguém de pé no caixa esperando a conta.
+    """
+    await database_sync_to_async(SyncEvent.objects.create)(
+        account=conta,
+        source_node=no_nuvem,
+        target_node=no_loja,
+        direction=Direction.OUTBOUND,
+        entity_type="order",
+        entity_id=uuid.uuid4(),
+        operation="CREATE",
+        payload={"fields": {}},
+        sequence=1,
+    )
+
+    com = await _conectado(no_loja)
+    tipo, _ = await _ler(com)
+    assert tipo == MessageType.AUTHENTICATED
+
+    tipo, payload = await _ler(com)
+    assert tipo == MessageType.SYNC_AVAILABLE
+    assert payload["reason"] == "reconnect"
+    await com.disconnect()
+
+
+async def test_sem_fila_a_reconexao_nao_avisa(como_nuvem, no_loja):
+    """Aviso sem fila ensinaria a loja a pedir à toa a cada reconexão."""
+    com = await _conectado(no_loja)
+    tipo, _ = await _ler(com)
+    assert tipo == MessageType.AUTHENTICATED
+
+    # `receive_nothing` em vez de esperar exceção: `CancelledError` herda de
+    # `BaseException`, e `pytest.raises(Exception)` não a pegaria — o teste
+    # passaria por engano.
+    assert await com.receive_nothing(timeout=1)
+    await com.disconnect()
+
+
 async def test_token_invalido_derruba_a_conexao(como_nuvem, no_loja):
     com = _comunicador(token="token-errado")
     conectado, _ = await com.connect()

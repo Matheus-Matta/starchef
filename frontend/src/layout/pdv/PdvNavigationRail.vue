@@ -37,7 +37,6 @@ const props = defineProps({
   active: { type: String, default: "venda" },
   showOrders: { type: Boolean, default: true },
   showFinance: { type: Boolean, default: true },
-  showMerge: { type: Boolean, default: false },
   showCommands: { type: Boolean, default: true },
 });
 
@@ -50,7 +49,6 @@ const entries = computed(() => [
   // quando a família chega com quatro cartões, e ele não deve ter de
   // procurar num menu com o cliente esperando.
   ...(props.showCommands ? [{ key: "comandas", label: "Comandas", icon: "pi pi-qrcode" }] : []),
-  ...(props.showMerge ? [{ key: "conta-agrupada", label: "Juntar", icon: "pi pi-link" }] : []),
   { key: "mesas", label: "Mesas", icon: "pi pi-th-large" },
   ...(props.showFinance ? [{ key: "caixa", label: "Caixa", icon: "pi pi-wallet" }] : []),
 ]);

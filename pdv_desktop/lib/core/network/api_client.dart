@@ -6,8 +6,11 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'api_exception.dart';
+import 'cloud_fallback.dart';
 import 'data_signals.dart';
 import 'realtime_client.dart';
+
+part 'api_client_fallback.dart';
 
 /// Estado da ligação com o backend.
 ///
@@ -26,6 +29,14 @@ enum NetworkPhase {
 
   /// O servidor respondeu, mas recusando por sobrecarga (429/5xx).
   degraded,
+
+  /// A loja está fora e quem está atendendo é a NUVEM.
+  ///
+  /// É um estado que o operador precisa VER, e não um detalhe de transporte: o
+  /// que ele lança agora vive do outro lado até a loja voltar, e outro
+  /// terminal que ainda alcance a loja enxerga um salão diferente do dele.
+  /// Sem a faixa na tela, os dois acham que estão vendo a mesma coisa.
+  cloud,
 }
 
 /// Renova o access token e devolve o novo valor, ou `null` quando a sessão
@@ -40,7 +51,12 @@ class NetworkStatus {
   final Duration? retryAfter;
 
   bool get hasConnection =>
-      phase == NetworkPhase.online || phase == NetworkPhase.degraded;
+      phase == NetworkPhase.online ||
+      phase == NetworkPhase.degraded ||
+      phase == NetworkPhase.cloud;
+
+  /// Quem está atendendo é a nuvem, porque a loja não respondeu.
+  bool get servidoPelaNuvem => phase == NetworkPhase.cloud;
 
   @override
   bool operator ==(Object other) =>
@@ -64,8 +80,25 @@ class ApiClient {
     required String baseUrl,
     http.Client? client,
     this.requestTimeout = const Duration(seconds: 20),
+    CloudFallback? cloudFallback,
   }) : _baseUrl = baseUrl,
+       cloudFallback = cloudFallback ?? CloudFallback(),
        _client = client ?? http.Client();
+
+  /// A nuvem como SEGUNDA leitura, quando o backend da loja não responde.
+  ///
+  /// Só leitura: escrita não atravessa, porque a deduplicação por
+  /// `Idempotency-Key` vive no banco de cada backend e a nuvem nunca viu a
+  /// chave que a loja consumiu. Ver `CloudFallback`.
+  final CloudFallback cloudFallback;
+
+  /// De onde veio a ÚLTIMA leitura que chegou à tela.
+  ///
+  /// A tela mostra isso ao operador: o que ele lê da nuvem pode estar atrás do
+  /// que a loja tem, e o que ele lançar não aparece ali até a sincronização
+  /// rodar. Dado de outra origem sem aviso é pior que tela vazia — parece
+  /// atual.
+  ServerOrigin lastServerOrigin = ServerOrigin.loja;
 
   String _baseUrl;
   String get baseUrl => _baseUrl;
@@ -262,13 +295,21 @@ class ApiClient {
     // ao servidor e a resposta ter se perdido no caminho; quando o operador
     // repete o gesto, o backend reconhece a mesma chave e não duplica a venda.
     final operationId = method == 'GET' ? null : _nextOperationId();
-    final result = await _requestWithSessionRecovery(
+    final result = await _comPlanoB(
       method,
       path,
       query: query,
       body: body,
       accessToken: accessToken,
       operationId: operationId,
+      original: () => _requestWithSessionRecovery(
+        method,
+        path,
+        query: query,
+        body: body,
+        accessToken: accessToken,
+        operationId: operationId,
+      ),
     );
     if (method != 'GET') _signal(path);
     return result;
@@ -428,8 +469,11 @@ class ApiClient {
         'Não foi possível montar a requisição para $path: ${error.message}',
       );
     } on TimeoutException {
+      // PODE ter chegado e sido executada — só a resposta não voltou. É a
+      // única falha de rede em que repetir num outro backend é perigoso.
       throw _offline(
         'O servidor demorou mais de ${requestTimeout.inSeconds} segundos para responder.',
+        reachedServer: true,
       );
     } on SocketException catch (error) {
       throw _offline(
@@ -457,9 +501,13 @@ class ApiClient {
   /// `isConnectivity` é o que separa, na interface, a recusa que o operador
   /// precisa ler e resolver do estado contínuo de rede fora, que o indicador
   /// de conexão já mostra e não deve virar um alerta novo a cada chamada.
-  ApiException _offline(String message) {
+  ApiException _offline(String message, {bool reachedServer = false}) {
     _publishStatus(NetworkPhase.offline, error: message);
-    return ApiException(message, isConnectivity: true);
+    return ApiException(
+      message,
+      isConnectivity: true,
+      reachedServer: reachedServer,
+    );
   }
 
   void _publishStatus(

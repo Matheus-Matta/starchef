@@ -11,7 +11,7 @@
       />
       <DraftCartPanel
         :itens="rascunho.itens.value"
-        :comanda="rascunho.comanda.value"
+        :comandas="rascunho.comandas.value"
         :mesa="rascunho.mesa.value"
         :total="rascunho.total.value"
         :quantidade="rascunho.quantidadeDeItens.value"

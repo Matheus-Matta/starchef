@@ -3,26 +3,24 @@
     <!-- Sem comanda o pedido é de BALCÃO, e isso precisa estar dito: é a
          diferença entre o cliente levar o cupom agora e a conta ficar num
          cartão até ele sair. -->
-    <button
-      v-if="!comanda"
-      class="anexo__botao"
-      type="button"
+    <!-- Um cartão por linha: a mesa que paga junto é o caso, não a exceção,
+         e o cliente confere em voz alta "quanto é a minha?". -->
+    <!-- Um cartão por linha: a mesa que paga junto é o caso, não a exceção,
+         e o cliente confere em voz alta "quanto é a minha?". -->
+    <DraftAttachedCommand
+      v-for="atual in comandas"
+      :key="atual.id"
+      :comanda="atual"
       :disabled="disabled"
-      @click="abrir = true"
-    >
-      <span class="anexo__rotulo">Balcão</span>
-      <span class="anexo__acao">Incluir comanda</span>
-    </button>
+      @detach="$emit('detach', atual.id)"
+    />
 
-    <div v-else class="anexo__atual">
-      <span class="anexo__rotulo">
-        Comanda <strong>{{ comanda.number }}</strong>
-        <em v-if="mesa" class="anexo__mesa">mesa {{ mesa.number }}</em>
+    <button class="anexo__botao" type="button" :disabled="disabled" @click="abrir = true">
+      <span class="anexo__rotulo">{{ comandas.length ? "" : "Balcão" }}</span>
+      <span class="anexo__acao">
+        {{ comandas.length ? "Incluir outra comanda" : "Incluir comanda" }}
       </span>
-      <button class="anexo__soltar" type="button" :disabled="disabled" @click="$emit('detach')">
-        Retirar
-      </button>
-    </div>
+    </button>
 
     <div v-if="abrir" class="anexo__seletor">
       <CommandScannerInput
@@ -60,11 +58,12 @@ import { computed, ref, watch } from "vue";
 
 import CommandPickerList from "./CommandPickerList.vue";
 import CommandScannerInput from "./CommandScannerInput.vue";
+import DraftAttachedCommand from "./DraftAttachedCommand.vue";
 import { api } from "../../services/api";
 import { findCommandByCode } from "../../services/commandService";
 
 defineProps({
-  comanda: { type: Object, default: null },
+  comandas: { type: Array, default: () => [] },
   mesa: { type: Object, default: null },
   disabled: { type: Boolean, default: false },
 });
@@ -72,13 +71,15 @@ defineProps({
 const emit = defineEmits(["attach", "detach"]);
 
 const abrir = ref(false);
-const comandas = ref([]);
+const disponiveisNoServidor = ref([]);
 const carregando = ref(false);
 const erro = ref("");
 
 /** Comanda em fechamento não entra: o caixa está cobrando aquele cartão. */
 const disponiveis = computed(() =>
-  comandas.value.filter((item) => !item.closing_merge),
+  // Cartão sem valor não entra: ele não acrescenta um centavo à conta, e
+  // anexá-lo só prende um pedido a um cartão que não cobra nada.
+  disponiveisNoServidor.value.filter((item) => Number(item.pending_total || 0) > 0),
 );
 
 async function carregar() {
@@ -88,7 +89,7 @@ async function carregar() {
     const { data } = await api.get("/commands/", {
       params: { page_size: 200, is_active: true },
     });
-    comandas.value = data?.results || data || [];
+    disponiveisNoServidor.value = data?.results || data || [];
   } catch (exc) {
     erro.value = exc?.response?.data?.detail || "Não foi possível listar as comandas.";
   } finally {

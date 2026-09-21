@@ -66,12 +66,14 @@ class SyncEntry:
     #: Alternativas OR do filtro essencial, cada uma como kwargs de `filter`.
     #:
     #: Existe porque `essential_filter` é um `dict` e um dict só sabe dizer E.
-    #: A conta agrupada precisa de OU: o pedido de origem fica em `merged`,
-    #: que NÃO está em "abertos", mas ele precisa descer mesmo assim — o item
-    #: do destino aponta para ele por `origin_order`, e a FK ficaria sem alvo
-    #: na loja nova. Incluir `merged` globalmente em ABERTOS carregaria o
-    #: histórico inteiro; aqui desce só o que participa de uma consolidação
-    #: VIVA.
+    #: Serve ao caso em que uma linha FORA do recorte vivo precisa descer
+    #: mesmo assim, porque outra que desce aponta para ela e a FK ficaria sem
+    #: alvo na loja nova. Alargar o recorte principal resolveria também — e
+    #: carregaria o histórico inteiro junto.
+    #:
+    #: Hoje nenhuma entrada do catálogo usa: quem precisava era a conta
+    #: agrupada, que saiu quando a comanda virou bloco de notas. Fica porque o
+    #: problema volta na primeira FK que atravessar o recorte.
     essential_filter_any: tuple = ()
     #: Filtro aplicado SÓ na carga essencial, como kwargs de `QuerySet.filter`.
     #:

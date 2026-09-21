@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.core.tenant import tenant_context
 from apps.menu.models import Product, ProductCategory
-from apps.orders.models import Order, OrderItem
+from apps.orders.models import CommandItem, Order, OrderItem
 from apps.printers.models import Printer, Scale, ScaleReading
 from apps.printers.scale_command import (
     bind_command_to_scale,
@@ -142,9 +142,13 @@ def test_com_cartao_o_peso_entra_na_comanda(
     assert response.status_code == 201
 
     with tenant_context(account):
-        item = OrderItem.objects.get()
+        # O peso vira uma ANOTAÇÃO na comanda. Nenhum pedido é aberto: era
+        # esse gesto que prendia o cartão a um pedido que talvez ninguém fosse
+        # pagar.
+        item = CommandItem.objects.get()
         assert item.command_id == comanda.pk
-        assert item.order.order_type == Order.TYPE_COMMAND
+        assert item.command_status == CommandItem.STATUS_PENDENTE
+        assert not Order.objects.exists()
         comanda.refresh_from_db()
         assert comanda.status == Command.STATUS_OCCUPIED
 
@@ -165,9 +169,10 @@ def test_a_nota_de_pesagem_imprime_o_numero_da_comanda(
     with tenant_context(account):
         job = PrintJob.objects.get(job_type=PrintJob.TYPE_WEIGH)
     texto = job.payload["text_content"]
+    # O número do cartão é o que liga a etiqueta ao cliente no caixa. Sem ele,
+    # o papel na mão da pessoa não diz de quem é.
     assert f"COMANDA {comanda.number}" in texto
-    assert "/kg" in texto
-    assert job.payload["command"]["number"] == comanda.number
+    assert job.payload["command_number"] == comanda.number
 
 
 def test_a_segunda_pesagem_anota_de_novo_na_mesma_comanda(

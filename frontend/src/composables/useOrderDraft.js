@@ -9,13 +9,16 @@ import { materializeDraft } from "../services/orderDraftService";
  * tela até alguém de fora precisar do pedido (a cozinha, para imprimir; o
  * caixa, para receber). É `materializeDraft` quem faz essa passagem.
  *
- * A comanda aqui é um ATRIBUTO do rascunho, não um gesto que cria pedido.
+ * As comandas aqui são ATRIBUTOS do rascunho, não um gesto que cria pedido.
+ * São VÁRIAS porque a mesa que paga junto é o caso, não a exceção — e o pedido
+ * do caixa puxa as anotações pendentes de todas elas.
+ *
  * Escolher a comanda 13 e desistir não deixa o cartão ocupado — que era
  * exatamente o que acontecia quando a escolha disparava `open-command`.
  */
 export function useOrderDraft() {
   const itens = ref([]);
-  const comanda = ref(null);
+  const comandas = ref([]);
   const mesa = ref(null);
   const cliente = ref(null);
   const tipo = ref("counter");
@@ -85,21 +88,36 @@ export function useOrderDraft() {
     itens.value = itens.value.filter((linha) => linha._id !== localId);
   }
 
+  /**
+   * Anexa um cartão. Passar o MESMO de novo não duplica.
+   *
+   * A mesa vem do PRIMEIRO cartão: ela diz onde a conta está sentada, e quatro
+   * cartões da mesma mesa apontam para a mesma. O leitor dispara duas leituras
+   * com frequência, e virar duas linhas do mesmo cartão cobraria em dobro.
+   */
   function anexarComanda(escolhida, mesaDaComanda = null) {
-    comanda.value = escolhida;
-    mesa.value = mesaDaComanda;
-    tipo.value = escolhida ? "command" : "counter";
+    if (!escolhida?.id) return;
+    if (!comandas.value.some((atual) => atual.id === escolhida.id)) {
+      comandas.value = [...comandas.value, escolhida];
+    }
+    if (!mesa.value) mesa.value = mesaDaComanda;
+    tipo.value = "command";
   }
 
-  function soltarComanda() {
-    comanda.value = null;
-    mesa.value = null;
-    tipo.value = "counter";
+  /** Solta UM cartão, ou todos quando não se diz qual. */
+  function soltarComanda(commandId = null) {
+    comandas.value = commandId
+      ? comandas.value.filter((atual) => atual.id !== commandId)
+      : [];
+    if (!comandas.value.length) {
+      mesa.value = null;
+      tipo.value = "counter";
+    }
   }
 
   function limpar() {
     itens.value = [];
-    comanda.value = null;
+    comandas.value = [];
     mesa.value = null;
     cliente.value = null;
     tipo.value = "counter";
@@ -118,8 +136,7 @@ export function useOrderDraft() {
       return await materializeDraft({
         orderType: tipo.value,
         restaurantId,
-        commandId: comanda.value?.id || null,
-        tableId: mesa.value?.id || null,
+        commandIds: comandas.value.map((atual) => atual.id),
         customerId: cliente.value?.id || null,
         items: itens.value,
       });
@@ -130,7 +147,7 @@ export function useOrderDraft() {
 
   return {
     itens,
-    comanda,
+    comandas,
     mesa,
     cliente,
     tipo,

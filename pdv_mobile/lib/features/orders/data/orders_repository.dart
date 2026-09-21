@@ -8,6 +8,7 @@ import 'order_drafts.dart';
 
 export '../../../core/network/resource_page.dart';
 
+part 'orders_command_items.dart';
 part 'orders_commands.dart';
 part 'orders_queries.dart';
 

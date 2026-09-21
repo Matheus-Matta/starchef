@@ -232,6 +232,29 @@ class OrderViewSet(BaseTenantViewSet):
         dados["detached"] = resumo
         return Response(dados)
 
+    def _attending_user(self, restaurant):
+        """Quem esta atendendo, quando nao e quem gravou.
+
+        O Caixa Principal executa as operacoes do app do garcom com as
+        proprias credenciais — e ele quem tem a sessao com a nuvem. Sem esta
+        atribuicao o pedido nascia no nome do caixa e a comanda saia na cozinha
+        com "ATENDENTE: <caixa>", escondendo quem de fato atendeu a mesa.
+
+        `created_by` continua sendo quem gravou (verdade de auditoria); so o
+        atendimento e atribuido, e apenas a um usuario do mesmo restaurante.
+        """
+        raw = str(self.request.data.get("responsible_user") or "").strip()
+        if not raw:
+            return None
+        try:
+            return (
+                get_user_model()
+                .objects.filter(pk=raw, profile__restaurant=restaurant)
+                .first()
+            )
+        except (ValueError, ValidationError):
+            return None
+
     @action(detail=False, methods=["post"], url_path="create-with-item")
     def create_with_item(self, request):
         """Creates the order and first item in one transaction.
