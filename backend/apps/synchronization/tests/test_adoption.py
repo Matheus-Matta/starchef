@@ -109,7 +109,10 @@ def test_a_nuvem_nao_adota_registro_que_nasceu_na_loja(como_nuvem, conta, no_nuv
     assert adoption.origin_is_authority("product", NodeType.CLOUD) is False
     assert adoption.origin_is_authority("order", NodeType.CLOUD) is True
     assert adoption.origin_is_authority("order", NodeType.LOCAL) is False
-    # MANUAL nunca adota em silêncio, em sentido nenhum.
+    # Documento fiscal nunca adota, em sentido nenhum — e agora por ser
+    # FISCAL, não por ser MANUAL. A nota virou LOCAL_WINS para a nuvem aceitar
+    # as atualizações dela; sem a trava por entidade, isso teria autorizado a
+    # nuvem a APAGAR uma nota dela para dar lugar à da loja.
     assert adoption.origin_is_authority("invoice", NodeType.LOCAL) is False
     assert adoption.origin_is_authority("invoice", NodeType.CLOUD) is False
 

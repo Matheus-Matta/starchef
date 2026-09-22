@@ -6,7 +6,12 @@ last-write-wins — ele vira um SyncConflict e espera decisão humana.
 """
 import logging
 
-from apps.synchronization.constants import ConflictResolution, ConflictStatus, NodeType
+from apps.synchronization.constants import (
+    ENTIDADES_FISCAIS,
+    ConflictResolution,
+    ConflictStatus,
+    NodeType,
+)
 from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -15,6 +20,7 @@ logger = logging.getLogger(__name__)
 APLICAR = "apply"
 IGNORAR = "ignore"
 CONFLITO = "conflict"
+
 
 
 def decide(entity_type, *, local_version, remote_version, receiving_node_type, local_exists,
@@ -28,10 +34,9 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
     if not local_exists:
         return APLICAR
     if remote_version == local_version:
-        # Sem fonte de versão, "igual" é só a constante 1 comparada com ela
-        # mesma — não quer dizer "já apliquei". Deixa passar e quem decide é a
-        # comparação de CONTEÚDO em `apply._atualizar`, que não grava nada
-        # quando os campos vêm iguais.
+        # Sem fonte de versão, "igual" é a constante 1 comparada com ela mesma
+        # — não quer dizer "já apliquei". Quem decide é a comparação de
+        # CONTEÚDO em `apply._atualizar`, que não grava campos iguais.
         from apps.synchronization.services import serialization
 
         if serialization.tem_fonte_de_versao(local_instance):
@@ -61,19 +66,20 @@ def _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
     conflito, e a conta seguia chamando "(aguardando sincronização)" com o nome
     certo parado dentro do payload.
 
-    As três condições juntas são o que impede que a correção vire outro
-    defeito. A exigência de ter nascido aqui é a mais importante: sem ela, um
-    evento ATRASADO sobrescreveria um mais novo da mesma origem, e a ordem de
-    entrega deixaria de valer. Se a linha veio da sincronização, a versão
-    decide como sempre decidiu.
+    A exigência de ter nascido aqui é a mais importante: sem ela um evento
+    ATRASADO sobrescreveria um mais novo da mesma origem. Se a linha veio da
+    sincronização, a versão decide como sempre decidiu.
 
-    MANUAL fica de fora: documento fiscal não se resolve em silêncio, nem a
-    favor da nuvem.
+    O fiscal fica de fora: para ele a VERSÃO decide sempre, e um evento
+    atrasado da loja não sobrescreve um retrato mais novo só porque a linha do
+    outro lado nasceu lá.
     """
     from apps.synchronization.services import adoption
 
     entrada = registry.get(entity_type)
     if entrada is None or entrada.conflict_policy == ConflictResolution.MANUAL:
+        return False
+    if entity_type in ENTIDADES_FISCAIS:
         return False
 
     if entrada.flow == "cloud_to_local":
@@ -94,11 +100,10 @@ def _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
     Então o que chegou não é edição concorrente — é atualização que ele
     perdeu, e recusá-la seria guardar um retrato velho de propósito.
 
-    É a regra que faz o desvio para a nuvem valer a pena. Com a loja fora, o
-    terminal vende pela nuvem; linha NOVA desce sem problema (não há o que
-    conflitar), mas linha que já existe na loja — a comanda que passou a estar
-    ocupada, o pedido que ganhou item — voltava como conflito e nunca era
-    aplicada. A loja seguia mostrando a comanda livre com itens dentro.
+    É a regra que faz o desvio para a nuvem valer a pena: com a loja fora, o
+    terminal vende pela nuvem, e a linha que já existe na loja — a comanda que
+    passou a estar ocupada, o pedido que ganhou item — voltava como conflito e
+    nunca era aplicada.
 
     A pergunta que autoriza é estreita de propósito: *a loja mexeu nisto
     enquanto esteve fora?* Se a versão local é anterior ao último contato com
@@ -108,11 +113,11 @@ def _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
     """
     from apps.synchronization.services import nodes
 
-    if _politica(entity_type) == ConflictResolution.MANUAL:
-        # Documento fiscal não entra na exceção, e não é só disciplina: o PDV
-        # nunca desvia o fiscal para a nuvem, então uma divergência aqui não
-        # nasceu de queda nenhuma. Veio de outro lugar — que é exatamente o
-        # que precisa de gente olhando.
+    # Fiscal e MANUAL ficam de fora: o PDV nunca desvia o fiscal para a nuvem,
+    # então uma divergência aqui não nasceu de queda nenhuma. A checagem é pela
+    # ENTIDADE e não só pela política porque a nota virou `LOJA` — amarrá-la à
+    # política desligaria esta proteção sem nada no diff dizendo isso.
+    if entity_type in ENTIDADES_FISCAIS or _politica(entity_type) == ConflictResolution.MANUAL:
         return False
     if receiving_node_type != NodeType.LOCAL:
         return False

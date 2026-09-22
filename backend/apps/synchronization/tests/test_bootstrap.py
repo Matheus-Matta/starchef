@@ -345,10 +345,20 @@ def test_a_nota_do_pedido_aberto_desce_junto(como_nuvem, no_loja, conta, cenario
         )
 
 
-def test_a_nota_continua_com_resolucao_manual(como_nuvem):
-    """Semear não pode afrouxar a regra: divergência fiscal vira conflito."""
+def test_a_nota_e_da_LOJA_e_a_nuvem_espelha(como_nuvem):
+    """A nota é de mão única, e a política precisa dizer isso.
+
+    Era `MANUAL`, e o rigor estava no lado errado: só a PRIMEIRA chegada era
+    aplicada na nuvem; `error` → `issued`, o protocolo e a chave viravam
+    conflito e nunca subiam. `LOJA` aceita o que a autora manda — e continua
+    recusando a nuvem tentar sobrescrever a nota da loja.
+    """
     from apps.synchronization.constants import ConflictResolution
     from apps.synchronization.services.registry import registry
 
-    assert registry.require("invoice").conflict_policy == ConflictResolution.MANUAL
-    assert registry.require("invoice_item").conflict_policy == ConflictResolution.MANUAL
+    for tipo in ("invoice", "invoice_item"):
+        entrada = registry.require(tipo)
+        assert entrada.conflict_policy == ConflictResolution.LOCAL_WINS
+        assert entrada.flow == "local_to_cloud", (
+            "a política LOJA só é segura porque a nuvem nunca é autora da nota"
+        )

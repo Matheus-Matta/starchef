@@ -369,13 +369,27 @@ _e("payment", "payments.Payment", conflict_policy=LOJA, flow="both",
 # teve NFC-e emitida na nuvem e não sabe disso, ela emite outra — e documento
 # fiscal em duplicidade não se apaga, só se cancela, um a um, dentro do prazo.
 #
-# `MANUAL` continua valendo: a nota entra na semeadura porque ainda não existe
-# na loja, mas uma divergência posterior vira SyncConflict para uma pessoa
-# decidir. Documento fiscal nunca se resolve em silêncio (§15).
-_e("invoice", "invoices.Invoice", conflict_policy=MANUAL, flow="local_to_cloud",
+# A POLÍTICA É `LOJA`, e `MANUAL` estava errado aqui — não por rigor demais,
+# por rigor no lado errado.
+#
+# A nota é de MÃO ÚNICA: a loja emite, a nuvem espelha. Com `MANUAL`, só a
+# PRIMEIRA chegada era aplicada (a linha ainda não existia lá); toda alteração
+# seguinte caía em `_decidir_versao_nova` e virava SyncConflict. E alteração é
+# a vida inteira do documento: `error` → `pending` → `issued`, o protocolo de
+# autorização, a chave, o XML, a URL do DANFE.
+#
+# O resultado era invisível do lado de cá — a loja recebia ACK e zerava a
+# fila — enquanto a nuvem acumulava conflitos e guardava para sempre o
+# primeiro retrato da nota, normalmente o de ERRO.
+#
+# `LOJA` diz o que de fato vale: a autora é a loja, e a nuvem aceita o que ela
+# manda. O §15 continua respeitado no lado que importa — a nuvem tentando
+# sobrescrever a nota da loja segue virando CONFLITO, e `ENTIDADES_FISCAIS`
+# em `conflicts.py` impede que até uma queda de conexão autorize isso.
+_e("invoice", "invoices.Invoice", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("order", "fiscal_profile"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
-_e("invoice_item", "invoices.InvoiceItem", conflict_policy=MANUAL, flow="local_to_cloud",
+_e("invoice_item", "invoices.InvoiceItem", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("invoice",),
    seed_to_local=True, essential_filter={"invoice__order__status__in": ABERTOS})
 

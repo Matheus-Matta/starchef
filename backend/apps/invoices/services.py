@@ -542,7 +542,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
         if not items:
             raise ValidationError("Pedido sem itens faturaveis.")
 
-        number = config.next_number
+        number = _proximo_numero_livre(config)
         emission_dt = timezone.now()
         access_key, numeric_code = build_access_key(
             uf=config.uf,
@@ -740,6 +740,53 @@ def cancel_fiscal_invoice(invoice, reason="", user=None):
                 metadata={"fiscal_event": transmitted_event},
             )
             return locked
+
+
+def _proximo_numero_livre(config):
+    """O próximo número que AINDA NÃO FOI USADO nesta série e ambiente.
+
+    `config.next_number` sozinho era um voto de confiança: qualquer coisa que
+    mexesse no contador sem olhar as notas já gravadas — restauração de
+    backup, edição pelo admin, a sincronização do cadastro com o provedor, uma
+    base de demonstração semeada com números altos — fazia a emissão seguinte
+    repetir um número já emitido.
+
+    E repetir passava em silêncio: não há restrição de unicidade no banco, e a
+    SEFAZ só recusaria na transmissão, com a venda já fechada e o cliente
+    esperando o cupom. Foi assim que os números 68, 69 e 71 apareceram duas
+    vezes na mesma série.
+
+    O ambiente entra na conta porque homologação e produção numeram
+    separado: a mesma série 1 tem uma nota 71 de teste e uma 71 de verdade, e
+    elas não se atrapalham.
+
+    Pular não INVENTA buraco: um número já gasto por outra nota não estava
+    disponível de qualquer forma. E o contador anda para frente junto, para a
+    próxima emissão não repetir a busca.
+    """
+    from apps.invoices.models import Invoice
+
+    usados = set(
+        Invoice.all_objects.filter(
+            branch_id=config.branch_id,
+            series=config.series,
+            document_model=config.document_model,
+            environment=config.environment,
+        )
+        .exclude(number="")
+        .values_list("number", flat=True)
+    )
+    numero = config.next_number
+    while str(numero) in usados:
+        numero += 1
+    if numero != config.next_number:
+        logging.getLogger(__name__).warning(
+            "Numeracao fiscal pulou de %s para %s: os numeros no meio ja estavam "
+            "gravados nesta serie/ambiente.",
+            config.next_number,
+            numero,
+        )
+    return numero
 
 
 def _refresh_emission_for_retry(invoice, config):

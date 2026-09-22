@@ -25,7 +25,7 @@ que é o comportamento certo para uma divergência que ninguém previu.
 """
 import logging
 
-from apps.synchronization.constants import ConflictResolution, Direction, EventStatus, NodeType
+from apps.synchronization.constants import ENTIDADES_FISCAIS, ConflictResolution, Direction, EventStatus, NodeType
 from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,11 @@ def origin_is_authority(entity_type, receiving_node_type):
     """A origem manda nesta entidade, neste sentido?"""
     entrada = registry.get(entity_type)
     if entrada is None:
+        return False
+    if entity_type in ENTIDADES_FISCAIS:
+        # Adotar APAGA a linha local. Documento fiscal em duplicidade não se
+        # apaga: cancela-se, um a um, dentro do prazo — e por gente, não por
+        # uma colisão de chave única no meio da madrugada.
         return False
     politica = entrada.conflict_policy
     if politica == ConflictResolution.CLOUD_WINS:

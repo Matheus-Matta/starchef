@@ -185,3 +185,12 @@ class CloseCode:
     INCOMPATIBLE = 4426
     #: Outro processo autenticou com a MESMA identidade de nó e assumiu a vez.
     SUPERSEDED = 4409
+
+
+#: O que a loja EMITE e a nuvem só espelha. Duas regras do §15 passam longe
+#: destas entidades: a **atualização perdida** (o PDV nunca desvia o fiscal,
+#: então divergência aqui não nasceu de queda) e a **adoção**, que APAGA a
+#: linha local — e nota em duplicidade se cancela, não se apaga. Mora aqui
+#: porque amarrá-la à política já se mostrou frágil: trocar `MANUAL` por
+#: `LOJA` desligou as duas proteções de uma vez, sem nada no diff.
+ENTIDADES_FISCAIS = frozenset({"invoice", "invoice_item"})
