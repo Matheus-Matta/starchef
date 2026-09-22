@@ -197,7 +197,17 @@ def validate_focus_company_config(config):
 
 
 def build_focus_company_payload(config, *, include_certificate=True):
-    """Converte o cadastro fiscal local no contrato de empresa da Focus."""
+    """Converte o cadastro fiscal local no contrato de empresa da Focus.
+
+    O CSC e o certificado saem de `segredos_de`, e não direto do model: numa
+    LOJA eles não estão gravados — são emprestados da nuvem na hora de emitir
+    (ver `emission_secrets`). Lendo do model, a conferência de pré-voo
+    recusava com "ID do CSC: obrigatorio para emitir NFC-e" mesmo com o CSC
+    na mão, e a emissão parava antes de consultar o empréstimo.
+    """
+    from apps.invoices.emission_secrets import segredos_de
+
+    segredos = segredos_de(config)
     restaurant = config.restaurant
     branch = config.branch
     is_production = config.environment == FiscalConfig.ENV_PRODUCTION
@@ -225,10 +235,10 @@ def build_focus_company_payload(config, *, include_certificate=True):
         "reaproveita_numero_nfce_contingencia": is_nfce,
     }
     if include_certificate:
-        encoded_certificate = certificate_base64(config)
+        encoded_certificate = segredos.certificate_base64
         if encoded_certificate:
             payload["arquivo_certificado_base64"] = encoded_certificate
-            payload["senha_certificado"] = config.certificate_password
+            payload["senha_certificado"] = segredos.certificate_password
     if is_nfe:
         suffix = "producao" if is_production else "homologacao"
         payload[f"serie_nfe_{suffix}"] = str(config.series)
@@ -237,10 +247,10 @@ def build_focus_company_payload(config, *, include_certificate=True):
         suffix = "producao" if is_production else "homologacao"
         payload[f"serie_nfce_{suffix}"] = str(config.series)
         payload[f"proximo_numero_nfce_{suffix}"] = str(config.next_number)
-        if config.csc_token:
-            payload[f"csc_nfce_{suffix}"] = config.csc_token
-        if config.csc_id:
-            payload[f"id_token_nfce_{suffix}"] = int(config.csc_id)
+        if segredos.csc_token:
+            payload[f"csc_nfce_{suffix}"] = segredos.csc_token
+        if segredos.csc_id:
+            payload[f"id_token_nfce_{suffix}"] = int(segredos.csc_id)
     return _clean_payload(payload)
 
 

@@ -188,3 +188,29 @@ def test_sem_token_em_lugar_nenhum_o_provedor_RECUSA(config, monkeypatch):
         FocusNfeProvider._token(config)
 
     assert "sem token para o ambiente selecionado" in str(falha.value)
+
+
+def test_o_PRE_VOO_enxerga_o_CSC_emprestado(config, nuvem_responde):
+    """O buraco que sobrou do primeiro conserto.
+
+    `_token` e o QR já consultavam o empréstimo, mas `unavailable_reason` lia
+    o CSC direto do model e recusava com "ID do CSC: obrigatorio para emitir
+    NFC-e" — com o CSC na mão. A emissão parava ANTES de chegar ao provedor,
+    então nenhum dos testes anteriores pegava.
+    """
+    from apps.invoices.focus import company_payload_missing_fields
+
+    faltando = {issue["field"] for issue in company_payload_missing_fields(config)}
+
+    assert "csc_id" not in faltando, "o pré-voo ignorou o CSC emprestado"
+    assert "csc_token" not in faltando
+
+
+def test_o_payload_da_empresa_LEVA_o_certificado_emprestado(config, nuvem_responde):
+    """Cadastrar a empresa na Focus a partir da loja também precisa dele."""
+    from apps.invoices.focus import build_focus_company_payload
+
+    payload = build_focus_company_payload(config)
+
+    assert payload["arquivo_certificado_base64"] == "Y2VydGlmaWNhZG8="
+    assert payload["senha_certificado"] == "senha-do-a1"
