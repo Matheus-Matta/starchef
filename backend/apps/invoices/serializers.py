@@ -68,6 +68,7 @@ class FiscalConfigSerializer(TenantModelSerializer):
     focus_account_configured = serializers.SerializerMethodField()
     focus_company_dry_run = serializers.SerializerMethodField()
     has_certificate = serializers.SerializerMethodField()
+    account_allows_local_fiscal = serializers.SerializerMethodField()
     has_certificate_password = serializers.SerializerMethodField()
     certificate_password = serializers.CharField(
         write_only=True,
@@ -113,6 +114,17 @@ class FiscalConfigSerializer(TenantModelSerializer):
 
     def get_focus_connected(self, obj):
         return bool(obj.focus_company_id and (obj.focus_token_production or obj.focus_token_homologation))
+
+    def get_account_allows_local_fiscal(self, obj):
+        """A trava DE CIMA da emissão local, para a tela poder explicá-la.
+
+        A autorização mora na conta, não na configuração fiscal — então ela não
+        vem em `fields = "__all__"`. Sem este campo a tela só poderia mostrar o
+        interruptor da loja, e ligar sem efeito é pior do que não poder ligar:
+        o operador acha que ativou.
+        """
+        conta = getattr(obj, "account", None)
+        return bool(getattr(conta, "local_fiscal_allowed", False))
 
     def get_focus_missing_fields(self, obj):
         """O que ainda falta para a Focus aceitar a empresa, campo a campo.

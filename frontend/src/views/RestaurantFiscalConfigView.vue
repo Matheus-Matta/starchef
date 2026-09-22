@@ -201,6 +201,12 @@
         @certificate-selected="onSefazCertificateSelected"
       />
 
+      <LocalFiscalSection
+        :config="form"
+        :account-allows="form.account_allows_local_fiscal === true"
+        @update-field="updateFiscalField"
+      />
+
       <section v-if="form.provider === 'focus_nfe'" class="rfiscal__card">
         <div class="rfiscal__card-head">
           <div>
@@ -288,6 +294,7 @@ import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 import { useToast } from "primevue/usetoast";
 
+import LocalFiscalSection from "../components/restaurant/LocalFiscalSection.vue";
 import NfceCertificateSection from "../components/restaurant/NfceCertificateSection.vue";
 import { api } from "../services/api";
 import { ResourceService } from "../services/ResourceService";
@@ -340,6 +347,8 @@ const EDITABLE_FIELDS = [
   "provider", "document_model", "environment", "crt", "series", "is_active",
   "corporate_name", "trade_name", "cnpj", "ie", "address_line", "address_number", "district", "city", "city_ibge", "uf", "zip_code",
   "csc_id", "qr_base_url", "portal_url", "dfe_ult_nsu",
+  // Emissão local: o endereço do Comunicador e as duas chaves que a ligam.
+  "local_fiscal_enabled", "local_fiscal_contingency", "local_fiscal_url",
 ];
 // Em branco significa "não alterar" — o GET nunca devolve segredo.
 const SECRET_FIELDS = ["csc_token", "provider_token", "certificate_password"];
@@ -363,6 +372,10 @@ const form = reactive({
   city_ibge: "",
   uf: "",
   zip_code: "",
+  local_fiscal_enabled: false,
+  local_fiscal_contingency: false,
+  local_fiscal_url: "",
+  account_allows_local_fiscal: false,
   csc_id: "",
   csc_token: "",
   csc_token_configured: false,
