@@ -79,6 +79,16 @@ def montar_pacote(no):
         # O CSC monta o QR Code da NFC-e no terminal.
         "csc_id": config.csc_id or "",
         "csc_token": config.csc_token or "",
+        # O TOKEN DO PROVEDOR faltava, e sem ele o pacote não emitia nada: a
+        # loja abria o envelope com o certificado e o CSC na mão e ainda
+        # ouvia "empresa ainda sem token para o ambiente selecionado".
+        #
+        # São dois por empresa, um por ambiente, e mandar os dois é o certo:
+        # o ambiente é decidido na loja, e o pacote não sabe se o operador vai
+        # virar a chave para produção antes de o cache expirar.
+        "focus_token_homologation": config.focus_token_homologation or "",
+        "focus_token_production": config.focus_token_production or "",
+        "provider_token": config.provider_token or "",
         # O certificado A1 e sua senha, para a assinatura local quando o
         # Comunicador estiver em uso.
         "certificate_base64": certificate_base64(config),

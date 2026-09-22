@@ -20,6 +20,7 @@ from django.utils.dateparse import parse_datetime
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
+from apps.invoices.emission_secrets import segredos_de
 from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.invoices.fiscal import (
     build_access_key,
@@ -543,6 +544,11 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
             raise ValidationError("Pedido sem itens faturaveis.")
 
         number = _proximo_numero_livre(config)
+        # O CSC pode não estar gravado aqui: a loja não recebe segredo de
+        # emissão pela sincronização. Resolvido UMA vez por emissão — o
+        # empréstimo tem cache em memória, mas duas chamadas seriam duas
+        # respostas diferentes se a nuvem rotacionasse no meio.
+        _segredos = segredos_de(config)
         emission_dt = timezone.now()
         access_key, numeric_code = build_access_key(
             uf=config.uf,
@@ -555,8 +561,8 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
         qr_data = build_nfce_qrcode(
             access_key=access_key,
             environment=config.environment,
-            csc_id=config.csc_id,
-            csc_token=config.csc_token,
+            csc_id=_segredos.csc_id,
+            csc_token=_segredos.csc_token,
             base_url=config.qr_base_url,
         )
 
@@ -793,6 +799,7 @@ def _refresh_emission_for_retry(invoice, config):
     """Atualiza dhEmi e os dados locais derivados antes de uma retransmissao."""
 
     emission_dt = timezone.now()
+    _segredos = segredos_de(config)
     fiscal_payload = dict(invoice.fiscal_payload or {})
     access_key, numeric_code = build_access_key(
         uf=config.uf,
@@ -808,8 +815,8 @@ def _refresh_emission_for_retry(invoice, config):
     invoice.qr_code_data = build_nfce_qrcode(
         access_key=access_key,
         environment=config.environment,
-        csc_id=config.csc_id,
-        csc_token=config.csc_token,
+        csc_id=_segredos.csc_id,
+        csc_token=_segredos.csc_token,
         base_url=config.qr_base_url,
     )
     fiscal_payload.update({"cNF": numeric_code, "emission": emission_dt.isoformat()})

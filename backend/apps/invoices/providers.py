@@ -161,7 +161,9 @@ class FocusNfeProvider(FiscalProvider):
         if not base_url:
             environment = "producao" if config.environment == config.ENV_PRODUCTION else "homologacao"
             return f"A URL de {environment} da Focus NFe nao esta configurada para esta conta."
-        token = config.focus_token_production if config.environment == config.ENV_PRODUCTION else config.focus_token_homologation
+        from apps.invoices.emission_secrets import segredos_de
+
+        token = segredos_de(config).token_do_provedor(config.environment)
         if not token:
             return "A empresa ainda nao possui token Focus para o ambiente selecionado. Sincronize o cadastro fiscal."
         return None
@@ -205,11 +207,13 @@ class FocusNfeProvider(FiscalProvider):
 
     @staticmethod
     def _token(config):
-        token = (
-            config.focus_token_production
-            if config.environment == config.ENV_PRODUCTION
-            else config.focus_token_homologation
-        )
+        # O token pode não estar GRAVADO aqui: a loja não recebe segredo de
+        # emissão pela sincronização (ver `emission_secrets`). Quando falta,
+        # ele é pedido emprestado à nuvem, usado e descartado — nunca vai ao
+        # disco desta máquina.
+        from apps.invoices.emission_secrets import segredos_de
+
+        token = segredos_de(config).token_do_provedor(config.environment)
         if not token:
             raise FiscalConfigurationError(
                 "Focus NFe: empresa ainda sem token para o ambiente selecionado. Sincronize o cadastro fiscal."
