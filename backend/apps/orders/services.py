@@ -549,6 +549,17 @@ def create_order_with_item(
             restaurant=restaurant,
             order_type=order_type,
             command=command,
+            # A MESA TAMBÉM VAI. A view já a conferiu (restaurante, ativa) e
+            # devolve 400 para uma mesa inválida — conferir e depois descartar
+            # é o pior dos dois mundos: a chamada diz "esta conta é da mesa 7",
+            # o servidor concorda e grava o pedido sem mesa nenhuma.
+            #
+            # Sem isso, a conta agrupada aberta sobre a mesa nascia solta: a
+            # mesa não ficava ocupada, o cupom não dizia de onde era, e
+            # `free_table_if_empty(order.table)` no pagamento não tinha o que
+            # liberar. Com comanda informada, `create_order` sobrescreve com a
+            # mesa DO CARTÃO — é ela que manda no vínculo.
+            table=table,
             user=user,
             responsible_user=responsible_user,
         )

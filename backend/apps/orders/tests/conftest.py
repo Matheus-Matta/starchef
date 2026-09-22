@@ -107,3 +107,62 @@ def mesa_da_familia(account, restaurant, branch, manager_user, produto, mesa):
         )
         for _ in range(3)
     ]
+
+
+# ── A API, como os dois PDVs a chamam ───────────────────────────────────────
+#
+# Os testes de matriz batem no HTTP de propósito. As regras já têm cobertura
+# no nível de serviço, e ela passava inteira enquanto `create-with-item`
+# recusava a conta agrupada: o defeito estava na porta, não na regra.
+
+ROTA = "/api/v1/orders"
+
+
+def criar_com_item(api, *, restaurant, produto, tipo, quantidade=1, **extra):
+    """`create-with-item`: o pedido nasce com o primeiro item, numa transação."""
+    return api.post(
+        f"{ROTA}/create-with-item/",
+        {
+            "order_type": tipo,
+            "restaurant": str(restaurant.pk),
+            "item": {"product": str(produto.pk), "quantity": quantidade},
+            **extra,
+        },
+        format="json",
+    )
+
+
+def criar_vazio(api, *, restaurant, tipo, **extra):
+    """O pedido que nasce sem nada: é assim que a conta só de comandas abre."""
+    return api.post(
+        f"{ROTA}/",
+        {"order_type": tipo, "restaurant": str(restaurant.pk), **extra},
+        format="json",
+    )
+
+
+def incluir_item(api, pedido_id, produto, quantidade=1):
+    return api.post(
+        f"{ROTA}/{pedido_id}/items/",
+        {"product": str(produto.pk), "quantity": quantidade},
+        format="json",
+    )
+
+
+def anexar(api, pedido_id, comandas):
+    return api.post(
+        f"{ROTA}/{pedido_id}/attach-commands/",
+        {"commands": [str(c) for c in comandas]},
+        format="json",
+    )
+
+
+def pagar(api, pedido_id, metodo, valor, chave=None):
+    corpo = {"payment_method": str(metodo.pk), "amount": str(valor)}
+    if chave:
+        corpo["idempotency_key"] = chave
+    return api.post(f"{ROTA}/{pedido_id}/pay/", corpo, format="json")
+
+
+def ler(api, pedido_id):
+    return api.get(f"{ROTA}/{pedido_id}/").data

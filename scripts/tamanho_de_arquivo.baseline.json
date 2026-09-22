@@ -57,7 +57,7 @@
     "backend/apps/orders/command_billing.py": 301,
     "backend/apps/orders/models.py": 367,
     "backend/apps/orders/serializers.py": 261,
-    "backend/apps/orders/services.py": 1221,
+    "backend/apps/orders/services.py": 1232,
     "backend/apps/orders/tests/test_command_billing.py": 406,
     "backend/apps/orders/views.py": 766,
     "backend/apps/payments/models.py": 327,
