@@ -145,6 +145,7 @@ jobs:
           context: backend
           build-args: |
             REQUIREMENTS=production
+            APP_VERSION=${{ steps.meta.outputs.version }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -27,6 +27,16 @@ ARG REQUIREMENTS=development
 # files.pythonhosted.org" atrás de proxy corporativo que intercepta HTTPS).
 # Vazio por padrão — o build de produção não muda.
 ARG PIP_TRUSTED_HOST=""
+# A VERSÃO DO BUILD, gravada na imagem.
+#
+# O nó a declara no HELLO e ela vira a ficha "esta loja está na versão X" no
+# admin da nuvem. Enquanto dependia de uma variável no `.env` de cada loja, ela
+# envelhecia em silêncio — e a ficha mentia sobre a única coisa que ela conta.
+#
+# Vazio no build local é o certo: só o CI, que constrói a partir da tag, sabe
+# o número de verdade.
+ARG APP_VERSION=""
+ENV STARCHEF_APP_VERSION=${APP_VERSION}
 COPY requirements /app/requirements
 RUN PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}" pip install -r requirements/${REQUIREMENTS}.txt
 

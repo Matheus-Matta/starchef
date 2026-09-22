@@ -47,7 +47,21 @@ SYNC_BATCH_MAX_BYTES = config("SYNC_BATCH_MAX_BYTES", default=1048576, cast=int)
 # Retenção: só apaga evento JÁ CONFIRMADO pelo outro lado. O que falhou fica.
 SYNC_RETENTION_DAYS = config("SYNC_RETENTION_DAYS", default=30, cast=int)
 
-SYNC_APP_VERSION = config("SYNC_APP_VERSION", default="")
+#: Qual build está rodando neste nó. É RÓTULO, não trava: quem recusa conexão
+#: incompatível é `protocol_version`, que é constante no código. Este valor só
+#: é gravado na ficha do nó e mostrado no admin — para responder "a loja do
+#: cliente está em qual versão?" sem ligar para lá.
+#:
+#: Por isso ele NÃO se escreve à mão. Mantido na env, envelhecia sozinho: a
+#: loja rodou meses declarando 3.0.14 com a imagem em 3.0.22, e a ficha na
+#: nuvem mentia justamente sobre o que ela existe para contar. A imagem sabe a
+#: própria versão (`STARCHEF_APP_VERSION`, gravada no build), e é ela que vale.
+#:
+#: A env continua aceita e tem precedência — serve para quem roda fora de
+#: container, ou para forçar um valor num diagnóstico.
+SYNC_APP_VERSION = config("SYNC_APP_VERSION", default="") or config(
+    "STARCHEF_APP_VERSION", default=""
+)
 
 #: Filas Celery da sincronização (§12). Separadas para que uma carga total não
 #: fique atrás de mil retentativas na mesma fila.
