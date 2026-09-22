@@ -70,6 +70,7 @@ import 'paid_order_follow_ups.dart';
 import 'table_details_panel.dart';
 
 import '../../orders/data/order_draft.dart';
+import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';
 import '../../orders/data/order_draft_commands.dart';
 import '../../orders/data/order_draft_materializer.dart';
@@ -1131,28 +1132,6 @@ class _HomePageState extends State<HomePage>
     if (selection == 'logout') widget.controller.logout();
   }
 
-  /// Volta à tela inicial do atendimento.
-  ///
-  /// A volta é imediata: o cardápio e as mesas já estão em memória e mudam
-  /// pouco. A atualização segue por baixo, sem prender o operador entre um
-  /// pedido e o próximo.
-  /// O pedido aberto nao tem nada dentro?
-  ///
-  /// Item cancelado nao conta: uma comanda em que tudo foi cancelado continua
-  /// sem conteudo, e prende a mesa do mesmo jeito.
-  bool get _activeOrderIsEmpty {
-    if (activeOrder == null) return false;
-    if (const {
-      'paid',
-      'cancelled',
-      'refunded',
-    }.contains('${activeOrder?['status']}')) {
-      return false;
-    }
-    final hasItems = orderItems.any(OrderItemStatus.countsTowardBill);
-    return !hasItems && registeredPayments.isEmpty;
-  }
-
   /// Descarta o pedido que foi aberto e não virou nada.
   ///
   /// O fluxo atual só cria ao incluir o primeiro item, mas pedidos vazios de
@@ -1202,9 +1181,49 @@ class _HomePageState extends State<HomePage>
   @override
   void _leaveActiveOrder({String? except}) {
     final current = activeOrder;
-    if (current == null || !_activeOrderIsEmpty) return;
+    if (current == null) return;
     if (except != null && '${current['id']}' == except) return;
-    unawaited(_discardEmptyOrder(current));
+    switch (decideOrderExit(
+      order: current,
+      items: orderItems,
+      hasPayments: registeredPayments.isNotEmpty,
+    )) {
+      case OrderExit.keep:
+        return;
+      case OrderExit.discard:
+        unawaited(_discardEmptyOrder(current));
+      case OrderExit.releaseCommands:
+        unawaited(_releaseCommandsAndDiscard(current));
+    }
+  }
+
+  /// Devolve os cartões e descarta a conta que sobrou.
+  ///
+  /// `detach-commands` põe as anotações de volta em pendente e apaga os itens
+  /// que eram cópia delas — o consumo continua vivo no cartão, que volta a
+  /// estar em uso. Só depois o pedido é descartado, já sem nada dentro.
+  Future<void> _releaseCommandsAndDiscard(Map<String, dynamic> order) async {
+    final cartoes = commandsHeldBy(orderItems).toList();
+    if (cartoes.isNotEmpty) {
+      try {
+        await api.post(
+          '/orders/${order['id']}/detach-commands/',
+          body: {'commands': cartoes},
+          accessToken: token,
+        );
+      } catch (error) {
+        // Falhou soltar: NÃO descarte. Cancelar agora marcaria o consumo do
+        // cliente como perda, que é pior do que a conta ficar aberta — ela
+        // ainda pode ser concluída ou cancelada de propósito pela tela de
+        // Pedidos.
+        AppLogger.instance.warning(
+          'comandas_nao_soltas',
+          data: {'pedido': '${order['id']}', 'causa': '$error'},
+        );
+        return;
+      }
+    }
+    await _discardEmptyOrder(order);
   }
 
   /// Apaga os rascunhos deste terminal que ficaram órfãos.

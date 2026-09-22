@@ -112,3 +112,36 @@ def test_o_proximo_pagamento_NAO_ve_as_anotacoes_ja_cobradas(
     _pagar_tudo(conta_com_comanda, manager_user, dinheiro)
 
     assert list(pending_items_of([comanda.pk])) == []
+
+
+def test_pagar_TIRA_o_cartao_da_mesa(
+    contexto_tenant, restaurant, branch, manager_user, produto, mesa, dinheiro,
+    sem_caixa_obrigatorio, account,
+):
+    """Cartão livre não pode continuar sentado.
+
+    O salão decide ocupação pelas comandas vinculadas. Um cartão pago que
+    segue na mesa a mantém ocupada para o próximo cliente — e o operador,
+    olhando o mapa, procura uma conta que já foi embora.
+    """
+    from apps.orders.command_items import launch_item
+
+    comanda = Command.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        number=902, current_table=mesa,
+    )
+    launch_item(command=comanda, product=produto, user=manager_user, quantity=1)
+    pedido = create_order(
+        restaurant=restaurant, branch=branch,
+        order_type=Order.TYPE_COMMAND, user=manager_user,
+    )
+    attach_commands_to_order(order=pedido, command_ids=[comanda.pk], user=manager_user)
+    pedido.refresh_from_db()
+
+    _pagar_tudo(pedido, manager_user, dinheiro)
+
+    comanda.refresh_from_db()
+    assert comanda.status == Command.STATUS_FREE
+    assert comanda.current_table_id is None, (
+        "o cartão foi pago e liberado, mas continua sentado na mesa"
+    )

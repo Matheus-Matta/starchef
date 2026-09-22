@@ -134,10 +134,22 @@ def attach_commands_to_order(*, order, command_ids, user):
         )
         novos = [p for p in pendentes if p.pk not in ja_cobrados]
         if not novos:
-            vazias = [c.number for c in comandas.values()]
+            numeros = [c.number for c in comandas.values()]
+            # DUAS CAUSAS, DUAS FRASES. Com anotação pendente na mão, o cartão
+            # não está vazio — ele está PRESO em outra conta, aberta e nunca
+            # concluída. Dizer "não tem item pendente" para um operador que
+            # está olhando os itens na tela manda ele procurar no lugar errado:
+            # foi o que aconteceu, e a conta abandonada ficou lá.
+            if pendentes:
+                raise ValidationError(
+                    f"A comanda {numeros[0]} já está em outra conta aberta."
+                    if len(numeros) == 1
+                    else "Estas comandas já estão em outra conta aberta."
+                    " Conclua ou descarte aquela conta antes de cobrar aqui."
+                )
             raise ValidationError(
-                f"Nada a cobrar: a comanda {vazias[0]} não tem item pendente."
-                if len(vazias) == 1
+                f"Nada a cobrar: a comanda {numeros[0]} não tem item pendente."
+                if len(numeros) == 1
                 else "Nada a cobrar: nenhuma das comandas tem item pendente."
             )
 

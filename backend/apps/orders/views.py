@@ -286,13 +286,31 @@ class OrderViewSet(BaseTenantViewSet):
         command = None
         table = None
         if order_type == Order.TYPE_COMMAND:
-            command = Command.objects.filter(
-                pk=request.data.get("command"),
-                restaurant=restaurant,
-                is_active=True,
-            ).first()
-            if command is None:
-                return Response({"command": "Selecione uma comanda válida."}, status=status.HTTP_400_BAD_REQUEST)
+            # A COMANDA É OPCIONAL AQUI, e isso não é folga: no modelo de hoje
+            # a comanda ANOTA, ela não abre o pedido. Uma conta pode cobrar
+            # duzentos cartões, que entram depois por `attach-commands` — não
+            # existe "a" comanda deste pedido para mandar no corpo.
+            #
+            # Exigir o campo quebrava o caso central do caixa: a mesa chega com
+            # dois cartões anexados, o cliente pede mais uma cerveja, e passar
+            # esse item respondia "Selecione uma comanda válida" — sobre uma
+            # conta que já tinha duas.
+            #
+            # O tipo segue `command` de propósito: é o que o relatório agrupa,
+            # e trocá-lo por `counter` porque o corpo veio sem id faria a mesma
+            # venda cair em duas colunas conforme a ordem dos toques.
+            referencia = request.data.get("command")
+            if referencia:
+                command = Command.objects.filter(
+                    pk=referencia,
+                    restaurant=restaurant,
+                    is_active=True,
+                ).first()
+                # Informada e não encontrada continua sendo recusa: o app do
+                # garçom manda o cartão que ele leu, e aceitar em silêncio um
+                # id inválido lançaria o item num cartão que ninguém escolheu.
+                if command is None:
+                    return Response({"command": "Selecione uma comanda válida."}, status=status.HTTP_400_BAD_REQUEST)
             if request.data.get("table"):
                 from apps.restaurants.models import Table
 
