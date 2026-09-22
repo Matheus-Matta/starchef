@@ -239,14 +239,27 @@ def build_focus_company_payload(config, *, include_certificate=True):
         if encoded_certificate:
             payload["arquivo_certificado_base64"] = encoded_certificate
             payload["senha_certificado"] = segredos.certificate_password
+    # O CONTADOR QUE VAI PARA A FOCUS É O LIVRE, não `next_number` cru.
+    #
+    # Quem numera a nota, com este provedor, é a FOCUS: o payload de emissão
+    # não leva `numero`, e `apply_response` grava de volta o que ela devolveu.
+    # O número calculado aqui na loja é provisório até a resposta chegar.
+    #
+    # Mandar `next_number` sem conferir as notas já gravadas repetia o defeito
+    # um nível acima: a Focus emitia sobre um número que nós já sabíamos
+    # ocupado, e a SEFAZ devolvia "Duplicidade de NF-e, com diferença na Chave
+    # de Acesso" — com a venda fechada e o cliente esperando o cupom.
+    from apps.invoices.services import _proximo_numero_livre
+
+    proximo = str(_proximo_numero_livre(config))
     if is_nfe:
         suffix = "producao" if is_production else "homologacao"
         payload[f"serie_nfe_{suffix}"] = str(config.series)
-        payload[f"proximo_numero_nfe_{suffix}"] = str(config.next_number)
+        payload[f"proximo_numero_nfe_{suffix}"] = proximo
     if is_nfce:
         suffix = "producao" if is_production else "homologacao"
         payload[f"serie_nfce_{suffix}"] = str(config.series)
-        payload[f"proximo_numero_nfce_{suffix}"] = str(config.next_number)
+        payload[f"proximo_numero_nfce_{suffix}"] = proximo
         if segredos.csc_token:
             payload[f"csc_nfce_{suffix}"] = segredos.csc_token
         if segredos.csc_id:

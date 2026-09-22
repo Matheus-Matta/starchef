@@ -173,3 +173,28 @@ def test_a_EMISSAO_pega_o_numero_livre_e_nao_o_do_contador(
     )
     config.refresh_from_db()
     assert config.next_number == 72
+
+
+def test_o_contador_MANDADO_a_focus_tambem_pula_o_ocupado(
+    config, account, restaurant, branch, pedidos
+):
+    """Quem numera a nota, com a Focus, é a FOCUS.
+
+    O payload de emissão não leva `numero`: ela usa o contador do cadastro da
+    empresa, e `apply_response` grava de volta o que ela devolveu. Mandar
+    `next_number` cru repetia o defeito um nível acima — a Focus emitia sobre
+    um número que a loja já sabia ocupado, e a SEFAZ devolvia "Duplicidade de
+    NF-e, com diferença na Chave de Acesso".
+
+    Aconteceu de verdade: a nota 71 foi reenviada e voltou rejeitada por causa
+    da 68, que a Focus escolheu sozinha.
+    """
+    from apps.invoices.focus import build_focus_company_payload
+
+    _nota(config, account, restaurant, branch, pedidos(1)[0], numero="70")
+
+    payload = build_focus_company_payload(config, include_certificate=False)
+
+    assert payload["proximo_numero_nfce_homologacao"] == "71", (
+        "mandamos à Focus um número que já está gravado nesta série"
+    )
