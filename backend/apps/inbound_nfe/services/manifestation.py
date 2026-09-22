@@ -583,9 +583,8 @@ def fetch_full_xml(invoice) -> bool:
                 invoice.full_xml = doc.xml
                 invoice.distribution_type = InboundNFe.DISTRIBUTION_FULL
                 invoice.xml_status = InboundNFe.XML_STATUS_FULL_XML_AVAILABLE
-
-                if invoice.status == InboundNFe.STATUS_SUMMARY:
-                    invoice.status = InboundNFe.STATUS_PENDING_MAPPING
+                if doc.nsu and (not invoice.nsu or invoice.nsu == "MANUAL"): invoice.nsu = doc.nsu
+                if invoice.status == InboundNFe.STATUS_SUMMARY: invoice.status = InboundNFe.STATUS_PENDING_MAPPING
                 invoice.save()
 
                 # 4. Criar itens se o XML contiver <det>

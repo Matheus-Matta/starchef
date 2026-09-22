@@ -34,3 +34,40 @@
   .rpro__head-top--inbound .rpro__head-actions > :not(.rpro__unit-select):not(.rpro__help-action) { display: none; }
   .rpro__unit-select { flex: 1 1 auto; width: auto; }
 }
+
+/* ── Rolagem fluida da página para telas menores (permite ocultar banner SEFAZ ao rolar) ── */
+.rpro--inbound {
+  height: auto;
+  min-height: 100%;
+}
+.rpro--inbound .rpro__panel {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+.rpro--inbound .rpro__table {
+  flex: none;
+  min-height: auto;
+}
+.rpro--inbound .rpro__table :deep(.p-datatable-wrapper) {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+.rpro--inbound .rpro__table :deep(.p-datatable-thead > tr > th) {
+  position: sticky;
+  top: -22px;
+  z-index: 10;
+  background: var(--surface-sunken);
+  box-shadow: 0 1px 0 var(--border);
+}
+@media (max-width: 900px) {
+  .rpro--inbound .rpro__table :deep(.p-datatable-thead > tr > th) {
+    top: -14px;
+  }
+}
+@media (max-width: 600px) {
+  .rpro--inbound .rpro__table :deep(.p-datatable-thead > tr > th) {
+    top: -10px;
+  }
+}
