@@ -82,6 +82,7 @@ mixin _PanelsSection on _HomePageShared {
   ///
   /// É o número que o cliente confere em voz alta antes de pagar: com quatro
   /// comandas numa conta só, "quanto é a minha?" é a primeira pergunta.
+  @override
   Map<String, double> get _totaisPorComanda => {
     for (final comanda in draft.commands)
       '${comanda['id']}': (draft.commandItems['${comanda['id']}'] ?? const [])

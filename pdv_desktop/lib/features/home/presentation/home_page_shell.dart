@@ -58,6 +58,9 @@ mixin _ShellSection on _HomePageShared {
   String? get loadErrorMessage;
   List<Map<String, dynamic>> get products;
   List<Map<String, dynamic>> get categories;
+  List<Map<String, dynamic>> get tables;
+  Future<void> _seatCommandAtTable();
+  Future<void> _unlinkCommandFromTable(Map<String, dynamic> command);
   Widget _sidebarOperationPanel({bool compact});
   (String, String, IconData) get _workspaceIdentity;
   Widget _catalog();
@@ -239,6 +242,7 @@ mixin _ShellSection on _HomePageShared {
                           // cardápio.
                           products: products,
                           categories: categories,
+                          tables: tables,
                         )
                       else if (flowStep == 'orders')
                         _ordersPage()
@@ -253,6 +257,11 @@ mixin _ShellSection on _HomePageShared {
                           table: selectedTable!,
                           onBack: () => setState(() => flowStep = 'context'),
                           onOpenCommand: (cmd) => _openCommand(cmd),
+                          onAddCommand: busy ? null : _seatCommandAtTable,
+                          onUnlinkCommand: busy
+                              ? null
+                              : (cmd) =>
+                                    unawaited(_unlinkCommandFromTable(cmd)),
                         )
                       else if (flowStep == 'payment')
                         _paymentPage()

@@ -79,21 +79,13 @@ class DraftDestinationBar extends StatelessWidget {
           ),
           if (orderType == 'command') ...[
             const SizedBox(height: 8),
-            for (final comanda in commands)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: DraftAttachedCommand(
-                  command: comanda,
-                  table: table,
-                  total: totalPorComanda['${comanda['id']}'],
-                  enabled: enabled,
-                  onAttach: onAttachCommand,
-                  onDetach: () => onDetachCommand('${comanda['id']}'),
-                ),
-              ),
-            // O convite para o PRÓXIMO cartão fica sempre visível: é ele que
-            // diz que dá para pagar várias comandas numa conta só. Escondido
-            // atrás de um menu, ninguém descobre.
+            // UM botão, e não uma pilha de cartões.
+            //
+            // Cada comanda anexada aparecia aqui como uma linha própria: numa
+            // mesa com quatro cartões o carrinho começava com quatro linhas
+            // antes do primeiro produto, e "retirar" ficava longe de
+            // "incluir". As duas coisas passaram para o diálogo, que é onde a
+            // decisão acontece — aqui fica só quantas estão na conta.
             DraftAttachedCommand(
               command: null,
               table: null,
@@ -103,7 +95,7 @@ class DraftDestinationBar extends StatelessWidget {
               onDetach: () {},
               rotuloVazio: commands.isEmpty
                   ? 'Anexar comanda'
-                  : 'Anexar outra comanda',
+                  : '${commands.length} comanda${commands.length > 1 ? 's' : ''} · incluir ou retirar',
             ),
           ] else if (customer != null) ...[
             const SizedBox(height: 8),

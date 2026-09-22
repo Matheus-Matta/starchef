@@ -120,8 +120,32 @@ class CommandRepository {
   );
 
   /// Resolve um cartão lido pelo leitor de código de barras.
-  Future<Map<String, dynamic>> byCode(String code) =>
-      _api.get('/commands/by-code/', query: {'code': code}, accessToken: accessToken);
+  /// Senta o cartão numa mesa.
+  ///
+  /// O vínculo é da COMANDA, não do pedido: é ela que anda pelo salão e
+  /// decide a ocupação. O pedido guarda a mesa só como histórico do que foi
+  /// consumido onde.
+  Future<Map<String, dynamic>> linkTable({
+    required String commandId,
+    required String tableId,
+  }) => _api.post(
+    '/commands/$commandId/link-table/',
+    body: {'table_id': tableId},
+    accessToken: accessToken,
+  );
+
+  /// Tira o cartão da mesa, sem mexer no que ele tem anotado.
+  Future<Map<String, dynamic>> unlinkTable(String commandId) => _api.post(
+    '/commands/$commandId/unlink-table/',
+    body: const {},
+    accessToken: accessToken,
+  );
+
+  Future<Map<String, dynamic>> byCode(String code) => _api.get(
+    '/commands/by-code/',
+    query: {'code': code},
+    accessToken: accessToken,
+  );
 }
 
 /// A comanda tem VALOR a cobrar.

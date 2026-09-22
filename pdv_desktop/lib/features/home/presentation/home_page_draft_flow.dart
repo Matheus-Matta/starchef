@@ -64,9 +64,21 @@ mixin _DraftFlowSection on _HomePageShared {
 
   @override
   Future<void> _attachCommandToDraft() async {
-    final command = await showCommandAttachDialog(context, commands: commands);
-    if (command == null || !mounted) return;
-    _attachCommandToDraftDirectly(command);
+    // O diálogo decide os DOIS sentidos: incluir o cartão novo ou retirar um
+    // que já está na conta. Tirar deixou de ter botão próprio no carrinho —
+    // "incluir" e "retirar" são a mesma decisão e agora moram juntos.
+    final resultado = await showCommandAttachDialog(
+      context,
+      commands: commands,
+      attached: draft.commands,
+      totals: _totaisPorComanda,
+    );
+    if (resultado == null || !mounted) return;
+    if (resultado.isDetach) {
+      _detachCommandFromDraft(resultado.detachedId);
+      return;
+    }
+    _attachCommandToDraftDirectly(resultado.command!);
   }
 
   /// Anexa ESTE cartão, sem perguntar.

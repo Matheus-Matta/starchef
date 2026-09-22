@@ -32,6 +32,7 @@ class CommandDetailView extends StatelessWidget {
     required this.onSendToKitchen,
     required this.onPrintReceipt,
     required this.onVoidItem,
+    this.onEscolherMesa,
   });
 
   final Map<String, dynamic>? comanda;
@@ -52,6 +53,21 @@ class CommandDetailView extends StatelessWidget {
   final VoidCallback onPrintReceipt;
   final ValueChanged<Map<String, dynamic>> onVoidItem;
 
+  /// Senta o cartão numa mesa — ou o tira dela.
+  ///
+  /// Nulo quando o salão não tem mesa nenhuma cadastrada: um botão que só
+  /// abre um diálogo vazio ensina o operador a ignorar botões.
+  final VoidCallback? onEscolherMesa;
+
+  /// O número da mesa, quando há uma.
+  ///
+  /// O servidor devolve `current_table_number` no cartão; sem ele o rótulo
+  /// convida ao gesto em vez de afirmar um vínculo que não existe.
+  String get _rotuloDaMesa {
+    final numero = '${comanda?['current_table_number'] ?? ''}'.trim();
+    return numero.isEmpty ? 'Sem mesa' : 'Mesa $numero';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -59,13 +75,23 @@ class CommandDetailView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onVoltar,
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Todas as comandas'),
-            ),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: onVoltar,
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('Todas as comandas'),
+              ),
+              const Spacer(),
+              // O botão DIZ onde o cartão está sentado, não só o que ele faz:
+              // "Mesa 12" responde à pergunta antes de o operador clicar.
+              if (onEscolherMesa != null)
+                OutlinedButton.icon(
+                  onPressed: onEscolherMesa,
+                  icon: const Icon(Icons.table_restaurant_outlined, size: 18),
+                  label: Text(_rotuloDaMesa),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Expanded(

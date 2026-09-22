@@ -5,6 +5,7 @@ import '../../../core/data/order_item_status.dart';
 import 'draft_destination_bar.dart';
 import 'order_presenter.dart';
 import '../../../core/theme/app_theme.dart';
+import 'cart_command_badge.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 
 /// Painel visual do pedido atual.
@@ -703,6 +704,11 @@ class _CartItem extends StatelessWidget {
   /// pedido fechado ou produto vendido por peso.
   final ValueChanged<int>? onQuantityDelta;
 
+  /// Item de COMANDA não se apaga aqui: ele não é deste carrinho, é uma
+  /// anotação que já existe no cartão. Um X daria a impressão de apagar o
+  /// consumo — o caminho certo é retirar a comanda inteira, no diálogo.
+  bool get _podeRemover => canRemove && numeroDaComandaDoItem(item) == null;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -744,6 +750,10 @@ class _CartItem extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
+                if (numeroDaComandaDoItem(item) case final numero?) ...[
+                  const SizedBox(height: 3),
+                  CartCommandBadge(numero: numero),
+                ],
                 if (extras.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(
@@ -809,7 +819,7 @@ class _CartItem extends StatelessWidget {
               ),
             ],
           ),
-          if (canRemove)
+          if (_podeRemover)
             SizedBox(
               width: 30,
               height: 30,

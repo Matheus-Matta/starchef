@@ -3,6 +3,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
+import 'table_command_row.dart';
 
 class TableDetailsPanel extends StatelessWidget {
   const TableDetailsPanel({
@@ -10,11 +11,20 @@ class TableDetailsPanel extends StatelessWidget {
     required this.table,
     required this.onBack,
     required this.onOpenCommand,
+    this.onUnlinkCommand,
+    this.onAddCommand,
   });
 
   final Map<String, dynamic> table;
   final VoidCallback onBack;
   final ValueChanged<Map<String, dynamic>> onOpenCommand;
+
+  /// Tira um cartão desta mesa. Nulo enquanto a tela está ocupada.
+  final ValueChanged<Map<String, dynamic>>? onUnlinkCommand;
+
+  /// Senta MAIS um cartão nesta mesa, pelo mesmo diálogo do "anexar comanda"
+  /// da venda — o operador não aprende dois jeitos de escolher um cartão.
+  final VoidCallback? onAddCommand;
 
   @override
   Widget build(BuildContext context) {
@@ -96,12 +106,24 @@ class TableDetailsPanel extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 22),
-              Text(
-                'Comandas Vinculadas (${activeCommands.length})',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Comandas Vinculadas (${activeCommands.length})',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  if (onAddCommand != null)
+                    FilledButton.icon(
+                      onPressed: onAddCommand,
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Vincular comanda'),
+                    ),
+                ],
               ),
               const SizedBox(height: 12),
               Expanded(
@@ -117,48 +139,12 @@ class TableDetailsPanel extends StatelessWidget {
                         separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final command = activeCommands[index];
-                          return ShadCard(
-                            padding: EdgeInsets.zero,
-                            radius: AppTheme.radius,
-                            shadows: const [],
-                            columnCrossAxisAlignment:
-                                CrossAxisAlignment.stretch,
-                            child: Material(
-                              type: MaterialType.transparency,
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                leading: CircleAvatar(
-                                  backgroundColor: scheme.primaryContainer,
-                                  child: Text(
-                                    '${command['number']}',
-                                    style: TextStyle(
-                                      color: scheme.onPrimaryContainer,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                title: Text(
-                                  command['customer_name']?.isNotEmpty == true
-                                      ? command['customer_name']
-                                      : 'Comanda ${command['number']}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  command['code'] ?? 'Sem código',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                onTap: () => onOpenCommand(command),
-                                trailing: const Icon(Icons.chevron_right),
-                              ),
-                            ),
+                          return TableCommandRow(
+                            command: command,
+                            onOpen: () => onOpenCommand(command),
+                            onUnlink: onUnlinkCommand == null
+                                ? null
+                                : () => onUnlinkCommand!(command),
                           );
                         },
                       ),

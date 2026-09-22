@@ -1,149 +1,52 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/widgets/app_dialog.dart';
-import '../../commands/data/command_repository.dart';
-import '../../commands/presentation/command_card.dart';
+import 'command_attach_dialog_body.dart';
 
-/// Escolher a comanda que vai neste rascunho.
+/// O QUE ESTÁ NA CONTA e o que pode entrar — num lugar só.
 ///
-/// É só uma ESCOLHA: nada é enviado ao servidor aqui. O cartão só passa a
-/// existir como pedido quando o rascunho é materializado — ao enviar à cozinha
-/// ou ao ir para o pagamento.
+/// É só ESCOLHA: nada é enviado ao servidor aqui. Quem chamou decide o que
+/// fazer com a resposta — na venda o cartão entra no rascunho, na mesa ele é
+/// vinculado de verdade.
 ///
-/// O cartão é o mesmo widget da página de comandas, com as mesmas cores de
-/// estado. Uma segunda aparência para a mesma coisa faria o operador aprender
-/// duas leituras do mesmo salão.
-Future<Map<String, dynamic>?> showCommandAttachDialog(
+/// Os cartões já anexados ficavam empilhados FORA, acima do botão de anexar.
+/// Numa mesa com quatro cartões o carrinho começava com quatro linhas antes do
+/// primeiro produto, e "incluir" ficava longe de "retirar" — dois gestos
+/// opostos em cantos diferentes da tela. Aqui em cima da lista, o operador vê
+/// os dois lados da mesma decisão.
+///
+/// [somenteComConta] é o que separa os dois usos. Na venda, um cartão LIVRE
+/// não tem nada a cobrar e anexá-lo não significa coisa alguma. Na mesa é o
+/// contrário: sentar um cartão livre é justamente o gesto normal.
+///
+/// Devolve o que mudou: `attach` com o cartão escolhido, `detach` com o id do
+/// que saiu, ou `null` se o operador só fechou.
+Future<CommandAttachResult?> showCommandAttachDialog(
   BuildContext context, {
   required List<Map<String, dynamic>> commands,
+  List<Map<String, dynamic>> attached = const [],
+  Map<String, num> totals = const {},
+  String title = 'Comandas desta conta',
+  bool somenteComConta = true,
 }) {
-  return showDialog<Map<String, dynamic>>(
+  return showDialog<CommandAttachResult>(
     context: context,
-    builder: (_) => _CommandAttachDialog(commands: commands),
+    builder: (_) => CommandAttachDialog(
+      commands: commands,
+      attached: attached,
+      totals: totals,
+      title: title,
+      somenteComConta: somenteComConta,
+    ),
   );
 }
 
-class _CommandAttachDialog extends StatefulWidget {
-  const _CommandAttachDialog({required this.commands});
+/// O que o diálogo decidiu.
+class CommandAttachResult {
+  const CommandAttachResult.attach(this.command) : detachedId = null;
+  const CommandAttachResult.detach(this.detachedId) : command = null;
 
-  final List<Map<String, dynamic>> commands;
+  final Map<String, dynamic>? command;
+  final String? detachedId;
 
-  @override
-  State<_CommandAttachDialog> createState() => _CommandAttachDialogState();
-}
-
-class _CommandAttachDialogState extends State<_CommandAttachDialog> {
-  final _busca = TextEditingController();
-  final _foco = FocusNode(debugLabel: 'anexar-comanda');
-
-  @override
-  void dispose() {
-    _busca.dispose();
-    _foco.dispose();
-    super.dispose();
-  }
-
-  /// Só os cartões com conta aberta.
-  ///
-  /// Um cartão LIVRE não tem nada a cobrar, então anexá-lo a um pedido não
-  /// significa coisa alguma. Some da lista em vez de aparecer e recusar ao
-  /// toque: numa lista de dezenas, o que não serve só atrapalha a procura do
-  /// que serve.
-  List<Map<String, dynamic>> get _comAberto =>
-      widget.commands.where(comandaTemContaAberta).toList(growable: false);
-
-  /// Filtra por número, código ou cliente — os três jeitos de o operador se
-  /// referir ao cartão que tem na mão.
-  List<Map<String, dynamic>> get _visiveis {
-    final termo = _busca.text.trim().toLowerCase();
-    if (termo.isEmpty) return _comAberto;
-    return _comAberto
-        .where(
-          (comanda) => [
-            '${comanda['number'] ?? ''}',
-            '${comanda['code'] ?? ''}',
-            '${comanda['customer_name'] ?? ''}',
-          ].any((campo) => campo.toLowerCase().contains(termo)),
-        )
-        .toList(growable: false);
-  }
-
-  /// Um único resultado e o operador apertou Enter: é o leitor de código de
-  /// barras, que digita o código e manda Enter. Fazer ele escolher com o mouse
-  /// depois de passar o cartão anularia o leitor.
-  void _confirmarPelaBusca() {
-    final visiveis = _visiveis;
-    if (visiveis.length == 1) Navigator.pop(context, visiveis.first);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final visiveis = _visiveis;
-    return AppDialog(
-      maxWidth: 560,
-      title: const Text('Anexar comanda ao pedido'),
-      content: SizedBox(
-        height: 420,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // A regra fica ACIMA da busca: quem não achar o cartão precisa
-            // saber que ele pode estar fora por estar livre, e não por erro de
-            // digitação.
-            Text(
-              'Só cartões com consumo lançado.',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _busca,
-              focusNode: _foco,
-              autofocus: true,
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.qr_code_scanner_rounded),
-                hintText:
-                    'Passe o cartão ou filtre por número, código, cliente',
-                isDense: true,
-              ),
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => _confirmarPelaBusca(),
-            ),
-            const SizedBox(height: 10),
-            Expanded(
-              child: visiveis.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 24),
-                        child: Text(
-                          'Nenhuma comanda com conta aberta. Só entram '
-                          'cartões que já têm consumo lançado — um cartão '
-                          'livre não tem nada a cobrar.',
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      itemCount: visiveis.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 6),
-                      itemBuilder: (_, indice) => CommandCard(
-                        comanda: visiveis[indice],
-                        ativo: false,
-                        onTap: () => Navigator.pop(context, visiveis[indice]),
-                      ),
-                    ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-      ],
-    );
-  }
+  bool get isDetach => detachedId != null;
 }

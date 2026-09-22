@@ -58,6 +58,14 @@ mixin _HomePageShared on State<HomePage> {
   bool get _draftIsLive;
   List<Map<String, dynamic>> get _cartItems;
   OrderDraftCart get draft;
+
+  /// Quanto cada cartão anexado tem a cobrar, por id.
+  ///
+  /// Declarado aqui porque dois mixins o usam — o painel, para desenhar, e o
+  /// fluxo, para mostrar o valor ao lado de cada comanda no diálogo. Nesta
+  /// biblioteca cada seção é um mixin, e o analisador não liga as duas pontas
+  /// sozinho.
+  Map<String, double> get _totaisPorComanda;
   void _addLineToDraft(
     Map<String, dynamic> product, {
     double quantity,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_dialog.dart';
+import 'table_choice_tile.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 
@@ -10,10 +11,11 @@ bool commandNeedsTableSelection(JsonMap command) {
   return tableId == null || '$tableId'.trim().isEmpty;
 }
 
-/// Resultado explícito do aviso exibido antes de abrir uma comanda sem mesa.
+/// Resultado explícito da escolha de mesa.
 ///
-/// [table] nulo significa que o operador confirmou a abertura sem vínculo;
-/// fechar o diálogo retorna `null` e cancela toda a abertura.
+/// [table] nulo significa SEM MESA — seguir sem vínculo, quando o cartão
+/// ainda não tem mesa, ou tirá-lo da mesa em que está. Fechar o diálogo
+/// devolve `null` e não muda nada.
 class CommandTableSelection {
   const CommandTableSelection({this.table});
 
@@ -39,6 +41,16 @@ class _CommandTableSelectionDialogState
     extends State<CommandTableSelectionDialog> {
   JsonMap? selectedTable;
 
+  /// O cartão já está sentado em alguma mesa?
+  ///
+  /// O mesmo diálogo serve aos dois momentos — antes de abrir o pedido, e
+  /// depois, no detalhe do cartão. Só o texto muda: quem já tem mesa está
+  /// MUDANDO de mesa, e "Sem mesa" deixa de ser "seguir assim" para virar
+  /// "tirar da mesa".
+  String get _mesaAtual =>
+      '${widget.command['current_table_number'] ?? ''}'.trim();
+  bool get _jaSentada => _mesaAtual.isNotEmpty;
+
   List<JsonMap> get linkableTables => widget.tables
       .where(
         (table) => table['is_active'] != false && table['status'] != 'cleaning',
@@ -55,7 +67,13 @@ class _CommandTableSelectionDialogState
         children: [
           Icon(Icons.qr_code_2_outlined, color: scheme.primary),
           const SizedBox(width: 10),
-          Expanded(child: Text('Comanda ${widget.command['number']} sem mesa')),
+          Expanded(
+            child: Text(
+              _jaSentada
+                  ? 'Comanda ${widget.command['number']} · Mesa $_mesaAtual'
+                  : 'Comanda ${widget.command['number']} sem mesa',
+            ),
+          ),
         ],
       ),
       content: SizedBox(
@@ -64,9 +82,12 @@ class _CommandTableSelectionDialogState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Esta comanda ainda não está vinculada. Selecione uma mesa '
-              'agora ou continue sem mesa para abrir o pedido.',
+            Text(
+              _jaSentada
+                  ? 'Escolha outra mesa para mudar o cartão de lugar, ou '
+                        'tire-o da mesa em que está.'
+                  : 'Esta comanda ainda não está vinculada. Selecione uma '
+                        'mesa agora ou continue sem mesa para abrir o pedido.',
             ),
             const SizedBox(height: 14),
             if (available.isEmpty)
@@ -91,69 +112,10 @@ class _CommandTableSelectionDialogState
                   separatorBuilder: (_, _) => const SizedBox(height: 6),
                   itemBuilder: (context, index) {
                     final table = available[index];
-                    final selected =
-                        '${selectedTable?['id']}' == '${table['id']}';
-                    final commands =
-                        (table['active_commands'] as List? ?? const []).length;
-                    return Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: AppTheme.radius,
-                        onTap: () => setState(() => selectedTable = table),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 120),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? scheme.primaryContainer
-                                : scheme.surfaceContainerLow,
-                            border: Border.all(
-                              color: selected
-                                  ? scheme.primary
-                                  : scheme.outlineVariant,
-                            ),
-                            borderRadius: AppTheme.radius,
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                selected
-                                    ? Icons.check_box_outlined
-                                    : Icons.table_restaurant_outlined,
-                                color: selected
-                                    ? scheme.primary
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Mesa ${table['number']}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${_statusLabel(table['status'])}'
-                                      '${commands > 0 ? ' · $commands ${commands == 1 ? 'comanda vinculada' : 'comandas vinculadas'}' : ''}',
-                                      style: TextStyle(
-                                        color: scheme.onSurfaceVariant,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                    return TableChoiceTile(
+                      table: table,
+                      selected: '${selectedTable?['id']}' == '${table['id']}',
+                      onTap: () => setState(() => selectedTable = table),
                     );
                   },
                 ),
@@ -165,7 +127,7 @@ class _CommandTableSelectionDialogState
         OutlinedButton(
           onPressed: () =>
               Navigator.pop(context, const CommandTableSelection()),
-          child: const Text('Sem mesa'),
+          child: Text(_jaSentada ? 'Tirar da mesa' : 'Sem mesa'),
         ),
         FilledButton.icon(
           onPressed: selectedTable == null
@@ -180,10 +142,4 @@ class _CommandTableSelectionDialogState
       ],
     );
   }
-
-  String _statusLabel(dynamic status) => switch ('$status') {
-    'occupied' => 'Ocupada',
-    'reserved' => 'Reservada',
-    _ => 'Livre',
-  };
 }

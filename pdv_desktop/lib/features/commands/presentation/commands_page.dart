@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/command_repository.dart';
-import 'command_void_dialog.dart';
 import 'command_detail_view.dart';
+import 'commands_actions.dart';
 import 'commands_grid.dart';
 import 'commands_loading.dart';
 
@@ -29,6 +29,7 @@ class CommandsPage extends StatefulWidget {
     required this.repository,
     this.products = const [],
     this.categories = const [],
+    this.tables = const [],
     this.restaurantId,
     this.codigosLidos,
   });
@@ -36,6 +37,12 @@ class CommandsPage extends StatefulWidget {
   final CommandRepository repository;
   final List<Map<String, dynamic>> products;
   final List<Map<String, dynamic>> categories;
+
+  /// As mesas do salão, para sentar o cartão em uma delas.
+  ///
+  /// Vêm de fora, do mesmo catálogo que a venda usa: carregar uma segunda
+  /// cópia faria as duas divergirem na primeira mesa criada.
+  final List<Map<String, dynamic>> tables;
   final String? restaurantId;
 
   /// Os códigos lidos que a casca captura quando NENHUM campo está focado.
@@ -51,15 +58,11 @@ class CommandsPage extends StatefulWidget {
 }
 
 class _CommandsPageState extends State<CommandsPage>
-    with CommandsLoading<CommandsPage> {
+    with CommandsLoading<CommandsPage>, CommandsActions<CommandsPage> {
   final _busca = TextEditingController();
   final _leitor = TextEditingController();
   final _focoDoLeitor = FocusNode();
 
-  List<Map<String, dynamic>> _itens = const [];
-  bool _carregandoItens = false;
-  bool _enviando = false;
-  bool _imprimindo = false;
   String? _categoria;
   String _termoDeProduto = '';
 
@@ -73,6 +76,8 @@ class _CommandsPageState extends State<CommandsPage>
   FocusNode get focoDoLeitor => _focoDoLeitor;
   @override
   Stream<String>? get codigosLidos => widget.codigosLidos;
+  @override
+  List<Map<String, dynamic>> get mesas => widget.tables;
 
   @override
   void initState() {
@@ -122,7 +127,7 @@ class _CommandsPageState extends State<CommandsPage>
   void _voltarAoSalao() {
     setState(() {
       selecionada = null;
-      _itens = const [];
+      itens = const [];
       recado = '';
       erro = '';
     });
@@ -133,104 +138,9 @@ class _CommandsPageState extends State<CommandsPage>
     setState(() {
       selecionada = comanda;
       recado = '';
-      _itens = const [];
+      itens = const [];
     });
-    await _carregarItens();
-  }
-
-  Future<void> _carregarItens() async {
-    final id = '${selecionada?['id'] ?? ''}';
-    if (id.isEmpty) return;
-    setState(() {
-      _carregandoItens = true;
-      erro = '';
-    });
-    try {
-      final dados = await repository.items(id);
-      // O operador pode ter trocado de cartão enquanto a resposta vinha.
-      if (!mounted || '${selecionada?['id'] ?? ''}' != id) return;
-      final bruto = dados['items'];
-      setState(() {
-        _itens = bruto is List
-            ? bruto
-                  .whereType<Map>()
-                  .map((item) => Map<String, dynamic>.from(item))
-                  .toList()
-            : const [];
-      });
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao ler a comanda: $falha');
-    } finally {
-      if (mounted) setState(() => _carregandoItens = false);
-    }
-  }
-
-  /// Anota o produto NA COMANDA. Nenhum pedido é aberto.
-  Future<void> _lancar(Map<String, dynamic> produto) async {
-    final id = '${selecionada?['id'] ?? ''}';
-    if (id.isEmpty) {
-      setState(() => erro = 'Escolha uma comanda antes de lançar.');
-      return;
-    }
-    try {
-      await repository.launchItem(id, productId: '${produto['id']}');
-      await _carregarItens();
-      // A coluna da esquerda mostra o estado do cartão: o primeiro lançamento
-      // o deixa ocupado, e a lista precisa acompanhar.
-      await carregar();
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao lançar na comanda: $falha');
-    }
-  }
-
-  Future<void> _enviarACozinha() async {
-    final id = '${selecionada?['id'] ?? ''}';
-    if (id.isEmpty) return;
-    setState(() {
-      _enviando = true;
-      erro = '';
-    });
-    try {
-      final lote = await repository.sendToKitchen(id);
-      await _carregarItens();
-      if (mounted) {
-        setState(() => recado = 'Rodada ${lote['batch_number']} na cozinha.');
-      }
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao enviar à cozinha: $falha');
-    } finally {
-      if (mounted) setState(() => _enviando = false);
-    }
-  }
-
-  Future<void> _imprimirRecibo() async {
-    final id = '${selecionada?['id'] ?? ''}';
-    if (id.isEmpty) return;
-    setState(() {
-      _imprimindo = true;
-      erro = '';
-    });
-    try {
-      await repository.receipt(id);
-      if (mounted) setState(() => recado = 'Recibo enviado para a impressora.');
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao imprimir o recibo: $falha');
-    } finally {
-      if (mounted) setState(() => _imprimindo = false);
-    }
-  }
-
-  Future<void> _cancelarItem(Map<String, dynamic> item) async {
-    final id = '${selecionada?['id'] ?? ''}';
-    final motivo = await showCommandVoidDialog(context, item: item);
-    if (motivo == null || !mounted) return;
-    try {
-      await repository.voidItem(id, '${item['id']}', reason: motivo);
-      await _carregarItens();
-      await carregar();
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao cancelar o item: $falha');
-    }
+    await carregarItens();
   }
 
   @override
@@ -270,21 +180,22 @@ class _CommandsPageState extends State<CommandsPage>
   /// A segunda: o cartão aberto, no desenho da venda.
   Widget _cartaoAberto() => CommandDetailView(
     comanda: selecionada,
-    itens: _itens,
+    itens: itens,
     produtos: _produtosVisiveis,
     todosOsProdutos: widget.products,
     categorias: widget.categories,
     categoria: _categoria,
     termoDeProduto: _termoDeProduto,
-    carregando: _carregandoItens,
-    enviando: _enviando,
-    imprimindo: _imprimindo,
+    carregando: carregandoItens,
+    enviando: enviando,
+    imprimindo: imprimindo,
     onVoltar: _voltarAoSalao,
     onBuscaDeProduto: (valor) => setState(() => _termoDeProduto = valor),
     onCategoria: (valor) => setState(() => _categoria = valor),
-    onProduto: _lancar,
-    onSendToKitchen: _enviarACozinha,
-    onPrintReceipt: _imprimirRecibo,
-    onVoidItem: _cancelarItem,
+    onProduto: lancar,
+    onSendToKitchen: enviarACozinha,
+    onPrintReceipt: imprimirRecibo,
+    onVoidItem: cancelarItem,
+    onEscolherMesa: widget.tables.isEmpty ? null : escolherMesa,
   );
 }

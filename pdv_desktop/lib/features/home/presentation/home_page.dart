@@ -80,6 +80,7 @@ part 'home_page_cash_ops.dart';
 part 'home_page_cash_print.dart';
 part 'home_page_commands.dart';
 part 'home_page_commands_view.dart';
+part 'home_page_table_commands.dart';
 part 'home_page_customer.dart';
 part 'home_page_kitchen.dart';
 part 'home_page_draft.dart';
@@ -134,6 +135,7 @@ class _HomePageState extends State<HomePage>
         _CashPrintSection,
         _CommandSection,
         _CommandView,
+        _TableCommandsSection,
         _FiscalSection,
         _InputSection,
         _ScanSection,
