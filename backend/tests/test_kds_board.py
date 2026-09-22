@@ -109,7 +109,7 @@ def test_create_station_from_template(manager_user, restaurant):
     assert resp.status_code == 201, resp.data
     assert resp.data["name"] == "Cozinha 1"
     cols = resp.data["columns"]
-    assert [c["name"] for c in sorted(cols, key=lambda c: c["position"])] == ["A fazer", "Em preparo", "Montagem", "Pronto"]
+    assert [c["name"] for c in sorted(cols, key=lambda c: c["position"])] == ["A fazer", "Em preparo", "Montagem", "Pronto", "Cancelados"]
     assert cols[0]["is_entry"] is True
     assert any(c["is_done"] for c in cols)
     assert resp.data["rules"][0]["action"] == "include"

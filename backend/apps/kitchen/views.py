@@ -1,4 +1,5 @@
 import django_filters
+from django.db.models import Q
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import action
@@ -99,16 +100,25 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
     def get_queryset(self):
-        # Fora o item em si, o PEDIDO precisa continuar vivo: um pedido
-        # cancelado/estornado nao tem mais producao, e o card so ficava parado
-        # no quadro recusando qualquer movimento. Pedido PAGO continua no
-        # quadro de proposito — o caixa cobra antes de a cozinha terminar.
-        return (
-            super()
-            .get_queryset()
-            .filter(status__in=_ACTIVE_ITEM_STATUSES)
-            .exclude(order__status__in=_INACTIVE_ORDER_STATUSES)
-        )
+        # Quadros comuns ocultam cancelados. A cozinha conserva somente itens
+        # que chegaram à produção para mostrar o cancelamento e seu motivo.
+        # Pedidos pagos seguem visíveis enquanto a cozinha prepara o item.
+        queryset = super().get_queryset()
+        station_id = self.request.query_params.get("station")
+        if station_id:
+            station = KdsStation.objects.filter(
+                pk=station_id, account=getattr(self.request, "account", None), is_active=True
+            ).first()
+        else:
+            station = None
+        if station:
+            if any(rule.get("id") == "move-cancelled" and rule.get("enabled", True) for rule in station.rules or []):
+                return queryset.filter(
+                    (Q(status__in=_ACTIVE_ITEM_STATUSES) & ~Q(order__status__in=_INACTIVE_ORDER_STATUSES)) |
+                    (Q(status=OrderItem.STATUS_CANCELLED, sent_to_kitchen_at__isnull=False) &
+                     ~Q(order__status=Order.STATUS_REFUNDED))
+                )
+        return queryset.filter(status__in=_ACTIVE_ITEM_STATUSES).exclude(order__status__in=_INACTIVE_ORDER_STATUSES)
 
     @action(detail=True, methods=["post"], url_path="status")
     def set_status(self, request, pk=None):
@@ -143,6 +153,15 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
 
         if column and column.station.restaurant_id != item.restaurant_id:
             return Response({"detail": "A coluna não pertence ao restaurante do item."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if column and any(
+            rule.get("id") == "move-cancelled" and str(rule.get("target_column")) == str(column.id)
+            for rule in column.station.rules or []
+        ):
+            return Response(
+                {"detail": "Cancele o item no pedido, informando o motivo; o KDS o moverá automaticamente."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         if column:
             entry = column.station.columns.filter(is_active=True, is_entry=True).first()

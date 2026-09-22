@@ -220,8 +220,12 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
 - KDS: `KdsStationsView.vue` incorpora `KdsRulesEditor.vue`, que ordena e
   edita regras de inclusão, exclusão e movimentação automática por estação.
   Ao criar uma estação com um dos modelos, o backend configura recebimento,
-  ocultação de cancelados, avanço por status e um SLA que ativa o alerta de
-  tempo do quadro; todas as regras continuam editáveis.
+  avanço por status e um SLA que ativa o alerta de tempo do quadro; todas as
+  regras continuam editáveis. Para estações antigas sem regras, o editor pode
+  aplicar um modelo sem apagar as colunas existentes. Cozinha ganha a coluna
+  “Cancelados”, onde ficam os itens cancelados e seus motivos; os outros
+  modelos continuam ocultando cancelados. Para cancelar, use o pedido e
+  informe o motivo: arrastar um card para essa coluna não cancela o item.
   O board pede os itens já resolvidos para a estação selecionada, atualiza a
   cada 15 segundos para aplicar regras de tempo, oferece tela cheia nativa e
   aceita arrastar cards por mouse ou toque; tocar sem arrastar continua abrindo

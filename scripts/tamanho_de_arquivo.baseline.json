@@ -125,7 +125,7 @@
     "frontend/src/views/FocusNfeConfigView.vue": 275,
     "frontend/src/views/HelpCenterView.vue": 531,
     "frontend/src/views/KdsStationsView.vue": 518,
-    "frontend/src/views/KdsView.vue": 749,
+    "frontend/src/views/KdsView.vue": 760,
     "frontend/src/views/LoginScreen.vue": 447,
     "frontend/src/views/PdvView.vue": 2809,
     "frontend/src/views/ReportsView.vue": 848,

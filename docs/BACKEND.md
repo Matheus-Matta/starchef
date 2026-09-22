@@ -211,12 +211,18 @@ simples já existentes sem alterar hashes válidas.
 estação. As ações são incluir, excluir e mover; as condições cobrem tipo do
 pedido, setor, status do item/pedido/pagamento/produção/entrega, mesa, comanda,
 observação e tempo desde o envio ou na coluna. Estações existentes continuam
-com `rules=[]`; estações novas criadas em branco recebem a regra editável
-“Incluir todos os pedidos”. Os modelos de cozinha, bar, pizzaria, confeitaria
-e simples criam regras para receber itens em produção, ocultar cancelados e
-mover itens em preparo/prontos conforme o status, além de um SLA de preparo
+com `rules=[]`; o editor oferece `POST /kitchen/stations/{id}/apply-template-rules/`
+para aplicar um modelo a essas estações, preservando as colunas existentes e
+recusando a substituição de regras próprias. Estações novas criadas em branco
+recebem a regra editável “Incluir todos os pedidos”. Os modelos de cozinha, bar,
+pizzaria, confeitaria e simples criam regras para receber itens em produção,
+mover itens em preparo/prontos conforme o status e um SLA de preparo
 vinculado ao quadro (alerta em dois terços do tempo configurado). O SLA só
 mostra urgência; o tempo decorrido nunca conclui um item.
+O modelo de cozinha inclui a coluna “Cancelados”: itens enviados à produção
+que forem cancelados no pedido ou individualmente passam para ela, com o
+motivo. Cancelar exige o fluxo do pedido; arrastar um card para a coluna é
+recusado com 409. Nos demais modelos, cancelados continuam ocultos.
 `GET /kitchen/items/?station=<id>` avalia as regras e devolve
 `kds_position`/`kds_entered_at`. A posição é persistida em `KdsItemPosition`
 por item + estação, portanto mover o mesmo item em um quadro não altera sua

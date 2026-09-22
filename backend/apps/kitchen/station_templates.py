@@ -12,13 +12,14 @@ STATION_TEMPLATES = [
         "key": "cozinha",
         "name": "Cozinha",
         "icon": "soup",
-        "description": "Fluxo padrão de cozinha: a fazer, preparo, montagem e pronto.",
+        "description": "Fluxo de cozinha: a fazer, preparo, montagem, pronto e cancelados.",
         "sectors": ["kitchen"],
         "columns": [
             {"name": "A fazer", "color": "#64748b", "is_entry": True, "is_done": False},
             {"name": "Em preparo", "color": "#0ea5e9", "is_entry": False, "is_done": False},
             {"name": "Montagem", "color": "#8b5cf6", "is_entry": False, "is_done": False},
             {"name": "Pronto", "color": "#10b981", "is_entry": False, "is_done": True},
+            {"name": "Cancelados", "color": "#ef4444", "is_entry": False, "is_done": False},
         ],
     },
     {

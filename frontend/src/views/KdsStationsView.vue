@@ -76,7 +76,7 @@
               Sem colunas. Adicione a primeira e marque-a como <strong>Entrada</strong>.
             </div>
           </div>
-          <KdsRulesEditor :station="selected" @saved="loadStations(selected.id)" />
+          <KdsRulesEditor :station="selected" :templates="templates" @saved="loadStations(selected.id)" />
         </template>
       </section>
     </div>

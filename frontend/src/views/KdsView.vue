@@ -117,7 +117,7 @@
             :key="item.id"
             class="ticket"
             :class="{ 'ticket--urgent': isUrgent(item, column), 'ticket--dragging': dragItem && dragItem.id === item.id }"
-            draggable="true"
+            :draggable="item.status !== 'cancelled'"
             @dragstart="onDragStart(item)"
             @dragend="onDragEnd"
             @click="openModal(item)"
@@ -150,6 +150,9 @@
 
             <div v-if="item.customer_note" class="ticket__note">
               <AppIcon name="alert-circle" :size="11" /><span>{{ item.customer_note }}</span>
+            </div>
+            <div v-if="item.status === 'cancelled' && item.void_reason" class="ticket__note">
+              <AppIcon name="x" :size="11" /><span>Cancelado: {{ item.void_reason }}</span>
             </div>
           </article>
 
@@ -199,6 +202,7 @@
                 + {{ sib.addons.map((a) => a.addon_name || a.name).filter(Boolean).join(", ") }}
               </small>
               <p v-if="sib.customer_note" class="kds-modal__note"><AppIcon name="alert-circle" :size="11" /> {{ sib.customer_note }}</p>
+              <p v-if="sib.status === 'cancelled' && sib.void_reason" class="kds-modal__note">Motivo: {{ sib.void_reason }}</p>
             </div>
             <span class="kds-modal__stat">{{ statusLabel(sib.status) }}</span>
           </div>
@@ -217,7 +221,7 @@
           >
             Avançar para "{{ nextColumn.name }}" <AppIcon name="chevron-right" :size="15" />
           </button>
-          <span v-else class="kds-modal__done"><AppIcon name="check-circle" :size="15" /> Última coluna</span>
+          <span v-else class="kds-modal__done"><AppIcon name="check-circle" :size="15" /> {{ modalItem.status === "cancelled" ? "Item cancelado" : "Última coluna" }}</span>
         </footer>
       </div>
     </div>
@@ -239,9 +243,8 @@ import { currentMonthRange } from "../utils/dateRange";
 const DEFAULT_SLA = 15;
 const PAGE = 20; // cards renderizados por coluna antes de "carregar mais" no scroll
 const router = useRouter();
-// Ouve o PEDIDO além do item: cancelar um pedido atualiza os itens em massa
-// (sem disparar evento por item), então só escutando `orderitem` o card
-// cancelado ficava parado no quadro até o polling de 2 min.
+// Ouve o PEDIDO além do item: cancelar o pedido atualiza os itens em massa
+// sem emitir evento por item, e os cards precisam ir para Cancelados na hora.
 useRealtimeResource(["orders.orderitem", "orders.order"], () => loadItems());
 
 /* ── Filtro de datas (default: Hoje) ─────────────────────────── */
@@ -315,6 +318,7 @@ const boardColumns = computed(() =>
     .sort((a, b) => a.position - b.position),
 );
 const columnIds = computed(() => new Set(boardColumns.value.map((c) => c.id)));
+const cancellationColumnId = computed(() => station.value?.rules?.find((rule) => rule.id === "move-cancelled")?.target_column);
 const entryColumn = computed(() => boardColumns.value.find((c) => c.is_entry) || boardColumns.value[0] || null);
 
 /** Um item pertence a este quadro se casa com os setores da estação (ou todos). */
@@ -365,7 +369,7 @@ function slaFor(column) {
   return slas.value.find((s) => s.is_active && (s.stations || []).includes(station.value?.id)) || null;
 }
 function hasSla(column) {
-  return Boolean(column && !column.is_done && slaFor(column));
+  return Boolean(column && !column.is_done && column.id !== cancellationColumnId.value && slaFor(column));
 }
 function thresholdFor(column) {
   const sla = slaFor(column);
@@ -390,8 +394,12 @@ const modalColumn = computed(() => {
 });
 const modalColumnName = computed(() => modalColumn.value?.name || "—");
 const modalIndex = computed(() => (modalColumn.value ? boardColumns.value.findIndex((c) => c.id === modalColumn.value.id) : -1));
-const nextColumn = computed(() => (modalIndex.value >= 0 ? boardColumns.value[modalIndex.value + 1] || null : null));
-const prevColumn = computed(() => (modalIndex.value > 0 ? boardColumns.value[modalIndex.value - 1] || null : null));
+const nextColumn = computed(() => (modalIndex.value >= 0 && modalItem.value?.status !== "cancelled"
+  ? boardColumns.value.filter((column) => column.id !== cancellationColumnId.value).find((column) =>
+    boardColumns.value.indexOf(column) > modalIndex.value) || null : null));
+const prevColumn = computed(() => (modalIndex.value > 0 && modalItem.value?.status !== "cancelled"
+  ? [...boardColumns.value].reverse().find((column) =>
+    column.id !== cancellationColumnId.value && boardColumns.value.indexOf(column) < modalIndex.value) || null : null));
 
 function openModal(item) {
   if (dragItem.value || suppressCardClick) return; // não abre no fim de um arraste
@@ -407,6 +415,7 @@ async function advanceModal(delta) {
 
 /* ── Drag & drop ─────────────────────────────────────────────── */
 function onDragStart(item) {
+  if (item.status === "cancelled") return;
   dragItem.value = item;
 }
 function onDragEnd() {
@@ -425,7 +434,7 @@ async function onDrop(column) {
 }
 
 function onPointerDown(event, item) {
-  if (event.pointerType !== "touch") return;
+  if (event.pointerType !== "touch" || item.status === "cancelled") return;
   touchDrag = { pointerId: event.pointerId, item, x: event.clientX, y: event.clientY, active: false };
   event.currentTarget.setPointerCapture?.(event.pointerId);
 }
@@ -460,6 +469,10 @@ function onPointerCancel() {
 }
 
 async function moveItem(item, column) {
+  if (item.status === "cancelled" || column.id === cancellationColumnId.value) {
+    errorMsg.value = "Cancele o item no pedido, informando o motivo; o KDS o moverá automaticamente.";
+    return;
+  }
   movingId.value = item.id;
   errorMsg.value = "";
   const previous = item.kds_position;
@@ -470,9 +483,7 @@ async function moveItem(item, column) {
   } catch (err) {
     item.kds_position = previous; // desfaz
     errorMsg.value = normalizeApiError(err).message;
-    // O card pode ter morrido com a tela aberta (pedido cancelado/estornado no
-    // caixa): recarregar tira ele do quadro em vez de deixar um card parado
-    // que recusa todo movimento até o próximo refresh automático.
+    // O card pode ter mudado no caixa; a recarga reflete o novo estado.
     await loadItems();
   } finally {
     movingId.value = "";
@@ -552,7 +563,7 @@ function contextIcon(item) {
   return { table: "armchair", counter: "store", delivery: "truck", takeaway: "shopping-bag", command: "ticket" }[item.order_type] || "receipt-text";
 }
 function statusLabel(s) {
-  return { pending: "Pendente", sent: "Novo", preparing: "Preparo", ready: "Pronto", delivered: "Entregue" }[s] || s;
+  return { pending: "Pendente", sent: "Novo", preparing: "Preparo", ready: "Pronto", delivered: "Entregue", cancelled: "Cancelado" }[s] || s;
 }
 function decimal(value) {
   return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 3 });
