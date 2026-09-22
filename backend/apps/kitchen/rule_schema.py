@@ -17,7 +17,7 @@ FIELDS = {
     "order_type", "production_sector", "item_status", "order_status",
     "payment_status", "production_status", "delivery_status",
     "minutes_since_sent", "minutes_in_column", "has_customer_note",
-    "has_table", "has_command",
+    "has_table", "has_command", "column_is_entry",
 }
 OPERATORS = {"equals", "not_equals", "in", "not_in", "gte", "lte", "true", "false"}
 ACTIONS = {"include", "exclude", "move"}

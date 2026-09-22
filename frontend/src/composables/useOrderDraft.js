@@ -1,5 +1,7 @@
 import { computed, ref } from "vue";
 
+import { useDraftVisibleItems } from "./useDraftVisibleItems";
+
 import { materializeDraft } from "../services/orderDraftService";
 
 /**
@@ -26,16 +28,14 @@ export function useOrderDraft() {
 
   let proximoId = 1;
 
-  const vazio = computed(() => itens.value.length === 0);
-  const quantidadeDeItens = computed(() =>
-    itens.value.reduce((soma, item) => soma + Number(item.quantity || 0), 0),
+  // A lista que a tela mostra é pergunta de APRESENTAÇÃO, não de estado: o
+  // rascunho guarda só os itens que ele próprio criou.
+  const { itensVisiveis, quantidadeDeItens, total } = useDraftVisibleItems(
+    itens,
+    comandas,
   );
-  const total = computed(() =>
-    itens.value.reduce(
-      (soma, item) => soma + Number(item.unit_price || 0) * Number(item.quantity || 0),
-      0,
-    ),
-  );
+
+  const vazio = computed(() => itensVisiveis.value.length === 0);
 
   /**
    * Acrescenta um produto ao rascunho.
@@ -104,6 +104,20 @@ export function useOrderDraft() {
     tipo.value = "command";
   }
 
+  /**
+   * Guarda as anotações que o cartão já tinha, para o carrinho mostrá-las.
+   *
+   * É só PRÉVIA: quem monta a conta de verdade é o `attach-commands` no
+   * servidor, que relê as anotações pendentes no momento da abertura. Se
+   * outro garçom lançar uma sobremesa entre anexar e cobrar, o servidor a
+   * inclui — e é assim que tem de ser.
+   */
+  function registrarItensDaComanda(commandId, itensDoCartao) {
+    comandas.value = comandas.value.map((atual) =>
+      atual.id === commandId ? { ...atual, items: itensDoCartao } : atual,
+    );
+  }
+
   /** Solta UM cartão, ou todos quando não se diz qual. */
   function soltarComanda(commandId = null) {
     comandas.value = commandId
@@ -147,6 +161,7 @@ export function useOrderDraft() {
 
   return {
     itens,
+    itensVisiveis,
     comandas,
     mesa,
     cliente,
@@ -159,6 +174,7 @@ export function useOrderDraft() {
     mudarQuantidade,
     remover,
     anexarComanda,
+    registrarItensDaComanda,
     soltarComanda,
     limpar,
     materializar,

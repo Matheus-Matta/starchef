@@ -66,7 +66,7 @@ const canSave = computed(() => form.name.trim() && (form.action !== "move" || fo
 function valuesFor(field) { return fieldValues(field); }
 function isMinutes(field) { return field.startsWith("minutes_"); }
 function needsValue(operator) { return !["true", "false"].includes(operator); }
-function operatorsFor(field) { return ["has_customer_note", "has_table", "has_command"].includes(field) ? OPERATORS.boolean : (isMinutes(field) ? OPERATORS.number : OPERATORS.text); }
+function operatorsFor(field) { return ["has_customer_note", "has_table", "has_command", "column_is_entry"].includes(field) ? OPERATORS.boolean : (isMinutes(field) ? OPERATORS.number : OPERATORS.text); }
 function resetCondition(condition) { condition.operator = operatorsFor(condition.field)[0].value; condition.value = ""; }
 function addCondition() { form.conditions.push({ field: "order_type", operator: "equals", value: "" }); }
 function summary(rule) { return ruleSummary(rule, props.station.columns || []); }

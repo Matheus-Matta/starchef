@@ -20,6 +20,8 @@ class Command(BaseCommand):
         parser.add_argument("--status", action="store_true", help="só mostra o que existe hoje")
         parser.add_argument("--force", action="store_true",
                             help="instala mesmo com SYNC_ENABLED=false")
+        parser.add_argument("--if-needed", action="store_true", dest="if_needed",
+                            help="não faz nada se nenhuma tabela estiver sem trigger")
 
     def handle(self, *args, **options):
         if not triggers.is_postgres():
@@ -51,6 +53,17 @@ class Command(BaseCommand):
 
         if options["remove"]:
             triggers.uninstall(log=self.stdout.write)
+            return None
+
+        # O CAMINHO DO BOOT. Quatro containers sobem com a mesma imagem e
+        # chamariam isto ao mesmo tempo; recriar 55 triggers em cada um pega
+        # ACCESS EXCLUSIVE em toda tabela sincronizada e serializa o arranque
+        # inteiro por causa de trabalho que já estava feito.
+        #
+        # Conferir primeiro é barato (uma consulta ao catálogo do Postgres) e
+        # transforma o caso normal — nada faltando — em nenhuma DDL.
+        if options["if_needed"] and not triggers.faltando():
+            self.stdout.write("triggers já instaladas; nada a fazer.")
             return None
 
         triggers.install(log=self.stdout.write)

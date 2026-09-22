@@ -33,6 +33,7 @@ def _context(item, position, now):
         "delivery_status": current_order.delivery_status,
         "minutes_since_sent": _minutes_since(item.sent_to_kitchen_at or item.launched_at, now),
         "minutes_in_column": _minutes_since(position.entered_at if position else None, now),
+        "column_is_entry": bool(position and position.column.is_entry),
         "has_customer_note": bool(item.customer_note),
         "has_table": bool(production_order.table_id),
         "has_command": bool(item.command_id or production_order.command_id),

@@ -5,11 +5,13 @@ from rest_framework.response import Response
 
 from apps.core.viewsets import BaseTenantViewSet
 from apps.restaurants.models import Restaurant
+from apps.sla.models import ServiceLevelAgreement
 
 from .models import KdsColumn, KdsStation
-from .rule_schema import DEFAULT_STATION_RULES, FIELDS, OPERATORS
+from .rule_schema import FIELDS, OPERATORS, validate_station_rules
 from .serializers import KdsColumnSerializer, KdsStationSerializer
 from .station_templates import STATION_TEMPLATES, TEMPLATES_BY_KEY
+from .template_rules import template_rules
 
 
 class KdsStationViewSet(BaseTenantViewSet):
@@ -43,9 +45,11 @@ class KdsStationViewSet(BaseTenantViewSet):
 
         name = (request.data.get("name") or template["name"]).strip()
         try:
-            sla_minutes = int(request.data.get("sla_minutes") or 15)
+            sla_minutes = int(request.data.get("sla_minutes", 15))
         except (TypeError, ValueError):
             sla_minutes = 15
+        if sla_minutes < 1:
+            return Response({"sla_minutes": "Informe pelo menos 1 minuto."}, status=status.HTTP_400_BAD_REQUEST)
         sectors = request.data.get("sectors")
         if not isinstance(sectors, list):
             sectors = template.get("sectors", [])
@@ -53,16 +57,25 @@ class KdsStationViewSet(BaseTenantViewSet):
             station = KdsStation.objects.create(
                 account=account, restaurant=restaurant, name=name,
                 sla_minutes=sla_minutes, sectors=sectors,
-                rules=[dict(rule) for rule in DEFAULT_STATION_RULES],
             )
-            KdsColumn.objects.bulk_create([
-                KdsColumn(
+            # bulk_create não dispara post_save: as colunas precisam sincronizar.
+            columns = [
+                KdsColumn.objects.create(
                     account=account, station=station, position=position,
                     name=column["name"], color=column["color"],
                     is_entry=column["is_entry"], is_done=column["is_done"],
                 )
                 for position, column in enumerate(template["columns"])
-            ])
+            ]
+            station.rules = validate_station_rules(template_rules(columns), station)
+            station.save(update_fields=["rules", "updated_at"])
+            # O quadro só exibe urgência se houver um SLA ativo vinculado.
+            sla = ServiceLevelAgreement.objects.create(
+                account=account, name=f"Preparo · {name}",
+                sla_type=ServiceLevelAgreement.TYPE_PREP,
+                target_minutes=sla_minutes, alert_minutes=max(1, (sla_minutes * 2) // 3),
+            )
+            sla.stations.add(station)
         station = self.get_queryset().get(pk=station.pk)
         return Response(self.get_serializer(station).data, status=status.HTTP_201_CREATED)
 

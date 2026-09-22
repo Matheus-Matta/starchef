@@ -45,3 +45,41 @@ export async function findCommandByCode(code) {
   const { data } = await api.get("/commands/by-code/", { params: { code } });
   return data;
 }
+
+
+/**
+ * As mesas do salão, para escolher onde o cartão vai sentar.
+ *
+ * Ativas e ordenadas por número: o operador procura "mesa 12", não um id.
+ */
+export async function fetchTables(restaurantId) {
+  const { data } = await api.get("/tables/", {
+    params: {
+      restaurant: restaurantId,
+      is_active: true,
+      ordering: "number",
+      page_size: 200,
+    },
+  });
+  return data?.results || data || [];
+}
+
+/**
+ * Senta o cartão numa mesa.
+ *
+ * O vínculo é da COMANDA, não do pedido: é ela que anda pelo salão e decide a
+ * ocupação. O pedido guarda a mesa só como histórico do que foi consumido
+ * onde.
+ */
+export async function linkCommandToTable(commandId, tableId) {
+  const { data } = await api.post(`/commands/${commandId}/link-table/`, {
+    table_id: tableId,
+  });
+  return data;
+}
+
+/** Tira o cartão da mesa, sem mexer no que ele tem anotado. */
+export async function unlinkCommandFromTable(commandId) {
+  const { data } = await api.post(`/commands/${commandId}/unlink-table/`, {});
+  return data;
+}

@@ -44,6 +44,12 @@ COPY . /app
 # copia o dono junto ao inicializar o volume.
 RUN adduser --disabled-password --gecos "" --uid 1000 appuser \
     && mkdir -p /app/media/sync_tmp /app/staticfiles /app/sync \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app     && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000
+
+# A rede de segurança das triggers entra por AQUI, e não pelo `command` de cada
+# compose. Deixá-la no compose é confiar que toda instalação — de toda loja, de
+# todo cliente — lembrou de escrever a mesma linha; a nuvem não lembrou, e duas
+# tabelas da comanda ficaram sem captura sem ninguém ver.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

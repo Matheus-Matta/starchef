@@ -158,9 +158,9 @@ Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusã
 
 - `status`: `open → awaiting_payment → paid` (ou `cancelled`/`refunded`).
 - `production_status`: `idle → sent_to_kitchen → preparing → partially_ready → ready → delivered`.
-- `payment_status`: `pending → partial → paid` (ou `refunded`).
+- `payment_status`: `pending → partial → paid` (ou `cancelled`/`refunded`). Ao cancelar o pedido, pagamentos pendentes ou parciais passam a `cancelled`; se ele estava pago, passa a `refunded` sem executar estorno financeiro nesta etapa.
 
-Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para alteração; cancelamento exige motivo e cancela, na mesma transação, a nota fiscal vinculada (inclusive descartando a pendente para impedir emissão posterior); retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`. Para cartão, `metadata.card_subtype` (`debit` ou `credit`) é obrigatório no fluxo de pedido, persistido em `Payment.card_subtype` e usado para gerar o meio de pagamento correto na NFC-e.
+Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para edição de itens e fechamento; o cancelamento de pedido pago marca `payment_status=refunded`, sem estorno financeiro; cancelamento exige motivo e cancela, na mesma transação, a nota fiscal vinculada (inclusive descartando a pendente para impedir emissão posterior); retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`. Para cartão, `metadata.card_subtype` (`debit` ou `credit`) é obrigatório no fluxo de pedido, persistido em `Payment.card_subtype` e usado para gerar o meio de pagamento correto na NFC-e.
 
 No fechamento, `POST /orders/{id}/close/` aceita `fiscal_customer_cpf`. O CPF é
 validado, normalizado para 11 dígitos e armazenado no pedido antes do pagamento.
@@ -211,8 +211,13 @@ simples já existentes sem alterar hashes válidas.
 estação. As ações são incluir, excluir e mover; as condições cobrem tipo do
 pedido, setor, status do item/pedido/pagamento/produção/entrega, mesa, comanda,
 observação e tempo desde o envio ou na coluna. Estações existentes continuam
-com `rules=[]`; estações novas recebem a regra editável “Incluir todos os
-pedidos”. `GET /kitchen/items/?station=<id>` avalia as regras e devolve
+com `rules=[]`; estações novas criadas em branco recebem a regra editável
+“Incluir todos os pedidos”. Os modelos de cozinha, bar, pizzaria, confeitaria
+e simples criam regras para receber itens em produção, ocultar cancelados e
+mover itens em preparo/prontos conforme o status, além de um SLA de preparo
+vinculado ao quadro (alerta em dois terços do tempo configurado). O SLA só
+mostra urgência; o tempo decorrido nunca conclui um item.
+`GET /kitchen/items/?station=<id>` avalia as regras e devolve
 `kds_position`/`kds_entered_at`. A posição é persistida em `KdsItemPosition`
 por item + estação, portanto mover o mesmo item em um quadro não altera sua
 coluna em outro. `POST /kitchen/items/{id}/move/` mantém o campo legado

@@ -3,42 +3,21 @@
     <!-- Sem comanda o pedido é de BALCÃO, e isso precisa estar dito: é a
          diferença entre o cliente levar o cupom agora e a conta ficar num
          cartão até ele sair. -->
-    <!-- Um cartão por linha: a mesa que paga junto é o caso, não a exceção,
-         e o cliente confere em voz alta "quanto é a minha?". -->
-    <!-- Um cartão por linha: a mesa que paga junto é o caso, não a exceção,
-         e o cliente confere em voz alta "quanto é a minha?". -->
-    <DraftAttachedCommand
-      v-for="atual in comandas"
-      :key="atual.id"
-      :comanda="atual"
-      :disabled="disabled"
-      @detach="$emit('detach', atual.id)"
-    />
-
     <button class="anexo__botao" type="button" :disabled="disabled" @click="abrir = true">
-      <span class="anexo__rotulo">{{ comandas.length ? "" : "Balcão" }}</span>
+      <span class="anexo__rotulo">{{ rotulo }}</span>
       <span class="anexo__acao">
         {{ comandas.length ? "Incluir outra comanda" : "Incluir comanda" }}
       </span>
     </button>
 
-    <div v-if="abrir" class="anexo__seletor">
-      <CommandScannerInput
-        :disabled="carregando"
-        hint="Passe o cartão ou escolha na lista."
-        @scan="escolherPorCodigo"
-      />
-      <p v-if="erro" class="pdv-notice pdv-notice--error" role="alert">{{ erro }}</p>
-      <CommandPickerList
-        :comandas="disponiveis"
-        :carregando="carregando"
-        vazio="Nenhuma comanda livre."
-        @pick="escolher"
-      />
-      <button class="pdv-btn pdv-btn--ghost anexo__cancelar" type="button" @click="abrir = false">
-        Cancelar
-      </button>
-    </div>
+    <CommandAttachPicker
+      v-if="abrir"
+      :comandas="comandas"
+      :disabled="disabled"
+      @attach="anexar"
+      @detach="$emit('detach', $event)"
+      @close="abrir = false"
+    />
   </div>
 </template>
 
@@ -53,16 +32,15 @@
  *
  * A comanda vira um atributo do carrinho, do mesmo jeito que o cliente. O
  * pedido nasce quando a cozinha ou o caixa precisam dele.
+ *
+ * Aqui mora só o botão e o estado de aberto; a busca no servidor, a leitura
+ * do cartão e a regra de quem pode entrar vivem no `CommandAttachPicker`.
  */
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 
-import CommandPickerList from "./CommandPickerList.vue";
-import CommandScannerInput from "./CommandScannerInput.vue";
-import DraftAttachedCommand from "./DraftAttachedCommand.vue";
-import { api } from "../../services/api";
-import { findCommandByCode } from "../../services/commandService";
+import CommandAttachPicker from "./CommandAttachPicker.vue";
 
-defineProps({
+const props = defineProps({
   comandas: { type: Array, default: () => [] },
   mesa: { type: Object, default: null },
   disabled: { type: Boolean, default: false },
@@ -71,51 +49,18 @@ defineProps({
 const emit = defineEmits(["attach", "detach"]);
 
 const abrir = ref(false);
-const disponiveisNoServidor = ref([]);
-const carregando = ref(false);
-const erro = ref("");
 
-const disponiveis = computed(() =>
-  // Cartão sem valor não entra: ele não acrescenta um centavo à conta, e
-  // anexá-lo só prende um pedido a um cartão que não cobra nada.
-  disponiveisNoServidor.value.filter((item) => Number(item.pending_total || 0) > 0),
-);
+const rotulo = computed(() => {
+  const quantas = props.comandas.length;
+  if (!quantas) return "Balcão";
+  return `${quantas} comanda${quantas > 1 ? "s" : ""}`;
+});
 
-async function carregar() {
-  carregando.value = true;
-  erro.value = "";
-  try {
-    const { data } = await api.get("/commands/", {
-      params: { page_size: 200, is_active: true },
-    });
-    disponiveisNoServidor.value = data?.results || data || [];
-  } catch (exc) {
-    erro.value = exc?.response?.data?.detail || "Não foi possível listar as comandas.";
-  } finally {
-    carregando.value = false;
-  }
-}
-
-async function escolherPorCodigo(codigo) {
-  carregando.value = true;
-  erro.value = "";
-  try {
-    escolher(await findCommandByCode(codigo));
-  } catch (exc) {
-    erro.value = exc?.response?.data?.detail || `Comanda "${codigo}" não encontrada.`;
-  } finally {
-    carregando.value = false;
-  }
-}
-
-function escolher(comanda) {
-  abrir.value = false;
+function anexar(comanda) {
+  // O modal FICA aberto: a mesa que paga junto é o caso, não a exceção, e
+  // fechar a cada cartão obrigaria a reabrir quatro vezes.
   emit("attach", comanda);
 }
-
-watch(abrir, (aberto) => {
-  if (aberto) carregar();
-});
 </script>
 
 <style scoped>
@@ -125,8 +70,7 @@ watch(abrir, (aberto) => {
   gap: 8px;
 }
 
-.anexo__botao,
-.anexo__atual {
+.anexo__botao {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -140,50 +84,13 @@ watch(abrir, (aberto) => {
   cursor: pointer;
 }
 
-.anexo__atual {
-  border-style: solid;
-  cursor: default;
-}
-
 .anexo__rotulo {
   font-size: 13px;
-}
-
-.anexo__mesa {
-  margin-left: 6px;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--text-color-secondary, #6b7280);
 }
 
 .anexo__acao {
   font-size: 12px;
   font-weight: 700;
   color: var(--primary-color, #2563eb);
-}
-
-.anexo__soltar {
-  border: 0;
-  background: transparent;
-  color: var(--text-color-secondary, #6b7280);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.anexo__seletor {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 340px;
-  padding: 10px;
-  border: 1px solid var(--surface-border, #e5e7eb);
-  border-radius: 8px;
-  background: var(--surface-card, #fff);
-}
-
-.anexo__cancelar {
-  align-self: flex-end;
 }
 </style>

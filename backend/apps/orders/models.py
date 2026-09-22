@@ -63,12 +63,14 @@ class Order(TenantModel):
     PAYMENT_PARTIAL = "partial"
     PAYMENT_PAID = "paid"
     PAYMENT_REFUNDED = "refunded"
+    PAYMENT_CANCELLED = "cancelled"
 
     PAYMENT_STATUS_CHOICES = [
         (PAYMENT_PENDING, "Pending"),
         (PAYMENT_PARTIAL, "Partial"),
         (PAYMENT_PAID, "Paid"),
         (PAYMENT_REFUNDED, "Refunded"),
+        (PAYMENT_CANCELLED, "Cancelled"),
     ]
 
     # Delivery cycle — só relevante para pedidos de entrega (módulo Entrega).

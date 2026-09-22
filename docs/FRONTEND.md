@@ -219,6 +219,9 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
 - Relatórios: `views/ReportsView.vue` monta a barra de filtros por seção e delega os painéis maiores a `components/reports/`: `OrdersCancellationsPanel.vue` (seção Pedidos: KPIs de cancelamento, por hora, por autorização, listas de pedidos cancelados e itens retirados; filtros de autorização e tipo) e `CashMovementsReport.vue` (seção Caixa, rota `relatorios/caixa`: gaveta por dia, resumo, por caixa/operador, sessões e movimentos, com filtro por caixa). O CSV de cada seção sai do endpoint da própria seção (`reportService.endpoints`). Uma movimentação abre `CashMovementDetailsDialog.vue`; uma sessão abre `CashSessionDetailView.vue` (`caixa/sessoes/:id`), que reúne entradas, saídas, suprimentos, recebimentos, itens e ocorrências e permite imprimir ou exportar o extrato completo. `CashRegisterView.vue` reutiliza esses detalhes, autoriza sangria e divergência só com a senha de ações do caixa (`cash_password` no `/approve/`), como o PDV, e mostra operador, terminal, autorização e saldo após cada movimento. O form de Restaurantes (`config/resources.js`) tem "Comandas por mesa" e "Carência de cancelamento" na seção Operação.
 - KDS: `KdsStationsView.vue` incorpora `KdsRulesEditor.vue`, que ordena e
   edita regras de inclusão, exclusão e movimentação automática por estação.
+  Ao criar uma estação com um dos modelos, o backend configura recebimento,
+  ocultação de cancelados, avanço por status e um SLA que ativa o alerta de
+  tempo do quadro; todas as regras continuam editáveis.
   O board pede os itens já resolvidos para a estação selecionada, atualiza a
   cada 15 segundos para aplicar regras de tempo, oferece tela cheia nativa e
   aceita arrastar cards por mouse ou toque; tocar sem arrastar continua abrindo

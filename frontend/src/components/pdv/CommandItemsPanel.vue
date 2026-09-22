@@ -9,6 +9,15 @@
 
     <p v-if="erro" class="pdv-notice pdv-notice--error" role="alert">{{ erro }}</p>
 
+    <!-- ONDE O CARTÃO ESTÁ SENTADO. Quem está olhando a comanda é quem sabe
+         para qual mesa ela foi; antes isso só existia no meio do fluxo de
+         abrir pedido, e um cartão na mesa errada só era corrigido ao cobrar. -->
+    <CommandTableLink
+      :comanda="command"
+      :restaurant-id="restaurantId"
+      @changed="$emit('table-changed')"
+    />
+
     <div class="pdv-scroll painel__lista">
       <p v-if="carregando" class="pdv-empty">Carregando…</p>
       <p v-else-if="!itens.length" class="pdv-empty">Este cartão nunca foi usado.</p>
@@ -59,13 +68,15 @@
 import { computed, toRef } from "vue";
 
 import CommandItemsGroups from "./CommandItemsGroups.vue";
+import CommandTableLink from "./CommandTableLink.vue";
 import { useCommandItems } from "../../composables/useCommandItems";
 
 const props = defineProps({
   command: { type: Object, required: true },
+  restaurantId: { type: [String, Number], default: null },
 });
 
-const emit = defineEmits(["printed"]);
+const emit = defineEmits(["printed", "table-changed"]);
 
 const {
   itens,

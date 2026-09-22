@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from apps.synchronization.constants import PROTOCOL_VERSION
+from apps.synchronization.constants import PROTOCOL_VERSION, EventStatus
 from apps.synchronization.services import crypto, inbox
 
 pytestmark = pytest.mark.django_db
@@ -60,7 +60,14 @@ def test_evento_para_outro_destino_nao_e_gravado(como_nuvem, conta, no_loja, no_
     assert aceitos == []
     assert len(recusados) == 1
     assert recusados[0]["event_id"] == bruto["event_id"]
-    assert not SyncEvent.objects.filter(event_id=bruto["event_id"]).exists()
+
+    # FICA gravado, como DEAD e com o motivo. Antes era descartado com uma
+    # linha de log, e foi isso que escondeu por um dia inteiro uma loja
+    # endereçando tudo para um nó apagado: 729 eventos, pagamentos incluídos,
+    # foram para o ralo com a fila dizendo "0 mortos".
+    guardado = SyncEvent.objects.get(event_id=bruto["event_id"])
+    assert guardado.status == EventStatus.DEAD
+    assert "target_node" in guardado.last_error
 
 
 def test_um_evento_estragado_nao_derruba_os_outros(como_nuvem, conta, no_loja, no_nuvem):
@@ -84,6 +91,7 @@ def test_um_evento_estragado_nao_derruba_os_outros(como_nuvem, conta, no_loja, n
     )
 
     assert len(aceitos) == 2, "o evento ruim levou os bons junto"
+    assert estragado["event_id"] not in [str(e.event_id) for e in aceitos]
     assert len(recusados) == 1
     assert SyncEvent.objects.filter(event_id=bom_depois["event_id"]).exists(), (
         "o que vinha DEPOIS do evento ruim precisa chegar"
@@ -131,4 +139,50 @@ def test_checksum_divergente_no_evento_e_rejeitado(como_nuvem, conta, no_loja, n
 
     assert aceitos == []
     assert "Checksum" in recusados[0]["error"]
-    assert not SyncEvent.objects.filter(event_id=bruto["event_id"]).exists()
+
+    # Guardado como DEAD, com o motivo — nunca aplicado, mas nunca invisível.
+    guardado = SyncEvent.objects.get(event_id=bruto["event_id"])
+    assert guardado.status == EventStatus.DEAD
+    assert "Checksum" in guardado.last_error
+
+
+def test_o_evento_em_quarentena_APARECE_na_fila(como_nuvem, conta, no_loja, no_nuvem):
+    """O defeito que custou um dia inteiro de diagnóstico.
+
+    Uma loja endereçava tudo para um nó que a nuvem havia apagado. Os eventos
+    eram descartados com uma linha de log, e a fila seguia dizendo "0 mortos"
+    — então o painel parecia saudável, o `sync_status` parecia saudável, e 729
+    eventos (pagamentos incluídos) simplesmente não chegavam.
+
+    "Mortos" é o número que alguém olha. Se a quarentena não entra nele, ela
+    troca um problema barulhento por um invisível.
+    """
+    from apps.synchronization.models import SyncEvent
+
+    bruto = _evento(conta, no_nuvem, target_node_id=str(uuid.uuid4()))
+    inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
+
+    guardado = SyncEvent.objects.get(event_id=bruto["event_id"])
+    assert guardado.status == EventStatus.DEAD
+    assert SyncEvent.objects.filter(status=EventStatus.DEAD).count() >= 1, (
+        "a quarentena não aparece em lugar nenhum"
+    )
+
+
+def test_o_evento_em_quarentena_NUNCA_e_aplicado(como_nuvem, conta, no_loja, no_nuvem):
+    """A garantia de segurança que não pode cair junto com a visibilidade.
+
+    Guardar o evento é para ele ser VISTO, não para ser aplicado. `DEAD` fica
+    fora de `pending_inbound`, que só olha RECEIVED e FAILED — então nenhuma
+    passada do worker o pega.
+    """
+    from apps.synchronization.models import SyncEvent
+    from apps.synchronization.services import nodes as servico_nos
+
+    bruto = _evento(conta, no_nuvem, target_node_id=str(uuid.uuid4()))
+    inbox.store_batch([bruto], connection_node=no_loja, account_id=conta.id)
+
+    proprio = servico_nos.self_node()
+    pendentes = SyncEvent.objects.pending_inbound(proprio).values_list("event_id", flat=True)
+
+    assert bruto["event_id"] not in [str(e) for e in pendentes]

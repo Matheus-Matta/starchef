@@ -3,7 +3,7 @@ Modelos (templates) de estação de KDS — atalhos de onboarding.
 
 Cada template descreve um quadro pronto para um tipo de operação (cozinha, bar,
 pizzaria…), já com as colunas montadas. O cliente escolhe um modelo ao criar a
-estação e o backend cria o quadro + colunas de uma vez (ver
+estação e o backend cria quadro, colunas, regras e SLA de preparo (ver
 `KdsStationViewSet.from_template`). As cores seguem a paleta padrão do KDS.
 """
 

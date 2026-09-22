@@ -1078,15 +1078,36 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         raise ValidationError("O motivo do cancelamento é obrigatório.")
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
-        if order.status == Order.STATUS_PAID:
-            raise ValidationError("Pedidos pagos devem ser estornados, não cancelados.")
+        if order.status == Order.STATUS_CANCELLED:
+            return order
+        pagamento_integral = order.payment_status == Order.PAYMENT_PAID
         from apps.invoices.order_cancellation import cancel_invoice_for_order
         cancel_invoice_for_order(order, reason=reason, user=user)
+        from apps.payments.models import Payment
+        from apps.payments.services import cancel_cash_movements_of
+
+        if not pagamento_integral:
+            # Recebimentos parciais precisam sair do caixa ao cancelar a venda.
+            for payment in order.payments.select_for_update().filter(
+                status__in=[Payment.STATUS_PENDING, Payment.STATUS_APPROVED]
+            ).order_by("pk"):
+                payment.status = Payment.STATUS_CANCELLED
+                payment.updated_by = user
+                payment.save(update_fields=["status", "updated_by", "updated_at"])
+                cancel_cash_movements_of(payment, user=user)
+                record_audit(
+                    action=AuditLog.ACTION_CANCELLED,
+                    instance=payment,
+                    actor=user,
+                    reason=reason,
+                    metadata={"order": str(order.id), "event": "payment_cancelled"},
+                )
         # Não retire itens da origem enquanto o caixa monta a conta.
         now = timezone.now()
         if not authorization:
             authorization = Order.AUTHORIZATION_DELEGATED if authorized_by is not None else Order.AUTHORIZATION_OWN
         order.status = Order.STATUS_CANCELLED
+        order.payment_status = Order.PAYMENT_REFUNDED if pagamento_integral else Order.PAYMENT_CANCELLED
         order.cancel_reason = reason
         order.cancelled_at = now
         order.cancelled_by = user
@@ -1096,6 +1117,7 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order.save(
             update_fields=[
                 "status",
+                "payment_status",
                 "cancel_reason",
                 "cancelled_at",
                 "cancelled_by",

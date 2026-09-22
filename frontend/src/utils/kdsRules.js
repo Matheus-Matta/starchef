@@ -13,6 +13,7 @@ export const FIELDS = [
   { value: "has_customer_note", label: "Tem observação" },
   { value: "has_table", label: "Tem mesa" },
   { value: "has_command", label: "Tem comanda" },
+  { value: "column_is_entry", label: "Está na coluna de entrada" },
 ];
 
 const text = [
@@ -27,9 +28,9 @@ export const OPERATORS = {
 const VALUES = {
   order_type: [["command", "Comanda"], ["counter", "Balcão"], ["delivery", "Delivery"], ["takeaway", "Retirada"], ["internal", "Interno"]],
   production_sector: [["kitchen", "Cozinha"], ["bar", "Bar"], ["dessert", "Sobremesas"]],
-  item_status: [["sent", "Novo"], ["preparing", "Em preparo"], ["ready", "Pronto"]],
-  order_status: [["open", "Aberto"], ["awaiting_payment", "Aguardando pagamento"], ["paid", "Pago"]],
-  payment_status: [["pending", "Pendente"], ["partial", "Parcial"], ["paid", "Pago"], ["refunded", "Estornado"]],
+  item_status: [["sent", "Novo"], ["preparing", "Em preparo"], ["ready", "Pronto"], ["cancelled", "Cancelado"]],
+  order_status: [["open", "Aberto"], ["awaiting_payment", "Aguardando pagamento"], ["paid", "Pago"], ["cancelled", "Cancelado"], ["refunded", "Estornado"]],
+  payment_status: [["pending", "Pendente"], ["partial", "Parcial"], ["paid", "Pago"], ["refunded", "Estornado"], ["cancelled", "Cancelado"]],
   production_status: [["sent_to_kitchen", "Enviado"], ["preparing", "Em preparo"], ["partially_ready", "Parcialmente pronto"], ["ready", "Pronto"], ["delivered", "Entregue"]],
   delivery_status: [["pending", "Pendente"], ["out_for_delivery", "Saiu para entrega"], ["delivered", "Entregue"], ["failed", "Falhou"]],
 };

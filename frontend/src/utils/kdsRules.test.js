@@ -17,4 +17,10 @@ describe("kdsRules", () => {
   it("oferece tipos de pedido para a condição", () => {
     expect(fieldValues("order_type")).toContainEqual({ value: "delivery", label: "Delivery" });
   });
+
+  it("permite editar as exclusões de cancelados dos modelos", () => {
+    expect(fieldValues("order_status")).toContainEqual({ value: "cancelled", label: "Cancelado" });
+    expect(fieldValues("order_status")).toContainEqual({ value: "refunded", label: "Estornado" });
+    expect(fieldValues("item_status")).toContainEqual({ value: "cancelled", label: "Cancelado" });
+  });
 });

@@ -664,6 +664,20 @@ def register_payment(
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
 
         if paid_in_full:
+            # AS ANOTAÇÕES SAEM DA COMANDA COMO VENDA — e isto tem de vir
+            # ANTES de tentar liberar o cartão.
+            #
+            # Faltava aqui. Havia dois caminhos para um pedido virar pago e só
+            # o outro (`orders.services`, fechamento com ajuste de taxa)
+            # concluía as anotações; este, que é por onde o caixa passa de
+            # verdade, não. O resultado: pago, e as anotações seguiam
+            # `pending`. `free_command_if_empty` via pendência, recusava
+            # liberar, e o cartão ficava ocupado com a conta do cliente que já
+            # foi embora — pronta para ser cobrada de novo no próximo
+            # pagamento.
+            from apps.orders.command_billing import conclude_items_of_order
+
+            conclude_items_of_order(order, billed=True)
             if order.table_id:
                 from apps.orders.services import free_table_if_empty
 
@@ -739,19 +753,19 @@ def cancel_cash_movements_of(payment, *, user):
 def cancel_payment(*, payment, user):
     """Cancela um recebimento lançado no PDV e desfaz seus efeitos operacionais."""
     with tenant_context(payment.account):
-        payment = (
-            Payment.objects.select_related("order__restaurant", "order__table", "order__command")
-            .select_for_update(of=("self",))
-            .get(pk=payment.pk)
-        )
-        if payment.status != Payment.STATUS_APPROVED:
-            raise ValidationError("Este pagamento já foi cancelado ou estornado.")
-
         order = (
             Order.objects.select_related("restaurant", "table", "command")
             .select_for_update(of=("self",))
             .get(pk=payment.order_id)
         )
+        if order.status in {Order.STATUS_CANCELLED, Order.STATUS_REFUNDED}:
+            raise ValidationError("Este pedido já está cancelado ou estornado.")
+        payment = (
+            Payment.objects.select_for_update()
+            .get(pk=payment.pk)
+        )
+        if payment.status != Payment.STATUS_APPROVED:
+            raise ValidationError("Este pagamento já foi cancelado ou estornado.")
         was_paid = order.payment_status == Order.PAYMENT_PAID
 
         payment.status = Payment.STATUS_CANCELLED

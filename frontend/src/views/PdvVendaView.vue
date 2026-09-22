@@ -10,7 +10,7 @@
         @pick="rascunho.adicionar"
       />
       <DraftCartPanel
-        :itens="rascunho.itens.value"
+        :itens="rascunho.itensVisiveis.value"
         :comandas="rascunho.comandas.value"
         :mesa="rascunho.mesa.value"
         :total="rascunho.total.value"
@@ -48,6 +48,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 import DraftCartPanel from "../components/pdv/DraftCartPanel.vue";
+import { fetchCommandItems } from "../services/commandService";
 import MenuProductGrid from "../components/pdv/MenuProductGrid.vue";
 import { useOrderDraft } from "../composables/useOrderDraft";
 import { api } from "../services/api";
@@ -79,10 +80,22 @@ async function carregarCardapio() {
   }
 }
 
-function anexar(comanda) {
+async function anexar(comanda) {
   // A mesa vem da COMANDA: é ela que decide a ocupação do salão, e o pedido
   // guarda a mesa só como histórico.
   rascunho.anexarComanda(comanda, comanda?.current_table ? { id: comanda.current_table } : null);
+
+  // E as ANOTAÇÕES vêm junto, para o carrinho mostrar o que vai ser cobrado.
+  // Sem isto o operador anexa quatro cartões e vê um carrinho vazio com um
+  // total que não bate com nada na tela — e só descobre o que está cobrando
+  // depois de abrir a conta.
+  try {
+    const dados = await fetchCommandItems(comanda.id);
+    rascunho.registrarItensDaComanda(comanda.id, dados?.items || []);
+  } catch {
+    // O carrinho segue utilizável sem a prévia: o servidor é quem monta a
+    // conta de verdade, no `attach-commands`.
+  }
 }
 
 function mudarQuantidade(item, delta) {

@@ -2,6 +2,12 @@
   <div class="linha">
     <div class="linha__produto">
       <strong>{{ item.product_name }}</strong>
+      <!-- DE QUAL CARTÃO É ESTE ITEM. Numa conta com quatro comandas, o
+           carrinho é uma lista só — sem isto, ninguém sabe o que pertence a
+           quem, e a conferência em voz alta com o cliente não fecha. -->
+      <span v-if="numeroDaComanda" class="linha__comanda">
+        Comanda {{ numeroDaComanda }}
+      </span>
       <em v-if="item.customer_note" class="pdv-muted linha__obs">{{ item.customer_note }}</em>
     </div>
     <div class="linha__quantidade">
@@ -18,9 +24,20 @@
       </button>
     </div>
     <span class="pdv-num linha__valor">{{ valor }}</span>
-    <button class="linha__remover" type="button" :disabled="disabled" @click="$emit('remove')">
+    <!-- Item de COMANDA não tem X: ele não é deste carrinho, é uma anotação
+         que já existe no cartão. Tirar aqui daria a impressão de apagar o
+         consumo — e o caminho certo é retirar a comanda inteira, no modal.
+         O espaço fica reservado para as linhas não dançarem. -->
+    <button
+      v-if="!numeroDaComanda"
+      class="linha__remover"
+      type="button"
+      :disabled="disabled"
+      @click="$emit('remove')"
+    >
       ✕
     </button>
+    <span v-else class="linha__remover linha__remover--vazio" aria-hidden="true"></span>
   </div>
 </template>
 
@@ -34,6 +51,11 @@ const props = defineProps({
 });
 
 defineEmits(["quantity", "remove"]);
+
+/** De qual comanda veio este item, se veio de alguma. */
+const numeroDaComanda = computed(
+  () => props.item.command_number || props.item.comandaNumero || null,
+);
 
 /** Produto por quilo mostra o peso; o resto mostra a contagem. */
 const rotulo = computed(() => {
@@ -58,6 +80,22 @@ const valor = computed(() =>
   padding: 8px 0;
   border-bottom: 1px solid var(--surface-border, #f1f2f4);
   font-size: 13px;
+}
+
+.linha__comanda {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color, #2563eb) 12%, transparent);
+  color: var(--primary-color, #2563eb);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.linha__remover--vazio {
+  visibility: hidden;
 }
 
 .linha__obs {

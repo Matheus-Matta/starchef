@@ -5,15 +5,18 @@ credencial nova. É idempotente: rematricular reaproveita o mesmo nó na nuvem
 (mesmo `pair_id`), então nada é duplicado lá.
 """
 import logging
-import uuid
 
 import requests
 from django.conf import settings
 from django.db import transaction
 
-from apps.synchronization.constants import NodeStatus, NodeType
+from apps.synchronization.constants import NodeType
 from apps.synchronization.models import SyncNode
 from apps.synchronization.services import enrollment, guard, nodes
+from apps.synchronization.services.enrollment_identity import (
+    _garantir_conta,
+    _gravar_no,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,50 +106,6 @@ def install(pacote, *, env_path=None):
     if env_path:
         _gravar_env(pacote, env_path)
     return proprio
-
-
-def _garantir_conta(conta_id):
-    """Cria um esqueleto da conta quando ela ainda não existe aqui.
-
-    O ovo e a galinha da primeira instalação: o SyncNode aponta para a conta,
-    mas a conta só chega como PRIMEIRO evento da carga — que por sua vez
-    precisa do nó para ter destino. Sem este esqueleto, a matrícula falha com
-    `FOREIGN KEY constraint failed` num banco vazio, que é justamente o único
-    estado em que ela roda.
-
-    O registro nasce inativo e sem nome real: o evento `account` da carga
-    sobrescreve tudo em seguida, com os dados verdadeiros. Inativo de propósito
-    — se a carga não vier, ninguém opera em cima de uma conta fantasma.
-    """
-    from apps.accounts.models import Account
-
-    if Account.objects.filter(pk=conta_id).exists():
-        return
-    Account.objects.create(
-        pk=conta_id,
-        name="(aguardando sincronização)",
-        slug=f"sync-{str(conta_id)[:8]}",
-        is_active=False,
-    )
-    logger.info("sync-enroll: conta %s criada como esqueleto até a carga chegar", conta_id)
-
-
-def _gravar_no(node_id, pair_id, conta_id, node_type, nome, *, is_self):
-    """O nó é criado antes da carga; a conta já foi garantida acima."""
-    no, _criado = SyncNode.objects.update_or_create(
-        pk=uuid.UUID(str(node_id)),
-        defaults={
-            "pair_id": uuid.UUID(str(pair_id)),
-            "account_id": conta_id,
-            "node_type": node_type,
-            "environment": guard.current_environment(),
-            "name": nome,
-            "status": NodeStatus.ACTIVE if is_self else NodeStatus.PENDING,
-            "is_self": is_self,
-            "is_active": True,
-        },
-    )
-    return no
 
 
 def _aplicar_em_runtime(pacote):

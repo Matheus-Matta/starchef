@@ -56,6 +56,9 @@ def store_batch(events_payload, *, connection_node, account_id, run=None):
                     SyncEvent, bruto, connection_node, destino, account_id, run
                 )
         except EventQuarantined as erro:
+            _guardar_na_quarentena(
+                SyncEvent, bruto, connection_node, destino, account_id, run, erro
+            )
             recusados.append({"event_id": bruto.get("event_id"), "error": str(erro)})
             logger.error(
                 "sync: evento %s em quarentena (nó %s) — %s",
@@ -110,6 +113,58 @@ def _gravar(SyncEvent, bruto, origem, destino, account_id, run):
     except IntegrityError:
         # Corrida entre dois workers no mesmo lote: o outro já gravou.
         return None
+
+
+def _guardar_na_quarentena(SyncEvent, bruto, origem, destino, account_id, run, erro):
+    """O evento recusado FICA — como DEAD, com o motivo escrito.
+
+    Antes ele era só descartado com uma linha de log, e isso escondeu um
+    defeito por um dia inteiro: uma loja endereçava tudo para um nó que a
+    nuvem havia apagado, e 729 eventos — pagamentos incluídos — foram para o
+    ralo sem que a fila acusasse nada. `sync_status` dizia "0 mortos", o
+    painel dizia que estava tudo bem, e o dado não chegava.
+
+    DEAD é o estado certo e já existe: `pending_inbound` só olha RECEIVED e
+    FAILED, então ele NUNCA é aplicado — a garantia de segurança continua
+    inteira. O que muda é que ele passa a ser contado em "mortos", aparece no
+    `sync_status` e nas métricas, e `sync_recover --requeue` consegue
+    ressuscitá-lo depois que a causa for corrigida.
+    """
+
+    payload = bruto.get("payload") or {}
+    if "bytes" in str(erro):
+        # Foi recusado POR TAMANHO: guardar o payload seria guardar exatamente
+        # o que não coube. O motivo já diz tudo o que se precisa saber.
+        payload = {}
+    try:
+        with transaction.atomic():
+            SyncEvent.objects.create(
+                event_id=bruto["event_id"],
+                account_id=account_id,
+                source_node=origem,
+                # O destino aqui é ESTE nó, não o que veio no envelope: o
+                # endereço errado é justamente o motivo da recusa, e gravá-lo
+                # criaria uma referência para um nó que pode nem existir.
+                target_node=destino,
+                run=run,
+                direction=Direction.INBOUND,
+                sequence=int(bruto.get("sequence") or 0),
+                entity_type=bruto.get("entity_type", ""),
+                entity_id=str(bruto.get("entity_id") or ""),
+                operation=bruto.get("operation", ""),
+                entity_version=int(bruto.get("entity_version") or 1),
+                protocol_version=int(bruto.get("protocol_version") or 1),
+                schema_version=int(payload.get("schema_version") or 1),
+                payload=payload,
+                payload_checksum=bruto.get("payload_checksum") or "",
+                status=EventStatus.DEAD,
+                last_error=str(erro)[:2000],
+                correlation_id=bruto.get("correlation_id") or None,
+            )
+    except IntegrityError:
+        # `event_id` repetido: a origem reenviou o que já está em quarentena.
+        # Um registro basta.
+        pass
 
 
 def mark_acknowledged(source_node, event_ids):

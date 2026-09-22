@@ -144,6 +144,15 @@ def attach_commands_to_order(*, order, command_ids, user):
         criados = OrderItem.objects.bulk_create(
             [_para_item_de_pedido(anotacao, order=order, user=user) for anotacao in novos]
         )
+        # `bulk_create` não dispara signal, então o total do pedido não se
+        # move sozinho: o caixa puxava quatro cartões e via R$ 0,00.
+        #
+        # Só não estourou antes porque o PDV fecha a conta (que recalcula)
+        # antes de cobrar. Quem chamasse `attach-commands` e pagasse em
+        # seguida — pela API, como o aplicativo faz — tentaria receber zero.
+        from apps.orders.services import recalculate_order
+
+        recalculate_order(order)
 
     return criados
 

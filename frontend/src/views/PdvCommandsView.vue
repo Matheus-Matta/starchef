@@ -45,7 +45,9 @@
           v-if="selecionada"
           :key="selecionada.id"
           :command="selecionada"
+          :restaurant-id="selecionada.restaurant"
           @printed="avisarImpressao"
+          @table-changed="recarregarSelecionada"
         />
         <p v-else class="pdv-empty">
           Escolha uma comanda à esquerda, ou passe o cartão no leitor.
@@ -111,6 +113,20 @@ async function carregar() {
   } finally {
     carregando.value = false;
   }
+}
+
+/**
+ * Relê a lista e reapresenta o MESMO cartão, com a mesa nova.
+ *
+ * Só atualizar o campo em memória deixaria a lista da esquerda dizendo uma
+ * coisa e o detalhe outra — e é a lista que o operador usa para achar o
+ * cartão da mesa 12.
+ */
+async function recarregarSelecionada() {
+  const id = selecionada.value?.id;
+  await carregar();
+  if (id) selecionada.value = comandas.value.find((item) => item.id === id) || null;
+  recado.value = "Mesa atualizada.";
 }
 
 function selecionar(comanda) {
