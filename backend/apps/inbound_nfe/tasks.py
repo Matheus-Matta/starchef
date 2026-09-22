@@ -515,11 +515,10 @@ def _process_res_nfe(doc: DFeDistributionDocument):
     ).first()
 
     if existing:
-        # Nota já existe — verificar se precisa atualizar com dados do resumo
-        logger.info(
-            f"InboundNFe {parsed.access_key} já existe "
-            f"(status={existing.status}). Pulando resNFe."
-        )
+        logger.info(f"InboundNFe {parsed.access_key} já existe (status={existing.status}). Pulando resNFe.")
+        if doc.nsu and (not existing.nsu or existing.nsu == "MANUAL"):
+            existing.nsu = doc.nsu
+            existing.save(update_fields=["nsu"])
         from apps.inbound_nfe.services.event_processor import apply_pending_events
         apply_pending_events(existing)
     else:

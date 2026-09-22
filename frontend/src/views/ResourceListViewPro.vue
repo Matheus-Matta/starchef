@@ -1,5 +1,5 @@
 <template>
-  <div class="rpro">
+  <div class="rpro" :class="{ 'rpro--inbound': props.endpoint === '/inbound-nfe/' }">
     <!-- ── Cabeçalho: título + ações (Export / Import / ação primária) ── -->
     <header class="rpro__head">
       <div class="rpro__head-top" :class="{ 'rpro__head-top--inbound': props.endpoint === '/inbound-nfe/' }">
@@ -9,7 +9,6 @@
         </div>
         <div class="rpro__head-actions">
           <template v-if="props.endpoint === '/inbound-nfe/'">
-            <InboundRestaurantSelector class="rpro__unit-select" compact :model-value="inboundRestaurantId" @update:model-value="selectInboundRestaurant" />
             <button
               class="rpro-btn rpro-btn--ghost rpro__export-selected"
               type="button"
@@ -339,8 +338,8 @@
         class="rpro__table"
         :loading="loading"
         :row-hover="true"
-        scrollable
-        scroll-height="flex"
+        :scrollable="props.endpoint !== '/inbound-nfe/'"
+        :scroll-height="props.endpoint !== '/inbound-nfe/' ? 'flex' : undefined"
         removable-sort
         :sort-field="sortField"
         :sort-order="sortOrder"
@@ -411,7 +410,7 @@
               </span>
               <template v-if="data.fiscal_status !== 'CANCELLED' && data.status !== 'cancelled'">
                 <button
-                  v-if="data.status === 'summary' && data.manifestation_status !== 'science_registered'"
+                  v-if="(data.status === 'summary' || data.xml_status === 'summary_only' || (!data.items_count && data.xml_status !== 'full_xml_available')) && data.manifestation_status !== 'science_registered' && data.manifestation_status !== 'confirmed'"
                   type="button"
                   class="rpro-btn rpro-btn--primary rpro-btn--xs ml-1"
                   title="Dar Ciência da Operação (210210) e baixar XML completo da SEFAZ"
@@ -420,7 +419,7 @@
                   <i class="pi pi-bolt mr-1" /> Dar Ciência
                 </button>
                 <button
-                  v-else-if="data.manifestation_status === 'science_registered' && data.xml_status === 'full_xml_pending'"
+                  v-else-if="(data.manifestation_status === 'science_registered' || data.manifestation_status === 'confirmed') && data.xml_status !== 'full_xml_available'"
                   type="button"
                   class="rpro-btn rpro-btn--ghost rpro-btn--xs ml-1"
                   title="Reconsultar XML completo na SEFAZ (consChNFe)"
@@ -1084,6 +1083,24 @@
               </span>
             </div>
             <div class="flex items-center gap-2">
+              <button
+                v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled' && (inboundDetailData.status === 'summary' || inboundDetailData.xml_status === 'summary_only' || (!inboundDetailData.items?.length && inboundDetailData.xml_status !== 'full_xml_available')) && inboundDetailData.manifestation_status !== 'science_registered' && inboundDetailData.manifestation_status !== 'confirmed'"
+                type="button"
+                class="rpro-btn rpro-btn--primary rpro-btn--sm"
+                title="Dar Ciência da Operação (210210) e baixar XML completo da SEFAZ"
+                @click="openScienceConfirmDialog(inboundDetailData)"
+              >
+                <i class="pi pi-bolt mr-1" /> Dar Ciência
+              </button>
+              <button
+                v-else-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled' && (inboundDetailData.manifestation_status === 'science_registered' || inboundDetailData.manifestation_status === 'confirmed') && inboundDetailData.xml_status !== 'full_xml_available'"
+                type="button"
+                class="rpro-btn rpro-btn--ghost rpro-btn--sm"
+                title="Reconsultar XML completo na SEFAZ (consChNFe)"
+                @click="retryFetchFullXmlDirect(inboundDetailData)"
+              >
+                <i class="pi pi-cloud-download text-indigo-400 mr-1" /> Baixar XML
+              </button>
               <button
                 type="button"
                 class="rpro-btn rpro-btn--ghost rpro-btn--sm"
@@ -2427,7 +2444,6 @@ import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
 import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
-import InboundRestaurantSelector from "../components/inbound/InboundRestaurantSelector.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
 import { ASSET_STATUS_OPTIONS } from "../config/enums";
@@ -2505,7 +2521,7 @@ function dateParams() {
 
 const inboundStatusFilter = ref("all");
 const inboundStatusCounts = ref({});
-const inboundRestaurantId = ref("");
+const inboundRestaurantId = computed(() => getBrowserValue("starchef-restaurant-scope") || "");
 
 const INBOUND_FILTER_OPTIONS = [
   { value: "all", label: "Todas as Notas", icon: "pi pi-list" },
@@ -2753,10 +2769,6 @@ const dfeSyncInfo = ref(null);
 const dfeSyncLoading = ref(false);
 const nowTick = ref(Date.now());
 let dfeTimerInterval = null;
-async function selectInboundRestaurant(restaurantId) {
-  inboundRestaurantId.value = restaurantId || ""; selection.value = [];
-  await Promise.all([reload(), loadDfeSyncInfo(), fetchInboundStatusCounts()]);
-}
 const dfeMinutesRemaining = computed(() => {
   if (!dfeSyncInfo.value?.next_allowed_at) {
     return dfeSyncInfo.value?.minutes_remaining || 0;
@@ -2811,7 +2823,7 @@ async function triggerSefazSync() {
     toast.add({
       severity: "warn",
       summary: "Selecione uma Unidade",
-      detail: "Escolha uma unidade no seletor exibido no topo desta página.",
+      detail: "Selecione uma unidade específica na barra lateral (menu superior) para sincronizar com a SEFAZ.",
       life: 5000,
     });
     return;
@@ -4462,10 +4474,19 @@ async function exportInboundXml(exportAll = false) {
       life: 5000,
     });
   } catch (error) {
+    let msg = normalizeApiError(error).message;
+    if (error?.response?.data instanceof Blob) {
+      try {
+        const parsed = JSON.parse(await error.response.data.text());
+        msg = parsed.error || parsed.detail || msg;
+      } catch {
+        // Ignora erro de parse e mantém msg padronizada se o blob não for JSON
+      }
+    }
     toast.add({
       severity: "error",
       summary: "Não foi possível exportar os XMLs",
-      detail: normalizeApiError(error).message,
+      detail: msg,
       life: 6000,
     });
   } finally {
@@ -4871,14 +4892,14 @@ const rowMenuItems = computed(() => {
           class: "rpro-menu-danger",
           command: () => openManualCancelDialog(row),
         });
-        if (row.status === "summary" && row.manifestation_status !== "science_registered") {
+        if ((row.status === "summary" || row.xml_status === "summary_only" || (!row.items_count && row.xml_status !== "full_xml_available")) && row.manifestation_status !== "science_registered" && row.manifestation_status !== "confirmed") {
           items.push({
             label: "Dar ciência e obter XML",
             icon: "pi pi-bolt",
             command: () => openScienceConfirmDialog(row),
           });
         }
-        if (row.manifestation_status === "science_registered" && row.xml_status === "full_xml_pending") {
+        if ((row.manifestation_status === "science_registered" || row.manifestation_status === "confirmed") && row.xml_status !== "full_xml_available") {
           items.push({
             label: "Buscar XML Completo (SEFAZ)",
             icon: "pi pi-cloud-download",

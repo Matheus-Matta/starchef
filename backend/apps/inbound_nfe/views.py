@@ -98,11 +98,8 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        mapping_filter = (
-            self.request.query_params.get("mapping_filter")
-            or self.request.query_params.get("filter_status")
-            or self.request.query_params.get("filter")
-        )
+        d = getattr(self.request, "data", {}) if isinstance(getattr(self.request, "data", None), dict) else {}
+        mapping_filter = (self.request.query_params.get("mapping_filter") or self.request.query_params.get("filter_status") or self.request.query_params.get("filter") or d.get("mapping_filter") or d.get("filter_status"))
         if mapping_filter == "unmapped":
             qs = qs.filter(status=InboundNFe.STATUS_PENDING_MAPPING).exclude(fiscal_status=InboundNFe.FISCAL_CANCELLED)
         elif mapping_filter == "ready":
@@ -822,16 +819,12 @@ class InboundNFeViewSet(BaseTenantViewSet):
         - Se 1 nota for exportada (e sem all): devolve o arquivo .xml direto.
         - Se múltiplas notas ou all: devolve um .zip contendo os arquivos .xml originais.
         """
-        import io
-        import zipfile
+        import io, json, zipfile
         from django.http import HttpResponse
         from django.utils import timezone
-        from apps.inbound_nfe.models import DFeDistributionDocument
+        from apps.inbound_nfe.models import DFeDistributionDocument, DFeSyncState
 
-        export_all = (
-            str(request.data.get("all", "")).lower() in ("true", "1")
-            or str(request.query_params.get("all", "")).lower() in ("true", "1")
-        )
+        export_all = (str(request.data.get("all", "")).lower() in ("true", "1") or str(request.query_params.get("all", "")).lower() in ("true", "1"))
         ids = request.data.get("ids") or request.query_params.get("ids") or []
         if isinstance(ids, str):
             ids = [i.strip() for i in ids.split(",") if i.strip()]
@@ -848,11 +841,11 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
             issue_after = request.data.get("issue_date_after") or request.query_params.get("issue_date_after")
             if issue_after:
-                qs = qs.filter(issue_date__gte=issue_after)
+                qs = qs.filter(issue_date__date__gte=str(issue_after)[:10])
 
             issue_before = request.data.get("issue_date_before") or request.query_params.get("issue_date_before")
             if issue_before:
-                qs = qs.filter(issue_date__lte=issue_before)
+                qs = qs.filter(issue_date__date__lte=str(issue_before)[:10])
 
             search = request.data.get("search") or request.query_params.get("search")
             if search:
@@ -888,7 +881,7 @@ class InboundNFeViewSet(BaseTenantViewSet):
             response["Access-Control-Expose-Headers"] = "Content-Disposition"
             return response
 
-        # Múltiplas notas ou "Exportar Tudo" -> gera arquivo ZIP com os XMLs originais
+        # Múltiplas notas ou "Exportar Tudo" -> gera arquivo ZIP com os XMLs originais + manifest.json
         zip_buffer = io.BytesIO()
         exported_count = 0
         used_filenames = set()
@@ -912,6 +905,11 @@ class InboundNFeViewSet(BaseTenantViewSet):
 
                     zf.writestr(filename, xml_content.encode("utf-8"))
                     exported_count += 1
+
+            if exported_count > 0:
+                s = (DFeSyncState.all_objects.filter(account=request.account, restaurant_id=restaurant_id).first() if restaurant_id else None) or DFeSyncState.all_objects.filter(account=request.account).order_by("-last_sync_at").first()
+                manifest = {"version": "1.0", "ult_nsu": getattr(s, "ult_nsu", "") or "", "max_nsu": getattr(s, "max_nsu", "") or "", "notes": {n.access_key: {"nsu": n.nsu or "", "status": n.status, "manifestation_status": n.manifestation_status} for n in notes if n.access_key}}
+                zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
 
         if exported_count == 0:
             return Response({"error": "Nenhum arquivo XML disponível para as notas selecionadas."}, status=status.HTTP_404_NOT_FOUND)
