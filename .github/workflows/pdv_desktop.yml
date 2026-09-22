@@ -50,7 +50,13 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
           channel: "stable"
+          flutter-version: "3.44.4"
 
       - name: Instalar dependências
         run: flutter pub get
@@ -132,7 +138,13 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
           channel: "stable"
+          flutter-version: "3.44.4"
 
       - name: Instalar dependências
         run: flutter pub get
@@ -208,7 +220,12 @@ jobs:
   build-linux:
     needs: release-metadata
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'tag')
-    runs-on: ubuntu-latest
+    # FIXO, e não `ubuntu-latest`. O `latest` migrou de 22.04 para 24.04 e
+    # derrubou o build do Linux sem ninguém tocar no código: a v3.0.21
+    # compilou e a v3.0.22, com o MESMO `pdv_desktop` (só o número da versão
+    # mudou), não. Quem empacota binário não pode ter a máquina trocada
+    # debaixo dele por um apelido.
+    runs-on: ubuntu-22.04
     env:
       API_BASE_URL: ${{ inputs.api_base_url || vars.PDV_API_BASE_URL }}
       PDV_SENTRY_DSN: ${{ inputs.sentry_dsn || secrets.PDV_SENTRY_DSN }}
@@ -224,7 +241,13 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
+          # VERSÃO FIXA, não `channel: stable`. O canal entrega sempre o mais
+          # novo, e isso já custou duas releases num dia: um lint novo
+          # reprovou a v3.0.19 e a máquina nova derrubou a v3.0.22 — as duas
+          # sem uma linha de código alterada. Subir o Flutter passa a ser um
+          # commit que alguém revisa, e não uma surpresa na hora de publicar.
           channel: "stable"
+          flutter-version: "3.44.4"
 
       - name: Instalar dependências
         run: flutter pub get
