@@ -79,6 +79,7 @@ import '../../orders/presentation/command_attach_dialog.dart';
 part 'home_page_cash.dart';
 part 'home_page_cash_ops.dart';
 part 'home_page_cash_print.dart';
+part 'home_page_cash_print_send.dart';
 part 'home_page_commands.dart';
 part 'home_page_commands_view.dart';
 part 'home_page_table_commands.dart';
@@ -134,6 +135,7 @@ class _HomePageState extends State<HomePage>
         _CashSection,
         _CashOpsSection,
         _CashPrintSection,
+        _CashPrintDelivery,
         _CommandSection,
         _CommandView,
         _TableCommandsSection,
