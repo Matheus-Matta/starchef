@@ -425,6 +425,9 @@ REST_FRAMEWORK = {
         # guarda em memória por alguns minutos. Folgado para o uso legítimo,
         # estreito para quem varra com um token capturado.
         "sync_credentials": "60/hour",
+        # Transmissão da nota pela nuvem: uma venda, um pedido. O teto é do
+        # balcão mais cheio que a gente espera, não do uso médio.
+        "sync_fiscal": config("THROTTLE_RATE_SYNC_FISCAL", default="600/hour"),
     },
 }
 

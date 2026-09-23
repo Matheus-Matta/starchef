@@ -9,6 +9,7 @@ from apps.synchronization.views import (
     SyncRunViewSet,
 )
 from apps.synchronization.views_credentials import SyncCredentialsView
+from apps.synchronization.views_fiscal_relay import SyncFiscalRelayView
 from apps.synchronization.views_enroll import SyncEnrollView
 from apps.synchronization.views_metrics import SyncMetricsView
 
@@ -30,6 +31,7 @@ urlpatterns = [
     # Segredo de emissão, emprestado sob demanda e nunca replicado. Autentica
     # por token de NÓ, como as métricas e a transferência de arquivo.
     path("credentials/", SyncCredentialsView.as_view(), name="sync-credentials"),
+    path("fiscal/", SyncFiscalRelayView.as_view(), name="sync-fiscal"),
     # Métricas para o coletor e transferência de binário: autenticam por token
     # (de raspagem e de nó), não por JWT de usuário. Antes do router, pelo
     # mesmo motivo da matrícula.

@@ -497,10 +497,15 @@ class FocusNfeProvider(FiscalProvider):
             raise FiscalUnavailable(f"Focus NFe: falha de comunicacao com o provedor ({exc}).") from exc
 
     @staticmethod
-    def _classify_http(response, data):
-        """Traduz uma resposta HTTP sem situacao fiscal utilizavel na falha correspondente."""
-        code = response.status_code
-        detail = data or (response.text or "")[:300]
+    def _classify_http(code, data):
+        """Traduz um HTTP sem situacao fiscal utilizavel na falha correspondente.
+
+        Recebe o CÓDIGO, e não a resposta: com o relé, quem falou com a Focus
+        pode ter sido a nuvem, e o que chega aqui é `(status, corpo)`. A
+        classificação é a mesma nos dois caminhos — e precisa ser, porque é ela
+        que decide o que vira contingência e o que vira recusa definitiva.
+        """
+        detail = data or ""
         if code in (401, 403):
             return FiscalConfigurationError(
                 f"Focus NFe: token recusado pelo provedor (HTTP {code}). Verifique o cadastro fiscal."
@@ -511,78 +516,118 @@ class FocusNfeProvider(FiscalProvider):
             return FiscalRejection(f"Focus NFe recusou a requisicao (HTTP {code}): {detail}")
         return FiscalAmbiguous(f"Focus NFe: resposta sem situacao fiscal (HTTP {code}): {detail}")
 
+    # ── a chamada ao provedor: daqui, ou pela nuvem ─────────────────────────
+    #
+    # `relay_execute` é a chamada de VERDADE, e roda onde está a credencial:
+    # na nuvem, quando a loja delega; aqui mesmo, numa instalação única.
+    # `_chamar` é quem escolhe. As três operações passam por ele, e nenhuma
+    # monta URL por conta própria — é o que mantém o relé com três portas
+    # nomeadas em vez de virar um proxy para `/v2/empresas`.
+
+    TRANSMITIR = "transmit"
+    CONSULTAR = "consult"
+    CANCELAR = "cancel"
+
+    @classmethod
+    def relay_execute(cls, config, *, operacao, reference, document_model,
+                      payload=None, reason=""):
+        """Fala com a Focus e devolve `(status_code, dados)`, sem interpretar.
+
+        Quem interpreta é quem chamou: é lá que `apply_response` grava número,
+        série, chave e protocolo na nota. Traduzir aqui criaria um segundo
+        dialeto para manter — e a nuvem, que só transmite em nome da loja, não
+        tem o que dizer sobre o documento.
+        """
+        base = cls()._base_url(config)
+        token = cls()._token(config)
+        timeout = cls()._timeout(config)
+        recurso = cls._resource(document_model)
+        alvo = f"{base}/v2/{recurso}/{reference}"
+
+        if operacao == cls.TRANSMITIR:
+            resposta = cls._request(
+                "POST", f"{base}/v2/{recurso}?ref={reference}",
+                json=payload, auth=(token, ""), timeout=timeout,
+            )
+        elif operacao == cls.CONSULTAR:
+            resposta = cls._request("GET", alvo, auth=(token, ""), timeout=timeout)
+        elif operacao == cls.CANCELAR:
+            resposta = cls._request(
+                "DELETE", alvo,
+                json={"justificativa": reason or "Cancelamento solicitado pelo operador."},
+                auth=(token, ""), timeout=timeout,
+            )
+        else:
+            raise FiscalConfigurationError(f"Operação fiscal desconhecida: {operacao!r}.")
+        return resposta.status_code, (resposta.json() if resposta.content else {})
+
+    def _chamar(self, config, **kwargs):
+        """Direto, ou pela nuvem quando esta instalação é uma loja."""
+        from apps.invoices import relay_client
+
+        if relay_client.deve_delegar(config):
+            return relay_client.executar(config, **kwargs)
+        return self.relay_execute(config, **kwargs)
+
     def emit(self, invoice, config):
         invoice.provider = self.name
         invoice.provider_reference = self._reference(invoice)
-        resource = self._resource(invoice.document_model)
-        base_url = self._base_url(config)
-        token = self._token(config)
-        timeout = self._timeout(config)
-        document_url = f"{base_url}/v2/{resource}/{invoice.provider_reference}"
-        response = self._request(
-            "POST",
-            f"{base_url}/v2/{resource}?ref={invoice.provider_reference}",
-            json=self._build_payload(invoice, config),
-            auth=(token, ""),
-            timeout=timeout,
+        comum = {
+            "reference": invoice.provider_reference,
+            "document_model": invoice.document_model,
+        }
+        codigo, data = self._chamar(
+            config, operacao=self.TRANSMITIR,
+            payload=self._build_payload(invoice, config), **comum,
         )
-        data = response.json() if response.content else {}
-        if response.status_code == 422 and data.get("codigo") == "already_processed":
+        if codigo == 422 and data.get("codigo") == "already_processed":
             # A Focus usa a referencia como chave de idempotencia. Se a resposta
             # da primeira emissao nao chegou ao StarChef, um reenvio devolve 422
             # mesmo que a nota tenha sido autorizada. Consulte o documento ja
             # existente para reconciliar o estado local em vez de marca-lo como
             # erro e induzir novos reenvios.
-            response = self._request("GET", document_url, auth=(token, ""), timeout=timeout)
-            data = response.json() if response.content else {}
-            if response.status_code >= 400 or data.get("status") is None:
+            codigo, data = self._chamar(config, operacao=self.CONSULTAR, **comum)
+            if codigo >= 400 or data.get("status") is None:
                 # O documento existe do lado da Focus e nao sabemos como ele
                 # terminou: reenviar as cegas duplicaria a nota.
                 raise FiscalAmbiguous(
                     "Focus NFe: a nota ja foi processada, mas nao foi possivel "
-                    f"consultar o resultado (HTTP {response.status_code}): {data}"
+                    f"consultar o resultado (HTTP {codigo}): {data}"
                 )
-        if response.status_code >= 400 or data.get("status") is None:
-            raise self._classify_http(response, data)
+        if codigo >= 400 or data.get("status") is None:
+            raise self._classify_http(codigo, data)
         return self.apply_response(invoice, data)
 
     def cancel(self, invoice, reason):
         config = self._config_for(invoice)
-        resource = self._resource(invoice.document_model)
-        response = self._request(
-            "DELETE",
-            f"{self._base_url(config)}/v2/{resource}/{self._reference(invoice)}",
-            json={"justificativa": reason or "Cancelamento solicitado pelo operador."},
-            auth=(self._token(config), ""),
-            timeout=self._timeout(config),
+        codigo, data = self._chamar(
+            config, operacao=self.CANCELAR, reason=reason,
+            reference=self._reference(invoice),
+            document_model=invoice.document_model,
         )
-        if response.status_code == 404:
+        if codigo == 404:
             raise FiscalNotFound(
                 "Focus NFe: nenhum documento com esta referencia foi encontrado para cancelar."
             )
-        if response.status_code >= 400:
-            raise self._classify_http(response, response.json() if response.content else {})
-        data = response.json() if response.content else {"status": "cancelado"}
-        return self.apply_response(invoice, data)
+        if codigo >= 400:
+            raise self._classify_http(codigo, data)
+        return self.apply_response(invoice, data or {"status": "cancelado"})
 
     def status(self, invoice):
         config = self._config_for(invoice)
-        resource = self._resource(invoice.document_model)
-        response = self._request(
-            "GET",
-            f"{self._base_url(config)}/v2/{resource}/{self._reference(invoice)}",
-            auth=(self._token(config), ""),
-            timeout=self._timeout(config),
+        codigo, data = self._chamar(
+            config, operacao=self.CONSULTAR,
+            reference=self._reference(invoice),
+            document_model=invoice.document_model,
         )
-        data = response.json() if response.content else {}
-        if response.status_code == 404:
+        if codigo == 404:
             # Numa consulta, 404 quer dizer "o documento nao esta aqui" — nao
             # que ele foi recusado. Tratar como rejeicao marcaria como recusada
             # justamente a nota que nunca conseguiu ser transmitida.
             raise FiscalNotFound(
                 "Focus NFe: nenhum documento com esta referencia foi encontrado no provedor."
             )
-        if response.status_code >= 400 or data.get("status") is None:
-            raise self._classify_http(response, data)
+        if codigo >= 400 or data.get("status") is None:
+            raise self._classify_http(codigo, data)
         self.apply_response(invoice, data)
         return invoice.status

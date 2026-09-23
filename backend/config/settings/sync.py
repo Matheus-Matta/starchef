@@ -198,3 +198,15 @@ SYNC_FILE_MAX_BYTES = config("SYNC_FILE_MAX_BYTES", default=64 * 1024 * 1024, ca
 # Token de raspagem do /api/v1/sync/metrics/. Vazio = só superusuário acessa.
 # A rota NUNCA fica aberta, com ou sem token.
 SYNC_METRICS_TOKEN = config("SYNC_METRICS_TOKEN", default="")
+
+
+#: A loja transmite a nota pela NUVEM, em vez de falar direto com o provedor.
+#:
+#: Tira o segredo de emissão do computador dentro do restaurante no caminho
+#: normal e dá um dono só ao contador do provedor — era a divergência entre
+#: lojas que produzia "Duplicidade de NF-e, com diferença na Chave de Acesso".
+#:
+#: Só tem efeito numa LOJA com endereço de nuvem configurado; a nuvem é o
+#: destino e uma instalação única não tem a quem pedir.
+FISCAL_TRANSMIT_VIA_CLOUD = config("FISCAL_TRANSMIT_VIA_CLOUD", default=True, cast=bool)
+FISCAL_RELAY_TIMEOUT = config("FISCAL_RELAY_TIMEOUT", default=45, cast=int)
