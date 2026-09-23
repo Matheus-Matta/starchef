@@ -31,6 +31,18 @@ class PdvUpdateInstaller {
 
   final File executable;
 
+  /// Teto do caminho da pasta de instalação, no Windows.
+  ///
+  /// O limite clássico do Win32 é 260 para o caminho COMPLETO, e a conta é:
+  ///
+  ///     instalação + sufixo de transação (~26) + separador + 91
+  ///
+  /// onde 91 é o arquivo mais fundo do pacote
+  /// (`datalutter_assets\packages\lucide_icons_flutter\...`). Com 120,
+  /// o pior caso dá 238 — folga real, e ainda larguíssimo para qualquer
+  /// instalação sensata: a padrão do instalador usa 52.
+  static const int maximoDoCaminhoDeInstalacao = 120;
+
   Future<PdvPreparedUpdate> prepare(
     PdvDownloadedArtifact download,
     String version,
@@ -220,6 +232,29 @@ class PdvUpdateInstaller {
         path.trim().isEmpty ||
         path.contains(RegExp(r'[\r\n]'))) {
       throw const FileSystemException('Diretório de instalação inseguro');
+    }
+    if (Platform.isWindows && path.length > maximoDoCaminhoDeInstalacao) {
+      // O caminho longo NÃO é hipótese: aconteceu em campo.
+      //
+      // A troca antiga renomeava a instalação inteira, e cada atualização
+      // acrescentava `.starchef-new-<versão>-<pid>` ao nome da pasta. Depois
+      // de algumas, o caminho passou do limite do Windows e o aplicativo
+      // parou de ABRIR — com um diálogo que fala em inicialização
+      // (0xC0000106, STATUS_NAME_TOO_LONG) e não diz uma palavra sobre
+      // caminho. Quem caiu nesse estado não conseguia nem se atualizar para a
+      // correção, porque o PDV não subia.
+      //
+      // A troca de hoje move item a item e não renomeia mais nada, então o
+      // nome não cresce. Esta trava é a rede: se o caminho já for longo — por
+      // aquele defeito ou porque alguém extraiu o ZIP fundo demais —, a
+      // atualização para AQUI, com um recado que diz o que fazer, em vez de
+      // produzir uma instalação que não abre.
+      throw FileSystemException(
+        'O caminho da instalação tem ${path.length} caracteres e passa do '
+        'limite do Windows. Mova o StarChef PDV para uma pasta mais curta '
+        'e atualize de novo.',
+        path,
+      );
     }
   }
 
