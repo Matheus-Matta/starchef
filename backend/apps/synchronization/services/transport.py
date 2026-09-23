@@ -60,11 +60,26 @@ class CloudConnection:
         return self.socket
 
     def _hello_payload(self):
+        # O AMBIENTE É O DESTA INSTALAÇÃO, não uma constante.
+        #
+        # Estava fixo em "development", e ficou certo por acidente enquanto só
+        # existia um ambiente. No dia em que a nuvem passou para `production`,
+        # TODA loja passou a se apresentar como development e o handshake
+        # começou a ser recusado — "o nó declara 'development' e esta
+        # instalação é 'production'" —, em laço, a cada reconexão. Nada subia,
+        # e a fila só crescia.
+        #
+        # A conferência do outro lado é legítima e precisa continuar existindo:
+        # sem ela, uma loja de homologação entraria na nuvem de produção e
+        # gravaria venda de teste no banco que vale. O defeito era a loja
+        # mentir sobre quem é.
+        from apps.synchronization.services import guard
+
         return {
             "node_id": self.node_id,
             "pair_id": self.pair_id,
             "account_id": self.account_id,
-            "environment": "development",
+            "environment": guard.current_environment(),
             "protocol_version": PROTOCOL_VERSION,
             "schema_version": SCHEMA_VERSION,
             "app_version": self.app_version,
