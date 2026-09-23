@@ -130,7 +130,7 @@ saturação — que é exatamente o que se quer medir.
 
 ---
 
-## 3. As quatro frentes
+## 3. As frentes
 
 ### 3.1 `backend` — tempestade de criação
 
@@ -239,7 +239,61 @@ Três fases: abertura simultânea (com régua mais apertada que a do caixa — o
 garçom está em pé na frente do cliente), salão lançando em paralelo, e a
 conferência de que todo lançamento aceito virou item de verdade.
 
-### 3.5 `sync` — a fila entre os dois backends
+### 3.5 `comanda` — o ciclo de vida do cartão
+
+Percorre a comanda de ponta a ponta e termina fazendo a única pergunta que
+interessa ao salão: **a mesa ficou livre e o cartão voltou para a gaveta?**
+
+A comanda é um bloco de notas — ela anota o consumo e manda para a produção sem
+abrir pedido. O pedido nasce no caixa e recebe as anotações pendentes. O que
+quebra esse ciclo não é uma rota respondendo errado: é um estado que fica para
+trás. Um cartão marcado como ocupado sem nada a cobrar some do salão, e a mesa
+dele junto, sem nada estourar em lugar nenhum.
+
+Sete fases:
+
+| fase | o que faz |
+| --- | --- |
+| 0 | abre o caixa (e vincula o operador à estação, se preciso) |
+| 1 | garçons lançando itens em cartões diferentes ao mesmo tempo |
+| 2 | venda com **uma comanda por conta** — o caso que o salão repete o dia inteiro |
+| 3 | conta com o cartão dentro, **cancelada** |
+| 4 | **remoção** das anotações, uma a uma, até o cartão esvaziar |
+| 5 | **balança**: o cliente passa o cartão e o peso vira anotação pendente |
+| 6 | **o operador atrapalhado** (ver abaixo) |
+| 7 | conferência: cartão livre, mesa livre, nada pendente |
+
+A suíte **cria os próprios cartões e mesas** a cada execução, um cartão por
+mesa. Reaproveitar os da conta fazia a fase 1 contar anotações de execuções
+anteriores e a conferência acusar cartão preso que aquele teste nunca tocou —
+uma suíte que reprova por sujeira própria deixa de ser lida.
+
+#### A fase do operador atrapalhado
+
+Não é teste de `4xx`. É teste de **estado**: depois da trapalhada toda, o
+cartão tem de voltar para a gaveta. Um erro que devolve 400 e ainda assim
+deixa o cartão preso é pior que um 500 — ninguém percebe até o próximo cliente
+não conseguir usar o cartão.
+
+Os erros são os de balcão de verdade: vincular a mesa, desvincular e vincular
+de novo; toque duplo no mesmo item; quantidade negativa; pesar o mesmo prato
+duas vezes; peso zero; cartão inexistente na balança; remover sem motivo;
+remover o item que já saiu; abrir uma conta e abandonar; cobrar o mesmo cartão
+duas vezes na mesma conta; fechar duas vezes; pagar um troco de nada.
+
+E então — este é o ponto — **o operador acerta**: relê o que falta e paga o
+valor certo. Errar não pode impedir o desfecho correto.
+
+#### Recusa e saturação são coisas diferentes
+
+A suíte separa "o backend RECUSOU com um motivo" de "não houve resposta"
+(`status == 0`: conexão derrubada ou tempo esgotado). Só a primeira reprova.
+A segunda vira observação no relatório, porque no alvo SQLite + servidor de
+desenvolvimento ela começa cedo e não fala nada sobre o código — é o teto do
+laptop, não do sistema. Para medir de verdade a partir do perfil `medio`, use
+o alvo Postgres da §2.1.1.
+
+### 3.6 `sync` — a fila entre os dois backends
 
 Exercita a sincronização nuvem↔loja: identidade dos nós, escrita pesada
 enchendo a outbox, drenagem da fila, e a matrícula sob tentativa de força
