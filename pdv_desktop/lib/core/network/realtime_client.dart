@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Um evento recebido do `/ws/realtime/`: `{"event": ..., "payload": ...}`.
 class RealtimeEvent {
   const RealtimeEvent(this.event, this.payload);
@@ -18,7 +20,11 @@ class RealtimeEvent {
 /// cobrir o que pode ter sido perdido enquanto a conexão estava caída — nunca
 /// um timer recorrente.
 class RealtimeClient {
-  RealtimeClient({required this.urlBuilder, this.headersBuilder});
+  RealtimeClient({
+    required this.urlBuilder,
+    this.headersBuilder,
+    this.heartbeatInterval = const Duration(seconds: 20),
+  });
 
   /// Reconstrói a URL a cada tentativa: o token pode ter sido renovado entre
   /// uma queda de conexão e a próxima tentativa.
@@ -27,6 +33,10 @@ class RealtimeClient {
   /// Headers reconstruídos em cada reconexão. O PDV envia o JWT como Bearer
   /// para que a credencial não apareça na URL ou em logs de proxy.
   final Map<String, dynamic> Function()? headersBuilder;
+
+  /// De quanto em quanto tempo o pulso sai. Parametrizado para o teste poder
+  /// esperar milissegundos em vez de vinte segundos.
+  final Duration heartbeatInterval;
 
   static const _backoffSeconds = [2, 3, 5, 10, 20, 30];
 
@@ -144,16 +154,41 @@ class RealtimeClient {
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
       final socket = _socket;
       final lastMessageAt = _lastMessageAt;
       if (socket == null || lastMessageAt == null) return;
-      if (DateTime.now().difference(lastMessageAt) >
-          const Duration(seconds: 50)) {
-        unawaited(socket.close(4000, 'heartbeat timeout'));
-        return;
+      // O PULSO NÃO PODE DERRUBAR O PROCESSO, e este `try` é a diferença
+      // entre reconectar e fechar o PDV na cara do operador.
+      //
+      // `socket.add` lança SINCRONAMENTE quando o sink já fechou — e existe
+      // uma janela real em que isso acontece: a conexão cai no nível do TCP e
+      // o `onDone` que zeraria `_socket` ainda não rodou. Uma exceção lançada
+      // dentro do callback de um `Timer` não tem quem a pegue: no Windows ela
+      // vira `0xC000041D` (STATUS_FATAL_USER_CALLBACK_EXCEPTION) e o processo
+      // morre inteiro.
+      //
+      // O sintoma era exatamente esse: o PDV abria, funcionava, e vinte
+      // segundos depois sumia da tela sem nada no `pdv.log` — porque a
+      // exceção escapava antes de qualquer linha de log.
+      //
+      // Falhar o pulso não diz nada além de "esta conexão não serve mais",
+      // que é precisamente o que `_scheduleReconnect` trata.
+      try {
+        if (DateTime.now().difference(lastMessageAt) >
+            const Duration(seconds: 50)) {
+          unawaited(socket.close(4000, 'heartbeat timeout'));
+          return;
+        }
+        enviarPulso(socket);
+      } catch (_) {
+        _scheduleReconnect();
       }
-      socket.add(jsonEncode({'event': 'ping'}));
     });
   }
+
+  /// Manda o ping. Separado para o teste poder fazê-lo falhar.
+  @visibleForTesting
+  void enviarPulso(WebSocket socket) =>
+      socket.add(jsonEncode({'event': 'ping'}));
 }
