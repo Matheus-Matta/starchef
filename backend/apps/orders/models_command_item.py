@@ -18,6 +18,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.orders.models_consumption import ConsumptionItem, ProductionBatch
+from apps.orders.models_command_item_addon import CommandItemAddon as CommandItemAddon
 
 
 class CommandBatch(ProductionBatch):

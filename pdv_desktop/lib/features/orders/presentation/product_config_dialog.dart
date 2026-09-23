@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 
 import '../../../core/widgets/app_dialog.dart';
 import '../../../core/widgets/product_image_url.dart';
+import 'product_configuration_rules.dart';
+
+export 'product_configuration_rules.dart';
 
 /// O que o operador escolheu para um produto: variação, adicionais,
 /// quantidade/peso e observação — antes de o item entrar no pedido.
@@ -275,12 +278,6 @@ Future<ProductConfigResult?> showProductConfigDialog(
     customerNote: customerNote.trim(),
   );
 }
-
-/// Aceita tanto o contrato atual (`pricing_unit=kg`) quanto payloads locais
-/// antigos que traziam apenas `is_weighed=true`.
-bool isProductSoldByWeight(Map<String, dynamic> product) =>
-    '${product['pricing_unit'] ?? ''}'.toLowerCase() == 'kg' ||
-    product['is_weighed'] == true;
 
 String _money(dynamic value) {
   final number = value is num ? value : num.tryParse('$value') ?? 0;

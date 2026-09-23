@@ -10,6 +10,7 @@ import '../core/errors/error_center.dart';
 import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
 import '../core/update/pdv_auto_updater.dart';
+import '../core/update/pdv_update_overlay.dart';
 import '../core/widgets/app_window_frame.dart';
 import '../core/widgets/responsive_scale.dart';
 import '../core/widgets/supervisor_close_dialog.dart';
@@ -40,6 +41,10 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final AuthController _auth = AuthController(widget.authRepository)
     ..initialize();
+  late final Listenable _appState = Listenable.merge([
+    _auth,
+    widget.autoUpdater,
+  ]);
   late ThemeMode _themeMode = widget.preferences.themeMode;
   // main.dart inicia o PDV principal em tela cheia. Manter o estado alinhado
   // evita o menu oferecer "entrar" em tela cheia quando ele já está nela.
@@ -157,14 +162,20 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
                 ? ResponsiveScale(
                     child: AppErrorHost(
                       center: widget.errorCenter,
-                      child: _withUpdateOverlay(child!),
+                      child: PdvUpdateOverlay(
+                        autoUpdater: widget.autoUpdater,
+                        child: child!,
+                      ),
                     ),
                   )
                 : AppWindowFrame(
                     child: ResponsiveScale(
                       child: AppErrorHost(
                         center: widget.errorCenter,
-                        child: _withUpdateOverlay(child!),
+                        child: PdvUpdateOverlay(
+                          autoUpdater: widget.autoUpdater,
+                          child: child!,
+                        ),
                       ),
                     ),
                   ),
@@ -173,7 +184,7 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
       ),
     ),
     home: ListenableBuilder(
-      listenable: _auth,
+      listenable: _appState,
       builder: (_, _) {
         if (!_auth.initialized) {
           return const Scaffold(
@@ -195,56 +206,10 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
                 isDark: _themeMode == ThemeMode.dark,
                 onToggleTheme: _toggleTheme,
                 preferences: widget.preferences,
+                versionStatus: widget.autoUpdater.status,
                 onClose: onWindowClose,
               );
       },
     ),
-  );
-
-  Widget _withUpdateOverlay(Widget child) => ListenableBuilder(
-    listenable: widget.autoUpdater,
-    child: child,
-    builder: (context, child) {
-      if (!widget.autoUpdater.blocksInteraction) return child!;
-      final message = switch (widget.autoUpdater.phase) {
-        PdvAutoUpdatePhase.downloading => 'Baixando atualização segura…',
-        PdvAutoUpdatePhase.preparing => 'Preparando atualização…',
-        PdvAutoUpdatePhase.restarting => 'Reiniciando o StarChef…',
-        _ => 'Atualizando o StarChef…',
-      };
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          child!,
-          ColoredBox(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: Center(
-              child: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.system_update_alt, size: 54),
-                    const SizedBox(height: 20),
-                    Text(
-                      message,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(value: widget.autoUpdater.progress),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Não desligue o computador. Se a nova versão não abrir, '
-                      'a versão anterior será restaurada automaticamente.',
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    },
   );
 }

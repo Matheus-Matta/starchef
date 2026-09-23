@@ -1,4 +1,3 @@
-
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -364,4 +363,4 @@ class OrderItemAddon(TenantModel):
 # Os models da consolidação vivem em `models_merge.py` (arquivo próprio, como
 # manda a organização do repositório). O import precisa ficar AQUI para o
 # Django registrá-los junto da app.
-from apps.orders.models_command_item import CommandBatch, CommandItem  # noqa: E402,F401
+from apps.orders.models_command_item import CommandBatch, CommandItem, CommandItemAddon  # noqa: E402,F401

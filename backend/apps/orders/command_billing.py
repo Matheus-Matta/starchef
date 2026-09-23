@@ -22,6 +22,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.core.tenant import tenant_context
+from apps.orders.command_item_to_order import copy_addons, to_order_item
 from apps.orders.models import CommandItem, OrderItem
 
 #: Teto por chamada. Não é o limite do desenho — é o limite do GESTO: um caixa
@@ -53,6 +54,7 @@ def pending_items_of(command_ids):
             command_status=CommandItem.STATUS_PENDENTE,
         )
         .select_related("product")
+        .prefetch_related("addons")
         .order_by("command_id", "launched_at")
     )
 
@@ -154,8 +156,9 @@ def attach_commands_to_order(*, order, command_ids, user):
             )
 
         criados = OrderItem.objects.bulk_create(
-            [_para_item_de_pedido(anotacao, order=order, user=user) for anotacao in novos]
+            [to_order_item(anotacao, order=order, user=user) for anotacao in novos]
         )
+        copy_addons(novos, criados, order=order, user=user)
         # `bulk_create` não dispara signal, então o total do pedido não se
         # move sozinho: o caixa puxava quatro cartões e via R$ 0,00.
         #
@@ -167,42 +170,6 @@ def attach_commands_to_order(*, order, command_ids, user):
         recalculate_order(order)
 
     return criados
-
-
-def _para_item_de_pedido(anotacao, *, order, user):
-    """O `OrderItem` que corresponde a esta anotação da comanda.
-
-    O preço é COPIADO da anotação, nunca relido do cadastro: o cliente consumiu
-    ao preço do momento do lançamento, e reler aqui faria a conta mudar porque
-    o gerente reajustou o cardápio no meio do almoço.
-
-    O estado de produção também vem junto. O prato já saiu da cozinha às 20h;
-    o item que nasce no caixa às 22h não pode aparecer como pendente e mandar
-    a picanha para o forno de novo.
-    """
-    return OrderItem(
-        account=order.account,
-        restaurant=order.restaurant,
-        branch=order.branch,
-        order=order,
-        command_id=anotacao.command_id,
-        command_item=anotacao,
-        product_id=anotacao.product_id,
-        quantity=anotacao.quantity,
-        unit_price=anotacao.unit_price,
-        total_price=anotacao.total_price,
-        variations=anotacao.variations,
-        customer_note=anotacao.customer_note,
-        production_sector=anotacao.production_sector,
-        status=anotacao.status,
-        sent_to_kitchen_at=anotacao.sent_to_kitchen_at,
-        preparation_started_at=anotacao.preparation_started_at,
-        ready_at=anotacao.ready_at,
-        delivered_at=anotacao.delivered_at,
-        launched_by=anotacao.launched_by,
-        created_by=user,
-        updated_by=user,
-    )
 
 
 def conclude_items_of_order(order, *, when=None, billed=True):

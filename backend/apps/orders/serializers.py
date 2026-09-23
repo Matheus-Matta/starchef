@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.orders.models import CommandItem, Order, OrderBatch, OrderItem, OrderItemAddon
+from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 
 
 class OrderItemAddonSerializer(TenantModelSerializer):
@@ -201,61 +201,4 @@ class OrderSerializer(TenantModelSerializer):
         return value
 
 
-class CommandItemSerializer(TenantModelSerializer):
-    """Uma anotação da comanda, como as telas leem.
-
-    O formato espelha o do item de pedido de propósito: as duas coisas são o
-    mesmo consumo, e o PDV desenha as duas no mesmo carrinho. O que muda é só
-    a ORIGEM, que a tela mostra como rótulo — item da comanda ou item do
-    pedido.
-    """
-
-    product_name = serializers.CharField(source="product.name", read_only=True)
-    pricing_unit = serializers.CharField(source="product.pricing_unit", read_only=True)
-    command_number = serializers.IntegerField(source="command.number", read_only=True)
-    command_code = serializers.CharField(source="command.code", read_only=True)
-    table_number = serializers.IntegerField(
-        source="table.number", read_only=True, default=None
-    )
-    batch_number = serializers.IntegerField(
-        source="batch.batch_number", read_only=True, default=None
-    )
-    #: A origem, para a tela rotular o card sem adivinhar pelo formato.
-    origin = serializers.SerializerMethodField()
-
-    class Meta:
-        model = CommandItem
-        fields = [
-            "id",
-            "command",
-            "command_number",
-            "command_code",
-            "table",
-            "table_number",
-            "product",
-            "product_name",
-            "pricing_unit",
-            "quantity",
-            "unit_price",
-            "total_price",
-            "variations",
-            "customer_note",
-            "production_sector",
-            "status",
-            "command_status",
-            "command_closed_at",
-            "batch",
-            "batch_number",
-            "launched_at",
-            "sent_to_kitchen_at",
-            "preparation_started_at",
-            "ready_at",
-            "delivered_at",
-            "void_reason",
-            "voided_at",
-            "origin",
-        ]
-        read_only_fields = ["command_status", "command_closed_at", "launched_at"]
-
-    def get_origin(self, obj):
-        return "command"
+from apps.orders.serializers_command_item import CommandItemSerializer  # noqa: E402,F401

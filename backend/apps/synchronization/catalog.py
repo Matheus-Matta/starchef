@@ -291,23 +291,23 @@ _e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="both
 # pedido só nasce no caixa — então a anotação precisa descer na carga
 # essencial por conta própria: uma loja que assume a operação herda cartões
 # com consumo em aberto, e sem isto o garçom encontra a mesa vazia.
-#
 # Só o PENDENTE desce. O histórico do cartão fica na nuvem: ele é grande (todo
 # almoço de todo cliente) e a loja não precisa dele para atender.
 PENDENTE_NA_COMANDA = {"command_status": "pending"}
-
-# ORDEM DE CARGA: `command_batch` depende de `command`; `command_item` das
-# duas. Errar a ordem não quebra teste nenhum — quebra a carga inicial de uma
+# ORDEM DE CARGA: `command_batch` depende de `command`; `command_item` das duas.
+# Errar a ordem não quebra teste nenhum — quebra a carga inicial de uma
 # loja nova, com "ainda não existe aqui" em retentativa eterna.
 _e("command_batch", "orders.CommandBatch", conflict_policy=LOJA, flow="both",
-   dependencies=("command",),
-   seed_to_local=True,
+   dependencies=("command",), seed_to_local=True,
    essential_filter={"items__command_status": "pending"})
 _e("command_item", "orders.CommandItem", conflict_policy=LOJA, flow="both",
    # `table` é o retrato de onde o item foi consumido, e a comanda anda pelo
    # salão: a dependência é real, não decorativa.
    dependencies=("command", "product", "command_batch", "table"),
    seed_to_local=True, essential_filter=PENDENTE_NA_COMANDA)
+_e("command_item_addon", "orders.CommandItemAddon", conflict_policy=LOJA, flow="both",
+   dependencies=("command_item", "product_addon"), seed_to_local=True,
+   essential_filter={"item__command_status": "pending"})
 # A CHAVE DE IDEMPOTÊNCIA ATRAVESSA OS NÓS.
 #
 # Ela já foi excluída daqui, com a razão "vale só no nó que atendeu" — e era

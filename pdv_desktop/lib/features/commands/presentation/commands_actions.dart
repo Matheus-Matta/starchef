@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../home/presentation/command_table_selection_dialog.dart';
+import '../../orders/presentation/product_config_dialog.dart';
 import 'command_void_dialog.dart';
 import 'commands_loading.dart';
 
@@ -49,14 +50,27 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
   }
 
   /// Anota o produto NA COMANDA. Nenhum pedido é aberto.
-  Future<void> lancar(Map<String, dynamic> produto) async {
+  Future<void> lancar(
+    Map<String, dynamic> produto, {
+    num quantity = 1,
+    String customerNote = '',
+    List<String> variationIds = const [],
+    List<String> addonIds = const [],
+  }) async {
     final id = '${selecionada?['id'] ?? ''}';
     if (id.isEmpty) {
       setState(() => erro = 'Escolha uma comanda antes de lançar.');
       return;
     }
     try {
-      await repository.launchItem(id, productId: '${produto['id']}');
+      await repository.launchItem(
+        id,
+        productId: '${produto['id']}',
+        quantity: quantity,
+        customerNote: customerNote,
+        variationIds: variationIds,
+        addonIds: addonIds,
+      );
       await carregarItens();
       // A coluna da esquerda mostra o estado do cartão: o primeiro lançamento
       // o deixa ocupado, e a lista precisa acompanhar.
@@ -64,6 +78,24 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
     } catch (falha) {
       if (mounted) setState(() => erro = 'Falha ao lançar na comanda: $falha');
     }
+  }
+
+  Future<void> configurarProduto(Map<String, dynamic> produto) async {
+    if (!productNeedsConfiguration(produto)) {
+      await lancar(produto);
+      return;
+    }
+    final configuracao = await showProductConfigDialog(context, produto);
+    if (!mounted || configuracao == null) return;
+    await lancar(
+      produto,
+      quantity: configuracao.quantity,
+      customerNote: configuracao.customerNote,
+      variationIds: [
+        if (configuracao.variationId != null) configuracao.variationId!,
+      ],
+      addonIds: configuracao.addonIds,
+    );
   }
 
   Future<void> enviarACozinha() async {

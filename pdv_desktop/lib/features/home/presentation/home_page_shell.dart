@@ -18,7 +18,6 @@ mixin _ShellSection on _HomePageShared {
   LocalDeviceAgent get deviceAgent;
   PdvUpdateStatus get versionStatus;
   NetworkStatus get networkStatus;
-
   Map<String, dynamic>? get activeOrder;
   Map<String, dynamic>? get selectedTable;
   Map<String, dynamic>? get selectedCommand;
@@ -202,6 +201,7 @@ mixin _ShellSection on _HomePageShared {
                   printer: deviceAgent.printerAvailability,
                   syncPending:
                       offlineMode || activeOrder?['_offline_pending'] == true,
+                  versionStatus: versionStatus,
                   // O sino fica no fim da barra de status, ao lado dos outros
                   // sinais de "como as coisas estão" — o operador olha para um
                   // canto só.

@@ -361,7 +361,6 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         """
         from apps.orders.command_items import launch_item
         from apps.orders.serializers import CommandItemSerializer
-
         command = self.get_object()
         if not request.data.get("product"):
             return Response(
@@ -373,10 +372,11 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 command=command,
                 product=request.data["product"],
                 user=request.user,
-                quantity=request.data.get("quantity") or 1,
+                quantity=request.data.get("quantity", 1),
                 unit_price=request.data.get("unit_price"),
                 customer_note=request.data.get("customer_note") or "",
                 variations=request.data.get("variations") or [],
+                addons=request.data.get("addons") or [],
             )
         except ValidationError as exc:
             detalhe = getattr(exc, "messages", None) or [str(exc)]

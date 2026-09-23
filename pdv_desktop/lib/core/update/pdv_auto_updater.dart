@@ -52,7 +52,13 @@ class PdvAutoUpdater extends ChangeNotifier {
     _started = true;
     _setPhase(PdvAutoUpdatePhase.checking);
     try {
-      status = await _service.check();
+      status = await _service.check(
+        onInstalled: (installed) {
+          if (_disposed) return;
+          status = PdvUpdateStatus.checking(installed: installed);
+          notifyListeners();
+        },
+      );
       if (_disposed) return;
       if (status!.phase != PdvUpdatePhase.updateAvailable) {
         _setPhase(

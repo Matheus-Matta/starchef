@@ -192,7 +192,7 @@ class _CommandsPageState extends State<CommandsPage>
     onVoltar: _voltarAoSalao,
     onBuscaDeProduto: (valor) => setState(() => _termoDeProduto = valor),
     onCategoria: (valor) => setState(() => _categoria = valor),
-    onProduto: lancar,
+    onProduto: configurarProduto,
     onSendToKitchen: enviarACozinha,
     onPrintReceipt: imprimirRecibo,
     onVoidItem: cancelarItem,

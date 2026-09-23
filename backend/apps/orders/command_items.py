@@ -10,10 +10,9 @@ e é a razão de a consulta do que ela tem AGORA nunca poder ser `command.items`
 cru, que devolve o histórico inteiro.
 """
 from django.core.exceptions import ValidationError
-from django.db import transaction
 from django.utils import timezone
 
-from apps.core.tenant import tenant_context
+from apps.orders.command_item_launch import launch_item as launch_item
 from apps.orders.models import CommandItem
 
 
@@ -24,6 +23,7 @@ def open_items_of_command(command_id):
             command_id=command_id, command_status=CommandItem.STATUS_PENDENTE
         )
         .select_related("product", "table", "batch")
+        .prefetch_related("addons__addon")
         .order_by("launched_at")
     )
 
@@ -33,57 +33,9 @@ def history_items_of_command(command_id):
     return (
         CommandItem.objects.filter(command_id=command_id)
         .select_related("product", "table", "batch")
+        .prefetch_related("addons__addon")
         .order_by("-launched_at")
     )
-
-
-def launch_item(*, command, product, user, quantity=1, unit_price=None, **extras):
-    """Anota um consumo na comanda. Não cria pedido nenhum.
-
-    A mesa vai no item, e não só na comanda: a comanda anda pelo salão, e é
-    isto que responde "o que saiu na mesa 4" depois de o cliente ter trocado de
-    lugar.
-    """
-    from apps.menu.models import Product
-
-    if not isinstance(product, Product):
-        product = Product.objects.get(pk=product)
-
-    preco = unit_price if unit_price is not None else product.current_price
-    with tenant_context(command.account), transaction.atomic():
-        item = CommandItem.objects.create(
-            account=command.account,
-            restaurant=command.restaurant,
-            branch=command.branch,
-            command=command,
-            table=command.current_table,
-            product=product,
-            quantity=quantity,
-            unit_price=preco,
-            total_price=preco * quantity,
-            production_sector=product.production_sector,
-            launched_by=user,
-            created_by=user,
-            updated_by=user,
-            **extras,
-        )
-        _marcar_em_uso(command, user=user)
-    return item
-
-
-def _marcar_em_uso(command, *, user=None):
-    """A comanda passa a estar em uso no primeiro lançamento.
-
-    O estado é DERIVADO de ter anotação pendente — este campo é só o retrato
-    que as listas leem sem precisar contar itens de cada cartão.
-    """
-    from apps.restaurants.models import Command
-
-    if command.status == Command.STATUS_OCCUPIED:
-        return
-    command.status = Command.STATUS_OCCUPIED
-    command.updated_by = user
-    command.save(update_fields=["status", "updated_by", "updated_at"])
 
 
 def conclude_item(item, *, when=None, billed=False):

@@ -74,14 +74,16 @@ class CommandRepository {
     required String productId,
     num quantity = 1,
     String customerNote = '',
-    List<Map<String, dynamic>> variations = const [],
+    List<String> variationIds = const [],
+    List<String> addonIds = const [],
   }) => _api.post(
     '/commands/$commandId/items/',
     body: {
       'product': productId,
       'quantity': quantity,
       'customer_note': customerNote,
-      'variations': variations,
+      'variations': variationIds,
+      'addons': addonIds,
     },
     accessToken: accessToken,
   );

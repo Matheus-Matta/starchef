@@ -26,7 +26,8 @@ O PDV possui **atualização automática transacional** no Windows e no Linux.
 - troca as pastas, inicia a versão nova e a observa por oito segundos;
 - se a versão nova encerrar durante essa validação, restaura a pasta anterior e
   reinicia automaticamente o PDV antigo;
-- mostra `STARCHEF vX.Y.Z` e o estado por ícone na barra lateral.
+- mostra `vX.Y.Z` e o estado por texto e ícone no login e na barra superior do
+  PDV.
 
 O instalador EXE continua publicado para primeira instalação e atualização
 manual. A atualização automática usa o ZIP também no Windows porque a troca de
@@ -250,10 +251,10 @@ o manifesto herda o `package` do release anterior, cuja URL continua válida.
 | ícone vermelho | manifesto possui uma versão semântica superior |
 | ícone neutro com interrogação | falha de rede, HTTP, JSON, versão ou pacote da plataforma |
 
-A versão instalada aparece ao lado do produto, por exemplo
-`STARCHEF v1.0.34`, sem exibir o build number. Os detalhes ficam no tooltip do
-ícone. O clique no ícone repete a consulta. O timeout e qualquer erro ficam
-isolados do fluxo de vendas.
+A versão instalada aparece no login e na barra superior interna, por exemplo
+`v1.0.34 · Atualizado`, sem exibir o build number. Quando há uma versão nova, o
+texto muda para `Atualização disponível` e o tooltip informa qual versão será
+instalada. O timeout e qualquer erro ficam isolados do fluxo de vendas.
 
 ## Configuração do GitHub
 
@@ -437,7 +438,7 @@ Além dos testes automatizados, faça uma homologação curta:
 - envio setorizado para produção;
 - impressão em ao menos uma impressora real;
 - fechamento e nova abertura do PDV;
-- indicador de versão na barra lateral.
+- indicador de versão no login e na barra superior interna.
 
 ### 3. Commitar e enviar o código
 
