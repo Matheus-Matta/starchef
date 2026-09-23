@@ -53,6 +53,7 @@ class PrintDocument {
     this.qr,
     this.remoteJobId,
     this.rawType,
+    this.openCashDrawer = false,
   });
 
   final PrintJobType type;
@@ -73,20 +74,36 @@ class PrintDocument {
   /// `job_type` que ele conhece e este PDV ainda não.
   final String? rawType;
 
+  /// Este cupom leva junto o pulso da gaveta?
+  ///
+  /// É decisão de quem monta o documento, não da impressora: a gaveta abre
+  /// porque **este** dinheiro mudou de mão, e não porque saiu um papel. Um
+  /// recibo reimpresso meia hora depois não abre nada.
+  ///
+  /// Vive no documento, e não num parâmetro do envio, porque o cupom pode
+  /// esperar na fila local: sem isto, uma venda em dinheiro impressa depois
+  /// de a impressora voltar sairia com a gaveta trancada.
+  final bool openCashDrawer;
+
   /// Valor a gravar na fila local.
   String get wireType => rawType ?? type.wire;
 
   bool get isEmpty => content.trim().isEmpty;
 
-  PrintDocument copyWith({String? content, String? barcode, String? qr}) =>
-      PrintDocument(
-        type: type,
-        content: content ?? this.content,
-        barcode: barcode ?? this.barcode,
-        qr: qr ?? this.qr,
-        remoteJobId: remoteJobId,
-        rawType: rawType,
-      );
+  PrintDocument copyWith({
+    String? content,
+    String? barcode,
+    String? qr,
+    bool? openCashDrawer,
+  }) => PrintDocument(
+    type: type,
+    content: content ?? this.content,
+    barcode: barcode ?? this.barcode,
+    qr: qr ?? this.qr,
+    remoteJobId: remoteJobId,
+    rawType: rawType,
+    openCashDrawer: openCashDrawer ?? this.openCashDrawer,
+  );
 
   /// Documento montado por este terminal (offline ou por escolha do caixa).
   factory PrintDocument.local({
@@ -94,11 +111,13 @@ class PrintDocument {
     required String content,
     String? barcode,
     String? qr,
+    bool openCashDrawer = false,
   }) => PrintDocument(
     type: type,
     content: content,
     barcode: barcode,
     qr: qr,
+    openCashDrawer: openCashDrawer,
   );
 
   /// Documento que já estava na fila local.
@@ -109,6 +128,7 @@ class PrintDocument {
     qr: entry.qr,
     remoteJobId: entry.remoteJobId,
     rawType: entry.jobType,
+    openCashDrawer: entry.openCashDrawer,
   );
 
   /// Documento de um `PrintJob` renderizado pelo servidor.

@@ -268,6 +268,65 @@ void main() {
       expect(parts.cut, EscPosCodec.cutBytes);
     });
   });
+
+  group('gaveta de dinheiro', () {
+    test('monta ESC p com o pino e os tempos em passos de 2 ms', () {
+      expect(EscPosCodec.openDrawerBytes(), [0x1b, 0x70, 0x00, 50, 200]);
+      // Pino 5 é a segunda saída do conector: `m = 1`.
+      expect(
+        EscPosCodec.openDrawerBytes(pin: 5, onMs: 50, offMs: 500),
+        [0x1b, 0x70, 0x01, 25, 250],
+      );
+    });
+
+    test('nunca deixa o pulso cair para zero', () {
+      // Um tempo abaixo de um passo arredondaria para nenhuma energia na
+      // bobina — a gaveta ficaria fechada sem erro em lugar nenhum.
+      expect(EscPosCodec.openDrawerBytes(onMs: 1, offMs: 1).sublist(3), [1, 1]);
+    });
+
+    test('respeita o teto de um byte por tempo', () {
+      expect(
+        EscPosCodec.openDrawerBytes(onMs: 5000, offMs: 5000).sublist(3),
+        [255, 255],
+      );
+    });
+
+    test('o pulso sai DEPOIS do corte e no mesmo trabalho', () {
+      final pulse = EscPosCodec.openDrawerBytes();
+      final bytes = EscPosCodec.rawTransportBytes(
+        'VENDA EM DINHEIRO',
+        isEscPos: true,
+        drawerPulse: pulse,
+      );
+
+      expect(bytes.sublist(bytes.length - pulse.length), pulse);
+
+      final parts = EscPosCodec.splitCutCommand(bytes, isEscPos: true);
+      // A gaveta viaja junto da guilhotina, não numa segunda sessão: uma
+      // térmica de rede aceita uma conexão por vez.
+      expect(parts.cut, [...EscPosCodec.cutBytes, ...pulse]);
+      expect(
+        parts.content.sublist(parts.content.length - 6),
+        EscPosCodec.feedBeforeCutBytes,
+      );
+    });
+
+    test('uma impressora fora do ESC/POS não recebe pulso nenhum', () {
+      final bytes = EscPosCodec.rawTransportBytes(
+        'VENDA EM DINHEIRO',
+        isEscPos: false,
+        drawerPulse: EscPosCodec.openDrawerBytes(),
+      );
+
+      // No driver gráfico os mesmos bytes não são comando: sairiam impressos
+      // no papel. O fluxo tem que sair idêntico ao de quem não pediu gaveta.
+      expect(
+        bytes,
+        EscPosCodec.rawTransportBytes('VENDA EM DINHEIRO', isEscPos: false),
+      );
+    });
+  });
 }
 
 int _sublistIndex(List<int> source, List<int> pattern) {

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_desktop/core/data/print_queue_service.dart';
+import 'package:starchef_pdv_desktop/features/devices/printing/print_document.dart';
 
 /// **A fila de impressão é do terminal, não do servidor.**
 ///
@@ -64,6 +65,32 @@ void main() {
     content: content,
     remoteJobId: remoteJobId,
   );
+
+  test('a gaveta atravessa a fila junto com o cupom', () async {
+    // Uma venda em dinheiro que esperou a impressora voltar continua sendo
+    // uma venda em dinheiro quando o papel finalmente sai: sem isto, a
+    // gaveta ficaria trancada justamente na venda que a justifica.
+    await queue.enqueue(
+      scope: scope,
+      printer: printer,
+      jobType: 'receipt',
+      content: 'VENDA',
+      openCashDrawer: true,
+    );
+
+    final job = await queue.claimNext(scope: scope);
+
+    expect(job!.openCashDrawer, isTrue);
+    expect(PrintDocument.fromQueueEntry(job).openCashDrawer, isTrue);
+  });
+
+  test('um cupom comum atravessa a fila sem abrir gaveta', () async {
+    await enfileirar();
+
+    final job = await queue.claimNext(scope: scope);
+
+    expect(job!.openCashDrawer, isFalse);
+  });
 
   test('o cupom espera na fila até a impressora aceitar', () async {
     await enfileirar();

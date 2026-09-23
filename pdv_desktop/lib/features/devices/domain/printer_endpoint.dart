@@ -12,6 +12,55 @@ enum PrinterConnection {
   serial,
 }
 
+/// A gaveta de dinheiro ligada à saída RJ12 desta impressora.
+///
+/// É cadastro do equipamento, não do terminal: quem tem o cabo da gaveta
+/// plugado é a impressora, e ela pode ser a mesma para dois PDVs.
+class CashDrawerSettings {
+  const CashDrawerSettings({
+    required this.enabled,
+    required this.pin,
+    required this.onMs,
+    required this.offMs,
+  });
+
+  /// Gaveta não cadastrada: nenhum pulso sai em trabalho nenhum.
+  static const disabled = CashDrawerSettings(
+    enabled: false,
+    pin: 2,
+    onMs: 100,
+    offMs: 400,
+  );
+
+  final bool enabled;
+
+  /// Pino do conector (2 na primeira gaveta, 5 na segunda).
+  final int pin;
+
+  final int onMs;
+  final int offMs;
+
+  factory CashDrawerSettings.fromJson(Map<String, dynamic> printer) {
+    final settings = printer['settings'] as Map<String, dynamic>? ?? const {};
+    Object? pick(String key) => printer[key] ?? settings[key];
+    final pin = ValueFormatters.integer(pick('cash_drawer_pin'), fallback: 2);
+    return CashDrawerSettings(
+      enabled: pick('cash_drawer_enabled') == true,
+      // Só existem duas saídas no comando; qualquer outro número cai na
+      // primeira, que é onde uma gaveta única está ligada.
+      pin: pin == 5 ? 5 : 2,
+      onMs: ValueFormatters.integer(
+        pick('cash_drawer_on_ms'),
+        fallback: 100,
+      ).clamp(1, 510),
+      offMs: ValueFormatters.integer(
+        pick('cash_drawer_off_ms'),
+        fallback: 400,
+      ).clamp(1, 510),
+    );
+  }
+}
+
 /// Configuração de transporte de uma impressora, resolvida em um só lugar.
 ///
 /// O cadastro no backend guarda os mesmos campos em dois níveis — direto no
@@ -28,6 +77,7 @@ class PrinterEndpoint {
     required this.baudRate,
     required this.driverType,
     required this.timeout,
+    this.cashDrawer = CashDrawerSettings.disabled,
   });
 
   final PrinterConnection connection;
@@ -40,6 +90,7 @@ class PrinterEndpoint {
   final int baudRate;
   final String driverType;
   final Duration timeout;
+  final CashDrawerSettings cashDrawer;
 
   factory PrinterEndpoint.fromJson(Map<String, dynamic> printer) {
     final settings = printer['settings'] as Map<String, dynamic>? ?? const {};
@@ -66,11 +117,21 @@ class PrinterEndpoint {
           fallback: 10,
         ).clamp(1, 120),
       ),
+      cashDrawer: CashDrawerSettings.fromJson(printer),
     );
   }
 
   /// A impressora usa comandos ESC/POS (necessário para código de barras real).
   bool get isEscPos => driverType == 'escpos';
+
+  /// Esta impressora pode abrir uma gaveta?
+  ///
+  /// O pulso é um comando de controle. Numa impressora que vai pelo driver
+  /// gráfico do sistema, os mesmos bytes não são comando nenhum — sairiam
+  /// impressos no papel. O cadastro já recusa a combinação, mas o terminal
+  /// não depende disso: ele também imprime a partir da cópia guardada na
+  /// fila local, gravada por uma versão anterior do backend.
+  bool get canOpenCashDrawer => isEscPos && cashDrawer.enabled;
 
   /// Há endereço suficiente para tentar imprimir.
   bool get isAddressable => switch (connection) {

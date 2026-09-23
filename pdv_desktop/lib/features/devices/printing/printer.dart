@@ -132,11 +132,13 @@ abstract class Printer {
     required String content,
     String? barcode,
     String? qr,
+    bool openCashDrawer = false,
   }) => PrintDocument(
     type: jobType,
     content: content,
     barcode: barcode,
     qr: qr,
+    openCashDrawer: openCashDrawer,
   );
 
   /// Entrega o documento ao equipamento.
@@ -212,12 +214,14 @@ abstract class Printer {
         );
       }
 
+      final drawer = _drawerPulseFor(document);
       await transport.write(
         EscPosCodec.rawTransportBytes(
           document.content,
           isEscPos: target.isEscPos,
           barcodeValue: document.barcode,
           qrValue: document.qr,
+          drawerPulse: drawer,
         ),
       );
       _lastSuccessfulSend[device.lockResource] = DateTime.now();
@@ -228,6 +232,7 @@ abstract class Printer {
           'printer': device.label,
           'job_type': jobType.wire,
           'ligacao': target.connection.name,
+          'gaveta': drawer != null,
           'ms': DateTime.now().difference(startedAt).inMilliseconds,
         },
       );
@@ -245,6 +250,24 @@ abstract class Printer {
     } finally {
       await lock.release();
     }
+  }
+
+  /// Os bytes da gaveta para este documento, ou `null` quando ela não entra.
+  ///
+  /// Três condições, e todas precisam valer: o documento pediu a gaveta, o
+  /// cadastro tem gaveta ligada nesta impressora e a impressora fala ESC/POS.
+  /// A última não é redundante com o cadastro — o cupom pode ter esperado na
+  /// fila local com a cópia de um cadastro anterior, e num driver gráfico os
+  /// mesmos bytes sairiam impressos no papel em vez de abrir coisa alguma.
+  List<int>? _drawerPulseFor(PrintDocument document) {
+    if (!document.openCashDrawer) return null;
+    if (!target.canOpenCashDrawer) return null;
+    final drawer = target.cashDrawer;
+    return EscPosCodec.openDrawerBytes(
+      pin: drawer.pin,
+      onMs: drawer.onMs,
+      offMs: drawer.offMs,
+    );
   }
 
   /// O equipamento está ao alcance?

@@ -37,6 +37,7 @@ class PrintQueueEntry {
     this.remoteJobId,
     this.barcode,
     this.qr,
+    this.openCashDrawer = false,
     this.nextRetryAt,
     this.printedAt,
     this.leaseOwner,
@@ -66,6 +67,14 @@ class PrintQueueEntry {
   final String content;
   final String? barcode;
   final String? qr;
+
+  /// O cupom leva junto o pulso da gaveta quando finalmente sair.
+  ///
+  /// Guardado na fila porque a gaveta pertence ao trabalho, não ao instante:
+  /// uma venda em dinheiro que esperou a impressora voltar continua sendo uma
+  /// venda em dinheiro quando o papel sai.
+  final bool openCashDrawer;
+
   final PrintJobStatus status;
   final int attempts;
   final DateTime createdAt;
@@ -97,6 +106,7 @@ class PrintQueueEntry {
     content: content,
     barcode: barcode,
     qr: qr,
+    openCashDrawer: openCashDrawer,
     status: status ?? this.status,
     attempts: attempts ?? this.attempts,
     createdAt: createdAt,
@@ -118,6 +128,7 @@ class PrintQueueEntry {
     'content': content,
     'barcode': barcode,
     'qr': qr,
+    'open_cash_drawer': openCashDrawer,
     'status': status.code,
     'attempts': attempts,
     'created_at': createdAt.toIso8601String(),
@@ -143,6 +154,8 @@ class PrintQueueEntry {
       content: '${row['content']}',
       barcode: row['barcode'] as String?,
       qr: row['qr'] as String?,
+      // Linhas gravadas antes deste campo existir não abrem gaveta nenhuma.
+      openCashDrawer: row['open_cash_drawer'] == true,
       status: PrintJobStatus.parse(row['status']),
       attempts: (row['attempts'] as num?)?.toInt() ?? 0,
       createdAt:
@@ -306,6 +319,7 @@ class PrintQueueService {
     String? remoteJobId,
     String? barcode,
     String? qr,
+    bool openCashDrawer = false,
     String? heldReason,
   }) async {
     final id = jobId ?? remoteJobId ?? LocalId.uuid();
@@ -327,6 +341,7 @@ class PrintQueueService {
           content: content,
           barcode: barcode,
           qr: qr,
+          openCashDrawer: openCashDrawer,
           status: heldReason == null
               ? PrintJobStatus.pending
               : PrintJobStatus.failed,

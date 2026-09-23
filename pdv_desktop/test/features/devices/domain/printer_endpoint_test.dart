@@ -127,4 +127,72 @@ void main() {
       'Sistema · Balcao',
     );
   });
+
+  group('gaveta de dinheiro', () {
+    test('sem cadastro, nenhuma impressora abre gaveta', () {
+      final endpoint = PrinterEndpoint.fromJson({
+        'connection_type': 'network',
+        'host': '10.0.0.5',
+        'driver_type': 'escpos',
+      });
+
+      expect(endpoint.cashDrawer.enabled, isFalse);
+      expect(endpoint.canOpenCashDrawer, isFalse);
+    });
+
+    test('lê a gaveta do nível de cima ou de dentro de settings', () {
+      // A cópia guardada na fila local vem de um cadastro completo; a tela de
+      // equipamentos monta o mapa com os campos que tem na mão. Os dois
+      // precisam resolver igual.
+      for (final json in [
+        const {
+          'driver_type': 'escpos',
+          'endpoint': 'Caixa',
+          'cash_drawer_enabled': true,
+          'cash_drawer_pin': 5,
+          'cash_drawer_on_ms': 120,
+          'cash_drawer_off_ms': 480,
+        },
+        const {
+          'driver_type': 'escpos',
+          'endpoint': 'Caixa',
+          'settings': {
+            'cash_drawer_enabled': true,
+            'cash_drawer_pin': 5,
+            'cash_drawer_on_ms': 120,
+            'cash_drawer_off_ms': 480,
+          },
+        },
+      ]) {
+        final drawer = PrinterEndpoint.fromJson(json).cashDrawer;
+        expect(drawer.enabled, isTrue);
+        expect(drawer.pin, 5);
+        expect(drawer.onMs, 120);
+        expect(drawer.offMs, 480);
+      }
+    });
+
+    test('um pino desconhecido cai na primeira saída', () {
+      final drawer = PrinterEndpoint.fromJson({
+        'driver_type': 'escpos',
+        'endpoint': 'Caixa',
+        'cash_drawer_enabled': true,
+        'cash_drawer_pin': 7,
+      }).cashDrawer;
+
+      expect(drawer.pin, 2);
+    });
+
+    test('gaveta cadastrada fora do ESC/POS não é acionável', () {
+      final endpoint = PrinterEndpoint.fromJson({
+        'driver_type': 'browser',
+        'endpoint': 'Caixa',
+        'cash_drawer_enabled': true,
+      });
+
+      expect(endpoint.cashDrawer.enabled, isTrue);
+      // No driver gráfico os bytes do pulso sairiam impressos no papel.
+      expect(endpoint.canOpenCashDrawer, isFalse);
+    });
+  });
 }

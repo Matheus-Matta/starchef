@@ -661,7 +661,11 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
       // de impressão inteiro — com WebSocket e fila — só para escrever numa
       // porta.
       final tester = TestPrinter(PrinterDevice.fromJson(printer));
-      await tester.send(tester.compose(content: text));
+      // A nota de teste leva o pulso da gaveta quando ela está cadastrada
+      // nesta impressora: é o único jeito de conferir o cabo RJ12 e os tempos
+      // sem precisar de uma venda em dinheiro de verdade. Numa impressora sem
+      // gaveta cadastrada nada muda — o pulso nem chega a ser montado.
+      await tester.send(tester.compose(content: text, openCashDrawer: true));
       final jobId = job['print_job_id'];
       if (jobId != null) {
         await widget.api.post(

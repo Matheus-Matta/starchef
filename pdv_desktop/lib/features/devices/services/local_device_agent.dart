@@ -845,6 +845,7 @@ class LocalDeviceAgent {
       content: document.content,
       barcode: document.barcode,
       qr: document.qr,
+      openCashDrawer: document.openCashDrawer,
     );
     AppLogger.instance.info(
       'print_job_enfileirado',
@@ -1099,6 +1100,7 @@ class LocalDeviceAgent {
     Map<String, dynamic> job,
     Map<String, dynamic> printer, {
     bool automatic = false,
+    bool openCashDrawer = false,
   }) async {
     if (automatic) {
       final key = fiscalDedupeKey(job);
@@ -1121,7 +1123,11 @@ class LocalDeviceAgent {
     // impressora própria e cupom já renderizado na mão.
     final token = _token;
     final jobId = '${job['print_job_id'] ?? job['id'] ?? ''}'.trim();
-    final document = PrintDocument.fromRemoteJob(job);
+    // O servidor renderiza o cupom, mas não decide a gaveta: quem sabe se
+    // este pedido foi pago em dinheiro é a tela que acabou de receber.
+    final document = PrintDocument.fromRemoteJob(
+      job,
+    ).copyWith(openCashDrawer: openCashDrawer);
     if (document.isEmpty) {
       throw StateError('O trabalho não possui conteúdo para impressão.');
     }

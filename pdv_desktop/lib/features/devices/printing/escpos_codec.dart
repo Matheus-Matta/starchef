@@ -33,6 +33,37 @@ abstract final class EscPosCodec {
   /// último dado e o corte. Não substitui o avanço mecânico da guilhotina.
   static const int finalBlankLines = 5;
 
+  /// `ESC p m t1 t2` — pulso na saída de gaveta do conector RJ12.
+  ///
+  /// Não é a gaveta que recebe o comando: quem o recebe é a impressora, que
+  /// energiza a saída pelo tempo pedido e destrava a bobina. Por isso a
+  /// gaveta sai pelo mesmo cabo do cupom, seja ele rede, serial ou fila do
+  /// sistema — o transporte é indiferente, o firmware é que interpreta.
+  ///
+  /// [pin] é o número escrito no conector (2 na primeira gaveta, 5 na
+  /// segunda); o `m` do comando é 0 ou 1. Os tempos vêm em milissegundos e
+  /// são convertidos para os passos de 2 ms que o comando conta — um byte
+  /// cada, o que limita os dois a 510 ms.
+  ///
+  /// A MP-4200 **HS** é ESC/POS e não aceita ESC/BEMA: o `ESC v` das MP-4200
+  /// TH antigas não abre gaveta nenhuma aqui — naquele protocolo ele existe,
+  /// mas em ESC/POS o mesmo prefixo consulta o sensor de papel.
+  static List<int> openDrawerBytes({
+    int pin = 2,
+    int onMs = 100,
+    int offMs = 400,
+  }) {
+    // Passo mínimo de 1: um tempo arredondado para zero deixaria a bobina
+    // sem energia nenhuma, e a gaveta fechada sem erro em lugar algum.
+    int steps(int ms) => (ms ~/ 2).clamp(1, 255);
+    return <int>[
+      0x1b, 0x70, // ESC p
+      pin == 5 ? 0x01 : 0x00, // m: 0 = pino 2, 1 = pino 5.
+      steps(onMs),
+      steps(offMs),
+    ];
+  }
+
   /// Produces an ESC/POS `GS k` Code128 command using code set B.
   ///
   /// Code set B is deliberately limited to printable ASCII. Values outside
@@ -148,6 +179,7 @@ abstract final class EscPosCodec {
     required bool isEscPos,
     String? barcodeValue,
     String? qrValue,
+    List<int>? drawerPulse,
   }) {
     final barcodeBytes = isEscPos && barcodeValue != null
         ? code128Bytes(barcodeValue)
@@ -173,11 +205,21 @@ abstract final class EscPosCodec {
       // Ordem obrigatória para qualquer cupom: conteúdo, avanço até a lâmina
       // e só então a guilhotina — ver [feedBeforeCutBytes].
       if (isEscPos) ...[...feedBeforeCutBytes, ...cutBytes],
+      // A gaveta fecha a fila, DEPOIS do corte, e no mesmo trabalho: uma
+      // térmica de rede aceita uma sessão por vez, e mandar o pulso numa
+      // segunda conexão é disputar a porta com o cupom que ainda está
+      // saindo. [splitCutCommand] mantém os dois juntos na escrita final.
+      if (isEscPos) ...?drawerPulse,
     ];
   }
 
   /// Separa o comando de corte para que o transporte possa drenar o conteúdo
   /// antes de enviá-lo. O retorno mantém os avanços de papel junto ao corpo.
+  ///
+  /// O corte não é necessariamente o fim do fluxo: o pulso da gaveta vem
+  /// depois dele. O que estiver atrás do corte segue junto com ele na
+  /// segunda escrita — é o mesmo trabalho, e separá-lo em outra sessão é o
+  /// que faz a impressora recusar a conexão.
   static ({List<int> content, List<int> cut}) splitCutCommand(
     List<int> bytes, {
     required bool isEscPos,
@@ -185,17 +227,33 @@ abstract final class EscPosCodec {
     if (!isEscPos || bytes.length < cutBytes.length) {
       return (content: List<int>.from(bytes), cut: const <int>[]);
     }
-    final cutStart = bytes.length - cutBytes.length;
-    final hasCut =
-        List<int>.generate(
-          cutBytes.length,
-          (index) => bytes[cutStart + index],
-        ).join(',') ==
-        cutBytes.join(',');
-    if (!hasCut) {
+    final cutStart = _cutIndexInTrailer(bytes);
+    if (cutStart < 0) {
       return (content: List<int>.from(bytes), cut: const <int>[]);
     }
     return (content: bytes.sublist(0, cutStart), cut: bytes.sublist(cutStart));
+  }
+
+  /// Onde começa o corte no FIM do fluxo, ou `-1` se ele não estiver lá.
+  ///
+  /// A busca é limitada ao rabo do trabalho — o corte, e no máximo o pulso da
+  /// gaveta depois dele. Procurar `GS V 0` no cupom inteiro acharia a mesma
+  /// sequência caída por acaso no meio do conteúdo e partiria a nota ali.
+  static int _cutIndexInTrailer(List<int> bytes) {
+    const maxTrailer = 5; // Tamanho do pulso de gaveta (ESC p m t1 t2).
+    final last = bytes.length - cutBytes.length;
+    final first = last - maxTrailer;
+    for (var start = last; start >= 0 && start >= first; start--) {
+      var matches = true;
+      for (var offset = 0; offset < cutBytes.length; offset++) {
+        if (bytes[start + offset] != cutBytes[offset]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return start;
+    }
+    return -1;
   }
 
   /// Applies conservative ESC/POS typography that remains readable on both

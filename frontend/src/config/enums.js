@@ -296,6 +296,14 @@ export const PRINTER_DRIVER_OPTIONS = [
   { label: "ESC/POS (termica)", value: "escpos" },
 ];
 
+// Espelha Printer.DRAWER_PIN_CHOICES do backend. O numero e o do pino no
+// conector RJ12 da impressora, que e como o manual da gaveta o chama.
+export const PRINTER_DRAWER_PIN_OPTIONS = [
+  { label: "Pino 2 (primeira gaveta)", value: 2 },
+  { label: "Pino 5 (segunda gaveta)", value: 5 },
+];
+export const PRINTER_DRAWER_PIN_LABELS = Object.fromEntries(PRINTER_DRAWER_PIN_OPTIONS.map((o) => [o.value, o.label]));
+
 // Espelha Scale.PROTOCOL_CHOICES do backend.
 export const SCALE_PROTOCOL_OPTIONS = [
   { label: "Generico", value: "generic" },

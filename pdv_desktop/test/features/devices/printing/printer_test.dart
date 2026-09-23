@@ -277,4 +277,82 @@ void main() {
       expect(KitchenPrinter(PrinterDevice.fromJson(json)).queueable, isTrue);
     });
   });
+
+  group('Printer gaveta de dinheiro', () {
+    useTemporaryLockDirectory();
+
+    /// Imprime um recibo e devolve os bytes que chegaram ao equipamento.
+    Future<List<int>> sentBytes(
+      Map<String, dynamic> json, {
+      required bool openCashDrawer,
+    }) async {
+      final captured = <int>[];
+      final printer = ReceiptPrinter(
+        device(json),
+        runtime: PrinterRuntime(
+          networkWriter: (_, bytes) async => captured.addAll(bytes),
+          timing: PrintTiming(delay: (_) async {}),
+        ),
+      );
+      await printer.send(
+        printer.compose(content: 'VENDA', openCashDrawer: openCashDrawer),
+      );
+      return captured;
+    }
+
+    const comGaveta = {
+      'connection_type': 'network',
+      'host': '192.0.2.10',
+      'driver_type': 'escpos',
+      'cash_drawer_enabled': true,
+      'cash_drawer_pin': 2,
+      'cash_drawer_on_ms': 100,
+      'cash_drawer_off_ms': 400,
+    };
+
+    test('o recibo em dinheiro termina com o pulso da gaveta', () async {
+      final bytes = await sentBytes(comGaveta, openCashDrawer: true);
+
+      expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x00, 50, 200]);
+    });
+
+    test('um recibo que não pediu gaveta não a abre', () async {
+      // Reimpressão, venda no cartão, segunda via: mesmo equipamento, mesma
+      // gaveta cadastrada — e nenhum motivo para destravá-la.
+      final bytes = await sentBytes(comGaveta, openCashDrawer: false);
+
+      expect(bytes.sublist(bytes.length - 3), [0x1d, 0x56, 0x00]);
+    });
+
+    test('gaveta não cadastrada não abre nem quando o cupom pede', () async {
+      final bytes = await sentBytes({
+        ...comGaveta,
+        'cash_drawer_enabled': false,
+      }, openCashDrawer: true);
+
+      expect(bytes.sublist(bytes.length - 3), [0x1d, 0x56, 0x00]);
+    });
+
+    test('fora do ESC/POS o pulso nunca é montado', () async {
+      // A cópia do cadastro guardada na fila local pode ser mais velha que a
+      // validação do backend; o terminal não depende dela.
+      final bytes = await sentBytes({
+        ...comGaveta,
+        'driver_type': 'browser',
+      }, openCashDrawer: true);
+
+      expect(bytes, isNot(containsAllInOrder([0x1b, 0x70])));
+    });
+
+    test('o pino 5 aciona a segunda saída do conector', () async {
+      final bytes = await sentBytes({
+        ...comGaveta,
+        'cash_drawer_pin': 5,
+        'cash_drawer_on_ms': 60,
+        'cash_drawer_off_ms': 300,
+      }, openCashDrawer: true);
+
+      expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x01, 30, 150]);
+    });
+  });
 }

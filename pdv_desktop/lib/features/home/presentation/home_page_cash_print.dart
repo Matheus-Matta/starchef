@@ -168,7 +168,11 @@ mixin _CashPrintSection on _HomePageShared {
       );
       final result = await deviceAgent.submit(
         printer,
-        printer.compose(content: content),
+        // Todo documento daqui existe porque alguém vai pôr a mão no
+        // dinheiro: abertura conta o fundo de troco, sangria tira, suprimento
+        // põe e o fechamento confere. A gaveta abre junto com o comprovante,
+        // e não em um segundo gesto.
+        printer.compose(content: content, openCashDrawer: true),
       );
       // ACEITO NA FILA é silêncio: a impressora não respondeu agora, mas o
       // cupom está guardado e sai sozinho quando ela voltar. Avisar a cada

@@ -43,6 +43,35 @@ class PrinterSerializer(TenantModelSerializer):
                 errors["port"] = "Informe uma porta entre 1 e 65535."
         if not timeout or timeout > 120:
             errors["timeout_seconds"] = "Informe um timeout entre 1 e 120 segundos."
+
+        driver_type = attrs.get("driver_type", getattr(instance, "driver_type", Printer.DRIVER_BROWSER))
+        drawer_enabled = attrs.get(
+            "cash_drawer_enabled",
+            getattr(instance, "cash_drawer_enabled", False),
+        )
+        drawer_pin = attrs.get("cash_drawer_pin", getattr(instance, "cash_drawer_pin", Printer.DRAWER_PIN_2))
+        drawer_on = attrs.get("cash_drawer_on_ms", getattr(instance, "cash_drawer_on_ms", 100))
+        drawer_off = attrs.get("cash_drawer_off_ms", getattr(instance, "cash_drawer_off_ms", 400))
+        if drawer_enabled:
+            # O pulso e um comando ESC/POS. No driver grafico do Windows os
+            # mesmos bytes nao sao comando nenhum: sairiam impressos no papel.
+            if driver_type != Printer.DRIVER_ESCPOS:
+                errors["cash_drawer_enabled"] = (
+                    "A gaveta so abre em impressoras com driver ESC/POS."
+                )
+            # Teto do proprio comando: `t1` e `t2` tem um byte cada, contado em
+            # passos de 2 ms — 255 passos, 510 ms.
+            for field, value, label in (
+                ("cash_drawer_on_ms", drawer_on, "tempo ligado"),
+                ("cash_drawer_off_ms", drawer_off, "intervalo desligado"),
+            ):
+                if not value or value > 510:
+                    errors[field] = f"Informe um {label} entre 1 e 510 ms."
+            if "cash_drawer_on_ms" not in errors and "cash_drawer_off_ms" not in errors:
+                if drawer_off < drawer_on:
+                    errors["cash_drawer_off_ms"] = (
+                        "O intervalo desligado precisa ser maior ou igual ao tempo ligado."
+                    )
         # `settings` e um JSONField: o cliente pode mandar lista, numero ou
         # texto. `dict(["a"])` levanta ValueError, que virava 500 — e o campo
         # aceita qualquer JSON, entao nao ha validacao de tipo antes daqui.
@@ -60,6 +89,12 @@ class PrinterSerializer(TenantModelSerializer):
                 "host": str(host) if host else None,
                 "port": port,
                 "timeout_seconds": timeout,
+                # Espelhado como os campos de conexao: o PDV guarda uma copia
+                # do cadastro junto do cupom na fila local, e le os dois niveis.
+                "cash_drawer_enabled": bool(drawer_enabled),
+                "cash_drawer_pin": drawer_pin,
+                "cash_drawer_on_ms": drawer_on,
+                "cash_drawer_off_ms": drawer_off,
             }
         )
         attrs["settings"] = settings

@@ -46,6 +46,47 @@ class Printer(TenantModel):
     port = models.PositiveIntegerField(default=9100)
     timeout_seconds = models.PositiveIntegerField(default=10)
     auto_print = models.BooleanField(default=False)
+
+    # GAVETA DE DINHEIRO. O pulso e um comando ESC/POS (`ESC p m t1 t2`)
+    # enviado NO MESMO trabalho do cupom: a impressora energiza a saida RJ12 e
+    # a gaveta destrava. Por isso isto e cadastro da impressora, e nao do
+    # terminal — quem tem a saida eletrica ligada na gaveta e o equipamento.
+    #
+    # So vale para `driver_type = escpos`. Uma impressora no driver grafico do
+    # Windows nao recebe comando de controle nenhum: os bytes seriam
+    # reinterpretados como texto.
+    cash_drawer_enabled = models.BooleanField(
+        default=False,
+        help_text="Abre a gaveta ligada a esta impressora ao imprimir venda em dinheiro e documentos de caixa.",
+    )
+
+    DRAWER_PIN_2 = 2
+    DRAWER_PIN_5 = 5
+
+    DRAWER_PIN_CHOICES = [
+        (DRAWER_PIN_2, "Pino 2 (primeira gaveta)"),
+        (DRAWER_PIN_5, "Pino 5 (segunda gaveta)"),
+    ]
+
+    # `m` do comando: 0 aciona o sinal do pino 2, 1 o do pino 5. Guardamos o
+    # numero do PINO (2 ou 5), que e o que esta escrito no conector e no manual
+    # da gaveta; a traducao para 0/1 e do PDV.
+    cash_drawer_pin = models.PositiveSmallIntegerField(
+        default=DRAWER_PIN_2,
+        choices=DRAWER_PIN_CHOICES,
+        help_text="Saida do conector RJ12 acionada. A primeira gaveta costuma ser o pino 2.",
+    )
+    # `t1` e `t2` em milissegundos. O ESC/POS conta em passos de 2 ms com um
+    # byte cada, entao o teto real e 510 ms para cada um.
+    cash_drawer_on_ms = models.PositiveSmallIntegerField(
+        default=100,
+        help_text="Tempo com a bobina energizada. Comece por 100 ms: pulso curto demais nao destrava, longo demais aquece a bobina.",
+    )
+    cash_drawer_off_ms = models.PositiveSmallIntegerField(
+        default=400,
+        help_text="Intervalo desligado depois do pulso. Deve ser maior que o tempo ligado.",
+    )
+
     is_active = models.BooleanField(default=True)
     settings = models.JSONField(default=dict, blank=True)
 

@@ -68,8 +68,9 @@ mixin _PaymentSection on _HomePageShared {
   Future<String?> _chooseSalePrinter(Map<String, dynamic> order);
   Future<void> _printSaleReceipt(
     Map<String, dynamic> order,
-    Future<String?> printerChoice,
-  );
+    Future<String?> printerChoice, {
+    bool paidInCash,
+  });
   Future<void> _emitFiscalInvoice(
     Map<String, dynamic> order, {
     bool silentIfUnconfigured,
@@ -432,6 +433,10 @@ mixin _PaymentSection on _HomePageShared {
       return;
     }
     final paidOrder = Map<String, dynamic>.from(activeOrder!);
+    // Lido AGORA, antes de `showNextSale` limpar a tela para a próxima venda:
+    // depois dali `registeredPayments` está vazia, e o recibo sairia sem a
+    // gaveta justamente na venda que a justifica.
+    final paidInCash = registeredPayments.any(_isCashPayment);
     final customer = selectedCustomer == null
         ? null
         : Map<String, dynamic>.from(selectedCustomer!);
@@ -447,7 +452,8 @@ mixin _PaymentSection on _HomePageShared {
         flowStep = 'order';
       }),
       choosePrinter: () => _chooseSalePrinter(paidOrder),
-      printReceipt: (printer) => _printSaleReceipt(paidOrder, printer),
+      printReceipt: (printer) =>
+          _printSaleReceipt(paidOrder, printer, paidInCash: paidInCash),
       emitInvoice: (printer) => _emitFiscalInvoice(
         paidOrder,
         customer: customer,

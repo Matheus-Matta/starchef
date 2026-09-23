@@ -51,10 +51,17 @@ mixin _PaidReceiptSection on _HomePageShared {
     }
   }
 
+  /// Imprime o recibo da venda paga.
+  ///
+  /// [paidInCash] decide a gaveta, e vem de quem registrou os recebimentos —
+  /// aqui já não dá para saber: `order` é a cópia do pedido, não a lista de
+  /// formas de pagamento. A gaveta sai NESTE trabalho, junto do recibo, e
+  /// não numa segunda conexão com a mesma impressora.
   Future<void> _printSaleReceipt(
     Map<String, dynamic> order,
-    Future<String?> printerChoice,
-  ) async {
+    Future<String?> printerChoice, {
+    bool paidInCash = false,
+  }) async {
     try {
       final printerId = await printerChoice;
       if (!mounted || printerId == null) return;
@@ -74,7 +81,11 @@ mixin _PaidReceiptSection on _HomePageShared {
           'O trabalho de impressão voltou sem impressora.',
         );
       }
-      await deviceAgent.printJobManually(printJob, printer);
+      await deviceAgent.printJobManually(
+        printJob,
+        printer,
+        openCashDrawer: paidInCash,
+      );
     } catch (error) {
       if (mounted) {
         _error(
