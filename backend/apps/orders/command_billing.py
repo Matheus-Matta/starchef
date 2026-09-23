@@ -72,6 +72,26 @@ def billable_items_of(command_ids):
     )
 
 
+def em_uso_subquery(campo="pk"):
+    """`Exists` que responde "este cartão tem o que cobrar?" dentro do banco.
+
+    Mesma definição de [command_has_pending_items], escrita como subconsulta
+    para valer sobre um conjunto inteiro: filtrar, contar ou excluir duzentos
+    cartões sem trazer nenhum para a memória. Existe porque `Command.status`
+    deixou de ser coluna — quem precisa perguntar em lote pergunta por aqui.
+    """
+    from django.db.models import Exists, OuterRef
+
+    return Exists(
+        CommandItem.objects.filter(
+            command=OuterRef(campo),
+            command_status=CommandItem.STATUS_PENDENTE,
+        ).exclude(
+            status__in=[CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
+        )
+    )
+
+
 def command_has_pending_items(command_id):
     """A comanda está EM USO?
 
@@ -256,12 +276,9 @@ def detach_commands_from_order(*, order, command_ids, user):
             updated_at=timezone.now(),
         )
 
-        # A comanda volta a estar em uso: ela tem o que cobrar de novo.
-        from apps.restaurants.models import Command
-
-        Command.objects.filter(pk__in=ids, status=Command.STATUS_FREE).update(
-            status=Command.STATUS_OCCUPIED, updated_at=timezone.now()
-        )
+        # A comanda volta a estar em uso sozinha: "em uso" é ter o que cobrar,
+        # e as anotações acabaram de voltar a PENDENTE. Não há campo para
+        # reescrever — ver `Command.status`.
 
     # Quem já foi para a produção volta para a comanda com o prato feito — o
     # cozinheiro não desfaz. Quem chamou decide se avisa o operador.

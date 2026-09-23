@@ -68,7 +68,16 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
 
         if order_type == Order.TYPE_COMMAND and kwargs.get("command"):
             command = Command.objects.select_for_update().get(pk=kwargs["command"].pk)
-            if command.status == Command.STATUS_OCCUPIED:
+            # DUAS CONTAS ABERTAS PARA O MESMO CARTÃO é o que não pode.
+            #
+            # Antes isto perguntava ao campo `status`, que hoje é calculado —
+            # e calculado ele diz "em uso" também quando o cartão tem consumo
+            # a cobrar, que é exatamente quando o caixa PRECISA abrir a conta.
+            # A pergunta certa sempre foi sobre o pedido, não sobre o cartão.
+            if Order.objects.filter(
+                command_id=command.pk,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).exists():
                 raise ValidationError("A comanda já está em uso.")
             kwargs["command"] = command
             # A mesa é um vínculo da comanda. O pedido guarda apenas o snapshot
@@ -94,11 +103,12 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
 
         if order.command_id:
             command = order.command
-            command.status = Command.STATUS_OCCUPIED
+            # `status` não é gravado: ele responde pelo consumo pendente do
+            # cartão, e abrir um pedido não consome nada — ver `Command.status`.
             command.current_order_id = order.id
             if order.customer_id and not command.customer_name:
                 command.customer_name = order.customer.name
-            command.save(update_fields=["status", "current_order_id", "customer_name", "updated_at"])
+            command.save(update_fields=["current_order_id", "customer_name", "updated_at"])
 
         record_audit(action=AuditLog.ACTION_CREATED, instance=order, actor=user)
         return order

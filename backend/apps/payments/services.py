@@ -794,13 +794,14 @@ def cancel_payment(*, payment, user):
                 from apps.restaurants.models import Command
 
                 command = Command.objects.select_for_update().get(pk=order.command_id)
-                command.status = Command.STATUS_OCCUPIED
+                # `status` volta sozinho ao estornar: as anotações voltam a
+                # PENDENTE e o cartão passa a ter o que cobrar de novo — ver
+                # `Command.status`.
                 command.current_order_id = order.id
                 command.customer_name = order.customer.name if order.customer_id else ""
                 command.current_table = order.table
                 command.save(
                     update_fields=[
-                        "status",
                         "current_order_id",
                         "customer_name",
                         "current_table",

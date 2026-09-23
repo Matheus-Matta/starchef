@@ -10,6 +10,7 @@ e é a razão de a consulta do que ela tem AGORA nunca poder ser `command.items`
 cru, que devolve o histórico inteiro.
 """
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
 from apps.orders.command_item_launch import launch_item as launch_item
@@ -48,14 +49,28 @@ def conclude_item(item, *, when=None, billed=False):
     Cancelar na cozinha e sair da comanda são dimensões diferentes, mas um item
     cancelado precisa sair do cartão também: senão ele ocupa a comanda do
     próximo cliente.
+
+    TIRAR A ÚLTIMA ANOTAÇÃO DEVOLVE O CARTÃO PARA A GAVETA — aqui, e não em
+    quem chama. "Em uso" é ter o que cobrar; quando a última anotação sai, o
+    cartão deixou de estar em uso no mesmo instante, e quem sabe disso é esta
+    função. Deixar a liberação a cargo do chamador era o que fazia o cartão
+    ficar preso: o caminho do pagamento lembrava de liberar, o do
+    cancelamento de item não — e o cartão sumia do salão, ocupado por um
+    consumo que já não existia, sem nada estourar em lugar nenhum.
     """
     if item.finalizado:
         return item
-    item.command_status = (
-        CommandItem.STATUS_COBRADO if billed else CommandItem.STATUS_CANCELADO
-    )
-    item.command_closed_at = when or timezone.now()
-    item.save(update_fields=["command_status", "command_closed_at", "updated_at"])
+    with transaction.atomic():
+        item.command_status = (
+            CommandItem.STATUS_COBRADO if billed else CommandItem.STATUS_CANCELADO
+        )
+        item.command_closed_at = when or timezone.now()
+        item.save(update_fields=["command_status", "command_closed_at", "updated_at"])
+        # `free_command_if_empty` não faz nada quando ainda há o que cobrar,
+        # então chamar sempre é mais barato que decidir aqui — e não deixa
+        # brecha para o próximo caminho de saída esquecer.
+        if item.command_id:
+            free_command_if_empty(item.command, user=item.updated_by)
     return item
 
 
@@ -95,7 +110,9 @@ def free_command_if_empty(command, *, user=None):
     command = Command.objects.select_for_update().get(pk=command.pk)
     mesa_anterior = command.current_table_id
 
-    command.status = Command.STATUS_FREE
+    # `status` não é gravado: ele se calcula do consumo, que esta função
+    # acabou de zerar. O que ainda é estado de verdade do cartão — o nome do
+    # cliente, a mesa e o resto do modelo antigo — continua sendo limpo aqui.
     command.customer_name = ""
     command.current_table = None
     # `current_order_id` é resto do modelo antigo, em que a comanda ABRIA
@@ -106,7 +123,6 @@ def free_command_if_empty(command, *, user=None):
     command.updated_by = user
     command.save(
         update_fields=[
-            "status",
             "customer_name",
             "current_table",
             "current_order_id",

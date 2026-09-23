@@ -171,6 +171,11 @@ class CommandSerializer(TenantModelSerializer):
     pending_items = serializers.SerializerMethodField()
     pending_total = serializers.SerializerMethodField()
 
+    # `status` deixou de ser coluna e virou cálculo (ver `Command.status`), mas
+    # continua saindo na API com o mesmo nome e os mesmos valores: o PDV, o app
+    # do garçom e o painel já leem este campo.
+    status = serializers.CharField(read_only=True)
+
     def get_pending_items(self, obj):
         # A anotação do queryset vem primeiro: sem ela, desenhar uma grade de
         # duzentos cartões custaria duzentas consultas.

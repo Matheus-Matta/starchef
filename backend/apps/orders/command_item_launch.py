@@ -74,10 +74,13 @@ def _create_addons(item, addons, quantity, user):
 
 
 def _mark_occupied(command, user):
-    from apps.restaurants.models import Command
+    """Registra quem mexeu no cartão. O "ocupado" não se grava mais.
 
-    if command.status == Command.STATUS_OCCUPIED:
+    Lançar uma anotação JÁ é ocupar o cartão: `Command.status` responde pelo
+    consumo pendente. O que ainda vale escrever aqui é a autoria — quem foi o
+    último a mexer neste cartão é pergunta de auditoria, não de estado.
+    """
+    if command.updated_by_id == getattr(user, "pk", None):
         return
-    command.status = Command.STATUS_OCCUPIED
     command.updated_by = user
-    command.save(update_fields=["status", "updated_by", "updated_at"])
+    command.save(update_fields=["updated_by", "updated_at"])

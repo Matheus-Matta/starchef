@@ -16,6 +16,26 @@ def _command(account, restaurant, branch, number, **extra):
     )
 
 
+def _anotacao_pendente(account, restaurant, branch, command):
+    """Põe consumo pendente no cartão — é isso que o deixa em uso."""
+    from apps.menu.models import Product, ProductCategory
+    from apps.orders.models import CommandItem
+
+    categoria, _ = ProductCategory.objects.get_or_create(
+        account=account, restaurant=restaurant, branch=branch, name="Testes"
+    )
+    produto = Product.objects.create(
+        account=account, restaurant=restaurant, branch=branch, category=categoria,
+        name=f"Item {command.number}", internal_code=f"BULK{command.number}",
+        sale_price="10.00",
+    )
+    return CommandItem.objects.create(
+        account=account, restaurant=restaurant, branch=branch,
+        command=command, product=produto, quantity=1,
+        unit_price="10.00", total_price="10.00",
+    )
+
+
 def test_bulk_delete_uses_one_request_and_soft_deletes_free_commands(
     admin_client, account, restaurant, branch
 ):
@@ -36,7 +56,11 @@ def test_bulk_delete_is_atomic_when_one_command_is_occupied(
     admin_client, account, restaurant, branch
 ):
     free = _command(account, restaurant, branch, 200)
-    occupied = _command(account, restaurant, branch, 201, status=Command.STATUS_OCCUPIED)
+    # "Ocupada" não se atribui: o cartão está em uso porque TEM O QUE COBRAR.
+    # Antes bastava gravar `status=occupied`, e era justamente essa cópia
+    # gravada à mão que divergia do consumo real.
+    occupied = _command(account, restaurant, branch, 201)
+    _anotacao_pendente(account, restaurant, branch, occupied)
 
     response = admin_client.post(
         "/api/v1/commands/bulk-delete/",

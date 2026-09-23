@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+import django_filters
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, Q, Sum
@@ -11,6 +12,7 @@ from rest_framework import status
 
 from apps.accounts.limits import assert_can_create_restaurant
 from apps.core.codes import barcode_data_uri, qr_data_uri
+from apps.orders.command_billing import em_uso_subquery
 from apps.core.modules import MODULE_ENTREGA
 from apps.core.viewsets import BaseTenantViewSet
 from apps.realtime.events import broadcast_resource_event
@@ -275,6 +277,33 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         return Response({"transferred": len(commands)})
 
 
+class CommandFilterSet(django_filters.FilterSet):
+    """`?status=free|occupied` continua funcionando — sem coluna `status`.
+
+    "Em uso" virou cálculo: é ter anotação pendente com valor. O filtro
+    pergunta isso ao banco com `Exists`, numa subconsulta, em vez de ler uma
+    coluna que alguém precisava lembrar de manter em dia.
+
+    O nome e os valores do parâmetro são os de antes de propósito: o PDV, o
+    app do garçom e o painel já mandam `?status=occupied`, e trocar o contrato
+    obrigaria os três a atualizar no mesmo dia.
+    """
+
+    status = django_filters.ChoiceFilter(
+        choices=Command.STATUS_CHOICES, method="filtra_por_uso"
+    )
+
+    class Meta:
+        model = Command
+        fields = ["is_active"]
+
+    def filtra_por_uso(self, queryset, name, value):
+        from apps.orders.command_billing import em_uso_subquery
+
+        anotado = queryset.annotate(tem_pendente=em_uso_subquery())
+        return anotado.filter(tem_pendente=value == Command.STATUS_OCCUPIED)
+
+
 class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     """Cadastro de comandas reutilizáveis (padrão self-service / Graal)."""
 
@@ -306,9 +335,11 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         )
         .all()
     )
-    filterset_fields = ["status", "is_active"]
+    filterset_class = CommandFilterSet
     search_fields = ["number", "code", "customer_name"]
-    ordering_fields = ["number", "status", "updated_at"]
+    # `status` saiu da ordenação: não há coluna para o banco ordenar. Quem
+    # quer os ocupados primeiro filtra por `status=occupied`.
+    ordering_fields = ["number", "updated_at"]
     MAX_BULK_COMMANDS = 200
 
     def destroy(self, request, *args, **kwargs):
@@ -667,11 +698,14 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         commands = self.filter_queryset(self.get_queryset()).filter(pk__in=ids)
         if commands.count() != len(ids):
             raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
-        occupied = commands.exclude(
-            status=Command.STATUS_FREE,
-            current_order_id=None,
-            current_table_id=None,
-        ).count()
+        # "Ocupada" é ter o que cobrar. A subconsulta pergunta isso ao banco
+        # para todas de uma vez — `get_queryset` reconstrói a consulta a partir
+        # do model e não herda anotação declarada na classe.
+        occupied = (
+            commands.annotate(tem_pendente=em_uso_subquery())
+            .exclude(tem_pendente=False, current_order_id=None, current_table_id=None)
+            .count()
+        )
         if occupied:
             raise ValidationError({"ids": f"{occupied} comanda(s) estão ocupadas e não podem ser excluídas."})
 
@@ -712,11 +746,9 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             raise ValidationError({"ids": "Uma ou mais comandas não existem ou estão fora do seu acesso."})
         if (
             changes["is_active"] is False
-            and commands.exclude(
-                status=Command.STATUS_FREE,
-                current_order_id=None,
-                current_table_id=None,
-            ).exists()
+            and commands.annotate(tem_pendente=em_uso_subquery())
+            .exclude(tem_pendente=False, current_order_id=None, current_table_id=None)
+            .exists()
         ):
             raise ValidationError({"ids": "Desvincule e encerre as comandas antes de desativá-las."})
 

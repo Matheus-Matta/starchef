@@ -207,6 +207,32 @@ class Table(TenantModel):
             self.code = str(self.number)
         super().save(*args, **kwargs)
 
+    @property
+    def esta_ocupada(self):
+        """Tem gente sentada aqui? Quem responde são as comandas, não o campo.
+
+        A mesa está ocupada enquanto houver cartão vinculado a ela COM O QUE
+        COBRAR. Cartão sem nada a cobrar não ocupa mesa nenhuma: ele já foi
+        embora, e a mesa que continua marcada some do salão — o garçom a vê
+        ocupada, o cliente a vê vazia.
+
+        `reserved` e `cleaning` NÃO são deriváveis: são decisão de pessoa, não
+        consequência do consumo, e por isso continuam no campo. Esta
+        propriedade responde só pela dimensão que o consumo determina.
+        """
+        from apps.core.tenant import tenant_context
+        from apps.orders.command_billing import em_uso_subquery
+
+        # Mesma razão de `Command.em_uso`: o manager é escopado por conta, e
+        # fora de um request não há conta no ar. Sem isto a mesa responderia
+        # "livre" em tarefa de fundo e comando de manage.py — em silêncio.
+        with tenant_context(self.account_id):
+            return (
+                self.active_commands.annotate(tem_pendente=em_uso_subquery())
+                .filter(tem_pendente=True)
+                .exists()
+            )
+
     def __str__(self):
         return f"Table {self.number}"
 
@@ -232,7 +258,8 @@ class Command(TenantModel):
     number = models.PositiveIntegerField()
     code = models.CharField(max_length=40, blank=True)
     customer_name = models.CharField(max_length=120, blank=True)
-    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_FREE, db_index=True)
+    # `status` NAO e coluna: e propriedade, calculada do consumo. Ver `status`
+    # e `em_uso` mais abaixo.
     current_order_id = models.UUIDField(null=True, blank=True, db_index=True)
     current_table = models.ForeignKey(
         "restaurants.Table",
@@ -253,10 +280,6 @@ class Command(TenantModel):
                 name="unique_command_code_by_restaurant",
             ),
         ]
-        indexes = [
-            models.Index(fields=["restaurant", "status"]),
-        ]
-
     def save(self, *args, **kwargs):
         # Numero auto (sequencial por restaurante) e code escaneavel padrao quando
         # nao informados — cobre API, admin e criacao em lote. Import tardio evita
@@ -270,6 +293,68 @@ class Command(TenantModel):
 
             self.code = default_command_code(self.number)
         super().save(*args, **kwargs)
+
+    @property
+    def em_uso(self):
+        """O cartão está em uso? Pergunta ao consumo — não há campo a consultar.
+
+        "Em uso" é TER O QUE COBRAR. Isto já foi uma coluna, gravada por quem
+        mexia nas anotações, e uma cópia gravada em oito lugares é uma cópia
+        que um dia diverge. Divergiu: um caminho de saída esquecia de liberar,
+        o cartão ficava marcado como ocupado sem nada a receber, e sumia do
+        salão levando a mesa junto — sem nada estourar em lugar nenhum.
+
+        Agora não há o que esquecer de atualizar. O custo é uma consulta por
+        cartão; quem lista muitos usa a anotação do queryset
+        (`CommandViewSet`), que responde por todos de uma vez.
+        """
+        from apps.core.tenant import tenant_context
+        from apps.orders.command_billing import command_has_pending_items
+
+        # A anotação da listagem, quando existe, já trouxe a resposta do banco.
+        contados = getattr(self, "pendentes", None)
+        if contados is not None:
+            return contados > 0
+        if self.pk is None:
+            return False
+        # A CONTA PRECISA SER A DO CARTÃO, e não a que estiver no ar.
+        #
+        # O manager de `CommandItem` é escopado por conta, e a middleware LIMPA
+        # a conta ao terminar o request. Sem entrar no contexto do próprio
+        # cartão, esta propriedade responde "livre" para qualquer cartão lido
+        # fora de um request — numa tarefa de fundo, num comando de manage.py,
+        # num sinal pós-commit — e responde isso em silêncio, que é o pior
+        # jeito de errar sobre dinheiro.
+        with tenant_context(self.account_id):
+            if command_has_pending_items(self.pk):
+                return True
+            # UM CARTÃO PRESO A UMA CONTA ABERTA TAMBÉM ESTÁ EM USO, mesmo sem
+            # anotação nenhuma. É o fluxo antigo, em que a comanda abria o
+            # pedido: o consumo mora no pedido, não no cartão, e olhar só as
+            # anotações devolveria à gaveta um cartão que está numa conta viva.
+            #
+            # O estado do PEDIDO é conferido de propósito: `current_order_id`
+            # sobrevive a contas pagas e canceladas em bases antigas, e um id
+            # velho deixaria o cartão ocupado para sempre.
+            from apps.orders.models import Order
+
+            if not self.current_order_id:
+                return False
+            return Order.all_objects.filter(
+                pk=self.current_order_id,
+                status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
+            ).exists()
+
+    @property
+    def status(self):
+        """`free` ou `occupied`, calculado — a API continua respondendo igual.
+
+        Mantido com o mesmo nome e os mesmos valores de antes de propósito: o
+        PDV, o app do garçom e o painel leem este campo, e trocar o nome
+        obrigaria os três a atualizar juntos. O que mudou é onde a resposta
+        nasce.
+        """
+        return self.STATUS_OCCUPIED if self.em_uso else self.STATUS_FREE
 
     def __str__(self):
         return f"Comanda {self.number}"

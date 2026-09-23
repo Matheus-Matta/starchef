@@ -60,8 +60,10 @@ class TableAdmin(TenantModelAdmin):
 
 @admin.register(Command)
 class CommandAdmin(TenantModelAdmin):
+    # `status` e propriedade calculada, nao coluna: da para MOSTRAR na lista,
+    # mas nao para filtrar nem ordenar por ela no admin.
     list_display = ("number", "code", "account", "restaurant", "customer_name", "status", "is_active")
-    list_filter = ("account", "restaurant", "status", "is_active")
+    list_filter = ("account", "restaurant", "is_active")
     search_fields = ("number", "code", "customer_name")
     ordering = ("restaurant", "number")
 
