@@ -31,6 +31,18 @@ class _Resposta:
         return self._corpo
 
 
+@pytest.fixture(autouse=True)
+def _no_desta_loja(monkeypatch):
+    """A identidade do nó, que vai no cabeçalho junto do token."""
+
+    class _No:
+        id = "11111111-1111-4111-8111-111111111111"
+
+    monkeypatch.setattr(
+        "apps.synchronization.services.nodes.self_node", lambda: _No()
+    )
+
+
 @pytest.fixture
 def como_loja(settings):
     settings.FISCAL_TRANSMIT_VIA_CLOUD = True
@@ -146,3 +158,36 @@ def test_loja_SEM_token_do_no_e_configuracao(como_loja):
         relay_client.executar(
             None, operacao="transmit", reference="ref-1", document_model="65",
         )
+
+
+def test_o_pedido_leva_O_ID_DO_NO_junto_do_token(como_loja):
+    """Sem ele a nuvem devolve 401, e a nota fica pendente para sempre.
+
+    `NodeTokenAuthentication` precisa do id em cabeçalho próprio — o token
+    sozinho exigiria varrer todos os nós comparando hash. O primeiro relé que
+    eu escrevi mandava só o `Authorization`, e o sintoma era o pior possível:
+    parecia rede instável.
+    """
+    capturado = {}
+
+    def _post(url, **kwargs):
+        capturado.update(kwargs.get("headers") or {})
+        return _Resposta(200, {"status_code": 200, "data": {}})
+
+    with patch("requests.post", side_effect=_post):
+        relay_client.executar(
+            None, operacao="transmit", reference="ref-1", document_model="65",
+        )
+
+    assert capturado["Authorization"] == "Bearer token-do-no"
+    assert capturado["X-Sync-Node-Id"] == "11111111-1111-4111-8111-111111111111"
+
+
+@pytest.mark.parametrize("codigo", [401, 403])
+def test_identidade_recusada_NAO_e_indisponibilidade(como_loja, codigo):
+    """Repetir não conserta credencial — e a nota não pode ficar em espera."""
+    with patch("requests.post", return_value=_Resposta(codigo, {})):
+        with pytest.raises(FiscalConfigurationError):
+            relay_client.executar(
+                None, operacao="transmit", reference="ref-1", document_model="65",
+            )

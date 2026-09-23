@@ -68,11 +68,30 @@ def executar(config, *, operacao, reference, document_model, payload=None, reaso
     if payload is not None:
         corpo["payload"] = payload
 
+    # OS DOIS CABEÇALHOS, e não só o token.
+    #
+    # `NodeTokenAuthentication` precisa do id do nó em cabeçalho próprio: o
+    # token sozinho exigiria varrer todos os nós comparando hash — O(n) por
+    # requisição e um oráculo de tempo de graça. Sem ele a nuvem devolve 401,
+    # e como 401 cai em "não cheguei", a nota ficava pendente para sempre com
+    # a aparência de rede instável.
+    from apps.synchronization.services import nodes
+
+    try:
+        proprio = nodes.self_node()
+    except Exception as erro:  # noqa: BLE001 — sem identidade não há pedido
+        raise FiscalConfigurationError(
+            f"Transmissão pela nuvem: esta loja não sabe quem é ({erro})."
+        ) from erro
+
     try:
         resposta = requests.post(
             f"{base}/api/v1/sync/fiscal/",
             json=corpo,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Sync-Node-Id": str(proprio.id),
+            },
             timeout=int(getattr(settings, "FISCAL_RELAY_TIMEOUT", TIMEOUT_PADRAO)),
         )
     except requests.RequestException as erro:
@@ -80,9 +99,13 @@ def executar(config, *, operacao, reference, document_model, payload=None, reaso
             f"Transmissão pela nuvem: não foi possível falar com a nuvem ({erro})."
         ) from erro
 
-    if resposta.status_code == 403:
+    if resposta.status_code in (401, 403):
+        # Credencial, não rede. Repetir não conserta, e tratar como
+        # indisponibilidade deixaria a nota pendente para sempre com cara de
+        # "a internet está ruim".
         raise FiscalConfigurationError(
-            "Transmissão pela nuvem: a nuvem recusou a identidade desta loja."
+            "Transmissão pela nuvem: a nuvem recusou a identidade desta loja "
+            f"(HTTP {resposta.status_code})."
         )
     if resposta.status_code >= 500 or resposta.status_code == 429:
         raise FiscalUnavailable(
