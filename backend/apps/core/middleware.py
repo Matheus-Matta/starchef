@@ -39,6 +39,7 @@ PUBLIC_URL_NAMES = {
     # estrita: ver `apps/synchronization/node_auth.py`.
     "sync-metrics",
     "sync-credentials",
+    "sync-fiscal",
     "sync-file-open",
     "sync-file-status",
     "sync-file-chunk",
