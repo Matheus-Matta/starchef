@@ -71,8 +71,30 @@ void main() {
         'pending_items': 3,
       },
       'items': [
-        {'id': 'i-1', 'product_name': 'Coxinha', 'status': 'sent'},
-        {'id': 'i-2', 'product_name': 'Guaraná', 'status': 'pending'},
+        {
+          'id': 'i-1',
+          'product_name': 'Coxinha',
+          'status': 'sent',
+          'command_status': 'pending',
+        },
+        {
+          'id': 'i-2',
+          'product_name': 'Guaraná',
+          'status': 'pending',
+          'command_status': 'pending',
+        },
+        {
+          'id': 'i-antigo',
+          'product_name': 'Conta anterior',
+          'status': 'delivered',
+          'command_status': 'billed',
+        },
+        {
+          'id': 'i-cancelado',
+          'product_name': 'Item cancelado antes',
+          'status': 'cancelled',
+          'command_status': 'cancelled',
+        },
       ],
     };
 
@@ -82,6 +104,15 @@ void main() {
       expect(subject['command_number'], 12);
       expect(subject['table_number'], '4');
       expect((subject['items'] as List).length, 2);
+    });
+
+    test('nao traz itens cobrados de um uso anterior da comanda', () {
+      // A comanda é reutilizável. O item continua no histórico do backend,
+      // mas não pertence ao cliente que está usando o cartão agora.
+      final items = commandAsSubject(resposta)['items'] as List;
+
+      expect(items.map((item) => item['id']), isNot(contains('i-antigo')));
+      expect(items.map((item) => item['id']), isNot(contains('i-cancelado')));
     });
 
     test('o total e o PENDENTE, nao o historico', () {
@@ -131,6 +162,15 @@ void main() {
 
     test('comanda sem contagem conhecida conta zero', () {
       expect(itemCountOf(const {}), 0);
+    });
+
+    test('lista somente comandas que ainda possuem consumo pendente', () {
+      final rows = commandsWithPendingItems([
+        linha,
+        {...linha, 'id': 'c-antiga', 'pending_items': 0},
+      ]);
+
+      expect(rows.map((row) => row['id']), ['c-7']);
     });
 
     test('a linha carrega numero e total para o cartao', () {

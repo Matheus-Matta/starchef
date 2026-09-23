@@ -9,9 +9,8 @@ import 'order_formatters.dart';
 
 /// Escolha da comanda para abrir (ou retomar) um pedido.
 ///
-/// Comanda ocupada aparece e é selecionável de propósito: é assim que o garçom
-/// volta a uma mesa que já está sendo atendida para lançar mais itens — o
-/// backend devolve o pedido em aberto em vez de criar outro.
+/// Comanda em uso aparece e é selecionável de propósito: é assim que o garçom
+/// volta ao cartão que já está sendo atendido para lançar mais itens.
 Future<Map<String, dynamic>?> showCommandPicker(
   BuildContext context,
   OrdersRepository repository,
@@ -46,7 +45,10 @@ class _CommandTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final busy = command['status'] == 'occupied';
+    // Consumo pendente é a fonte de verdade. Bases antigas podem ter deixado
+    // `status=occupied` depois de cobrar a conta, fazendo um cartão vazio
+    // continuar amarelo e parecer pertencer ao cliente anterior.
+    final busy = itemCountOf(command) > 0;
     // O caixa está montando uma conta agrupada com esta comanda AGORA. Abrir
     // o pedido dela devolve 409, e a lista precisa dizer isso antes do toque:
     // um item lançado aqui ficaria fora do pagamento que o caixa está lendo em

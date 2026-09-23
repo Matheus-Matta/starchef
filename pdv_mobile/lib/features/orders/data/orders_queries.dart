@@ -38,18 +38,21 @@ extension OrdersQueries on OrdersRepository {
   ///
   /// `pending_items` e `pending_total` já vêm na listagem, então o cartão
   /// mostra quanto a comanda deve sem abrir uma por uma.
-  Future<List<Map<String, dynamic>>> commandsInUse() async => _rows(
-    await read(
-      '/commands/',
-      query: {
-        'restaurant': session.user.restaurantId,
-        'status': 'occupied',
-        'is_active': true,
-        'ordering': 'number',
-        'page_size': 100,
-      },
-    ),
-  );
+  Future<List<Map<String, dynamic>>> commandsInUse() async {
+    final rows = _rows(
+      await read(
+        '/commands/',
+        query: {
+          'restaurant': session.user.restaurantId,
+          'status': 'occupied',
+          'is_active': true,
+          'ordering': 'number',
+          'page_size': 100,
+        },
+      ),
+    );
+    return commandsWithPendingItems(rows);
+  }
 
   /// O que a comanda tem AGORA — as anotações pendentes.
   ///

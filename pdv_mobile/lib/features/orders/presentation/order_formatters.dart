@@ -1,3 +1,5 @@
+import '../data/order_subject.dart';
+
 /// Formatação e leitura dos campos de pedido devolvidos pela API.
 ///
 /// A API devolve decimais como texto ("12.50") para não perder precisão em
@@ -99,6 +101,7 @@ List<Map<String, dynamic>> orderItems(Map<String, dynamic> order) {
     return items
         .whereType<Map>()
         .map(Map<String, dynamic>.from)
+        .where(isCurrentCommandItem)
         .where((item) => item['status'] != 'cancelled')
         .toList(growable: false);
   }

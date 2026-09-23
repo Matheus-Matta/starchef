@@ -60,6 +60,22 @@ Map<String, dynamic> commandRowAsSubject(Map<String, dynamic> command) => {
 int itemCountOf(Map<String, dynamic> command) =>
     int.tryParse('${command['pending_items'] ?? 0}') ?? 0;
 
+/// Remove da tela cartões que o backend ainda marcou como ocupados, mas que
+/// já não possuem consumo a cobrar. Isso também protege bases antigas cujo
+/// campo `status` ficou desatualizado depois do fechamento da conta.
+List<Map<String, dynamic>> commandsWithPendingItems(
+  Iterable<Map<String, dynamic>> commands,
+) => commands
+    .where((command) => itemCountOf(command) > 0)
+    .toList(growable: false);
+
+/// Uma anotação pertence ao uso atual enquanto ainda estiver pendente.
+///
+/// Backend antigo não enviava `command_status`; nesse caso o item continua
+/// visível para não apagar consumo válido durante uma atualização gradual.
+bool isCurrentCommandItem(Map<String, dynamic> item) =>
+    '${item['command_status'] ?? 'pending'}' == 'pending';
+
 /// A comanda lida como o pedido é lido.
 ///
 /// `/commands/{id}/items/` devolve `{command, items}`; a tela de detalhe lê um
@@ -76,7 +92,12 @@ Map<String, dynamic> commandAsSubject(Map<String, dynamic> response) {
     _ => <String, dynamic>{},
   };
   final items = switch (response['items']) {
-    final List raw => raw.whereType<Map>().map(Map<String, dynamic>.from).toList(),
+    final List raw =>
+      raw
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .where(isCurrentCommandItem)
+          .toList(growable: false),
     _ => const <Map<String, dynamic>>[],
   };
   return {
