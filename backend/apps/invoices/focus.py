@@ -8,7 +8,6 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import FocusNfeConfig
-from apps.invoices.certificate_data import certificate_base64
 from apps.invoices.fiscal import only_digits
 from apps.invoices.models import FiscalConfig
 

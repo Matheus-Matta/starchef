@@ -21,12 +21,10 @@ pytestmark = pytest.mark.django_db
 
 def _resolver(monkeypatch, *, env="", build=""):
     """Reexecuta a decisão do settings com o ambiente que o teste montou."""
-    from decouple import config as _config  # noqa: F401 — só para garantir o import
+    import os
 
     monkeypatch.setenv("SYNC_APP_VERSION", env)
     monkeypatch.setenv("STARCHEF_APP_VERSION", build)
-    import importlib
-    import os
 
     # `decouple` lê de `os.environ` a cada chamada; a expressão é a mesma do
     # settings, reproduzida aqui para não recarregar o módulo inteiro.
