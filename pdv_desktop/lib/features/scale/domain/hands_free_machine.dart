@@ -13,10 +13,10 @@ enum HandsFreeState {
   /// Estado 2: item pesado registrado, aguardando a leitura da comanda.
   waitingCommand,
 
-  /// Estado 3: criando o pedido e imprimindo.
-  creatingOrder,
+  /// Estado 3: lançando a anotação na comanda e imprimindo.
+  launching,
 
-  /// Pedido concluído; a estação volta sozinha ao Estado 1.
+  /// Lançamento concluído; a estação volta sozinha ao Estado 1.
   completed,
 
   /// A criação falhou; o operador pode reler a comanda.
@@ -31,8 +31,8 @@ enum HandsFreeEffect {
   /// Confirmação sonora curta (leitura aceita).
   successSound,
 
-  /// A interface deve disparar a criação do pedido.
-  createOrder,
+  /// A interface deve lançar a pesagem na comanda.
+  launchIntoCommand,
 
   /// A operação temporária foi descartada.
   operationCancelled,
@@ -169,7 +169,7 @@ class HandsFreeMachine extends ChangeNotifier {
           effects.addAll(_cancelToWaiting());
         }
       case HandsFreeState.idle:
-      case HandsFreeState.creatingOrder:
+      case HandsFreeState.launching:
       case HandsFreeState.completed:
       case HandsFreeState.failed:
         break;
@@ -204,20 +204,20 @@ class HandsFreeMachine extends ChangeNotifier {
       return const [HandsFreeEffect.alertSound];
     }
     if (_weighedItem == null) return const [HandsFreeEffect.alertSound];
-    if (_state == HandsFreeState.creatingOrder) {
+    if (_state == HandsFreeState.launching) {
       return const [HandsFreeEffect.alertSound];
     }
 
     _commandCode = code;
     _failureMessage = null;
-    _state = HandsFreeState.creatingOrder;
+    _state = HandsFreeState.launching;
     _commandDeadline = null;
     notifyListeners();
-    return const [HandsFreeEffect.successSound, HandsFreeEffect.createOrder];
+    return const [HandsFreeEffect.successSound, HandsFreeEffect.launchIntoCommand];
   }
 
-  /// O pedido foi criado e o cupom despachado.
-  List<HandsFreeEffect> onOrderCreated() {
+  /// A anotação entrou na comanda e a etiqueta foi despachada.
+  List<HandsFreeEffect> onLaunched() {
     _state = HandsFreeState.completed;
     notifyListeners();
     return const [];
@@ -244,7 +244,7 @@ class HandsFreeMachine extends ChangeNotifier {
 
   /// Cancelamento explícito pelo operador.
   List<HandsFreeEffect> cancel() {
-    if (_state == HandsFreeState.creatingOrder) return const [];
+    if (_state == HandsFreeState.launching) return const [];
     final effects = _cancelToWaiting();
     notifyListeners();
     return effects;

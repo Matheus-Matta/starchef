@@ -370,6 +370,12 @@ def printer_payload(printer):
     diz por onde. Compartilhado entre a rota do recibo e a do DANFE para
     as duas nao divergirem — foi assim que a do DANFE ficou sem devolver
     impressora nenhuma.
+
+    ESTE DICIONARIO E MONTADO A MAO, e nao pelo serializer: e por isso que
+    todo campo novo da impressora precisa ser lembrado aqui. A gaveta ja
+    nasceu esquecida uma vez — o cupom da venda em dinheiro saia, o PDV
+    recebia a impressora sem `cash_drawer_enabled`, e o pulso nunca chegava a
+    ser montado. Nada falhava: a gaveta simplesmente nao abria.
     """
     if printer is None:
         return None
@@ -385,6 +391,10 @@ def printer_payload(printer):
         "settings": printer.settings,
         "auto_print": printer.auto_print,
         "is_active": printer.is_active,
+        "cash_drawer_enabled": printer.cash_drawer_enabled,
+        "cash_drawer_pin": printer.cash_drawer_pin,
+        "cash_drawer_on_ms": printer.cash_drawer_on_ms,
+        "cash_drawer_off_ms": printer.cash_drawer_off_ms,
     }
 
 
@@ -1155,7 +1165,7 @@ def register_command_bill_print(*, command, items, total, user):
         )
 
 
-def register_command_weigh_print(*, command, item, scale, user=None):
+def register_command_weigh_print(*, command, item, scale, user=None, offline_printed=False):
     """A etiqueta de pesagem de um item anotado NA COMANDA.
 
     É o papel que o cliente leva ao caixa. O ticket do pedido é montado por um
@@ -1165,6 +1175,13 @@ def register_command_weigh_print(*, command, item, scale, user=None):
 
     Por isso o conteúdo é texto: produto, peso, preço e o número do cartão. É
     o que a etiqueta precisa dizer.
+
+    ``offline_printed=True`` mantém o contrato de ``register_weigh_print``:
+    a estação fechou a pesagem sem servidor e já imprimiu a etiqueta. O job
+    continua sendo criado, porque a auditoria depende dele, mas já nasce
+    impresso — senão o agente local imprimiria a mesma etiqueta de novo
+    quando a fila sincronizasse, e o cliente levaria dois papéis do mesmo
+    prato ao caixa.
     """
     from apps.printers.command_receipt import TYPE_TABLE_BILL  # noqa: F401
 
@@ -1185,7 +1202,8 @@ def register_command_weigh_print(*, command, item, scale, user=None):
             branch=command.branch,
             printer=printer,
             job_type=PrintJob.TYPE_WEIGH,
-            status=PrintJob.STATUS_PENDING,
+            status=PrintJob.STATUS_PRINTED if offline_printed else PrintJob.STATUS_PENDING,
+            printed_at=timezone.now() if offline_printed else None,
             payload={
                 "text_content": "\n".join(linhas),
                 "command": str(command.id),

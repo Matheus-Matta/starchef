@@ -277,12 +277,25 @@ class ScaleViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="checkout-command")
     def checkout_command(self, request, pk=None):
-        """Finaliza uma pesagem na comanda e inclui extras em uma transacao."""
+        """Fecha a pesagem NA COMANDA: o prato e os extras viram anotações pendentes.
+
+        Nenhum pedido nasce aqui. A comanda é um bloco de notas, e o pedido só
+        existe no caixa — montado com as anotações PENDENTES dos cartões que
+        vão ser pagos juntos (ver `apps.orders.command_items`).
+
+        Esta rota tinha ficado para trás quando a comanda virou bloco de notas:
+        ela abria um pedido para o cartão e lançava o prato como `OrderItem`. O
+        item até era criado, mas fora do lugar onde a comanda é lida hoje — a
+        tela do garçom e o caixa perguntam pelas anotações pendentes do cartão,
+        então o prato pesado simplesmente não aparecia na comanda. E o pedido
+        aberto ainda prendia o cartão a uma conta que talvez ninguém fosse
+        pagar, que é exatamente o que `CommandItem` existe para eliminar.
+        """
         from apps.menu.models import Product
-        from apps.orders.models import Order
-        from apps.orders.serializers import OrderSerializer
-        from apps.orders.services import add_order_item, create_order, recalculate_order
-        from apps.printers.services import register_weigh_print
+        from apps.orders.command_items import launch_item
+        from apps.orders.serializers_command_item import CommandItemSerializer
+        from apps.printers.scale_command import weigh_into_command
+        from apps.printers.services import register_command_weigh_print
         from apps.restaurants.models import Command
 
         command_code = str(request.data.get("command_code", "")).strip()
@@ -321,23 +334,6 @@ class ScaleViewSet(BaseTenantViewSet):
                 if command is None:
                     raise ValidationError("Comanda nao encontrada para o restaurante selecionado.")
 
-                order = None
-                if command.current_order_id:
-                    order = Order.objects.filter(
-                        pk=command.current_order_id,
-                        account=scale.account,
-                        restaurant=scale.restaurant,
-                        status__in=[Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT],
-                    ).first()
-                if order is None:
-                    order = create_order(
-                        restaurant=scale.restaurant,
-                        branch=None,
-                        order_type=Order.TYPE_COMMAND,
-                        command=command,
-                        user=request.user,
-                    )
-
                 if reading_id:
                     reading = (
                         ScaleReading.objects.select_for_update()
@@ -347,6 +343,11 @@ class ScaleViewSet(BaseTenantViewSet):
                             scale=scale,
                             is_stable=True,
                             order_item__isnull=True,
+                            # A leitura consumida agora vira ANOTACAO, e nao
+                            # item de pedido. Sem esta condicao, a mesma
+                            # pesagem podia ser lancada de novo na comanda: o
+                            # cliente pagaria duas vezes pelo mesmo prato.
+                            command_item__isnull=True,
                         )
                         .first()
                     )
@@ -381,11 +382,12 @@ class ScaleViewSet(BaseTenantViewSet):
                         updated_by=request.user,
                     )
 
-                weighed_item, _ = weigh_to_order(
+                weighed_item = weigh_into_command(
                     scale=scale,
-                    order=order,
+                    command=command,
                     user=request.user,
                     scale_reading=reading,
+                    # A etiqueta sai uma vez so, depois dos extras.
                     do_print=False,
                 )
 
@@ -414,24 +416,27 @@ class ScaleViewSet(BaseTenantViewSet):
                     if not isinstance(addons, list):
                         raise ValidationError("Lista de adicionais invalida.")
                     customer_note = str(entry.get("customer_note") or "")
+                    # A bebida que o cliente pega na balanca e uma anotacao
+                    # como qualquer outra: mesma porta de entrada que o garcom
+                    # usa, com variacao, adicional e observacao.
                     extra_items.append(
-                        add_order_item(
-                            order=order,
+                        launch_item(
+                            command=command,
                             product=product,
-                            quantity=quantity,
                             user=request.user,
+                            quantity=quantity,
                             variations=variations,
                             addons=addons,
                             customer_note=customer_note,
                         )
                     )
 
-                # A nota deve ser um snapshot do pedido final, depois do item
-                # pesado, dos extras e do recálculo explícito dos totais.
-                order = recalculate_order(order)
+                # Dentro da transacao de proposito: sem impressora resolvida, a
+                # pesagem inteira volta atras em vez de consumir a leitura e
+                # deixar o cliente sem a etiqueta que ele leva ao caixa.
                 print_job = (
-                    register_weigh_print(
-                        order=order,
+                    register_command_weigh_print(
+                        command=command,
                         item=weighed_item,
                         scale=scale,
                         user=request.user,
@@ -440,12 +445,19 @@ class ScaleViewSet(BaseTenantViewSet):
                     if request.data.get("print", True)
                     else None
                 )
-                order = self._resolve_order(scale, order.id)
+                # `launch_item` marca o cartao como ocupado; a resposta precisa
+                # dizer o estado depois disso, e nao o de antes.
+                command.refresh_from_db()
                 return Response(
                     {
-                        "order": OrderSerializer(order).data,
-                        "weighed_item": OrderItemSerializer(weighed_item).data,
-                        "extra_items": OrderItemSerializer(extra_items, many=True).data,
+                        "command": {
+                            "id": str(command.id),
+                            "number": command.number,
+                            "code": command.code,
+                            "status": command.status,
+                        },
+                        "weighed_item": CommandItemSerializer(weighed_item).data,
+                        "extra_items": CommandItemSerializer(extra_items, many=True).data,
                         "print_job": (
                             PrintJobSerializer(print_job, context={"request": request}).data
                             if print_job

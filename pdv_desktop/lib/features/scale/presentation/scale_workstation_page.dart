@@ -614,8 +614,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           if (widget.preferences.audibleAlerts) {
             SystemSound.play(SystemSoundType.click);
           }
-        case HandsFreeEffect.createOrder:
-          unawaited(_createOrder());
+        case HandsFreeEffect.launchIntoCommand:
+          unawaited(_launchIntoCommand());
         case HandsFreeEffect.operationCancelled:
           commandController.clear();
           extraConfigs.clear();
@@ -625,13 +625,16 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     }
   }
 
-  // ------------------------------------------------------- criação do pedido
+  // ---------------------------------------------- lançamento na comanda
 
-  /// Lança o pedido na comanda e imprime o cupom.
+  /// Anota a pesagem NA COMANDA e imprime a etiqueta.
+  ///
+  /// Nenhum pedido é aberto: a comanda é um bloco de notas e a conta nasce
+  /// no caixa, com as anotações pendentes dos cartões pagos juntos.
   ///
   /// A leitura é registrada no servidor no mesmo instante do lançamento, e não
   /// a cada pesagem: assim uma operação cancelada não deixa leituras órfãs.
-  Future<void> _createOrder() async {
+  Future<void> _launchIntoCommand() async {
     final item = machine.weighedItem;
     final code = machine.commandCode;
     if (item == null || code == null || scaleId == null) return;
@@ -712,7 +715,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         await _monitorPrintJob(lastPrintJobId!);
         if (!mounted) return;
       }
-      machine.onOrderCreated();
+      machine.onLaunched();
       await Future<void>.delayed(const Duration(seconds: 2));
       if (!mounted || !started) return;
       reader?.resetStability();
@@ -808,11 +811,10 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     );
   }
 
-  /// Reimprime o último cupom sem criar outro pedido.
+  /// Reimprime a última etiqueta sem lançar nada de novo.
   ///
-  /// Reenfileira o mesmo trabalho de impressão em vez de gerar um novo a
-  /// partir do pedido: assim o cupom sai idêntico, com o layout da nota de
-  /// pesagem e o Code 128 da comanda, e nenhum item é lançado de novo.
+  /// Reenfileira o MESMO trabalho de impressão em vez de montar outro: a
+  /// etiqueta sai idêntica e nenhuma anotação entra na comanda de novo.
   Future<void> _reprintLastTicket() async {
     final jobId = lastPrintJobId;
     if (jobId == null || reprinting) return;
@@ -833,7 +835,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         error,
         title: 'Não foi possível reimprimir',
         recommendedAction:
-            'O pedido continua lançado. Verifique a impressora e tente de novo.',
+            'A anotação continua na comanda. Verifique a impressora e tente de novo.',
       );
     } finally {
       if (mounted) setState(() => reprinting = false);
@@ -1710,7 +1712,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           ),
           IconButton(
             tooltip: 'Trocar restaurante ou balança',
-            onPressed: machine.state == HandsFreeState.creatingOrder
+            onPressed: machine.state == HandsFreeState.launching
                 ? null
                 : () => unawaited(_stopStation()),
             icon: const Icon(Icons.settings_outlined),
@@ -1882,7 +1884,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   Widget _commandBody() {
     switch (machine.state) {
-      case HandsFreeState.creatingOrder:
+      case HandsFreeState.launching:
         return const Padding(
           padding: EdgeInsets.symmetric(vertical: 24),
           child: Column(
@@ -1949,7 +1951,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         children: _commandActions(),
       );
     }
-    if (machine.state == HandsFreeState.creatingOrder) {
+    if (machine.state == HandsFreeState.launching) {
       return const FilledButton(onPressed: null, child: Text('Finalizando...'));
     }
     if (machine.state == HandsFreeState.completed) {

@@ -4,7 +4,7 @@ import pytest
 
 from apps.core.tenant import tenant_context
 from apps.menu.models import Product, ProductAddon, ProductVariation
-from apps.orders.models import OrderItem
+from apps.orders.models import CommandItem, Order, OrderItem
 from apps.printers.models import Scale, ScaleReading
 from apps.restaurants.models import Command
 
@@ -69,11 +69,20 @@ def test_scale_checkout_command_is_atomic_and_reading_is_one_time(
     )
 
     assert response.status_code == 201, response.data
-    assert len(response.data["order"]["items"]) == 2
-    assert OrderItem.all_objects.filter(product=weighed, quantity=Decimal("0.500")).exists()
-    assert OrderItem.all_objects.filter(product=drink, quantity=Decimal("2")).exists()
+    # O prato e a bebida entram como ANOTACOES PENDENTES do cartao. A balanca
+    # nao abre pedido: a comanda e um bloco de notas e a conta nasce no caixa.
+    assert response.data["weighed_item"]["command_status"] == CommandItem.STATUS_PENDENTE
+    assert len(response.data["extra_items"]) == 1
+    assert not Order.all_objects.exists()
+    assert not OrderItem.all_objects.exists()
+    assert CommandItem.all_objects.filter(
+        product=weighed, quantity=Decimal("0.500"), command_status=CommandItem.STATUS_PENDENTE
+    ).exists()
+    assert CommandItem.all_objects.filter(
+        product=drink, quantity=Decimal("2"), command_status=CommandItem.STATUS_PENDENTE
+    ).exists()
     reading.refresh_from_db()
-    assert reading.order_item_id is not None
+    assert reading.command_item_id is not None
 
     replay = admin_client.post(
         f"/api/v1/scales/{scale.id}/checkout-command/",
@@ -81,7 +90,7 @@ def test_scale_checkout_command_is_atomic_and_reading_is_one_time(
         format="json",
     )
     assert replay.status_code == 400
-    assert OrderItem.all_objects.count() == 2
+    assert CommandItem.all_objects.count() == 2
 
 
 @pytest.mark.django_db
@@ -152,13 +161,14 @@ def test_scale_checkout_command_applies_extra_variation_addon_and_note(
     )
 
     assert response.status_code == 201, response.data
-    item = OrderItem.all_objects.get(product=burger)
+    item = CommandItem.all_objects.get(product=burger)
+    assert item.command_status == CommandItem.STATUS_PENDENTE
     assert item.customer_note == "sem cebola"
     assert [v["id"] for v in item.variations] == [str(size.id)]
     # item.addons e um related manager escopado por tenant (TenantManager):
     # fora do contexto de conta ele filtra pela conta corrente e devolveria
     # vazio mesmo com o adicional gravado — precisa do mesmo contexto que
-    # add_order_item usa para escrever.
+    # `launch_item` usa para escrever.
     with tenant_context(account):
         assert {a.addon_id for a in item.addons.all()} == {bacon.id}
     # Preco unitario carrega o delta da variacao (+5) e do adicional (+3).

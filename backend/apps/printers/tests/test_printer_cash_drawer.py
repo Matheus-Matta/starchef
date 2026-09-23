@@ -98,3 +98,38 @@ def test_drawer_off_time_cannot_be_shorter_than_the_pulse(admin_client, restaura
     )
     assert resp.status_code == 400
     assert "cash_drawer_off_ms" in resp.json()["error"]["message"]
+
+
+def test_printer_payload_carrega_a_gaveta(account, restaurant, branch):
+    """O dicionario que a rota do recibo devolve precisa dizer que ha gaveta.
+
+    `printer_payload` e montado a mao, e nao pelo serializer: todo campo novo
+    da impressora precisa ser lembrado ali. A gaveta ja nasceu esquecida uma
+    vez — o cupom da venda em dinheiro saia normalmente, o PDV recebia a
+    impressora sem `cash_drawer_enabled` e o pulso nunca chegava a ser
+    montado. Nada falhava; a gaveta so nao abria.
+    """
+    from apps.printers.models import Printer
+    from apps.printers.services import printer_payload
+
+    impressora = Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Caixa 01",
+        driver_type=Printer.DRIVER_ESCPOS,
+        connection_type=Printer.CONNECTION_NETWORK,
+        host="192.168.10.50",
+        port=9100,
+        cash_drawer_enabled=True,
+        cash_drawer_pin=Printer.DRAWER_PIN_5,
+        cash_drawer_on_ms=120,
+        cash_drawer_off_ms=480,
+    )
+
+    payload = printer_payload(impressora)
+
+    assert payload["cash_drawer_enabled"] is True
+    assert payload["cash_drawer_pin"] == 5
+    assert payload["cash_drawer_on_ms"] == 120
+    assert payload["cash_drawer_off_ms"] == 480

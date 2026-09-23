@@ -75,9 +75,9 @@ void main() {
 
     final effects = machine.onCommandRead(' 1234 ');
 
-    expect(machine.state, HandsFreeState.creatingOrder);
+    expect(machine.state, HandsFreeState.launching);
     expect(machine.commandCode, '1234');
-    expect(effects, contains(HandsFreeEffect.createOrder));
+    expect(effects, contains(HandsFreeEffect.launchIntoCommand));
   });
 
   test('leitura fora da etapa é recusada com alerta', () {
@@ -104,7 +104,7 @@ void main() {
     machine.onSample(sample(0.8), pricePerKg: 30);
     machine.onCommandRead('1234');
 
-    machine.onOrderCreated();
+    machine.onLaunched();
     expect(machine.state, HandsFreeState.completed);
 
     machine.readyForNext();
@@ -128,7 +128,7 @@ void main() {
     expect(machine.canAcceptCommand, isTrue);
 
     machine.onCommandRead('4321');
-    expect(machine.state, HandsFreeState.creatingOrder);
+    expect(machine.state, HandsFreeState.launching);
     expect(machine.commandCode, '4321');
   });
 
@@ -165,8 +165,8 @@ void main() {
 
       final effects = machine.onCommandRead('9876');
 
-      expect(machine.state, HandsFreeState.creatingOrder);
-      expect(effects, contains(HandsFreeEffect.createOrder));
+      expect(machine.state, HandsFreeState.launching);
+      expect(effects, contains(HandsFreeEffect.launchIntoCommand));
     });
 
     test(
@@ -242,7 +242,7 @@ void main() {
 
     machine.cancel();
 
-    expect(machine.state, HandsFreeState.creatingOrder);
+    expect(machine.state, HandsFreeState.launching);
   });
 
   test('extras são acumulados e removidos ao zerar a quantidade', () {

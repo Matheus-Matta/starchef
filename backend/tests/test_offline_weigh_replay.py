@@ -6,7 +6,11 @@ o ``checkout-command`` com o **peso bruto** — nao ha id de leitura para citar.
 
 Sem aceitar esse formato, a operacao voltava da fila com 400 e a pesagem ficava
 presa na tela de revisao: o cliente ja tinha levado o prato e o item nunca
-chegava ao pedido no servidor.
+chegava ao servidor.
+
+O item chega como ANOTACAO PENDENTE da comanda. A balanca nao abre pedido:
+isso e do caixa, que monta a conta com as anotacoes dos cartoes que vao ser
+pagos juntos.
 """
 
 from decimal import Decimal
@@ -15,6 +19,7 @@ import pytest
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.menu.models import Product
+from apps.orders.models import CommandItem, Order
 from apps.printers.models import Printer, Scale, ScaleReading
 
 
@@ -82,8 +87,15 @@ def test_peso_bruto_materializa_a_leitura_e_lanca_o_item(
     assert reading.is_stable is True
     # A leitura fica ligada ao item: e o que impede a mesma pesagem de ser
     # aproveitada duas vezes.
-    assert reading.order_item is not None
-    assert reading.order_item.product_id == weighed_product.pk
+    #
+    # O item e uma ANOTACAO da comanda, nao um item de pedido: a balanca nao
+    # abre conta para o cartao. Nenhum pedido deve nascer deste replay.
+    assert reading.order_item is None
+    assert reading.command_item is not None
+    assert reading.command_item.product_id == weighed_product.pk
+    assert reading.command_item.command_id == command.pk
+    assert reading.command_item.command_status == CommandItem.STATUS_PENDENTE
+    assert not Order.all_objects.exists()
 
 
 @pytest.mark.django_db

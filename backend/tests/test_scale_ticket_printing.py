@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from apps.menu.models import Product
-from apps.orders.models import Order, OrderItem
+from apps.orders.models import CommandItem, Order, OrderItem
 from apps.printers.models import Printer, PrintJob, Scale, ScaleReading
 from apps.restaurants.models import Command
 
@@ -30,7 +30,7 @@ def _product(
 
 
 @pytest.mark.django_db
-def test_checkout_command_prints_complete_recalculated_ticket_with_code128(
+def test_checkout_command_lanca_anotacoes_pendentes_e_imprime_a_etiqueta(
     admin_client,
     account,
     restaurant,
@@ -96,54 +96,49 @@ def test_checkout_command_prints_complete_recalculated_ticket_with_code128(
     )
 
     assert response.status_code == 201, response.data
-    assert Decimal(response.data["order"]["subtotal"]) == Decimal("39.95")
-    assert Decimal(response.data["order"]["total"]) == Decimal("39.95")
 
+    # O PRATO E A BEBIDA VIRAM ANOTACOES DA COMANDA, e nao itens de um pedido.
+    # A balanca nao abre conta: quem monta o pedido e o caixa, com as anotacoes
+    # pendentes dos cartoes que vao ser pagos juntos.
+    assert not Order.all_objects.exists()
+    assert not OrderItem.all_objects.exists()
+
+    anotacoes = CommandItem.all_objects.filter(command=command).order_by("launched_at")
+    assert [item.product_id for item in anotacoes] == [weighed.pk, drink.pk]
+    assert all(
+        item.command_status == CommandItem.STATUS_PENDENTE for item in anotacoes
+    )
+    assert anotacoes[0].quantity == Decimal("0.500")
+    assert anotacoes[0].total_price == Decimal("29.95")
+    assert anotacoes[1].quantity == 2
+    assert anotacoes[1].total_price == Decimal("10.00")
+
+    # O cartao fica em uso porque tem anotacao pendente — nao por causa de um
+    # pedido preso a ele.
+    command.refresh_from_db()
+    assert command.current_order_id is None
+    assert response.data["command"]["status"] == command.status
+    assert response.data["weighed_item"]["command_status"] == CommandItem.STATUS_PENDENTE
+    assert len(response.data["extra_items"]) == 1
+
+    # A leitura fica consumida: a mesma pesagem nao vira uma segunda anotacao.
+    reading.refresh_from_db()
+    assert reading.command_item_id == anotacoes[0].pk
+    assert reading.order_item_id is None
+
+    # A ETIQUETA e o papel que o cliente leva ao caixa. Ela nao e o cupom do
+    # pedido: nao ha pedido para resumir, e montar um so para imprimir seria o
+    # gesto que este modelo existe para eliminar.
     job = PrintJob.all_objects.get(pk=response.data["print_job"]["id"])
     assert job.printer_id == printer.id
     assert job.status == PrintJob.STATUS_PENDING
-    assert job.payload["restaurant"] == {
-        "id": str(restaurant.id),
-        "trade_name": restaurant.trade_name,
-        "legal_name": restaurant.legal_name,
-        "cnpj": restaurant.cnpj,
-    }
-    assert job.payload["order"]["id"] == response.data["order"]["id"]
-    assert job.payload["order"]["sequence"] == response.data["order"]["sequence"]
-    assert job.payload["order"]["command"] == {
-        "id": str(command.id),
-        "number": command.number,
-        "code": command.code,
-    }
-    assert [item["name"] for item in job.payload["items"]] == [
-        weighed.name,
-        drink.name,
-    ]
-    assert job.payload["subtotal"] == "39.95"
-    assert job.payload["order_total"] == "39.95"
-    assert job.payload["order"]["total"] == "39.95"
-    # `total` continua sendo o total legado do item pesado.
-    assert job.payload["total"] == "29.95"
-    assert job.payload["barcode"]["symbology"] == "CODE128"
-    assert job.payload["barcode"]["value"] == command.code
-
-    for expected in (restaurant.trade_name, weighed.name, drink.name):
-        assert expected in job.payload["text_content"]
-        assert expected in job.html_content
-    assert "39.95" in job.payload["text_content"]
-    text_lines = job.payload["text_content"].splitlines()
-    weighed_line = next(line for line in text_lines if weighed.name in line)
-    drink_line = next(line for line in text_lines if drink.name in line)
-    assert len(weighed_line) == 42
-    assert weighed_line.endswith("R$ 29.95")
-    assert len(drink_line) == 42
-    assert drink_line.endswith("R$ 10.00")
-    assert "39,95" in job.html_content
-    assert f"{weighed.name}</span><span>R$ 29,95" in job.html_content
-    assert "CODE128" in job.payload["text_content"]
-    assert 'data-symbology="CODE128"' in job.html_content
-    assert "data:image/png;base64," in job.html_content
-    assert command.code in job.html_content
+    assert job.payload["command"] == str(command.id)
+    assert job.payload["command_number"] == command.number
+    assert job.payload["item"] == str(anotacoes[0].pk)
+    texto = job.payload["text_content"]
+    assert f"COMANDA {command.number}" in texto
+    assert weighed.name in texto
+    assert "29.95" in texto
 
 
 @pytest.mark.django_db
@@ -337,7 +332,7 @@ def _weigh_ticket_setup(account, restaurant, branch):
 
 
 @pytest.mark.django_db
-def test_requeue_reprints_the_same_ticket_without_touching_the_order(
+def test_requeue_reimprime_a_mesma_etiqueta_sem_tocar_nas_anotacoes(
     admin_client,
     account,
     restaurant,
@@ -355,7 +350,7 @@ def test_requeue_reprints_the_same_ticket_without_touching_the_order(
     )
     assert checkout.status_code == 201, checkout.data
     job_id = checkout.data["print_job"]["id"]
-    order_id = checkout.data["order"]["id"]
+    item_id = checkout.data["weighed_item"]["id"]
     original = PrintJob.all_objects.get(pk=job_id)
     original_html = original.html_content
     original_payload = original.payload
@@ -370,15 +365,17 @@ def test_requeue_reprints_the_same_ticket_without_touching_the_order(
     assert job.status == PrintJob.STATUS_RENDERED
     assert job.error_message == ""
     assert job.printed_at is None
-    # O conteudo original e preservado, incluindo o Code 128 da comanda.
+    # O conteudo original e preservado: a etiqueta reimpressa e a MESMA.
     assert job.html_content == original_html
     assert job.payload == original_payload
-    assert job.payload["barcode"]["value"] == command.code
-    # Nenhum pedido ou item novo foi criado.
+    assert job.payload["command_number"] == command.number
+    # Reimprimir e um gesto de papel, nao de dinheiro: nenhuma anotacao nova
+    # entrou na comanda, e nenhum pedido nasceu.
     assert PrintJob.all_objects.count() == 1
-    assert Order.all_objects.count() == 1
-    assert str(Order.all_objects.get().id) == order_id
-    assert OrderItem.all_objects.count() == 1
+    assert not Order.all_objects.exists()
+    assert not OrderItem.all_objects.exists()
+    assert CommandItem.all_objects.count() == 1
+    assert str(CommandItem.all_objects.get().id) == item_id
 
 
 @pytest.mark.django_db
