@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/network/api_exception.dart';
@@ -29,15 +31,20 @@ class _RepositorioVazio extends CommandRepository {
       const [];
 }
 
+// `ShadCard` exige o tema do shadcn acima dele — a tela de comandas passou a
+// usar o MESMO card do carrinho da venda, e ele é um `ShadCard`.
 Widget _tela(CommandRepository repositorio) => MaterialApp(
-  home: Scaffold(
-    body: CommandsPage(
-      repository: repositorio,
-      // A tela agora é o desenho da venda: catálogo no meio, carrinho à
-      // direita. Sem produto nenhum ela ainda precisa carregar e mostrar o
-      // recado de falha — que é o que estes testes provam.
-      products: const [],
-      categories: const [],
+  home: ShadTheme(
+    data: AppTheme.shadLight(),
+    child: Scaffold(
+      body: CommandsPage(
+        repository: repositorio,
+        // A tela é o desenho da venda: catálogo no meio, carrinho à direita.
+        // Sem produto nenhum ela ainda precisa carregar e mostrar o recado de
+        // falha — que é o que estes testes provam.
+        products: const [],
+        categories: const [],
+      ),
     ),
   ),
 );

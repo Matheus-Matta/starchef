@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/formatters/value_formatters.dart';
+import '../../orders/presentation/cart_item_card.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// O que a comanda tem PENDENTE — o carrinho da tela de comandas.
@@ -151,7 +152,15 @@ class CommandCartPanel extends StatelessWidget {
       separatorBuilder: (_, _) =>
           Divider(height: 1, color: scheme.outlineVariant),
       itemBuilder: (_, indice) =>
-          _Linha(item: itens[indice], onVoid: () => onVoidItem(itens[indice])),
+          CartItemCard(
+            item: itens[indice],
+            money: ValueFormatters.money,
+            // A anotação ainda não enviada pode ser tirada; a que já foi para
+            // a produção também — mas ali o cancelamento imprime um cupom no
+            // setor, e o diálogo avisa antes.
+            canRemove: true,
+            onRemove: () => onVoidItem(itens[indice]),
+          ),
     );
   }
 
@@ -241,71 +250,6 @@ class CommandCartPanel extends StatelessWidget {
             'A cobrança é feita no pedido, pelo caixa.',
             textAlign: TextAlign.center,
             style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 11),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Linha extends StatelessWidget {
-  const _Linha({required this.item, required this.onVoid});
-
-  final Map<String, dynamic> item;
-  final VoidCallback onVoid;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final naCozinha = '${item['status'] ?? ''}' != 'pending';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 34,
-            child: Text(
-              '${ValueFormatters.number(item['quantity']).toStringAsFixed(0)}x',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('${item['product_name'] ?? ''}'),
-                if ('${item['customer_note'] ?? ''}'.isNotEmpty)
-                  Text(
-                    '${item['customer_note']}',
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontSize: 11,
-                    ),
-                  ),
-                // O operador precisa ver o que JÁ foi para a produção: é o que
-                // decide se cancelar custa um cupom na impressora do setor.
-                if (naCozinha)
-                  Text(
-                    'na cozinha',
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Text(
-            ValueFormatters.money(item['total_price']),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          IconButton(
-            onPressed: onVoid,
-            icon: const Icon(Icons.close_rounded, size: 17),
-            tooltip: 'Cancelar item',
-            visualDensity: VisualDensity.compact,
           ),
         ],
       ),
