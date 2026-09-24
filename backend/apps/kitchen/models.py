@@ -41,6 +41,18 @@ class KdsColumn(TenantBaseModel):
     color = models.CharField(max_length=20, default="#64748b", help_text="Cor da coluna (hex).")
     is_entry = models.BooleanField(default=False, help_text="Cards novos aparecem nesta coluna.")
     is_done = models.BooleanField(default=False, help_text="Coluna final: concluir o item ao mover para cá.")
+    # Item parado NESTA coluna não pode ser cancelado.
+    #
+    # É a regra do cozinheiro: depois que o prato entrou na chapa, tirá-lo da
+    # conta não desfaz o insumo nem o tempo. Marcar "Em preparo" e "Pronto"
+    # cobre o caso comum; a coluna de entrada normalmente fica livre.
+    #
+    # Nasce DESLIGADA, e em coluna nova também: uma coluna criada no meio do
+    # almoço não pode começar bloqueando algo que ninguém configurou.
+    blocks_cancel = models.BooleanField(
+        default=False,
+        help_text="Item nesta coluna não pode ser cancelado (exige autorização).",
+    )
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:

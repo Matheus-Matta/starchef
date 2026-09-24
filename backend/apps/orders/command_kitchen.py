@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
+from apps.orders.item_cancellation import assert_pode_cancelar
 from apps.core.audit import record_audit
 from apps.orders.models import CommandBatch, CommandItem
 
@@ -134,7 +135,7 @@ def dispatch_command_batch(batch, *, now=None):
     return batch
 
 
-def void_command_item(item, *, user, reason):
+def void_command_item(item, *, user, reason, authorized=False, authorized_by=None):
     """Cancela uma anotação. Sai da comanda como PERDA, não como venda.
 
     Item que já foi para a produção é outra conversa: sai um cupom de
@@ -146,6 +147,10 @@ def void_command_item(item, *, user, reason):
     if not reason:
         raise ValidationError("Informe o motivo do cancelamento.")
     with tenant_context(item.account):
+        # A anotação não entra no quadro do KDS, então só a regra de TEMPO a
+        # alcança — e alcança pelo mesmo campo, porque `sent_to_kitchen_at`
+        # mora na base que os dois tipos de item compartilham.
+        assert_pode_cancelar(item, authorized=authorized)
         agora = timezone.now()
         item.status = CommandItem.STATUS_CANCELLED
         item.void_reason = reason
@@ -168,6 +173,10 @@ def void_command_item(item, *, user, reason):
             instance=item,
             actor=user,
             reason=reason,
-            metadata={"event": "command_item_voided"},
+            metadata={
+                "event": "command_item_voided",
+                # Quem liberou, quando a janela de tempo já tinha fechado.
+                **({"authorized_by": str(authorized_by.pk)} if authorized_by else {}),
+            },
         )
     return item

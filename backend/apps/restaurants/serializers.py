@@ -30,6 +30,10 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
     has_cash_action_password = serializers.SerializerMethodField()
     # Teto de dez minutos: acima disso a "carencia" vira cozinha parada.
     cancellation_grace_seconds = serializers.IntegerField(required=False, min_value=0, max_value=600)
+    # Teto de uma hora: passou disso, o que o operador quer nao e "cancelar
+    # dentro do prazo", e a autorizacao do supervisor — que existe e fica
+    # auditada. Um limite de um dia seria o mesmo que desligar a regra.
+    item_cancel_window_seconds = serializers.IntegerField(required=False, min_value=0, max_value=3600)
     max_commands_per_table = serializers.IntegerField(required=False, min_value=0, max_value=100)
     fiscal_provider = serializers.ChoiceField(
         choices=("manual", "focus_nfe"),

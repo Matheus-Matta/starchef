@@ -15,7 +15,8 @@ class KdsColumnSerializer(TenantModelSerializer):
         model = KdsColumn
         fields = [
             "id", "station", "station_name", "label", "name", "position", "color",
-            "is_entry", "is_done", "is_active", "created_at", "updated_at",
+            "is_entry", "is_done", "blocks_cancel", "is_active",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 

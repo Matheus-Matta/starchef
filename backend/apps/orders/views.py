@@ -37,7 +37,7 @@ from apps.restaurants.models import Command
 User = get_user_model()
 
 
-def _can_authorize_order_cancellation(request, order):
+def _can_authorize_cancellation(request, restaurant, account_id):
     """Valida a autorização no mesmo request que altera o pedido.
 
     A senha nunca entra na fila offline: cancelamento exige resposta imediata
@@ -54,12 +54,6 @@ def _can_authorize_order_cancellation(request, order):
     cancelou, e a pergunta "quem liberou?" ficava sem resposta.
     """
 
-    # Dentro da carência do restaurante nada chegou à produção: não há
-    # consumo a proteger, e a senha só atrasaria quem digitou errado.
-    from apps.orders.services import order_within_cancellation_grace
-
-    if order_within_cancellation_grace(order):
-        return True, None, Order.AUTHORIZATION_GRACE
 
     cash_password = str(request.data.get("cash_password") or "")
     if cash_password:
@@ -75,7 +69,7 @@ def _can_authorize_order_cancellation(request, order):
         # É o mesmo que o movimento de caixa já fazia (`payments/services.py`):
         # sem senha gravada, recusa. Quem precisa cancelar continua tendo a
         # autorização por LOGIN de gerente, logo abaixo — nominal e auditável.
-        stored = order.restaurant.cash_action_password or ""
+        stored = restaurant.cash_action_password or ""
         approved = bool(stored) and check_password(cash_password, stored)
         # A senha e do restaurante, nao de uma pessoa: quem autorizou e a
         # propria operacao da loja.
@@ -91,7 +85,7 @@ def _can_authorize_order_cancellation(request, order):
         matched = (
             User.objects.filter(
                 email__iexact=login,
-                profile__account_id=order.account_id,
+                profile__account_id=account_id,
             )
             .only("username")
             .first()
@@ -102,7 +96,7 @@ def _can_authorize_order_cancellation(request, order):
     if authorizer is None:
         return False, None, ""
     profile = getattr(authorizer, "profile", None)
-    if not profile or not profile.is_active or profile.account_id != order.account_id:
+    if not profile or not profile.is_active or profile.account_id != account_id:
         return False, None, ""
     codes = effective_permission_codes(authorizer)
     approved = is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
@@ -497,14 +491,26 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["delete"], url_path=r"items/(?P<item_pk>[^/.]+)/void")
     def void_item(self, request, pk=None, item_pk=None):
-        """Void a pending item (cancel before sending to kitchen)."""
+        """Cancela um item do pedido.
+
+        Duas regras podem barrar depois que o prato chegou à produção: a janela
+        de tempo do restaurante e a coluna do KDS em que o item está. As duas
+        são liberáveis por quem responde — a senha de operação ou a credencial
+        de um usuário com permissão, no mesmo corpo do pedido de cancelamento.
+        """
+        order = self.get_object()
+        authorized, authorizer, _how = _can_authorize_cancellation(
+            request, order.restaurant, order.account_id
+        )
         try:
-            item = OrderItem.objects.get(pk=item_pk, order=self.get_object())
+            item = OrderItem.objects.get(pk=item_pk, order=order)
             item = void_order_item(
                 item,
                 request.user,
                 reason=request.data.get("reason", ""),
                 offline_printed=bool(request.data.get("offline_printed")),
+                authorized=authorized,
+                authorized_by=authorizer,
             )
         except OrderItem.DoesNotExist:
             return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
@@ -670,7 +676,18 @@ class OrderViewSet(BaseTenantViewSet):
         # do supervisor existe para impedir que alguem apague consumo ja
         # lancado. Exigi-la aqui deixava a comanda ocupada por um pedido que
         # nunca virou nada — e travava o proximo cliente que fosse usa-la.
-        authorized, authorizer, authorization = _can_authorize_order_cancellation(request, order)
+        from apps.orders.services import order_within_cancellation_grace
+
+        # A carência é uma regra DO PEDIDO: dentro dela nada chegou à produção,
+        # então não há consumo a proteger e a senha só atrasaria quem digitou
+        # errado. Fica aqui, e não no validador, porque o cancelamento de ITEM
+        # tem as regras dele.
+        if order_within_cancellation_grace(order):
+            authorized, authorizer, authorization = True, None, Order.AUTHORIZATION_GRACE
+        else:
+            authorized, authorizer, authorization = _can_authorize_cancellation(
+                request, order.restaurant, order.account_id
+            )
         if not order_is_empty(order) and not authorized:
             return Response(
                 {

@@ -62,6 +62,7 @@
                 <div class="kcol__badges">
                   <span v-if="col.is_entry" class="kbadge kbadge--entry">Entrada</span>
                   <span v-if="col.is_done" class="kbadge kbadge--done">Concluído</span>
+                  <span v-if="col.blocks_cancel" class="kbadge kbadge--locked">Sem cancelar</span>
                   <span v-if="!col.is_active" class="kbadge">Inativa</span>
                 </div>
               </div>
@@ -151,6 +152,7 @@
         </div>
         <label class="kcheck"><input v-model="columnForm.is_entry" type="checkbox" /> Coluna de entrada <small>(cards novos aparecem aqui)</small></label>
         <label class="kcheck"><input v-model="columnForm.is_done" type="checkbox" /> Coluna final <small>(conclui o item ao mover para cá)</small></label>
+        <label class="kcheck"><input v-model="columnForm.blocks_cancel" type="checkbox" /> Bloqueia cancelamento <small>(item nesta coluna só é cancelado com autorização)</small></label>
         <label class="kcheck"><input v-model="columnForm.is_active" type="checkbox" /> Ativa</label>
         <div class="kmodal__actions">
           <button class="kbtn" type="button" @click="columnForm.open = false">Cancelar</button>
@@ -197,7 +199,7 @@ function sectorNames(codes) {
   if (!codes || !codes.length) return "Todos os setores";
   return codes.map((c) => SECTORS.find((s) => s.value === c)?.label || c).join(", ");
 }
-const columnForm = reactive({ open: false, id: null, name: "", color: PALETTE[1], is_entry: false, is_done: false, is_active: true });
+const columnForm = reactive({ open: false, id: null, name: "", color: PALETTE[1], is_entry: false, is_done: false, blocks_cancel: false, is_active: true });
 
 async function loadStations(keepSelectedId) {
   loadingStations.value = true;
@@ -320,6 +322,9 @@ function openColumnForm(col) {
     color: col?.color || PALETTE[1],
     is_entry: col ? col.is_entry : columns.value.length === 0, // 1ª coluna já sugere "entrada"
     is_done: col ? col.is_done : false,
+    // Coluna nova nasce SEM bloquear: uma coluna criada no meio do almoco nao
+    // pode comecar trancando algo que ninguem configurou.
+    blocks_cancel: col ? col.blocks_cancel : false,
     is_active: col ? col.is_active : true,
   });
 }
@@ -335,6 +340,7 @@ async function saveColumn() {
       color: columnForm.color,
       is_entry: columnForm.is_entry,
       is_done: columnForm.is_done,
+      blocks_cancel: columnForm.blocks_cancel,
       is_active: columnForm.is_active,
     };
     if (columnForm.id) await api.patch(`/kitchen/columns/${columnForm.id}/`, payload);
@@ -443,6 +449,7 @@ onMounted(() => {
 .kbadge { padding: 2px 8px; border-radius: 99px; font: var(--weight-bold) 10.5px/1.4 var(--font-sans); background: var(--surface-active); color: var(--text-muted); }
 .kbadge--entry { background: var(--info-subtle); color: var(--info-text); }
 .kbadge--done { background: var(--success-subtle); color: var(--success-text); }
+.kbadge--locked { background: #fee2e2; color: #991b1b; }
 .kcol__tools { display: flex; gap: 4px; }
 
 .kicon {

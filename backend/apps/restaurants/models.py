@@ -51,6 +51,19 @@ class Restaurant(TenantBaseModel):
     # senha do caixa nem gera cupom de cancelamento — nada chegou à produção.
     # 0 = desligada (comportamento antigo: sai na hora).
     cancellation_grace_seconds = models.PositiveIntegerField(default=0)
+    # Quanto tempo o operador ainda pode CANCELAR um item DEPOIS de ele ter
+    # chegado à produção. Passou disso, a remoção é recusada.
+    #
+    # É outra pergunta, e por isso outro campo. `cancellation_grace_seconds`
+    # ATRASA o envio: dentro dele nada chegou à cozinha e cancelar é de graça.
+    # Este conta do despacho para frente, quando o prato JÁ está sendo feito —
+    # e o que ele protege é o trabalho do cozinheiro e o insumo que já foi.
+    #
+    # 0 = desligado, e é o padrão de propósito: toda instalação que já existe
+    # continua podendo cancelar a qualquer momento até alguém decidir o
+    # contrário. Uma regra nova que nasce ligada tranca operação no dia do
+    # deploy, sem ninguém ter pedido.
+    item_cancel_window_seconds = models.PositiveIntegerField(default=0)
     operational_settings = models.JSONField(default=dict, blank=True)
     fiscal_settings = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)

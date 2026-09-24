@@ -22,6 +22,7 @@ from apps.customers.validators import is_valid_cpf, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
 from apps.orders.command_billing import conclude_items_of_order
 from apps.menu.models import ProductVariation
+from apps.orders.item_cancellation import assert_pode_cancelar
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
 from apps.restaurants.models import Command, Table
 
@@ -743,7 +744,8 @@ def set_order_item_quantity(item, user, quantity):
         return item
 
 
-def void_order_item(item, user, reason="", offline_printed=False):
+def void_order_item(item, user, reason="", offline_printed=False, authorized=False,
+                    authorized_by=None):
     """Cancela um item, com cupom de cancelamento so depois de despachado.
 
     ``offline_printed=True`` vem do PDV que ja imprimiu o cupom na impressora
@@ -769,6 +771,11 @@ def void_order_item(item, user, reason="", offline_printed=False):
             dispatch_kitchen_batch(item.batch)
             item.refresh_from_db()
             within_grace = item.status == OrderItem.STATUS_QUEUED
+
+        # DEPOIS de liberar o lote vencido, e não antes: um lote agendado que
+        # já passou da hora conta como despachado, e é desse instante que a
+        # janela de cancelamento corre. Checar antes mediria o tempo errado.
+        assert_pode_cancelar(item, authorized=authorized)
 
         was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
         item.status = OrderItem.STATUS_CANCELLED
@@ -798,6 +805,10 @@ def void_order_item(item, user, reason="", offline_printed=False):
             actor=user,
             reason=reason,
             metadata={
+                # QUEM LIBEROU fica gravado. Sem isto o registro diz apenas que
+                # o operador cancelou, e a pergunta que o dono faz depois —
+                # "quem autorizou tirar isso da conta?" — fica sem resposta.
+                **({"authorized_by": str(authorized_by.pk)} if authorized_by else {}),
                 "event": "order_item_cancelled",
                 "within_print_grace_period": within_grace,
                 "cancellation_ticket_required": was_dispatched,
