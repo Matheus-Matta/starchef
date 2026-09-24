@@ -21,6 +21,9 @@ enum PdvScreen {
   /// A página das comandas: consulta e conferência, não venda.
   commands,
 
+  /// Lista de clientes: consulta e cadastro.
+  customers,
+
   /// Fechamento e recebimento.
   payment,
 
@@ -45,7 +48,12 @@ enum PdvScreen {
     PdvScreen.orders ||
     PdvScreen.commands ||
     PdvScreen.scale => true,
-    PdvScreen.payment || PdvScreen.cash || PdvScreen.settings => false,
+    // Clientes não lê código: o leitor do balcão lê comanda e produto, e um
+    // código caindo aqui só encheria o campo de busca com o que ele não acha.
+    PdvScreen.customers ||
+    PdvScreen.payment ||
+    PdvScreen.cash ||
+    PdvScreen.settings => false,
   };
 
   /// A balança tem o próprio roteamento (comanda + produto + peso), então o
@@ -58,6 +66,7 @@ enum PdvScreen {
     PdvScreen.order => 'Edição do pedido',
     PdvScreen.orders => 'Pedidos',
     PdvScreen.commands => 'Comandas',
+    PdvScreen.customers => 'Clientes',
     PdvScreen.payment => 'Pagamento',
     PdvScreen.cash => 'Caixa',
     PdvScreen.settings => 'Configurações',
@@ -81,6 +90,7 @@ enum PdvScreen {
     PdvScreen.commands =>
       'Abre a comanda do cartão NESTA tela, sem sair para o pedido dela: aqui '
           'se consulta e se confere, não se vende.',
+    PdvScreen.customers => 'Códigos são ignorados.',
     PdvScreen.payment => 'Códigos são ignorados.',
     PdvScreen.cash => 'Códigos são ignorados.',
     PdvScreen.settings => 'Códigos são ignorados.',

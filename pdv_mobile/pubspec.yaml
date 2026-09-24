@@ -1,7 +1,7 @@
 name: starchef_pdv_mobile
 description: "StarChef PDV Mobile — atendimento e impressão direto no backend."
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.1.0+3
 
 environment:
   sdk: ^3.12.2

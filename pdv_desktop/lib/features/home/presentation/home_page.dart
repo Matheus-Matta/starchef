@@ -40,6 +40,9 @@ import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/orders_table_metrics.dart';
 import '../../commands/data/command_repository.dart';
+import '../../customers/data/customer_repository.dart';
+import '../../customers/presentation/customer_form_dialog.dart';
+import '../../customers/presentation/customers_page.dart';
 import '../../commands/presentation/commands_page.dart';
 import '../../orders/presentation/order_cart_panel.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
@@ -981,6 +984,7 @@ class _HomePageState extends State<HomePage>
   PdvDestination get _selectedDestination {
     if (flowStep == 'scale-workstation') return PdvDestination.scale;
     if (flowStep == 'commands') return PdvDestination.commands;
+    if (flowStep == 'customers') return PdvDestination.customers;
     if (flowStep == 'orders') return PdvDestination.orders;
     if (flowStep == 'table_details' ||
         (flowStep == 'context' && orderType != 'command')) {
@@ -1027,6 +1031,20 @@ class _HomePageState extends State<HomePage>
           selectedCommand = null;
           orderItems = [];
           flowStep = 'commands';
+        });
+        return;
+      case PdvDestination.customers:
+        // Sair da venda para consultar cliente segue as MESMAS travas das
+        // outras telas: item pendente confirmado, rascunho descartado, pedido
+        // vazio devolvido. Consultar não é motivo para deixar meia venda no
+        // banco.
+        if (!await _confirmLeavingPendingItems()) return;
+        _leaveActiveOrder();
+        _discardDraft();
+        setState(() {
+          activeOrder = null;
+          orderItems = [];
+          flowStep = 'customers';
         });
         return;
       case PdvDestination.orders:

@@ -251,6 +251,14 @@ mixin _ShellSection on _HomePageShared {
                           categories: categories,
                           tables: tables,
                         )
+                      else if (flowStep == 'customers')
+                        CustomersPage(
+                          repository: CustomerRepository(
+                            api,
+                            accessToken: token,
+                          ),
+                          restaurantId: restaurantId,
+                        )
                       else if (flowStep == 'orders')
                         _ordersPage()
                       else if (activeOrder == null && flowStep == 'context')

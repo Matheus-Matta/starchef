@@ -12,6 +12,7 @@ export 'order_subject.dart';
 
 part 'orders_command_items.dart';
 part 'orders_commands.dart';
+part 'orders_customers.dart';
 part 'orders_queries.dart';
 part 'orders_subject_api.dart';
 

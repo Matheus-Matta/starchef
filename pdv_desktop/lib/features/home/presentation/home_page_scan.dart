@@ -77,6 +77,9 @@ mixin _ScanSection on _HomePageShared {
         // cartão lido ABRE A COMANDA na tela, e não o pedido dela. Sair para o
         // pedido seria o contrário do que se foi fazer lá — conferir.
         commandPageCodes.add(scanned.value);
+      // Clientes não reage a código: o leitor do balcão lê comanda e produto,
+      // e um código caindo aqui só encheria a busca com o que ela não acha.
+      case PdvScreen.customers:
       case PdvScreen.payment:
       case PdvScreen.cash:
       case PdvScreen.settings:

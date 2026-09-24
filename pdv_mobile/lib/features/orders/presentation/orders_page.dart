@@ -6,6 +6,7 @@ import '../../../core/sync/backend_gateway.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../auth/presentation/session_controller.dart';
+import '../../customers/presentation/customers_page.dart';
 import '../../printing/presentation/print_status_page.dart';
 import '../../printing/services/mobile_print_agent.dart';
 import '../../settings/presentation/api_settings_page.dart';
@@ -66,6 +67,17 @@ class _OrdersPageState extends State<OrdersPage>
     super.dispose();
   }
 
+  /// A lista de clientes. Ao voltar, a lista do salão é relida: o garçom pode
+  /// ter cadastrado alguém que já entra no próximo pedido.
+  Future<void> _openCustomers() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CustomersPage(repository: widget.repository),
+      ),
+    );
+    if (mounted) await _presenter.load();
+  }
+
   Future<void> _openApiSettings() async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
@@ -108,6 +120,7 @@ class _OrdersPageState extends State<OrdersPage>
           controller: widget.controller,
           onApiSettings: _openApiSettings,
           onPrinting: _openPrinting,
+          onCustomers: _openCustomers,
         ),
       ],
       banners: [

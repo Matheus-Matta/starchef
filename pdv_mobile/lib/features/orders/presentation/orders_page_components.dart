@@ -109,11 +109,13 @@ class _AccountMenu extends StatelessWidget {
     required this.controller,
     required this.onApiSettings,
     required this.onPrinting,
+    required this.onCustomers,
   });
 
   final SessionController controller;
   final VoidCallback onApiSettings;
   final VoidCallback onPrinting;
+  final VoidCallback onCustomers;
 
   @override
   Widget build(BuildContext context) {
@@ -121,6 +123,7 @@ class _AccountMenu extends StatelessWidget {
     return PopupMenuButton<String>(
       tooltip: 'Conta',
       onSelected: (value) => switch (value) {
+        'clientes' => onCustomers(),
         'api' => onApiSettings(),
         'printing' => onPrinting(),
         'sair' => controller.logout(),

@@ -81,6 +81,7 @@ mixin _InputSection on _HomePageShared {
     if (flowStep == 'scale-workstation') return PdvScreen.scale;
     if (flowStep == 'orders') return PdvScreen.orders;
     if (flowStep == 'commands') return PdvScreen.commands;
+    if (flowStep == 'customers') return PdvScreen.customers;
     if (flowStep == 'payment') return PdvScreen.payment;
     if (activeOrder != null || flowStep == 'order') return PdvScreen.order;
     if (flowStep == 'context' || flowStep == 'table_details') {
@@ -511,6 +512,9 @@ mixin _InputSection on _HomePageShared {
       // leitor manda Enter no fim de cada leitura, e um atalho global aqui
       // dispararia uma segunda ação a cada cartão passado.
       case PdvScreen.commands:
+      // Clientes tem o campo de busca dela, e o Enter é dele: um atalho global
+      // aqui roubaria o Enter de quem está digitando um nome.
+      case PdvScreen.customers:
       case PdvScreen.home:
       case PdvScreen.orders:
       case PdvScreen.cash:
