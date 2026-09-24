@@ -9,6 +9,12 @@ falam só com ele; ele fala com a nuvem por conta própria, quando dá.
 migrations. `SYNC_NODE_TYPE=local` é o que muda o papel — não há um "backend
 local" separado para manter.
 
+A **faixa de numeração de pedido** não sai dessa variável: quem decide é o
+`SyncNode` que a matrícula grava no banco (loja a partir de 1, nuvem a partir
+de 1.000.000). A variável fica fixada no `docker-compose`, acima do
+`.env.local`, justamente para uma loja não virar nuvem por um typo no arquivo
+que o cliente edita — ver "O que roda no boot".
+
     PDV, KDS, garçom
             ↓  (rede interna da loja)
     backend  →  postgres local + outbox
@@ -78,7 +84,18 @@ Essas triggers capturam escrita feita por fora do ORM — `QuerySet.update`,
 `bulk_create`, SQL direto — que os signals do Django não veem. São idempotentes
 e acompanham o catálogo, então rodam em todo boot sem migration nova.
 
-`manage.py check` avisa se alguma tabela sincronizada ficar sem trigger.
+Depois disso roda `manage.py check`, e é a **última coisa impressa antes do
+gunicorn**. Os avisos já saíam no `migrate`, mas ali sobem junto com centenas
+de linhas de migration e ninguém os lê; no fim do log eles ficam onde quem
+está subindo a loja está olhando.
+
+Ele avisa se alguma tabela sincronizada ficar sem trigger, se faltar
+credencial do nó (`W003`) e se o papel declarado discordar do `SyncNode`
+gravado (`W008`) — este último é o que pega uma loja se achando nuvem.
+
+O `check` **não derruba o boot**: sincronização mal configurada degrada a
+sincronização, não tira a loja do ar. Um `migrate` que falha, esse sim,
+impede o gunicorn de subir.
 
 ## Internet caiu. E agora?
 

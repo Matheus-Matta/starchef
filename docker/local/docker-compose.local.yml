@@ -50,6 +50,11 @@ x-backend-base: &backend-base
     CELERY_BROKER_URL: redis://redis:6379/1
     CELERY_RESULT_BACKEND: redis://redis:6379/2
     # O papel deste nó. É a única linha que difere da nuvem.
+    #
+    # Fixado AQUI, e não no `.env.local`: `environment` tem precedência sobre
+    # `env_file`, então uma loja não vira nuvem por um typo no arquivo que o
+    # cliente edita. A faixa de numeração de pedido segue o `SyncNode`
+    # provisionado, e esta linha é o que sobra para o resto da sincronização.
     SYNC_NODE_TYPE: local
   volumes:
     - backend_media:/app/media
@@ -117,10 +122,24 @@ services:
     # `sync_install_triggers` depois do migrate: é a rede de segurança do §11.2,
     # que captura escrita feita por fora do ORM (bulk, SQL direto). É
     # idempotente, então roda em todo boot e acompanha o catálogo sem migration.
+    #
+    # `check` no FIM, e não no começo: os avisos de sincronização falam do
+    # banco (o nó provisionado, as triggers), então antes do migrate eles
+    # diriam meia verdade. E é a última coisa impressa antes do gunicorn — os
+    # do migrate sobem junto com centenas de linhas de migration e ninguém os
+    # lê. Um nó com o papel errado ou sem credencial aparece aqui, no fim do
+    # log, onde quem sobe a loja está olhando.
+    #
+    # NÃO derruba o boot: sincronização mal configurada degrada a
+    # sincronização, não tira a loja do ar. Daí o `|| true` — dentro de
+    # parênteses, porque `A && B || true && C` no `sh` agrupa como
+    # `((A && B) || true) && C`: o `|| true` cobriria a cadeia inteira e o
+    # gunicorn subiria mesmo com o migrate falhando.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
              python manage.py sync_install_triggers &&
+             (python manage.py check || true) &&
              gunicorn config.asgi:application -c gunicorn.conf.py"
     # Publicado na rede da loja (não em loopback): o PDV, o KDS e os tablets
     # do salão são outras máquinas. Restrinja pelo firewall do host à faixa
