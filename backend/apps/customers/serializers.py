@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
-from apps.customers.models import Customer, CustomerAddress
+from apps.customers.models import Customer, CustomerAddress, CustomerGroup
 from apps.customers.validators import format_cpf, is_valid_cpf, mask_cpf, mask_phone, strip_cpf
 
 # Cargos (Role.code) autorizados a ver dados pessoais completos (CPF/telefone) nas listagens.
@@ -17,14 +17,45 @@ class CustomerAddressSerializer(TenantModelSerializer):
         read_only_fields = AUDIT_READ_ONLY_FIELDS
 
 
+class CustomerGroupSerializer(TenantModelSerializer):
+    """Cadastro do grupo. `customer_count` responde a pergunta da listagem.
+
+    Quem olha a grade quer saber QUANTA gente o grupo alcança — um grupo vazio
+    e um grupo com trezentos clientes têm o mesmo nome e a mesma cor, e sem o
+    número só dá para saber abrindo.
+    """
+
+    customer_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerGroup
+        fields = "__all__"
+        read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def get_customer_count(self, obj):
+        # A anotação da listagem vem primeiro: sem ela, uma grade de cinquenta
+        # grupos custaria cinquenta consultas.
+        anotado = getattr(obj, "total_clientes", None)
+        if anotado is not None:
+            return anotado
+        return obj.customers.count()
+
+
 class CustomerSerializer(TenantModelSerializer):
     addresses = CustomerAddressSerializer(many=True, read_only=True)
     address = serializers.DictField(write_only=True, required=False)
+    # Os grupos saem pelo id (é o que o formulário manda de volta) e também
+    # pelo nome, para a grade não precisar de uma segunda consulta só para
+    # escrever "VIP" onde hoje apareceria um uuid.
+    group_names = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
         fields = "__all__"
         read_only_fields = AUDIT_READ_ONLY_FIELDS
+
+    def get_group_names(self, obj):
+        return [grupo.name for grupo in obj.groups.all()]
 
     def validate_document(self, value):
         # CPF é opcional; quando informado, precisa ser válido (STC-043).

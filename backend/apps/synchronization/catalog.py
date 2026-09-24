@@ -214,7 +214,18 @@ _e("deliveryman", "restaurants.Deliveryman", conflict_policy=CLOUD, dependencies
 
 # 11. Clientes: os dois lados cadastram, então vence a maior versão e o empate
 # vai para revisão.
-_e("customer", "customers.Customer", conflict_policy=VERSAO, dependencies=("account",))
+#
+# O GRUPO vem ANTES do cliente na ordem de carga, e isso não é estética: o
+# vínculo N:N do cliente aponta para ele, e um cliente que chega antes do seu
+# grupo fica em "ainda não existe aqui" em retentativa eterna.
+_e("customer_group", "customers.CustomerGroup", conflict_policy=VERSAO,
+   dependencies=("account",))
+_e("customer", "customers.Customer", conflict_policy=VERSAO, dependencies=("account", "customer_group"),
+   # O vínculo com os grupos viaja junto do cliente. Sem declará-lo aqui, a
+   # loja receberia o cliente SEM os grupos dele — e a diferença só apareceria
+   # no dia em que alguém filtrasse a base por grupo no balcão e visse menos
+   # gente do que existe.
+   m2m_fields={"groups": "id"})
 _e("customer_address", "customers.CustomerAddress", conflict_policy=VERSAO,
    dependencies=("customer",))
 

@@ -255,6 +255,7 @@ const groups = computed(() =>
         canUseCash.value ? { id: "caixa", label: "Caixa", icon: "wallet" } : null,
         canUseCash.value ? { id: "formas-pagamento", label: "Formas de pagamento", icon: "credit-card" } : null,
         { id: "clientes", label: "Clientes", icon: "users" },
+        { id: "grupos-de-clientes", label: "Grupos de clientes", icon: "users" },
       ].filter(Boolean),
     },
     {

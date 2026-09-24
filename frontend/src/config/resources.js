@@ -208,6 +208,7 @@ export const resources = [
       { key: "name", label: "Nome" },
       { key: "phone", label: "Telefone" },
       { key: "email", label: "Email" },
+      { key: "group_names", label: "Grupos", type: "badges", sortable: false },
       { key: "is_active", label: "Ativo", type: "boolean" },
     ],
     formFields: [
@@ -216,6 +217,7 @@ export const resources = [
       { name: "birth_date", label: "Data de nascimento", type: "text", inputType: "date", section: "Dados pessoais" },
       { name: "phone", label: "Telefone", type: "text", required: true, maxlength: 32, placeholder: "(11) 90000-0000", section: "Contato" },
       { name: "email", label: "Email", type: "text", maxlength: 254, inputType: "email", section: "Contato" },
+      { name: "groups", label: "Grupos", type: "remote-multiselect", endpoint: "/customers/groups/", optionLabel: "name", optionValue: "id", globalScope: true, full: true, section: "Dados pessoais", hint: "Um cliente pode participar de varios grupos. Cadastre-os em Clientes > Grupos." },
       { name: "internal_notes", label: "Observacoes", type: "textarea", full: true, section: "Contato" },
       { name: "is_active", label: "Ativo", type: "boolean", default: true, section: "Contato" },
       { name: "address.label", label: "Identificacao", type: "text", default: "Principal", placeholder: "Casa, trabalho...", section: "Endereco principal" },
@@ -227,6 +229,23 @@ export const resources = [
       { name: "address.city", label: "Cidade", type: "text", section: "Endereco principal" },
       { name: "address.state", label: "UF", type: "text", placeholder: "SP", maxlength: 2, section: "Endereco principal" },
       { name: "address.reference", label: "Ponto de referencia", type: "textarea", full: true, rows: 2, section: "Endereco principal" },
+    ],
+  },
+  {
+    name: "grupos-de-clientes",
+    title: "Grupos de clientes",
+    endpoint: "/customers/groups/",
+    columns: [
+      { key: "name", label: "Nome" },
+      { key: "description", label: "Descricao" },
+      { key: "customer_count", label: "Clientes" },
+      { key: "is_active", label: "Ativo", type: "boolean" },
+    ],
+    formFields: [
+      { name: "name", label: "Nome do grupo", type: "text", maxlength: 120, required: true, hint: "Como o grupo aparece no cadastro do cliente. Unico por conta." },
+      { name: "description", label: "Descricao", type: "text", maxlength: 255, full: true, hint: "Opcional. Para quem for usar o grupo depois lembrar o criterio." },
+      { name: "color", label: "Cor do selo", type: "text", inputType: "color", default: "#64748b", hint: "Grupo se le de relance na grade de clientes." },
+      { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
   },
   {

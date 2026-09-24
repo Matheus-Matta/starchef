@@ -3,6 +3,38 @@ from django.db import models
 from apps.core.models import TenantModel
 
 
+class CustomerGroup(TenantModel):
+    """Um grupo de clientes: "Aniversariantes", "Corporativo", "VIP".
+
+    Existe para o restaurante falar com um recorte da base sem ter de repetir
+    o recorte a cada vez. É cadastro da CONTA, e não do restaurante: a mesma
+    pessoa que é VIP na matriz é VIP na filial, e duplicar o grupo por unidade
+    faria a franquia manter a mesma lista em N lugares.
+
+    O vínculo é N:N de propósito — o cliente corporativo também faz
+    aniversário, e obrigá-lo a escolher um grupo só transformaria o cadastro
+    numa disputa entre quem organiza a base.
+    """
+
+    name = models.CharField(max_length=120)
+    description = models.CharField(max_length=255, blank=True)
+    # Cor do selo na listagem. Grupo se le de relance numa grade de clientes;
+    # sem cor, dez grupos viram dez textos iguais.
+    color = models.CharField(max_length=20, default="#64748b")
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            # O nome e o que o operador digita e procura. Dois "VIP" na mesma
+            # conta sao duas listas que ninguem consegue distinguir depois.
+            models.UniqueConstraint(fields=["account", "name"], name="unique_customer_group_per_account"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Customer(TenantModel):
     name = models.CharField(max_length=180)
     phone = models.CharField(max_length=32, db_index=True)
@@ -10,6 +42,12 @@ class Customer(TenantModel):
     document = models.CharField(max_length=20, blank=True)  # CPF
     birth_date = models.DateField(null=True, blank=True)
     internal_notes = models.TextField(blank=True)
+    groups = models.ManyToManyField(
+        CustomerGroup,
+        related_name="customers",
+        blank=True,
+        help_text="Um cliente pode participar de vários grupos.",
+    )
     is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:

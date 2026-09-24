@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from apps.core.admin_mixins import TenantModelAdmin
-from apps.customers.models import Customer, CustomerAddress
+from apps.customers.models import Customer, CustomerAddress, CustomerGroup
 
 
 @admin.register(Customer)
@@ -15,3 +15,10 @@ class CustomerAdmin(TenantModelAdmin):
 class CustomerAddressAdmin(TenantModelAdmin):
     list_display = ("customer", "account", "label", "district", "city", "state", "is_default")
     list_filter = ("account", "restaurant", "branch", "city", "state")
+
+
+@admin.register(CustomerGroup)
+class CustomerGroupAdmin(TenantModelAdmin):
+    list_display = ("name", "account", "description", "is_active")
+    list_filter = ("account", "is_active")
+    search_fields = ("name", "description")

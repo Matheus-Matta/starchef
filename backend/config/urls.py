@@ -27,7 +27,7 @@ from apps.accounts.views import (
 from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
 from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet, ReusableAssetViewSet
-from apps.customers.views import CustomerAddressViewSet, CustomerViewSet
+from apps.customers.views import CustomerAddressViewSet, CustomerGroupViewSet, CustomerViewSet
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, FocusNfeWebhookView, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
 from apps.sla.views import ServiceLevelAgreementViewSet
@@ -122,6 +122,7 @@ router.register("commands", CommandViewSet, basename="commands")
 router.register("delivery/zones", DeliveryZoneViewSet, basename="delivery-zones")
 router.register("delivery/deliverymen", DeliverymanViewSet, basename="deliverymen")
 router.register("customers/addresses", CustomerAddressViewSet, basename="customer-addresses")
+router.register("customers/groups", CustomerGroupViewSet, basename="customer-groups")
 router.register("customers", CustomerViewSet, basename="customers")
 router.register("menu/categories", ProductCategoryViewSet, basename="product-categories")
 router.register("menu/products", ProductViewSet, basename="products")
