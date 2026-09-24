@@ -594,6 +594,22 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
         invoice.consult_url = config.portal_url
         invoice.created_by = getattr(invoice, "created_by", None) or user
         invoice.updated_by = user
+        # O VALOR ENTRA ANTES DO PRIMEIRO SAVE.
+        #
+        # Esta gravação existe só para dar `pk` aos itens, e `rebuild_invoice_items`
+        # calcula os totais depois — então a linha nascia com R$ 0,00 e só
+        # ganhava valor no save do fim. Uma nota que ficasse pelo caminho (o
+        # processo morre, o worker é reciclado) aparecia na tela como documento
+        # zerado e em rascunho, sem nada dizendo que estava pela metade.
+        #
+        # `total_amount` é o do pedido, que é a mesma fonte que o fim usa;
+        # `products_total` é recalculado linha a linha logo abaixo, com o
+        # detalhamento tributário. Aqui é só o piso de honestidade da linha.
+        invoice.total_amount = order.total
+        invoice.products_total = sum(
+            (item.total_price for item in items), Decimal("0")
+        )
+        invoice.discount_total = order.discount
         invoice.save()  # precisa de pk para os itens
 
         # (Re)monta os itens fiscais com o detalhamento tributario.
