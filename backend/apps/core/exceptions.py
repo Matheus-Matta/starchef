@@ -3,42 +3,24 @@ import logging
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError
 from rest_framework import status
-from rest_framework.exceptions import APIException, ValidationError
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
 
 logger = logging.getLogger("api.errors")
 
 
-class LimitReached(APIException):
-    """Limite de tenancy atingido (ex.: nº de usuários/restaurantes do plano).
-
-    Usa 409 (conflito com o estado atual da conta) e um `default_code` próprio
-    para que o frontend possa reconhecer o caso e exibir a mensagem personalizada.
-    A mensagem é passada na criação da exceção e chega ao usuário via envelope.
-    """
-
-    status_code = status.HTTP_409_CONFLICT
-    default_detail = "Limite do plano atingido."
-    default_code = "limit_reached"
-
-
-class MediaStorageUnavailable(APIException):
-    """Não há como gravar a imagem agora (storage sem credencial ou fora do ar).
-
-    503 e não 500: o servidor está de pé e o resto da API funciona — só o
-    destino do arquivo é que não está disponível, e o cliente pode tentar de
-    novo depois que a configuração for corrigida. O `default_code` permite ao
-    frontend reconhecer o caso e orientar quem administra a conta, em vez de
-    mostrar "erro inesperado" para um problema com solução conhecida.
-
-    Levantada pelo `apps.core.storage` no momento da gravação — nunca no boot.
-    """
-
-    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    default_detail = "O armazenamento de imagens não está disponível."
-    default_code = "media_storage_unavailable"
-
+# Reexportadas: as classes moram em `api_errors`, mas este continua sendo o
+# lugar de onde o projeto inteiro as importa.
+from apps.core.api_errors import (  # noqa: E402
+    CancelBlocked as CancelBlocked,
+)
+from apps.core.api_errors import (  # noqa: E402
+    LimitReached as LimitReached,
+)
+from apps.core.api_errors import (  # noqa: E402
+    MediaStorageUnavailable as MediaStorageUnavailable,
+)
 
 STANDARD_MESSAGES_PT_BR = {
     "Authentication credentials were not provided.": "As credenciais de autenticação não foram fornecidas.",

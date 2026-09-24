@@ -26,6 +26,10 @@ mixin _ShellSection on _HomePageShared {
   List<Map<String, dynamic>> get orderItems;
   String get flowStep;
   set flowStep(String value);
+
+  /// Definido em `home_page_kitchen.dart`: pede a senha do supervisor para
+  /// liberar um cancelamento que o servidor barrou.
+  Future<String?> _autorizarCancelamentoDeItem(String motivo);
   String? get orderType;
   String? get selectedRestaurantId;
   bool get loading;
@@ -236,6 +240,9 @@ mixin _ShellSection on _HomePageShared {
                           ),
                           restaurantId: restaurantId,
                           codigosLidos: commandPageCodes.stream,
+                          // A tela de comandas não conhece o controlador; ela
+                          // recebe só a capacidade de pedir a liberação.
+                          autorizarCancelamento: _autorizarCancelamentoDeItem,
                           // O MESMO catálogo da venda: a tela de comandas
                           // lança produto igual, e carregar uma segunda cópia
                           // faria as duas divergirem na primeira alteração de

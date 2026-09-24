@@ -7,6 +7,7 @@ import 'command_detail_view.dart';
 import 'commands_actions.dart';
 import 'commands_grid.dart';
 import 'commands_loading.dart';
+import 'commands_table_actions.dart';
 
 /// As comandas em DUAS telas: o salão e o cartão aberto.
 ///
@@ -32,6 +33,7 @@ class CommandsPage extends StatefulWidget {
     this.tables = const [],
     this.restaurantId,
     this.codigosLidos,
+    this.autorizarCancelamento,
   });
 
   final CommandRepository repository;
@@ -53,12 +55,25 @@ class CommandsPage extends StatefulWidget {
   /// vazio.
   final Stream<String>? codigosLidos;
 
+  /// Pede a autorização de um supervisor para um cancelamento que o servidor
+  /// barrou, e devolve a senha (ou `null` se ninguém autorizou).
+  ///
+  /// Vem de fora como FUNÇÃO, e não como o controlador inteiro: esta tela não
+  /// precisa saber o que valida a senha nem como ela é sincronizada — só que
+  /// existe alguém capaz de liberar. Passar o controlador daria a ela acesso à
+  /// sessão, ao caixa e ao resto, para usar um método.
+  final Future<String?> Function(String motivo)? autorizarCancelamento;
+
   @override
   State<CommandsPage> createState() => _CommandsPageState();
 }
 
 class _CommandsPageState extends State<CommandsPage>
-    with CommandsLoading<CommandsPage>, CommandsActions<CommandsPage> {
+    with CommandsLoading<CommandsPage>, CommandsActions<CommandsPage>, CommandsTableActions<CommandsPage> {
+  @override
+  Future<String?> Function(String motivo)? get autorizarCancelamento =>
+      widget.autorizarCancelamento;
+
   final _busca = TextEditingController();
   final _leitor = TextEditingController();
   final _focoDoLeitor = FocusNode();

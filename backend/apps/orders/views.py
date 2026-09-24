@@ -10,12 +10,14 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.exceptions import CancelBlocked
 from apps.core.requests import required_field
 from apps.core.viewsets import BaseTenantViewSet
 from apps.core.access import is_tenant_admin
 from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
 from apps.orders.command_billing import attach_commands_to_order, detach_commands_from_order
+from apps.orders.item_cancellation import CancelamentoBloqueado
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.printers.models import ScaleReading
 from apps.orders.serializers import OrderBatchSerializer, OrderItemSerializer, OrderSerializer
@@ -514,6 +516,10 @@ class OrderViewSet(BaseTenantViewSet):
             )
         except OrderItem.DoesNotExist:
             return Response({"detail": "Item não encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        except CancelamentoBloqueado as exc:
+            # 409 com código próprio: o terminal reconhece e oferece a
+            # autorização do supervisor. Ver `CancelBlocked`.
+            raise CancelBlocked(" ".join(exc.messages)) from exc
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderItemSerializer(item).data)

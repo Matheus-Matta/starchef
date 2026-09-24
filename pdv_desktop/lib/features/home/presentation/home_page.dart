@@ -85,6 +85,7 @@ part 'home_page_commands_view.dart';
 part 'home_page_table_commands.dart';
 part 'home_page_customer.dart';
 part 'home_page_kitchen.dart';
+part 'home_page_kitchen_order.dart';
 part 'home_page_draft.dart';
 part 'home_page_draft_flow.dart';
 part 'home_page_draft_items.dart';
@@ -148,6 +149,7 @@ class _HomePageState extends State<HomePage>
         _DraftFlowSection,
         _DraftCommandItemsSection,
         _KitchenSection,
+        _KitchenOrderSection,
         _OrderSection,
         _ProductSection,
         _OrdersSection,

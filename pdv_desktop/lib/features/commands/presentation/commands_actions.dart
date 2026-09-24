@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../home/presentation/command_table_selection_dialog.dart';
+import '../../../core/network/api_exception.dart';
+
 import '../../orders/presentation/product_config_dialog.dart';
 import 'command_void_dialog.dart';
 import 'commands_loading.dart';
@@ -14,6 +15,8 @@ import 'commands_loading.dart';
 /// muda, relê também a grade, que é onde o operador procura "o cartão da mesa
 /// 12".
 mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
+  /// Fornecida pela tela: pede a senha do supervisor e devolve ela, ou `null`.
+  Future<String?> Function(String motivo)? get autorizarCancelamento;
   /// As mesas do salão, fornecidas pela página.
   List<Map<String, dynamic>> get mesas;
 
@@ -140,9 +143,28 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
     final motivo = await showCommandVoidDialog(context, item: item);
     if (motivo == null || !mounted) return;
     try {
-      await repository.voidItem(id, '${item['id']}', reason: motivo);
+      try {
+        await repository.voidItem(id, '${item['id']}', reason: motivo);
+      } on ApiException catch (recusa) {
+        // 409 é o servidor dizendo que o ESTADO barra — passou do prazo de
+        // cancelamento do restaurante. Não é erro de preenchimento: repetir o
+        // mesmo corpo não resolve, e a saída é um supervisor liberar.
+        if (recusa.statusCode != 409 || autorizarCancelamento == null) rethrow;
+        final senha = await autorizarCancelamento!(recusa.message);
+        if (senha == null) return;
+        await repository.voidItem(
+          id,
+          '${item['id']}',
+          reason: motivo,
+          cashPassword: senha,
+        );
+      }
       await carregarItens();
       await carregar();
+    } on ApiException catch (recusa) {
+      // A recusa do servidor já explica a regra e o que fazer. Prefixar com
+      // "Falha ao cancelar o item" enterra a frase útil no meio do ruído.
+      if (mounted) setState(() => erro = recusa.message);
     } catch (falha) {
       if (mounted) setState(() => erro = 'Falha ao cancelar o item: $falha');
     }
@@ -154,33 +176,4 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
   /// para qual mesa ele foi. Antes, vincular só existia no meio do fluxo de
   /// abrir pedido, então um cartão que sentou na mesa errada só era corrigido
   /// na hora de cobrar.
-  Future<void> escolherMesa() async {
-    final comanda = selecionada;
-    if (comanda == null) return;
-    final escolha = await showDialog<CommandTableSelection>(
-      context: context,
-      builder: (_) =>
-          CommandTableSelectionDialog(command: comanda, tables: mesas),
-    );
-    if (escolha == null || !mounted) return;
-    try {
-      final id = '${comanda['id']}';
-      final mesa = escolha.table;
-      final atualizada = mesa == null
-          ? await repository.unlinkTable(id)
-          : await repository.linkTable(commandId: id, tableId: '${mesa['id']}');
-      if (!mounted) return;
-      // O cartão inteiro vem do servidor: trocar só o número da mesa aqui
-      // deixaria a grade dizendo uma coisa e o detalhe outra.
-      setState(() {
-        selecionada = atualizada;
-        recado = mesa == null
-            ? 'Cartão tirado da mesa.'
-            : 'Cartão sentado na mesa ${mesa['number']}.';
-      });
-      await carregar();
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao mudar a mesa: $falha');
-    }
-  }
 }

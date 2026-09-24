@@ -451,6 +451,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             return Response({"detail": "Item não encontrado nesta comanda."}, status=404)
         # Passada a janela de tempo do restaurante, cancelar exige quem
         # responde. É o mesmo gesto do pedido, com a mesma credencial.
+        from apps.orders.item_cancellation import CancelamentoBloqueado
         from apps.orders.views import _can_authorize_cancellation
 
         authorized, authorizer, _how = _can_authorize_cancellation(
@@ -464,6 +465,10 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 authorized=authorized,
                 authorized_by=authorizer,
             )
+        except CancelamentoBloqueado as exc:
+            from apps.core.exceptions import CancelBlocked
+
+            raise CancelBlocked(" ".join(exc.messages)) from exc
         except ValidationError as exc:
             detalhe = getattr(exc, "messages", None) or [str(exc)]
             return Response({"detail": " ".join(detalhe)}, status=400)

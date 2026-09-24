@@ -100,13 +100,17 @@ class CommandRepository {
   );
 
   /// Cancela uma anotação. Ela sai da comanda como PERDA, não como venda.
+  /// [cashPassword] é a senha de ações do caixa, quando um supervisor precisou
+  /// liberar: passado o prazo do restaurante, o servidor recusa com 409 e é
+  /// ela que destrava — no mesmo corpo, conferida lá.
   Future<Map<String, dynamic>> voidItem(
     String commandId,
     String itemId, {
     required String reason,
+    String? cashPassword,
   }) => _api.delete(
     '/commands/$commandId/items/$itemId/void/',
-    body: {'reason': reason},
+    body: {'reason': reason, 'cash_password': ?cashPassword},
     accessToken: accessToken,
   );
 

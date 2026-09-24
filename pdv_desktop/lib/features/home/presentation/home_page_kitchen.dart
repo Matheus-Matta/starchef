@@ -9,10 +9,12 @@
 
 part of 'home_page.dart';
 
-/// Cozinha e cancelamento: cancelar item ou pedido, o cupom que avisa a
-/// produção, e o envio da rodada.
+/// Cancelar um ITEM — e a autorização que destrava o que a regra barrou.
 ///
-/// Os métodos foram MOVIDOS, não reescritos.
+/// Cancelar o PEDIDO e mandar a rodada para a produção são outros gestos, e
+/// moram em `home_page_kitchen_order.dart`: o que muda entre eles não é o
+/// código, é quem decide. Tirar um prato da conta é do operador; cancelar a
+/// venda inteira é de quem responde pelo caixa.
 mixin _KitchenSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
@@ -67,11 +69,22 @@ mixin _KitchenSection on _HomePageShared {
     if (reason == null || !mounted) return;
 
     await _work(() async {
-      await api.delete(
-        '/orders/${activeOrder!['id']}/items/${item['id']}/void/',
-        body: {'reason': reason},
-        accessToken: token,
-      );
+      try {
+        await _enviarCancelamentoDeItem(item, reason: reason);
+      } on ApiException catch (erro) {
+        // 409 é o servidor dizendo que o ESTADO barra: passou do prazo de
+        // cancelamento ou o item está numa coluna do KDS que bloqueia. Não é
+        // erro de preenchimento — repetir o mesmo corpo não resolve, e existe
+        // uma saída: um supervisor libera com a senha de ações do caixa.
+        if (erro.statusCode != 409) rethrow;
+        final liberado = await _autorizarCancelamentoDeItem(erro.message);
+        if (liberado == null) return;
+        await _enviarCancelamentoDeItem(
+          item,
+          reason: reason,
+          cashPassword: liberado,
+        );
+      }
       // O cupom de cancelamento é criado pelo servidor junto com a baixa do
       // item (`register_kitchen_item_cancellation_jobs`). O agente deste
       // terminal recebe o `PrintJob` no ciclo seguinte e põe no papel: não há
@@ -80,109 +93,44 @@ mixin _KitchenSection on _HomePageShared {
     });
   }
 
-  Future<void> _cancelOrder() async {
-    final order = activeOrder;
-    if (order == null ||
-        const {
-          'paid',
-          'cancelled',
-          'refunded',
-        }.contains('${order['status']}')) {
-      return;
-    }
+  Future<void> _enviarCancelamentoDeItem(
+    Map<String, dynamic> item, {
+    required String reason,
+    String? cashPassword,
+  }) => api.delete(
+    '/orders/${activeOrder!['id']}/items/${item['id']}/void/',
+    body: {'reason': reason, 'cash_password': ?cashPassword},
+    accessToken: token,
+  );
 
-    final reason = await ItemVoidReasonDialog.show(
-      context,
-      itemName: 'Pedido #${order['sequence']}',
-      title: 'Cancelar pedido',
-      confirmLabel: 'Continuar',
-    );
-    if (!mounted || reason == null) return;
-
-    Map<String, dynamic>? cancelled;
-    if (widget.controller.session!.user.canCancelOrders) {
-      // A permissão já veio no perfil autenticado e o servidor a confirma no
-      // mesmo request. Não há motivo para pedir uma segunda credencial.
-      cancelled = await _work(
-        () => api.post(
-          '/orders/${order['id']}/cancel/',
-          body: {'reason': reason},
-          accessToken: token,
-        ),
-        errorTitle: 'Não foi possível cancelar o pedido',
-      );
-    } else {
-      // Só a senha de ações do caixa: conferida aqui, contra o hash já
-      // sincronizado, e enviada ao servidor junto do cancelamento (que é
-      // quem apaga consumo já lançado).
-      String? cashPassword;
-      final authorized = await showSupervisorCloseDialog(
-        context: context,
-        title: 'Autorizar cancelamento',
-        description:
-            'Informe a senha de ações do caixa para cancelar este pedido.',
-        confirmLabel: 'Cancelar pedido',
-        cancelLabel: 'Voltar',
-        confirmIcon: Icons.cancel_outlined,
-        verifyPassword: (password) async {
-          final valid = await widget.controller.verifySupervisorClosePassword(
-            password,
-          );
-          if (valid) cashPassword = password;
-          return valid;
-        },
-        onInvalidPassword: () => widget.controller.syncSupervisorPassword(
-          restaurantId: restaurantId,
-          force: true,
-        ),
-      );
-      if (!mounted ||
-          !authorized ||
-          '${activeOrder?['id']}' != '${order['id']}') {
-        return;
-      }
-      cancelled = await _work(
-        () => api.post(
-          '/orders/${order['id']}/cancel/',
-          body: {'reason': reason, 'cash_password': ?cashPassword},
-          accessToken: token,
-        ),
-        errorTitle: 'Não foi possível cancelar o pedido',
-      );
-    }
-    if (!mounted || cancelled == null) return;
-
-    if (!mounted) return;
-    await _goHome();
-  }
-
-  /// Envia os itens pendentes para produção.
+  /// Pede a senha de ações do caixa para liberar um cancelamento barrado.
   ///
-  /// Quem monta a comanda e decide em qual impressora de setor ela sai é o
-  /// SERVIDOR (`register_kitchen_batch_print_jobs`). Este terminal recebe o
-  /// `PrintJob` pronto pelo agente e põe no papel — ele é o dono da
-  /// impressora, não do documento.
-  ///
-  /// `client_batch_serial` continua indo: é ele que identifica a rodada e
-  /// impede que um reenvio, depois de uma resposta perdida no caminho, gere
-  /// uma segunda comanda para os mesmos itens.
-  Future<Map<String, dynamic>> _sendPendingItemsToKitchen(
-    List<Map<String, dynamic>> pendingItems,
-  ) async {
-    final batchSerial = OrderPresenter.generateBatchSerial();
-    final response = await api.post(
-      '/orders/${activeOrder!['id']}/send-to-kitchen/',
-      body: {'client_batch_serial': batchSerial},
-      accessToken: token,
-    );
-    AppLogger.instance.info(
-      'comanda_envio',
-      data: {
-        'pedido': '${activeOrder?['id']}',
-        'itens_pendentes': pendingItems.length,
-        'lote': batchSerial,
+  /// Devolve a senha quando alguém autoriza, ou `null` quando desiste. A senha
+  /// é conferida aqui contra o hash já sincronizado E enviada ao servidor, que
+  /// é quem de fato decide — conferir só no terminal seria uma tranca que
+  /// qualquer cliente desatualizado contorna.
+  Future<String?> _autorizarCancelamentoDeItem(String motivo) async {
+    String? senha;
+    final autorizado = await showSupervisorCloseDialog(
+      context: context,
+      title: 'Autorizar cancelamento',
+      description:
+          '$motivo Informe a senha de ações do caixa para liberar.',
+      confirmLabel: 'Liberar cancelamento',
+      cancelLabel: 'Voltar',
+      confirmIcon: Icons.lock_open_outlined,
+      verifyPassword: (password) async {
+        final valid = await widget.controller.verifySupervisorClosePassword(
+          password,
+        );
+        if (valid) senha = password;
+        return valid;
       },
+      onInvalidPassword: () => widget.controller.syncSupervisorPassword(
+        restaurantId: restaurantId,
+        force: true,
+      ),
     );
-    return response;
+    return autorizado ? senha : null;
   }
 }
