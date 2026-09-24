@@ -140,7 +140,11 @@ def test_cartao_preso_em_outra_conta_DIZ_isso(
     recusa = anexar(api_client, segunda.data["id"], [cartao.pk])
 
     assert recusa.status_code == 409
-    assert "outra conta aberta" in str(recusa.data)
+    # Com o número da conta que segura o cartão e o que fazer para soltá-lo.
+    recado = str(recusa.data)
+    assert f"#{primeira.data['sequence']}" in recado, recado
+    assert "continua aberta" in recado, recado
+    assert "Remova os cartões" in recado, recado
 
 
 def test_comanda_INEXISTENTE_na_conta_e_recusada(cenario, api_client, restaurant):

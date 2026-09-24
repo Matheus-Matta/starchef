@@ -79,7 +79,13 @@ def test_a_recusa_DIZ_que_o_cartao_esta_em_outra_conta(
         )
 
     recado = " ".join(falha.value.messages).lower()
-    assert "outra conta" in recado, recado
+    # A recusa precisa APONTAR a conta que está segurando o cartão, com o
+    # número: sem ele o operador sai procurando a conta aberta no salão.
+    assert f"#{conta_abandonada.sequence}" in recado, recado
+    assert "continua aberta" in recado, recado
+    # E precisa dizer o que fazer. "Cancele aquela conta" seria conselho caro:
+    # cancelar marca o consumo como perda, e o cliente consumiu de verdade.
+    assert "remova os cartões" in recado, recado
     assert "não tem item pendente" not in recado
 
 

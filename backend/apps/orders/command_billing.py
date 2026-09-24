@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from apps.core.tenant import tenant_context
 from apps.orders.command_item_to_order import copy_addons, to_order_item
-from apps.orders.models import CommandItem, OrderItem
+from apps.orders.models import CommandItem, Order, OrderItem
 
 #: Teto por chamada. Não é o limite do desenho — é o limite do GESTO: um caixa
 #: que incluísse mil cartões de uma vez quase certamente errou a seleção, e uma
@@ -110,9 +110,10 @@ def attach_commands_to_order(*, order, command_ids, user):
     apontando de volta — é esse fio que, no encerramento do pedido, marca a
     anotação como concluída e esvazia o cartão.
 
-    Repetir a chamada com a mesma comanda é inofensivo: a anotação que já tem
-    item de pedido é ignorada, e a restrição no banco é quem garante isso
-    mesmo com dois caixas ao mesmo tempo.
+    Repetir a chamada NESTE pedido é inofensivo: a anotação que já tem item é
+    ignorada, e a restrição no banco garante isso mesmo com dois caixas ao
+    mesmo tempo. Repetir em OUTRA conta aberta é recusado — o mesmo cartão em
+    duas contas divide o consumo entre elas, e uma das duas nunca é paga.
     """
     ids = [str(value) for value in dict.fromkeys(command_ids) if value]
     if not ids:
@@ -149,11 +150,54 @@ def attach_commands_to_order(*, order, command_ids, user):
         # linha de R$ 0,00 que ninguém sabe explicar — ele é encerrado junto
         # com o cartão, na liberação.
         pendentes = list(billable_items_of(ids).select_for_update(of=("self",)))
-        ja_cobrados = set(
+        ja_em_pedido = list(
             OrderItem.objects.filter(
                 command_item_id__in=[p.pk for p in pendentes]
-            ).values_list("command_item_id", flat=True)
+            ).values_list("command_item_id", "order_id", "order__status")
         )
+        ja_cobrados = {item for item, _, _ in ja_em_pedido}
+
+        # O CARTÃO NÃO PODE ESTAR EM DUAS CONTAS ABERTAS AO MESMO TEMPO.
+        #
+        # Conferir só `novos` deixava passar o caso pior: o operador abre a
+        # conta, anexa os cartões e fecha a tela sem concluir; depois o garçom
+        # lança mais um item em cada cartão. Como há anotação nova, `novos`
+        # não fica vazio, a recusa abaixo não dispara — e a segunda conta
+        # nasce com PARTE do consumo, enquanto a primeira segura o resto.
+        #
+        # O cliente vê uma conta menor do que consumiu, a conta abandonada
+        # nunca é paga, e quando a nova é quitada as anotações dela continuam
+        # pendentes: o cartão segue ocupado depois de o cliente ir embora.
+        # Nada disso estoura — é só dinheiro no lugar errado.
+        presos = {
+            pedido
+            for _, pedido, situacao in ja_em_pedido
+            if pedido != order.pk
+            and situacao in (Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT)
+        }
+        if presos:
+            # DIZER QUAL CONTA, E DIZER O QUE FAZER.
+            #
+            # "Descarte aquela conta" seria conselho caro: cancelar marca o
+            # consumo dela como PERDA, e o cliente consumiu de verdade. Quem
+            # devolve as anotações ao cartão é `detach-commands` — e é isso
+            # que o operador precisa ler, com o número da conta na mão, em vez
+            # de sair procurando.
+            contas = sorted(
+                Order.objects.filter(pk__in=presos).values_list("sequence", flat=True)
+            )
+            onde = ", ".join(f"#{numero}" for numero in contas)
+            numeros = sorted(c.number for c in comandas.values())
+            alvo = (
+                f"A comanda {numeros[0]} já está"
+                if len(numeros) == 1
+                else "Estas comandas já estão"
+            )
+            raise ValidationError(
+                f"{alvo} na conta {onde}, que continua aberta. Remova os "
+                "cartões daquela conta (ou conclua-a) antes de cobrar aqui."
+            )
+
         novos = [p for p in pendentes if p.pk not in ja_cobrados]
         if not novos:
             numeros = [c.number for c in comandas.values()]

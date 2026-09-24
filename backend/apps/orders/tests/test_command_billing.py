@@ -404,3 +404,43 @@ def test_o_proximo_cliente_nao_herda_nada(restaurant, branch, manager_user, prod
 
     assert [item.command_item_id for item in criados] == [nova.pk]
 
+
+
+@pytest.mark.django_db
+def test_cartao_preso_em_conta_abandonada_NAO_entra_em_outra(
+    restaurant, branch, manager_user, produto
+):
+    """O pior caso da conta abandonada: ela NAO dava erro, dividia a conta.
+
+    O operador abre a conta, anexa o cartao e fecha a tela sem concluir. Mais
+    tarde o garcom lanca outro item no mesmo cartao. Como havia anotacao nova,
+    a recusa por "nada novo a cobrar" nao disparava: a segunda conta nascia
+    com PARTE do consumo e a primeira segurava o resto.
+
+    O cliente via uma conta menor do que consumiu, a abandonada nunca era
+    paga, e quando a nova era quitada as anotacoes dela continuavam pendentes
+    — o cartao seguia ocupado depois de o cliente ir embora. Nada estourava.
+    """
+    comanda = _comanda(restaurant, branch, 910)
+    launch_item(command=comanda, product=produto, user=manager_user)
+    abandonada = _pedido(restaurant, branch, manager_user)
+    attach_commands_to_order(
+        order=abandonada, command_ids=[str(comanda.pk)], user=manager_user
+    )
+
+    # O garcom lanca mais um item DEPOIS de a conta ter sido abandonada.
+    launch_item(command=comanda, product=produto, user=manager_user)
+
+    nova = _pedido(restaurant, branch, manager_user)
+    with pytest.raises(ValidationError) as recusa:
+        attach_commands_to_order(
+            order=nova, command_ids=[str(comanda.pk)], user=manager_user
+        )
+
+    mensagem = " ".join(recusa.value.messages)
+    # A recusa precisa dizer QUAL conta e O QUE fazer: sem o numero, o
+    # operador sai procurando; e "cancele aquela conta" seria conselho caro,
+    # porque cancelar marca o consumo como perda.
+    assert f"#{abandonada.sequence}" in mensagem
+    assert "Remova os cartões" in mensagem
+    assert not OrderItem.objects.filter(order=nova).exists()
