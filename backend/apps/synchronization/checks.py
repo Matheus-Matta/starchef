@@ -8,6 +8,11 @@ from django.conf import settings
 from django.core.checks import Warning as CheckWarning
 from django.core.checks import register
 
+from apps.synchronization.checks_identidade import (
+    _checar_faixa_de_id,
+    _checar_nome,
+    _checar_papel_gravado,
+)
 from apps.synchronization.constants import NodeType
 from apps.synchronization.services import guard
 
@@ -35,6 +40,7 @@ def check_sync_configuration(app_configs, **kwargs):
 
     if tipo == NodeType.LOCAL:
         avisos.extend(_checar_local())
+    avisos.extend(_checar_papel_gravado(tipo))
     avisos.extend(_checar_chave())
     avisos.extend(_checar_triggers())
     return avisos
@@ -104,62 +110,6 @@ def _checar_triggers():
             "Tabelas: " + ", ".join(ausentes[:8]) + ("…" if len(ausentes) > 8 else "")
         ),
         id="synchronization.W004",
-    )]
-
-
-def _checar_nome():
-    """Esta loja tem nome próprio?
-
-    Vazio cai no padrão "Servidor da loja", e o padrão é o mesmo para todo
-    mundo: com três lojas matriculadas, o Admin da nuvem lista três nós com o
-    mesmo nome e nada que os distinga além do UUID. Quem for descartar a fila
-    de uma delas está a um clique de descartar a da outra.
-    """
-    if not getattr(settings, "SYNC_AUTO_ENROLL", False):
-        return []
-    if getattr(settings, "SYNC_NODE_NAME", "").strip():
-        return []
-    return [CheckWarning(
-        "SYNC_NODE_NAME vazio: esta loja vai se matricular como "
-        '"Servidor da loja".',
-        hint=(
-            "Dê um nome próprio (ex.: SYNC_NODE_NAME=Loja Cobogó). É como ela "
-            "aparece no Admin da nuvem; sem isso, todas ficam com o mesmo nome "
-            "e só o UUID as distingue. Trocar depois e rematricular renomeia o "
-            "nó existente."
-        ),
-        id="synchronization.W006",
-    )]
-
-
-def _checar_faixa_de_id():
-    """A loja ainda numera usuário na mesma faixa que a nuvem?
-
-    A migration `0009` empurra a sequência para fora dela. Este aviso existe
-    para a instalação que já estava no ar quando a migration passou, ou que
-    virou nó LOCAL depois. O porquê inteiro está em `services/user_ids.py`.
-    """
-    try:
-        from django.db import connection
-
-        from apps.synchronization.services import user_ids
-
-        if not user_ids.dentro_da_faixa_da_nuvem(connection):
-            return []
-        atual = user_ids.valor_atual(connection)
-    except Exception:  # noqa: BLE001 — banco ainda migrando, por exemplo
-        return []
-
-    return [CheckWarning(
-        f"A sequência de `auth_user` está em {atual}, dentro da faixa que a "
-        "nuvem usa.",
-        hint=(
-            "Um usuário criado nesta loja pode receber um id que a nuvem já "
-            "deu a OUTRA pessoa, e a sincronização sobrescreveria uma com a "
-            "outra sem erro visível — hash de senha inclusive. Rode "
-            "`manage.py migrate synchronization`, que a 0009 reserva a faixa."
-        ),
-        id="synchronization.W007",
     )]
 
 

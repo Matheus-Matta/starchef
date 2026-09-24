@@ -29,18 +29,14 @@ TWO_PLACES = Decimal("0.01")
 THREE_PLACES = Decimal("0.001")
 
 
-def next_order_sequence(restaurant):
-    """O próximo número de pedido deste restaurante, NA FAIXA DESTE NÓ.
-
-    A loja e a nuvem numeram faixas separadas: as duas atendem o mesmo
-    restaurante, e enquanto a loja está fora ela não enxerga o que a nuvem
-    emitiu. Sem faixas, as duas entregariam o mesmo número, e a conferência de
-    caixa do dia encontraria dois "pedido 17". Ver `sequence_ranges`.
-    """
-    from apps.orders.sequence_ranges import proximo_numero
-
-    with tenant_context(restaurant.account):
-        return proximo_numero(Order.objects.filter(restaurant=restaurant))
+# A numeração do pedido mora em `order_numbering`. Reexportada porque
+# `next_order_sequence` é chamado de fora e sempre foi importado daqui.
+from apps.orders.order_numbering import (  # noqa: E402
+    _criar_pedido_numerado,
+)
+from apps.orders.order_numbering import (  # noqa: E402
+    next_order_sequence as next_order_sequence,
+)
 
 
 @transaction.atomic
@@ -84,11 +80,10 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
             # para histórico, relatórios e impressão após o pagamento.
             kwargs["table"] = command.current_table
 
-        order = Order.objects.create(
+        order = _criar_pedido_numerado(
             account=account,
             restaurant=restaurant,
             branch=None,
-            sequence=next_order_sequence(restaurant),
             order_type=order_type,
             responsible_user=responsible_user or user,
             created_by=user,

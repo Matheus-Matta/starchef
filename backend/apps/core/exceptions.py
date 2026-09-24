@@ -83,7 +83,12 @@ def _django_validation_detail(exc):
 
 def _integrity_message(exc):
     """Traduz violações comuns de integridade em mensagens compreensíveis."""
+    from apps.core.conflitos import CONFLITOS_CONHECIDOS
+
     text = str(exc).lower()
+    for restricao, mensagem in CONFLITOS_CONHECIDOS.items():
+        if restricao in text:
+            return mensagem
     if "unique" in text or "duplicate" in text:
         return "Já existe um registro com estes dados (valor duplicado)."
     if "foreign key" in text or "violates foreign key" in text:

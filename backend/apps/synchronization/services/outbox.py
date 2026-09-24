@@ -12,9 +12,8 @@ o dispatcher volta a pegá-lo — mesmo depois de reinício, queda de rede ou
 semanas offline.
 """
 import logging
-import threading
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.synchronization.constants import Direction, EventStatus, Operation
 from apps.synchronization.services import crypto, nodes, serialization
@@ -22,62 +21,15 @@ from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
 
-#: Enquanto ligado, nada do que este processo grava vira evento novo. É o
-#: `SET LOCAL app.sync_apply = '1'` do plano, na versão que funciona também no
-#: SQLite do desenvolvimento: uma flag por thread, ligada só durante o apply.
-_estado = threading.local()
-
-
-def is_applying():
-    return getattr(_estado, "applying", False)
-
-
-class applying_remote_event:
-    """Context manager que desliga a captura durante a aplicação de um evento.
-
-    Sem isso, aplicar um produto vindo da nuvem geraria um evento de volta para
-    a nuvem, que geraria outro de volta para a loja: o laço infinito que o §13.2
-    manda evitar.
-
-    Desliga os DOIS caminhos de captura: a flag por thread (que os signals
-    consultam) e, no PostgreSQL, a variável `app.sync_apply` da transação (que
-    a trigger consulta). Desligar só um deixaria o laço vivo pelo outro.
-    """
-
-    def __enter__(self):
-        self.anterior = is_applying()
-        _estado.applying = True
-        # `SET LOCAL` só tem efeito DENTRO de uma transação: em autocommit o
-        # PostgreSQL o aceita, emite um aviso e não faz nada. Se quem chamou
-        # não abriu transação, a supressão da trigger sumiria em silêncio — e o
-        # sintoma seria um laço de eco, descoberto muito depois. Então o bloco
-        # é garantido aqui, e não confiado a quem chama.
-        self._transacao = None
-        if not transaction.get_connection().in_atomic_block:
-            self._transacao = transaction.atomic()
-            self._transacao.__enter__()
-        self._marcar_sessao()
-        return self
-
-    def __exit__(self, tipo, valor, traco):
-        _estado.applying = self.anterior
-        if self._transacao is not None:
-            self._transacao.__exit__(tipo, valor, traco)
-        return False
-
-    def _marcar_sessao(self):
-        """`SET LOCAL app.sync_apply = '1'`. Morre com a transação.
-
-        Falhar aqui não pode abortar a aplicação: sem PostgreSQL não há
-        trigger, e a flag por thread já cobre os signals.
-        """
-        try:
-            from apps.synchronization.services import triggers
-
-            triggers.mark_apply_session()
-        except Exception:  # noqa: BLE001
-            logger.debug("sync: não foi possível marcar app.sync_apply", exc_info=True)
-
+# Reexportados: a supressão de eco mora em `outbox_eco`, mas quem já importava
+# `outbox.is_applying` / `outbox.applying_remote_event` continua importando de
+# onde sempre importou.
+from apps.synchronization.services.outbox_eco import (  # noqa: E402
+    applying_remote_event as applying_remote_event,
+)
+from apps.synchronization.services.outbox_eco import (  # noqa: E402
+    is_applying as is_applying,
+)
 
 def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
     """Registra o evento de saída de uma instância. Devolve os eventos criados.
@@ -150,6 +102,27 @@ def _account_de(instance):
 
 
 def _criar_evento(origem, destino, account_id, entry, payload, operation, run):
+    from apps.synchronization.services.outbox_sequencia import (
+        MAX_TENTATIVAS_DE_SEQUENCIA,
+        e_colisao_de_sequencia,
+        realinhar_contador,
+    )
+
+    for tentativa in range(MAX_TENTATIVAS_DE_SEQUENCIA):
+        try:
+            return _gravar_evento(
+                origem, destino, account_id, entry, payload, operation, run
+            )
+        except IntegrityError as erro:
+            if not e_colisao_de_sequencia(erro):
+                raise
+            if tentativa == MAX_TENTATIVAS_DE_SEQUENCIA - 1:
+                raise
+            realinhar_contador(origem)
+    return None
+
+
+def _gravar_evento(origem, destino, account_id, entry, payload, operation, run):
     from apps.synchronization.models import SyncEvent
 
     with transaction.atomic():

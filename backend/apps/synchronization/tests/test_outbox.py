@@ -167,3 +167,34 @@ def test_delete_vira_evento_de_exclusao(como_nuvem, conta):
     # Restaurant usa soft delete: a exclusão chega como UPDATE do deleted_at.
     evento = SyncEvent.objects.filter(entity_type="restaurant").latest("created_at")
     assert evento.operation in (Operation.UPDATE, Operation.DELETE)
+
+
+def test_contador_atrasado_se_realinha_em_vez_de_travar_a_loja(como_nuvem, conta):
+    """O banco restaurado de um backup mais velho que os eventos.
+
+    O contador do no e os eventos sao duas fontes para o MESMO numero, e saem
+    de sincronia sem ninguem reclamar: restauracao, no recriado, importacao
+    com sequencia explicita.
+
+    A partir dai TODA escrita sincronizada do no colide — abrir um pedido,
+    lancar um item, receber um pagamento. O operador via "ja existe um
+    registro com estes dados" em cima de um gesto que nao tinha nada de
+    duplicado, nada indicava onde procurar, e o erro NAO passava sozinho.
+    """
+    _restaurante(conta, "Antes da restauracao")
+    evento = SyncEvent.objects.get(entity_type="restaurant")
+
+    # O backup volta com o contador atras dos eventos que ja existem.
+    no = como_nuvem
+    no.sequence_counter = evento.sequence - 1
+    no.save(update_fields=["sequence_counter"])
+
+    # A proxima venda nao pode encontrar a loja travada.
+    _restaurante(conta, "Depois da restauracao")
+
+    novo = SyncEvent.objects.get(payload__fields__trade_name="Depois da restauracao")
+    assert novo.sequence > evento.sequence
+
+    # E o conserto e DEFINITIVO: o contador ficou acima de tudo que existe.
+    no.refresh_from_db(fields=["sequence_counter"])
+    assert no.sequence_counter >= novo.sequence
