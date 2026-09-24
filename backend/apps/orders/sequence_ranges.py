@@ -38,14 +38,48 @@ def _tipo_do_no():
     return str(getattr(settings, "SYNC_NODE_TYPE", "") or "").strip().lower()
 
 
+def _papel_gravado():
+    """O papel deste nó SEGUNDO O BANCO, ou `None` se não há registro.
+
+    O `SyncNode` com `is_self=True` é criado pelo provisionamento
+    (`sync_provision_node` na nuvem, `sync_install_node` na loja) e o outro
+    lado tem um registro que casa com ele. É conhecimento COMBINADO entre os
+    dois; a variável de ambiente é configuração local de um só.
+
+    Nunca derruba a venda: instalação sem sincronização, banco fora do ar ou
+    tabela ainda não migrada devolvem `None`, e quem chama cai na variável.
+    """
+    try:
+        from apps.synchronization.services.nodes import self_node_or_none
+
+        no = self_node_or_none()
+    except Exception:  # noqa: BLE001 — numerar pedido não depende da sincronização
+        return None
+    tipo = getattr(no, "node_type", "") or ""
+    return tipo.strip().lower() or None
+
+
 def e_a_nuvem():
     """Este backend é a nuvem?
 
-    Na dúvida (variável ausente, instalação sem sincronização), a resposta é
-    NÃO: o comportamento padrão continua sendo o da loja, que é o que quase
-    toda instalação é. Um nó que se acha nuvem por engano numeraria na faixa
-    alta sem necessidade.
+    QUEM DECIDE É O REGISTRO DO NÓ, e a variável de ambiente só entra quando
+    não há registro. A ordem importa, e custou: uma loja com
+    `SYNC_NODE_TYPE=cloud` no `.env` passava a numerar na faixa alta, entregava
+    os mesmos números que a nuvem entregava, e a sincronização juntava duas
+    vendas diferentes com o mesmo "pedido 1.000.002". O sintoma que aparecia
+    primeiro era outro — pedido nascendo com número de sete dígitos numa loja
+    que nunca passou de três.
+
+    Uma variável errada agora não muda a faixa: ela discorda do banco, o
+    `manage.py check` acusa (W008), e a numeração continua certa enquanto
+    ninguém arruma.
+
+    Na dúvida (sem registro E sem variável), a resposta é NÃO: o padrão é a
+    loja, que é o que quase toda instalação é.
     """
+    gravado = _papel_gravado()
+    if gravado:
+        return gravado == "cloud"
     return _tipo_do_no() == "cloud"
 
 

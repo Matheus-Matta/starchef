@@ -138,3 +138,47 @@ def test_sem_a_variavel_o_no_se_comporta_como_loja(restaurant, settings):
 
     assert sequence_ranges.e_a_nuvem() is False
     assert _proximo(restaurant) == 1
+
+
+@pytest.mark.django_db
+def test_o_REGISTRO_do_no_manda_e_a_variavel_errada_nao_muda_a_faixa(
+    restaurant, settings
+):
+    """A prevencao do defeito que ja aconteceu.
+
+    Uma loja com `SYNC_NODE_TYPE=cloud` no `.env` passava a numerar na faixa
+    alta. Ela e a nuvem entregavam os mesmos numeros, e a sincronizacao juntava
+    duas vendas diferentes com o mesmo "pedido 1.000.002". O que aparecia
+    primeiro era outro sintoma: pedido nascendo com sete digitos numa loja que
+    nunca passou de tres.
+
+    Quem decide passa a ser o `SyncNode` provisionado — conhecimento COMBINADO
+    entre os dois lados —, e nao a configuracao local de um so.
+    """
+    from apps.synchronization.constants import NodeType
+    from apps.synchronization.models import SyncNode
+    from apps.synchronization.services import nodes
+
+    no = SyncNode.objects.create(
+        account=restaurant.account, node_type=NodeType.LOCAL,
+        name="Loja 1", is_self=True,
+    )
+    nodes.invalidate_cache()
+    settings.SYNC_NODE_ID = str(no.id)
+    # O `.env` errado: esta loja se declara nuvem.
+    settings.SYNC_NODE_TYPE = "cloud"
+
+    assert sequence_ranges.e_a_nuvem() is False
+    assert _proximo(restaurant) == 1
+
+
+@pytest.mark.django_db
+def test_sem_registro_a_variavel_continua_valendo(restaurant, settings):
+    """Instalacao sem sincronizacao nao pode depender de um registro que nao tem."""
+    from apps.synchronization.services import nodes
+
+    nodes.invalidate_cache()
+    settings.SYNC_NODE_TYPE = "cloud"
+
+    assert sequence_ranges.e_a_nuvem() is True
+    assert _proximo(restaurant) == PRIMEIRO_NUMERO_DA_NUVEM
