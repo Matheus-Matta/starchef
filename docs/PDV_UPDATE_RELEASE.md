@@ -47,6 +47,42 @@ entrega ao instalador do Android — e, desde a separação dos workflows,
 **manifesto próprio**: `latest-mobile.json`. O `latest-desktop.json` voltou a
 ser só do PDV.
 
+### O atendimento móvel, em detalhe
+
+O app consulta `latest-mobile.json` ao abrir a tela de login e, quando há versão
+nova, mostra um aviso com o botão **Baixar e instalar** e o TAMANHO do download —
+que é o que decide "agora ou depois" na rede da loja.
+
+**Avisa, não bloqueia.** No celular do garçom, no meio do almoço, travar o
+atendimento para baixar 25 MB é pior do que continuar na versão anterior: ele está
+em pé na frente do cliente. Quem escolhe o momento é ele, e "Depois" volta a
+aparecer no próximo início do app.
+
+O aviso só aparece quando há versão nova. Um banner permanente dizendo "você está
+atualizado" vira ruído que ninguém lê — e no dia em que virar aviso de verdade,
+ninguém vai ler também.
+
+**Escolhe o APK da arquitetura do aparelho** (`Build.SUPPORTED_ABIS[0]` por
+`MethodChannel`), caindo no universal quando ela não está no manifesto. São ~25 MB
+em vez de ~69 MB, baixados na rede da loja com o garçom esperando.
+
+**Confere tamanho e SHA-256 antes de entregar** ao instalador. A rede da loja cai
+no meio do download com frequência, e um APK truncado falha na cara do garçom sem
+dizer por quê. Arquivo que não confere é apagado — deixá-lo em disco faria a
+próxima tentativa achar que já baixou.
+
+**NÃO EXISTE ROLLBACK, e não dá para existir.** Quem instala é o instalador do
+Android, que pede a confirmação da pessoa; o app entrega o arquivo e perde o
+controle ali. Por isso o estado que o app conhece é "baixado e entregue", nunca
+"atualizado".
+
+**A permissão é o que mais trava na prática.** Instalar de fora da Play Store exige
+que o aparelho autorize ESTE app (`REQUEST_INSTALL_PACKAGES` +
+`canRequestPackageInstalls()`), e sem isso o instalador abre e fecha sem dizer
+nada. O app confere ANTES do download — baixar 25 MB para depois chegar a um beco
+gasta a rede e o tempo do garçom — e oferece o botão que leva à tela certa do
+sistema.
+
 > **Dois manifestos, dois produtos.** `latest-desktop.json` é do PDV
 > Windows/Linux; `latest-mobile.json` é do atendimento móvel. Os dois são
 > publicados no MESMO GitHub Release da tag `vX.Y.Z`, por workflows diferentes.
@@ -122,6 +158,7 @@ O pipeline rejeita uma tag divergente. Por exemplo, `v1.0.35` falha se o
 | Android | `StarChef-PDV-Mobile-vA.B.C.apk` | APK universal do atendimento móvel (~69 MB); instalação manual em qualquer aparelho, e o que as versões do app anteriores a 1.8.3 baixam |
 | Android | `StarChef-PDV-Mobile-vA.B.C-<abi>.apk` | um por arquitetura (`arm64-v8a`, `armeabi-v7a`, `x86_64`), ~25 MB; é o que a atualização automática baixa |
 | Todos | `latest-desktop.json` | manifesto consumido pelo verificador do PDV |
+| Todos | `latest-mobile.json` | manifesto consumido pelo app do garçom |
 
 No Windows, prefira o instalador para a primeira instalação. O `AppId` permanece
 estável e o instalador bloqueia instalação de versão igual ou inferior. Depois

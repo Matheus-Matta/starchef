@@ -1,7 +1,7 @@
 name: starchef_pdv_mobile
 description: "StarChef PDV Mobile — atendimento e impressão direto no backend."
 publish_to: 'none'
-version: 1.1.0+3
+version: 1.2.0+4
 
 environment:
   sdk: ^3.12.2
@@ -14,6 +14,11 @@ dependencies:
   http: ^1.6.0
   path_provider: ^2.1.5
   shadcn_ui: 0.56.1
+  # Atualizacao do app. As MESMAS versoes do PDV desktop de proposito: os dois
+  # leem manifesto publicado pelo mesmo release, e divergir aqui faria um
+  # verificar SHA-256 diferente do outro.
+  crypto: ^3.0.6
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:

@@ -8,6 +8,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -29,6 +31,87 @@ class MainActivity : FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
+        }
+        // ATUALIZACAO DO PROPRIO APP.
+        //
+        // Canal separado do de permissao de rede porque sao assuntos sem relacao,
+        // e juntar os dois faria um `when` com cinco metodos onde ninguem acha o
+        // que procura.
+        //
+        // No Android nao existe troca de pasta com rollback como no PDV desktop:
+        // quem instala e o instalador do sistema, e ele pede a confirmacao da
+        // pessoa. O app entrega o arquivo e perde o controle ali.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            INSTALL_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // A arquitetura decide QUAL apk baixar: o da abi tem ~25 MB e o
+                // universal ~69 MB, baixados na rede da loja com o garcom
+                // esperando.
+                "abi" -> result.success(Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                "canInstall" -> result.success(canRequestInstalls())
+                "openInstallPermission" -> {
+                    openInstallPermission()
+                    result.success(null)
+                }
+                "install" -> result.success(installApk(call.argument<String>("path")))
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** O aparelho autoriza ESTE app a instalar pacotes? */
+    private fun canRequestInstalls(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            // Antes do Android 8 a autorizacao era global ("fontes desconhecidas")
+            // e nao por app: nao ha o que consultar, e o instalador decide.
+            true
+        }
+
+    private fun openInstallPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+            return
+        }
+        startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+    }
+
+    /**
+     * Entrega o APK ao instalador do sistema.
+     *
+     * A URI vem do `FileProvider`: desde o Android 7 um `file://` que sai do
+     * processo estoura `FileUriExposedException`, e a excecao apareceria como
+     * "falha ao instalar" sem explicar nada.
+     */
+    private fun installApk(caminho: String?): Boolean {
+        val arquivo = caminho?.let { File(it) } ?: return false
+        if (!arquivo.isFile) return false
+        return try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.updates",
+                arquivo,
+            )
+            startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+            true
+        } catch (_: Exception) {
+            // Aparelho sem instalador acessivel, ou provider mal configurado. A
+            // interface avisa; estourar aqui derrubaria a tela do garcom.
+            false
         }
     }
 
@@ -76,6 +159,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "br.com.starchef.pdv_mobile/nearby_permission"
+        private const val INSTALL_CHANNEL = "br.com.starchef.pdv_mobile/apk_install"
         private const val REQUEST_CODE = 9100
     }
 }

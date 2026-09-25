@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- O unico caminho que o provider expoe: a pasta temporaria do app, que e onde
+     `getTemporaryDirectory()` grava o APK baixado. Expor a raiz dos arquivos
+     daria ao instalador acesso ao banco local e as credenciais do terminal. -->
+<paths>
+    <cache-path name="updates" path="." />
+</paths>

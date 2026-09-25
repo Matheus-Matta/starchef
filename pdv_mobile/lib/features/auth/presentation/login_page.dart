@@ -6,6 +6,7 @@ import '../../../core/widgets/shadcn_layout.dart';
 import '../../settings/presentation/api_settings_page.dart';
 import 'auth_scaffold.dart';
 import 'session_controller.dart';
+import '../../../core/update/update_banner.dart';
 
 /// Entrada do app: só quem é o garçom.
 ///
@@ -69,6 +70,10 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // O AVISO DE VERSAO FICA NO LOGIN porque e o unico momento do dia em
+            // que o garcom nao esta no meio de um atendimento. Durante o servico
+            // ele aparece no menu, onde nao interrompe nada.
+            const UpdateBanner(),
             LabeledField(
               controller: _username,
               label: 'Usuário',

@@ -209,10 +209,17 @@ jobs:
       # `package`) continuam baixando.
       - name: Build dos APKs
         shell: bash
+        env:
+          # A URL DO MANIFESTO ENTRA NO BINARIO. Sem este define, um fork
+          # compilaria um app que consulta as atualizacoes DESTE repositorio — e
+          # instalaria a nossa versao nos aparelhos dele. Mesmo tratamento que o
+          # PDV desktop da ao `PDV_UPDATE_MANIFEST_URL`.
+          MANIFEST_URL: ${{ vars.PDV_MOBILE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-mobile.json', github.repository) }}
         run: |
           set -euo pipefail
-          flutter build apk --release --split-per-abi
-          flutter build apk --release
+          defines=("--dart-define=PDV_MOBILE_MANIFEST_URL=$MANIFEST_URL")
+          flutter build apk --release --split-per-abi "${defines[@]}"
+          flutter build apk --release "${defines[@]}"
           out="$GITHUB_WORKSPACE/artifacts"
           mkdir -p "$out"
           apks=build/app/outputs/flutter-apk
