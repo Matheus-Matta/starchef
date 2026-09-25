@@ -37,6 +37,8 @@ mixin _PaymentView on _HomePageShared {
   set flowStep(String value);
   Map<String, dynamic>? get selectedMethod;
 
+  Widget _couponControl(BuildContext context);
+
   void _goBack();
   void _pressPaymentKey(String key);
   void _typePaymentAmount(String raw);
@@ -114,6 +116,10 @@ mixin _PaymentView on _HomePageShared {
                             'Desconto',
                             '- ${_money(activeOrder!['discount'])}',
                           ),
+                        // O CUPOM ENTRA ANTES DO TOTAL, junto das outras linhas
+                        // que o compoem. Depois do total ele pareceria um
+                        // extra, quando e justamente uma parcela dele.
+                        _couponControl(context),
                         _paymentSummaryRow(
                           'Total do pedido',
                           _money(activeOrder!['total']),

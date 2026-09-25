@@ -5,13 +5,10 @@ tem — CONFERIR. O caixa precisa saber se aquele código vale para AQUELE pedid
 antes de cobrar, e essa pergunta não existe numa promoção de vitrine.
 """
 
-from decimal import Decimal
-
 from django.db.models import Count
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.api_errors import CouponRejected
 from apps.core.viewsets import BaseTenantViewSet
 from apps.promotions.models import Coupon, CouponRedemption
 from apps.promotions.serializers import CouponRedemptionSerializer, CouponSerializer
@@ -91,20 +88,3 @@ class CouponRedemptionViewSet(BaseTenantViewSet):
     filterset_fields = ["coupon", "customer"]
     search_fields = ["document", "coupon__code"]
     ordering_fields = ["created_at", "amount"]
-
-
-def aplicar_cupom_no_pedido(request, order):
-    """Aplica o cupom do corpo da requisição a um pedido. Usado por `orders`.
-
-    Vive aqui, e não em `orders/views.py`, para a regra do cupom ter um só
-    dono: o pedido pede, as promoções decidem.
-    """
-    from apps.promotions.coupon_service import aplicar_cupom, retirar_cupom
-
-    codigo = request.data.get("code")
-    if codigo is None:
-        raise CouponRejected("Informe o código do cupom.")
-    if not str(codigo).strip():
-        retirar_cupom(order)
-        return None, Decimal("0.00")
-    return aplicar_cupom(order, codigo)

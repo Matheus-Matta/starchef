@@ -1,0 +1,82 @@
+/* Estilo do campo de cupom do PDV web.
+ *
+ * Fora do `.vue` pelo mesmo motivo de `ImageUploadField.css`: o arquivo passava
+ * do teto de 200 linhas do projeto, e estilo é a parte que menos se lê junto
+ * com a regra.
+ */
+.cupom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cupom__aplicado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: var(--weight-medium) 13px/1.3 var(--font-sans);
+}
+
+.cupom__aplicado-nome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.cupom__aplicado-valor {
+  color: var(--green-500, #22c55e);
+}
+
+.cupom__linha {
+  display: flex;
+  gap: 6px;
+}
+
+.cupom__input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: var(--weight-medium) 13px/1.2 var(--font-sans);
+  text-transform: uppercase;
+}
+
+.cupom__input[aria-invalid="true"] {
+  border-color: var(--red-500, #ef4444);
+}
+
+.cupom__btn {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: var(--weight-semibold) 13px/1.2 var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cupom__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cupom__btn--aplicar {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.cupom__btn--retirar {
+  border-color: var(--red-500, #ef4444);
+  color: var(--red-500, #ef4444);
+}
+
+.cupom__erro {
+  color: var(--red-500, #ef4444);
+  font: var(--weight-medium) 12px/1.35 var(--font-sans);
+}

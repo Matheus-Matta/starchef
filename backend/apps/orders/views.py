@@ -597,18 +597,30 @@ class OrderViewSet(BaseTenantViewSet):
 
     @action(detail=True, methods=["post"], url_path="apply-coupon")
     def apply_coupon(self, request, pk=None):
-        """Aplica um cupom ao pedido aberto, ou retira quando `code` vem vazio.
+        """Aplica, troca ou retira o cupom do pedido. `code` vazio RETIRA.
 
-        Existe separada do fechamento porque o cliente informa o cupom ANTES de
-        fechar, e ver o desconto entrar no total e o que ele espera. Obrigar a
-        fechar para descobrir se o cupom vale faria o caixa fechar e reabrir a
-        conta na frente dele.
+        Serve o pedido ABERTO e o pedido em PAGAMENTO, e os dois de propósito: o
+        cliente informa o cupom antes de fechar, e informa também no meio do
+        pagamento, quando lembra. Obrigar a fechar para descobrir se o cupom
+        vale faria o caixa fechar e reabrir a conta na frente dele; e obrigar a
+        voltar para o pedido faria ele desfazer o fechamento por causa de um
+        código.
+
+        Quem decide se pode é `promotions.coupon_service`: venda já paga,
+        cancelada ou bloqueada recusa, e o total nunca pode cair abaixo do que já
+        foi recebido.
         """
-        from apps.promotions.views import aplicar_cupom_no_pedido
+        from apps.promotions.coupon_service import mexer_no_cupom
 
-        order = self.get_object()
-        aplicar_cupom_no_pedido(request, order)
-        order = recalculate_order(order)
+        codigo = request.data.get("code")
+        if codigo is None:
+            # `None` aqui seria "não mexe", e não existe "não mexe" numa rota
+            # cujo único propósito é mexer: o cliente mandou a requisição errada.
+            return Response(
+                {"detail": 'Informe "code" com o cupom, ou vazio para retirar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        order = mexer_no_cupom(self.get_object(), codigo)
         return Response(self.get_serializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="pay")

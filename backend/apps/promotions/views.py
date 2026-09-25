@@ -119,5 +119,4 @@ class PromotionViewSet(BaseTenantViewSet):
 from apps.promotions.views_coupon import (  # noqa: E402,F401
     CouponRedemptionViewSet,
     CouponViewSet,
-    aplicar_cupom_no_pedido,
 )

@@ -17,9 +17,13 @@ from decimal import Decimal
 from django.db import transaction
 
 from apps.core.api_errors import CouponRejected
-from apps.promotions.coupon_identity import cliente_por_cpf, cpf_do_pedido
+from apps.promotions.coupon_guards import (
+    recusar_pedido_encerrado,
+    recusar_se_o_total_ficar_abaixo_do_recebido,
+)
+from apps.promotions.coupon_identity import cpf_do_pedido
 from apps.promotions.coupon_rules import avaliar
-from apps.promotions.models import Coupon, CouponRedemption
+from apps.promotions.models import Coupon
 
 
 def _base_do_cupom(order):
@@ -85,6 +89,7 @@ def buscar_cupom(account_id, codigo):
 @transaction.atomic
 def aplicar_cupom(order, codigo):
     """Prende o cupom ao pedido. Recusa com o motivo quando não se aplica."""
+    recusar_pedido_encerrado(order)
     cupom = buscar_cupom(order.account_id, codigo)
     motivo, desconto, _cliente = avaliar_no_pedido(cupom, order)
     if motivo:
@@ -99,10 +104,39 @@ def aplicar_cupom(order, codigo):
 @transaction.atomic
 def retirar_cupom(order):
     """Solta o cupom. O código sai também: o pedido não tem mais cupom nenhum."""
+    recusar_pedido_encerrado(order)
     order.coupon = None
     order.coupon_code = ""
     order.coupon_discount = Decimal("0.00")
     order.save(update_fields=["coupon", "coupon_code", "coupon_discount", "updated_at"])
+    return order
+
+
+@transaction.atomic
+def mexer_no_cupom(order, codigo):
+    """Aplica, troca ou retira o cupom — e devolve o pedido recalculado.
+
+    É o que a TELA DE PAGAMENTO chama. Ela precisa de três garantias que
+    `aplicar_cupom` sozinho não dá:
+
+    1. o total tem de vir já refeito, porque o teclado do caixa desenha o troco
+       a partir dele — devolver o pedido antigo faria o operador cobrar o valor
+       de antes do desconto;
+    2. a conferência do que já foi recebido só é possível DEPOIS do recálculo;
+    3. tudo numa transação: a recusa do item 2 tem de desfazer a aplicação, ou o
+       pedido ficaria com o desconto que acabou de ser rejeitado.
+
+    `codigo` vazio RETIRA. É gesto de uma tecla só no caixa, e separar em duas
+    rotas faria a tela decidir qual chamar a partir de um campo de texto.
+    """
+    from apps.orders.services import recalculate_order
+
+    if str(codigo or "").strip():
+        aplicar_cupom(order, codigo)
+    else:
+        retirar_cupom(order)
+    order = recalculate_order(order)
+    recusar_se_o_total_ficar_abaixo_do_recebido(order)
     return order
 
 
@@ -125,43 +159,9 @@ def revalidar(order):
         return Decimal("0.00"), motivo
     return desconto, None
 
-
-@transaction.atomic
-def registrar_resgate(order):
-    """Grava o resgate do cupom deste pedido — no pagamento, e uma vez só.
-
-    Idempotente de propósito: o pagamento pode ser confirmado duas vezes (fila
-    offline reenviando, webhook repetido), e um segundo resgate faria o cupom de
-    compra única aparecer como usado duas vezes pela mesma pessoa.
-    """
-    if not order.coupon_id or Decimal(order.coupon_discount or 0) <= 0:
-        return None
-    existente = CouponRedemption.all_objects.filter(
-        coupon_id=order.coupon_id,
-        order_id=order.pk,
-        deleted_at__isnull=True,
-    ).first()
-    if existente is not None:
-        return existente
-    cpf = cpf_do_pedido(order)
-    cliente = order.customer or cliente_por_cpf(order.account_id, cpf)
-    return CouponRedemption.objects.create(
-        account_id=order.account_id,
-        restaurant_id=order.restaurant_id,
-        branch_id=order.branch_id,
-        coupon_id=order.coupon_id,
-        order_id=order.pk,
-        customer=cliente,
-        document=cpf,
-        amount=Decimal(order.coupon_discount or 0),
-    )
-
-
-@transaction.atomic
-def devolver_resgate(order):
-    """Devolve o direito quando o pedido é cancelado ou estornado.
-
-    Apaga o resgate em vez de decrementar um contador: contador perde a conta na
-    primeira condição de corrida, e "quem usou" deixa de ser respondível.
-    """
-    return CouponRedemption.all_objects.filter(order_id=order.pk).delete()
+# O RESGATE mora em `coupon_redemption.py`: ele nasce no pagamento e morre no
+# cancelamento, e nao tem nada a ver com aplicar cupom numa conta aberta.
+from apps.promotions.coupon_redemption import (  # noqa: E402,F401
+    devolver_resgate,
+    registrar_resgate,
+)

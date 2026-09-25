@@ -435,6 +435,17 @@
             />
             <small v-if="invoiceCpfError" class="pdv__cpf-error">{{ invoiceCpfError }}</small>
           </div>
+          <!-- O CUPOM FICA JUNTO DO CPF porque o CPF e a IDENTIDADE dele: e por
+               ele que "compra unica por cliente" e "so para o grupo VIP" sao
+               conferidos. Em blocos separados, o operador digitaria o cupom,
+               ouviria "informe o CPF" e teria de voltar. -->
+          <PdvCouponField
+            v-if="currentOrder?.id"
+            :order-id="String(currentOrder.id)"
+            :applied="currentOrder?.coupon_code || ''"
+            :discount="currentOrder?.coupon_discount || 0"
+            @applied="onCouponApplied"
+          />
           <div class="pdv__total-row">
             <span>Subtotal</span>
             <strong>{{ money(currentOrder?.subtotal) }}</strong>
@@ -539,6 +550,16 @@
           <div class="pdv__pay-row"><span>Subtotal</span><span>{{ money(currentOrder?.subtotal) }}</span></div>
           <div v-if="currentOrder?.service_fee > 0" class="pdv__pay-row"><span>Taxa de serviço</span><span>{{ money(currentOrder?.service_fee) }}</span></div>
           <div v-if="currentOrder?.fiscal_customer_cpf" class="pdv__pay-row"><span>CPF na NFC-e</span><span>{{ formatCpf(currentOrder.fiscal_customer_cpf) }}</span></div>
+          <!-- TAMBEM AQUI. O cliente lembra do cupom quando o operador fala o
+               total: e o caso normal, nao a excecao. Sem isto, seria preciso
+               desfazer o fechamento por causa de um codigo. -->
+          <PdvCouponField
+            v-if="currentOrder?.id"
+            :order-id="String(currentOrder.id)"
+            :applied="currentOrder?.coupon_code || ''"
+            :discount="currentOrder?.coupon_discount || 0"
+            @applied="onCouponApplied"
+          />
           <div class="pdv__pay-row pdv__pay-row--grand"><span>Total</span><strong>{{ money(finalTotal) }}</strong></div>
         </div>
 
@@ -823,6 +844,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
 import AppIcon from "../components/AppIcon.vue";
+import PdvCouponField from "../components/pdv/PdvCouponField.vue";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
@@ -1066,8 +1088,24 @@ const orderPreviewTotal = computed(() => {
   const subtotal = Number(currentOrder.value?.subtotal || 0);
   const delivery = Number(currentOrder.value?.delivery_fee || 0);
   const orderDiscount = Number(currentOrder.value?.discount || 0);
-  return Math.max(0, subtotal + delivery + previewServiceFee.value - orderDiscount);
+  // O CUPOM ENTRA NA PREVIA. Sem ele, o total exibido antes do fechamento
+  // ignorava o abatimento e — pior — era esse numero que ia como
+  // `expected_total`: o servidor respondia com a reconciliacao a cada venda com
+  // cupom, e a tela avisava divergencia num total que estava certo.
+  const coupon = Number(currentOrder.value?.coupon_discount || 0);
+  return Math.max(0, subtotal + delivery + previewServiceFee.value - orderDiscount - coupon);
 });
+
+/**
+ * O pedido volta do servidor JA recalculado quando o cupom muda.
+ *
+ * Substituir `currentOrder` inteiro e o ponto: o total, o `coupon_discount` e o
+ * `coupon_code` chegam juntos e consistentes. Atualizar so o desconto deixaria
+ * o total antigo na tela por um instante — e o operador cobra o que le.
+ */
+function onCouponApplied(pedido) {
+  currentOrder.value = pedido;
+}
 
 const totalPaid = computed(() => registeredPayments.value.reduce((s, p) => s + Number(p.amount), 0));
 const totalChange = computed(() => registeredPayments.value.reduce((s, p) => s + Number(p.change_amount || 0), 0));

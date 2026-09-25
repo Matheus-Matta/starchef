@@ -205,7 +205,7 @@ cancelamento                     →  CouponRedemption é apagado
 | `/promotions/coupons/validate/`               | `{"code", "order"}` → confere **sem** aplicar |
 | `/promotions/coupons/{id}/redemptions/`       | quem usou                        |
 | `/promotions/coupon-redemptions/`             | leitura; nascem do pagamento     |
-| `/orders/{id}/apply-coupon/`                  | `{"code"}`; vazio retira         |
+| `/orders/{id}/apply-coupon/`                  | `{"code"}`; vazio retira. Serve conta aberta E em pagamento |
 | `/orders/{id}/close/`                         | aceita `coupon_code`             |
 
 `validate` existe para o caixa conferir enquanto o cliente fala. Aplicar para
@@ -220,6 +220,23 @@ código de propósito precisa ver o desconto sair.
 O código entra **depois** do CPF dentro de `close_order`: as regras de grupo e de
 "um por cliente" se resolvem pelo CPF da nota, e avaliar antes de gravá-lo
 recusaria quem acabou de informá-lo.
+
+Em `apply-coupon`, `code` **ausente é 400**: não existe "não mexe" numa rota cujo
+único propósito é mexer. Ela serve o pedido **aberto** e o pedido **em
+pagamento** — o cliente informa o cupom antes de fechar, e informa também no meio
+do pagamento, quando lembra.
+
+### As duas guardas (`coupon_guards.py`)
+
+- **venda paga, cancelada ou bloqueada recusa.** Mexer no total de uma venda paga
+  criaria diferença de caixa sem contrapartida: o dinheiro que entrou não volta
+  por causa de um cupom lembrado depois. Conta **parcialmente** recebida continua
+  aceitando — é justamente o caso do cupom entregue no meio do pagamento.
+- **o total não pode cair abaixo do já recebido.** Se o cliente pagou R$ 60 de uma
+  conta de R$ 60 e o cupom abate R$ 10, o caixa ficaria devendo R$ 10 que nenhum
+  troco registrou. A conferência é **depois** do recálculo e **dentro** da
+  transação de `mexer_no_cupom`: a recusa desfaz a aplicação, ou o pedido ficaria
+  com o desconto que acabou de ser rejeitado.
 
 ---
 
@@ -262,9 +279,24 @@ sistema está cobrando menos" não diz onde ir para mudar, e sem isso o gerente 
 o cadastro intacto, o PDV cobra outro valor, e conclui que o sistema errou.
 
 **PDV desktop:** a grade mostra o "de" riscado acima do "por"
-(`ProductPriceLabel`). O cupom é digitado no diálogo de fechamento, junto do CPF
-— que é a identidade dele. Em telas separadas, o caixa digitaria o cupom, ouviria
-"informe o CPF" e teria de voltar.
+(`ProductPriceLabel`). O cupom aparece em **dois** lugares:
+
+1. no diálogo de fechamento, junto do CPF — que é a identidade dele. Em telas
+   separadas, o caixa digitaria o cupom, ouviria "informe o CPF" e voltaria;
+2. no resumo da **tela de pagamento** (`PaymentCouponInput`), com **Aplicar**,
+   **Trocar** e **Retirar**. O cliente lembra do cupom quando o caixa fala o
+   total — é o caso normal, não a exceção — e sem isto seria preciso desfazer o
+   fechamento por causa de um código.
+
+A recusa aparece **no campo**, e não no centro de erros: a frase é sobre o cupom,
+e quem precisa lê-la está olhando o que acabou de digitar.
+
+**PDV web (retaguarda):** `PdvCouponField` nos mesmos dois momentos — no painel
+de confirmação (ao lado da taxa e do CPF) e no resumo do pagamento. O componente
+não guarda total: emite o pedido que o servidor devolveu, já recalculado, e a
+tela tira dali o restante e o troco. `orderPreviewTotal` desconta o cupom — sem
+isso ele ia como `expected_total` sem o abatimento, e o servidor respondia com
+reconciliação a cada venda com cupom.
 
 **PDV mobile:** o picker, a configuração do produto e a **prévia de preço do
 garçom** (`expectedUnitPrice`) leem `current_price`. Antes a prévia lia

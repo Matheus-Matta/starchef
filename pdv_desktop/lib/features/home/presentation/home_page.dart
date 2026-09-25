@@ -70,6 +70,7 @@ import 'pdv_settings_menu_dialog.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
+import 'payment_coupon_input.dart';
 import 'table_details_panel.dart';
 
 import '../../orders/data/order_draft.dart';
@@ -100,6 +101,7 @@ part 'home_page_orders_view.dart';
 part 'home_page_payment.dart';
 part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
+part 'home_page_payment_coupon.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
 part 'home_page_shared.dart';
@@ -160,6 +162,7 @@ class _HomePageState extends State<HomePage>
         _OrdersView,
         _PaymentSection,
         _PaidReceiptSection,
+        _PaymentCouponSection,
         _PaymentView,
         _ReceiptSection,
         _ShellSection,
@@ -300,6 +303,15 @@ class _HomePageState extends State<HomePage>
   final paymentReference = TextEditingController();
   @override
   final paymentAmount = TextEditingController();
+  // O CUPOM NA TELA DE PAGAMENTO. O controlador vive aqui, e nao no mixin,
+  // porque e `_HomePageState` quem descarta: um controlador criado dentro de
+  // mixin sobreviveria ao `dispose` da tela.
+  @override
+  final couponCode = TextEditingController();
+  @override
+  var couponError = '';
+  @override
+  var couponBusy = false;
   @override
   String? selectedRestaurantId;
   @override
@@ -1371,6 +1383,7 @@ class _HomePageState extends State<HomePage>
     inputRouter.dispose();
     paymentReference.dispose();
     paymentAmount.dispose();
+    couponCode.dispose();
     ordersSearchDebounce?.cancel();
     ordersSearchController.dispose();
     ordersSearchFocus.dispose();
