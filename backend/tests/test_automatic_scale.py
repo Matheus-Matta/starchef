@@ -21,8 +21,11 @@ def test_automatic_scale_creates_pending_counter_order_item_and_print_job(
         HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}"
     )
     product.pricing_unit = Product.PRICING_KG
-    product.sale_price = Decimal("79.90")
-    product.save(update_fields=["pricing_unit", "sale_price", "updated_at"])
+    # `base_price`, e nao `sale_price`: o preco virou PROPRIEDADE, e `update_fields`
+    # so aceita coluna. O setter continua funcionando na atribuicao acima — o que
+    # nao existe e uma coluna com esse nome para o Django gravar.
+    product.base_price = Decimal("79.90")
+    product.save(update_fields=["pricing_unit", "base_price", "updated_at"])
     printer = Printer.objects.create(
         account=account,
         restaurant=restaurant,
@@ -95,8 +98,11 @@ def test_automatic_scale_reading_succeeds_without_agent_claim(
         HTTP_AUTHORIZATION=f"Bearer {AccessToken.for_user(manager_user)}"
     )
     product.pricing_unit = Product.PRICING_KG
-    product.sale_price = Decimal("79.90")
-    product.save(update_fields=["pricing_unit", "sale_price", "updated_at"])
+    # `base_price`, e nao `sale_price`: o preco virou PROPRIEDADE, e `update_fields`
+    # so aceita coluna. O setter continua funcionando na atribuicao acima — o que
+    # nao existe e uma coluna com esse nome para o Django gravar.
+    product.base_price = Decimal("79.90")
+    product.save(update_fields=["pricing_unit", "base_price", "updated_at"])
     printer = Printer.objects.create(
         account=account,
         restaurant=restaurant,

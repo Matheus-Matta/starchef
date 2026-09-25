@@ -38,8 +38,17 @@ propriedade com setter nos kwargs do construtor. `Product(sale_price=10)` e
 obrigaria a reescrever cinquenta chamadas em semeadura, testes e desserialização
 do sync — cada uma uma chance de deixar um preço zerado para trás.
 
-**O que NÃO funciona** (e é intencional): `filter(sale_price=...)`,
-`order_by("sale_price")`, `values("sale_price")`. Use `base_price` no ORM.
+**O que NÃO funciona** (e é intencional), porque estes lugares exigem uma COLUNA:
+
+```python
+filter(sale_price=...)         order_by("sale_price")      values("sale_price")
+save(update_fields=["sale_price"])          F("sale_price")
+```
+
+Use `base_price`. A ATRIBUIÇÃO continua valendo (`produto.sale_price = 10`, pelo
+setter); o que não existe é uma coluna com esse nome para o Django gravar ou
+consultar. `update_fields` foi o único destes que passou pela revisão local e só
+apareceu na CI — está aqui para o próximo não precisar descobrir do mesmo jeito.
 Para "quais produtos estão em promoção?", use
 `apps.promotions.queries.filtro_de_promocao(account_id, restaurant_id)` — ele
 devolve um `Q`, e responde no banco em vez de carregar o catálogo inteiro.
