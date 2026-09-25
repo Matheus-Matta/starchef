@@ -284,6 +284,44 @@
               fluid
             />
 
+            <!-- MULTISELECT DE OPÇÕES LOCAIS. O `remote-multiselect` busca no
+                 servidor; este é para listas que o próprio sistema define (tipos
+                 de pedido, por exemplo), onde uma chamada de rede só para trazer
+                 cinco valores fixos é latência sem informação nova. -->
+            <MultiSelect
+              v-else-if="field.type === 'multiselect'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :options="field.options"
+              option-label="label"
+              option-value="value"
+              display="chip"
+              :placeholder="fieldPlaceholder(field, `Selecionar ${field.label.toLowerCase()}`)"
+              :class="['rpage__select', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :disabled="isView"
+              fluid
+            />
+
+            <!-- DATA COM HORA. A validação de promoção é do MINUTO: "happy hour
+                 das 18h às 20h" não cabe num campo de data, e digitar ISO à mão
+                 num campo de texto é como nascem tabelas que começam no ano
+                 errado. O valor sai daqui como ISO, que é o que a API espera. -->
+            <Calendar
+              v-else-if="field.type === 'datetime' || field.type === 'date'"
+              :id="`f-${field.name}`"
+              v-model="formData[field.name]"
+              :show-time="field.type === 'datetime'"
+              hour-format="24"
+              date-format="dd/mm/yy"
+              :placeholder="fieldPlaceholder(field, field.type === 'datetime' ? 'dd/mm/aaaa hh:mm' : 'dd/mm/aaaa')"
+              :class="['rpage__input', { 'p-invalid': !!fieldErrors[field.name] }]"
+              :disabled="isView"
+              show-button-bar
+              show-icon
+              icon-display="input"
+              fluid
+            />
+
             <div v-else-if="field.type === 'remote-dropdown' && field.quickCreate" class="rpage__field-row">
               <Dropdown
                 :id="`f-${field.name}`"
@@ -433,6 +471,16 @@
             <small v-if="fieldErrors[field.name]" class="rpage__field-err">
               <i class="pi pi-exclamation-circle" />
               {{ fieldErrors[field.name] }}
+            </small>
+
+            <!-- AVISO ABAIXO DO CAMPO, vindo do dado e nao do cadastro.
+                 O preco que sera cobrado nao e necessariamente o que esta
+                 digitado aqui: uma tabela de desconto ativa pode estar mandando
+                 nele. Sem este aviso, o gerente ve o cadastro intacto, o PDV
+                 cobra outro valor, e a conclusao dele e que o sistema errou. -->
+            <small v-else-if="fieldNotice(field)" class="rpage__field-notice">
+              <i class="pi pi-tag" />
+              {{ fieldNotice(field) }}
             </small>
           </div>
         </div>
@@ -908,6 +956,7 @@ import Dropdown from "primevue/dropdown";
 import InputNumber from "primevue/inputnumber";
 import InputSwitch from "primevue/inputswitch";
 import InputText from "primevue/inputtext";
+import Calendar from "primevue/calendar";
 import MultiSelect from "primevue/multiselect";
 import Password from "primevue/password";
 import Skeleton from "primevue/skeleton";
@@ -1686,6 +1735,23 @@ function fieldPlaceholder(field, fallback) {
   return field.placeholder || fallback;
 }
 
+/**
+ * Aviso abaixo do campo, calculado a partir do registro carregado.
+ *
+ * Hoje só o preço usa: o valor digitado no cadastro pode NÃO ser o cobrado,
+ * porque uma tabela de desconto ativa tem prioridade sobre ele. Quem edita
+ * precisa ver isso no mesmo lugar em que digita — abrir a tela de promoções para
+ * descobrir por que o PDV cobra outro valor é exatamente o caminho que ninguém
+ * percorre antes de concluir que o sistema está errado.
+ *
+ * Fica genérico (`noticeFor` na configuração do recurso) para o próximo campo que
+ * precisar de um aviso vivo não exigir mexer neste componente.
+ */
+function fieldNotice(field) {
+  if (typeof field.noticeFor !== "function") return "";
+  return field.noticeFor(record.value || {}) || "";
+}
+
 function existingImages(field) {
   return record.value?.[field.previewField || "url"] || null;
 }
@@ -1983,6 +2049,14 @@ watch(() => [recordId.value, props.mode], async () => {
   flex-direction: column;
   gap: 16px;
   padding: 0 var(--card-pad) var(--card-pad); /* mesmo padding das demais seções */
+}
+.rpage__field-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--amber-500, #f59e0b);
+  font: var(--weight-medium) 12px/1.3 var(--font-sans);
 }
 .rpage__hint {
   padding: 14px 16px;

@@ -67,6 +67,33 @@ import {
   GOODS_RECEIPT_STATUS_LABELS,
 } from "./enums";
 import { invoiceColumns, invoiceProConfig } from "./invoiceResource";
+import { promotionResources } from "./promotionResources";
+import { formatMoney } from "../utils/format";
+
+/**
+ * O aviso que aparece abaixo dos campos de preço do produto.
+ *
+ * Responde a pergunta que o cadastro sozinho não responde: "quanto o caixa vai
+ * cobrar por isto AGORA?". O número vem do servidor (`current_price`), que é a
+ * mesma fonte que o PDV usa — recalcular aqui abriria a porta para a tela dizer
+ * um valor e a venda cobrar outro.
+ *
+ * Quando a promoção vem de tabela, o aviso NOMEIA a tabela. É a diferença entre
+ * "o sistema está cobrando menos" e "a tabela Happy Hour está cobrando menos":
+ * a segunda frase diz onde ir para mudar.
+ */
+function avisoDePreco(registro) {
+  const cobrado = Number(registro.current_price ?? 0);
+  const cheio = Number(registro.sale_price ?? 0);
+  if (!cobrado || cobrado >= cheio) return "";
+  const riscado = registro.compare_at_price ? formatMoney(registro.compare_at_price) : formatMoney(cheio);
+  const promocao = registro.promotion;
+  if (promocao) {
+    return `Cobrando ${formatMoney(cobrado)} (de ${riscado}) pela tabela "${promocao.table_name}", regra "${promocao.name}". Esta promocao tem prioridade sobre o promocional do cadastro.`;
+  }
+  return `Cobrando ${formatMoney(cobrado)} em vez de ${riscado}, pelo promocional deste cadastro.`;
+}
+
 export const resources = [
   // ── Operacional ────────────────────────────────────────────────────
   {
@@ -248,6 +275,7 @@ export const resources = [
       { name: "is_active", label: "Ativo", type: "boolean", default: true },
     ],
   },
+  ...promotionResources,
   {
     name: "caixa",
     title: "Caixa",
@@ -293,8 +321,16 @@ export const resources = [
       { name: "logo_p_upload", label: "Imagem principal", type: "file", uploadMode: "avatar", previewField: "logo_p", full: true, section: "Imagens", hint: "Usada como capa do produto na tela inicial e no cardapio." },
       { name: "photo_uploads", label: "Galeria do produto", type: "file", uploadMode: "gallery", multiple: true, fileLimit: 20, removeField: "photo_remove_ids", previewField: "photo_list", full: true, section: "Imagens", hint: "Arraste ate 20 fotos. Use a lixeira para remover uma foto salva ou ainda pendente." },
       { name: "sector", label: "Setor principal (opcional)", type: "remote-dropdown", endpoint: "/tables/sectors/", optionLabel: "name", optionValue: "id", section: "Informações básicas" },
-      { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços" },
-      { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços" },
+      // UM CAMPO DE VALOR E UM DE PROMOCIONAL, como sempre foi. Os dois gravam
+      // o CADASTRO: nenhuma tabela de desconto encosta nestes numeros.
+      //
+      // O que muda e o AVISO abaixo: o preco que o PDV vai cobrar pode nao ser
+      // o que esta digitado aqui, porque uma tabela de desconto ativa tem
+      // prioridade. Sem dizer isso no proprio campo, o gerente ve o cadastro
+      // intacto, o caixa cobra outro valor, e a conclusao dele e que o sistema
+      // errou — quando o sistema esta obedecendo a promocao que ele mesmo criou.
+      { name: "sale_price", label: "Preco de venda (R$)", type: "decimal", required: true, section: "Preços", noticeFor: avisoDePreco },
+      { name: "promotional_price", label: "Preco promocional (R$)", type: "decimal", section: "Preços", hint: "Promocional do proprio cadastro, sem data. Tabela de desconto tem prioridade sobre ele.", noticeFor: avisoDePreco },
       { name: "pricing_unit", label: "Cobranca", type: "dropdown", options: PRICING_OPTIONS, default: "unit", section: "Preços" },
       // Categoria opcional (STC-022): pode ficar vazia — o produto aparece como "Sem categoria".
       { name: "category", label: "Categoria", type: "remote-dropdown", endpoint: "/menu/categories/", optionLabel: "name", optionValue: "id", placeholder: "Sem categoria", section: "Classificação" },

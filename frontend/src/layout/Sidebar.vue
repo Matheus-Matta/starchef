@@ -268,6 +268,18 @@ const groups = computed(() =>
         canManage.value ? { id: "receitas", label: "Fichas técnicas", icon: "salad" } : null,
       ].filter(Boolean),
     },
+    {
+      // Promoções fica FORA de "Cardapio" de propósito: quem mexe em preço
+      // promocional está fazendo uma ação comercial com data, e não editando o
+      // catálogo. Só gerente para cima — um desconto mal cadastrado vende
+      // errado até alguem perceber.
+      label: "Promoções",
+      items: [
+        canManage.value ? { id: "tabelas-de-desconto", label: "Tabelas de desconto", icon: "percentage" } : null,
+        canManage.value ? { id: "regras-de-desconto", label: "Regras de desconto", icon: "list" } : null,
+        canManage.value ? { id: "cupons", label: "Cupons", icon: "ticket" } : null,
+      ].filter(Boolean),
+    },
     // ── Secoes de Modulos opcionais (ocultam por completo se o modulo estiver off) ──
     {
       // Cardapio digital: o site publico e o que o alimenta. A visibilidade

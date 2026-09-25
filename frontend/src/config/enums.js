@@ -16,6 +16,45 @@ export const ORDER_TYPE_LABELS = {
   internal: "Interno",
 };
 
+/* ── Promoções e cupons ────────────────────────────────── */
+export const PROMOTION_TARGET_LABELS = {
+  products: "Produtos escolhidos",
+  categories: "Categorias",
+  sectors: "Setores",
+  all: "Todo o cardápio",
+};
+
+export const PROMOTION_TARGET_OPTIONS = Object.entries(PROMOTION_TARGET_LABELS).map(
+  ([value, label]) => ({ label, value }),
+);
+
+export const PROMOTION_KIND_LABELS = {
+  percent: "Percentual (%)",
+  amount: "Valor abatido (R$)",
+  fixed: "Preço fixo (R$)",
+};
+
+export const PROMOTION_KIND_OPTIONS = Object.entries(PROMOTION_KIND_LABELS).map(
+  ([value, label]) => ({ label, value }),
+);
+
+export const COUPON_KIND_LABELS = {
+  percent: "Percentual sobre o subtotal (%)",
+  amount: "Valor em reais (R$)",
+  free_delivery: "Entrega grátis",
+};
+
+export const COUPON_KIND_OPTIONS = Object.entries(COUPON_KIND_LABELS).map(
+  ([value, label]) => ({ label, value }),
+);
+
+// Os tipos que um cupom pode restringir sao os MESMOS do pedido: uma lista
+// propria aqui divergiria na primeira vez que o backend ganhasse um tipo novo,
+// e o cupom passaria a recusar um pedido que o cadastro nem sabe que existe.
+export const ORDER_TYPE_OPTIONS_FOR_COUPON = Object.entries(ORDER_TYPE_LABELS).map(
+  ([value, label]) => ({ label, value }),
+);
+
 export const ORDER_STATUS_LABELS = {
   open: "Aberto",
   sent_to_kitchen: "Cozinha",

@@ -38,7 +38,10 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
     for (const field of formFields) {
       if (field.default !== undefined) data[field.name] = field.default;
       else if (field.type === "boolean") data[field.name] = true;
-      else if (field.type === "remote-multiselect") data[field.name] = [];
+      else if (field.type === "remote-multiselect" || field.type === "multiselect") data[field.name] = [];
+      // O seletor de data trabalha com `Date`, nao com texto: "" nele viraria
+      // uma data invalida na tela em vez de um campo vazio.
+      else if (field.type === "datetime" || field.type === "date") data[field.name] = null;
       // Sem arquivo selecionado (null, e não ""): um upload é opcional na
       // edição (reenviar só quando o usuário escolhe outro arquivo).
       else if (field.type === "file") {
@@ -72,13 +75,33 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       record.value = data;
       for (const field of formFields) {
         const value = field.name.includes(".") ? getDeep(data, field.name) : data[field.name];
-        if (value !== undefined) formData[field.name] = value;
+        if (value === undefined) continue;
+        formData[field.name] = ehCampoDeData(field) ? paraData(value) : value;
       }
     } catch {
       fetchError.value = "Nao foi possivel carregar o registro.";
     } finally {
       fetching.value = false;
     }
+  }
+
+  /** O campo trabalha com data? (o seletor usa `Date`, a API usa ISO). */
+  function ehCampoDeData(field) {
+    return field.type === "datetime" || field.type === "date";
+  }
+
+  /** ISO (ou vazio) -> `Date`. Texto invalido vira vazio, e nao "Invalid Date". */
+  function paraData(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    const data = new Date(value);
+    return Number.isNaN(data.getTime()) ? null : data;
+  }
+
+  /** `Date` -> ISO. Ja em texto, passa direto: o servidor devolve ISO. */
+  function paraIso(value) {
+    if (value instanceof Date) return value.toISOString();
+    return value;
   }
 
   /** Grava `value` em `target` no caminho `a.b.c` (aninha objetos quando há ponto). */
@@ -171,6 +194,10 @@ export function useResourceForm({ service, formFields = [], mode, recordId, shar
       // FK vazio vai como null (e não ""), para o backend limpar o vínculo
       // (ex.: categoria "Sem categoria") ou preencher no servidor (restaurante).
       else if (field.type === "remote-dropdown" && !filled) value = null;
+      // O SELETOR DE DATA DEVOLVE `Date`, e a API espera ISO. Sem a conversao, o
+      // corpo levava o toString do navegador ("Mon Sep 29 2026 18:00:00 GMT...")
+      // e o servidor recusava a janela inteira da tabela de desconto.
+      else if (ehCampoDeData(field)) value = filled ? paraIso(value) : null;
       // Nomes com ponto (ex.: "profile.profile_type") viram objeto aninhado.
       setDeep(payload, field.name, value);
     }
