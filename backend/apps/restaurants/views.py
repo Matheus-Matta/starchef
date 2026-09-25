@@ -408,6 +408,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
                 customer_note=request.data.get("customer_note") or "",
                 variations=request.data.get("variations") or [],
                 addons=request.data.get("addons") or [],
+                metafields=request.data.get("metafields"),
             )
         except ValidationError as exc:
             detalhe = getattr(exc, "messages", None) or [str(exc)]

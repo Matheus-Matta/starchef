@@ -21,6 +21,7 @@ extension OrdersSubjectApi on OrdersRepository {
     String customerNote = '',
     List<String> addonIds = const [],
     String? variationId,
+    Map<String, String>? metafields,
   }) => to.isCommand
       ? launchCommandItem(
           commandId: to.id,
@@ -30,6 +31,7 @@ extension OrdersSubjectApi on OrdersRepository {
           customerNote: customerNote,
           addonIds: addonIds,
           variationId: variationId,
+          metafields: metafields,
         )
       : addItem(
           orderId: to.id,
@@ -39,6 +41,7 @@ extension OrdersSubjectApi on OrdersRepository {
           customerNote: customerNote,
           addonIds: addonIds,
           variationId: variationId,
+          metafields: metafields,
         );
 
   Future<Map<String, dynamic>> voidSubjectItem({

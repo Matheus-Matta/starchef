@@ -45,7 +45,7 @@
   {% else %}
     <p>Mesa: {{ order.table.number|default:"-" }} · Comanda: {{ order.command.code|default:"-" }}</p>
   {% endif %}
-  <p>Operador: {{ order.responsible_user.get_full_name|default:order.responsible_user.username }}</p>
+  {% if order.operator_label %}<p>Operador: {{ order.operator_label }}</p>{% endif %}
   <p>Data: {{ order.opened_at|date:"d/m/Y H:i" }}</p>
   <div class="line"></div>
   <table>

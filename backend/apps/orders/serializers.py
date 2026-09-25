@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 
 from apps.orders.models import Order, OrderBatch, OrderItem, OrderItemAddon
+from apps.orders.serializers_metafields import MetafieldsField
 
 
 class OrderItemAddonSerializer(TenantModelSerializer):
@@ -15,6 +16,10 @@ class OrderItemAddonSerializer(TenantModelSerializer):
 
 
 class OrderItemSerializer(TenantModelSerializer):
+    # O código de QUEM lançou este item. É no item que ele serve de verdade: num
+    # pedido de uma hora, três garçons anotam, e um código só no cabeçalho
+    # atribuiria tudo ao primeiro.
+    metafields = MetafieldsField()
     product_name = serializers.CharField(source="product.name", read_only=True)
     pricing_unit = serializers.CharField(source="product.pricing_unit", read_only=True)
     restaurant_name = serializers.CharField(source="restaurant.trade_name", read_only=True)
@@ -124,6 +129,10 @@ class OrderSerializer(TenantModelSerializer):
     # de pagamento le a lista pelo mesmo caminho.
     payments = serializers.SerializerMethodField()
     fiscal = serializers.SerializerMethodField()
+    # "Maria Silva - 4821". Somente leitura: ela é derivada do usuário e do
+    # código, e um campo gravável deixaria a tela e o cupom discordarem.
+    operator_label = serializers.CharField(read_only=True)
+    metafields = MetafieldsField()
     def get_payments(self, obj):
         """Recebimentos aprovados do pedido, na ordem em que entraram.
 

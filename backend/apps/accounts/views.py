@@ -171,6 +171,15 @@ class MeView(APIView):
                 "account_name": account.name if account else None,
                 "restaurant_id": str(profile.restaurant_id) if profile and profile.restaurant_id else None,
                 "restaurant_name": profile.restaurant.trade_name if profile and profile.restaurant_id else None,
+                # A EXIGENCIA DO CODIGO DO OPERADOR viaja com a sessao porque e o app
+                # do garcom quem precisa dela ANTES de qualquer lancamento: perguntar
+                # ao `/restaurants/` exigiria dar ao garcom leitura do cadastro do
+                # restaurante so para descobrir se deve pedir um codigo.
+                "require_operator_code": bool(
+                    profile.restaurant.require_operator_code
+                    if profile and profile.restaurant_id
+                    else False
+                ),
                 "branch_id": str(profile.branch_id) if profile and profile.branch_id else None,
                 "branch_name": profile.branch.name if profile and profile.branch_id else None,
                 "enabled_modules": resolve_enabled_modules(request.user, account),

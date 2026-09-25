@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import AUDIT_READ_ONLY_FIELDS, TenantModelSerializer
 from apps.images.serializers import LogoImageMixin
+from apps.orders.serializers_metafields import MetafieldsField
 
 from apps.restaurants.models import (
     Branch,
@@ -161,6 +162,10 @@ class TableSectorSerializer(TenantModelSerializer):
 
 
 class CommandSerializer(TenantModelSerializer):
+    # O código de quem ABRIU o cartão. O pedido que nascer dele herda estes
+    # campos: o cartão é aberto no salão e o pedido só nasce no caixa, horas
+    # depois, e sem herdar o rastro do atendimento sumiria no registro que fica.
+    metafields = MetafieldsField()
     # Numero e opcional na escrita: quando omitido, o model atribui o proximo
     # sequencial do restaurante. `code` idem (derivado do numero).
     number = serializers.IntegerField(required=False, min_value=1)

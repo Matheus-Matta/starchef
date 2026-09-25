@@ -97,6 +97,17 @@ mixin _PaymentView on _HomePageShared {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // QUEM LANCOU, com o codigo quando houver: "Maria - 4821".
+                        //
+                        // O caixa confere a conta de um atendimento que nao foi
+                        // dele. Num aparelho compartilhado no salao o login e
+                        // sempre o mesmo, e o codigo e a unica coisa aqui que
+                        // diz quem de fato atendeu aquela mesa.
+                        if ('${activeOrder!['operator_label'] ?? ''}'.isNotEmpty)
+                          _paymentSummaryRow(
+                            'Operador',
+                            '${activeOrder!['operator_label']}',
+                          ),
                         _paymentSummaryRow(
                           'Subtotal',
                           _money(activeOrder!['subtotal']),

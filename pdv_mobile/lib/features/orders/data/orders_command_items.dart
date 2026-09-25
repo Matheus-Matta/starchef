@@ -25,6 +25,7 @@ extension OrdersCommandItems on OrdersRepository {
     String customerNote = '',
     List<String> addonIds = const [],
     String? variationId,
+    Map<String, String>? metafields,
   }) => mutate(
     method: 'POST',
     path: '/commands/$commandId/items/',
@@ -41,6 +42,7 @@ extension OrdersCommandItems on OrdersRepository {
       'variations': variationId == null ? const [] : [variationId],
       'addons': addonIds,
       'customer_note': customerNote,
+      'metafields': ?metafields,
     },
   );
 

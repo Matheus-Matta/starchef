@@ -101,6 +101,7 @@ extension OrdersCommands on OrdersRepository {
     String customerNote = '',
     List<String> addonIds = const [],
     String? variationId,
+    Map<String, String>? metafields,
   }) => mutate(
     method: 'POST',
     path: '/orders/$orderId/items/',
@@ -112,6 +113,10 @@ extension OrdersCommands on OrdersRepository {
       'variations': variationId == null ? const [] : [variationId],
       'addons': addonIds,
       'customer_note': customerNote,
+      // O CODIGO DE QUEM LANCOU viaja com o ITEM, e por isso sobrevive a fila
+      // offline: a operacao enfileirada sobe horas depois, quando quem lancou
+      // pode nem estar mais no turno.
+      'metafields': ?metafields,
     },
   );
 

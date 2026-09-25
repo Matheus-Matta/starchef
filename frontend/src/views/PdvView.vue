@@ -550,6 +550,10 @@
           <div class="pdv__pay-row"><span>Subtotal</span><span>{{ money(currentOrder?.subtotal) }}</span></div>
           <div v-if="currentOrder?.service_fee > 0" class="pdv__pay-row"><span>Taxa de serviço</span><span>{{ money(currentOrder?.service_fee) }}</span></div>
           <div v-if="currentOrder?.fiscal_customer_cpf" class="pdv__pay-row"><span>CPF na NFC-e</span><span>{{ formatCpf(currentOrder.fiscal_customer_cpf) }}</span></div>
+          <!-- QUEM LANCOU, com o codigo quando houver: "Maria - 4821". Num
+               aparelho compartilhado no salao o login e sempre o mesmo, e o
+               codigo e a unica coisa aqui que diz quem de fato atendeu. -->
+          <div v-if="currentOrder?.operator_label" class="pdv__pay-row"><span>Operador</span><span>{{ currentOrder.operator_label }}</span></div>
           <!-- TAMBEM AQUI. O cliente lembra do cupom quando o operador fala o
                total: e o caso normal, nao a excecao. Sem isto, seria preciso
                desfazer o fechamento por causa de um codigo. -->

@@ -90,6 +90,16 @@ class ConsumptionItem(TenantModel):
     delivered_at = models.DateTimeField(null=True, blank=True)
     void_reason = models.TextField(blank=True)
     voided_at = models.DateTimeField(null=True, blank=True)
+    # QUEM REGISTROU ESTE ITEM, quando o login não responde isso.
+    #
+    # Fica na base abstrata porque a pergunta é a mesma no item do pedido e no da
+    # comanda: um aparelho compartilhado (o totem do salão) lança nos dois, e o
+    # rastro precisa acompanhar o item até o relatório — não o cabeçalho.
+    #
+    # O item é o ÚNICO lugar onde o código de quem lançou serve de verdade: num
+    # pedido de uma hora de duração, três garçons anotam, e um código só no
+    # cabeçalho atribuiria tudo ao primeiro.
+    metafields = models.JSONField(default=dict, blank=True, help_text="Campos adicionais livres. Dicionário raso, valores escalares curtos.")
 
     class Meta:
         abstract = True

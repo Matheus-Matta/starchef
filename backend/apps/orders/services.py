@@ -81,6 +81,24 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
             # para histórico, relatórios e impressão após o pagamento.
             kwargs["table"] = command.current_table
 
+        # O PEDIDO HERDA OS CAMPOS DA COMANDA, e o que vem no corpo vence.
+        #
+        # O cartão foi aberto horas antes, no salão, e o código de quem o abriu
+        # está nele. O pedido só nasce no caixa: sem herdar, o rastro do
+        # atendimento inteiro sumiria justamente no registro que fica.
+        #
+        # O que vem no corpo não é sobrescrito porque é mais recente e mais
+        # específico — ver `apps.core.metafields.herdar`.
+        from apps.core.metafields import herdar
+        from apps.orders.operator_code import exigir
+
+        comanda = kwargs.get("command")
+        kwargs["metafields"] = exigir(
+            restaurant,
+            herdar(kwargs.get("metafields"), getattr(comanda, "metafields", None)),
+            acao="abrir pedido",
+        )
+
         order = _criar_pedido_numerado(
             account=account,
             restaurant=restaurant,
@@ -227,9 +245,24 @@ def add_order_item(
     scale_reading=None,
     weight_kg=None,
     expected_unit_price=None,
+    metafields=None,
 ):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
+        # O CÓDIGO DE QUEM LANÇOU, quando o restaurante exige. O item herda o que
+        # o pedido tiver: quem abriu a conta já se identificou, e cobrar o código
+        # a cada prato faria o garçom digitar dez vezes no mesmo atendimento.
+        #
+        # A conferência vem ANTES das outras: barrar por falta de código depois de
+        # resolver peso, variação e adicional gastaria as consultas para nada.
+        from apps.core.metafields import herdar
+        from apps.orders.operator_code import exigir
+
+        extras = exigir(
+            order.restaurant,
+            herdar(metafields, order.metafields),
+            acao="lançar item",
+        )
         if product.account_id != order.account_id:
             raise ValidationError("O produto não pertence à conta do pedido.")
         if not product.restaurants.filter(pk=order.restaurant_id).exists():
@@ -349,6 +382,7 @@ def add_order_item(
             launched_by=user,
             created_by=user,
             updated_by=user,
+            metafields=extras,
         )
         for addon in selected_addons:
             OrderItemAddon.objects.create(
@@ -582,6 +616,11 @@ def create_order_with_item(
             table=table,
             user=user,
             responsible_user=responsible_user,
+            # O CODIGO DO OPERADOR SOBE COM O PEDIDO, e nao so com o item. Sem
+            # isso, `create_order` recusaria a abertura por falta de codigo num
+            # restaurante que o exige — e o item que o trazia nunca chegaria a
+            # ser criado.
+            metafields=item_data.get("metafields"),
         )
         add_order_item(order=order, product=product, user=user, **item_data)
         return Order.objects.prefetch_related("items__product", "items__addons", "items__batch").get(pk=order.pk)

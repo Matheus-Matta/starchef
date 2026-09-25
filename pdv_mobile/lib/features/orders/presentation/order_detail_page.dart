@@ -14,6 +14,7 @@ import 'order_item_tiles.dart';
 import 'payment_sheet.dart';
 import 'cloud_mode_banner.dart';
 import 'stale_data_banner.dart';
+import 'operator_code_sheet.dart';
 
 part 'order_detail_items_list.dart';
 
@@ -116,8 +117,34 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   }
 
   Future<void> _addItem() async {
+    // O CODIGO VEM ANTES DO CARDAPIO. Pedir depois faria o garcom escolher o
+    // prato, configurar variacao e adicional, e so entao descobrir que precisa
+    // de um codigo que ele talvez nao saiba — com o cliente esperando.
+    if (!await _garantirCodigo()) return;
+    if (!mounted) return;
     final choice = await showProductPicker(context, widget.repository);
     if (choice != null) await _presenter.addDraft(choice);
+  }
+
+  /// Pede o codigo quando o restaurante exige e ele ainda nao foi informado.
+  ///
+  /// Uma vez por atendimento: dez pratos numa mesa seriam dez digitacoes, e a
+  /// decima vira "1111" para acabar logo — um rastro que mente e pior do que
+  /// nenhum. Quem assume o aparelho depois informa o seu ao abrir outro
+  /// atendimento.
+  Future<bool> _garantirCodigo() async {
+    if (!_presenter.needsOperatorCode) return true;
+    final codigo = await pedirCodigoDoOperador(
+      context,
+      atual: _presenter.operatorCode,
+      // `orderTitle` e o mesmo texto do cabecalho da tela: quem esta lancando
+      // precisa saber ONDE, e um rotulo proprio faria a folha dizer "Comanda 12"
+      // enquanto o titulo acima diz outra coisa.
+      assunto: _presenter.order == null ? '' : orderTitle(_presenter.order!),
+    );
+    if (codigo == null || !mounted) return false;
+    _presenter.rememberOperatorCode(codigo);
+    return true;
   }
 
   Future<void> _voidItem(Map<String, dynamic> item) async {

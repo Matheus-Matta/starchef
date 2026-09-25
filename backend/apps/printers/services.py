@@ -245,9 +245,11 @@ def _customer_receipt_text(order):
             *_order_context_lines(order),
         ]
     )
-    if order.responsible_user_id:
-        operator = order.responsible_user.get_full_name() or order.responsible_user.username
-        lines.append(f"Operador: {operator}"[:LARGURA_CUPOM])
+    # `operator_label` junta o nome e o CODIGO do operador: num aparelho
+    # compartilhado (o totem do salao) o login e sempre o mesmo, e o codigo e a
+    # unica coisa no cupom que diz quem de fato atendeu.
+    if order.operator_label:
+        lines.append(f"Operador: {order.operator_label}"[:LARGURA_CUPOM])
     lines.append(f"Data: {timezone.localtime(order.opened_at):%d/%m/%Y %H:%M}")
     lines.append("-" * LARGURA_CUPOM)
     for item in order.items.select_related("product").prefetch_related("addons__addon"):

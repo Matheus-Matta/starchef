@@ -64,6 +64,21 @@ class Restaurant(TenantBaseModel):
     # contrário. Uma regra nova que nasce ligada tranca operação no dia do
     # deploy, sem ninguém ter pedido.
     item_cancel_window_seconds = models.PositiveIntegerField(default=0)
+    # O CÓDIGO DE QUEM LANÇOU, num aparelho compartilhado.
+    #
+    # Ligado, o app do garçom pede um código antes de criar pedido ou lançar item,
+    # e grava em `metafields`. O caso é o totem no salão: vários garçons usando a
+    # MESMA sessão, e sem isso todo lançamento do dia fica no nome do mesmo login.
+    #
+    # É ATRIBUIÇÃO, NÃO AUTENTICAÇÃO: o código não é conferido contra cadastro
+    # nenhum e não dá permissão de nada. Ver `apps.orders.operator_code`.
+    #
+    # Nasce desligado: uma exigência nova que nasce ligada tranca o lançamento no
+    # dia do deploy, com o salão cheio e ninguém sabendo que código digitar.
+    require_operator_code = models.BooleanField(
+        default=False,
+        help_text="Pedir o código do operador antes de criar pedido ou lançar item (app do garçom).",
+    )
     operational_settings = models.JSONField(default=dict, blank=True)
     fiscal_settings = models.JSONField(default=dict, blank=True)
     print_settings = models.JSONField(default=dict, blank=True)
@@ -282,6 +297,12 @@ class Command(TenantModel):
         on_delete=models.SET_NULL,
     )
     is_active = models.BooleanField(default=True)
+    # OS CAMPOS ADICIONAIS DO CARTÃO, herdados pelo pedido que nascer dele.
+    #
+    # É aqui que o código de quem abriu a comanda fica: o pedido só nasce no
+    # caixa, horas depois, e sem guardar no cartão o rastro de quem anotou se
+    # perderia no caminho.
+    metafields = models.JSONField(default=dict, blank=True, help_text="Campos adicionais livres. Dicionário raso, valores escalares curtos.")
 
     class Meta:
         ordering = ["number"]

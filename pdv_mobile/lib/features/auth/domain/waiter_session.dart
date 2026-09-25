@@ -37,6 +37,7 @@ class WaiterUser {
     this.restaurantName = '',
     this.profileType = '',
     this.permissions = const [],
+    this.requireOperatorCode = false,
   });
 
   final String id;
@@ -47,6 +48,17 @@ class WaiterUser {
   final String restaurantName;
   final String profileType;
   final List<String> permissions;
+
+  /// O restaurante pede o código de quem lançou antes de criar pedido ou item?
+  ///
+  /// Vem com a SESSÃO, e não de uma consulta ao cadastro do restaurante: o app
+  /// precisa da resposta antes do primeiro lançamento, e perguntar ao
+  /// `/restaurants/` exigiria dar ao garçom leitura do cadastro inteiro só para
+  /// descobrir se deve pedir um número.
+  ///
+  /// Muda no próximo login ou na revalidação da sessão — ligar a opção no meio
+  /// do serviço não interrompe quem está atendendo.
+  final bool requireOperatorCode;
 
   String get displayName => name.trim().isEmpty ? username : name.trim();
   bool get canReceivePayment =>
@@ -63,6 +75,7 @@ class WaiterUser {
     'restaurant_name': restaurantName,
     'profile_type': profileType,
     'permissions': permissions,
+    'require_operator_code': requireOperatorCode,
   };
 
   static WaiterUser fromJson(Map<String, dynamic> json) => WaiterUser(
@@ -76,5 +89,6 @@ class WaiterUser {
     permissions: (json['permissions'] as List? ?? const [])
         .map((item) => '$item')
         .toList(),
+    requireOperatorCode: json['require_operator_code'] == true,
   );
 }

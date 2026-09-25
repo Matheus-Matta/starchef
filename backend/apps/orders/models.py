@@ -171,6 +171,12 @@ class Order(TenantModel):
     # do pedido precisa dizer POR QUE o total foi aquele, e um FK nulo não diz.
     coupon_code = models.CharField(max_length=40, blank=True, default="")
     coupon_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # OS CAMPOS ADICIONAIS DO PEDIDO, herdados da comanda que o originou.
+    #
+    # `attach_commands_to_order` copia o que a comanda tiver e o pedido não — sem
+    # sobrescrever: o que foi registrado no pedido é mais recente e mais
+    # específico, e apagá-lo trocaria o rastro de quem fechou pelo de quem abriu.
+    metafields = models.JSONField(default=dict, blank=True, help_text="Campos adicionais livres. Dicionário raso, valores escalares curtos.")
     delivery_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_status = models.CharField(
@@ -232,6 +238,30 @@ class Order(TenantModel):
         if update_fields is not None:
             kwargs["update_fields"] = [*set(update_fields), "updated_at"]
         return super().save(*args, **kwargs)
+
+    @property
+    def operator_label(self):
+        """Quem atendeu, e com qual código — "Maria Silva - 4821".
+
+        Existe como propriedade porque TRÊS lugares imprimem a mesma linha: o
+        cupom de texto do PDV, o recibo em HTML da retaguarda e a tela de
+        detalhe. Montada em cada um, a primeira mudança de formato faria os
+        três discordarem sobre quem atendeu a mesma venda.
+
+        O código só aparece quando EXISTE, e não quando o restaurante o exige:
+        uma venda registrada com código continua imprimindo o rastro dela depois
+        que alguém desligar a opção, que é justamente quando o rastro é pedido.
+        """
+        from apps.orders.operator_code import codigo_de
+
+        pessoa = self.responsible_user
+        nome = ""
+        if pessoa is not None:
+            nome = pessoa.get_full_name() or pessoa.username
+        codigo = codigo_de(self.metafields)
+        if nome and codigo:
+            return f"{nome} - {codigo}"
+        return nome or codigo
 
     @property
     def is_locked(self):

@@ -968,6 +968,11 @@ export const resources = [
       { name: "max_commands_per_table", label: "Comandas por mesa (0 = sem limite)", type: "number", default: 4, min: 0, section: "Operacao", hint: "Quantas comandas podem ficar vinculadas à mesma mesa. O servidor barra a próxima com aviso no PDV e no app do garçom." },
       { name: "cancellation_grace_seconds", label: "Carência de cancelamento (segundos)", type: "number", default: 0, min: 0, max: 600, section: "Operacao", hint: "Tempo entre enviar para a cozinha e a comanda sair de fato. Dentro dele, cancelar não pede a senha do caixa nem imprime cupom de cancelamento. 0 desliga." },
       { name: "item_cancel_window_seconds", label: "Prazo para cancelar item na produção (segundos)", type: "number", default: 0, min: 0, max: 3600, section: "Operacao", hint: "Conta DEPOIS que o item chega à cozinha. Passado o prazo, cancelar o item exige autorização de um supervisor. 0 desliga." },
+      // O CODIGO DE QUEM LANCOU, para aparelho compartilhado.
+      //
+      // Nasce desligado: uma exigencia nova que nasce ligada tranca o lancamento
+      // no dia do deploy, com o salao cheio e ninguem sabendo que codigo digitar.
+      { name: "require_operator_code", label: "Pedir código do operador no app do garçom", type: "boolean", default: false, section: "Operacao", hint: "Para totem ou aparelho compartilhado: antes de criar pedido ou lançar item, o app pede um código (só números) e o grava no registro. E atribuição, nao senha: qualquer número é aceito e ele nao da permissão de nada. Aparece na nota como \"Operador: nome - código\"." },
       // O operador digita a senha comum; a API gera a hash e nunca devolve o valor.
       { name: "cash_action_password", label: "Definir senha de ações do caixa", type: "password", configuredField: "has_cash_action_password", placeholder: "Digite a senha desejada (ex.: 123)", section: "Operacao", full: true, hint: "As bolinhas indicam que já existe uma senha salva. Digite apenas para substituir. Não cole uma hash." },
     ],

@@ -2,11 +2,14 @@ from rest_framework import serializers
 
 from apps.core.serializers import TenantModelSerializer
 from apps.orders.models import CommandItem
+from apps.orders.serializers_metafields import MetafieldsField
 
 
 class CommandItemSerializer(TenantModelSerializer):
     """Anotação de comanda no mesmo formato visual de um item de pedido."""
 
+    # O código de QUEM anotou este consumo. Herdado da comanda quando ela tem.
+    metafields = MetafieldsField()
     product_name = serializers.CharField(source="product.name", read_only=True)
     pricing_unit = serializers.CharField(source="product.pricing_unit", read_only=True)
     command_number = serializers.IntegerField(source="command.number", read_only=True)
@@ -34,6 +37,7 @@ class CommandItemSerializer(TenantModelSerializer):
             "variations",
             "addons",
             "customer_note",
+            "metafields",
             "production_sector",
             "status",
             "command_status",

@@ -331,6 +331,11 @@ class OrderViewSet(BaseTenantViewSet):
             "addons": raw_item.get("addons", []),
             "customer_note": raw_item.get("customer_note", ""),
             "expected_unit_price": raw_item.get("expected_unit_price"),
+            # O CODIGO DE QUEM LANCOU. Aceito no item e tambem no corpo: o app
+            # manda um pedido com vários itens de uma vez, e nesse caso o codigo
+            # e o mesmo para todos — repeti-lo em cada item seria o app copiando
+            # o proprio estado N vezes.
+            "metafields": raw_item.get("metafields") or request.data.get("metafields"),
         }
 
         # A comanda ja tem pedido aberto: o item entra NELE.
@@ -413,6 +418,10 @@ class OrderViewSet(BaseTenantViewSet):
             delivery_address=serializer.validated_data.get("delivery_address"),
             delivery_fee=serializer.validated_data.get("delivery_fee", 0),
             general_notes=serializer.validated_data.get("general_notes", ""),
+            # Quem abre a conta por aqui tambem informa o codigo. `create_order`
+            # e o unico lugar que cobra a exigencia do restaurante: deixar o CRUD
+            # de fora abriria a porta que a configuracao acabou de fechar.
+            metafields=serializer.validated_data.get("metafields"),
         )
         serializer.instance = order
 
@@ -471,6 +480,7 @@ class OrderViewSet(BaseTenantViewSet):
                 scale_reading=scale_reading,
                 weight_kg=request.data.get("weight_kg"),
                 expected_unit_price=request.data.get("expected_unit_price"),
+                metafields=request.data.get("metafields"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)

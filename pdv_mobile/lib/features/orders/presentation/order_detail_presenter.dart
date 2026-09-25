@@ -9,6 +9,7 @@ import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/order_drafts.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
+import '../domain/operator_code_keeper.dart';
 
 part 'order_detail_payments.dart';
 
@@ -28,9 +29,32 @@ class OrderDetailPresenter extends ChangeNotifier {
     required this.repository,
     required this.subject,
     Map<String, dynamic>? initialOrder,
-  }) : _order = initialOrder;
+    OperatorCodeKeeper? operatorCodes,
+  }) : _order = initialOrder,
+       operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
   final OrdersRepository repository;
+
+  /// Guarda o código de quem está lançando, por atendimento.
+  final OperatorCodeKeeper operatorCodes;
+
+  /// Este restaurante exige o código antes do lançamento?
+  ///
+  /// Vem da SESSÃO, e não de uma consulta: a resposta é necessária antes do
+  /// primeiro item, e uma ida à rede aqui atrasaria o lançamento inteiro — num
+  /// aparelho que lança offline por desenho.
+  bool get requiresOperatorCode => repository.session.user.requireOperatorCode;
+
+  /// O código guardado para ESTE atendimento, ou vazio.
+  String get operatorCode => operatorCodes.codigoDe(subject.id);
+
+  /// Já dá para lançar, ou falta o código?
+  bool get needsOperatorCode => requiresOperatorCode && operatorCode.isEmpty;
+
+  void rememberOperatorCode(String codigo) {
+    operatorCodes.guardar(subject.id, codigo);
+    _notify();
+  }
 
   BackendGateway get gateway => repository.gateway;
   OrderDrafts get drafts => repository.drafts;
@@ -305,6 +329,10 @@ class OrderDetailPresenter extends ChangeNotifier {
             variationId: draft.variationId,
             addonIds: draft.addonIds,
             customerNote: draft.note,
+            // O CÓDIGO VIAJA COM O ITEM, e não com a sessão: a operação
+            // enfileirada sobe horas depois, quando quem lançou pode nem estar
+            // mais no turno.
+            metafields: operatorCodes.corpoDe(subject.id),
           );
           sent++;
         } on MutationQueued {

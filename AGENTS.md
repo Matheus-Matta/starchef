@@ -44,6 +44,9 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/PROMOCOES_E_CUPONS.md`: o preço do produto saindo de propriedade e não de
   coluna, a tabela de desconto e a disputa entre regras, e o cupom com
   identidade por CPF. **Leitura obrigatória antes de mexer em preço.**
+- `docs/CODIGO_DO_OPERADOR.md`: `metafields` em comanda, pedido e item, e o
+  código de quem lançou num aparelho compartilhado (totem). É ATRIBUIÇÃO, não
+  autenticação — leia antes de tratar o código como permissão.
 
 ## Regra da sincronização
 

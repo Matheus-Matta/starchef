@@ -17,9 +17,25 @@ def launch_item(
     variations=None,
     addons=None,
     customer_note="",
+    metafields=None,
 ):
-    """Anota um consumo na comanda sem criar pedido."""
+    """Anota um consumo na comanda sem criar pedido.
+
+    `metafields` carrega o código de QUEM anotou quando o restaurante exige. O
+    item herda o que a comanda tiver: quem abriu o cartão já se identificou, e
+    exigir o código de novo a cada prato faria o garçom digitar dez vezes no
+    mesmo atendimento.
+    """
     from apps.menu.models import Product
+
+    from apps.core.metafields import herdar
+    from apps.orders.operator_code import exigir
+
+    extras = exigir(
+        command.restaurant,
+        herdar(metafields, command.metafields),
+        acao="lançar item na comanda",
+    )
 
     if not isinstance(product, Product):
         product = Product.objects.get(pk=product)
@@ -47,6 +63,7 @@ def launch_item(
             launched_by=user,
             created_by=user,
             updated_by=user,
+            metafields=extras,
         )
         _create_addons(item, adicionais, quantidade, user)
         _mark_occupied(command, user)
