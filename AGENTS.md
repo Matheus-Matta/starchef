@@ -41,6 +41,9 @@ Para assuntos técnicos mais amplos, use também a documentação específica:
 - `docs/CONTA_AGRUPADA_COMANDAS.md`: pagar várias comandas num pedido só —
   `OrderMerge`, o estado do item na comanda, a cozinha lendo a origem e a
   balança que pesa para a comanda.
+- `docs/PROMOCOES_E_CUPONS.md`: o preço do produto saindo de propriedade e não de
+  coluna, a tabela de desconto e a disputa entre regras, e o cupom com
+  identidade por CPF. **Leitura obrigatória antes de mexer em preço.**
 
 ## Regra da sincronização
 
