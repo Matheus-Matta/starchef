@@ -23,7 +23,7 @@ class ProductCategoryAdmin(TenantModelAdmin):
 
 @admin.register(Product)
 class ProductAdmin(TenantModelAdmin):
-    list_display = ("name", "account", "internal_code", "category", "sale_price", "production_sector", "is_active")
+    list_display = ("name", "account", "internal_code", "category", "base_price", "production_sector", "is_active")
     list_filter = ("account", "restaurant", "branch", "product_type", "production_sector", "is_active")
     search_fields = ("name", "internal_code", "description")
 

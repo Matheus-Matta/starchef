@@ -229,6 +229,30 @@ _e("customer", "customers.Customer", conflict_policy=VERSAO, dependencies=("acco
 _e("customer_address", "customers.CustomerAddress", conflict_policy=VERSAO,
    dependencies=("customer",))
 
+# 11-b. Promocoes e cupons. O PRECO E DECISAO DO ESCRITORIO: quem cadastra
+# tabela de desconto e cupom e a nuvem, e a loja recebe. `cloud_to_local` nao e
+# economia de trafego — e o que impede uma loja de inventar desconto proprio e a
+# rede descobrir no fechamento do mes.
+#
+# A ORDEM AQUI E A ORDEM DE CARGA, e ela importa: a regra aponta a tabela, o
+# vinculo aponta a regra e o produto, e o pedido aponta o cupom. Um filho que
+# chega antes do pai fica em "ainda nao existe aqui" em retentativa eterna.
+_e("discount_table", "promotions.DiscountTable", conflict_policy=CLOUD, flow="cloud_to_local",
+   dependencies=("restaurant",))
+# `products` NAO viaja como m2m: ele passa por `PromotionProduct`, que tem
+# campos proprios (o "de" e o "por" do encarte). Sincronizar o m2m gravaria o
+# vinculo SEM esses valores — a promocao chegaria na loja apontando o produto
+# certo com preco vazio, e o caixa cobraria o preco cheio.
+_e("promotion", "promotions.Promotion", conflict_policy=CLOUD, flow="cloud_to_local",
+   dependencies=("discount_table", "product_category"),
+   exclude_fields=("products",),
+   m2m_fields={"categories": "id", "sectors": "id"})
+_e("promotion_product", "promotions.PromotionProduct", conflict_policy=CLOUD, flow="cloud_to_local",
+   dependencies=("promotion", "product"))
+_e("coupon", "promotions.Coupon", conflict_policy=CLOUD, flow="cloud_to_local",
+   dependencies=("account", "customer_group", "customer"),
+   m2m_fields={"customer_groups": "id", "customers": "id"})
+
 # 12. Estoque. Movimento é imutável: o destino insere e nunca reescreve.
 _e("stock_location", "stock.StockLocation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("stock_supplier", "stock.Supplier", conflict_policy=CLOUD, dependencies=("account",),
@@ -284,7 +308,7 @@ CAIXA_VIVO = ["pending_opening", "open", "blocked",
 # Fiscal e caixa NÃO entram aqui, e não é esquecimento: eles não desviam
 # (`CloudFallback.caminhosQueNuncaDesviam`), então não há o que descer.
 _e("order", "orders.Order", conflict_policy=LOJA, flow="both",
-   dependencies=("restaurant", "table", "customer"),
+   dependencies=("restaurant", "table", "customer", "coupon"),
    seed_to_local=True, essential_filter={"status__in": ABERTOS})
 _e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="both",
    dependencies=("order",),
@@ -298,6 +322,14 @@ _e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="both",
 _e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="both",
    dependencies=("order_item", "product_addon"),
    seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS})
+# O RESGATE SOBE. Ele nasce no pagamento, e o pagamento acontece na loja: sem
+# `local_to_cloud` no `both`, um cupom de compra unica usado no balcao ficaria
+# invisivel para a nuvem e a mesma pessoa usaria de novo no delivery. Nao entra
+# na carga essencial porque a loja nao precisa do historico de resgate de
+# ninguem para atender — ela precisa saber se ESTE CPF ja usou, e isso ela
+# pergunta no momento da venda.
+_e("coupon_redemption", "promotions.CouponRedemption", conflict_policy=LOJA, flow="both",
+   dependencies=("coupon", "order", "customer"), include_in_bootstrap=False)
 # A COMANDA COMO BLOCO DE NOTAS. Ela anota o consumo sem pedido nenhum, e o
 # pedido só nasce no caixa — então a anotação precisa descer na carga
 # essencial por conta própria: uma loja que assume a operação herda cartões

@@ -155,6 +155,22 @@ class Order(TenantModel):
     )
     fiscal_customer_cpf = models.CharField(max_length=11, blank=True, default="")
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # O CUPOM FICA SEPARADO DO `discount` de propósito. `discount` é a decisão
+    # de um gerente naquele pedido; o cupom é uma regra que o cliente exerceu, e
+    # some por conta própria se o pedido mudar e deixar de se qualificar.
+    # Somados numa coluna só, o recálculo apagaria o abatimento que o gerente
+    # deu à mão toda vez que reavaliasse o cupom.
+    coupon = models.ForeignKey(
+        "promotions.Coupon",
+        null=True,
+        blank=True,
+        related_name="orders",
+        on_delete=models.SET_NULL,
+    )
+    # O código fica gravado mesmo que o cupom seja apagado depois: o histórico
+    # do pedido precisa dizer POR QUE o total foi aquele, e um FK nulo não diz.
+    coupon_code = models.CharField(max_length=40, blank=True, default="")
+    coupon_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     payment_status = models.CharField(

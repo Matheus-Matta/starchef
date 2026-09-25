@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "apps.images",
     "apps.customers",
     "apps.menu",
+    "apps.promotions",
     "apps.orders",
     "apps.kitchen",
     "apps.payments",

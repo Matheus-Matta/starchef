@@ -20,6 +20,7 @@ from apps.menu.models import (
     Recipe,
     RecipeItem,
 )
+from apps.menu.serializers_pricing import ProductPromotionReading
 
 
 class ProductCategorySerializer(LogoImageMixin, TenantModelSerializer):
@@ -175,16 +176,35 @@ class CeilDecimalField(serializers.DecimalField):
         return super().to_internal_value(data)
 
 
-class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
+class ProductSerializer(ProductPromotionReading, ProductImagesMixin, TenantModelSerializer):
     category_name = serializers.SerializerMethodField()
     sector_name = serializers.CharField(source="sector.name", read_only=True, default=None)
     current_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     variations = ProductVariationSerializer(many=True, read_only=True)
     recipe = RecipeSerializer(read_only=True)
     internal_code = serializers.CharField(required=False, allow_blank=True, default="")
+    # UM CAMPO DE VALOR E UM DE PROMOCIONAL — exatamente como o formulário
+    # sempre teve. Os dois gravam o CADASTRO (`base_price` e
+    # `base_promotional_price`): o que o operador digita é o que fica guardado,
+    # e nenhuma tabela de desconto encosta nesses números.
+    #
     # O banco aceita zero para equipamentos criados pelo recebimento fiscal,
     # mas o cadastro comercial pela API continua exigindo preco explicito.
-    sale_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=True)
+    sale_price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=True, source="base_price",
+    )
+    promotional_price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, required=False, allow_null=True,
+        source="base_promotional_price",
+    )
+    # E ESTES SÃO A LEITURA, calculada: o preço que será cobrado agora, o valor
+    # riscado e de qual promoção ele veio. São read-only de propósito — quem
+    # muda preço é o cadastro ou a tabela de desconto, nunca um PATCH no
+    # produto.
+    compare_at_price = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True,
+    )
+    promotion = serializers.SerializerMethodField()
     estimated_cost = CeilDecimalField(max_digits=12, decimal_places=2, required=False, default=Decimal("0.00"))
     # Adicionais vinculados a este produto (gerenciados na edição do produto).
     addons = serializers.SerializerMethodField()
@@ -216,7 +236,11 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
 
     class Meta:
         model = Product
-        fields = "__all__"
+        # `exclude` em vez de `__all__`: as colunas gravadas já têm porta pela
+        # frente (`sale_price` e `promotional_price`), e expô-las duas vezes
+        # daria ao cliente dois caminhos para o mesmo número — com o último
+        # que chegasse vencendo, sem ordem definida.
+        exclude = ("base_price", "base_promotional_price")
         read_only_fields = AUDIT_READ_ONLY_FIELDS
         # `margin_percent` e assinado: vender abaixo do custo e uma decisao
         # possivel, e a margem negativa e o retrato dela.
@@ -233,6 +257,7 @@ class ProductSerializer(ProductImagesMixin, TenantModelSerializer):
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category_id else "Sem categoria"
+
 
     def validate_sector(self, value):
         if value and self.instance and value.branch_id != self.instance.branch_id:

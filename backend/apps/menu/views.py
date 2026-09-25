@@ -71,7 +71,7 @@ class ProductViewSet(BaseTenantViewSet):
         "available_for_delivery",
     ]
     search_fields = ["name", "internal_code", "ean", "gtin", "brand", "model", "description"]
-    ordering_fields = ["name", "sale_price", "created_at", "updated_at"]
+    ordering_fields = ["name", "base_price", "created_at", "updated_at"]
     ordering = ["name"]
 
     def get_queryset(self):

@@ -1,6 +1,7 @@
 from django.db import models
 
 from apps.core.models import TenantModel
+from apps.menu.product_pricing import ProductPricing
 
 UNIT_UNIT = "unit"
 UNIT_KG = "kg"
@@ -53,7 +54,7 @@ class ProductCategory(TenantModel):
         return self.name
 
 
-class Product(TenantModel):
+class Product(ProductPricing, TenantModel):
     TYPE_MEAL = "meal"
     TYPE_DRINK = "drink"
     TYPE_DESSERT = "dessert"
@@ -183,13 +184,26 @@ class Product(TenantModel):
         related_name="product_logos",
         on_delete=models.SET_NULL,
     )
-    sale_price = models.DecimalField(
+    # O VALOR CADASTRADO, GRAVADO, QUE NUNCA MUDA SOZINHO.
+    #
+    # `sale_price` e `promotional_price` existem logo abaixo como
+    # PROPRIEDADES: o preço que o restaurante cobra sai de cálculo, porque
+    # uma tabela de desconto que começa às 18h tem de valer às 18h sem
+    # ninguém salvar produto nenhum. O que está aqui é o valor de referência
+    # — ele sobrevive à promoção e volta a valer quando ela termina.
+    base_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=0,
-        help_text="Por unidade, ou por kg quando pricing_unit=kg.",
+        help_text="Preço cheio cadastrado. Por unidade, ou por kg quando pricing_unit=kg.",
     )
-    promotional_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    base_promotional_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Promocional do próprio cadastro, sem data. Tabela de desconto desconta sobre ele.",
+    )
     pricing_unit = models.CharField(max_length=8, choices=PRICING_CHOICES, default=PRICING_UNIT)
     stock_unit = models.CharField(max_length=12, default="UN", help_text="Unidade padrão no estoque (ex: UN, KG, L, G, ML).")
     estimated_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -275,10 +289,6 @@ class Product(TenantModel):
             # varreria o catálogo inteiro.
             models.Index(fields=["account", "ean"]),
         ]
-
-    @property
-    def current_price(self):
-        return self.promotional_price or self.sale_price
 
     @property
     def is_weighed(self):

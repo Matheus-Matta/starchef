@@ -393,10 +393,24 @@ def recalculate_order(order):
         subtotal = order.items.exclude(status__in=excluded).aggregate(value=Sum("total_price"))["value"]
         order.subtotal = subtotal or Decimal("0.00")
         order.service_fee = service_fee_for(order)
-        order.total = order.subtotal + order.service_fee + order.delivery_fee - order.discount
+        # O CUPOM E REAVALIADO AQUI, a cada recalculo. Um cupom de "acima de
+        # R$ 50" aplicado num pedido de R$ 60 tem de cair quando o operador
+        # remove metade dos itens: congelar o abatimento no momento da aplicacao
+        # e como se da desconto sem querer, e ninguem revisa um total que ja
+        # apareceu certo na tela uma vez.
+        from apps.promotions.coupon_service import revalidar
+
+        order.coupon_discount, _caiu = revalidar(order)
+        order.total = (
+            order.subtotal
+            + order.service_fee
+            + order.delivery_fee
+            - order.discount
+            - order.coupon_discount
+        )
         if order.total < Decimal("0.00"):
             order.total = Decimal("0.00")
-        order.save(update_fields=["subtotal", "service_fee", "total", "updated_at"])
+        order.save(update_fields=["subtotal", "service_fee", "coupon_discount", "total", "updated_at"])
         return order
 
 
@@ -920,6 +934,7 @@ def close_order(
     service_fee_enabled=None,
     fiscal_customer_cpf=None,
     expected_total=None,
+    coupon_code=None,
 ):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
@@ -948,6 +963,20 @@ def close_order(
             if normalized_cpf and not is_valid_cpf(normalized_cpf):
                 raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
             order.fiscal_customer_cpf = normalized_cpf
+        # O CUPOM ENTRA DEPOIS DO CPF, e nao antes: a regra de "um por cliente"
+        # e a de grupo se resolvem pelo CPF da nota, e avaliar o cupom antes de
+        # gravar o CPF recusaria quem acabou de informa-lo.
+        #
+        # `None` significa "nao mexe"; string vazia significa "retira". Sao
+        # gestos diferentes: fechar o pedido de novo para corrigir a taxa nao
+        # pode derrubar o cupom que ja estava aplicado.
+        if coupon_code is not None:
+            from apps.promotions.coupon_service import aplicar_cupom, retirar_cupom
+
+            if str(coupon_code).strip():
+                aplicar_cupom(order, coupon_code)
+            else:
+                retirar_cupom(order)
         if service_fee_enabled is not None:
             if isinstance(service_fee_enabled, str):
                 service_fee_enabled = service_fee_enabled.lower() in {"1", "true", "yes", "on"}
@@ -1028,6 +1057,12 @@ def close_order(
             order.payment_status = Order.PAYMENT_PENDING
         order.save(update_fields=["payment_status", "status", "updated_by"])
         if paid_in_full:
+            # O RESGATE DO CUPOM NASCE AQUI, no pagamento — nunca na aplicação.
+            # Gravado na aplicação, um cupom de compra única queimaria num pedido
+            # abandonado e o cliente perderia o direito sem ter comprado nada.
+            from apps.promotions.coupon_service import registrar_resgate
+
+            registrar_resgate(order)
             # Pago: as anotações saem da comanda como VENDA.
             conclude_items_of_order(order, billed=True)
             if order.table_id:
@@ -1157,6 +1192,12 @@ def cancel_order(order, user, reason, authorized_by=None, authorization=None):
         order.items.exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED]).update(
             status=OrderItem.STATUS_CANCELLED, void_reason=reason, voided_at=now, voided_by=user
         )
+        # O CUPOM VOLTA A VALER. Uma venda cancelada nao consumiu o direito do
+        # cliente, e deixar o resgate gravado transformaria um cancelamento por
+        # erro de digitacao na perda definitiva de um cupom de compra unica.
+        from apps.promotions.coupon_service import devolver_resgate
+
+        devolver_resgate(order)
         # Conta cancelada: as anotações saem como PERDA, não como venda. É a
         # distinção que o fechamento do mês precisa, e que um estado só apagaria.
         conclude_items_of_order(order, when=now, billed=False)

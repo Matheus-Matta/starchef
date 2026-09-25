@@ -55,3 +55,21 @@ class MediaStorageUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = "O armazenamento de imagens não está disponível."
     default_code = "media_storage_unavailable"
+
+
+class CouponRejected(APIException):
+    """O cupom existe, mas quem esta pedindo nao tem direito a ele agora.
+
+    422, e nao 400: o corpo esta certo e o codigo foi digitado certo. O que
+    barra e uma REGRA — o CPF ja usou, o pedido nao alcanca o minimo, o cupom
+    venceu ontem. Um 400 faria o PDV tratar como erro de digitacao e pedir o
+    codigo de novo, quando o codigo nunca foi o problema.
+
+    O `default_code` unico deixa o terminal distinguir "cupom invalido" (nao
+    existe) de "cupom recusado" (existe e nao se aplica) — sao duas conversas
+    diferentes com o cliente, que esta ouvindo.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    default_detail = "Este cupom não pode ser aplicado a este pedido."
+    default_code = "coupon_rejected"

@@ -581,6 +581,9 @@ class OrderViewSet(BaseTenantViewSet):
                 service_fee_enabled=request.data.get("service_fee_enabled"),
                 fiscal_customer_cpf=request.data.get("fiscal_customer_cpf"),
                 expected_total=request.data.get("expected_total"),
+                # `None` quando a chave nao vem: fechar de novo para corrigir a
+                # taxa nao pode derrubar o cupom que ja estava aplicado.
+                coupon_code=request.data.get("coupon_code"),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
@@ -591,6 +594,22 @@ class OrderViewSet(BaseTenantViewSet):
             data["client_expected_total"] = str(order._client_expected_total)
             data["authoritative_total"] = data["total"]
         return Response(data)
+
+    @action(detail=True, methods=["post"], url_path="apply-coupon")
+    def apply_coupon(self, request, pk=None):
+        """Aplica um cupom ao pedido aberto, ou retira quando `code` vem vazio.
+
+        Existe separada do fechamento porque o cliente informa o cupom ANTES de
+        fechar, e ver o desconto entrar no total e o que ele espera. Obrigar a
+        fechar para descobrir se o cupom vale faria o caixa fechar e reabrir a
+        conta na frente dele.
+        """
+        from apps.promotions.views import aplicar_cupom_no_pedido
+
+        order = self.get_object()
+        aplicar_cupom_no_pedido(request, order)
+        order = recalculate_order(order)
+        return Response(self.get_serializer(order).data)
 
     @action(detail=True, methods=["post"], url_path="pay")
     def pay(self, request, pk=None):

@@ -191,6 +191,13 @@ class OrderSerializer(TenantModelSerializer):
             "payment_status",
             "production_status",
             "change_history",
+            # O CUPOM NAO ENTRA POR PATCH. Ele so entra por `apply-coupon` ou
+            # pelo fechamento, que e onde as regras sao avaliadas. Gravavel
+            # aqui, qualquer cliente prenderia um cupom vencido ao pedido e
+            # ainda escreveria o desconto que quisesse em `coupon_discount`.
+            "coupon",
+            "coupon_code",
+            "coupon_discount",
         ]
 
     def validate_order_type(self, value):

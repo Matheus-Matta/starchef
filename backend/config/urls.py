@@ -28,6 +28,12 @@ from apps.accounts.first_access import admin_login_or_first_access
 from apps.accounts.password_reset import PasswordResetConfirmView, PasswordResetRequestView
 from apps.assets.views import AssetLocationHistoryViewSet, AssetViewSet, ReusableAssetViewSet
 from apps.customers.views import CustomerAddressViewSet, CustomerGroupViewSet, CustomerViewSet
+from apps.promotions.views import (
+    CouponRedemptionViewSet,
+    CouponViewSet,
+    DiscountTableViewSet,
+    PromotionViewSet,
+)
 from apps.invoices.views import FiscalConfigViewSet, FiscalProfileViewSet, FocusNfeWebhookView, InvoiceViewSet
 from apps.kitchen.views import KdsColumnViewSet, KdsStationViewSet, KitchenItemViewSet, KitchenOrderViewSet
 from apps.sla.views import ServiceLevelAgreementViewSet
@@ -124,6 +130,10 @@ router.register("delivery/deliverymen", DeliverymanViewSet, basename="deliveryme
 router.register("customers/addresses", CustomerAddressViewSet, basename="customer-addresses")
 router.register("customers/groups", CustomerGroupViewSet, basename="customer-groups")
 router.register("customers", CustomerViewSet, basename="customers")
+router.register("promotions/discount-tables", DiscountTableViewSet, basename="discount-tables")
+router.register("promotions/rules", PromotionViewSet, basename="promotions")
+router.register("promotions/coupon-redemptions", CouponRedemptionViewSet, basename="coupon-redemptions")
+router.register("promotions/coupons", CouponViewSet, basename="coupons")
 router.register("menu/categories", ProductCategoryViewSet, basename="product-categories")
 router.register("menu/products", ProductViewSet, basename="products")
 router.register("menu/unit-conversions", ProductUnitConversionViewSet, basename="product-unit-conversions")

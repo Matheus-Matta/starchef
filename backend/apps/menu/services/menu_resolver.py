@@ -87,12 +87,25 @@ def _entry(**overrides):
     return entry
 
 
+def _entradas(products, *, request=None):
+    """Lista de produtos -> lista de entradas, com a promoção resolvida em lote.
+
+    Sem o lote, cada produto consultaria as tabelas de desconto por conta
+    própria: um bloco de doze ofertas no cardápio público viraria doze vezes a
+    mesma consulta, em página que qualquer cliente abre.
+    """
+    from apps.promotions.pricing import primar
+
+    produtos = primar(list(products))
+    return [product_entry(product, request=request) for product in produtos]
+
+
 def product_entry(product, *, request=None, item=None):
     """Produto → entrada. `item` traz o que o menu sobrescreve (título, foto, preço)."""
     price = item.override_price if item and item.override_price is not None else product.current_price
     # "De/por" só quando há promoção de verdade: um preço riscado igual ao
     # cobrado é propaganda enganosa, não desconto.
-    compare_at = product.sale_price if product.promotional_price else None
+    compare_at = product.compare_at_price
     return _entry(
         id=str(item.id) if item else "",
         type=MenuItem.TYPE_PRODUCT,
@@ -212,18 +225,24 @@ def _dynamic_entries(menu, request):
         if not menu.source_category_id:
             return []
         products = _active_products(menu).filter(category_id=menu.source_category_id).order_by("name")[:limit]
-        return [product_entry(product, request=request) for product in products]
+        return _entradas(products, request=request)
 
     if menu.source == Menu.SOURCE_BEST_SELLERS:
-        return [product_entry(product, request=request) for product in _best_selling_products(menu, limit)]
+        return _entradas(_best_selling_products(menu, limit), request=request)
 
     if menu.source == Menu.SOURCE_PROMOTIONS:
+        # O FILTRO VEM DAS PROMOÇÕES, e não de uma coluna. Antes o bloco de
+        # ofertas só achava quem tinha promocional digitado no cadastro: uma
+        # tabela de desconto de 20% na categoria inteira mudava o preço na
+        # vitrine e o bloco "Promoções" continuava vazio.
+        from apps.promotions.queries import filtro_de_promocao
+
         products = (
             _active_products(menu)
-            .filter(promotional_price__isnull=False)
+            .filter(filtro_de_promocao(menu.account_id, restaurant_id=menu.restaurant_id))
             .order_by("category__display_order", "name")[:limit]
         )
-        return [product_entry(product, request=request) for product in products]
+        return _entradas(products, request=request)
 
     return []
 
