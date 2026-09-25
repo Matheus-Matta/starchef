@@ -164,13 +164,21 @@ mixin _OrderSection on _HomePageShared {
         serviceFeePercent: defaultServiceFeePercent,
         serviceFeeAmount: taxa,
         money: _money,
+        savedCoupon: '${activeOrder?['coupon_code'] ?? ''}',
+        couponDiscount: _number(activeOrder?['coupon_discount']),
       ),
     );
     final seguir = escolha != null;
     final chargeService = escolha?.chargeService ?? true;
     final fiscalCpf = escolha?.fiscalCpf ?? '';
+    final couponCode = escolha?.couponCode ?? '';
     if (!seguir) return;
 
+    // O TITULO CITA O CUPOM porque ele e a causa mais provavel de o fechamento
+    // ser recusado com o corpo todo certo: o servidor devolve 422
+    // (`coupon_rejected`) com o motivo em portugues, e sem o titulo o caixa le
+    // "CPF ja usou este cupom" sob um cabecalho generico de falha e conclui que
+    // o problema e o CPF.
     final closed = await _work(() async {
       final hasPendingItems = orderItems.any(
         (item) => item['status'] == 'pending',
@@ -190,6 +198,10 @@ mixin _OrderSection on _HomePageShared {
           'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
           'fiscal_customer_cpf': fiscalCpf,
+          // Sempre presente, inclusive vazio: vazio RETIRA o cupom. Omitir
+          // significaria "nao mexe", e o caixa que apagou o codigo de proposito
+          // — porque o cliente desistiu dele — veria o desconto continuar.
+          'coupon_code': couponCode,
         },
         accessToken: token,
       );
@@ -199,7 +211,7 @@ mixin _OrderSection on _HomePageShared {
       activeOrder = closeResult;
       await _refreshOrder();
       return activeOrder!;
-    });
+    }, errorTitle: 'Não foi possível fechar o pedido');
     if (closed == null) return;
     // A impressão fica só para depois do pagamento (cupom fiscal) ou para o
     // fluxo automático setorizado da cozinha — não existe "nota de
@@ -210,139 +222,3 @@ mixin _OrderSection on _HomePageShared {
 }
 
 /// O que o operador decidiu no diálogo de "ir para o pagamento".
-class _FinishOrderChoice {
-  const _FinishOrderChoice({
-    required this.chargeService,
-    required this.fiscalCpf,
-  });
-
-  final bool chargeService;
-
-  /// Só dígitos, ou vazio quando o CPF não vai na nota.
-  final String fiscalCpf;
-}
-
-/// As duas escolhas da nota: taxa de serviço e CPF.
-///
-/// É um widget com estado porque ele é DONO do `TextEditingController` — ver
-/// `_MovementApprovalForm` para o defeito que isso evita.
-class _FinishOrderForm extends StatefulWidget {
-  const _FinishOrderForm({
-    required this.chargeService,
-    required this.savedCpf,
-    required this.customerCpf,
-    required this.serviceFeePercent,
-    required this.serviceFeeAmount,
-    required this.money,
-  });
-
-  final bool chargeService;
-  final String savedCpf;
-  final String customerCpf;
-  final double serviceFeePercent;
-  final double serviceFeeAmount;
-  final String Function(dynamic value) money;
-
-  @override
-  State<_FinishOrderForm> createState() => _FinishOrderFormState();
-}
-
-class _FinishOrderFormState extends State<_FinishOrderForm> {
-  late var _chargeService = widget.chargeService;
-  late var _includeCpf = widget.savedCpf.isNotEmpty;
-  late final _cpf = TextEditingController(
-    text: formatCpf(
-      widget.savedCpf.isNotEmpty ? widget.savedCpf : widget.customerCpf,
-    ),
-  );
-  String? _cpfError;
-
-  @override
-  void dispose() {
-    _cpf.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    if (_includeCpf && !isValidCpf(_cpf.text)) {
-      setState(() => _cpfError = 'Informe um CPF válido.');
-      return;
-    }
-    Navigator.pop(
-      context,
-      _FinishOrderChoice(
-        chargeService: _chargeService,
-        fiscalCpf: _includeCpf ? cpfDigits(_cpf.text) : '',
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) => AppDialog(
-    title: const Text('Ir para o pagamento'),
-    content: SizedBox(
-      width: 420,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _chargeService,
-            onChanged: (value) =>
-                setState(() => _chargeService = value ?? true),
-            title: const Text('Cobrar taxa de serviço'),
-            subtitle: Text(
-              widget.serviceFeePercent > 0
-                  ? '${widget.serviceFeePercent.toStringAsFixed(2).replaceAll('.', ',')}'
-                        ' · ${widget.money(widget.serviceFeeAmount)}'
-                  : 'Desmarque para retirar a taxa deste pedido.',
-            ),
-          ),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _includeCpf,
-            onChanged: (value) => setState(() {
-              _includeCpf = value ?? false;
-              _cpfError = null;
-              if (_includeCpf && _cpf.text.isEmpty) {
-                _cpf.text = formatCpf(widget.customerCpf);
-              }
-            }),
-            title: const Text('Incluir CPF na NFC-e'),
-            subtitle: const Text(
-              'O CPF será enviado como destinatário da nota fiscal.',
-            ),
-          ),
-          if (_includeCpf)
-            TextField(
-              key: const Key('fiscal-cpf'),
-              controller: _cpf,
-              keyboardType: TextInputType.number,
-              inputFormatters: [CpfInputFormatter()],
-              decoration: InputDecoration(
-                labelText: 'CPF para a NFC-e',
-                hintText: '000.000.000-00',
-                errorText: _cpfError,
-                prefixIcon: const Icon(Icons.badge_outlined),
-              ),
-              onChanged: (_) {
-                if (_cpfError != null) setState(() => _cpfError = null);
-              },
-            ),
-        ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Voltar'),
-      ),
-      FilledButton.icon(
-        onPressed: _confirm,
-        icon: const Icon(Icons.payments_outlined),
-        label: const Text('Ir para pagamento'),
-      ),
-    ],
-  );
-}

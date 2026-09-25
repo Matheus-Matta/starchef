@@ -5,6 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../orders/presentation/order_formatters.dart';
 import '../domain/product_options.dart';
 import 'product_thumbnail.dart';
+import 'product_price_text.dart';
 
 /// Segunda etapa do lançamento: variação, adicionais, quantidade e observação.
 ///
@@ -151,7 +152,7 @@ class _ProductConfigViewState extends State<ProductConfigView> {
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
         ),
       ),
-      Text(money(widget.product['sale_price'])),
+      ProductPriceText(product: widget.product, fontSize: 15),
     ],
   );
 

@@ -25,7 +25,11 @@ double expectedUnitPrice(
   String? variationId,
   Iterable<String> addonIds = const [],
 }) {
-  var total = amount(product['sale_price']);
+  // `current_price`, e NAO `sale_price`: o backend cobra o preco de agora, ja
+  // com a tabela de desconto aplicada. Ler o cadastrado fazia a previa do
+  // garcom mostrar um valor e a venda gravar outro — e a divergencia aparecia
+  // na frente do cliente, depois de ele ja ter ouvido o total.
+  var total = amount(product['current_price'] ?? product['sale_price']);
   for (final variation in (product['variations'] as List? ?? const [])) {
     if (variation is Map && '${variation['id']}' == variationId) {
       total += amount(variation['price_delta']);

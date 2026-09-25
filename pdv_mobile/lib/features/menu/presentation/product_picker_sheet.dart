@@ -8,6 +8,7 @@ import '../../orders/presentation/order_formatters.dart';
 import '../domain/product_options.dart';
 import 'product_config_view.dart';
 import 'product_thumbnail.dart';
+import 'product_price_text.dart';
 
 export '../domain/product_options.dart' show ProductChoice;
 
@@ -59,10 +60,7 @@ class _ProductPickerState extends State<_ProductPicker> {
               title: '${product['name'] ?? ''}',
               subtitle: _subtitle(product),
               leading: ProductThumbnail(product: product),
-              trailing: Text(
-                money(product['sale_price']),
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
+              trailing: ProductPriceText(product: product),
               onTap: () => setState(() => _selected = product),
             ),
           ),

@@ -5,6 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/product_image_url.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import 'product_card_metrics.dart';
+import 'product_price_label.dart';
 
 class ProductCatalogTile extends StatelessWidget {
   const ProductCatalogTile({
@@ -86,18 +87,10 @@ class ProductCatalogTile extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(
-                                '${money(product['current_price'])}${weighed ? ' / kg' : ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: scheme.primary,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w900,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
+                              child: ProductPriceLabel(
+                                product: product,
+                                money: money,
+                                suffix: weighed ? ' / kg' : '',
                               ),
                             ),
                             if (!_available)

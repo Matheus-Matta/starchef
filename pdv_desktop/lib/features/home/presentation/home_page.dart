@@ -93,6 +93,7 @@ part 'home_page_draft.dart';
 part 'home_page_draft_flow.dart';
 part 'home_page_draft_items.dart';
 part 'home_page_order.dart';
+part 'home_page_finish_order.dart';
 part 'home_page_product.dart';
 part 'home_page_orders.dart';
 part 'home_page_orders_view.dart';
