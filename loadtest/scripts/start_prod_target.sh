@@ -46,7 +46,11 @@ done
 # 2) Backend de produção + Redis.
 docker compose -f "$COMPOSE" up -d --build
 echo "aguardando /health/ em 127.0.0.1:${LOADTEST_PORT}..."
-for _ in $(seq 1 60); do
+# 150 x 2s: num banco NOVO o container migra ~150 tabelas e roda collectstatic
+# antes de o gunicorn abrir a porta. Com 60 tentativas o script desistia e dizia
+# "backend nao respondeu" sobre um backend que subia trinta segundos depois — e
+# a semente do passo 3 nunca rodava.
+for _ in $(seq 1 150); do
   if curl -fsS "http://127.0.0.1:${LOADTEST_PORT}/health/" >/dev/null 2>&1; then break; fi
   sleep 2
 done
