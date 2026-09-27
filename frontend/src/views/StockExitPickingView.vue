@@ -212,7 +212,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.picking { display: flex; flex-direction: column; gap: 16px; max-width: 1000px; margin: 0 auto; }
+.picking { display: flex; flex-direction: column; gap: var(--page-section-gap); max-width: 1000px; margin: 0 auto; }
 .picking__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .picking__eyebrow { color: var(--text-brand); font: var(--weight-bold) 11px/1 var(--font-sans); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .picking__head h1 { margin: 7px 0 5px; color: var(--text-strong); font-size: 25px; }
@@ -229,7 +229,7 @@ onMounted(async () => {
 .picking__alert--error { border: 1px solid var(--danger-border); background: var(--danger-subtle); color: var(--danger-text); }
 .picking__alert--ok { border: 1px solid var(--success); background: var(--success-subtle); color: var(--success-text); }
 
-.picking__card { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); }
+.picking__card { padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); }
 .picking__list { display: flex; flex-direction: column; gap: 10px; }
 .picking__item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 15px 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-card); }
 .picking__item--done { border-color: var(--success); background: var(--success-subtle); }

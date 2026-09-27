@@ -93,7 +93,8 @@ select:not([multiple]) {
   width: 100%;
   max-width: 1280px;      /* não ocupa a tela inteira em telas largas */
   margin-inline: auto;    /* centraliza o conteúdo */
-  padding: 22px;
+  /* O inset pertence à casca: páginas novas não podem nascer coladas à topbar. */
+  padding: var(--page-inset-y) var(--page-inset-x);
   overflow: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
@@ -162,7 +163,8 @@ select:not([multiple]) {
    conteúdo passa a ocupar toda a largura disponível. */
 @media (max-width: 900px) {
   .app-content {
-    padding: 14px 16px;
+    --page-inset-y: var(--space-4);
+    --page-inset-x: var(--space-4);
     max-width: none;
   }
   .app-content--mobile-nav {
@@ -173,7 +175,8 @@ select:not([multiple]) {
 
 @media (max-width: 560px) {
   .app-content {
-    padding: 12px;
+    --page-inset-y: var(--space-3);
+    --page-inset-x: var(--space-3);
   }
   .app-content--mobile-nav {
     padding-bottom: calc(82px + env(safe-area-inset-bottom));

@@ -26,7 +26,6 @@ mixin _PaymentView on _HomePageShared {
   String? get removingPaymentId;
   TextEditingController get paymentAmount;
   TextEditingController get paymentReference;
-
   double get paidTotal;
   double get remainingTotal;
   double get changeTotal;
@@ -36,9 +35,8 @@ mixin _PaymentView on _HomePageShared {
   String get flowStep;
   set flowStep(String value);
   Map<String, dynamic>? get selectedMethod;
-
   Widget _couponControl(BuildContext context);
-
+  Widget _couponSummaryRow();
   void _goBack();
   void _pressPaymentKey(String key);
   void _typePaymentAmount(String raw);
@@ -97,6 +95,8 @@ mixin _PaymentView on _HomePageShared {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Abre o cupom antes do resumo; o abatimento fica nele.
+                        _couponControl(context),
                         // QUEM LANCOU, com o codigo quando houver: "Maria - 4821".
                         //
                         // O caixa confere a conta de um atendimento que nao foi
@@ -127,10 +127,10 @@ mixin _PaymentView on _HomePageShared {
                             'Desconto',
                             '- ${_money(activeOrder!['discount'])}',
                           ),
-                        // O CUPOM ENTRA ANTES DO TOTAL, junto das outras linhas
-                        // que o compoem. Depois do total ele pareceria um
-                        // extra, quando e justamente uma parcela dele.
-                        _couponControl(context),
+                        // O DESCONTO DO CUPOM ENTRA ANTES DO TOTAL, junto das
+                        // outras linhas que o compoem: depois dele pareceria
+                        // um extra, quando e justamente uma parcela.
+                        _couponSummaryRow(),
                         _paymentSummaryRow(
                           'Total do pedido',
                           _money(activeOrder!['total']),

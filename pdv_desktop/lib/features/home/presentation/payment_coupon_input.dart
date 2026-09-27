@@ -38,6 +38,20 @@ class PaymentCouponInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cores = Theme.of(context).colorScheme;
+    // COMPACTO DE PROPÓSITO: o cupom abre o resumo do pagamento, acima das
+    // linhas de valor. Na altura padrão, campo e botão empurravam o total
+    // para baixo e roubavam a primeira olhada de quem só quer conferir a conta.
+    final botao = ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 12),
+      ),
+      minimumSize: const WidgetStatePropertyAll(Size(0, 34)),
+      textStyle: const WidgetStatePropertyAll(
+        TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -48,22 +62,33 @@ class PaymentCouponInput extends StatelessWidget {
             enabled: !busy,
             textCapitalization: TextCapitalization.characters,
             onSubmitted: onSubmit,
+            style: const TextStyle(fontSize: 13),
             decoration: InputDecoration(
               isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
+              ),
               labelText: 'Cupom',
+              labelStyle: const TextStyle(fontSize: 13),
               hintText: 'NATAL10',
               errorText: error.isEmpty ? null : error,
+              errorStyle: const TextStyle(fontSize: 11),
               // As frases do servidor explicam o MOTIVO, e cortá-las numa linha
               // deixaria "Este CPF já usou este…" — que não resolve nada para
               // quem está atendendo.
               errorMaxLines: 3,
-              prefixIcon: const Icon(Icons.local_activity_outlined, size: 18),
+              prefixIcon: const Icon(Icons.local_activity_outlined, size: 16),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 32,
+                minHeight: 32,
+              ),
             ),
           ),
         ),
         const SizedBox(width: 6),
         Padding(
-          padding: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.only(top: 3),
           child: busy
               ? const SizedBox(
                   width: 18,
@@ -82,6 +107,7 @@ class PaymentCouponInput extends StatelessWidget {
                       valueListenable: controller,
                       builder: (context, valor, _) => FilledButton(
                         key: const Key('payment-coupon-apply'),
+                        style: botao,
                         onPressed: valor.text.trim().isEmpty
                             ? null
                             : () => onSubmit(valor.text.trim()),
@@ -93,7 +119,9 @@ class PaymentCouponInput extends StatelessWidget {
                       OutlinedButton(
                         key: const Key('payment-coupon-remove'),
                         onPressed: onRemove,
-                        style: OutlinedButton.styleFrom(foregroundColor: cores.error),
+                        style: botao.merge(
+                          OutlinedButton.styleFrom(foregroundColor: cores.error),
+                        ),
                         child: const Text('Retirar'),
                       ),
                     ],

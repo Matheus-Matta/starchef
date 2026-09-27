@@ -4,10 +4,12 @@ import '../../../core/network/resource_page.dart';
 import '../../../core/sync/backend_gateway.dart';
 import '../../../core/sync/operation_id.dart';
 import '../../auth/domain/waiter_session.dart';
+import '../domain/operator_code_keeper.dart';
 import 'order_drafts.dart';
 import 'order_subject.dart';
 
 export '../../../core/network/resource_page.dart';
+export '../domain/operator_code_keeper.dart';
 export 'order_subject.dart';
 
 part 'orders_command_items.dart';
@@ -22,12 +24,28 @@ class OrdersRepository {
     required this.gateway,
     required this.session,
     OrderDrafts? drafts,
-  }) : drafts = drafts ?? OrderDrafts();
+    OperatorCodeKeeper? operatorCodes,
+  }) : drafts = drafts ?? OrderDrafts(),
+       operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
   final ApiClient api;
   final BackendGateway gateway;
   final WaiterSession session;
   final OrderDrafts drafts;
+
+  /// O código de quem está lançando, por atendimento.
+  ///
+  /// MORA AQUI, e não dentro de cada apresentador, porque o código é
+  /// informado numa tela (o fluxo de abrir o atendimento) e usado em outra (o
+  /// detalhe). Com um guardião por apresentador, o garçom digitava o código
+  /// para o primeiro item e era perguntado de novo no segundo.
+  final OperatorCodeKeeper operatorCodes;
+
+  /// Este restaurante exige o código antes do lançamento?
+  ///
+  /// Vem da SESSÃO, e não de uma consulta ao cadastro: a resposta é
+  /// necessária antes do primeiro item, num aparelho que lança offline.
+  bool get requiresOperatorCode => session.user.requireOperatorCode;
   ReadOrigin lastReadOrigin = const ReadOrigin.live();
   DateTime? _lastSyncedAt;
 

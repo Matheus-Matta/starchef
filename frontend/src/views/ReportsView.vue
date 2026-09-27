@@ -613,11 +613,8 @@ onMounted(async () => {
 .reports-view {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding-top: 4px;
+  gap: var(--page-section-gap);
 }
-
-.reports-view > :not(.reports-view__filters) { margin-top: 4px; }
 
 .reports-view__filters {
   display: flex;
@@ -751,7 +748,7 @@ onMounted(async () => {
 }
 
 @media (max-width: 720px) {
-  .reports-view { gap: 18px; padding-top: 2px; }
+  .reports-view { gap: var(--space-4); }
   .reports-view__filters {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

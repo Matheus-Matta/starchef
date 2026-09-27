@@ -969,7 +969,7 @@
       v-model:visible="inboundDetailVisible"
       modal
       :header="inboundDetailData ? `NF-e #${inboundDetailData.number || 'S/N'} · Série ${inboundDetailData.series || '0'}` : 'Carregando NF-e...'"
-      :style="{ width: 'min(980px, 96vw)' }"
+      :style="{ width: '80vw' }"
       class="rpro__inbound-dialog"
     >
       <div v-if="inboundDetailLoading" class="rpro__inbound-loading">
@@ -1076,13 +1076,13 @@
         <!-- Tabela de Produtos / Itens -->
         <div class="rpro__inbound-items-section">
           <div class="rpro__inbound-items-head flex justify-between items-center">
-            <div class="flex items-center gap-2">
+            <div class="rpro__inbound-items-title flex items-center gap-2">
               <h3>Produtos da Nota ({{ (inboundDetailData.items || []).length }} itens)</h3>
               <span v-if="inboundDetailData.ignored_items_count" class="text-xs text-amber-400 font-normal">
                 ({{ inboundDetailData.active_items_count }} ativos, {{ inboundDetailData.ignored_items_count }} ignorados)
               </span>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="rpro__inbound-actions flex items-center gap-2">
               <button
                 v-if="inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled' && (inboundDetailData.status === 'summary' || inboundDetailData.xml_status === 'summary_only' || (!inboundDetailData.items?.length && inboundDetailData.xml_status !== 'full_xml_available')) && inboundDetailData.manifestation_status !== 'science_registered' && inboundDetailData.manifestation_status !== 'confirmed'"
                 type="button"
@@ -1216,19 +1216,19 @@
                       </div>
 
                       <!-- Item Ativo Vinculado -->
-                      <div v-else-if="item.product_name || item.ingredient_name" class="flex items-center justify-between gap-2">
+                      <div v-else-if="item.product_name || item.ingredient_name" class="rpro__inbound-link-cell flex items-center justify-between gap-2">
                         <div>
                           <Tag
                             v-if="item.is_asset || item.product_item_type === 'EQUIPMENT' || item.product_item_type === 'FIXED_ASSET'"
-                            severity="info"
+                            severity="info" class="rpro__inbound-link-badge"
                             rounded
-                            :value="`🏢 Patrimônio: ${item.product_name}`"
+                            :value="`🏢 Patrimônio: ${item.product_name}`" :title="`Patrimônio: ${item.product_name}`"
                           />
                           <Tag
                             v-else
-                            severity="success"
+                            severity="success" class="rpro__inbound-link-badge"
                             rounded
-                            :value="item.product_name ? `Produto: ${item.product_name}` : `Ingrediente: ${item.ingredient_name}`"
+                            :value="item.product_name ? `Produto: ${item.product_name}` : `Ingrediente: ${item.ingredient_name}`" :title="item.product_name || item.ingredient_name"
                           />
                           <small v-if="item.product_brand" class="text-muted block text-xs mt-0.5">
                             Marca: {{ item.product_brand }} {{ item.product_model ? `(${item.product_model})` : '' }}
@@ -1517,7 +1517,7 @@
       v-model:visible="mapItemDialogVisible"
       modal
       header="Vincular Item da NF-e ao Estoque"
-      :style="{ width: 'min(680px, 96vw)' }"
+      :style="{ width: '70vw' }"
       class="inbound-map-dialog"
     >
       <div v-if="mappingItem" class="inbound-map">
@@ -1527,7 +1527,7 @@
             <span class="inbound-map__summary-label">Item na Nota Fiscal</span>
             <span class="inbound-map__summary-price">{{ money(mappingItem.product_total) }}</span>
           </div>
-          <strong class="inbound-map__summary-title">{{ mappingItem.description }}</strong>
+          <strong class="inbound-map__summary-title" :title="mappingItem.description">{{ mappingItem.description }}</strong>
           <div class="inbound-map__summary-meta">
             <span>Cód. Forn: <code>{{ mappingItem.supplier_code || '-' }}</code></span>
             <span>EAN: <code>{{ mappingItem.ean || 'Sem GTIN' }}</code></span>
@@ -1537,7 +1537,6 @@
           </div>
         </div>
 
-        <!-- Seletor de Modo: Buscar Existente vs Criar Novo -->
         <!-- Seletor de Modo: Buscar Existente vs Criar Produto vs Cadastrar em Patrimônios & Ativos -->
         <div class="inbound-map__tabs">
           <button
@@ -1602,17 +1601,17 @@
           </div>
 
           <!-- Lista de Itens Filtrados -->
-          <div class="inbound-map__list">
+          <div class="inbound-map__list" role="listbox" aria-label="Produtos disponíveis para vínculo">
             <div
               v-for="prod in filteredMappingProducts"
-              :key="prod.id"
+              :key="prod.id" role="option" tabindex="0"
               class="inbound-map__list-item"
-              :class="{ 'inbound-map__list-item--selected': selectedTargetProduct?.id === prod.id }"
-              @click="selectTargetProduct(prod)"
+              :class="{ 'inbound-map__list-item--selected': selectedTargetProduct?.id === prod.id }" :aria-selected="selectedTargetProduct?.id === prod.id"
+              @click="selectTargetProduct(prod)" @keydown.enter="selectTargetProduct(prod)" @keydown.space.prevent="selectTargetProduct(prod)"
             >
               <div class="inbound-map__item-left">
                 <div class="inbound-map__item-head">
-                  <strong class="inbound-map__item-name">{{ prod.name }}</strong>
+                  <strong class="inbound-map__item-name" :title="prod.name">{{ prod.name }}</strong>
                   <span class="inbound-map__tag" :class="`inbound-map__tag--${prod.item_type}`">
                     {{ getItemTypeLabel(prod.item_type) }}
                   </span>
@@ -1625,13 +1624,13 @@
               </div>
               <div class="inbound-map__item-right">
                 <i v-if="selectedTargetProduct?.id === prod.id" class="pi pi-check-circle text-brand text-lg" />
-                <button
-                  type="button"
+                <span
+                  aria-hidden="true"
                   class="rpro-btn rpro-btn--xs"
                   :class="selectedTargetProduct?.id === prod.id ? 'rpro-btn--primary' : 'rpro-btn--ghost'"
                 >
                   {{ selectedTargetProduct?.id === prod.id ? 'Selecionado' : 'Selecionar' }}
-                </button>
+                </span>
               </div>
             </div>
 
@@ -6916,3 +6915,4 @@ onBeforeUnmount(() => {
 }
 </style>
 <style scoped src="../styles/inbound-nfe-list.css"></style>
+<style src="../styles/inbound-nfe-dialogs.css"></style>

@@ -1791,7 +1791,7 @@ watch(() => [recordId.value, props.mode], async () => {
 .rpage {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--page-section-gap);
   width: 100%;
 }
 

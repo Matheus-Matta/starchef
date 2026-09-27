@@ -115,6 +115,9 @@ mixin _PanelsSection on _HomePageShared {
         : null,
     onAttachCommand: () => unawaited(_attachCommandToDraft()),
     onDetachCommand: _detachCommandFromDraft,
+    onChooseCustomer: _draftIsLive
+        ? () => unawaited(_chooseCustomerForDraft())
+        : null,
     draftCommands: _draftIsLive ? draft.commands : const [],
     draftCommandTotals: _draftIsLive ? _totaisPorComanda : const {},
     onVoidItem: _voidItem,

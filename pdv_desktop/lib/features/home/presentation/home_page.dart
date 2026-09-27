@@ -72,7 +72,7 @@ import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
 import 'payment_coupon_input.dart';
 import 'table_details_panel.dart';
-
+import 'table_occupancy.dart';
 import '../../orders/data/order_draft.dart';
 import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';

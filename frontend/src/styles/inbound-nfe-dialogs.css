@@ -1,0 +1,193 @@
+@import url("./inbound-nfe-dialogs-responsive.css");
+
+/* Diálogos da NF-e: o conteúdo amplo preserva ritmo, leitura e foco. */
+.rpro__inbound-dialog,
+.inbound-map-dialog {
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+}
+
+.rpro__inbound-dialog .p-dialog-header,
+.inbound-map-dialog .p-dialog-header {
+  flex-shrink: 0;
+  min-height: 64px;
+  padding: var(--space-5) var(--space-6);
+}
+
+.rpro__inbound-dialog .p-dialog-title,
+.inbound-map-dialog .p-dialog-title {
+  color: var(--text-strong);
+  font: var(--weight-extra) var(--text-lg)/1.3 var(--font-sans);
+}
+
+.rpro__inbound-dialog .p-dialog-content,
+.inbound-map-dialog .p-dialog-content {
+  min-height: 0;
+  padding: var(--dialog-content-inset) var(--space-6);
+  overflow: auto;
+}
+
+.rpro__inbound-dialog .p-dialog-footer,
+.inbound-map-dialog .p-dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+}
+
+.rpro__inbound-dialog .rpro-btn,
+.inbound-map-dialog .rpro-btn {
+  min-height: var(--control-h-lg);
+}
+
+.rpro__inbound-dialog .rpro-btn--sm,
+.inbound-map-dialog .rpro-btn--sm {
+  min-height: var(--control-h);
+}
+
+.rpro__inbound-dialog .rpro-btn:focus-visible,
+.inbound-map-dialog .rpro-btn:focus-visible,
+.inbound-map-dialog .inbound-map__tab-btn:focus-visible,
+.inbound-map-dialog .inbound-map__filter-btn:focus-visible,
+.inbound-map-dialog .inbound-map__search-clear:focus-visible,
+.inbound-map-dialog .inbound-map__list-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.rpro__inbound-items-head {
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.rpro__inbound-items-title {
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+
+.rpro__inbound-actions {
+  display: flex;
+  flex: 1 1 520px;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.rpro__inbound-link-cell {
+  width: 100%;
+  min-width: 0;
+}
+
+.rpro__inbound-link-cell > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.rpro__inbound-link-badge {
+  display: flex !important;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rpro__inbound-link-badge .p-tag-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbound-map-dialog .inbound-map {
+  min-width: 0;
+  gap: var(--section-content-gap);
+}
+
+.inbound-map-dialog .inbound-map__summary-title {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.inbound-map-dialog .inbound-map__tabs {
+  min-height: 44px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.inbound-map-dialog .inbound-map__tab-btn {
+  flex: 0 0 auto;
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.inbound-map-dialog .inbound-map__field {
+  min-width: 0;
+  gap: var(--field-label-gap);
+}
+
+.inbound-map-dialog .inbound-map__label {
+  line-height: 1.35;
+}
+
+.inbound-map-dialog .inbound-map__input,
+.inbound-map-dialog .inbound-map__dropdown,
+.inbound-map-dialog .inbound-map__search-input,
+.inbound-map-dialog .inbound-map__readonly-unit,
+.inbound-map-dialog .p-inputnumber-input {
+  min-height: var(--control-h-lg);
+  height: var(--control-h-lg) !important;
+  background: var(--surface-sunken) !important;
+  box-sizing: border-box;
+}
+
+.inbound-map-dialog .p-inputnumber,
+.inbound-map-dialog .p-inputnumber-input {
+  width: 100%;
+}
+
+.inbound-map-dialog .inbound-map__search-input:focus-visible,
+.inbound-map-dialog .inbound-map__input:focus-visible,
+.inbound-map-dialog .p-inputnumber-input:focus-visible {
+  border-color: var(--ring) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent) !important;
+}
+
+.inbound-map__list-item {
+  gap: var(--space-3);
+}
+
+.inbound-map__item-left,
+.inbound-map__item-head,
+.inbound-map__item-name {
+  min-width: 0;
+}
+
+.inbound-map__item-left {
+  flex: 1;
+}
+
+.inbound-map__item-name {
+  display: block;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbound-map__item-right,
+.inbound-map__tag {
+  flex-shrink: 0;
+}
+
+.inbound-map__item-meta {
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}

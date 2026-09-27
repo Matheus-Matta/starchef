@@ -570,14 +570,14 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
 .p-dialog .p-dialog-content {
   background: var(--surface-card);
   color: var(--text-body);
+  /* O tema Aura zera este lado; com cabeçalho, o primeiro campo encostava na divisória. */
+  padding-top: var(--dialog-content-inset);
+  padding-bottom: var(--dialog-content-inset);
 }
 .p-dialog .p-dialog-footer {
   background: var(--surface-card);
   border-top: 1px solid var(--border-subtle);
   padding-top: 18px; /* respiro entre a linha separadora e os botões */
-  padding-bottom: 18px;
-}
-.p-dialog .p-dialog-content {
   padding-bottom: 18px;
 }
 .p-dialog .p-dialog-header .p-dialog-title {
@@ -594,6 +594,12 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
   color: var(--text-body);
 }
 
+/* O Aura também começa painéis em zero no topo. A regra vale para qualquer
+   Panel, inclusive os criados depois, sem exigir correção em cada tela. */
+.p-panel .p-panel-content {
+  padding-top: var(--section-content-gap);
+}
+
 @media (max-width: 560px) {
   .p-dialog {
     width: calc(100vw - 24px) !important;
@@ -603,7 +609,7 @@ html .p-dropdown-panel .p-dropdown-filter-icon {
     border-radius: var(--radius-lg);
   }
   .p-dialog .p-dialog-header { padding: 16px; }
-  .p-dialog .p-dialog-content { padding: 14px 16px 18px; overflow-y: auto; }
+  .p-dialog .p-dialog-content { padding: var(--space-4); overflow-y: auto; }
   .p-dialog .p-dialog-footer {
     display: flex;
     gap: 8px;

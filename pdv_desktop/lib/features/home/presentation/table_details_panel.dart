@@ -4,6 +4,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import 'table_command_row.dart';
+import 'table_occupancy.dart';
 
 class TableDetailsPanel extends StatelessWidget {
   const TableDetailsPanel({
@@ -30,7 +31,7 @@ class TableDetailsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final activeCommands = (table['active_commands'] as List? ?? const [])
         .cast<Map<String, dynamic>>();
-    final occupied = activeCommands.isNotEmpty;
+    final occupied = tableIsOccupied(table);
     final color = occupied ? Colors.orange : Colors.green;
     final scheme = Theme.of(context).colorScheme;
 
@@ -79,7 +80,9 @@ class TableDetailsPanel extends StatelessWidget {
                       side: BorderSide(color: color.shade300),
                     ),
                     child: Text(
-                      occupied ? 'Ocupada' : 'Disponível',
+                      // "Disponível" aqui e "Livre" na lista descreviam o
+                      // mesmo estado com dois nomes, sobre a mesma mesa.
+                      tableStatusLabel(table),
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: color.shade800,

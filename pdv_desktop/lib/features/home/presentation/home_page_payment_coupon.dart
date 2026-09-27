@@ -84,34 +84,40 @@ mixin _PaymentCouponSection on _HomePageShared {
     }
   }
 
-  /// O bloco do cupom no resumo do pagamento.
+  /// O campo de cupom, no ALTO do resumo do pagamento.
   ///
-  /// A linha "Cupom NATAL10  - R$ 6,00" usa `_paymentSummaryRow` de propósito:
-  /// ela é uma parcela do total, e um estilo próprio a faria desalinhar de
-  /// "Desconto" logo acima. O campo em si é `PaymentCouponInput`, que vive fora
-  /// desta biblioteca porque é a parte que dá para verificar sozinha.
-  Widget _couponControl(BuildContext context) {
+  /// Separado da linha de desconto (`_couponSummaryRow`) porque os dois
+  /// respondem a perguntas diferentes: aqui é "onde eu digito", e lá embaixo
+  /// é "quanto abateu". Juntos, o campo descia junto com as parcelas do total
+  /// e sumia no meio do cartão num pedido com taxa, entrega e desconto.
+  ///
+  /// O campo em si é `PaymentCouponInput`, que vive fora desta biblioteca
+  /// porque é a parte que dá para verificar sozinha.
+  Widget _couponControl(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: PaymentCouponInput(
+      controller: couponCode,
+      applied: _appliedCoupon,
+      busy: couponBusy,
+      error: couponError,
+      onSubmit: _aplicarCupom,
+      onRemove: () {
+        couponCode.clear();
+        _aplicarCupom('');
+      },
+    ),
+  );
+
+  /// "Cupom NATAL10  - R$ 6,00" entre as parcelas do total.
+  ///
+  /// Usa `_paymentSummaryRow` de propósito: é uma parcela como as outras, e
+  /// um estilo próprio a faria desalinhar de "Desconto" logo acima.
+  Widget _couponSummaryRow() {
     final aplicado = _appliedCoupon;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (aplicado.isNotEmpty)
-          _paymentSummaryRow('Cupom $aplicado', '- ${_money(_couponDiscount)}'),
-        Padding(
-          padding: const EdgeInsets.only(top: 4, bottom: 2),
-          child: PaymentCouponInput(
-            controller: couponCode,
-            applied: aplicado,
-            busy: couponBusy,
-            error: couponError,
-            onSubmit: _aplicarCupom,
-            onRemove: () {
-              couponCode.clear();
-              _aplicarCupom('');
-            },
-          ),
-        ),
-      ],
+    if (aplicado.isEmpty) return const SizedBox.shrink();
+    return _paymentSummaryRow(
+      'Cupom $aplicado',
+      '- ${_money(_couponDiscount)}',
     );
   }
 }

@@ -9,7 +9,6 @@ import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/order_drafts.dart';
 import '../data/orders_repository.dart';
 import 'order_formatters.dart';
-import '../domain/operator_code_keeper.dart';
 
 part 'order_detail_payments.dart';
 
@@ -31,19 +30,19 @@ class OrderDetailPresenter extends ChangeNotifier {
     Map<String, dynamic>? initialOrder,
     OperatorCodeKeeper? operatorCodes,
   }) : _order = initialOrder,
-       operatorCodes = operatorCodes ?? OperatorCodeKeeper();
+       _operatorCodesOverride = operatorCodes;
 
   final OrdersRepository repository;
-
+  final OperatorCodeKeeper? _operatorCodesOverride;
   /// Guarda o código de quem está lançando, por atendimento.
-  final OperatorCodeKeeper operatorCodes;
-
+  OperatorCodeKeeper get operatorCodes =>
+      _operatorCodesOverride ?? repository.operatorCodes;
   /// Este restaurante exige o código antes do lançamento?
   ///
   /// Vem da SESSÃO, e não de uma consulta: a resposta é necessária antes do
   /// primeiro item, e uma ida à rede aqui atrasaria o lançamento inteiro — num
   /// aparelho que lança offline por desenho.
-  bool get requiresOperatorCode => repository.session.user.requireOperatorCode;
+  bool get requiresOperatorCode => repository.requiresOperatorCode;
 
   /// O código guardado para ESTE atendimento, ou vazio.
   String get operatorCode => operatorCodes.codigoDe(subject.id);

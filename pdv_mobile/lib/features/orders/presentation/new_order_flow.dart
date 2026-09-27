@@ -6,6 +6,7 @@ import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
 import 'command_picker_sheet.dart';
 import 'new_order_sheet.dart';
+import 'operator_code_sheet.dart';
 import 'order_formatters.dart';
 import 'table_picker_sheet.dart';
 
@@ -27,10 +28,57 @@ Future<Map<String, dynamic>?> startNewOrder(
   if (kind == null || !context.mounted) return null;
   if (kind == NewOrderKind.comanda) return _fromCommand(context, repository);
 
+  final codigo = await _codigoDoOperador(context, repository);
+  if (codigo == null || !context.mounted) return null;
   final item = await showProductPicker(context, repository);
   if (item == null || !context.mounted) return null;
-  return _create(context, repository, orderType: kind.orderType, item: item);
+  final pedido = await _create(
+    context,
+    repository,
+    orderType: kind.orderType,
+    item: item,
+    codigo: codigo,
+  );
+  // Guardado pelo id do pedido recém-aberto: a tela de detalhe abre em
+  // seguida, e sem isto ela pediria o mesmo código no item seguinte.
+  if (pedido != null) {
+    repository.operatorCodes.guardar('${pedido['id']}', codigo);
+  }
+  return pedido;
 }
+
+/// O código de quem está lançando, quando o restaurante exige.
+///
+/// PERGUNTA ANTES DE ENVIAR, e antes do cardápio: sem isto o garçom escolhia o
+/// prato, configurava variação e adicional, e o servidor recusava o lançamento
+/// inteiro por falta de um número que a tela nunca ofereceu onde digitar.
+///
+/// Três respostas: `''` quando o restaurante não exige (segue sem código), o
+/// código digitado, e `null` quando o garçom fechou a folha — aí o fluxo
+/// inteiro desiste, porque a exigência não tem saída pela lateral.
+Future<String?> _codigoDoOperador(
+  BuildContext context,
+  OrdersRepository repository, {
+  String assunto = '',
+  String guardadoEm = '',
+}) async {
+  if (!repository.requiresOperatorCode) return '';
+  final guardado = guardadoEm.isEmpty
+      ? ''
+      : repository.operatorCodes.codigoDe(guardadoEm);
+  if (guardado.isNotEmpty) return guardado;
+  final codigo = await pedirCodigoDoOperador(context, assunto: assunto);
+  if (codigo == null || codigo.isEmpty) return null;
+  if (guardadoEm.isNotEmpty) repository.operatorCodes.guardar(guardadoEm, codigo);
+  return codigo;
+}
+
+/// O corpo que viaja com o lançamento, ou `null` quando não há código.
+///
+/// `null` em vez de mapa vazio: o backend distingue "não informou" de
+/// "informou vazio".
+Map<String, String>? _metafields(String codigo) =>
+    codigo.isEmpty ? null : {OperatorCodeKeeper.chave: codigo};
 
 /// Comanda: o garçom ANOTA nela. Nenhum pedido é aberto.
 ///
@@ -72,6 +120,14 @@ Future<Map<String, dynamic>?> _fromCommand(
   // antes da folha seguinte, senão a tela pode já ter saído.
   if (!context.mounted) return null;
 
+  final codigo = await _codigoDoOperador(
+    context,
+    repository,
+    assunto: 'Comanda ${command['number'] ?? ''}'.trim(),
+    guardadoEm: '${command['id']}',
+  );
+  if (codigo == null || !context.mounted) return null;
+
   final item = await showProductPicker(context, repository);
   if (item == null || !context.mounted) return null;
   try {
@@ -83,6 +139,7 @@ Future<Map<String, dynamic>?> _fromCommand(
       variationId: item.variationId,
       addonIds: item.addonIds,
       customerNote: item.note,
+      metafields: _metafields(codigo),
     );
   } catch (error) {
     if (context.mounted) showToast(context, describeFailure(error));
@@ -116,6 +173,7 @@ Future<Map<String, dynamic>?> _create(
   OrdersRepository repository, {
   required String orderType,
   required ProductChoice item,
+  String codigo = '',
   String? commandId,
   String? tableId,
 }) async {
@@ -129,6 +187,7 @@ Future<Map<String, dynamic>?> _create(
       variationId: item.variationId,
       addonIds: item.addonIds,
       customerNote: item.note,
+      metafields: _metafields(codigo),
     );
   } catch (error) {
     if (context.mounted) showToast(context, describeFailure(error));

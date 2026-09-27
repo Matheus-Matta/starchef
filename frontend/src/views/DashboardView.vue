@@ -446,7 +446,7 @@ onMounted(loadDashboard);
 .dashboard-view {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--page-section-gap);
 }
 
 .dashboard-alert {

@@ -62,6 +62,23 @@ mixin _DraftFlowSection on _HomePageShared {
     });
   }
 
+  /// Vincula (ou cadastra) o cliente do pedido de balcão.
+  ///
+  /// O seletor existia e não tinha quem o chamasse: ele saiu da aba de tipo,
+  /// onde travava o toque quando a loja não tinha cliente cadastrado, e a
+  /// substituta anunciada no comentário de `_pickDraftType` — vincular
+  /// depois, no pedido — ficou só no comentário. É opcional: desistir do
+  /// diálogo deixa o pedido exatamente como estava.
+  @override
+  Future<void> _chooseCustomerForDraft() async {
+    final cliente = await _chooseCustomer(draft.orderType);
+    if (cliente == null || !mounted) return;
+    setState(() {
+      draft.customer = cliente;
+      selectedCustomer = cliente;
+    });
+  }
+
   @override
   Future<void> _attachCommandToDraft() async {
     // O diálogo decide os DOIS sentidos: incluir o cartão novo ou retirar um

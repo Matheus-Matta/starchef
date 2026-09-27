@@ -578,7 +578,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.rfiscal { display: flex; flex-direction: column; gap: 18px; max-width: 1060px; margin: 0 auto; }
+.rfiscal { display: flex; flex-direction: column; gap: var(--page-section-gap); max-width: 1060px; margin: 0 auto; }
 
 .rfiscal__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .rfiscal__crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
@@ -595,8 +595,8 @@ onMounted(load);
 .rfiscal__title p { margin: 0; max-width: 62ch; color: var(--text-muted); font: var(--weight-medium) 13px/1.5 var(--font-sans); }
 .rfiscal__title-tags { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 
-.rfiscal__form { display: flex; flex-direction: column; gap: 18px; }
-.rfiscal__card { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.rfiscal__form { display: flex; flex-direction: column; gap: var(--page-section-gap); }
+.rfiscal__card { padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
 .rfiscal__card--loading { display: grid; gap: 14px; }
 .rfiscal__card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .rfiscal__card-head h2 { margin: 0 0 5px; color: var(--text-strong); font-size: 17px; }

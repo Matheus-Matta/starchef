@@ -132,6 +132,10 @@ class _AccountMenu extends StatelessWidget {
       itemBuilder: (context) => [
         _info('${user?.displayName ?? ''}\n${user?.restaurantName ?? ''}'),
         const PopupMenuDivider(),
+        // O ITEM FALTAVA. `onSelected` já tratava 'clientes' e a tela existia
+        // inteira — sem esta linha o cadastro de cliente não tinha por onde
+        // ser aberto no aplicativo, e o código que o abria era inalcançável.
+        const PopupMenuItem(value: 'clientes', child: Text('Clientes')),
         const PopupMenuItem(
           value: 'printing',
           child: Text('Impressoras e fila'),

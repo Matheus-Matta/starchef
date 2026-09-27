@@ -246,13 +246,13 @@ onMounted(load);
 </script>
 
 <style scoped>
-.focus-page { display: flex; flex-direction: column; gap: 18px; max-width: 1060px; margin: 0 auto; }
+.focus-page { display: flex; flex-direction: column; gap: var(--page-section-gap); max-width: 1060px; margin: 0 auto; }
 .focus-page__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .focus-page__eyebrow { color: var(--text-brand); font: var(--weight-bold) 11px/1 var(--font-sans); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .focus-page__head h1 { margin: 7px 0 5px; color: var(--text-strong); font-size: 25px; }
 .focus-page__head p, .focus-card__head p { margin: 0; color: var(--text-muted); font-size: 13px; }
-.focus-page__form { display: flex; flex-direction: column; gap: 18px; }
-.focus-card { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.focus-page__form { display: flex; flex-direction: column; gap: var(--page-section-gap); }
+.focus-card { padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
 .focus-card--loading { display: grid; gap: 14px; }
 .focus-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .focus-card__head h2 { margin: 0 0 5px; color: var(--text-strong); font-size: 17px; }

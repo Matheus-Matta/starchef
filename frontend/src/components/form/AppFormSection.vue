@@ -48,5 +48,11 @@ defineProps({
 .appsection__title { color: var(--text-strong); font: var(--weight-extra) 14px/1.2 var(--font-sans); }
 .appsection__desc { margin-top: 2px; color: var(--text-muted); font: var(--weight-medium) 12px/1.4 var(--font-sans); }
 .appsection__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.appsection__body { display: flex; flex-direction: column; gap: var(--space-3); }
+.appsection__body {
+  display: flex;
+  flex-direction: column;
+  /* Mantém o primeiro campo afastado tanto do cabeçalho quanto do topo de uma seção sem título. */
+  padding-top: var(--space-1);
+  gap: var(--section-content-gap);
+}
 </style>

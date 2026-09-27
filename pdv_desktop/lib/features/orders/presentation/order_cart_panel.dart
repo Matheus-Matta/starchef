@@ -38,6 +38,7 @@ class OrderCartPanel extends StatelessWidget {
     this.onPickDraftType,
     this.onAttachCommand,
     this.onDetachCommand,
+    this.onChooseCustomer,
     this.draftCommands = const [],
     this.draftCommandTotals = const {},
   });
@@ -50,20 +51,18 @@ class OrderCartPanel extends StatelessWidget {
   final List<Map<String, dynamic>> items;
   final String Function(dynamic) money;
   final ValueChanged<Map<String, dynamic>> onVoidItem;
-
   /// O total do RASCUNHO, quando ainda não existe pedido no servidor.
   ///
   /// Não dá para tirar de `order`: ele é nulo justamente porque o pedido ainda
   /// não nasceu. E é só conferência — quem soma para cobrar é o servidor, que
   /// conhece taxa de serviço, desconto e o preço em vigor no lançamento.
   final double? draftTotal;
-
   /// A barra de destino no topo. Nula quando o pedido já existe: aí o destino
   /// está decidido, e trocá-lo não é mais um gesto de tela.
   final ValueChanged<String>? onPickDraftType;
   final VoidCallback? onAttachCommand;
+  final VoidCallback? onChooseCustomer;
   final ValueChanged<String>? onDetachCommand;
-
   /// Os cartões anexados ao rascunho e o que cada um já tem lançado.
   final List<Map<String, dynamic>> draftCommands;
   final Map<String, double> draftCommandTotals;
@@ -170,6 +169,7 @@ class OrderCartPanel extends StatelessWidget {
                 onPickType: onPickDraftType!,
                 onAttachCommand: onAttachCommand ?? () {},
                 onDetachCommand: onDetachCommand ?? (_) {},
+                onChooseCustomer: onChooseCustomer,
               ),
             Divider(height: 1, color: scheme.outlineVariant),
             Expanded(child: items.isEmpty ? _empty(context) : _items(context)),

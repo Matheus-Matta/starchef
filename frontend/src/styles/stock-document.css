@@ -2,7 +2,7 @@
    As duas sao o mesmo objeto visual — cabecalho, cartoes e linhas repetidas —
    e mante-las em um arquivo so evita que uma mude de aparencia sem a outra. */
 
-.stock-doc { display: flex; flex-direction: column; gap: 18px; max-width: 1180px; margin: 0 auto; }
+.stock-doc { display: flex; flex-direction: column; gap: var(--page-section-gap); max-width: 1180px; margin: 0 auto; }
 
 .stock-doc__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .stock-doc__eyebrow { color: var(--text-brand); font: var(--weight-bold) 11px/1 var(--font-sans); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
@@ -12,7 +12,7 @@
 
 .stock-doc__alert { display: flex; align-items: center; gap: 9px; padding: 12px 14px; border: 1px solid var(--danger-border); border-radius: var(--radius-md); background: var(--danger-subtle); color: var(--danger-text); font-size: 13px; }
 
-.stock-card { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.stock-card { padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow-sm); }
 .stock-card h2 { margin: 0 0 16px; color: var(--text-strong); font-size: 17px; }
 .stock-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .stock-card__head h2 { margin: 0 0 4px; }

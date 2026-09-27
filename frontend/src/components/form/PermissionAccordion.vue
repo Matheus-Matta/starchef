@@ -1,7 +1,7 @@
 <template>
   <div class="permission-accordion" :class="{ 'permission-accordion--disabled': disabled }">
     <div v-if="!groups.length" class="permission-accordion__empty">Nenhuma permissão disponível.</div>
-    <details v-for="(group, index) in groups" v-else :key="group.label" class="permission-accordion__group" :open="index === 0">
+    <details v-for="group in groups" v-else :key="group.label" class="permission-accordion__group" open>
       <summary>
         <span>{{ group.label }}</span>
         <small>{{ selectedCount(group) }} de {{ group.items.length }} ativas</small>

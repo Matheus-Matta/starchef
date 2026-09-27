@@ -83,7 +83,7 @@ const money=v=>Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"B
 const stopListening=onCashSessionChange(()=>load());onUnmounted(stopListening);onMounted(load);
 </script>
 <style scoped>
-.cash{max-width:1100px;margin:auto;padding:28px;display:flex;flex-direction:column;gap:18px}
+.cash{max-width:1100px;margin:auto;display:flex;flex-direction:column;gap:var(--page-section-gap)}
 .cash header,.hero,.row,.station{display:flex;align-items:center;justify-content:space-between;gap:18px}
 .holder{color:var(--text-muted);font-size:12px}
 .cash header>div{display:flex;flex-direction:column;gap:6px}
@@ -108,8 +108,7 @@ const stopListening=onCashSessionChange(()=>load());onUnmounted(stopListening);o
 .station-actions,.table-header,.dialog-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .table-header>div,.cash-actions>div:first-child{display:flex;flex-direction:column;gap:4px}
 .cash-actions>div:last-child,.status-action{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.card,.form{display:flex;flex-direction:column;gap:12px}
-.form{padding-top:12px;gap:18px}
+.card,.form{display:flex;flex-direction:column;gap:var(--section-content-gap)}
 .edit-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .field{display:flex;flex-direction:column;gap:6px}
 .field label{font-weight:600;color:var(--text-strong)}
@@ -126,7 +125,7 @@ const stopListening=onCashSessionChange(()=>load());onUnmounted(stopListening);o
 .row>span:first-child{flex:1}
 .values{text-align:right}
 .back{align-self:flex-start}
-@media(max-width:760px){.cash{padding:18px}.station,.hero{align-items:flex-start;flex-direction:column}.station-actions{justify-content:flex-start}.table-header{align-items:stretch;flex-direction:column}.table-header .p-iconfield,.table-header input{width:100%}.row{align-items:flex-start;flex-wrap:wrap}}
+@media(max-width:760px){.station,.hero{align-items:flex-start;flex-direction:column}.station-actions{justify-content:flex-start}.table-header{align-items:stretch;flex-direction:column}.table-header .p-iconfield,.table-header input{width:100%}.row{align-items:flex-start;flex-wrap:wrap}}
 .divergence{display:flex;flex-direction:column;gap:8px}
 .divergence ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:2px}
 .divergence p{margin:0}

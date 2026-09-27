@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_theme.dart';
+import 'table_occupancy.dart';
 
 /// Uma mesa na lista de escolha, com o estado dela e quantos cartões já estão
 /// sentados ali.
@@ -61,7 +62,7 @@ class TableChoiceTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       [
-                        _estado(table['status']),
+                        tableStatusLabel(table),
                         if (commands > 0)
                           '$commands ${commands == 1 ? 'comanda vinculada' : 'comandas vinculadas'}',
                       ].join(' · '),
@@ -79,10 +80,4 @@ class TableChoiceTile extends StatelessWidget {
       ),
     );
   }
-
-  static String _estado(dynamic status) => switch ('$status') {
-    'occupied' => 'Ocupada',
-    'reserved' => 'Reservada',
-    _ => 'Livre',
-  };
 }

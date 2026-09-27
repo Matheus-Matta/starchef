@@ -190,6 +190,6 @@ const dayChart = computed(() => {
 </script>
 
 <style scoped>
-.cash-report{display:flex;flex-direction:column;gap:20px;padding-top:4px}
-@media(max-width:720px){.cash-report{gap:14px;padding-top:2px}}
+.cash-report{display:flex;flex-direction:column;gap:var(--page-section-gap)}
+@media(max-width:720px){.cash-report{gap:var(--space-4)}}
 </style>

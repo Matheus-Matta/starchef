@@ -4,8 +4,13 @@ import '../../../core/theme/app_theme.dart';
 import 'pdv_navigation_shell.dart';
 
 /// Navegação fixa do posto de venda. A largura nunca muda: o catálogo não
-/// salta quando o operador troca de tela e os cinco destinos permanecem no
-/// mesmo lugar durante todo o turno.
+/// salta quando o operador troca de tela e os destinos permanecem no mesmo
+/// lugar durante todo o turno.
+///
+/// TODO destino de [PdvDestination] precisa de uma entrada aqui — é o único
+/// caminho até as telas. `PdvSidebar`, em `pdv_navigation_shell.dart`, tem
+/// uma lista parecida e não é usada por ninguém: foi acreditando nela que o
+/// "Clientes" passou despercebido como se estivesse no ar.
 class PdvNavigationRail extends StatelessWidget {
   const PdvNavigationRail({
     super.key,
@@ -43,6 +48,15 @@ class PdvNavigationRail extends StatelessWidget {
         'Comandas',
         Icons.qr_code_2_outlined,
       ),
+      // CLIENTES FALTAVA AQUI. O destino existia no enum, `_navigateTo` o
+      // tratava e a tela era desenhada por `flowStep == 'customers'` — só não
+      // havia botão nenhum que o selecionasse, e o cadastro de cliente ficava
+      // inalcançável no desktop inteiro.
+      const _RailEntry(
+        PdvDestination.customers,
+        'Clientes',
+        Icons.people_outline,
+      ),
       if (showFinance)
         const _RailEntry(
           PdvDestination.finance,
@@ -68,16 +82,29 @@ class PdvNavigationRail extends StatelessWidget {
           ),
           Divider(height: 1, color: scheme.outlineVariant),
           const SizedBox(height: 8),
-          for (final entry in entries)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              child: _RailButton(
-                entry: entry,
-                selected: _isSelected(entry.destination),
-                onTap: () => onSelected(entry.destination),
+          // ROLA QUANDO NÃO CABE. São oito destinos de 58 px: numa tela baixa
+          // (ou com a janela reduzida) a coluna estourava e o último botão
+          // ficava cortado — uma tela inalcançável de novo, agora por altura.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final entry in entries)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      child: _RailButton(
+                        entry: entry,
+                        selected: _isSelected(entry.destination),
+                        onTap: () => onSelected(entry.destination),
+                      ),
+                    ),
+                ],
               ),
             ),
-          const Spacer(),
+          ),
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Tooltip(

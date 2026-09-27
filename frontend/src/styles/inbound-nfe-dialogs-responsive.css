@@ -1,0 +1,42 @@
+@media (max-width: 900px) {
+  .rpro__inbound-dialog .p-dialog-header,
+  .inbound-map-dialog .p-dialog-header,
+  .rpro__inbound-dialog .p-dialog-content,
+  .inbound-map-dialog .p-dialog-content,
+  .rpro__inbound-dialog .p-dialog-footer,
+  .inbound-map-dialog .p-dialog-footer {
+    padding-right: var(--space-4);
+    padding-left: var(--space-4);
+  }
+
+  .rpro__inbound-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .inbound-map__grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .inbound-map__list-item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .inbound-map__item-right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .rpro__inbound-dialog .p-dialog-footer,
+  .inbound-map-dialog .p-dialog-footer {
+    flex-wrap: wrap;
+  }
+
+  .rpro__inbound-dialog .p-dialog-footer .rpro-btn,
+  .inbound-map-dialog .p-dialog-footer .rpro-btn {
+    flex: 1 1 100%;
+  }
+}

@@ -146,7 +146,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.cosmos-page { width: 100%; display: flex; flex-direction: column; gap: 18px; }
+.cosmos-page { width: 100%; display: flex; flex-direction: column; gap: var(--page-section-gap); }
 .cosmos-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .cosmos-eyebrow { color: var(--text-brand); font: var(--weight-bold) 11px/1 var(--font-sans); letter-spacing: .12em; }
 .cosmos-head h1 { margin: 7px 0 5px; color: var(--text-strong); font: var(--weight-extra) 25px/1.15 var(--font-sans); }

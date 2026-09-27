@@ -17,6 +17,7 @@ extension OrdersCommands on OrdersRepository {
     String customerNote = '',
     String? commandId,
     String? tableId,
+    Map<String, String>? metafields,
   }) {
     final item = {
       'product': productId,
@@ -33,6 +34,11 @@ extension OrdersCommands on OrdersRepository {
         'command': ?commandId,
         'table': ?tableId,
         'item': item,
+        // O CÓDIGO DE QUEM LANÇOU sobe no mesmo corpo. Aqui ele vale para os
+        // dois registros que nascem juntos: o backend abre o pedido com ele e
+        // repassa ao primeiro item. Sem isto, um restaurante que exige o
+        // código recusava a abertura inteira — e o app não tinha onde pedi-lo.
+        'metafields': ?metafields,
       },
       optimisticFields: {
         'order_type': orderType,

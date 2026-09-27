@@ -35,6 +35,11 @@
   --sidebar-w-mini:  72px;
   --topbar-h:        64px;
   --container-max:   1320px;
+  --page-inset-y:    var(--space-6);
+  --page-inset-x:    var(--space-6);
+  --page-section-gap: var(--space-5);
+  --dialog-content-inset: var(--space-5);
+  --section-content-gap:  var(--space-4);
 
   /* Focus ring */
   --ring-width: 3px;

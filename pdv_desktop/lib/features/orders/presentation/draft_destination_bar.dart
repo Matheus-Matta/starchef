@@ -25,6 +25,7 @@ class DraftDestinationBar extends StatelessWidget {
     required this.onPickType,
     required this.onAttachCommand,
     required this.onDetachCommand,
+    this.onChooseCustomer,
   });
 
   final String orderType;
@@ -42,6 +43,11 @@ class DraftDestinationBar extends StatelessWidget {
   final ValueChanged<String> onPickType;
   final VoidCallback onAttachCommand;
   final ValueChanged<String> onDetachCommand;
+
+  /// Escolhe (ou cadastra) o cliente de um pedido de balcão.
+  ///
+  /// Nulo com o pedido já aberto, quando o destino não se troca mais.
+  final VoidCallback? onChooseCustomer;
 
   static const _tipos = [
     ('counter', 'Balcão', Icons.storefront_outlined),
@@ -97,15 +103,25 @@ class DraftDestinationBar extends StatelessWidget {
                   ? 'Anexar comanda'
                   : '${commands.length} comanda${commands.length > 1 ? 's' : ''} · incluir ou retirar',
             ),
-          ] else if (customer != null) ...[
+          ] else if (onChooseCustomer != null || customer != null) ...[
             const SizedBox(height: 8),
-            Text(
-              '${customer?['name'] ?? customer?['display_name'] ?? ''}',
-              style: TextStyle(
-                color: scheme.onSurfaceVariant,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
+            // ERA SÓ UM RÓTULO, e nada preenchia o cliente: a escolha saiu da
+            // aba de tipo (onde travava o toque em loja sem ninguém
+            // cadastrado) e a substituta prometida no comentário — "vincular
+            // depois, no pedido" — nunca foi ligada. O botão é a substituta:
+            // opcional como sempre foi, e no mesmo lugar onde a comanda é
+            // anexada.
+            DraftAttachedCommand(
+              command: null,
+              table: null,
+              total: null,
+              enabled: enabled && onChooseCustomer != null,
+              onAttach: onChooseCustomer ?? () {},
+              onDetach: () {},
+              icone: Icons.person_outline,
+              rotuloVazio: customer == null
+                  ? 'Vincular cliente (opcional)'
+                  : '${customer?['name'] ?? customer?['display_name'] ?? ''} · trocar',
             ),
           ],
         ],

@@ -76,6 +76,7 @@ class DraftAttachedCommand extends StatelessWidget {
     required this.onDetach,
     this.total,
     this.rotuloVazio = 'Anexar comanda',
+    this.icone = Icons.add_card_outlined,
   });
 
   final Map<String, dynamic>? command;
@@ -86,6 +87,11 @@ class DraftAttachedCommand extends StatelessWidget {
   /// de "ainda carregando" é o operador cobrando a menos.
   final double? total;
   final String rotuloVazio;
+
+  /// O glífico do botão vazio. O mesmo componente serve para anexar comanda e
+  /// para vincular cliente, e um cartão desenhado ao lado de "cliente" faria
+  /// o operador procurar um código de barras que não existe ali.
+  final IconData icone;
   final bool enabled;
   final VoidCallback onAttach;
   final VoidCallback onDetach;
@@ -96,7 +102,7 @@ class DraftAttachedCommand extends StatelessWidget {
     if (command == null) {
       return OutlinedButton.icon(
         onPressed: enabled ? onAttach : null,
-        icon: const Icon(Icons.add_card_outlined, size: 17),
+        icon: Icon(icone, size: 17),
         label: Text(rotuloVazio),
       );
     }

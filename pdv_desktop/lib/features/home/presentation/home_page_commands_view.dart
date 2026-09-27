@@ -73,10 +73,7 @@ mixin _CommandView on _HomePageShared {
                 itemCount: tables.length,
                 itemBuilder: (_, index) {
                   final table = tables[index];
-                  final occupied =
-                      table['status'] == 'occupied' ||
-                      (table['active_commands'] as List? ?? const [])
-                          .isNotEmpty;
+                  final occupied = tableIsOccupied(table);
                   final color = occupied ? Colors.orange : Colors.green;
                   return ShadCard(
                     padding: EdgeInsets.zero,
@@ -116,7 +113,7 @@ mixin _CommandView on _HomePageShared {
                               ),
                               const Spacer(),
                               Text(
-                                occupied ? 'Ocupada' : 'Livre',
+                                tableStatusLabel(table),
                                 style: TextStyle(
                                   fontWeight: FontWeight.w700,
                                   color: color.shade800,

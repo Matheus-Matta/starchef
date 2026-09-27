@@ -96,6 +96,10 @@ class _FinishOrderFormState extends State<_FinishOrderForm> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
+        // Encostados, o rótulo flutuante do cupom batia na linha do CPF acima
+        // e o texto de ajuda dele batia no rótulo do campo de baixo — três
+        // frases se tocando no meio da modal.
+        spacing: 14,
         children: [
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,

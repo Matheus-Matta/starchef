@@ -248,11 +248,11 @@ class TableSerializer(TenantModelSerializer):
         read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "status", "current_order_id"]
 
     def get_status(self, obj):
-        # O vínculo é a fonte de verdade operacional. Bases antigas podem ter
-        # mantido `status=free`; a API nunca deve desenhar essa mesa como livre.
         commands = getattr(obj, "_prefetched_objects_cache", {}).get("active_commands")
         occupied = bool(commands) if commands is not None else obj.active_commands.exists()
-        return Table.STATUS_OCCUPIED if occupied else obj.status
+        if occupied:
+            return Table.STATUS_OCCUPIED
+        return Table.STATUS_FREE if obj.status == Table.STATUS_OCCUPIED else obj.status
 
 
 class CommandMovementLogSerializer(TenantModelSerializer):

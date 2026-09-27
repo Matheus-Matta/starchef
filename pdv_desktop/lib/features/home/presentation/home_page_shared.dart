@@ -79,6 +79,7 @@ mixin _HomePageShared on State<HomePage> {
   void _removeDraftLine(String id);
   Future<void> _pickDraftType(String type);
   Future<void> _attachCommandToDraft();
+  Future<void> _chooseCustomerForDraft();
   void _attachCommandToDraftDirectly(Map<String, dynamic> command);
   void _detachCommandFromDraft([String? commandId]);
   Future<bool> _materializeDraft();

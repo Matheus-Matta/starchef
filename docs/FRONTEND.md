@@ -231,9 +231,9 @@ Vem do mesmo `.env` documentado em [`BACKEND.md`](BACKEND.md#10-configuração--
   aceita arrastar cards por mouse ou toque; tocar sem arrastar continua abrindo
   o detalhe com as ações anterior/próxima. A posição visual usa
   `kds_position`, independente para cada estação.
-- Relatórios: o contêiner compartilhado reserva espaçamento superior e `gap`
-  vertical consistente entre filtros, KPIs, gráficos e tabelas, inclusive nas
-  seções que não usam os painéis especializados.
+- Relatórios: a casca global reserva o espaço superior da página; o contêiner
+  compartilhado usa `--page-section-gap` entre filtros, KPIs, gráficos e
+  tabelas, inclusive nas seções que não usam os painéis especializados.
 - `API_URL` — usado no build de produção (`docker-compose.yml`), normalmente `/api/v1` (same-origin, sem CORS).
 - `VITE_SENTRY_DSN`, `VITE_SENTRY_ENVIRONMENT`, `VITE_SENTRY_TRACES_SAMPLE_RATE` — opcionais, Sentry do frontend (projeto separado do Sentry do backend).
 
