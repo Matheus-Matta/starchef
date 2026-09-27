@@ -678,6 +678,24 @@ def register_payment(
             from apps.orders.command_billing import conclude_items_of_order
 
             conclude_items_of_order(order, billed=True)
+            # O RESGATE DO CUPOM NASCE AQUI, pelo mesmo motivo do paragrafo
+            # acima: sao DOIS caminhos para um pedido virar pago, e o resgate
+            # estava so no outro (`orders.services`, no fechamento de um pedido
+            # ja pago). Este e o caminho que o caixa percorre de verdade —
+            # fecha a conta, depois cobra.
+            #
+            # O teste de carga mediu o tamanho do estrago: ZERO resgates
+            # gravados para seis vendas pagas com o mesmo cupom de uso unico.
+            # Sem resgate, `usos_do_cupom` responde zero para sempre, e
+            # "compra unica por cliente", "usos por cliente" e "limite total"
+            # nao valiam nada — o cupom era infinito.
+            #
+            # Ele pode RECUSAR (limite esgotado na janela entre fechar e pagar),
+            # e recusa dentro desta transacao: o recebimento que esta sendo
+            # gravado agora e desfeito junto, e nada de dinheiro se move.
+            from apps.promotions.coupon_redemption import registrar_resgate
+
+            registrar_resgate(order)
             if order.table_id:
                 from apps.orders.services import free_table_if_empty
 

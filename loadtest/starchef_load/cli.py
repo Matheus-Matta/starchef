@@ -6,13 +6,18 @@ import time
 from . import report
 from .config import PROFILES, LoadConfig
 from .context import Context
-from .suites import backend, comanda, desktop, mobile, sync, web
+from .suites import backend, comanda, desktop, mobile, promocoes, sync, web
 
 SUITES = {"backend": backend, "web": web, "desktop": desktop, "mobile": mobile,
-          "comanda": comanda, "sync": sync}
+          "comanda": comanda, "promocoes": promocoes, "sync": sync}
 # `comanda` depois de `mobile` e antes de `sync`: ela precisa do cenario ja
 # criado e mexe no estado do salao, entao roda com o salao ja movimentado.
-ORDEM = ["backend", "web", "desktop", "mobile", "comanda", "sync"]
+#
+# `promocoes` depois de `comanda`: ela cria tabela de desconto e liga a exigencia
+# do codigo do operador no restaurante. Rodando antes, mudaria o preco e a regra
+# de lancamento debaixo das outras suites — e o relatorio culparia a venda por
+# uma configuracao que esta suite tinha acabado de mexer.
+ORDEM = ["backend", "web", "desktop", "mobile", "comanda", "promocoes", "sync"]
 
 
 def build_parser():
@@ -77,7 +82,7 @@ def main(argv=None):
 
     escolhidas = ORDEM if args.suite == "all" else [args.suite]
     precisa_refs = any(
-        nome in ("backend", "desktop", "mobile", "web", "comanda", "sync")
+        nome in ("backend", "desktop", "mobile", "web", "comanda", "promocoes", "sync")
         for nome in escolhidas
     )
     ctx = Context(config, log=log)

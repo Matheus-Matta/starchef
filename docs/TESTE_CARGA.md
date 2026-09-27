@@ -293,7 +293,48 @@ desenvolvimento ela começa cedo e não fala nada sobre o código — é o teto 
 laptop, não do sistema. Para medir de verdade a partir do perfil `medio`, use
 o alvo Postgres da §2.1.1.
 
-### 3.6 `sync` — a fila entre os dois backends
+### 3.6 `promocoes` — preço dinâmico, cupom e código do operador
+
+Ataca o que só a **corrida** quebra nestes três recursos. O desconto sair certo é
+assunto do teste de unidade; aqui a pergunta é outra, e são três:
+
+| fase | a pergunta |
+| --- | --- |
+| 0 | preparo: cria tabela, regra de encarte e cupons marcados `LT-PROMO` |
+| 1 | **o preço lido é sempre um preço que existe?** Trinta terminais lendo o catálogo enquanto a tabela liga e desliga |
+| 2 | **a tabela mais antiga ganha sempre?** Duas tabelas no mesmo produto, sob leitura concorrente |
+| 3 | **"compra única por cliente" resiste a duas vendas simultâneas?** |
+| 4 | **o teto de usos vaza sob corrida?** |
+| 5 | **o cupom derruba o total abaixo do que já foi recebido?** |
+| 6 | **o código do operador é exigido SEMPRE?** |
+
+A fase 3 é a que mais importa. O resgate do cupom nasce no PAGAMENTO, e entre
+conferir o limite e gravar o resgate existe uma janela. Duas vendas simultâneas
+com o mesmo CPF e o mesmo cupom é o que um script de fraude faz de propósito — e
+o que um sábado de movimento faz por acidente, com dois caixas cobrando juntos.
+O defeito não aparece depois: as duas vendas ficam com registro perfeitamente
+normal, e o desconto a mais só some do caixa.
+
+Por isso a fase usa **barreira de largada**, e não volume: o que abre a janela é
+a simultaneidade, não a quantidade. Seis tentativas soltas juntas disputam mais
+que trezentas espaçadas.
+
+A fase 6 **liga `require_operator_code` no restaurante e desliga no fim**,
+inclusive se a medição estourar. Deixar ligado reprovaria toda suíte que rodasse
+depois, e o relatório culparia o lançamento por uma configuração que esta fase
+deixou para trás. Se o aviso "não consegui desligar" aparecer, desligue à mão
+antes da próxima carga.
+
+Ela mede as duas metades da regra: metade dos trabalhadores tenta **sem** código
+(tem de ser recusado, sempre) e metade **com** (o código tem de ficar gravado no
+item). Rodar só um dos dois provaria metade da regra — e a metade que passa é a
+que dá falso verde.
+
+A suíte **cria o próprio cadastro** a cada execução. Depender de o cenário já ter
+promoção faria ela passar por não ter o que medir, que é o pior resultado
+possível: um verde que não provou nada.
+
+### 3.7 `sync` — a fila entre os dois backends
 
 Exercita a sincronização nuvem↔loja: identidade dos nós, escrita pesada
 enchendo a outbox, drenagem da fila, e a matrícula sob tentativa de força
@@ -316,6 +357,54 @@ serialização.
 > provisionado. Há também um teste de unidade que prova o bloqueio por ordem de
 > eventos, sem cronômetro, em
 > `backend/apps/synchronization/tests/test_contencao_da_sequencia.py`.
+
+### 3.8 O par NUVEM + LOJA — "o registro atravessou?"
+
+A suíte `sync` mede a **fila**: vazão, drenagem, contenção do bilhete de
+matrícula. Ela não responde a pergunta que um recurso novo faz:
+
+    o registro que nasceu num lado aparece no outro?
+
+Para isso não basta um alvo com a sincronização ligada — ele produz eventos que
+ninguém consome, e um teste que observa a própria escrita passa sempre. Precisam
+existir **dois backends com bancos separados**, matriculados um no outro:
+
+```bash
+bash loadtest/scripts/start_sync_pair.sh          # nuvem 8021, loja 8022
+.venv/Scripts/python loadtest/validar_sync_par.py
+bash loadtest/scripts/start_sync_pair.sh --down
+```
+
+O script faz o que um compose sozinho não faz — respeita a **ordem**: sobe os dois
+Postgres zerados, sobe a nuvem, semeia, **lê do banco o UUID da conta** (ele só
+existe depois da semente) e só então sobe a loja com essa identidade. Sem o
+último passo a loja sobe sem `SYNC_ACCOUNT_ID` e a matrícula para pedindo o dado
+no terminal, que é o sintoma descrito em `SINCRONIZACAO_CONFIGURACAO.md`.
+
+Zerar os bancos é o ponto: a validação afirma "este registro **não existia** na
+loja e passou a existir", e num banco reaproveitado ela passaria pelo resíduo da
+execução anterior.
+
+O validador mede as **duas direções**, porque o catálogo as trata diferente:
+
+| direção | o que atravessa | por quê |
+| --- | --- | --- |
+| nuvem → loja | tabela de desconto, regra, **vínculo do encarte**, cupom, `require_operator_code` | preço é decisão do escritório |
+| loja → nuvem | `metafields` do pedido e o **resgate do cupom** | o resgate nasce no pagamento, e o pagamento acontece na loja |
+
+Duas verificações valem mais que as outras:
+
+- **o vínculo do encarte desceu com o "de/por"**. `Promotion.products` está em
+  `exclude_fields` de propósito — ele passa por `PromotionProduct`, que carrega os
+  dois números. Se só a regra descesse, a promoção chegaria na loja apontando o
+  produto certo com preço vazio, e o caixa cobraria o preço cheio.
+- **a nuvem recusa o cupom que a loja consumiu**. É a prova de que o resgate
+  subiu: sem ele, um cupom de uso único usado no balcão fica invisível para a
+  nuvem e a mesma pessoa usa de novo no delivery.
+
+> O par fala HTTP e WS **sem TLS**, com segredos fixos no compose e bancos
+> zerados. Não é ambiente de produção, e o `docker-compose.yml` da raiz não é
+> tocado por ele.
 
 ---
 

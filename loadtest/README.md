@@ -41,6 +41,54 @@ aparece como erro: um cartão ocupado sem nada a cobrar some do salão em
 silêncio. A suíte cria os próprios cartões e mesas, e separa "o backend
 recusou" de "não houve resposta" — só a recusa reprova.
 
+## A pergunta da suíte `promocoes`
+
+```bash
+python loadtest/run.py promocoes --profile leve --base-url http://127.0.0.1:8012
+```
+
+Três perguntas que só a corrida responde:
+
+1. **o preço lido é sempre um preço que existe?** O preço virou cálculo, e a
+   suíte lê o catálogo com trinta terminais enquanto liga e desliga a tabela de
+   desconto. Um terceiro valor — nem prateleira, nem promoção — é resolução
+   parcial, e no caixa é cobrar um preço que ninguém cadastrou.
+2. **"compra única por cliente" resiste a duas vendas simultâneas?**
+3. **o código do operador é exigido SEMPRE?** Uma exigência que vale em 99% das
+   requisições não vale: o 1% é o lançamento sem rastro.
+
+A fase 3 usa **barreira de largada**, e não volume — o que abre a janela é a
+simultaneidade. Seis tentativas soltas juntas disputam mais que trezentas
+espaçadas.
+
+**Ela já pagou o próprio custo.** Na primeira execução: seis vendas levaram um
+cupom de uso único e **zero resgates** foram gravados. O resgate estava ligado no
+ramo errado (`close_order` "pago integralmente", que só dispara ao fechar de novo
+um pedido já pago) e o caminho do caixa — fechar, depois cobrar — não gravava
+nada. Sem resgate, `usos_do_cupom` responde zero para sempre: "compra única",
+"usos por cliente" e "limite total" não valiam nada, e o cupom era infinito.
+
+## Validar a sincronização: o par NUVEM + LOJA
+
+```bash
+bash loadtest/scripts/start_sync_pair.sh          # nuvem 8021, loja 8022
+.venv/Scripts/python loadtest/validar_sync_par.py
+bash loadtest/scripts/start_sync_pair.sh --down
+```
+
+A suíte `sync` mede a FILA. Isto mede outra coisa: **o registro atravessou?** São
+dois backends com **bancos separados**, matriculados um no outro — com um banco
+só, o que a loja "recebeu" seria a mesma linha que a nuvem gravou.
+
+Valida as duas direções: tabela, regra, **vínculo do encarte**, cupom e as chaves
+do restaurante descendo; `metafields` do pedido e o **resgate do cupom** subindo.
+Termina provando a consequência: **a nuvem recusa o cupom que a loja consumiu**.
+
+> O par precisa do **Celery na nuvem**. A matrícula só ENFILEIRA a carga total, e
+> sem worker na fila `sync.bootstrap` (e sem o beat avisando) o par sobe inteiro,
+> a loja autentica, e nada sincroniza — foi o que aconteceu na primeira subida:
+> cinco containers de pé e a loja com 1 usuário, 0 produtos.
+
 ## Duas validações que só existem aqui
 
 Há coisas que o pytest não consegue provar, e é por isso que elas moram no

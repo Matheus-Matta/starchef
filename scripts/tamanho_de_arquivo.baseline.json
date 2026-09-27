@@ -62,7 +62,7 @@
     "backend/apps/orders/views.py": 830,
     "backend/apps/payments/models.py": 327,
     "backend/apps/payments/serializers.py": 307,
-    "backend/apps/payments/services.py": 836,
+    "backend/apps/payments/services.py": 854,
     "backend/apps/payments/terminals.py": 280,
     "backend/apps/payments/tests/test_cash_print_document.py": 213,
     "backend/apps/payments/views.py": 422,

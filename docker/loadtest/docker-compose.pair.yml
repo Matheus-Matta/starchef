@@ -1,0 +1,230 @@
+# O PAR NUVEM + LOJA, na mesma máquina, para validar a sincronização de verdade.
+#
+#   bash loadtest/scripts/start_sync_pair.sh
+#   bash loadtest/scripts/start_sync_pair.sh --down
+#
+# Existe porque a suíte `sync` mede a FILA (throughput, contenção do bilhete de
+# matrícula), e isso ela faz contra um alvo só no papel de nuvem. O que ela não
+# responde é a pergunta de um recurso novo:
+#
+#     **o registro que nasceu num lado aparece no outro?**
+#
+# Para isso precisam existir dois backends com bancos SEPARADOS, matriculados um
+# no outro. Um só, com a sincronização ligada, produz eventos que ninguém
+# consome — e um teste que observa a própria escrita passa sempre.
+#
+# Os dois Postgres são containers separados de propósito: com um banco só, o
+# "chegou na loja" seria a mesma linha que a nuvem acabou de gravar, e a
+# validação não provaria nada.
+#
+# NÃO É UM AMBIENTE DE PRODUÇÃO. Segredos fixos no arquivo, HTTP e WS sem TLS,
+# banco zerado a cada subida. O `docker-compose.yml` da raiz é o de produção e
+# não é tocado por isto.
+x-base: &base
+  image: starchef-backend:loadtest
+  restart: "no"
+  user: "1000:1000"
+  environment: &base-env
+    DJANGO_ENV: production
+    DJANGO_SETTINGS_MODULE: config.settings.production
+    DJANGO_DEBUG: "False"
+    DJANGO_SECRET_KEY: sync-pair-only-secret-key-with-enough-length-and-entropy-0123456789
+    DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend-cloud,backend-store,host.docker.internal
+    # HTTP PURO, sem proxy TLS na frente. Sem estas quatro linhas o
+    # `settings.production` liga o redirecionamento para HTTPS e o gunicorn passa
+    # a responder TLS na porta 8000: o cliente fala HTTP, e o erro que aparece e
+    # `SSL: WRONG_VERSION_NUMBER` — que nao tem nada a ver com o que se quer
+    # medir. Mesmo bloco do alvo de carga, e pelo mesmo motivo.
+    DJANGO_SECURE_SSL_REDIRECT: "False"
+    DJANGO_SESSION_COOKIE_SECURE: "False"
+    DJANGO_CSRF_COOKIE_SECURE: "False"
+    DJANGO_AUTH_COOKIE_SECURE: "False"
+    # O par fala entre si por HTTP e WS (sem TLS): a matricula e o canal saem de
+    # container para container na rede do compose.
+    DJANGO_CSRF_TRUSTED_ORIGINS: http://127.0.0.1:8021,http://127.0.0.1:8022
+    THROTTLE_RATE_LOGIN: 100000/min
+    THROTTLE_RATE_TOKEN_REFRESH: 100000/min
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: starchef
+    POSTGRES_PASSWORD: sync-pair-only-password
+    SYNC_ENABLED: "true"
+    SYNC_ENVIRONMENT: development
+    # A MESMA chave nos dois lados. O AES-GCM é camada adicional sobre o WSS; o
+    # que não pode é uma ponta cifrar e a outra não.
+    SYNC_ENCRYPTION_KEY: c3luY3BhaXItZGV2LWtleS0zMi1ieXRlcy0wMTIzNDU=
+    SYNC_ENCRYPTION_KEY_ID: sync-pair-01
+    # Teto alto: a validação faz rajadas curtas e o limite de matrícula
+    # (5/hour no padrão) barraria a segunda subida do dia.
+    THROTTLE_RATE_SYNC_ENROLL: 1000/hour
+    THROTTLE_RATE_ANON: 100000/min
+    THROTTLE_RATE_USER: 100000/min
+
+services:
+  redis-cloud:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [starchef-syncpair]
+
+  redis-store:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [starchef-syncpair]
+
+  # ── A NUVEM ────────────────────────────────────────────────────────────────
+  backend-cloud:
+    <<: *base
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py sync_install_triggers &&
+             gunicorn config.asgi:application -c gunicorn.conf.py"
+    environment:
+      <<: *base-env
+      POSTGRES_DB: starchef_cloud
+      POSTGRES_HOST: pg-cloud
+      REDIS_URL: redis://redis-cloud:6379/0
+      CELERY_BROKER_URL: redis://redis-cloud:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
+      SYNC_NODE_TYPE: cloud
+      GUNICORN_WORKERS: "2"
+    ports:
+      - "127.0.0.1:${CLOUD_PORT:-8021}:8000"
+    networks: [starchef-syncpair]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health/')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # O CELERY DA NUVEM. Sem ele o par sobe, matricula e nao sincroniza NADA.
+  #
+  # A matricula so ENFILEIRA a carga total ("a nuvem enfileirou a carga total
+  # <uuid>"), e quem a drena e a fila `sync.bootstrap`. O beat e o que dispara
+  # `sync.notify_pending_to_local_nodes` a cada 10s — sem ele a nuvem grava a
+  # fila do no e nunca avisa que tem coisa esperando.
+  #
+  # Foi exatamente o que faltou na primeira subida deste par: cinco containers
+  # de pe, loja autenticada, e a loja com 1 usuario, 0 perfis, 0 produtos.
+  celery_worker_cloud:
+    <<: *base
+    command: >
+      celery -A config worker -l info --concurrency=2
+      -Q celery,sync.dispatch,sync.receive,sync.apply,sync.bootstrap,sync.retry,sync.reconcile,sync.cleanup
+    environment:
+      <<: *base-env
+      POSTGRES_DB: starchef_cloud
+      POSTGRES_HOST: pg-cloud
+      REDIS_URL: redis://redis-cloud:6379/0
+      CELERY_BROKER_URL: redis://redis-cloud:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
+      SYNC_NODE_TYPE: cloud
+    networks: [starchef-syncpair]
+    depends_on:
+      backend-cloud:
+        condition: service_healthy
+
+  celery_beat_cloud:
+    <<: *base
+    command: celery -A config beat -l info
+    environment:
+      <<: *base-env
+      POSTGRES_DB: starchef_cloud
+      POSTGRES_HOST: pg-cloud
+      REDIS_URL: redis://redis-cloud:6379/0
+      CELERY_BROKER_URL: redis://redis-cloud:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-cloud:6379/2
+      SYNC_NODE_TYPE: cloud
+    networks: [starchef-syncpair]
+    depends_on:
+      backend-cloud:
+        condition: service_healthy
+
+  # ── A LOJA ─────────────────────────────────────────────────────────────────
+  #
+  # `SYNC_NODE_TYPE: local` fica aqui, e não num arquivo de ambiente: é a linha
+  # que define o PAPEL do nó, e `environment` vence `env_file`. Uma loja que
+  # vira nuvem por um typo numera pedidos na faixa da nuvem — o defeito que a
+  # numeração 1000001 já causou em produção neste projeto.
+  backend-store:
+    <<: *base
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py sync_install_triggers &&
+             gunicorn config.asgi:application -c gunicorn.conf.py"
+    environment:
+      <<: *base-env
+      POSTGRES_DB: starchef_store
+      POSTGRES_HOST: pg-store
+      REDIS_URL: redis://redis-store:6379/0
+      CELERY_BROKER_URL: redis://redis-store:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-store:6379/2
+      SYNC_NODE_TYPE: local
+      GUNICORN_WORKERS: "2"
+      # Para onde a loja se matricula e por onde ela fala.
+      SYNC_CLOUD_API_URL: http://backend-cloud:8000
+      SYNC_CLOUD_WSS_URL: ws://backend-cloud:8000/ws/sync/v1/
+      SYNC_AUTO_ENROLL: "true"
+      SYNC_ENROLL_SECRET: ${SYNC_ENROLL_SECRET:-par-de-validacao-segredo-de-24-mais-caracteres}
+      SYNC_NODE_NAME: loja-do-par-de-validacao
+      # A CONTA E A CREDENCIAL SO EXISTEM DEPOIS DE A NUVEM SER SEMEADA, entao
+      # elas chegam pelo ambiente do shell: `start_sync_pair.sh` sobe a nuvem,
+      # semeia, le o UUID da conta e so entao sobe a loja. Fixa-las aqui exigiria
+      # editar o arquivo a cada subida.
+      SYNC_ACCOUNT_ID: ${SYNC_ACCOUNT_ID:-}
+      SYNC_ENROLL_USERNAME: ${SYNC_ENROLL_USERNAME:-admin}
+      SYNC_ENROLL_PASSWORD: ${SYNC_ENROLL_PASSWORD:-admin12345}
+    ports:
+      - "127.0.0.1:${STORE_PORT:-8022}:8000"
+    networks: [starchef-syncpair]
+    depends_on:
+      backend-cloud:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health/')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  # O processo que MANTÉM a conexão com a nuvem. Sem ele os dois bancos ficam
+  # parados olhando um para o outro: a loja grava na outbox e nada sai.
+  sync_worker:
+    <<: *base
+    command: >
+      sh -c "python manage.py sync_worker --interval 2 --heartbeat 20"
+    environment:
+      <<: *base-env
+      POSTGRES_DB: starchef_store
+      POSTGRES_HOST: pg-store
+      REDIS_URL: redis://redis-store:6379/0
+      CELERY_BROKER_URL: redis://redis-store:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-store:6379/2
+      SYNC_NODE_TYPE: local
+      SYNC_CLOUD_API_URL: http://backend-cloud:8000
+      SYNC_CLOUD_WSS_URL: ws://backend-cloud:8000/ws/sync/v1/
+      SYNC_AUTO_ENROLL: "true"
+      SYNC_ENROLL_SECRET: ${SYNC_ENROLL_SECRET:-par-de-validacao-segredo-de-24-mais-caracteres}
+      SYNC_NODE_NAME: loja-do-par-de-validacao
+      # A CONTA E A CREDENCIAL SO EXISTEM DEPOIS DE A NUVEM SER SEMEADA, entao
+      # elas chegam pelo ambiente do shell: `start_sync_pair.sh` sobe a nuvem,
+      # semeia, le o UUID da conta e so entao sobe a loja. Fixa-las aqui exigiria
+      # editar o arquivo a cada subida.
+      SYNC_ACCOUNT_ID: ${SYNC_ACCOUNT_ID:-}
+      SYNC_ENROLL_USERNAME: ${SYNC_ENROLL_USERNAME:-admin}
+      SYNC_ENROLL_PASSWORD: ${SYNC_ENROLL_PASSWORD:-admin12345}
+    networks: [starchef-syncpair]
+    depends_on:
+      backend-store:
+        condition: service_healthy
+    volumes:
+      # A credencial que a matrícula recebe vive aqui. Sem o volume ela valeria
+      # só até o container reiniciar, e cada reinício viraria uma rematrícula.
+      - pair_sync_credentials:/app/sync
+
+volumes:
+  pair_sync_credentials:
+
+networks:
+  starchef-syncpair:
+    name: starchef-syncpair
+    external: true
