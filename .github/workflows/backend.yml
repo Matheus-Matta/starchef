@@ -136,6 +136,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      # Um espelho publico fora do ar nao pode custar um release inteiro: o
+      # build pergunta a cada um qual responde HOJE e usa o primeiro que
+      # responder. Ver o cabecalho do Dockerfile e o proprio script.
+      - name: Escolher o espelho da imagem base
+        id: base
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          imagem="$(scripts/resolver_imagem_base.sh python:3.12-slim)"
+          echo "Imagem base: $imagem"
+          echo "python=$imagem" >> "$GITHUB_OUTPUT"
+
       # Sem secrets no build: settings de produção (DB, Redis, chaves) são
       # lidos em runtime pelo container via .env (docker-compose.yml).
       - name: Build e push
@@ -146,6 +159,7 @@ jobs:
           build-args: |
             REQUIREMENTS=production
             APP_VERSION=${{ steps.meta.outputs.version }}
+            PYTHON_IMAGE=${{ steps.base.outputs.python }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

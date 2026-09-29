@@ -1,13 +1,16 @@
-# Imagem base pelo espelho publico da AWS, e nao pelo Docker Hub.
+# Imagem base por espelho publico, e o endereco e um ARG de proposito.
 #
-# O Hub limita pull ANONIMO por IP, e os runners do GitHub compartilham IP.
-# Quando a cota estoura, o build morre na linha 1 com um erro que nao parece
-# cota — "failed to fetch oauth token: connection reset by peer" — antes mesmo
-# de o Dockerfile ser lido. Foi o que derrubou o build da v3.0.8.
+# Nenhum registro publico consultado SEM CREDENCIAL sobrevive para sempre: a
+# cota nao e nossa, e do IP do runner, que o GitHub compartilha com todo mundo.
+# O Docker Hub derrubou a v3.0.8 no limite de pull anonimo. Trocamos para o
+# espelho da AWS, e ele derrubou a v3.0.58 com `429 toomanyrequests: Data limit
+# exceeded` — outra cota, mesmo motivo.
 #
-# `public.ecr.aws/docker/library/*` e o espelho oficial das imagens `library`
-# do Hub: mesma imagem, mesmas tags, sem limite para pull anonimo e sem
-# precisar guardar credencial do Docker Hub como secret.
+# A licao nao foi "este espelho e melhor", foi parar de depender de UM. O CI
+# pergunta a cada espelho qual esta de pe (`scripts/resolver_imagem_base.sh`) e
+# passa o vencedor por `--build-arg`. O padrao abaixo mantem `docker build`
+# manual funcionando igual, sem argumento nenhum.
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-alpine
 # Build de produção do frontend (Vue + Vite). Multi-stage: compila o SPA no
 # Node e entrega os estáticos por um servidor estático simples (`serve`) — sem
 # nginx. TLS e o proxy same-origin de /api e /ws são responsabilidade de um
@@ -16,7 +19,7 @@
 
 # ── Stage 1: build ───────────────────────────────────────────────────────────
 # jsdom 30/vitest 4 exigem Node >=22 (mesma razão do bump em .github/workflows/frontend.yml).
-FROM public.ecr.aws/docker/library/node:24-alpine AS build
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
 # Instala deps a partir do lockfile (build reproduzível).
@@ -31,7 +34,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: runtime (serve) ─────────────────────────────────────────────────
-FROM public.ecr.aws/docker/library/node:24-alpine
+FROM ${NODE_IMAGE}
 WORKDIR /app
 
 # Pin de versão pelo mesmo motivo do `npm ci` no stage 1: build reproduzível.

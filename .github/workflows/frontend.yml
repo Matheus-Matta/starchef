@@ -144,11 +144,26 @@ jobs:
       # docker-entrypoint.sh injeta window.RUNTIME_CONFIG via
       # runtime-config.js.template no start do container (ver Dockerfile) —
       # a MESMA imagem serve qualquer ambiente.
+      # Um espelho publico fora do ar nao pode custar um release inteiro: o
+      # build pergunta a cada um qual responde HOJE e usa o primeiro que
+      # responder. Ver o cabecalho do Dockerfile e o proprio script.
+      - name: Escolher o espelho da imagem base
+        id: base
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          imagem="$(scripts/resolver_imagem_base.sh node:24-alpine)"
+          echo "Imagem base: $imagem"
+          echo "node=$imagem" >> "$GITHUB_OUTPUT"
+
       - name: Build e push
         if: steps.changed.outputs.changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: frontend
+          build-args: |
+            NODE_IMAGE=${{ steps.base.outputs.node }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
