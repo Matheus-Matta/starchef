@@ -304,7 +304,6 @@ void main() {
       'connection_type': 'network',
       'host': '192.0.2.10',
       'driver_type': 'escpos',
-      'cash_drawer_enabled': true,
       'cash_drawer_pin': 2,
       'cash_drawer_on_ms': 50,
       'cash_drawer_off_ms': 500,
@@ -316,26 +315,30 @@ void main() {
       expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x00, 0x19, 0xfa]);
     });
 
-    test('um recibo que não pediu gaveta não a abre', () async {
-      // Reimpressão, venda no cartão, segunda via: mesmo equipamento, mesma
-      // gaveta cadastrada — e nenhum motivo para destravá-la.
+    test('um recibo que nao pediu gaveta nao a abre', () async {
+      // Reimpressao, venda no cartao, segunda via: mesmo equipamento, mesma
+      // gaveta ligada nele - e nenhum motivo para destrava-la.
       final bytes = await sentBytes(comGaveta, openCashDrawer: false);
 
       expect(bytes.sublist(bytes.length - 3), [0x1d, 0x56, 0x00]);
     });
 
-    test('gaveta não cadastrada não abre nem quando o cupom pede', () async {
+    test('sem gaveta no cadastro o pulso sai do mesmo jeito', () async {
+      // A impressora nao sabe dizer se ha uma gaveta no conector, e o PDV
+      // tambem nao. Antes um `cash_drawer_enabled` desmarcado deixava a
+      // gaveta trancada com o cabo plugado, sem erro em lugar nenhum.
       final bytes = await sentBytes({
-        ...comGaveta,
-        'cash_drawer_enabled': false,
+        'connection_type': 'network',
+        'host': '192.0.2.10',
+        'driver_type': 'escpos',
       }, openCashDrawer: true);
 
-      expect(bytes.sublist(bytes.length - 3), [0x1d, 0x56, 0x00]);
+      expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x00, 0x19, 0xfa]);
     });
 
-    test('fora do ESC/POS o pulso nunca é montado', () async {
-      // A cópia do cadastro guardada na fila local pode ser mais velha que a
-      // validação do backend; o terminal não depende dela.
+    test('fora do ESC/POS o pulso nunca e montado', () async {
+      // A copia do cadastro guardada na fila local pode ser mais velha que a
+      // validacao do backend; o terminal nao depende dela.
       final bytes = await sentBytes({
         ...comGaveta,
         'driver_type': 'browser',
@@ -344,7 +347,7 @@ void main() {
       expect(bytes, isNot(containsAllInOrder([0x1b, 0x70])));
     });
 
-    test('o pino 5 aciona a segunda saída do conector', () async {
+    test('o pino 5 aciona a segunda saida do conector', () async {
       final bytes = await sentBytes({
         ...comGaveta,
         'cash_drawer_pin': 5,
@@ -353,6 +356,80 @@ void main() {
       }, openCashDrawer: true);
 
       expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x01, 30, 150]);
+    });
+  });
+
+  group('Printer.openCashDrawer', () {
+    useTemporaryLockDirectory();
+
+    Future<List<int>> pulso(Map<String, dynamic> json) async {
+      final captured = <int>[];
+      await TestPrinter(
+        device(json),
+        runtime: PrinterRuntime(
+          networkWriter: (_, bytes) async => captured.addAll(bytes),
+          timing: PrintTiming(delay: (_) async {}),
+        ),
+      ).openCashDrawer();
+      return captured;
+    }
+
+    test('manda so o pulso, sem conteudo nem corte', () async {
+      // O teste da tela de equipamentos nao gasta papel: o trabalho inteiro
+      // sao os cinco bytes do comando.
+      final bytes = await pulso({
+        'connection_type': 'network',
+        'host': '192.0.2.10',
+        'driver_type': 'escpos',
+        'cash_drawer_pin': 5,
+        'cash_drawer_on_ms': 60,
+        'cash_drawer_off_ms': 300,
+      });
+
+      expect(bytes, [0x1b, 0x70, 0x01, 30, 150]);
+    });
+
+    test('sai pela ligacao cadastrada mesmo sem gaveta no cadastro', () async {
+      final bytes = await pulso({
+        'connection_type': 'network',
+        'host': '192.0.2.10',
+        'driver_type': 'escpos',
+      });
+
+      expect(bytes, [0x1b, 0x70, 0x00, 0x19, 0xfa]);
+    });
+
+    test('no driver grafico recusa antes de escrever qualquer byte', () async {
+      // Ali os mesmos bytes nao sao comando nenhum: sairiam impressos.
+      final captured = <int>[];
+      final printer = TestPrinter(
+        device({
+          'connection_type': 'network',
+          'host': '192.0.2.10',
+          'driver_type': 'browser',
+        }),
+        runtime: PrinterRuntime(
+          networkWriter: (_, bytes) async => captured.addAll(bytes),
+          timing: PrintTiming(delay: (_) async {}),
+        ),
+      );
+
+      await expectLater(
+        printer.openCashDrawer(),
+        throwsA(isA<PrinterCommunicationException>()),
+      );
+      expect(captured, isEmpty);
+    });
+
+    test('impressora sem endereco falha sem tentar abrir a porta', () async {
+      final printer = TestPrinter(
+        device({'connection_type': 'network', 'driver_type': 'escpos'}),
+      );
+
+      await expectLater(
+        printer.openCashDrawer(),
+        throwsA(isA<PrinterCommunicationException>()),
+      );
     });
   });
 }

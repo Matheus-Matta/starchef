@@ -11,7 +11,7 @@ class PrinterSerializer(TenantModelSerializer):
     class Meta:
         model = Printer
         fields = "__all__"
-        read_only_fields = AUDIT_READ_ONLY_FIELDS
+        read_only_fields = [*AUDIT_READ_ONLY_FIELDS, "cash_drawer_enabled"]
 
     def validate(self, attrs):
         instance = self.instance
@@ -45,39 +45,33 @@ class PrinterSerializer(TenantModelSerializer):
             errors["timeout_seconds"] = "Informe um timeout entre 1 e 120 segundos."
 
         driver_type = attrs.get("driver_type", getattr(instance, "driver_type", Printer.DRIVER_BROWSER))
-        if instance is None:
-            drawer_default = driver_type == Printer.DRIVER_ESCPOS
-        elif "driver_type" in attrs and driver_type != Printer.DRIVER_ESCPOS:
-            drawer_default = False
-        else:
-            drawer_default = instance.cash_drawer_enabled
-        drawer_enabled = attrs.get(
-            "cash_drawer_enabled",
-            drawer_default,
-        )
+        # A gaveta nao e uma caixa que alguem marca: e o espelho do driver.
+        # Enquanto foi escolha do operador, a tela de cadastro nunca ofereceu
+        # essa escolha — entao o campo ficava `False` e o pulso jamais era
+        # montado no PDV. A gaveta estava ligada, o cabo no lugar, e nada
+        # falhava em lugar nenhum. Ver `Printer.cash_drawer_enabled`.
+        drawer_enabled = driver_type == Printer.DRIVER_ESCPOS
         drawer_pin = attrs.get("cash_drawer_pin", getattr(instance, "cash_drawer_pin", Printer.DRAWER_PIN_2))
         drawer_on = attrs.get("cash_drawer_on_ms", getattr(instance, "cash_drawer_on_ms", 50))
         drawer_off = attrs.get("cash_drawer_off_ms", getattr(instance, "cash_drawer_off_ms", 500))
-        if drawer_enabled:
-            # O pulso e um comando ESC/POS. No driver grafico do Windows os
-            # mesmos bytes nao sao comando nenhum: sairiam impressos no papel.
-            if driver_type != Printer.DRIVER_ESCPOS:
-                errors["cash_drawer_enabled"] = (
-                    "A gaveta so abre em impressoras com driver ESC/POS."
+        # Os tempos sao conferidos SEMPRE, e nao so quando a gaveta esta
+        # ligada: eles sao cadastro do equipamento, e um valor impossivel
+        # guardado hoje viraria um pulso quebrado no dia em que o driver
+        # mudasse para ESC/POS.
+        #
+        # Teto do proprio comando: `t1` e `t2` tem um byte cada, contado em
+        # passos de 2 ms — 255 passos, 510 ms.
+        for field, value, label in (
+            ("cash_drawer_on_ms", drawer_on, "tempo ligado"),
+            ("cash_drawer_off_ms", drawer_off, "intervalo desligado"),
+        ):
+            if not value or value > 510:
+                errors[field] = f"Informe um {label} entre 1 e 510 ms."
+        if "cash_drawer_on_ms" not in errors and "cash_drawer_off_ms" not in errors:
+            if drawer_off < drawer_on:
+                errors["cash_drawer_off_ms"] = (
+                    "O intervalo desligado precisa ser maior ou igual ao tempo ligado."
                 )
-            # Teto do proprio comando: `t1` e `t2` tem um byte cada, contado em
-            # passos de 2 ms — 255 passos, 510 ms.
-            for field, value, label in (
-                ("cash_drawer_on_ms", drawer_on, "tempo ligado"),
-                ("cash_drawer_off_ms", drawer_off, "intervalo desligado"),
-            ):
-                if not value or value > 510:
-                    errors[field] = f"Informe um {label} entre 1 e 510 ms."
-            if "cash_drawer_on_ms" not in errors and "cash_drawer_off_ms" not in errors:
-                if drawer_off < drawer_on:
-                    errors["cash_drawer_off_ms"] = (
-                        "O intervalo desligado precisa ser maior ou igual ao tempo ligado."
-                    )
         # `settings` e um JSONField: o cliente pode mandar lista, numero ou
         # texto. `dict(["a"])` levanta ValueError, que virava 500 — e o campo
         # aceita qualquer JSON, entao nao ha validacao de tipo antes daqui.
@@ -89,9 +83,10 @@ class PrinterSerializer(TenantModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         settings = dict(raw_settings)
-        # A tela do PDV nao oferece um cadastro separado para a gaveta. Uma
-        # impressora ESC/POS nova portanto ja nasce pronta para o pulso; ainda
-        # e possivel desativar explicitamente pela API.
+        # Derivado, nunca recebido: o campo e `editable=False` no modelo e
+        # read-only aqui. Ele continua sendo GRAVADO e DEVOLVIDO porque os PDVs
+        # ja instalados leem esse nome para decidir o pulso — os terminais
+        # antigos passam a abrir a gaveta so com o backend atualizado.
         attrs["cash_drawer_enabled"] = bool(drawer_enabled)
         attrs["cash_drawer_pin"] = drawer_pin
         attrs["cash_drawer_on_ms"] = drawer_on

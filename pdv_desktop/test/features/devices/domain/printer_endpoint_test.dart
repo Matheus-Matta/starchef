@@ -129,26 +129,30 @@ void main() {
   });
 
   group('gaveta de dinheiro', () {
-    test('sem cadastro, nenhuma impressora abre gaveta', () {
+    test('sem nada cadastrado, uma ESC/POS ainda recebe o pulso', () {
+      // O pulso vai para a IMPRESSORA, nao para a gaveta: ela energiza a
+      // saida do conector e nao tem como saber se ha algo ligado ali. Vetar o
+      // envio por falta de cadastro so mantinha trancada uma gaveta plugada.
       final endpoint = PrinterEndpoint.fromJson({
         'connection_type': 'network',
         'host': '10.0.0.5',
         'driver_type': 'escpos',
       });
 
-      expect(endpoint.cashDrawer.enabled, isFalse);
-      expect(endpoint.canOpenCashDrawer, isFalse);
+      expect(endpoint.canOpenCashDrawer, isTrue);
+      expect(endpoint.cashDrawer.pin, 2);
+      expect(endpoint.cashDrawer.onMs, 50);
+      expect(endpoint.cashDrawer.offMs, 500);
     });
 
-    test('lê a gaveta do nível de cima ou de dentro de settings', () {
-      // A cópia guardada na fila local vem de um cadastro completo; a tela de
-      // equipamentos monta o mapa com os campos que tem na mão. Os dois
+    test('le os tempos do nivel de cima ou de dentro de settings', () {
+      // A copia guardada na fila local vem de um cadastro completo; a tela de
+      // equipamentos monta o mapa com os campos que tem na mao. Os dois
       // precisam resolver igual.
       for (final json in [
         const {
           'driver_type': 'escpos',
           'endpoint': 'Caixa',
-          'cash_drawer_enabled': true,
           'cash_drawer_pin': 5,
           'cash_drawer_on_ms': 120,
           'cash_drawer_off_ms': 480,
@@ -157,7 +161,6 @@ void main() {
           'driver_type': 'escpos',
           'endpoint': 'Caixa',
           'settings': {
-            'cash_drawer_enabled': true,
             'cash_drawer_pin': 5,
             'cash_drawer_on_ms': 120,
             'cash_drawer_off_ms': 480,
@@ -165,33 +168,29 @@ void main() {
         },
       ]) {
         final drawer = PrinterEndpoint.fromJson(json).cashDrawer;
-        expect(drawer.enabled, isTrue);
         expect(drawer.pin, 5);
         expect(drawer.onMs, 120);
         expect(drawer.offMs, 480);
       }
     });
 
-    test('um pino desconhecido cai na primeira saída', () {
+    test('um pino desconhecido cai na primeira saida', () {
       final drawer = PrinterEndpoint.fromJson({
         'driver_type': 'escpos',
         'endpoint': 'Caixa',
-        'cash_drawer_enabled': true,
         'cash_drawer_pin': 7,
       }).cashDrawer;
 
       expect(drawer.pin, 2);
     });
 
-    test('gaveta cadastrada fora do ESC/POS não é acionável', () {
+    test('fora do ESC/POS a gaveta nao e acionavel', () {
       final endpoint = PrinterEndpoint.fromJson({
         'driver_type': 'browser',
         'endpoint': 'Caixa',
-        'cash_drawer_enabled': true,
       });
 
-      expect(endpoint.cashDrawer.enabled, isTrue);
-      // No driver gráfico os bytes do pulso sairiam impressos no papel.
+      // No driver grafico os bytes do pulso sairiam impressos no papel.
       expect(endpoint.canOpenCashDrawer, isFalse);
     });
   });

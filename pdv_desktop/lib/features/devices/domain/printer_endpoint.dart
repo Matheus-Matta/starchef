@@ -12,27 +12,27 @@ enum PrinterConnection {
   serial,
 }
 
-/// A gaveta de dinheiro ligada à saída RJ12 desta impressora.
+/// O pulso da gaveta de dinheiro ligada à saída RJ12 desta impressora.
 ///
 /// É cadastro do equipamento, não do terminal: quem tem o cabo da gaveta
 /// plugado é a impressora, e ela pode ser a mesma para dois PDVs.
+///
+/// Repare que aqui não existe um "tem gaveta?". O pulso é endereçado à
+/// IMPRESSORA, que energiza a saída do conector — ela não tem como saber se
+/// há uma gaveta do outro lado do cabo. Um conector vazio recebe o mesmo
+/// comando e nada acontece, sem erro em lugar nenhum. Condicionar o envio a
+/// uma caixa marcada no cadastro só produzia o defeito oposto: a gaveta
+/// existe, está ligada, e o pulso não sai porque ninguém marcou a caixa.
 class CashDrawerSettings {
   const CashDrawerSettings({
-    required this.enabled,
     required this.pin,
     required this.onMs,
     required this.offMs,
   });
 
-  /// Gaveta não cadastrada: nenhum pulso sai em trabalho nenhum.
-  static const disabled = CashDrawerSettings(
-    enabled: false,
-    pin: 2,
-    onMs: 50,
-    offMs: 500,
-  );
-
-  final bool enabled;
+  /// Os tempos confirmados nas térmicas vendidas aqui, usados quando o
+  /// cadastro não traz nada.
+  static const standard = CashDrawerSettings(pin: 2, onMs: 50, offMs: 500);
 
   /// Pino do conector (2 na primeira gaveta, 5 na segunda).
   final int pin;
@@ -45,7 +45,6 @@ class CashDrawerSettings {
     Object? pick(String key) => printer[key] ?? settings[key];
     final pin = ValueFormatters.integer(pick('cash_drawer_pin'), fallback: 2);
     return CashDrawerSettings(
-      enabled: pick('cash_drawer_enabled') == true,
       // Só existem duas saídas no comando; qualquer outro número cai na
       // primeira, que é onde uma gaveta única está ligada.
       pin: pin == 5 ? 5 : 2,
@@ -77,7 +76,7 @@ class PrinterEndpoint {
     required this.baudRate,
     required this.driverType,
     required this.timeout,
-    this.cashDrawer = CashDrawerSettings.disabled,
+    this.cashDrawer = CashDrawerSettings.standard,
   });
 
   final PrinterConnection connection;
@@ -124,14 +123,16 @@ class PrinterEndpoint {
   /// A impressora usa comandos ESC/POS (necessário para código de barras real).
   bool get isEscPos => driverType == 'escpos';
 
-  /// Esta impressora pode abrir uma gaveta?
+  /// Esta impressora consegue receber o pulso da gaveta?
   ///
-  /// O pulso é um comando de controle. Numa impressora que vai pelo driver
-  /// gráfico do sistema, os mesmos bytes não são comando nenhum — sairiam
-  /// impressos no papel. O cadastro já recusa a combinação, mas o terminal
-  /// não depende disso: ele também imprime a partir da cópia guardada na
-  /// fila local, gravada por uma versão anterior do backend.
-  bool get canOpenCashDrawer => isEscPos && cashDrawer.enabled;
+  /// A única condição é o protocolo. O pulso é um comando de controle: numa
+  /// impressora que vai pelo driver gráfico do sistema, os mesmos bytes não
+  /// são comando nenhum — sairiam impressos no papel como lixo.
+  ///
+  /// Não há condição de cadastro. Toda impressora ESC/POS deste PDV recebe o
+  /// pulso quando o trabalho pede, tenha ou não uma gaveta plugada — ver
+  /// [CashDrawerSettings].
+  bool get canOpenCashDrawer => isEscPos;
 
   /// Há endereço suficiente para tentar imprimir.
   bool get isAddressable => switch (connection) {

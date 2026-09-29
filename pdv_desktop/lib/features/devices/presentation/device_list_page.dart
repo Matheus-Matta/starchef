@@ -18,6 +18,17 @@ enum DeviceKind { printer, scale }
 Map<String, dynamic> _deviceSettings(Map<String, dynamic>? item) =>
     item?['settings'] as Map<String, dynamic>? ?? const {};
 
+/// O pino do conector RJ12 gravado no cadastro.
+///
+/// Como o resto da impressora, pode chegar no nível de cima ou dentro de
+/// `settings`. Só existem duas saídas no comando ESC/POS: qualquer outro
+/// número cai na primeira, que é onde uma gaveta única está ligada.
+int _savedDrawerPin(Map<String, dynamic>? item) {
+  final raw =
+      item?['cash_drawer_pin'] ?? _deviceSettings(item)['cash_drawer_pin'];
+  return '$raw' == '5' ? 5 : 2;
+}
+
 String _savedConnectionType(Map<String, dynamic>? item) =>
     '${_deviceSettings(item)['connection_type'] ?? item?['connection_type'] ?? 'windows'}';
 
@@ -390,6 +401,8 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   late bool autoPrint = widget.item?['auto_print'] as bool? ?? false;
   bool saving = false;
   bool testing = false;
+  bool testingDrawer = false;
+  late int drawerPin = _savedDrawerPin(widget.item);
   bool loadingChoices = true;
   List<Map<String, dynamic>> sectors = [];
   List<Map<String, dynamic>> printers = [];
@@ -563,6 +576,7 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
           'host': host.text.trim().isEmpty ? null : host.text.trim(),
           'port': int.tryParse(networkPort.text) ?? 9100,
           'timeout_seconds': int.tryParse(timeout.text) ?? 10,
+          'cash_drawer_pin': drawerPin,
         } else ...{
           'protocol': type,
           'port': connection.text.trim(),
@@ -610,6 +624,93 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
     }
   }
 
+  /// O cadastro desta impressora como ele está NO FORMULÁRIO, agora.
+  ///
+  /// Testar o que está salvo no servidor responderia a pergunta errada: quem
+  /// clicou acabou de trocar o IP ou a porta na tela e quer saber se a troca
+  /// funciona, antes de salvar.
+  ///
+  /// [apiPrinter] é o cadastro que veio junto do trabalho de impressão, quando
+  /// houve um; os campos da tela ganham dele.
+  Map<String, dynamic> _printerFromForm([
+    Map<String, dynamic> apiPrinter = const {},
+  ]) {
+    final endereco = host.text.trim();
+    final porta = int.tryParse(networkPort.text) ?? 9100;
+    final espera = int.tryParse(timeout.text) ?? 10;
+    return <String, dynamic>{
+      ...?widget.item,
+      ...apiPrinter,
+      'connection_type': connectionType,
+      'endpoint': connection.text.trim(),
+      'host': endereco.isEmpty ? null : endereco,
+      'port': porta,
+      'timeout_seconds': espera,
+      'driver_type': type,
+      // O pino escolhido na tela vale JÁ no teste, antes de salvar: é
+      // justamente trocando de saída que se descobre em qual delas a gaveta
+      // está ligada.
+      'cash_drawer_pin': drawerPin,
+      'settings': {
+        ...(apiPrinter['settings'] as Map<String, dynamic>? ?? const {}),
+        'connection_type': connectionType,
+        'host': endereco.isEmpty ? null : endereco,
+        'port': porta,
+        'timeout_seconds': espera,
+        'baudrate': int.tryParse(baudRate.text) ?? 9600,
+        'cash_drawer_pin': drawerPin,
+      },
+    };
+  }
+
+  /// Manda o pulso da gaveta e nada mais.
+  ///
+  /// Não passa pelo servidor: não há cupom para renderizar, e o que se quer
+  /// provar é justamente o trecho final do caminho — da ligação cadastrada
+  /// nesta tela até o conector RJ12 da impressora. Também não gasta papel.
+  ///
+  /// O pulso sai mesmo sem nenhuma gaveta cadastrada. Quem recebe o comando é
+  /// a impressora, que energiza a saída; um conector vazio simplesmente não
+  /// faz nada. Exigir uma caixa marcada antes de tentar era o que mantinha a
+  /// gaveta trancada com o cabo plugado.
+  Future<void> _testCashDrawer() async {
+    if (testingDrawer || testing) return;
+    setState(() => testingDrawer = true);
+    try {
+      await TestPrinter(
+        PrinterDevice.fromJson(_printerFromForm()),
+      ).openCashDrawer();
+      if (mounted) {
+        showAppToast(
+          context,
+          'Pulso enviado à impressora. Se a gaveta não abriu, confira o cabo '
+          'RJ12 e o pino do conector.',
+          title: 'Gaveta acionada',
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PrinterCommunicationException) {
+        showAppError(
+          context,
+          error.message,
+          title: 'Não foi possível enviar o pulso da gaveta',
+          recommendedAction: error.recommendedAction,
+        );
+      } else {
+        showAppError(
+          context,
+          error,
+          title: 'Não foi possível enviar o pulso da gaveta',
+          recommendedAction:
+              'Confira o endereço da impressora e se ela está ligada.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => testingDrawer = false);
+    }
+  }
+
   Future<void> _testPrinter() async {
     final item = widget.item;
     if (item == null || testing) return;
@@ -629,26 +730,9 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         // caminho inteiro, do servidor ao papel, está de pé.
         rethrow;
       }
-      final apiPrinter =
-          job['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{};
-      final printer = <String, dynamic>{
-        ...item,
-        ...apiPrinter,
-        'connection_type': connectionType,
-        'endpoint': connection.text.trim(),
-        'host': host.text.trim().isEmpty ? null : host.text.trim(),
-        'port': int.tryParse(networkPort.text) ?? 9100,
-        'timeout_seconds': int.tryParse(timeout.text) ?? 10,
-        'driver_type': type,
-        'settings': {
-          ...(apiPrinter['settings'] as Map<String, dynamic>? ?? const {}),
-          'connection_type': connectionType,
-          'host': host.text.trim().isEmpty ? null : host.text.trim(),
-          'port': int.tryParse(networkPort.text) ?? 9100,
-          'timeout_seconds': int.tryParse(timeout.text) ?? 10,
-          'baudrate': int.tryParse(baudRate.text) ?? 9600,
-        },
-      };
+      final printer = _printerFromForm(
+        job['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+      );
       final payload = job['payload'] as Map<String, dynamic>? ?? const {};
       final text = '${payload['text_content'] ?? ''}'.trim();
       if (text.isEmpty) {
@@ -1085,13 +1169,43 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                       value: active,
                       onChanged: (value) => setState(() => active = value),
                     ),
+                    // Se o pulso sai e a gaveta continua fechada, o suspeito
+                    // seguinte é a saída do conector. Sem este campo em tela
+                    // alguma, o único jeito de trocar era pela API.
+                    if (printer) ...[
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<int>(
+                        initialValue: drawerPin,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Saída da gaveta no conector RJ12',
+                          helperText:
+                              'Uma gaveta única costuma estar no pino 2. Se o '
+                              'teste abaixo não abrir, tente o pino 5.',
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 2,
+                            child: Text('Pino 2 (primeira gaveta)'),
+                          ),
+                          DropdownMenuItem(
+                            value: 5,
+                            child: Text('Pino 5 (segunda gaveta)'),
+                          ),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => drawerPin = value ?? 2),
+                      ),
+                    ],
                     const SizedBox(height: 22),
                     if (printer && widget.item != null) ...[
                       SizedBox(
                         width: double.infinity,
                         height: 50,
                         child: OutlinedButton.icon(
-                          onPressed: saving || testing ? null : _testPrinter,
+                          onPressed: saving || testing || testingDrawer
+                              ? null
+                              : _testPrinter,
                           icon: testing
                               ? const SizedBox(
                                   width: 18,
@@ -1102,6 +1216,41 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                                 )
                               : const Icon(Icons.print_outlined),
                           label: const Text('Testar conexão e imprimir nota'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    // O teste da gaveta não espera o cadastro estar salvo: ele
+                    // usa só o que está na tela, e é justamente numa impressora
+                    // recém-cadastrada que se quer conferir o cabo da gaveta.
+                    if (printer) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          onPressed: saving || testing || testingDrawer
+                              ? null
+                              : _testCashDrawer,
+                          icon: testingDrawer
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.point_of_sale_outlined),
+                          label: const Text('Testar gaveta de dinheiro'),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Envia só o pulso de abertura pela ligação configurada '
+                        'acima, sem imprimir nada. É o mesmo comando que sai '
+                        'junto do recibo de uma venda em dinheiro.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 12),

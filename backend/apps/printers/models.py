@@ -52,12 +52,26 @@ class Printer(TenantModel):
     # a gaveta destrava. Por isso isto e cadastro da impressora, e nao do
     # terminal — quem tem a saida eletrica ligada na gaveta e o equipamento.
     #
-    # So vale para `driver_type = escpos`. Uma impressora no driver grafico do
-    # Windows nao recebe comando de controle nenhum: os bytes seriam
-    # reinterpretados como texto.
+    # A UNICA condicao e o driver ser `escpos`. Uma impressora no driver
+    # grafico do Windows nao recebe comando de controle nenhum: os bytes
+    # seriam reinterpretados como texto.
+    #
+    # NAO ha uma segunda condicao, e em particular nao ha um "tem gaveta?" a
+    # marcar: quem recebe o comando e a IMPRESSORA, que energiza a saida do
+    # conector. Ela nao tem como saber se ha uma gaveta do outro lado do cabo,
+    # e um conector vazio simplesmente nao faz nada, sem erro em lugar nenhum.
+    # Por isso este campo e DERIVADO de `driver_type`, e nao escolhido.
+    #
+    # Enquanto foi escolha, a tela de cadastro nunca ofereceu a caixa para
+    # marcar: o campo ficava `False`, o PDV nao montava o pulso, e a gaveta
+    # ficava trancada com o cabo RJ12 no lugar. Nada falhava.
+    #
+    # A coluna continua existindo, e continua saindo no payload, porque os PDVs
+    # ja instalados leem este nome para decidir o pulso.
     cash_drawer_enabled = models.BooleanField(
         default=False,
-        help_text="Abre a gaveta ligada a esta impressora ao imprimir venda em dinheiro e documentos de caixa.",
+        editable=False,
+        help_text="Derivado do driver: toda impressora ESC/POS pode acionar a gaveta.",
     )
 
     DRAWER_PIN_2 = 2

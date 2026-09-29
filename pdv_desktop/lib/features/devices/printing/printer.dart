@@ -148,7 +148,69 @@ abstract class Printer {
   Future<void> send(PrintDocument document) =>
       _reserveInProcess(device.lockResource, () => _send(document));
 
-  Future<void> _send(PrintDocument document) async {
+  /// Abre a gaveta agora, sem imprimir nada.
+  ///
+  /// Sai pela MESMA ligação cadastrada do cupom — rede, serial ou fila do
+  /// sistema —, porque quem recebe o pulso é a impressora, não a gaveta. Como
+  /// não há conteúdo, também não há avanço de papel nem corte: o trabalho é o
+  /// pulso e nada mais.
+  ///
+  /// Serve para conferir o cabo RJ12 e os tempos sem precisar de uma venda em
+  /// dinheiro de verdade.
+  Future<void> openCashDrawer() =>
+      _reserveInProcess(device.lockResource, _openCashDrawer);
+
+  Future<void> _openCashDrawer() {
+    if (!target.isEscPos) {
+      // Nada a tentar: no driver gráfico esses bytes viram texto no papel.
+      throw _publish(
+        PrinterCommunicationException(
+          message:
+              '${device.label} está cadastrada no driver do sistema, que não '
+              'aceita comandos de controle — o pulso da gaveta sairia '
+              'impresso no papel.',
+          recommendedAction:
+              'Troque o tipo da impressora para ESC/POS e teste de novo.',
+        ),
+        detail: 'gaveta',
+      );
+    }
+    final drawer = target.cashDrawer;
+    return _deliver(
+      detail: 'gaveta',
+      bytes: EscPosCodec.openDrawerBytes(
+        pin: drawer.pin,
+        onMs: drawer.onMs,
+        offMs: drawer.offMs,
+      ),
+      logData: const {'gaveta': true, 'somente_gaveta': true},
+    );
+  }
+
+  Future<void> _send(PrintDocument document) {
+    final drawer = _drawerPulseFor(document);
+    return _deliver(
+      detail: jobType.wire,
+      bytes: EscPosCodec.rawTransportBytes(
+        document.content,
+        isEscPos: target.isEscPos,
+        barcodeValue: document.barcode,
+        qrValue: document.qr,
+        drawerPulse: drawer,
+      ),
+      logData: {'gaveta': drawer != null},
+    );
+  }
+
+  /// Reserva o equipamento, entrega os bytes e traduz a falha.
+  ///
+  /// É o corpo comum do cupom e do pulso solto: os dois disputam o mesmo
+  /// equipamento e falham pelos mesmos motivos.
+  Future<void> _deliver({
+    required String detail,
+    required List<int> bytes,
+    required Map<String, Object?> logData,
+  }) async {
     final startedAt = DateTime.now();
     final missing = device.missingConfiguration;
     if (missing != null) {
@@ -159,6 +221,7 @@ abstract class Printer {
           message: 'Falha ao comunicar com ${device.label}. $missing',
           recommendedAction: 'Revise a configuração local da impressora.',
         ),
+        detail: detail,
       );
     }
 
@@ -186,7 +249,7 @@ abstract class Printer {
     final lock = await PeripheralLock.acquireQueued(
       device.lockResource,
       role: 'impressora',
-      detail: jobType.wire,
+      detail: detail,
       timeout: runtime.lockTimeout,
     );
     if (lock == null) {
@@ -199,6 +262,7 @@ abstract class Printer {
           recommendedAction:
               'Aguarde a impressão em andamento terminar e tente novamente.',
         ),
+        detail: detail,
       );
     }
 
@@ -214,30 +278,21 @@ abstract class Printer {
         );
       }
 
-      final drawer = _drawerPulseFor(document);
-      await transport.write(
-        EscPosCodec.rawTransportBytes(
-          document.content,
-          isEscPos: target.isEscPos,
-          barcodeValue: document.barcode,
-          qrValue: document.qr,
-          drawerPulse: drawer,
-        ),
-      );
+      await transport.write(bytes);
       _lastSuccessfulSend[device.lockResource] = DateTime.now();
       _publishStatus(PrinterAvailability.available);
       AppLogger.instance.info(
         'print_send_ok',
         data: {
           'printer': device.label,
-          'job_type': jobType.wire,
+          'job_type': detail,
           'ligacao': target.connection.name,
-          'gaveta': drawer != null,
+          ...logData,
           'ms': DateTime.now().difference(startedAt).inMilliseconds,
         },
       );
     } on PrinterCommunicationException catch (error) {
-      throw _publish(error);
+      throw _publish(error, detail: detail);
     } catch (error) {
       throw _publish(
         PrinterCommunicationException(
@@ -246,6 +301,7 @@ abstract class Printer {
               'Confira o cabo, a energia e a porta configurada. O PDV '
               'continuará funcionando normalmente.',
         ),
+        detail: detail,
       );
     } finally {
       await lock.release();
@@ -254,11 +310,12 @@ abstract class Printer {
 
   /// Os bytes da gaveta para este documento, ou `null` quando ela não entra.
   ///
-  /// Três condições, e todas precisam valer: o documento pediu a gaveta, o
-  /// cadastro tem gaveta ligada nesta impressora e a impressora fala ESC/POS.
-  /// A última não é redundante com o cadastro — o cupom pode ter esperado na
-  /// fila local com a cópia de um cadastro anterior, e num driver gráfico os
-  /// mesmos bytes sairiam impressos no papel em vez de abrir coisa alguma.
+  /// Duas condições: o documento pediu a gaveta e a impressora fala ESC/POS.
+  /// Não há terceira — nenhum campo de cadastro autoriza o pulso. Ele vai
+  /// para a impressora, que energiza a saída do conector; se não houver
+  /// gaveta plugada ali, nada acontece e ninguém reclama. Enquanto isso era
+  /// condicionado a `cash_drawer_enabled`, uma gaveta perfeitamente ligada
+  /// ficava trancada por causa de um campo desmarcado no cadastro.
   List<int>? _drawerPulseFor(PrintDocument document) {
     if (!document.openCashDrawer) return null;
     if (!target.canOpenCashDrawer) return null;
@@ -344,7 +401,10 @@ abstract class Printer {
     }
   }
 
-  PrinterCommunicationException _publish(PrinterCommunicationException error) {
+  PrinterCommunicationException _publish(
+    PrinterCommunicationException error, {
+    String? detail,
+  }) {
     _publishStatus(
       PrinterAvailability(
         PrinterAvailabilityPhase.unavailable,
@@ -355,7 +415,7 @@ abstract class Printer {
       'print_send_failed',
       data: {
         'printer': device.label,
-        'job_type': jobType.wire,
+        'job_type': detail ?? jobType.wire,
         'motivo': error.message,
       },
     );
