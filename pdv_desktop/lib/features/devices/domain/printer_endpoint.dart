@@ -28,8 +28,8 @@ class CashDrawerSettings {
   static const disabled = CashDrawerSettings(
     enabled: false,
     pin: 2,
-    onMs: 100,
-    offMs: 400,
+    onMs: 50,
+    offMs: 500,
   );
 
   final bool enabled;
@@ -51,11 +51,11 @@ class CashDrawerSettings {
       pin: pin == 5 ? 5 : 2,
       onMs: ValueFormatters.integer(
         pick('cash_drawer_on_ms'),
-        fallback: 100,
+        fallback: 50,
       ).clamp(1, 510),
       offMs: ValueFormatters.integer(
         pick('cash_drawer_off_ms'),
-        fallback: 400,
+        fallback: 500,
       ).clamp(1, 510),
     );
   }

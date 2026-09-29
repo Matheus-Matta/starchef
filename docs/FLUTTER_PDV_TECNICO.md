@@ -852,6 +852,13 @@ da mesma venda, sem pedir novamente quando a SEFAZ autorizar. A emissão da
 NFC-e começa mesmo enquanto o operador escolhe a impressora; se cancelar, o
 pedido permanece pago e os documentos podem ser reimpressos pelo histórico.
 
+**Dinheiro abre a gaveta pelo desktop.** O recibo do pagamento em espécie leva,
+depois do corte e na mesma conexão TCP/serial, o pulso ESC/POS
+`ESC p 0 25 250` (`1B 70 00 19 FA`). Impressoras ESC/POS novas já nascem com
+essa saída habilitada; a migração `printers.0008` corrige os cadastros antigos
+que ainda estavam no padrão anterior. Cartão, PIX e reimpressão não levam o
+pulso. O mobile não participa desse fluxo de caixa.
+
 **Lançar item: um clique, uma unidade.** Produto sem variação e sem adicional
 não tem nada a perguntar — clicar nele no catálogo, ou bipar o EAN, soma **uma
 unidade** direto (`_addOneMoreOf`; o servidor e o `OrderRepository` agrupam

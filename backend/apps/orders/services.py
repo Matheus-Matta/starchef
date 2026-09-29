@@ -90,13 +90,11 @@ def create_order(*, restaurant, order_type, user, branch=None, responsible_user=
         # O que vem no corpo não é sobrescrito porque é mais recente e mais
         # específico — ver `apps.core.metafields.herdar`.
         from apps.core.metafields import herdar
-        from apps.orders.operator_code import exigir
+        from apps.orders.operator_code import preparar
 
         comanda = kwargs.get("command")
-        kwargs["metafields"] = exigir(
-            restaurant,
+        kwargs["metafields"] = preparar(
             herdar(kwargs.get("metafields"), getattr(comanda, "metafields", None)),
-            acao="abrir pedido",
         )
 
         order = _criar_pedido_numerado(
@@ -249,19 +247,14 @@ def add_order_item(
 ):
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
-        # O CÓDIGO DE QUEM LANÇOU, quando o restaurante exige. O item herda o que
-        # o pedido tiver: quem abriu a conta já se identificou, e cobrar o código
-        # a cada prato faria o garçom digitar dez vezes no mesmo atendimento.
-        #
-        # A conferência vem ANTES das outras: barrar por falta de código depois de
-        # resolver peso, variação e adicional gastaria as consultas para nada.
+        # O código é exigido somente pelo app do garçom. O backend apenas
+        # normaliza o que recebeu, pois estas rotas também atendem o desktop,
+        # que não participa dessa regra de interface.
         from apps.core.metafields import herdar
-        from apps.orders.operator_code import exigir
+        from apps.orders.operator_code import preparar
 
-        extras = exigir(
-            order.restaurant,
+        extras = preparar(
             herdar(metafields, order.metafields),
-            acao="lançar item",
         )
         if product.account_id != order.account_id:
             raise ValidationError("O produto não pertence à conta do pedido.")
@@ -741,7 +734,12 @@ def dispatch_due_kitchen_batches(*, account_id=None, restaurant_id=None, now=Non
     for batch_id in batch_ids:
         batch = OrderBatch.all_objects.select_related("account").get(pk=batch_id)
         dispatch_kitchen_batch(batch, now=now)
-    return len(batch_ids)
+    from apps.orders.command_kitchen import dispatch_due_command_batches
+
+    command_count = dispatch_due_command_batches(
+        account_id=account_id, restaurant_id=restaurant_id, now=now
+    )
+    return len(batch_ids) + command_count
 
 
 @transaction.atomic

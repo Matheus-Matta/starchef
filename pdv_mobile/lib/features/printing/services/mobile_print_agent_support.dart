@@ -1,6 +1,46 @@
 part of 'mobile_print_agent.dart';
 
 extension _MobilePrintAgentSupport on MobilePrintAgent {
+  Future<void> _processJobs(String restaurant) async {
+    final available = {
+      for (final printer in _printers)
+        if (printer.acceptsAutomaticJobs) printer.id: printer,
+    };
+    if (available.isEmpty) return;
+    for (final status in ['pending', 'rendered']) {
+      final page = await api.get(
+        '/print-jobs/',
+        query: {
+          'restaurant': restaurant,
+          'status': status,
+          'ordering': 'created_at',
+          'page_size': 100,
+        },
+      );
+      for (final job in _rows(page)) {
+        if (!MobilePrintJobPolicy.shouldAutomaticallyPrint(job)) continue;
+        final jobId = '${job['id'] ?? ''}';
+        final printer = available['${job['printer'] ?? ''}'];
+        final retryAt = _retryAfter[jobId];
+        if (jobId.isEmpty || printer == null) continue;
+        if (_awaitingConfirmation.contains(jobId)) continue;
+        if (retryAt != null && retryAt.isAfter(DateTime.now())) continue;
+        if (!await _claim(jobId)) continue;
+        await _printJob(jobId, job, printer);
+      }
+    }
+  }
+
+  Future<bool> _claim(String jobId) async {
+    try {
+      await api.post('/print-jobs/$jobId/claim/');
+      return true;
+    } on ApiException catch (error) {
+      if (error.statusCode == 409) return false;
+      rethrow;
+    }
+  }
+
   Future<void> _loadPrintersIfNeeded(String restaurant) async {
     final loadedAt = _printersLoadedAt;
     if (loadedAt != null &&

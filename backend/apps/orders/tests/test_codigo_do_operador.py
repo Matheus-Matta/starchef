@@ -17,6 +17,7 @@ from django.core.exceptions import ValidationError
 
 from apps.core.tenant import tenant_context
 from apps.menu.models import Product
+from apps.orders.command_items import launch_item
 from apps.orders.models import Order
 from apps.orders.operator_code import CHAVE, codigo_de
 from apps.orders.services import add_order_item, create_order
@@ -58,13 +59,33 @@ def test_sem_a_opcao_ligada_nada_muda(account, restaurant, branch, manager_user,
         assert item.metafields == {}
 
 
-def test_com_a_opcao_ligada_abrir_pedido_sem_codigo_e_recusado(
-    account, exige_codigo, branch, manager_user
+def test_backend_nao_exige_codigo_quando_a_opcao_do_mobile_esta_ligada(
+    account, exige_codigo, branch, manager_user, produto
 ):
-    with tenant_context(account), pytest.raises(ValidationError) as falha:
-        _pedido(exige_codigo, branch, manager_user)
-    assert "código do operador" in str(falha.value)
-    assert "abrir pedido" in str(falha.value)
+    """A flag controla o app do garçom, não todos os clientes da API.
+
+    O PDV desktop usa as mesmas rotas e não pede código. Cobrar o campo no
+    backend fazia o caixa parar de abrir pedidos e lançar itens quando a loja
+    ligava a opção destinada somente ao mobile.
+    """
+    with tenant_context(account):
+        pedido = _pedido(exige_codigo, branch, manager_user)
+        item = add_order_item(
+            order=pedido, product=produto, quantity=1, user=manager_user
+        )
+        comanda = Command.objects.create(
+            account=account,
+            restaurant=exige_codigo,
+            branch=branch,
+            number=9000,
+        )
+        anotacao = launch_item(
+            command=comanda, product=produto, user=manager_user
+        )
+
+    assert pedido.metafields == {}
+    assert item.metafields == {}
+    assert anotacao.metafields == {}
 
 
 def test_o_codigo_grava_no_pedido_e_o_item_herda(

@@ -79,12 +79,12 @@ class Printer(TenantModel):
     # `t1` e `t2` em milissegundos. O ESC/POS conta em passos de 2 ms com um
     # byte cada, entao o teto real e 510 ms para cada um.
     cash_drawer_on_ms = models.PositiveSmallIntegerField(
-        default=100,
-        help_text="Tempo com a bobina energizada. Comece por 100 ms: pulso curto demais nao destrava, longo demais aquece a bobina.",
+        default=50,
+        help_text="Tempo com a bobina energizada. O padrao de 50 ms gera t1=25 no comando ESC/POS.",
     )
     cash_drawer_off_ms = models.PositiveSmallIntegerField(
-        default=400,
-        help_text="Intervalo desligado depois do pulso. Deve ser maior que o tempo ligado.",
+        default=500,
+        help_text="Intervalo desligado depois do pulso. O padrao de 500 ms gera t2=250 no comando ESC/POS.",
     )
 
     is_active = models.BooleanField(default=True)

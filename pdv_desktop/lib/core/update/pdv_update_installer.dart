@@ -35,13 +35,13 @@ class PdvUpdateInstaller {
   ///
   /// O limite clássico do Win32 é 260 para o caminho COMPLETO, e a conta é:
   ///
-  ///     instalação + sufixo de transação (~26) + separador + 91
+  ///     instalação + separador + 91
   ///
   /// onde 91 é o arquivo mais fundo do pacote
-  /// (`datalutter_assets\packages\lucide_icons_flutter\...`). Com 120,
-  /// o pior caso dá 238 — folga real, e ainda larguíssimo para qualquer
-  /// instalação sensata: a padrão do instalador usa 52.
-  static const int maximoDoCaminhoDeInstalacao = 120;
+  /// (`data\flutter_assets\packages\lucide_icons_flutter\...`). A transação
+  /// fica no diretório curto de dados e não aumenta mais este caminho. Com
+  /// 160, o pior caso dá 252, ainda abaixo do limite clássico de 260.
+  static const int maximoDoCaminhoDeInstalacao = 160;
 
   Future<PdvPreparedUpdate> prepare(
     PdvDownloadedArtifact download,
@@ -59,14 +59,18 @@ class PdvUpdateInstaller {
     final installDirectory = executable.absolute.parent;
     _validateInstallDirectory(installDirectory);
     final transaction = '${_safeVersion(version)}-$pid';
-    final stagingDirectory = Directory(
-      '${installDirectory.path}.starchef-new-$transaction',
+    final helperDirectory = Directory(
+      '${AppPaths.dataDirectory().path}${Platform.pathSeparator}updates'
+      '${Platform.pathSeparator}$transaction',
     );
-    final backupDirectory = Directory(
-      '${installDirectory.path}.starchef-backup-$transaction',
-    );
-    _validateManagedSibling(installDirectory, stagingDirectory);
-    _validateManagedSibling(installDirectory, backupDirectory);
+    final stagingDirectory = Platform.isWindows
+        ? Directory('${helperDirectory.path}${Platform.pathSeparator}staging')
+        : Directory('${installDirectory.path}.starchef-new-$transaction');
+    final backupDirectory = Platform.isWindows
+        ? Directory('${helperDirectory.path}${Platform.pathSeparator}backup')
+        : Directory('${installDirectory.path}.starchef-backup-$transaction');
+    _validateTransactionTarget(installDirectory, stagingDirectory);
+    _validateTransactionTarget(installDirectory, backupDirectory);
     if (await stagingDirectory.exists() || await backupDirectory.exists()) {
       throw const FileSystemException(
         'Diretório de transação já existe; atualização não iniciada',
@@ -107,10 +111,6 @@ class PdvUpdateInstaller {
         'liberar_firewall.ps1',
       );
 
-      final helperDirectory = Directory(
-        '${AppPaths.dataDirectory().path}${Platform.pathSeparator}updates'
-        '${Platform.pathSeparator}$transaction',
-      );
       await helperDirectory.create(recursive: true);
       final helperScript = File(
         '${helperDirectory.path}${Platform.pathSeparator}'
@@ -146,7 +146,7 @@ class PdvUpdateInstaller {
       );
     } catch (_) {
       if (await stagingDirectory.exists()) {
-        _validateManagedSibling(installDirectory, stagingDirectory);
+        _validateTransactionTarget(installDirectory, stagingDirectory);
         await stagingDirectory.delete(recursive: true);
       }
       rethrow;
@@ -154,8 +154,11 @@ class PdvUpdateInstaller {
   }
 
   Future<void> launch(PdvPreparedUpdate update) async {
-    _validateManagedSibling(update.installDirectory, update.stagingDirectory);
-    _validateManagedSibling(update.installDirectory, update.backupDirectory);
+    _validateTransactionTarget(
+      update.installDirectory,
+      update.stagingDirectory,
+    );
+    _validateTransactionTarget(update.installDirectory, update.backupDirectory);
     if (!await update.helperScript.exists() ||
         !await update.stagingDirectory.exists()) {
       throw const FileSystemException(
@@ -258,12 +261,22 @@ class PdvUpdateInstaller {
     }
   }
 
-  void _validateManagedSibling(Directory install, Directory target) {
-    final prefix = '${install.absolute.path}.starchef-';
-    if (!target.absolute.path.startsWith(prefix) ||
-        target.absolute.path.contains(RegExp(r'[\r\n]'))) {
+  void _validateTransactionTarget(Directory install, Directory target) {
+    final targetPath = target.absolute.path;
+    final allowed = Platform.isWindows
+        ? _insideUpdatesDirectory(targetPath)
+        : targetPath.startsWith('${install.absolute.path}.starchef-');
+    if (!allowed || targetPath.contains(RegExp(r'[\r\n]'))) {
       throw const FileSystemException('Diretório de atualização inseguro');
     }
+  }
+
+  bool _insideUpdatesDirectory(String target) {
+    final updates = Directory(
+      '${AppPaths.dataDirectory().path}${Platform.pathSeparator}updates',
+    ).absolute.path;
+    final prefix = '${updates.toLowerCase()}${Platform.pathSeparator}';
+    return target.toLowerCase().startsWith(prefix);
   }
 
   String _safeVersion(String value) =>

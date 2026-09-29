@@ -443,7 +443,7 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
     )
     def void_item(self, request, pk=None, item_pk=None):
         """Cancela uma anotação. Ela sai da comanda como PERDA."""
-        from apps.orders.command_kitchen import void_command_item
+        from apps.orders.command_item_void import void_command_item
         from apps.orders.models import CommandItem
 
         command = self.get_object()

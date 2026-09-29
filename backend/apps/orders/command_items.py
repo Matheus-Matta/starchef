@@ -18,10 +18,13 @@ from apps.orders.models import CommandItem
 
 
 def open_items_of_command(command_id):
-    """O que a comanda tem AGORA — as anotações pendentes."""
+    """O que a comanda tem AGORA e ainda entra no pagamento."""
     return (
         CommandItem.objects.filter(
             command_id=command_id, command_status=CommandItem.STATUS_PENDENTE
+        )
+        .exclude(
+            status__in=[CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED]
         )
         .select_related("product", "table", "batch")
         .prefetch_related("addons__addon")

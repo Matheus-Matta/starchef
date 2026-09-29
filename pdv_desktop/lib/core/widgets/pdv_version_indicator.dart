@@ -31,7 +31,9 @@ class PdvVersionIndicator extends StatelessWidget {
         Icons.check_circle,
         const Color(0xFF16A34A),
         'Atualizado',
-        'O aplicativo está atualizado',
+        onPressed == null
+            ? 'O aplicativo está atualizado'
+            : 'O aplicativo está atualizado. Clique para buscar novamente.',
       ),
       PdvUpdatePhase.updateAvailable => (
         Icons.system_update_alt,

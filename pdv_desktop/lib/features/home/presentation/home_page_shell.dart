@@ -12,7 +12,6 @@ part of 'home_page.dart';
 /// A casca da tela: barra lateral, cabeçalho e o `build` que escolhe o painel
 /// da etapa atual.
 ///
-/// O código foi MOVIDO, não reescrito.
 mixin _ShellSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
@@ -206,6 +205,7 @@ mixin _ShellSection on _HomePageShared {
                   syncPending:
                       offlineMode || activeOrder?['_offline_pending'] == true,
                   versionStatus: versionStatus,
+                  onCheckVersion: _checkPdvVersion,
                   // O sino fica no fim da barra de status, ao lado dos outros
                   // sinais de "como as coisas estão" — o operador olha para um
                   // canto só.

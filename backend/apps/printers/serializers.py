@@ -45,13 +45,19 @@ class PrinterSerializer(TenantModelSerializer):
             errors["timeout_seconds"] = "Informe um timeout entre 1 e 120 segundos."
 
         driver_type = attrs.get("driver_type", getattr(instance, "driver_type", Printer.DRIVER_BROWSER))
+        if instance is None:
+            drawer_default = driver_type == Printer.DRIVER_ESCPOS
+        elif "driver_type" in attrs and driver_type != Printer.DRIVER_ESCPOS:
+            drawer_default = False
+        else:
+            drawer_default = instance.cash_drawer_enabled
         drawer_enabled = attrs.get(
             "cash_drawer_enabled",
-            getattr(instance, "cash_drawer_enabled", False),
+            drawer_default,
         )
         drawer_pin = attrs.get("cash_drawer_pin", getattr(instance, "cash_drawer_pin", Printer.DRAWER_PIN_2))
-        drawer_on = attrs.get("cash_drawer_on_ms", getattr(instance, "cash_drawer_on_ms", 100))
-        drawer_off = attrs.get("cash_drawer_off_ms", getattr(instance, "cash_drawer_off_ms", 400))
+        drawer_on = attrs.get("cash_drawer_on_ms", getattr(instance, "cash_drawer_on_ms", 50))
+        drawer_off = attrs.get("cash_drawer_off_ms", getattr(instance, "cash_drawer_off_ms", 500))
         if drawer_enabled:
             # O pulso e um comando ESC/POS. No driver grafico do Windows os
             # mesmos bytes nao sao comando nenhum: sairiam impressos no papel.
@@ -83,6 +89,13 @@ class PrinterSerializer(TenantModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
         settings = dict(raw_settings)
+        # A tela do PDV nao oferece um cadastro separado para a gaveta. Uma
+        # impressora ESC/POS nova portanto ja nasce pronta para o pulso; ainda
+        # e possivel desativar explicitamente pela API.
+        attrs["cash_drawer_enabled"] = bool(drawer_enabled)
+        attrs["cash_drawer_pin"] = drawer_pin
+        attrs["cash_drawer_on_ms"] = drawer_on
+        attrs["cash_drawer_off_ms"] = drawer_off
         settings.update(
             {
                 "connection_type": connection_type,

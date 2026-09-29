@@ -28,6 +28,8 @@ O PDV possui **atualização automática transacional** no Windows e no Linux.
   reinicia automaticamente o PDV antigo;
 - mostra `vX.Y.Z` e o estado por texto e ícone no login e na barra superior do
   PDV.
+- oferece **Buscar atualizações** no login e no indicador interno; a ação
+  repete a consulta, baixa e aplica imediatamente a versão encontrada.
 
 O instalador EXE continua publicado para primeira instalação e atualização
 manual. A atualização automática usa o ZIP também no Windows porque a troca de
@@ -49,9 +51,12 @@ ser só do PDV.
 
 ### O atendimento móvel, em detalhe
 
-O app consulta `latest-mobile.json` ao abrir a tela de login e, quando há versão
-nova, mostra um aviso com o botão **Baixar e instalar** e o TAMANHO do download —
-que é o que decide "agora ou depois" na rede da loja.
+O app consulta `latest-mobile.json` tanto no login quanto no salão. Isso é
+necessário porque a sessão persistida pula o login nas aberturas seguintes.
+Quando há versão nova, mostra um aviso com o botão **Baixar e instalar** e o
+TAMANHO do download — que é o que decide "agora ou depois" na rede da loja. O
+menu da conta também oferece **Buscar atualizações** para repetir a consulta e
+abrir o fluxo de instalação na hora.
 
 **Avisa, não bloqueia.** No celular do garçom, no meio do almoço, travar o
 atendimento para baixar 25 MB é pior do que continuar na versão anterior: ele está
@@ -128,7 +133,7 @@ App móvel consulta /releases/latest/download/latest-mobile.json
 
 ## Fonte da versão
 
-A fonte da versão do aplicativo é `flutter/pubspec.yaml`:
+A fonte da versão do PDV é `pdv_desktop/pubspec.yaml`:
 
 ```yaml
 version: 1.0.34+32
@@ -266,8 +271,8 @@ versão do PDV. `tag` diz em qual Release este manifesto foi publicado.
 que as versões do app anteriores a 1.8.3 conhecem, e é por ele que elas
 continuam se atualizando.
 
-`packages` é a lista por arquitetura. O app descobre a própria ABI pelo
-`Abi.current()` do `dart:ffi` (sem plugin nem canal nativo), procura a entrada
+`packages` é a lista por arquitetura. O app recebe a ABI principal do Android
+(`Build.SUPPORTED_ABIS[0]`) pelo `MethodChannel`, procura a entrada
 correspondente e baixa só ela — cerca de um terço do universal, que carrega o
 código nativo das três. Sem correspondência, ou sem a lista, ele cai no
 `package`.
@@ -370,7 +375,7 @@ Por isso cada workflow decide, na hora da tag, se tem o que publicar:
 | APK (`pdv-mobile`) | `pdv_mobile/` ou `pdv_mobile.yml` mudaram | o `latest-mobile.json` herda o `package` do release anterior |
 
 O PDV não tem exceção porque a tag **é** a versão dele: `release-metadata`
-recusa uma tag que não bata com `flutter/pubspec.yaml`, então cortar um release
+recusa uma tag que não bata com `pdv_desktop/pubspec.yaml`, então cortar um release
 já implica ter subido a versão do PDV.
 
 ### Por que por arquivo alterado, e não pela versão declarada
@@ -414,8 +419,8 @@ dois acontecerem próximos um do outro, é normal aparecerem seis execuções:
 | --- | --- | --- |
 | Pull Request | `backend` | testes, lint e migrations; não publica imagem |
 | Pull Request | `frontend` | lint, testes, build e auditoria; não publica imagem |
-| Pull Request | `flutter` | analyze e testes do PDV; não publica release |
-| Pull Request | `garcom` | analyze, testes e APK temporário de homologação do atendimento móvel |
+| Pull Request | `pdv-desktop` | analyze e testes do PDV; não publica release |
+| Pull Request | `pdv-mobile` | analyze, testes e APK temporário de homologação do atendimento móvel |
 | tag `vX.Y.Z` | `backend` | testa e publica a imagem no GHCR **se `backend/` mudou** |
 | tag `vX.Y.Z` | `frontend` | testa e publica a imagem no GHCR **se `frontend/` mudou** |
 | tag `vX.Y.Z` | `pdv-desktop` | testa, compila Windows/Linux e publica o Release com `latest-desktop.json` |
@@ -425,9 +430,9 @@ Portanto, as execuções do Pull Request não duplicam o release. Elas são as
 verificações exigidas para aprovar o merge. Somente as execuções iniciadas pela
 tag entram nos jobs de publicação.
 
-Em um Pull Request que toca `flutter_garcom/`, quem roda é o workflow `garcom`,
+Em um Pull Request que toca `pdv_mobile/`, quem roda é o workflow `pdv-mobile`,
 que deixa o APK de homologação nos artefatos temporários do Actions. No workflow
-`flutter`, `build-windows`, `build-linux` e `publish-release` ficam ignorados
+`pdv-desktop`, `build-windows`, `build-linux` e `publish-release` ficam ignorados
 porque exigem tag ou disparo manual. Na execução da tag, todos os jobs são
 liberados em sequência depois dos testes.
 
@@ -438,7 +443,7 @@ liberados em sequência depois dos testes.
 Use uma versão ainda não publicada. Exemplo:
 
 ```yaml
-# flutter/pubspec.yaml
+# pdv_desktop/pubspec.yaml
 version: 1.0.34+32
 ```
 
@@ -454,7 +459,7 @@ Regras recomendadas:
 No PowerShell, a partir da raiz:
 
 ```powershell
-Push-Location flutter
+Push-Location pdv_desktop
 flutter pub get
 flutter analyze
 flutter test
@@ -480,7 +485,7 @@ Além dos testes automatizados, faça uma homologação curta:
 ### 3. Commitar e enviar o código
 
 ```powershell
-git add flutter/pubspec.yaml flutter/pubspec.lock
+git add pdv_desktop/pubspec.yaml pdv_desktop/pubspec.lock
 git commit -m "chore: prepara release v1.0.34"
 git push origin SUA_BRANCH
 ```
@@ -494,7 +499,7 @@ Confirme primeiro que o commit atual contém a versão correta:
 
 ```powershell
 git status
-git show HEAD:flutter/pubspec.yaml | Select-String '^version:'
+git show HEAD:pdv_desktop/pubspec.yaml | Select-String '^version:'
 ```
 
 Crie uma tag anotada no commit aprovado:
@@ -510,7 +515,7 @@ conjunto completo estiver pronto para produção.
 
 ### 5. Acompanhar o GitHub Actions
 
-No workflow `flutter`, os jobs executam nesta ordem:
+No workflow `pdv-desktop`, os jobs executam nesta ordem:
 
 1. `test`: dependências, analyze e testes do PDV;
 2. `release-metadata`: lê as duas versões, compara a versão do PDV com a tag e
@@ -548,7 +553,7 @@ latest-desktop.json
 latest-mobile.json
 ```
 
-`A.B.C` é a versão independente declarada em `flutter_garcom/pubspec.yaml`.
+`A.B.C` é a versão independente declarada em `pdv_mobile/pubspec.yaml`.
 Abra o `latest-desktop.json` e confirme `version`, `tag`, `commit`, nomes e URLs.
 Depois instale em um terminal de homologação e confira se o cabeçalho mostra a
 tag instalada com o ícone verde.
@@ -635,8 +640,8 @@ Verifique:
 - presença de pacote `windows` ou `linux`, conforme o terminal;
 - data, hora e certificados TLS da máquina.
 
-O PDV continua operacional nesse estado. Clique no indicador para tentar
-novamente depois de corrigir a rede.
+O PDV continua operacional nesse estado. Clique no indicador ou em **Buscar
+atualizações** para tentar novamente depois de corrigir a rede.
 
 ### Release existe, mas o PDV ainda mostra a versão antiga
 
@@ -658,12 +663,14 @@ que um certificado de code signing seja incorporado ao pipeline.
 
 ## Rollback e correção de release
 
-Durante a atualização automática, o helper renomeia a instalação atual para
-`<pasta>.starchef-backup-<versão>-<pid>`, move o bundle preparado para o caminho
-original e inicia o novo executável. A pasta anterior só é apagada depois que o
-novo processo permanece ativo por oito segundos. Se a troca ou a inicialização
-falhar, o helper remove somente a pasta nova controlada pela transação, restaura
-o backup e reinicia a versão anterior.
+Durante a atualização automática, o helper prepara o bundle e o backup dentro
+de `%LOCALAPPDATA%\StarChef\updates` no Windows. Depois que o PDV fecha, move o
+conteúdo instalado para o backup, coloca o bundle novo no mesmo caminho da
+instalação e inicia o novo executável. A pasta anterior só é apagada depois que
+o novo processo permanece ativo por oito segundos. Se a troca ou a
+inicialização falhar, o helper remove somente o conteúdo novo, restaura o backup
+e reinicia a versão anterior. Manter a transação nessa área curta também
+recupera instalações antigas cujo nome acumulou sufixos `.starchef-new-*`.
 
 Esse rollback local protege o terminal de falha de arquivo, permissão ou
 inicialização. Ele não transforma um release defeituoso em release válido para
@@ -687,10 +694,10 @@ correção.
 ## Arquivos relacionados
 
 - `.github/workflows/pdv_desktop.yml`: build, manifesto e publicação;
-- `flutter/pubspec.yaml`: versão do PDV;
-- `flutter/lib/core/update/pdv_update_service.dart`: leitura e validação do
+- `pdv_desktop/pubspec.yaml`: versão do PDV;
+- `pdv_desktop/lib/core/update/pdv_update_service.dart`: leitura e validação do
   manifesto;
-- `flutter/lib/features/home/presentation/pdv_navigation_shell.dart`: indicador
+- `pdv_desktop/lib/features/home/presentation/pdv_navigation_shell.dart`: indicador
   visual;
-- `flutter/windows/installer/build_installer.ps1`: versão e geração do EXE;
-- `flutter/windows/installer/starchef_pdv.iss`: comportamento do instalador.
+- `pdv_desktop/windows/installer/build_installer.ps1`: versão e geração do EXE;
+- `pdv_desktop/windows/installer/starchef_pdv.iss`: comportamento do instalador.

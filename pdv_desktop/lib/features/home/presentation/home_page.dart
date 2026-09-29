@@ -25,6 +25,7 @@ import '../../../core/formatters/cpf_formatter.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/update/pdv_auto_updater.dart';
 import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_dialog.dart';
@@ -116,6 +117,8 @@ class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     required this.controller,
+    required this.autoUpdater,
+    required this.onCheckForUpdates,
     required this.isDark,
     required this.onToggleTheme,
     required this.isFullScreen,
@@ -125,6 +128,8 @@ class HomePage extends StatefulWidget {
   });
 
   final AuthController controller;
+  final PdvAutoUpdater autoUpdater;
+  final Future<void> Function() onCheckForUpdates;
   final bool isDark;
   final VoidCallback onToggleTheme;
   final bool isFullScreen;
@@ -319,9 +324,9 @@ class _HomePageState extends State<HomePage>
   PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
   late final PdvRepository repository;
   late final PdvPresenter presenter;
-  late final PdvUpdateService updateService;
   @override
-  PdvUpdateStatus versionStatus = const PdvUpdateStatus.checking();
+  PdvUpdateStatus get versionStatus =>
+      widget.autoUpdater.status ?? const PdvUpdateStatus.checking();
 
   StreamSubscription<NetworkStatus>? syncStatusSubscription;
   StreamSubscription<void>? ordersSignalSubscription;
@@ -540,8 +545,6 @@ class _HomePageState extends State<HomePage>
     HardwareKeyboard.instance.addHandler(inputRouter.handleKeyEvent);
     repository = PdvRepository(api: api, accessToken: token);
     presenter = PdvPresenter(repository);
-    updateService = PdvUpdateService();
-    unawaited(_checkPdvVersion());
     networkStatus = api.status;
     syncStatusSubscription = api.statusChanges.listen((status) {
       if (!mounted) return;
@@ -574,24 +577,7 @@ class _HomePageState extends State<HomePage>
   }
 
   @override
-  Future<void> _checkPdvVersion() async {
-    if (mounted) {
-      setState(
-        () => versionStatus = PdvUpdateStatus.checking(
-          installed: versionStatus.installed,
-        ),
-      );
-    }
-    final result = await updateService.check(
-      onInstalled: (installed) {
-        if (!mounted) return;
-        setState(
-          () => versionStatus = PdvUpdateStatus.checking(installed: installed),
-        );
-      },
-    );
-    if (mounted) setState(() => versionStatus = result);
-  }
+  Future<void> _checkPdvVersion() => widget.onCheckForUpdates();
 
   void _scheduleRealtimeRefresh(String signal) {
     if (!mounted) return;
@@ -1389,7 +1375,6 @@ class _HomePageState extends State<HomePage>
     ordersSearchFocus.dispose();
     commandSearchFocus.dispose();
     catalogSearchFocus.dispose();
-    updateService.dispose();
     super.dispose();
   }
 

@@ -131,12 +131,14 @@ extension OrdersCommands on OrdersRepository {
     required String itemId,
     required String itemLabel,
     required String reason,
-  }) => mutate(
-    method: 'DELETE',
-    path: '/orders/$orderId/items/$itemId/void/',
-    kind: 'void_item',
-    summary: 'Cancelar $itemLabel',
-    body: {'reason': reason},
+  }) => refreshPrintingAfter(
+    mutate(
+      method: 'DELETE',
+      path: '/orders/$orderId/items/$itemId/void/',
+      kind: 'void_item',
+      summary: 'Cancelar $itemLabel',
+      body: {'reason': reason},
+    ),
   );
 
   Future<Map<String, dynamic>> pay({
@@ -164,10 +166,13 @@ extension OrdersCommands on OrdersRepository {
     },
   );
 
-  Future<Map<String, dynamic>> sendToKitchen(String orderId) => mutate(
-    method: 'POST',
-    path: '/orders/$orderId/send-to-kitchen/',
-    kind: 'send_to_kitchen',
-    summary: 'Enviar pedido para a cozinha',
-  );
+  Future<Map<String, dynamic>> sendToKitchen(String orderId) =>
+      refreshPrintingAfter(
+        mutate(
+          method: 'POST',
+          path: '/orders/$orderId/send-to-kitchen/',
+          kind: 'send_to_kitchen',
+          summary: 'Enviar pedido para a cozinha',
+        ),
+      );
 }

@@ -7,7 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/update/pdv_update_service.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/app_text_field.dart';
-import '../../../core/widgets/pdv_version_indicator.dart';
+import '../../../core/widgets/pdv_update_actions.dart';
 import '../../settings/presentation/api_url_settings_dialog.dart';
 import 'auth_controller.dart';
 import 'login_brand_panel.dart';
@@ -20,6 +20,7 @@ class LoginPage extends StatefulWidget {
     required this.onToggleTheme,
     required this.preferences,
     this.versionStatus,
+    this.onCheckForUpdates,
     this.onClose,
   });
 
@@ -28,6 +29,7 @@ class LoginPage extends StatefulWidget {
   final VoidCallback onToggleTheme;
   final LocalPreferences preferences;
   final PdvUpdateStatus? versionStatus;
+  final Future<void> Function()? onCheckForUpdates;
   final VoidCallback? onClose;
 
   @override
@@ -114,6 +116,7 @@ class _LoginPageState extends State<LoginPage> {
                             hidePassword: _hidePassword,
                             controller: widget.controller,
                             versionStatus: widget.versionStatus,
+                            onCheckForUpdates: widget.onCheckForUpdates,
                             onRememberChanged: (value) =>
                                 setState(() => _remember = value),
                             onPasswordVisibilityChanged: () =>
@@ -179,6 +182,7 @@ class _LoginForm extends StatelessWidget {
     required this.hidePassword,
     required this.controller,
     required this.versionStatus,
+    required this.onCheckForUpdates,
     required this.onRememberChanged,
     required this.onPasswordVisibilityChanged,
     required this.onSubmit,
@@ -191,6 +195,7 @@ class _LoginForm extends StatelessWidget {
   final bool hidePassword;
   final AuthController controller;
   final PdvUpdateStatus? versionStatus;
+  final Future<void> Function()? onCheckForUpdates;
   final ValueChanged<bool> onRememberChanged;
   final VoidCallback onPasswordVisibilityChanged;
   final VoidCallback onSubmit;
@@ -310,7 +315,10 @@ class _LoginForm extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        Center(child: PdvVersionIndicator(status: versionStatus)),
+        PdvUpdateActions(
+          status: versionStatus,
+          onCheckForUpdates: onCheckForUpdates,
+        ),
       ],
     ),
   );

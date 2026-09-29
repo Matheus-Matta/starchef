@@ -50,8 +50,8 @@ abstract final class EscPosCodec {
   /// mas em ESC/POS o mesmo prefixo consulta o sensor de papel.
   static List<int> openDrawerBytes({
     int pin = 2,
-    int onMs = 100,
-    int offMs = 400,
+    int onMs = 50,
+    int offMs = 500,
   }) {
     // Passo mínimo de 1: um tempo arredondado para zero deixaria a bobina
     // sem energia nenhuma, e a gaveta fechada sem erro em lugar algum.

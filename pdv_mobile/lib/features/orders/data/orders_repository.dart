@@ -25,6 +25,7 @@ class OrdersRepository {
     required this.session,
     OrderDrafts? drafts,
     OperatorCodeKeeper? operatorCodes,
+    this.onPrintJobsCreated,
   }) : drafts = drafts ?? OrderDrafts(),
        operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
@@ -32,6 +33,7 @@ class OrdersRepository {
   final BackendGateway gateway;
   final WaiterSession session;
   final OrderDrafts drafts;
+  final void Function()? onPrintJobsCreated;
 
   /// O código de quem está lançando, por atendimento.
   ///
@@ -48,6 +50,14 @@ class OrdersRepository {
   bool get requiresOperatorCode => session.user.requireOperatorCode;
   ReadOrigin lastReadOrigin = const ReadOrigin.live();
   DateTime? _lastSyncedAt;
+
+  Future<Map<String, dynamic>> refreshPrintingAfter(
+    Future<Map<String, dynamic>> operation,
+  ) async {
+    final result = await operation;
+    onPrintJobsCreated?.call();
+    return result;
+  }
 
   Future<Map<String, dynamic>> read(
     String path, {

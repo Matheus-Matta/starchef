@@ -19,7 +19,7 @@ void main() {
     expect(guarda.codigoDe('comanda-99'), '');
   });
 
-  test('só dígitos entram — o servidor recusa letra de qualquer forma', () {
+  test('só dígitos entram no código validado pelo app', () {
     final guarda = OperatorCodeKeeper();
 
     guarda.guardar('pedido-1', '48-21');
@@ -42,9 +42,8 @@ void main() {
   });
 
   test('o corpo é null sem código, e não um mapa vazio', () {
-    // O backend distingue "não informou" de "informou vazio": mandar `{}` num
-    // restaurante que exige o código receberia a recusa sem o operador ter sido
-    // perguntado — e ele veria um erro que não sabe resolver.
+    // Ausência não vira um metafield vazio no registro. Quem exige o valor é
+    // o app mobile antes de montar o corpo da requisição.
     final guarda = OperatorCodeKeeper();
 
     expect(guarda.corpoDe('pedido-1'), isNull);

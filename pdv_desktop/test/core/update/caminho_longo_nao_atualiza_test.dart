@@ -62,16 +62,12 @@ void main() {
     return exe;
   }
 
-  test('o teto existe e deixa folga para o pacote e o sufixo', () {
-    // instalação + sufixo de transação (~26) + separador + 91 (o arquivo mais
-    // fundo do pacote) precisa caber nos 260 do Win32.
-    const sufixoDeTransacao = 26;
+  test('o teto existe e deixa folga para o arquivo mais fundo', () {
+    // A transação fica no AppData. Só o caminho final da instalação e o
+    // arquivo mais fundo do pacote precisam caber nos 260 do Win32.
     const arquivoMaisFundo = 91;
     expect(
-      PdvUpdateInstaller.maximoDoCaminhoDeInstalacao +
-          sufixoDeTransacao +
-          1 +
-          arquivoMaisFundo,
+      PdvUpdateInstaller.maximoDoCaminhoDeInstalacao + 1 + arquivoMaisFundo,
       lessThan(260),
     );
   });
@@ -87,18 +83,39 @@ void main() {
   });
 
   test('caminho curto atualiza normalmente', () async {
-    final instalacao = Directory(
-      '${raiz.path}${Platform.pathSeparator}atual',
-    );
+    final instalacao = Directory('${raiz.path}${Platform.pathSeparator}atual');
     final exe = await executavelEm(instalacao);
 
-    final preparado = await PdvUpdateInstaller(executable: exe).prepare(
-      PdvDownloadedArtifact(artifact: artefato, file: zip),
-      '1.2.3',
-    );
+    final preparado = await PdvUpdateInstaller(
+      executable: exe,
+    ).prepare(PdvDownloadedArtifact(artifact: artefato, file: zip), '1.2.3');
 
     expect(preparado.stagingDirectory.existsSync(), isTrue);
   }, skip: !Platform.isWindows ? false : null);
+
+  test(
+    'caminho legado com 137 caracteres prepara a atualizacao fora da instalacao',
+    () async {
+      var caminho = '${raiz.path}${Platform.pathSeparator}starchef';
+      var indice = 37;
+      while (caminho.length < 130) {
+        caminho += '.starchef-new-3.0.$indice-${18000 + indice}';
+        indice++;
+      }
+      expect(caminho.length, greaterThan(120));
+      expect(caminho.length, lessThan(160));
+      final exe = await executavelEm(Directory(caminho));
+
+      final preparado = await PdvUpdateInstaller(
+        executable: exe,
+      ).prepare(PdvDownloadedArtifact(artifact: artefato, file: zip), '3.0.57');
+
+      expect(preparado.installDirectory.path, caminho);
+      expect(preparado.stagingDirectory.path, isNot(startsWith(caminho)));
+      expect(preparado.stagingDirectory.existsSync(), isTrue);
+    },
+    skip: !Platform.isWindows,
+  );
 
   test(
     'caminho longo demais é RECUSADO, e o recado diz o que fazer',

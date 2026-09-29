@@ -36,6 +36,10 @@ Para cada trabalho, o app:
 4. confirma em `mark-printed` somente depois da gravação no socket;
 5. libera a reserva em `release` quando a comunicação física falha.
 
+Depois de enviar uma rodada à cozinha ou cancelar um item, o app acorda o
+agente imediatamente. A varredura periódica continua como recuperação, mas o
+pedido novo e o aviso de cancelamento não dependem de esperar o próximo ciclo.
+
 Android solicita acesso a dispositivos Wi-Fi próximos. Se a permissão for
 negada, o app ainda mostra a lista recebida do backend, informa a limitação e
 oferece abrir as configurações do sistema. No iOS, o primeiro acesso ao IP de

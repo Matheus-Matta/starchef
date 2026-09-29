@@ -27,6 +27,7 @@ void main() {
   testWidgets('login mostra versão instalada e que ela está atualizada', (
     tester,
   ) async {
+    var checked = false;
     final directory = Directory.systemTemp.createTempSync(
       'starchef-login-version-',
     );
@@ -53,10 +54,14 @@ void main() {
           file: File('${directory.path}${Platform.pathSeparator}prefs.json'),
         ),
         versionStatus: _atualizado,
+        onCheckForUpdates: () async => checked = true,
       ),
     );
 
     expect(find.text('v3.0.33 · Atualizado'), findsOneWidget);
+    expect(find.text('Buscar atualizações'), findsOneWidget);
+    await tester.tap(find.text('Buscar atualizações'));
+    expect(checked, isTrue);
     expect(find.textContaining('+34'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -64,6 +69,7 @@ void main() {
   testWidgets('barra interna mostra versão e atualização disponível', (
     tester,
   ) async {
+    var checked = false;
     await _pump(
       tester,
       PdvOperationalBar(
@@ -79,11 +85,18 @@ void main() {
           installed: PdvInstalledVersion(version: '3.0.33'),
           latestVersion: '3.0.34',
         ),
+        onCheckVersion: () => checked = true,
       ),
     );
 
     expect(find.text('v3.0.33 · Atualização disponível'), findsOneWidget);
     expect(find.byTooltip('Nova versão: v3.0.34'), findsOneWidget);
+    expect(find.byKey(const Key('check-updates-home')), findsOneWidget);
+    await tester.tap(find.text('v3.0.33 · Atualização disponível'));
+    expect(checked, isTrue);
+    checked = false;
+    await tester.tap(find.byKey(const Key('check-updates-home')));
+    expect(checked, isTrue);
     expect(tester.takeException(), isNull);
   });
 }

@@ -4,6 +4,8 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import '../../../core/config/api_settings.dart';
 import '../../../core/sync/backend_gateway.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/update/manual_update_action.dart';
+import '../../../core/update/update_banner.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../auth/presentation/session_controller.dart';
 import '../../customers/presentation/customers_page.dart';
@@ -21,11 +23,7 @@ import 'sync_banner.dart';
 
 part 'orders_page_components.dart';
 
-/// Tela inicial: o que está aberto no salão — as comandas em uso e os
-/// pedidos abertos.
-///
-/// Aqui só existe tela — carregar, saber de onde veio o dado e traduzir falha
-/// é do [OrdersPresenter]; abrir um pedido novo, do [startNewOrder].
+/// Tela inicial: comandas em uso e pedidos abertos no salão.
 class OrdersPage extends StatefulWidget {
   const OrdersPage({
     super.key,
@@ -54,7 +52,6 @@ class _OrdersPageState extends State<OrdersPage>
   late final _presenter = OrdersPresenter(repository: widget.repository);
 
   BackendGateway get _gateway => widget.repository.gateway;
-
   @override
   void initState() {
     super.initState();
@@ -93,6 +90,7 @@ class _OrdersPageState extends State<OrdersPage>
     ),
   );
 
+  Future<void> _checkUpdates() => checkMobileUpdateNow(context);
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     // Um só builder para a tela inteira. A fila, os itens ainda não enviados
@@ -121,9 +119,11 @@ class _OrdersPageState extends State<OrdersPage>
           onApiSettings: _openApiSettings,
           onPrinting: _openPrinting,
           onCustomers: _openCustomers,
+          onUpdates: _checkUpdates,
         ),
       ],
       banners: [
+        const UpdateBanner(),
         // Antes do aviso de dado velho: "a escrita está indo para outro
         // servidor" muda mais o que o garçom pode fazer do que "a tela mostra
         // um retrato".

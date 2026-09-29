@@ -107,7 +107,7 @@ refeição inteira, não a exceção.
 
 | pergunta | como responder |
 | --- | --- |
-| **o que a comanda tem AGORA** | `open_items_of_command(id)` — estado aberto **e** no pedido atual/consolidação viva |
+| **o que a comanda tem AGORA** | `open_items_of_command(id)` — pendente para cobrança, excluindo cancelado e cortesia |
 | **o que a comanda JÁ teve** | `history_items_of_command(id)` — sem filtro de estado |
 
 `command.items` devolve o **histórico inteiro**, inclusive almoços de semanas

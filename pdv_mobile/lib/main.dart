@@ -112,6 +112,7 @@ class _PdvMobileAppState extends State<PdvMobileApp> {
             gateway: _gateway,
             session: _controller.session!,
             drafts: _drafts,
+            onPrintJobsCreated: () => unawaited(_printAgent.runNow()),
           ),
         ),
       },

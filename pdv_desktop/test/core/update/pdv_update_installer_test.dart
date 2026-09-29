@@ -8,7 +8,7 @@ import 'package:starchef_pdv_desktop/core/update/pdv_update_installer.dart';
 import 'package:starchef_pdv_desktop/core/update/pdv_update_service.dart';
 
 void main() {
-  test('prepara bundle ao lado da instalação e gera helper com rollback', () async {
+  test('prepara bundle em área curta e gera helper com rollback', () async {
     final root = await Directory.systemTemp.createTemp('pdv-installer-');
     final install = Directory('${root.path}${Platform.pathSeparator}current');
     final data = Directory('${root.path}${Platform.pathSeparator}data');
@@ -46,7 +46,10 @@ void main() {
 
     expect(
       prepared.stagingDirectory.path,
-      startsWith('${install.path}.starchef-new-'),
+      startsWith(
+        '${data.path}${Platform.pathSeparator}updates'
+        '${Platform.pathSeparator}',
+      ),
     );
     expect(
       File(

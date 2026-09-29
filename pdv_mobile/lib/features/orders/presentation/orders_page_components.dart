@@ -75,8 +75,10 @@ class _HomeList extends StatelessWidget {
     );
   }
 
-  static Widget _spaced(Widget child) =>
-      Padding(padding: const EdgeInsets.only(bottom: AppTheme.gap), child: child);
+  static Widget _spaced(Widget child) => Padding(
+    padding: const EdgeInsets.only(bottom: AppTheme.gap),
+    child: child,
+  );
 }
 
 /// Quanto este aparelho ainda deve ao backend.
@@ -110,12 +112,14 @@ class _AccountMenu extends StatelessWidget {
     required this.onApiSettings,
     required this.onPrinting,
     required this.onCustomers,
+    required this.onUpdates,
   });
 
   final SessionController controller;
   final VoidCallback onApiSettings;
   final VoidCallback onPrinting;
   final VoidCallback onCustomers;
+  final VoidCallback onUpdates;
 
   @override
   Widget build(BuildContext context) {
@@ -126,6 +130,7 @@ class _AccountMenu extends StatelessWidget {
         'clientes' => onCustomers(),
         'api' => onApiSettings(),
         'printing' => onPrinting(),
+        'updates' => onUpdates(),
         'sair' => controller.logout(),
         _ => null,
       },
@@ -141,6 +146,10 @@ class _AccountMenu extends StatelessWidget {
           child: Text('Impressoras e fila'),
         ),
         const PopupMenuItem(value: 'api', child: Text('Servidor da API')),
+        const PopupMenuItem(
+          value: 'updates',
+          child: Text('Buscar atualizações'),
+        ),
         const PopupMenuItem(value: 'sair', child: Text('Sair')),
       ],
     );

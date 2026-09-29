@@ -47,13 +47,16 @@ extension OrdersCommandItems on OrdersRepository {
   );
 
   /// Manda a rodada pendente da comanda para a produção.
-  Future<Map<String, dynamic>> sendCommandToKitchen(String commandId) => mutate(
-    method: 'POST',
-    path: '/commands/$commandId/send-to-kitchen/',
-    kind: 'send_to_kitchen',
-    summary: 'Enviar comanda à cozinha',
-    body: const {},
-  );
+  Future<Map<String, dynamic>> sendCommandToKitchen(String commandId) =>
+      refreshPrintingAfter(
+        mutate(
+          method: 'POST',
+          path: '/commands/$commandId/send-to-kitchen/',
+          kind: 'send_to_kitchen',
+          summary: 'Enviar comanda à cozinha',
+          body: const {},
+        ),
+      );
 
   /// Cancela uma anotação. Ela sai da comanda como PERDA, não como venda.
   Future<Map<String, dynamic>> voidCommandItem({
@@ -61,11 +64,13 @@ extension OrdersCommandItems on OrdersRepository {
     required String itemId,
     required String itemLabel,
     required String reason,
-  }) => mutate(
-    method: 'DELETE',
-    path: '/commands/$commandId/items/$itemId/void/',
-    kind: 'void_item',
-    summary: 'Cancelar $itemLabel',
-    body: {'reason': reason},
+  }) => refreshPrintingAfter(
+    mutate(
+      method: 'DELETE',
+      path: '/commands/$commandId/items/$itemId/void/',
+      kind: 'void_item',
+      summary: 'Cancelar $itemLabel',
+      body: {'reason': reason},
+    ),
   );
 }

@@ -25,14 +25,56 @@ def _payload(restaurant, **overrides):
     return body
 
 
-def test_drawer_defaults_to_disabled(admin_client, restaurant):
+def test_drawer_defaults_to_enabled_for_escpos(admin_client, restaurant):
     resp = admin_client.post(
         "/api/v1/printers/",
         json.dumps(_payload(restaurant)),
         content_type="application/json",
     )
     assert resp.status_code == 201, resp.content
+    assert resp.json()["cash_drawer_enabled"] is True
+
+
+def test_drawer_stays_disabled_for_non_escpos_printer(admin_client, restaurant):
+    resp = admin_client.post(
+        "/api/v1/printers/",
+        json.dumps(_payload(restaurant, driver_type="browser")),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 201, resp.content
     assert resp.json()["cash_drawer_enabled"] is False
+
+
+def test_switching_away_from_escpos_disables_the_drawer(admin_client, restaurant):
+    created = admin_client.post(
+        "/api/v1/printers/",
+        json.dumps(_payload(restaurant)),
+        content_type="application/json",
+    )
+
+    resp = admin_client.patch(
+        f"/api/v1/printers/{created.json()['id']}/",
+        json.dumps({"driver_type": "browser"}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["cash_drawer_enabled"] is False
+
+
+def test_drawer_uses_the_pulse_confirmed_on_the_real_printer(admin_client, restaurant):
+    """50/500 ms viram exatamente ESC p 0 25 250 no protocolo ESC/POS."""
+    resp = admin_client.post(
+        "/api/v1/printers/",
+        json.dumps(_payload(restaurant, cash_drawer_enabled=True)),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["cash_drawer_enabled"] is True
+    assert resp.json()["cash_drawer_on_ms"] == 50
+    assert resp.json()["cash_drawer_off_ms"] == 500
 
 
 def test_drawer_settings_are_mirrored_into_settings(admin_client, restaurant):

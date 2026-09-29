@@ -7,13 +7,15 @@ import 'package:starchef_pdv_mobile/features/orders/data/orders_repository.dart'
 
 /// O CÓDIGO PRECISA SUBIR COM O LANÇAMENTO.
 ///
-/// O defeito: num restaurante com `require_operator_code` ligado, abrir pedido
-/// e lançar o primeiro item na comanda eram recusados pelo backend — e o app
-/// não tinha onde pedir o número. `createOrderWithItem` sequer aceitava o
-/// campo, então nenhuma tela poderia tê-lo enviado.
+/// Quando `require_operator_code` está ligado, o próprio app pede o número e o
+/// inclui no lançamento. O backend mantém o campo opcional para não impor essa
+/// dependência ao PDV desktop.
 class _GatewayEspiao extends BackendGateway {
   _GatewayEspiao()
-    : super(api: ApiClient(baseUrlProvider: () => ''), store: OfflineQueueStore());
+    : super(
+        api: ApiClient(baseUrlProvider: () => ''),
+        store: OfflineQueueStore(),
+      );
 
   Map<String, dynamic>? corpo;
 
@@ -66,13 +68,12 @@ void main() {
     );
 
     // No corpo do PEDIDO, e não só do item: o backend abre a conta com ele e
-    // repassa ao primeiro item. Sem isto a abertura inteira era recusada.
+    // repassa ao primeiro item.
     expect(gateway.corpo?['metafields'], {'operator_code': '4821'});
   });
 
   test('sem código, o campo não vai vazio no corpo', () async {
-    // O backend distingue "não informou" de "informou vazio": mandar `{}` num
-    // restaurante que exige receberia a recusa sem ninguém ter sido perguntado.
+    // Sem exigência no mobile, nem uma chave vazia é gravada.
     await repositorio(exige: false).createOrderWithItem(
       orderType: 'counter',
       productId: 'p-1',

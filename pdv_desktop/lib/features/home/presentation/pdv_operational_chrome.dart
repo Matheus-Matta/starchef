@@ -18,6 +18,7 @@ class PdvOperationalBar extends StatelessWidget {
     required this.printer,
     required this.syncPending,
     this.versionStatus,
+    this.onCheckVersion,
     this.trailing,
   });
 
@@ -29,6 +30,7 @@ class PdvOperationalBar extends StatelessWidget {
   final ValueListenable<PrinterAvailability> printer;
   final bool syncPending;
   final PdvUpdateStatus? versionStatus;
+  final VoidCallback? onCheckVersion;
 
   /// Encaixe no fim da barra, para o que é estado e não cadastro — hoje o sino
   /// de notificações. Opcional porque a barra é reutilizável e os testes dela
@@ -54,6 +56,7 @@ class PdvOperationalBar extends StatelessWidget {
               shiftLabel: shiftLabel,
               cashOpen: cashOpen,
               versionStatus: versionStatus,
+              onCheckVersion: onCheckVersion,
             ),
           ),
           PdvStatusIndicator(
@@ -96,6 +99,7 @@ class _Identity extends StatelessWidget {
     required this.shiftLabel,
     required this.cashOpen,
     required this.versionStatus,
+    required this.onCheckVersion,
   });
 
   final String cashName;
@@ -103,6 +107,7 @@ class _Identity extends StatelessWidget {
   final String shiftLabel;
   final bool cashOpen;
   final PdvUpdateStatus? versionStatus;
+  final VoidCallback? onCheckVersion;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -161,7 +166,21 @@ class _Identity extends StatelessWidget {
       ),
       if (versionStatus != null) ...[
         const SizedBox(width: 12),
-        Flexible(flex: 3, child: PdvVersionIndicator(status: versionStatus)),
+        Flexible(
+          flex: 3,
+          child: PdvVersionIndicator(
+            status: versionStatus,
+            onPressed: onCheckVersion,
+          ),
+        ),
+        if (onCheckVersion != null)
+          IconButton(
+            key: const Key('check-updates-home'),
+            tooltip: 'Buscar atualizações',
+            onPressed: onCheckVersion,
+            icon: const Icon(Icons.system_update_alt, size: 18),
+            visualDensity: VisualDensity.compact,
+          ),
       ],
     ],
   );

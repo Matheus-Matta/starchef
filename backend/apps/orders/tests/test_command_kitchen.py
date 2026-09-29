@@ -1,18 +1,45 @@
 """A comanda manda para a cozinha do mesmo jeito que o pedido."""
+from datetime import timedelta
+
 import pytest
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.orders.command_billing import attach_commands_to_order
 from apps.orders.command_items import launch_item
-from apps.orders.command_kitchen import send_command_to_kitchen, void_command_item
+from apps.orders.command_item_void import void_command_item
+from apps.orders.command_kitchen import send_command_to_kitchen
 from apps.orders.models import CommandItem, Order
-from apps.restaurants.models import Command
+from apps.orders.services import dispatch_due_kitchen_batches
+from apps.printers.models import Printer, PrintJob
+from apps.restaurants.models import Command, TableSector
 
 
 def _comanda(restaurant, branch, numero):
     return Command.objects.create(
         account=restaurant.account, restaurant=restaurant, branch=branch,
         number=numero, code=f"CMD-{numero:04d}",
+    )
+
+
+def _impressora_do_produto(account, restaurant, branch, produto):
+    setor = TableSector.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        name="Cozinha",
+    )
+    produto.sector = setor
+    produto.save(update_fields=["sector"])
+    return Printer.objects.create(
+        account=account,
+        restaurant=restaurant,
+        branch=branch,
+        sector=setor,
+        name="Cozinha",
+        connection_type=Printer.CONNECTION_NETWORK,
+        host="192.168.1.50",
+        auto_print=True,
     )
 
 
@@ -86,3 +113,69 @@ def test_cancelamento_exige_motivo(restaurant, branch, manager_user, produto):
     item = launch_item(command=comanda, product=produto, user=manager_user)
     with pytest.raises(ValidationError):
         void_command_item(item, user=manager_user, reason="")
+
+
+@pytest.mark.django_db
+def test_enviar_comanda_cria_trabalho_para_a_impressora(
+    account, restaurant, branch, manager_user, produto
+):
+    impressora = _impressora_do_produto(
+        account, restaurant, branch, produto
+    )
+    comanda = _comanda(restaurant, branch, 35)
+    item = launch_item(command=comanda, product=produto, user=manager_user)
+
+    lote = send_command_to_kitchen(comanda, manager_user)
+
+    trabalho = PrintJob.all_objects.get(job_type=PrintJob.TYPE_KITCHEN)
+    assert trabalho.printer_id == impressora.pk
+    assert trabalho.status == PrintJob.STATUS_RENDERED
+    assert trabalho.payload["command_id"] == str(comanda.pk)
+    assert trabalho.payload["batch_id"] == str(lote.pk)
+    assert str(item.pk) in trabalho.payload["item_ids"]
+    assert "NOVO PEDIDO" in trabalho.payload["text_content"]
+
+
+@pytest.mark.django_db
+def test_cancelar_item_enviado_cria_aviso_na_mesma_impressora(
+    account, restaurant, branch, manager_user, produto
+):
+    impressora = _impressora_do_produto(
+        account, restaurant, branch, produto
+    )
+    comanda = _comanda(restaurant, branch, 36)
+    item = launch_item(command=comanda, product=produto, user=manager_user)
+    send_command_to_kitchen(comanda, manager_user)
+    item.refresh_from_db()
+
+    void_command_item(item, user=manager_user, reason="Cliente desistiu")
+
+    aviso = PrintJob.all_objects.get(job_type=PrintJob.TYPE_KITCHEN_CANCEL)
+    assert aviso.printer_id == impressora.pk
+    assert aviso.status == PrintJob.STATUS_RENDERED
+    assert aviso.payload["cancelled_command_item_id"] == str(item.pk)
+    assert "CANCELAMENTO" in aviso.payload["text_content"]
+    assert "Cliente desistiu" in aviso.payload["text_content"]
+
+
+@pytest.mark.django_db
+def test_carencia_libera_depois_o_ticket_da_comanda(
+    account, restaurant, branch, manager_user, produto
+):
+    restaurant.cancellation_grace_seconds = 60
+    restaurant.save(update_fields=["cancellation_grace_seconds"])
+    _impressora_do_produto(account, restaurant, branch, produto)
+    comanda = _comanda(restaurant, branch, 37)
+    launch_item(command=comanda, product=produto, user=manager_user)
+
+    send_command_to_kitchen(comanda, manager_user)
+    trabalho = PrintJob.all_objects.get(job_type=PrintJob.TYPE_KITCHEN)
+    assert trabalho.status == PrintJob.STATUS_SCHEDULED
+
+    liberados = dispatch_due_kitchen_batches(
+        now=timezone.now() + timedelta(seconds=61)
+    )
+
+    trabalho.refresh_from_db()
+    assert liberados == 1
+    assert trabalho.status == PrintJob.STATUS_RENDERED

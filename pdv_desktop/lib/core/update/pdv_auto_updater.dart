@@ -36,7 +36,10 @@ class PdvAutoUpdater extends ChangeNotifier {
   double? progress;
   String? detail;
   bool _started = false;
+  bool _running = false;
   bool _disposed = false;
+
+  bool get busy => _running;
 
   bool get blocksInteraction => switch (phase) {
     PdvAutoUpdatePhase.downloading ||
@@ -50,6 +53,34 @@ class PdvAutoUpdater extends ChangeNotifier {
       return;
     }
     _started = true;
+    await _run(closePdv: closePdv);
+  }
+
+  /// Repete a consulta e aplica a versão encontrada, mesmo que a tentativa da
+  /// abertura já tenha terminado. É o caminho usado pelo botão manual.
+  Future<void> checkAndInstall({
+    required Future<void> Function() closePdv,
+  }) async {
+    if (!enabled) {
+      _setPhase(
+        PdvAutoUpdatePhase.failed,
+        detail: 'A atualização só fica ativa no aplicativo instalado.',
+      );
+      return;
+    }
+    if (!Platform.isWindows && !Platform.isLinux) {
+      _setPhase(
+        PdvAutoUpdatePhase.failed,
+        detail: 'Atualização não suportada neste sistema operacional.',
+      );
+      return;
+    }
+    await _run(closePdv: closePdv);
+  }
+
+  Future<void> _run({required Future<void> Function() closePdv}) async {
+    if (_running) return;
+    _running = true;
     _setPhase(PdvAutoUpdatePhase.checking);
     try {
       status = await _service.check(
@@ -105,17 +136,34 @@ class PdvAutoUpdater extends ChangeNotifier {
       await closePdv();
     } catch (error, stackTrace) {
       if (_disposed) return;
+      final message = _failureMessage(error);
       AppLogger.instance.error(
         'pdv_auto_update_failed',
         cause: error,
         stackTrace: stackTrace,
         data: {'version': status?.latestVersion},
       );
-      _setPhase(
-        PdvAutoUpdatePhase.failed,
-        detail: 'A atualização automática falhou. O PDV atual foi mantido.',
+      status = PdvUpdateStatus(
+        phase: PdvUpdatePhase.unavailable,
+        installed: status?.installed,
+        latestVersion: status?.latestVersion,
+        releaseUrl: status?.releaseUrl,
+        detail: message,
       );
+      _setPhase(PdvAutoUpdatePhase.failed, detail: message);
+    } finally {
+      _running = false;
     }
+  }
+
+  String _failureMessage(Object error) {
+    if (error is FileSystemException && error.message.trim().isNotEmpty) {
+      return '${error.message} O PDV atual foi mantido.';
+    }
+    if (error is FormatException && error.message.trim().isNotEmpty) {
+      return '${error.message}. O PDV atual foi mantido.';
+    }
+    return 'A atualização falhou. O PDV atual foi mantido.';
   }
 
   void _setPhase(PdvAutoUpdatePhase value, {String? detail}) {

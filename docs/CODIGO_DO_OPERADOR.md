@@ -76,7 +76,7 @@ herança, o rastro do atendimento inteiro sumiria justamente no registro que fic
 
 ---
 
-## Como ligar
+## Como ligar no app mobile
 
 `Restaurant.require_operator_code` — **nasce desligado**. Uma exigência nova que
 nasce ligada tranca o lançamento no dia do deploy, com o salão cheio e ninguém
@@ -85,14 +85,20 @@ sabendo que código digitar.
 No frontend: cadastro do restaurante → seção **Operação** → "Pedir código do
 operador no app do garçom".
 
-Ligado, `apps.orders.operator_code.exigir()` cobra o código em:
+Ligado, o **app mobile** pede o código antes de:
 
-- `create_order` — "abrir pedido"
-- `add_order_item` — "lançar item"
-- `launch_item` (comanda) — "lançar item na comanda"
+- abrir um pedido;
+- lançar item num pedido;
+- lançar item numa comanda.
 
-A conferência vem **antes** das outras validações: barrar por falta de código
-depois de resolver peso, variação e adicional gastaria as consultas para nada.
+A conferência vem **antes do cardápio**, para o garçom não montar o item e só
+depois descobrir que falta o código.
+
+O backend **não exige a presença** do campo. As mesmas rotas atendem o PDV
+desktop, que não participa dessa dependência de interface. Quando um cliente
+envia o código, o backend ainda normaliza os `metafields` e recusa formato
+inválido; isso protege o dado gravado sem transformar a flag do mobile numa
+trava global da API.
 
 ---
 
@@ -125,9 +131,8 @@ que precisa de um código que talvez não saiba — com o cliente esperando. Ela
 tem "cancelar e lançar assim": o restaurante ligou a exigência porque quer o
 rastro, e uma saída pela lateral faria metade dos lançamentos não ter código.
 
-**O código viaja com o ITEM**, no corpo da requisição, e por isso sobrevive à fila
-offline: a operação enfileirada sobe horas depois, quando quem lançou pode nem
-estar mais no turno.
+**O código viaja com o ITEM**, no corpo da requisição. Assim o registro não
+depende de estado global da sessão e continua dizendo quem fez cada lançamento.
 
 ---
 

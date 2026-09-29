@@ -10,6 +10,7 @@ import '../core/errors/error_center.dart';
 import '../core/storage/local_preferences.dart';
 import '../core/theme/app_theme.dart';
 import '../core/update/pdv_auto_updater.dart';
+import '../core/update/pdv_manual_update_action.dart';
 import '../core/update/pdv_update_overlay.dart';
 import '../core/widgets/app_window_frame.dart';
 import '../core/widgets/responsive_scale.dart';
@@ -65,6 +66,12 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
     await windowManager.destroy();
   }
 
+  Future<void> _checkForUpdates() => checkAndInstallPdvUpdate(
+    context: _navigatorKey.currentContext,
+    updater: widget.autoUpdater,
+    closePdv: _closeForUpdate,
+  );
+
   Future<void> _toggleFullScreen() async {
     final current = await windowManager.isFullScreen();
     await windowManager.setFullScreen(!current);
@@ -87,19 +94,9 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
     if (_closeDialogOpen || !mounted || dialogContext == null) return;
     _closeDialogOpen = true;
     try {
-      // ANTES DO LOGIN O APLICATIVO FECHA DIRETO.
-      //
-      // Aqui existia uma senha PBKDF2 embutida no binário, igual em toda
-      // instalação: um segredo que basta extrair de um executável para valer
-      // em todos os terminais. E ela não protegia nada de verdade — impedir o
-      // fechamento pela janela não é fronteira de segurança, o processo pode
-      // ser encerrado pelo sistema operacional a qualquer momento.
-      //
-      // Sem sessão não há turno em andamento, caixa aberto nem venda na tela:
-      // não há o que proteger. Com sessão, a autorização é a senha de ações
-      // do caixa do restaurante — configurável por loja, conferida neste
-      // terminal (funciona sem internet) — e existe justamente para o caso
-      // que importa: alguém fechando o PDV no meio do expediente.
+      // Antes do login não há turno ou venda a proteger, então fecha direto.
+      // Durante o expediente, usa a senha de ações configurada pela loja e
+      // conferida localmente; nunca um segredo igual embutido nos terminais.
       if (!_auth.isAuthenticated) {
         await windowManager.setPreventClose(false);
         await windowManager.destroy();
@@ -154,10 +151,7 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
           },
           child: Focus(
             autofocus: true,
-            // Em tela cheia não há moldura própria: o conteúdo ocupa também a
-            // área da barra de tarefas. Ao sair pelo F11, a moldura volta para
-            // oferecer arrastar, minimizar, maximizar e fechar. A barra nunca é
-            // escalada, pois usa coordenadas físicas para os controles nativos.
+            // A moldura só aparece fora da tela cheia e usa medidas físicas.
             child: _isFullScreen
                 ? ResponsiveScale(
                     child: AppErrorHost(
@@ -194,6 +188,8 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
         return _auth.isAuthenticated
             ? HomePage(
                 controller: _auth,
+                autoUpdater: widget.autoUpdater,
+                onCheckForUpdates: _checkForUpdates,
                 isDark: _themeMode == ThemeMode.dark,
                 onToggleTheme: _toggleTheme,
                 isFullScreen: _isFullScreen,
@@ -207,6 +203,7 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
                 onToggleTheme: _toggleTheme,
                 preferences: widget.preferences,
                 versionStatus: widget.autoUpdater.status,
+                onCheckForUpdates: _checkForUpdates,
                 onClose: onWindowClose,
               );
       },

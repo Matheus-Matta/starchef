@@ -11,16 +11,17 @@ picanha de voltar para o forno às 22h porque a conta só foi fechada então.
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
-from apps.orders.item_cancellation import assert_pode_cancelar
 from apps.core.audit import record_audit
 from apps.orders.models import CommandBatch, CommandItem
 
 
+@transaction.atomic
 def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_printed=False):
     """Manda a rodada pendente desta comanda para a produção. Devolve o lote.
 
@@ -99,10 +100,17 @@ def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_
             },
         )
 
+        from apps.printers.command_kitchen import register_command_batch_print_jobs
+
+        register_command_batch_print_jobs(
+            batch=lote, user=user, offline_printed=offline_printed
+        )
+
         dispatch_command_batch(lote, now=agora)
     return lote
 
 
+@transaction.atomic
 def dispatch_command_batch(batch, *, now=None):
     """Solta a rodada agendada para o KDS e para as impressoras.
 
@@ -132,51 +140,43 @@ def dispatch_command_batch(batch, *, now=None):
         )
         batch.status = CommandBatch.STATUS_SENT
         batch.save(update_fields=["status", "updated_at"])
+
+        from apps.printers.models import PrintJob
+
+        PrintJob.objects.filter(
+            payload__batch_id=str(batch.pk),
+            status=PrintJob.STATUS_SCHEDULED,
+        ).update(status=PrintJob.STATUS_RENDERED, available_at=agora, updated_at=agora)
     return batch
 
 
+def dispatch_due_command_batches(*, account_id=None, restaurant_id=None, now=None):
+    """Libera as rodadas de comanda cuja carência terminou."""
+    now = now or timezone.now()
+    due = CommandBatch.all_objects.filter(
+        status=CommandBatch.STATUS_SCHEDULED,
+        dispatch_at__lte=now,
+        deleted_at__isnull=True,
+    )
+    if account_id:
+        due = due.filter(account_id=account_id)
+    if restaurant_id:
+        due = due.filter(restaurant_id=restaurant_id)
+    batch_ids = list(due.values_list("id", flat=True)[:500])
+    for batch_id in batch_ids:
+        batch = CommandBatch.all_objects.select_related("account").get(pk=batch_id)
+        dispatch_command_batch(batch, now=now)
+    return len(batch_ids)
+
+
 def void_command_item(item, *, user, reason, authorized=False, authorized_by=None):
-    """Cancela uma anotação. Sai da comanda como PERDA, não como venda.
+    """Mantém o caminho público antigo após separar a regra de cancelamento."""
+    from apps.orders.command_item_void import void_command_item as cancel_item
 
-    Item que já foi para a produção é outra conversa: sai um cupom de
-    cancelamento na impressora do setor, e é por isso que o operador precisa
-    ser avisado ANTES — ele descobriria pelo barulho da impressora.
-    """
-    from apps.orders.command_items import conclude_item
-
-    if not reason:
-        raise ValidationError("Informe o motivo do cancelamento.")
-    with tenant_context(item.account):
-        # A anotação não entra no quadro do KDS, então só a regra de TEMPO a
-        # alcança — e alcança pelo mesmo campo, porque `sent_to_kitchen_at`
-        # mora na base que os dois tipos de item compartilham.
-        assert_pode_cancelar(item, authorized=authorized)
-        agora = timezone.now()
-        item.status = CommandItem.STATUS_CANCELLED
-        item.void_reason = reason
-        item.voided_at = agora
-        item.voided_by = user
-        item.updated_by = user
-        item.save(
-            update_fields=[
-                "status",
-                "void_reason",
-                "voided_at",
-                "voided_by",
-                "updated_by",
-                "updated_at",
-            ]
-        )
-        conclude_item(item, when=agora, billed=False)
-        record_audit(
-            action=AuditLog.ACTION_UPDATED,
-            instance=item,
-            actor=user,
-            reason=reason,
-            metadata={
-                "event": "command_item_voided",
-                # Quem liberou, quando a janela de tempo já tinha fechado.
-                **({"authorized_by": str(authorized_by.pk)} if authorized_by else {}),
-            },
-        )
-    return item
+    return cancel_item(
+        item,
+        user=user,
+        reason=reason,
+        authorized=authorized,
+        authorized_by=authorized_by,
+    )

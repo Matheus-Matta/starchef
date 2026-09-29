@@ -21,20 +21,17 @@ def launch_item(
 ):
     """Anota um consumo na comanda sem criar pedido.
 
-    `metafields` carrega o código de QUEM anotou quando o restaurante exige. O
-    item herda o que a comanda tiver: quem abriu o cartão já se identificou, e
-    exigir o código de novo a cada prato faria o garçom digitar dez vezes no
-    mesmo atendimento.
+    `metafields` carrega o código de QUEM anotou quando o app mobile o pede. O
+    item herda o que a comanda tiver: quem abriu o cartão já se identificou.
+    O backend não exige o campo porque esta rota também atende o desktop.
     """
     from apps.menu.models import Product
 
     from apps.core.metafields import herdar
-    from apps.orders.operator_code import exigir
+    from apps.orders.operator_code import preparar
 
-    extras = exigir(
-        command.restaurant,
+    extras = preparar(
         herdar(metafields, command.metafields),
-        acao="lançar item na comanda",
     )
 
     if not isinstance(product, Product):

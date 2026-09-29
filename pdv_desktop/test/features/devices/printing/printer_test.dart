@@ -306,14 +306,14 @@ void main() {
       'driver_type': 'escpos',
       'cash_drawer_enabled': true,
       'cash_drawer_pin': 2,
-      'cash_drawer_on_ms': 100,
-      'cash_drawer_off_ms': 400,
+      'cash_drawer_on_ms': 50,
+      'cash_drawer_off_ms': 500,
     };
 
     test('o recibo em dinheiro termina com o pulso da gaveta', () async {
       final bytes = await sentBytes(comGaveta, openCashDrawer: true);
 
-      expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x00, 50, 200]);
+      expect(bytes.sublist(bytes.length - 5), [0x1b, 0x70, 0x00, 0x19, 0xfa]);
     });
 
     test('um recibo que não pediu gaveta não a abre', () async {

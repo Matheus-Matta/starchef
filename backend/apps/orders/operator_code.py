@@ -44,8 +44,8 @@ def codigo_de(metafields):
 def normalizar_codigo(bruto, *, campo="metafields"):
     """Só dígitos, sem separador, com tamanho de gente.
 
-    Devolve string vazia para ausência — quem exige é `exigir`, e separar as duas
-    coisas deixa o campo opcional onde o restaurante não pediu."""
+    Devolve string vazia para ausência. A obrigatoriedade pertence ao app
+    mobile; o backend mantém o campo opcional para os demais clientes."""
     texto = str(bruto or "").strip()
     if not texto:
         return ""
@@ -71,29 +71,4 @@ def preparar(metafields, *, campo="metafields"):
             # Chave presente e vazia é ruído: ela faria o relatório contar um
             # lançamento "com código" que não tem código nenhum.
             limpo.pop(CHAVE)
-    return limpo
-
-
-def exige_codigo(restaurant):
-    """Este restaurante pede o código antes do lançamento?"""
-    return bool(getattr(restaurant, "require_operator_code", False))
-
-
-def exigir(restaurant, metafields, *, campo="metafields", acao="lançar"):
-    """Prepara os campos e, quando o restaurante exige, cobra o código.
-
-    Devolve o dicionário pronto para gravar. Levanta `ValidationError` com a
-    mensagem que o app mostra ao garçom — ela cita a AÇÃO porque "informe o
-    código" sozinho, numa tela que faz três coisas, não diz o que foi barrado.
-    """
-    limpo = preparar(metafields, campo=campo)
-    if exige_codigo(restaurant) and not codigo_de(limpo):
-        raise ValidationError(
-            {
-                campo: (
-                    f"Este restaurante pede o código do operador para {acao}. "
-                    "Informe o código antes de continuar."
-                )
-            }
-        )
     return limpo

@@ -271,7 +271,7 @@ void main() {
 
   group('gaveta de dinheiro', () {
     test('monta ESC p com o pino e os tempos em passos de 2 ms', () {
-      expect(EscPosCodec.openDrawerBytes(), [0x1b, 0x70, 0x00, 50, 200]);
+      expect(EscPosCodec.openDrawerBytes(), [0x1b, 0x70, 0x00, 0x19, 0xfa]);
       // Pino 5 é a segunda saída do conector: `m = 1`.
       expect(
         EscPosCodec.openDrawerBytes(pin: 5, onMs: 50, offMs: 500),
