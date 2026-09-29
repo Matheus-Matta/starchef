@@ -4,7 +4,15 @@ project(runner LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "starchef_pdv_desktop")
+# O executavel se chama `starchef_pdv`, sem o `_desktop`: e o nome que o
+# operador ve na pasta e digita no terminal, nao o nome do pacote Dart (que
+# segue sendo `starchef_pdv_desktop`, porque os imports do projeto inteiro
+# dependem dele).
+#
+# No Windows o executavel CONTINUA `starchef_pdv_desktop.exe`: renomea-lo ali
+# mudaria o caminho instalado, e o Inno Setup usa esse caminho para reconhecer
+# uma instalacao existente e atualizar por cima dela.
+set(BINARY_NAME "starchef_pdv")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.example.starchef_pdv_desktop")

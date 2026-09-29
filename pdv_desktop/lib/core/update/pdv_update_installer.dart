@@ -79,17 +79,31 @@ class PdvUpdateInstaller {
 
     try {
       await _extractVerifiedZip(download.file, stagingDirectory);
-      final executableName = Platform.isWindows
-          ? 'starchef_pdv_desktop.exe'
-          : 'starchef_pdv_desktop';
-      final stagedExecutable = File(
-        '${stagingDirectory.path}${Platform.pathSeparator}$executableName',
-      );
-      if (!await stagedExecutable.exists()) {
+      // Mais de um nome aceito, e na ordem: o pacote pode ter sido gerado
+      // por uma versão anterior, que chamava o executável do Linux de
+      // `starchef_pdv_desktop`. Recusar o ZIP por causa do nome deixaria o
+      // terminal presolado na versão em que está, sem caminho de volta que não
+      // fosse instalar na mão.
+      final nomesAceitos = Platform.isWindows
+          ? const ['starchef_pdv_desktop.exe']
+          : const ['starchef_pdv', 'starchef_pdv_desktop'];
+      File? encontrado;
+      for (final nome in nomesAceitos) {
+        final candidato = File(
+          '${stagingDirectory.path}${Platform.pathSeparator}$nome',
+        );
+        if (await candidato.exists()) {
+          encontrado = candidato;
+          break;
+        }
+      }
+      if (encontrado == null) {
         throw FormatException(
-          'ZIP não contém o executável esperado: $executableName',
+          'ZIP não contém o executável esperado: ${nomesAceitos.join(' ou ')}',
         );
       }
+      final stagedExecutable = encontrado;
+      final executableName = stagedExecutable.uri.pathSegments.last;
       if (Platform.isLinux) {
         final chmod = await Process.run('chmod', [
           '755',

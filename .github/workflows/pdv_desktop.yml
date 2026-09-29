@@ -280,6 +280,24 @@ jobs:
           set -euo pipefail
           mkdir -p ../artifacts
           cd build/linux/x64/release/bundle
+          if [[ ! -f starchef_pdv ]]; then
+            echo "Executável não encontrado — o nome do binário mudou?" >&2
+            exit 1
+          fi
+          # CÓPIA DE TRANSIÇÃO, pelo mesmo motivo do `starchef_pdv.exe` no
+          # Windows: o executável do Linux se chamava `starchef_pdv_desktop`
+          # até a v3.0.58, e o atualizador JÁ INSTALADO procura esse nome
+          # dentro do ZIP e RECUSA o pacote quando não o encontra. Sem esta
+          # cópia, todo terminal Linux em campo ficaria presa na versão em que
+          # está, tentando e falhando a cada abertura, sem caminho de volta que
+          # não fosse instalar na mão.
+          #
+          # O Flutter localiza `data/` ao lado do executável e não pelo nome
+          # dele, então os dois arquivos rodam o mesmo aplicativo.
+          #
+          # PODE SER APAGADA quando nenhum terminal Linux estiver abaixo da
+          # v3.0.59 — dali em diante o atualizador já aceita os dois nomes.
+          cp starchef_pdv starchef_pdv_desktop
           zip -r "$GITHUB_WORKSPACE/artifacts/StarChef-PDV-Linux-v${APP_VERSION}.zip" .
 
       - name: Upload do pacote Linux
