@@ -9,9 +9,7 @@ import '../../../core/storage/local_preferences.dart';
 import '../../../core/widgets/copyable_error.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../domain/printer_endpoint.dart';
-import '../printing/printer.dart';
-import '../printing/printer_device.dart';
-import '../printing/printer_transport.dart';
+import 'printer_test_actions.dart';
 
 enum DeviceKind { printer, scale }
 
@@ -400,8 +398,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   late bool active = widget.item?['is_active'] as bool? ?? true;
   late bool autoPrint = widget.item?['auto_print'] as bool? ?? false;
   bool saving = false;
-  bool testing = false;
-  bool testingDrawer = false;
   late int drawerPin = _savedDrawerPin(widget.item);
   bool loadingChoices = true;
   List<Map<String, dynamic>> sectors = [];
@@ -661,135 +657,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
         'cash_drawer_pin': drawerPin,
       },
     };
-  }
-
-  /// Manda o pulso da gaveta e nada mais.
-  ///
-  /// Não passa pelo servidor: não há cupom para renderizar, e o que se quer
-  /// provar é justamente o trecho final do caminho — da ligação cadastrada
-  /// nesta tela até o conector RJ12 da impressora. Também não gasta papel.
-  ///
-  /// O pulso sai mesmo sem nenhuma gaveta cadastrada. Quem recebe o comando é
-  /// a impressora, que energiza a saída; um conector vazio simplesmente não
-  /// faz nada. Exigir uma caixa marcada antes de tentar era o que mantinha a
-  /// gaveta trancada com o cabo plugado.
-  Future<void> _testCashDrawer() async {
-    if (testingDrawer || testing) return;
-    setState(() => testingDrawer = true);
-    try {
-      await TestPrinter(
-        PrinterDevice.fromJson(_printerFromForm()),
-      ).openCashDrawer();
-      if (mounted) {
-        showAppToast(
-          context,
-          'Pulso enviado à impressora. Se a gaveta não abriu, confira o cabo '
-          'RJ12 e o pino do conector.',
-          title: 'Gaveta acionada',
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      if (error is PrinterCommunicationException) {
-        showAppError(
-          context,
-          error.message,
-          title: 'Não foi possível enviar o pulso da gaveta',
-          recommendedAction: error.recommendedAction,
-        );
-      } else {
-        showAppError(
-          context,
-          error,
-          title: 'Não foi possível enviar o pulso da gaveta',
-          recommendedAction:
-              'Confira o endereço da impressora e se ela está ligada.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => testingDrawer = false);
-    }
-  }
-
-  Future<void> _testPrinter() async {
-    final item = widget.item;
-    if (item == null || testing) return;
-    setState(() => testing = true);
-    Map<String, dynamic>? job;
-    try {
-      try {
-        job = await widget.api.post(
-          '/printers/${item['id']}/test-connection/',
-          body: const {},
-          accessToken: widget.token,
-        );
-      } on ApiException {
-        // Sem a nota do servidor não há o que escrever na porta. Este terminal
-        // não monta documento nenhum — e um teste que imprimisse um texto
-        // inventado aqui não provaria o que o operador quer provar: que o
-        // caminho inteiro, do servidor ao papel, está de pé.
-        rethrow;
-      }
-      final printer = _printerFromForm(
-        job['printer'] as Map<String, dynamic>? ?? const <String, dynamic>{},
-      );
-      final payload = job['payload'] as Map<String, dynamic>? ?? const {};
-      final text = '${payload['text_content'] ?? ''}'.trim();
-      if (text.isEmpty) {
-        throw const ApiException(
-          'O servidor não devolveu o conteúdo da nota de teste.',
-        );
-      }
-      // A nota de teste usa a mesma classe de impressora do resto do PDV: se
-      // ela sai aqui, sai igual na venda. Antes este botão montava um agente
-      // de impressão inteiro — com WebSocket e fila — só para escrever numa
-      // porta.
-      final tester = TestPrinter(PrinterDevice.fromJson(printer));
-      // A nota de teste leva o pulso da gaveta quando ela está cadastrada
-      // nesta impressora: é o único jeito de conferir o cabo RJ12 e os tempos
-      // sem precisar de uma venda em dinheiro de verdade. Numa impressora sem
-      // gaveta cadastrada nada muda — o pulso nem chega a ser montado.
-      await tester.send(tester.compose(content: text, openCashDrawer: true));
-      final jobId = job['print_job_id'];
-      if (jobId != null) {
-        await widget.api.post(
-          '/print-jobs/$jobId/mark-printed/',
-          body: const {},
-          accessToken: widget.token,
-        );
-      }
-    } catch (error) {
-      final jobId = job?['print_job_id'];
-      if (jobId != null) {
-        try {
-          await widget.api.post(
-            '/print-jobs/$jobId/mark-failed/',
-            body: {'error': 'Falha no teste local: $error'},
-            accessToken: widget.token,
-          );
-        } catch (_) {}
-      }
-      if (mounted) {
-        if (error is PrinterCommunicationException) {
-          showAppError(
-            context,
-            error.message,
-            title: 'Não foi possível imprimir a nota de teste',
-            recommendedAction: error.recommendedAction,
-          );
-        } else {
-          showAppError(
-            context,
-            error,
-            title: 'Não foi possível imprimir a nota de teste',
-            recommendedAction:
-                'Confira o endereço da impressora e se ela está ligada.',
-          );
-        }
-      }
-    } finally {
-      if (mounted) setState(() => testing = false);
-    }
   }
 
   @override
@@ -1198,60 +1065,16 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                       ),
                     ],
                     const SizedBox(height: 22),
-                    if (printer && widget.item != null) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: OutlinedButton.icon(
-                          onPressed: saving || testing || testingDrawer
-                              ? null
-                              : _testPrinter,
-                          icon: testing
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.print_outlined),
-                          label: const Text('Testar conexão e imprimir nota'),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
                     // O teste da gaveta não espera o cadastro estar salvo: ele
                     // usa só o que está na tela, e é justamente numa impressora
                     // recém-cadastrada que se quer conferir o cabo da gaveta.
                     if (printer) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: OutlinedButton.icon(
-                          onPressed: saving || testing || testingDrawer
-                              ? null
-                              : _testCashDrawer,
-                          icon: testingDrawer
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.point_of_sale_outlined),
-                          label: const Text('Testar gaveta de dinheiro'),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Envia só o pulso de abertura pela ligação configurada '
-                        'acima, sem imprimir nada. É o mesmo comando que sai '
-                        'junto do recibo de uma venda em dinheiro.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      PrinterTestActions(
+                        api: widget.api,
+                        token: widget.token,
+                        printerId: widget.item?['id']?.toString(),
+                        buildPrinter: _printerFromForm,
+                        enabled: !saving,
                       ),
                       const SizedBox(height: 12),
                     ],

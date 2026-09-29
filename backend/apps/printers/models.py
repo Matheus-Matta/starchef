@@ -52,22 +52,17 @@ class Printer(TenantModel):
     # a gaveta destrava. Por isso isto e cadastro da impressora, e nao do
     # terminal — quem tem a saida eletrica ligada na gaveta e o equipamento.
     #
-    # A UNICA condicao e o driver ser `escpos`. Uma impressora no driver
-    # grafico do Windows nao recebe comando de controle nenhum: os bytes
-    # seriam reinterpretados como texto.
+    # A UNICA condicao e o driver ser `escpos`: no driver grafico do Windows os
+    # mesmos bytes nao sao comando nenhum e sairiam impressos no papel. NAO ha
+    # um "tem gaveta?" a marcar — quem recebe o comando e a IMPRESSORA, que
+    # energiza a saida; ela nao sabe se ha gaveta do outro lado do cabo, e um
+    # conector vazio nao faz nada, sem erro em lugar nenhum.
     #
-    # NAO ha uma segunda condicao, e em particular nao ha um "tem gaveta?" a
-    # marcar: quem recebe o comando e a IMPRESSORA, que energiza a saida do
-    # conector. Ela nao tem como saber se ha uma gaveta do outro lado do cabo,
-    # e um conector vazio simplesmente nao faz nada, sem erro em lugar nenhum.
-    # Por isso este campo e DERIVADO de `driver_type`, e nao escolhido.
-    #
-    # Enquanto foi escolha, a tela de cadastro nunca ofereceu a caixa para
-    # marcar: o campo ficava `False`, o PDV nao montava o pulso, e a gaveta
-    # ficava trancada com o cabo RJ12 no lugar. Nada falhava.
-    #
-    # A coluna continua existindo, e continua saindo no payload, porque os PDVs
-    # ja instalados leem este nome para decidir o pulso.
+    # Enquanto isto foi escolha do operador, nenhuma tela ofereceu a caixa para
+    # marcar: ficava `False`, o PDV nao montava o pulso, e a gaveta ficava
+    # trancada com o cabo RJ12 no lugar. Nada falhava. Por isso agora e
+    # DERIVADO de `driver_type`. A coluna segue existindo, e segue saindo no
+    # payload, porque os PDVs ja instalados leem este nome.
     cash_drawer_enabled = models.BooleanField(
         default=False,
         editable=False,

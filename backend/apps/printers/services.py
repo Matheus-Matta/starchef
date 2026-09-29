@@ -378,10 +378,8 @@ def printer_payload(printer):
     nasceu esquecida uma vez — o cupom da venda em dinheiro saia, o PDV
     recebia a impressora sem `cash_drawer_enabled`, e o pulso nunca chegava a
     ser montado. Nada falhava: a gaveta simplesmente nao abria.
-
-    `cash_drawer_enabled` sai DERIVADO do driver, e nao lido da coluna: uma
-    linha gravada antes de a gaveta virar espelho do driver tem `False`
-    guardado, e o PDV instalado la no balcao acredita nesse `False`.
+    `cash_drawer_enabled` sai DERIVADO do driver: uma linha gravada antes
+    disso tem `False`, e o PDV do balcao acredita nele.
     """
     if printer is None:
         return None
