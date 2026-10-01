@@ -75,3 +75,28 @@ def test_motivo_e_obrigatorio(api_client, manager_user, restaurant, branch, tabl
     resposta = api_client.post(URL, {"ids": [str(pedidos[0].id)]}, format="json")
 
     assert resposta.status_code == 400
+
+
+def test_excluir_em_massa_so_apaga_pedido_sem_nota_nem_pagamento(api_client, manager_user, restaurant, branch, table, product):
+    """Pedido com nota ou dinheiro é venda: some do relatório se excluído."""
+    from apps.invoices.models import Invoice
+
+    _autenticar(api_client)
+    with tenant_context(restaurant.account):
+        vazio = create_order(restaurant=restaurant, branch=branch, order_type="counter", user=manager_user)
+        com_nota = create_order(restaurant=restaurant, branch=branch, order_type="counter", user=manager_user)
+        Invoice.all_objects.create(
+            account=restaurant.account, restaurant=restaurant, order=com_nota, status=Invoice.STATUS_ISSUED
+        )
+
+    resposta = api_client.post(
+        "/api/v1/orders/bulk-delete/", {"ids": [str(vazio.id), str(com_nota.id)]}, format="json"
+    )
+
+    assert resposta.status_code == 200, resposta.content
+    assert resposta.json()["deleted"] == 1
+    assert "nota fiscal" in resposta.json()["skipped"][0]["reason"]
+    assert Order.all_objects.get(pk=vazio.pk).deleted_at is not None
+    assert Order.all_objects.get(pk=com_nota.pk).deleted_at is None
+    # A exclusão de UM pedido segue a mesma trava.
+    assert api_client.delete(f"/api/v1/orders/{com_nota.id}/").status_code == 409

@@ -35,10 +35,58 @@ async function existentesPorChave(service, key) {
   return porChave;
 }
 
-export async function importUpsert({ service, payloads, fields, preferredKey }) {
+async function todasAsLinhas(servico) {
+  const linhas = [];
+  let page = await servico.list({ page_size: 500 });
+  for (;;) {
+    linhas.push(...(page?.results || []));
+    if (!page?.next) return linhas;
+    page = await servico.listByUrl(page.next);
+  }
+}
+
+/**
+ * Colunas de RELAÇÃO (perfil fiscal, categoria, setor, restaurantes) aceitam o
+ * id OU o nome. O id exportado envelhece: reimportar os perfis fiscais cria
+ * ids novos, e a planilha de produtos ficava apontando para um que não existe
+ * — "Pk inválido ... objeto não existe" derrubava a linha inteira.
+ *
+ * Valor que não casa com nada sai do payload (o registro mantém o que já
+ * tinha) e vira AVISO, não erro: o resto da linha ainda vale.
+ */
+async function resolverRelacoes({ fields, payloads, servicoPara }) {
+  const avisos = [];
+  const relacoes = fields.filter((f) => ["remote-dropdown", "remote-multiselect"].includes(f.type) && f.endpoint);
+  for (const campo of relacoes) {
+    if (!payloads.some((p) => p[campo.name] != null)) continue;
+    const valorDe = (row) => String(row[campo.optionValue || "id"]);
+    const linhas = await todasAsLinhas(servicoPara(campo));
+    const ids = new Set(linhas.map(valorDe));
+    const porNome = new Map(linhas.map((row) => [normalizar(row[campo.optionLabel || "name"]), valorDe(row)]));
+    const resolver = (valor) => (ids.has(String(valor)) ? String(valor) : porNome.get(normalizar(valor)) ?? null);
+
+    for (const [index, payload] of payloads.entries()) {
+      const bruto = payload[campo.name];
+      if (bruto == null) continue;
+      const valores = Array.isArray(bruto) ? bruto : [bruto];
+      const achados = valores.map(resolver);
+      const faltando = valores.filter((_, i) => achados[i] == null);
+      if (faltando.length) {
+        avisos.push(`Linha ${index + 2}: ${campo.label} "${faltando.join(", ")}" não existe — mantido o valor atual.`);
+      }
+      const validos = achados.filter((v) => v != null);
+      if (!validos.length) delete payload[campo.name];
+      else payload[campo.name] = Array.isArray(bruto) ? validos : validos[0];
+    }
+  }
+  return avisos;
+}
+
+export async function importUpsert({ service, payloads, fields, preferredKey, servicoPara }) {
   const key = importKeyFor(fields, preferredKey);
+  const avisos = servicoPara ? await resolverRelacoes({ fields, payloads, servicoPara }) : [];
   const existentes = key ? await existentesPorChave(service, key) : new Map();
-  const resultado = { created: 0, updated: 0, errors: [] };
+  const resultado = { created: 0, updated: 0, errors: [], warnings: avisos };
   for (const [index, payload] of payloads.entries()) {
     const id = key ? existentes.get(normalizar(payload[key])) : null;
     try {

@@ -1001,7 +1001,7 @@ const auth = useAuthStore();
 const orderTypes = computed(() => {
   const types = [
     { value: "command", label: "Comanda", icon: "pi-qrcode", hint: "Salão ou cartão de comanda" },
-    { value: "counter", label: "Balcao", icon: "pi-building", hint: "Entrega imediata no balcao" },
+    { value: "counter", label: "Balcão", icon: "pi-building", hint: "Entrega imediata no balcão" },
   ];
   // Delivery/Retirada só quando o módulo de Entrega está ativo.
   if (auth.hasModule("entrega")) {

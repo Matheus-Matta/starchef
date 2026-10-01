@@ -9,8 +9,9 @@
 
 /* ── Mapas de rotulo (valor do backend -> texto) ─────────────────────── */
 export const ORDER_TYPE_LABELS = {
+  table: "Mesa",
   command: "Comanda",
-  counter: "Balcao",
+  counter: "Balcão",
   delivery: "Delivery",
   takeaway: "Retirada",
   internal: "Interno",
@@ -126,7 +127,7 @@ export const MENU_CHANNEL_LABELS = {
   all: "Todos",
   table: "Salao",
   delivery: "Delivery",
-  counter: "Balcao",
+  counter: "Balcão",
   digital: "Digital",
 };
 
@@ -291,7 +292,7 @@ export const CHANNEL_OPTIONS = [
   { label: "Todos", value: "all" },
   { label: "Salao", value: "table" },
   { label: "Delivery", value: "delivery" },
-  { label: "Balcao", value: "counter" },
+  { label: "Balcão", value: "counter" },
   { label: "Digital", value: "digital" },
 ];
 

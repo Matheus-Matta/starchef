@@ -401,7 +401,7 @@ function orderType(value) {
   const labels = {
     table: "Salao",
     command: "Comanda",
-    counter: "Balcao",
+    counter: "Balcão",
     delivery: "Delivery",
     takeaway: "Retirada",
     internal: "Interno",

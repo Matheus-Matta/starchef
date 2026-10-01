@@ -21,6 +21,7 @@ export const invoiceProConfig = {
       // documento fiscal — por isso a ação daqui é a mesma da lista de pedidos.
       key: "cancel-orders",
       label: "Cancelar pedidos e notas",
+      icon: "pi pi-times-circle",
       type: "order-bulk-cancel",
       idField: "order",
     },

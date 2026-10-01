@@ -323,11 +323,6 @@
               :selection="selection"
               @completed="onInvoiceBulkCompleted"
             />
-            <OrderBulkCancelButton
-              v-else-if="bulkAction.type === 'order-bulk-cancel'"
-              :selection="selection" :id-field="bulkAction.idField" :label="bulkAction.label"
-              @completed="onInvoiceBulkCompleted"
-            />
             <button v-else class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="runBulkAction(bulkAction)">
               <i :class="bulkAction.icon || 'pi pi-bolt'" /> {{ bulkAction.label }}
             </button>
@@ -335,6 +330,17 @@
           <button class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="selection = []">Limpar</button>
         </div>
       </div>
+
+      <!-- Diálogos das ações em massa de pedidos. O gatilho é o botão genérico
+           da barra acima, para ficar com o mesmo estilo dos vizinhos. -->
+      <OrderBulkCancelDialog
+        v-model:visible="orderCancelVisible"
+        :selection="selection"
+        :id-field="orderBulkAction?.idField"
+        :label="orderBulkAction?.label"
+        @completed="onInvoiceBulkCompleted"
+      />
+      <OrderBulkDeleteDialog v-model:visible="orderDeleteVisible" :selection="selection" @completed="onInvoiceBulkCompleted" />
 
       <DataTable
         v-model:selection="selection"
@@ -2457,7 +2463,8 @@ import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
-import OrderBulkCancelButton from "../components/data/OrderBulkCancelButton.vue";
+import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
+import OrderBulkDeleteDialog from "../components/data/OrderBulkDeleteDialog.vue";
 import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
@@ -4286,7 +4293,16 @@ const bulkActions = computed(() => {
   if (props.formEnabled) actions.push({ key: "delete", label: "Excluir", icon: "pi pi-trash", type: "delete" });
   return actions;
 });
+const orderBulkAction = ref(null);
+const orderCancelVisible = ref(false);
+const orderDeleteVisible = ref(false);
 function runBulkAction(bulkAction) {
+  if (bulkAction.type === "order-bulk-cancel" || bulkAction.type === "order-bulk-delete") {
+    orderBulkAction.value = bulkAction;
+    if (bulkAction.type === "order-bulk-cancel") orderCancelVisible.value = true;
+    else orderDeleteVisible.value = true;
+    return;
+  }
   if (bulkAction.type === "print-codes") openLabels();
   else if (bulkAction.type === "asset-bulk-status") openAssetBulkStatus();
   else if (bulkAction.type === "asset-bulk-location") openAssetBulkLocation();
@@ -4554,14 +4570,16 @@ async function importRows() {
 
     // Atualiza o que já existe (pela chave) e cria o resto: reimportar a
     // planilha exportada não dá mais "valor duplicado" em toda linha.
-    const { created, updated, errors } = await importUpsert({
+    const { created, updated, errors, warnings } = await importUpsert({
       service, payloads, fields: exchangeFields.value, preferredKey: proCfg.value.importKey,
+      servicoPara: (campo) => new ResourceService({ endpoint: campo.endpoint, globalScope: campo.globalScope }),
     });
     toast.add({
-      severity: errors.length ? "warn" : "success",
+      severity: errors.length || warnings.length ? "warn" : "success",
       summary: `${created + updated} de ${payloads.length} itens importados`,
-      detail: [`${created} criado(s), ${updated} atualizado(s).`, errors[0]].filter(Boolean).join(" "),
-      life: 6000,
+      detail: [`${created} criado(s), ${updated} atualizado(s).`, errors[0], warnings[0],
+        warnings.length > 1 ? `(+${warnings.length - 1} aviso(s))` : ""].filter(Boolean).join(" "),
+      life: errors.length || warnings.length ? 12000 : 6000,
     });
     if (!errors.length) {
       importVisible.value = false;

@@ -712,6 +712,31 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data)
 
+    def perform_destroy(self, instance):
+        # Pedido com nota ou pagamento é VENDA: cancela-se, não se apaga
+        # (ver `bulk_delete.py`). Antes a exclusão individual não tinha trava.
+        from rest_framework.exceptions import APIException
+
+        from apps.orders.bulk_delete import motivo_para_manter
+
+        motivo = motivo_para_manter(instance)
+        if motivo:
+            erro = APIException(f"Pedido #{instance.sequence} {motivo}.")
+            erro.status_code = status.HTTP_409_CONFLICT
+            raise erro
+        super().perform_destroy(instance)
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        """Exclui vários pedidos sem rastro fiscal/financeiro — ver `bulk_delete.py`."""
+        from apps.orders.bulk_delete import MAXIMO, excluir_em_massa
+
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids or len(ids) > MAXIMO:
+            return Response({"detail": f"Selecione de 1 a {MAXIMO} pedidos."}, status=status.HTTP_400_BAD_REQUEST)
+        pedidos = list(self.get_queryset().filter(pk__in=ids))
+        return Response(excluir_em_massa(pedidos, user=request.user))
+
     @action(detail=False, methods=["post"], url_path="bulk-cancel")
     def bulk_cancel(self, request):
         """Cancela vários pedidos (e as notas deles) — ver `bulk_cancel.py`."""

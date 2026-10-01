@@ -106,7 +106,11 @@ export const resources = [
       // Cancela os selecionados (e as notas deles) com a regra do cancelamento
       // de um: motivo obrigatório e senha de operação. "Selecionar todos os N"
       // da barra pega o filtro inteiro, não só a página.
-      bulkActions: [{ key: "cancel", label: "Cancelar pedidos", type: "order-bulk-cancel", idField: "id" }],
+      bulkActions: [
+        { key: "cancel", label: "Cancelar pedidos", icon: "pi pi-times-circle", type: "order-bulk-cancel", idField: "id" },
+        // Só sai o que não tem nota nem pagamento; o resto é venda e se cancela.
+        { key: "delete", label: "Excluir pedidos", icon: "pi pi-trash", type: "order-bulk-delete" },
+      ],
       // Ação primária do cabeçalho — Pedidos são criados no PDV.
       primaryAction: { label: "Novo pedido", icon: "pi pi-plus", route: "pdv" },
       // Filtro de intervalo de datas → envia `opened_after` / `opened_before`.
