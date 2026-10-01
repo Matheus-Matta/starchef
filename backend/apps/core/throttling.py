@@ -7,27 +7,32 @@ no meio do serviço, e o terminal passava a receber 429 — impressão e pedido
 parados.
 
 O terminal se identifica pelo cabeçalho `X-Terminal-Id`, que os três clientes
-mandam em toda requisição. Ele ganha uma faixa 100x maior, CONTADA À PARTE do
-painel. Login, troca de senha e senha de caixa têm limites próprios e
-continuam apertados: são eles que seguram tentativa de adivinhar senha.
+mandam em toda requisição. Logado, ele não passa por limite nenhum. Login,
+troca de senha e senha de caixa têm limites próprios e continuam apertados: são
+eles que seguram tentativa de adivinhar senha.
 """
 from rest_framework.throttling import UserRateThrottle
 
 
 class TerminalScopeMixin:
-    """Troca o escopo para `terminal_scope` quando a requisição vem de terminal."""
+    """Terminal LOGADO não tem limite; o resto segue o escopo normal.
+
+    Um 429 no meio do serviço é impressão e pedido parados, e o terminal não
+    tem como esperar.
+    O usuário já está autenticado — o abuso que este limite contém é o de
+    quem não está, e esse continua barrado (anônimo, login, senha de caixa).
+    """
 
     terminal_scope = None
 
     def allow_request(self, request, view):
-        if self.terminal_scope and request.headers.get("X-Terminal-Id"):
-            self.scope = self.terminal_scope
-            self.rate = self.get_rate()
-            self.num_requests, self.duration = self.parse_rate(self.rate)
+        user = getattr(request, "user", None)
+        if request.headers.get("X-Terminal-Id") and getattr(user, "is_authenticated", False):
+            return True
         return super().allow_request(request, view)
 
 
 class TerminalAwareUserRateThrottle(TerminalScopeMixin, UserRateThrottle):
-    """O limite geral por usuário, com a faixa larga dos terminais."""
+    """O limite geral por usuário; terminal logado passa direto."""
 
     terminal_scope = "terminal_user"

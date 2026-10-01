@@ -1,4 +1,4 @@
-"""Terminal do PDV tem faixa própria (100x) de requisições; o painel não."""
+"""Terminal do PDV logado não tem limite de requisições; o painel tem."""
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -29,5 +29,24 @@ def test_terminal_usa_a_faixa_larga_e_o_painel_a_comum(monkeypatch):
 
     # Painel: estoura no terceiro pedido.
     assert [tentar() for _ in range(3)] == [True, True, False]
-    # Terminal: faixa própria, contada à parte — o painel no teto não o barra.
-    assert all(tentar(HTTP_X_TERMINAL_ID="pdv-1") for _ in range(50))
+    # Terminal logado: sem limite — nem a faixa própria (200/h aqui) o barra.
+    assert all(tentar(HTTP_X_TERMINAL_ID="pdv-1") for _ in range(500))
+
+
+@pytest.mark.django_db
+def test_terminal_sem_login_continua_limitado(monkeypatch):
+    """O cabeçalho sozinho não abre a porta: quem não está logado segue barrado."""
+    from django.contrib.auth.models import AnonymousUser
+    from rest_framework.request import Request
+    from rest_framework.throttling import AnonRateThrottle
+
+    monkeypatch.setattr(AnonRateThrottle, "THROTTLE_RATES", {"anon": "2/hour"})
+    cache.clear()
+    fabrica = APIRequestFactory()
+
+    def tentar():
+        request = fabrica.get("/api/v1/orders/", HTTP_X_TERMINAL_ID="pdv-1")
+        force_authenticate(request, user=AnonymousUser())
+        return AnonRateThrottle().allow_request(Request(request), _View())
+
+    assert [tentar() for _ in range(3)] == [True, True, False]
