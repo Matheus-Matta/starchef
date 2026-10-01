@@ -12,6 +12,7 @@ import 'network_printer_writer.dart';
 import 'print_confirmation_store.dart';
 
 part 'mobile_print_agent_support.dart';
+part 'mobile_print_agent_retry.dart';
 
 enum PrintAgentState { stopped, requestingPermission, syncing, ready, error }
 
@@ -31,6 +32,7 @@ class MobilePrintAgent extends ChangeNotifier {
   final PrintConfirmationStorage confirmations;
   final Map<String, DateTime> _retryAfter = {};
   final Map<String, int> _falhas = {};
+  final Map<String, String> _errosImpressao = {};
   final Set<String> _awaitingConfirmation = {};
 
   Timer? _timer;
@@ -81,6 +83,7 @@ class MobilePrintAgent extends ChangeNotifier {
     _printersLoadedAt = null;
     _retryAfter.clear();
     _falhas.clear();
+    _errosImpressao.clear();
     _rerunRequested = false;
     notifyListeners();
   }
@@ -124,6 +127,28 @@ class MobilePrintAgent extends ChangeNotifier {
   }
 
   Future<void> testPrinterConnection(MobilePrinter printer) async {
+    await _requirePrinterPermission();
+    await writer.testConnection(printer);
+  }
+
+  Future<void> printTestPage(MobilePrinter printer) async {
+    await _requirePrinterPermission();
+    final driver = printer.isEscPos ? 'ESC/POS' : 'texto';
+    final text = [
+      'STAR CHEF - TESTE DE IMPRESSAO',
+      'Impressora: ${printer.name}',
+      'Endereco: ${printer.host}:${printer.port}',
+      'Driver: $driver',
+      'Enviado em: ${DateTime.now().toLocal()}',
+      'Se este papel saiu, o formato foi reconhecido.',
+    ].join('\n');
+    await writer.write(
+      printer,
+      encoder.encode(text: text, escPos: printer.isEscPos),
+    );
+  }
+
+  Future<void> _requirePrinterPermission() async {
     _permissionGranted = await permission.request();
     if (!_permissionGranted) {
       notifyListeners();
@@ -131,7 +156,6 @@ class MobilePrintAgent extends ChangeNotifier {
         'Permita o acesso a dispositivos próximos para testar a impressora.',
       );
     }
-    await writer.testConnection(printer);
   }
 
   Future<List<Map<String, dynamic>>> loadQueue() => _loadQueue();

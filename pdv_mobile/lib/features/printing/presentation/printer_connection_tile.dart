@@ -20,22 +20,58 @@ class PrinterConnectionTile extends StatefulWidget {
 class _PrinterConnectionTileState extends State<PrinterConnectionTile> {
   bool _testing = false;
 
-  Future<void> _testConnection() async {
+  Future<void> _testConnection() => _runTest(
+    () => widget.agent.testPrinterConnection(widget.printer),
+    connected: true,
+  );
+
+  Future<void> _printTestPage() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Imprimir teste?'),
+        content: Text(
+          'A impressora ${widget.printer.name} vai imprimir um recibo curto.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Imprimir'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _runTest(
+      () => widget.agent.printTestPage(widget.printer),
+      connected: false,
+    );
+  }
+
+  Future<void> _runTest(
+    Future<void> Function() action, {
+    required bool connected,
+  }) async {
     setState(() => _testing = true);
     String message;
     try {
-      await widget.agent.testPrinterConnection(widget.printer);
-      message = 'Conectou em ${widget.printer.host}:${widget.printer.port}. '
-          'Nenhum papel foi impresso.';
+      await action();
+      message = connected
+          ? 'Conexão TCP aberta em ${widget.printer.host}:${widget.printer.port}.'
+          : 'Dados do teste enviados. Confira o papel e se o texto saiu legível.';
     } catch (error) {
       message = '$error';
     } finally {
       if (mounted) setState(() => _testing = false);
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -59,22 +95,27 @@ class _PrinterConnectionTileState extends State<PrinterConnectionTile> {
               title: Text(printer.name),
               subtitle: Text(subtitle),
             ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12, bottom: 8),
-                child: OutlinedButton.icon(
-                  onPressed: !printer.supportsMobile || _testing
-                      ? null
-                      : _testConnection,
-                  icon: _testing
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.wifi_find),
-                  label: Text(_testing ? 'Testando...' : 'Testar conexão'),
-                ),
+            Padding(
+              padding: const EdgeInsets.only(right: 12, bottom: 8),
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: !printer.supportsMobile || _testing
+                        ? null
+                        : _testConnection,
+                    icon: const Icon(Icons.wifi_find),
+                    label: Text(_testing ? 'Testando...' : 'Testar conexão'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: !printer.supportsMobile || _testing
+                        ? null
+                        : _printTestPage,
+                    icon: const Icon(Icons.print_outlined),
+                    label: const Text('Imprimir teste'),
+                  ),
+                ],
               ),
             ),
           ],

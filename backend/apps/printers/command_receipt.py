@@ -13,7 +13,7 @@ from apps.orders.command_items import open_items_of_command
 TYPE_TABLE_BILL = "table_bill"
 
 
-def register_command_receipt(*, command, user):
+def register_command_receipt(*, command, user, printer=None, manual_only=False):
     """Enfileira a impressão da conferência. Devolve `(print_job, dados)`."""
     from apps.printers.services import register_command_bill_print
 
@@ -29,6 +29,7 @@ def register_command_receipt(*, command, user):
             )
         total = total_pendente(command.pk)
         job = register_command_bill_print(
-            command=command, items=itens, total=total, user=user
+            command=command, items=itens, total=total, user=user,
+            printer=printer, manual_only=manual_only,
         )
     return job, {"total": total, "items": itens}

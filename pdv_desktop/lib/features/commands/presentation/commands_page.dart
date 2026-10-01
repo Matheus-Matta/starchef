@@ -7,6 +7,7 @@ import 'command_detail_view.dart';
 import 'commands_actions.dart';
 import 'commands_grid.dart';
 import 'commands_loading.dart';
+import 'commands_receipt.dart';
 import 'commands_table_actions.dart';
 
 /// As comandas em DUAS telas: o salão e o cartão aberto.
@@ -34,6 +35,8 @@ class CommandsPage extends StatefulWidget {
     this.restaurantId,
     this.codigosLidos,
     this.autorizarCancelamento,
+    this.impressoraMaster,
+    this.imprimirNoTerminal,
   });
 
   final CommandRepository repository;
@@ -64,15 +67,34 @@ class CommandsPage extends StatefulWidget {
   /// sessão, ao caixa e ao resto, para usar um método.
   final Future<String?> Function(String motivo)? autorizarCancelamento;
 
+  /// Impressora master do terminal e quem imprime nele (ver CommandsReceipt).
+  final String? Function()? impressoraMaster;
+  final Future<void> Function(
+    Map<String, dynamic> job,
+    Map<String, dynamic> printer,
+  )?
+  imprimirNoTerminal;
+
   @override
   State<CommandsPage> createState() => _CommandsPageState();
 }
 
 class _CommandsPageState extends State<CommandsPage>
-    with CommandsLoading<CommandsPage>, CommandsActions<CommandsPage>, CommandsTableActions<CommandsPage> {
+    with
+        CommandsLoading<CommandsPage>,
+        CommandsActions<CommandsPage>,
+        CommandsTableActions<CommandsPage>,
+        CommandsReceipt<CommandsPage> {
   @override
   Future<String?> Function(String motivo)? get autorizarCancelamento =>
       widget.autorizarCancelamento;
+  @override
+  String? Function()? get impressoraMaster => widget.impressoraMaster;
+  @override
+  Future<void> Function(Map<String, dynamic>, Map<String, dynamic>)?
+  get imprimirNoTerminal => widget.imprimirNoTerminal;
+  @override
+  String? get restaurantIdDaTela => widget.restaurantId;
 
   final _busca = TextEditingController();
   final _leitor = TextEditingController();

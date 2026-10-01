@@ -484,16 +484,35 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
         fiscal**, e o cupom diz isso: a nota é uma só, do pedido que cobrar.
         """
         from apps.printers.command_receipt import register_command_receipt
+        from apps.printers.models import Printer
         from apps.printers.serializers import PrintJobSerializer
+        from apps.printers.services import printer_payload
 
+        command = self.get_object()
+        printer = None
+        if request.data.get("printer"):
+            printer = Printer.objects.filter(
+                pk=request.data["printer"], restaurant=command.restaurant, is_active=True
+            ).first()
+            if printer is None:
+                return Response({"detail": "A impressora selecionada não existe ou está inativa."}, status=400)
         try:
-            job, data = register_command_receipt(command=self.get_object(), user=request.user)
+            job, data = register_command_receipt(
+                command=command, user=request.user, printer=printer,
+                manual_only=bool(request.data.get("manual_only", False)),
+            )
         except ValidationError as exc:
             detalhe = getattr(exc, "messages", None) or [str(exc)]
             return Response({"detail": " ".join(detalhe)}, status=400)
+        # Mesmo formato da impressão de pedido: o terminal imprime na hora pela
+        # impressora master, sem esperar a fila.
         return Response(
             {
                 "print_job": PrintJobSerializer(job, context={"request": request}).data,
+                "print_job_id": str(job.id),
+                "payload": job.payload,
+                "status": job.status,
+                "printer": printer_payload(job.printer),
                 "total": str(data["total"]),
             },
             status=201,

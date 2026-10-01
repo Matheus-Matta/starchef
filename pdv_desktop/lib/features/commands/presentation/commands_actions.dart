@@ -17,13 +17,13 @@ import 'commands_loading.dart';
 mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
   /// Fornecida pela tela: pede a senha do supervisor e devolve ela, ou `null`.
   Future<String?> Function(String motivo)? get autorizarCancelamento;
+
   /// As mesas do salão, fornecidas pela página.
   List<Map<String, dynamic>> get mesas;
 
   List<Map<String, dynamic>> itens = const [];
   bool carregandoItens = false;
   bool enviando = false;
-  bool imprimindo = false;
 
   Future<void> carregarItens() async {
     final id = '${selecionada?['id'] ?? ''}';
@@ -124,23 +124,6 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
       if (mounted) setState(() => erro = 'Falha ao enviar à cozinha: $falha');
     } finally {
       if (mounted) setState(() => enviando = false);
-    }
-  }
-
-  Future<void> imprimirRecibo() async {
-    final id = '${selecionada?['id'] ?? ''}';
-    if (id.isEmpty) return;
-    setState(() {
-      imprimindo = true;
-      erro = '';
-    });
-    try {
-      await repository.receipt(id);
-      if (mounted) setState(() => recado = 'Recibo enviado para a impressora.');
-    } catch (falha) {
-      if (mounted) setState(() => erro = 'Falha ao imprimir o recibo: $falha');
-    } finally {
-      if (mounted) setState(() => imprimindo = false);
     }
   }
 

@@ -243,6 +243,12 @@ mixin _ShellSection on _HomePageShared {
                           // A tela de comandas não conhece o controlador; ela
                           // recebe só a capacidade de pedir a liberação.
                           autorizarCancelamento: _autorizarCancelamentoDeItem,
+                          // O recibo da comanda sai como o de venda: na
+                          // impressora master deste terminal, impresso aqui.
+                          impressoraMaster: () =>
+                              widget.preferences.masterPrinterId,
+                          imprimirNoTerminal: (job, printer) =>
+                              deviceAgent.printJobManually(job, printer),
                           // O MESMO catálogo da venda: a tela de comandas
                           // lança produto igual, e carregar uma segunda cópia
                           // faria as duas divergirem na primeira alteração de

@@ -8,7 +8,7 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
       '/print-jobs/',
       query: {
         'restaurant': restaurant,
-        'status__in': 'pending,rendered,claimed,failed',
+        'status__in': 'pending,rendered,claimed',
         'job_type__in': MobilePrintJobPolicy.queryTypes,
         'ordering': 'created_at',
         'page_size': 100,
@@ -52,6 +52,10 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
       if (semResposta.contains(printer.id)) continue;
       if (_awaitingConfirmation.contains(jobId)) continue;
       if (retryAt != null && retryAt.isAfter(DateTime.now())) continue;
+      if ((_falhas[jobId] ?? 0) >= MobilePrintJobPolicy.maxAutomaticAttempts) {
+        await _registrarFalhaFinal(jobId);
+        continue;
+      }
       // UM trabalho com erro não interrompe o ciclo: antes a exceção subia e
       // nenhum outro trabalho era impresso, ciclo após ciclo.
       try {
@@ -59,7 +63,7 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
         if (!await _printJob(jobId, job, printer)) semResposta.add(printer.id);
       } on ApiException catch (error) {
         if (error.isConnectivity) rethrow;
-        _adiar(jobId);
+        await _adiar(jobId, error.message);
         _lastError = error.message;
       }
     }
@@ -141,6 +145,7 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
       _printedCount += 1;
       _retryAfter.remove(jobId);
       _falhas.remove(jobId);
+      _errosImpressao.remove(jobId);
       _awaitingConfirmation.add(jobId);
       await confirmations.add(jobId);
       await _confirmPrintedJob(jobId);
@@ -149,25 +154,17 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
         _lastError = 'O papel saiu, mas a confirmação ficou pendente: $error';
         return true;
       }
-      _adiar(jobId);
+      final encerrado = await _adiar(jobId, '$error');
       _lastError = '$error';
-      try {
-        await api.post('/print-jobs/$jobId/release/');
-      } catch (_) {
-        // A reserva expira sozinha no servidor; não pode travar a fila.
+      if (!encerrado) {
+        try {
+          await api.post('/print-jobs/$jobId/release/');
+        } catch (_) {
+          // A reserva expira sozinha no servidor; não pode travar a fila.
+        }
       }
       return false;
     }
     return true;
-  }
-
-  /// Trabalho com falha recebe espera crescente até 60 s e vai para o fim da
-  /// fila, sem segurar as comandas novas enquanto a impressora se recupera.
-  void _adiar(String jobId) {
-    final vezes = (_falhas[jobId] ?? 0) + 1;
-    _falhas[jobId] = vezes;
-    const esperasSegundos = [3, 8, 15, 30, 60];
-    final segundos = esperasSegundos[(vezes - 1).clamp(0, 4)];
-    _retryAfter[jobId] = DateTime.now().add(Duration(seconds: segundos));
   }
 }

@@ -80,7 +80,10 @@ class _PrintQueuePageState extends State<PrintQueuePage> {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(24),
-          child: Text('A fila não tem comandas ou cancelamentos pendentes.'),
+          child: Text(
+            'A fila ativa está vazia. Trabalhos que falharem cinco vezes '
+            'saem daqui e ficam registrados como falha no backend.',
+          ),
         ),
       );
     }
@@ -118,7 +121,8 @@ class _QueueJobCard extends StatelessWidget {
           children: [
             Text('Status: ${_statusLabel(status)}'),
             if (createdAt.isNotEmpty) Text('Criado: $createdAt'),
-            if (text.isNotEmpty) Text(text, maxLines: 4, overflow: TextOverflow.ellipsis),
+            if (text.isNotEmpty)
+              Text(text, maxLines: 4, overflow: TextOverflow.ellipsis),
             if (error.isNotEmpty)
               Text(
                 'Erro: $error',

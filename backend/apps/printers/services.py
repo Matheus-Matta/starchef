@@ -1130,7 +1130,7 @@ def weigh_to_order(*, scale, order, user, scale_reading=None, weight_kg=None, do
     return item, job
 
 
-def register_command_bill_print(*, command, items, total, user):
+def register_command_bill_print(*, command, items, total, user, printer=None, manual_only=False):
     """Enfileira a conferência de UMA comanda.
 
     **Não é documento fiscal** e o cupom diz isso: a nota é uma só, do pedido
@@ -1140,9 +1140,14 @@ def register_command_bill_print(*, command, items, total, user):
     from apps.printers.command_receipt import TYPE_TABLE_BILL
 
     with tenant_context(command.account):
-        printer = active_printers_for(command).order_by("name").first()
+        # A escolhida pelo terminal (impressora master); senão a de CAIXA, sem
+        # setor — a primeira por nome caía na cozinha.
+        if printer is None:
+            ativas = active_printers_for(command)
+            printer = ativas.filter(sector=None).order_by("name").first() or ativas.order_by("name").first()
         if printer is None:
             raise ValidationError("Nenhuma impressora ativa para este restaurante.")
+        codigo = str(command.code or command.number or "")
 
         linhas = [
             f"{item.quantity:g} x {item.product.name}{item.variation_suffix}"
@@ -1168,8 +1173,17 @@ def register_command_bill_print(*, command, items, total, user):
             branch=command.branch,
             printer=printer,
             job_type=TYPE_TABLE_BILL,
-            status=PrintJob.STATUS_PENDING,
-            payload={"text": conteudo, "command": str(command.id)},
+            status=PrintJob.STATUS_RENDERED,
+            # `text_content`, e não `text`: é a chave que o agente do PDV lê —
+            # com `text` o trabalho chegava vazio e o recibo não saía. O
+            # código de barras da comanda fecha o papel, como na balança.
+            payload={
+                "text_content": conteudo,
+                "command": str(command.id),
+                "manual_only": bool(manual_only),
+                "payload_version": 2,
+                "barcode": {"symbology": "CODE128", "value": codigo},
+            },
             created_by=user,
             updated_by=user,
         )

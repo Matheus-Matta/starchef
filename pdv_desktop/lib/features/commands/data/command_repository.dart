@@ -119,11 +119,31 @@ class CommandRepository {
   /// **Não é documento fiscal.** A NFC-e é uma só, do pedido consolidado; este
   /// papel é o que o cliente pede quando quer saber "e a comanda 13, quanto
   /// deu?" dentro de uma conta de quatro pessoas.
-  Future<Map<String, dynamic>> receipt(String commandId) => _api.post(
+  ///
+  /// [printerId] é a impressora escolhida pelo terminal (a master); com
+  /// [manualOnly] o servidor só registra e quem imprime é este terminal.
+  Future<Map<String, dynamic>> receipt(
+    String commandId, {
+    String? printerId,
+    bool manualOnly = false,
+  }) => _api.post(
     '/commands/$commandId/receipt/',
-    body: const {},
+    body: {'printer': ?printerId, 'manual_only': manualOnly},
     accessToken: accessToken,
   );
+
+  /// Impressoras ativas do restaurante, para escolher onde sai o recibo.
+  Future<List<Map<String, dynamic>>> printers({String? restaurantId}) async {
+    final resposta = await _api.get(
+      '/printers/',
+      query: {'is_active': true, 'page_size': 100, 'restaurant': ?restaurantId},
+      accessToken: accessToken,
+    );
+    final bruto = resposta['results'] ?? const [];
+    return bruto is List
+        ? bruto.whereType<Map<String, dynamic>>().toList()
+        : const [];
+  }
 
   /// Resolve um cartão lido pelo leitor de código de barras.
   /// Senta o cartão numa mesa.
