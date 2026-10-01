@@ -6,6 +6,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.accounts.models import FocusNfeConfig
 from apps.invoices.fiscal import only_digits
+from apps.invoices.focus_emission_errors import detail_from_focus, is_company_configuration_error
 from apps.invoices.models import FiscalConfig, Invoice
 
 _REGISTRY = {}
@@ -499,17 +500,16 @@ class FocusNfeProvider(FiscalProvider):
     @staticmethod
     def _classify_http(code, data):
         """Traduz um HTTP sem situacao fiscal utilizavel na falha correspondente.
-
-        Recebe o CÓDIGO, e não a resposta: com o relé, quem falou com a Focus
-        pode ter sido a nuvem, e o que chega aqui é `(status, corpo)`. A
-        classificação é a mesma nos dois caminhos — e precisa ser, porque é ela
-        que decide o que vira contingência e o que vira recusa definitiva.
+        A mesma regra vale na chamada direta e no rele da loja para a nuvem,
+        pois ela decide o que pode ser tentado novamente.
         """
-        detail = data or ""
+        detail = detail_from_focus(data)
         if code in (401, 403):
             return FiscalConfigurationError(
                 f"Focus NFe: token recusado pelo provedor (HTTP {code}). Verifique o cadastro fiscal."
             )
+        if is_company_configuration_error(code, data):
+            return FiscalConfigurationError(f"Focus NFe: configuracao fiscal recusada: {detail}")
         if code == 429 or code >= 500:
             return FiscalUnavailable(f"Focus NFe: provedor indisponivel (HTTP {code}): {detail}")
         if code >= 400:

@@ -22,6 +22,7 @@ import 'features/auth/data/auth_repository.dart';
 import 'features/cash/data/cash_auth_repository.dart';
 import 'features/cash/data/cash_auth_store.dart';
 import 'features/scale/services/scale_window_launcher.dart';
+import 'core/logging/global_error_handlers.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,29 +61,7 @@ Future<void> main(List<String> arguments) async {
   final config = await AppConfig.load(
     manualOverrideUrl: preferences.apiBaseUrlOverride,
   );
-  // Erros fora de um handler explícito ainda precisam chegar ao log; nenhum
-  // deles pode desaparecer em silêncio durante uma venda.
-  FlutterError.onError = (details) {
-    FlutterError.presentError(details);
-    // Sem o widget e a biblioteca, um estouro de layout vira uma linha de log
-    // idêntica repetida por item da lista, e não dá para saber onde procurar.
-    AppLogger.instance.error(
-      'flutter_error',
-      data: {
-        'library': details.library,
-        'context': details.context?.toString(),
-        'widget': details.informationCollector == null
-            ? null
-            : DiagnosticsNode.message(
-                details.informationCollector!()
-                    .map((node) => node.toString())
-                    .join(' | '),
-              ).toString(),
-      },
-      cause: details.exception,
-      stackTrace: details.stack,
-    );
-  };
+  installGlobalErrorHandlers();
   AppLogger.instance.info(
     'app_start',
     data: {'mode': scaleWindow ? 'scale_window' : 'pdv'},

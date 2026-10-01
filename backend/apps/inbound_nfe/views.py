@@ -22,6 +22,7 @@ from apps.inbound_nfe.serializers import (
 )
 from apps.inbound_nfe.services.receiving import receive_invoice
 from apps.inbound_nfe.services.manifestation import manifest_nfe
+from apps.inbound_nfe.services.unlink import VinculoTravado, assert_item_editable, unlink_item
 import django_filters
 from apps.stock.models import StockLocation
 from apps.menu.models import Ingredient, Product
@@ -934,6 +935,10 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
         item = self.get_object()
         serializer = InboundNFeItemMapRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        try:  # Trocar o vínculo de nota já recebida separaria nota e estoque.
+            assert_item_editable(item.invoice, item)
+        except VinculoTravado as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
 
         ingredient_id = serializer.validated_data.get("ingredient_id")
         product_id = serializer.validated_data.get("product_id")
@@ -1030,6 +1035,18 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
             return Response({"message": "Item mapeado com sucesso."})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="unlink")
+    def unlink(self, request, pk=None, *args, **kwargs):
+        """Desfaz o vínculo e, por padrão, o aprendizado do fornecedor (ver `services.unlink`)."""
+        esquecer = request.data.get("forget_supplier_mapping", True) not in (False, "false", 0, "0")
+        try:
+            item = unlink_item(self.get_object().pk, esquecer=esquecer)
+        except VinculoTravado as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response({"message": "Vínculo removido. O item pode ser vinculado de novo.",
+                         "item": InboundNFeItemSerializer(item, context={"request": request}).data,
+                         "invoice_status": item.invoice.status})
 
     @action(detail=True, methods=["post"], url_path="ignore")
     def ignore(self, request, pk=None, *args, **kwargs):

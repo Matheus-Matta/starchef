@@ -6,6 +6,7 @@ import '../../../core/widgets/shadcn_layout.dart';
 import '../../settings/presentation/api_settings_page.dart';
 import 'auth_scaffold.dart';
 import 'session_controller.dart';
+import '../../../core/update/check_update_button.dart';
 import '../../../core/update/update_banner.dart';
 
 /// Entrada do app: só quem é o garçom.
@@ -123,6 +124,7 @@ class _LoginPageState extends State<LoginPage> {
               icon: const Icon(Icons.settings_outlined),
               label: const Text('Configurar servidor'),
             ),
+            const CheckUpdateButton(),
           ],
         ),
       ),

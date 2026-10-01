@@ -50,7 +50,16 @@ class FiscalProfile(TenantModel):
         constraints = [
             # Nome unico por CONTA (e nao mais por filial): o perfil e um
             # cadastro reutilizavel, entao "Bebida" e um so em toda a conta.
-            models.UniqueConstraint(fields=["account", "name"], name="unique_fiscal_profile_by_account"),
+            #
+            # So entre os NAO apagados. Apagar e so marcar `deleted_at`: com a
+            # regra contando os apagados, um perfil removido continuava dono do
+            # nome, e recria-lo (ou importa-lo de um CSV) dava "valor
+            # duplicado" sem nada na tela com aquele nome.
+            models.UniqueConstraint(
+                fields=["account", "name"],
+                condition=models.Q(deleted_at__isnull=True),
+                name="unique_fiscal_profile_by_account",
+            ),
         ]
 
     def __str__(self):

@@ -28,7 +28,13 @@ class ScaleDevice {
   });
 
   factory ScaleDevice.fromJson(Map<String, dynamic> scale) {
-    final settings = scale['settings'] as Map<String, dynamic>? ?? const {};
+    // `settings` é JSON livre no cadastro. Um valor que não seja objeto (uma
+    // lista, um texto) estourava aqui DENTRO do build — e a tela inteira da
+    // balança virava um bloco cinza.
+    final rawSettings = scale['settings'];
+    final settings = rawSettings is Map
+        ? Map<String, dynamic>.from(rawSettings)
+        : const <String, dynamic>{};
     return ScaleDevice._(
       raw: scale,
       id: '${scale['id'] ?? ''}'.trim(),

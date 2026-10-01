@@ -267,6 +267,18 @@ Arquivo separado, publicado pelo `pdv_mobile.yml` no mesmo Release:
 `version` é a do `pdv_mobile/pubspec.yaml`, independente da tag — a tag é a
 versão do PDV. `tag` diz em qual Release este manifesto foi publicado.
 
+**O APK reconstruído sempre sai com versão maior que a publicada.** O app só
+se atualiza quando `version` é maior que a instalada. Antes, reconstruir sem
+subir o `version:` do pubspec publicava um APK novo com o número velho, e
+nenhum celular o via (foi assim que os aparelhos ficaram presos na 1.2.2). O
+passo `Garantir versão maior que a publicada`, do job `release-metadata`,
+compara o pubspec com o `latest-mobile.json` anterior. Exemplo: pubspec
+`1.2.2` e publicada `1.2.2` fazem o APK sair como `1.2.3`, com um aviso
+amarelo no Actions pedindo para subir o pubspec. O `versionCode` do Android
+vira o maior entre o build do pubspec e o `github.run_number`, e por isso só
+cresce (o Android recusa instalar por cima com `versionCode` menor). Os dois
+valores entram no build por `--build-name` e `--build-number`.
+
 `package` é o APK universal e **não pode sair do manifesto**: é o único campo
 que as versões do app anteriores a 1.8.3 conhecem, e é por ele que elas
 continuam se atualizando.

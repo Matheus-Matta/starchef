@@ -9,7 +9,6 @@
 // ignore_for_file: unused_element
 
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -68,6 +67,7 @@ import '../../cash/presentation/cash_auth_dialog.dart';
 import 'pdv_cash_center_dialog.dart';
 import 'pdv_presenter.dart';
 import 'pdv_settings_menu_dialog.dart';
+import 'fiscal_refusal_visibility.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';

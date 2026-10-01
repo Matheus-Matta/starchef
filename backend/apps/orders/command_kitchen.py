@@ -22,8 +22,11 @@ from apps.orders.models import CommandBatch, CommandItem
 
 
 @transaction.atomic
-def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_printed=False):
+def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_printed=False, only=None):
     """Manda a rodada pendente desta comanda para a produção. Devolve o lote.
+
+    `only` restringe a rodada a esses itens: a balança manda o prato que pesou,
+    e não o que o garçom anotou e ainda não decidiu mandar.
 
     `client_batch_serial`/`offline_printed` existem para o PDV que já imprimiu
     localmente porque a rede estava fora: o serial garante que o `REF:` do
@@ -32,13 +35,14 @@ def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_
     import uuid
 
     with tenant_context(command.account):
-        itens = list(
-            CommandItem.objects.filter(
-                command_id=command.pk,
-                command_status=CommandItem.STATUS_PENDENTE,
-                status=CommandItem.STATUS_PENDING,
-            ).select_related("product")
+        pendentes = CommandItem.objects.filter(
+            command_id=command.pk,
+            command_status=CommandItem.STATUS_PENDENTE,
+            status=CommandItem.STATUS_PENDING,
         )
+        if only is not None:
+            pendentes = pendentes.filter(pk__in=[i.pk for i in only])
+        itens = list(pendentes.select_related("product"))
         if not itens:
             raise ValidationError("Não há itens pendentes para enviar à cozinha.")
 

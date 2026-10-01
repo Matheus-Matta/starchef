@@ -67,7 +67,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.garantir.outputs.version }}
+      build_number: ${{ steps.garantir.outputs.build_number }}
       changed: ${{ steps.mudou.outputs.changed }}
       should_build: ${{ steps.mudou.outputs.should_build }}
     steps:
@@ -137,6 +138,49 @@ jobs:
             echo "::notice::APK reaproveitado do release anterior ($motivo)."
           fi
 
+      # O APK RECONSTRUÍDO PRECISA SER MAIS NOVO QUE O PUBLICADO.
+      #
+      # O app só se atualiza quando o manifesto traz versão MAIOR que a
+      # instalada. Reconstruir sem subir o `version:` do pubspec publicava um
+      # APK novo com o número velho — e nenhum celular jamais o via. Foi o que
+      # deixou os aparelhos presos na 1.2.2. Aqui o patch sobe sozinho quando
+      # alguém esquece, e o versionCode acompanha o número do run (o Android
+      # recusa instalar por cima com versionCode menor).
+      - name: Garantir versão maior que a publicada
+        id: garantir
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANGED: ${{ steps.mudou.outputs.changed }}
+          MANIFEST_URL: ${{ vars.PDV_MOBILE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-mobile.json', github.repository) }}
+        run: |
+          set -euo pipefail
+          full="$(awk '/^version:/{print $2; exit}' pdv_mobile/pubspec.yaml)"
+          build="${full#*+}"
+          [[ "$build" =~ ^[0-9]+$ ]] || build=0
+          (( build < GITHUB_RUN_NUMBER )) && build="$GITHUB_RUN_NUMBER"
+          version="$VERSION"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$CHANGED" == "true" ]]; then
+            published="$(curl -fsSL --max-time 30 "$MANIFEST_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' || true)"
+            version="$(python3 - "$version" "$published" <<'PY'
+          import sys
+          atual, publicada = sys.argv[1], sys.argv[2]
+          partes = lambda v: [int(p) for p in v.split(".")] if v else [0, 0, 0]
+          a, p = partes(atual), partes(publicada)
+          if a <= p:
+              p[2] += 1
+              print(".".join(map(str, p)))
+              print(f"::warning::pubspec em {atual}, publicada {publicada}: o APK sai como {'.'.join(map(str, p))}. Suba o version: do pubspec.", file=sys.stderr)
+          else:
+              print(atual)
+          PY
+          )"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build" >> "$GITHUB_OUTPUT"
+          echo "::notice::APK $version (versionCode $build)"
+
   build-apk:
     needs: release-metadata
     if: needs.release-metadata.outputs.should_build == 'true'
@@ -153,6 +197,7 @@ jobs:
       # Numa tag a assinatura é obrigatória; em PR e disparo manual, não.
       REQUIRE_SIGNING: ${{ github.ref_type == 'tag' && 'true' || 'false' }}
       MOBILE_VERSION: ${{ needs.release-metadata.outputs.version }}
+      MOBILE_BUILD_NUMBER: ${{ needs.release-metadata.outputs.build_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -217,7 +262,8 @@ jobs:
           MANIFEST_URL: ${{ vars.PDV_MOBILE_MANIFEST_URL || format('https://github.com/{0}/releases/latest/download/latest-mobile.json', github.repository) }}
         run: |
           set -euo pipefail
-          defines=("--dart-define=PDV_MOBILE_MANIFEST_URL=$MANIFEST_URL")
+          defines=("--dart-define=PDV_MOBILE_MANIFEST_URL=$MANIFEST_URL"
+                   "--build-name=$MOBILE_VERSION" "--build-number=$MOBILE_BUILD_NUMBER")
           flutter build apk --release --split-per-abi "${defines[@]}"
           flutter build apk --release "${defines[@]}"
           out="$GITHUB_WORKSPACE/artifacts"

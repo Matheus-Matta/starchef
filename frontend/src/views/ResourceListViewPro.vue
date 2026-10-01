@@ -1249,6 +1249,14 @@
                           </button>
                           <button
                             v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
+                            type="button" class="rpro-btn rpro-btn--ghost rpro-btn--xs text-neutral-400 hover:text-red-400"
+                            title="Remover vínculo (para vincular de novo ao item certo)"
+                            @click="unlinkInboundItem(item, { onDone: afterInboundItemUnlink })"
+                          >
+                            <i class="pi pi-times-circle" />
+                          </button>
+                          <button
+                            v-if="inboundDetailData.status !== 'received' && inboundDetailData.fiscal_status !== 'CANCELLED' && inboundDetailData.status !== 'cancelled'"
                             type="button"
                             class="rpro-btn rpro-btn--ghost rpro-btn--xs text-neutral-400 hover:text-amber-400"
                             title="Ignorar este item (não dará entrada no estoque)"
@@ -2429,6 +2437,7 @@ import Tag from "primevue/tag";
 import Textarea from "primevue/textarea";
 import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
+import { useInboundItemUnlink } from "../composables/useInboundItemUnlink";
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
@@ -2452,6 +2461,12 @@ const router = useRouter();
 const auth = useAuthStore();
 const toast = useToast();
 const confirm = useConfirm();
+const { unlinkInboundItem } = useInboundItemUnlink({ confirm, toast });
+async function afterInboundItemUnlink() {
+  if (inboundDetailData.value?.id) await openInboundDetail(inboundDetailData.value);
+  await reload();
+  await fetchInboundStatusCounts();
+}
 
 const props = defineProps({
   title: { type: String, required: true },

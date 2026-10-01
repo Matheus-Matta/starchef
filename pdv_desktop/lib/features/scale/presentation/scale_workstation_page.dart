@@ -23,6 +23,7 @@ import '../../orders/presentation/product_config_dialog.dart';
 import '../data/scanner_binding_store.dart';
 import '../domain/hands_free_machine.dart';
 import '../services/serial_scanner_service.dart';
+import 'manual_weight_dialog.dart';
 
 class ScaleWorkstationPage extends StatefulWidget {
   const ScaleWorkstationPage({
@@ -313,7 +314,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   }
 
   Future<void> _pasteCommandFromClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final ClipboardData? data;
+    try {
+      data = await Clipboard.getData(Clipboard.kTextPlain);
+    } catch (_) {
+      return; // Área de transferência indisponível: o operador digita.
+    }
     if (!mounted || !_acceptsCommandInput) return;
     final pasted = data?.text?.replaceAll(RegExp(r'[\r\n\t]'), '').trim();
     if (pasted == null || pasted.isEmpty) return;
@@ -333,6 +339,19 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     final code = commandController.text.trim();
     if (code.isEmpty) return;
     _runEffects(machine.onCommandRead(code));
+  }
+
+  /// Falha que não veio da API: resposta num formato inesperado, porta
+  /// serial, área de transferência. Antes ela escapava sem tratamento, e a
+  /// tela ficava parada ("carregando" para sempre) sem dizer nada.
+  void _reportarFalha(Object error, StackTrace stack, String contexto) {
+    AppLogger.instance.error(
+      'scale_page_failure',
+      data: {'contexto': contexto},
+      cause: error,
+      stackTrace: stack,
+    );
+    if (mounted) setState(() => errorMessage = '$contexto: $error');
   }
 
   // ---------------------------------------------------------------- catálogo
@@ -370,6 +389,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       if (scaleId != null) await _loadScannerBinding();
     } on ApiException catch (error) {
       if (mounted) setState(() => errorMessage = error.message);
+    } catch (error, stack) {
+      _reportarFalha(error, stack, 'Balanças');
     } finally {
       if (mounted) setState(() => loadingScales = false);
     }
@@ -396,6 +417,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       if (mounted) {
         setState(() => errorMessage = 'Impressoras: ${error.message}');
       }
+    } catch (error, stack) {
+      _reportarFalha(error, stack, 'Impressoras');
     } finally {
       if (mounted) setState(() => loadingPrinters = false);
     }
@@ -446,6 +469,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               '${error.message}';
         });
       }
+    } catch (error, stack) {
+      if (mounted) setState(() => printerId = previous);
+      _reportarFalha(error, stack, 'Impressora da balança');
     } finally {
       if (mounted) setState(() => loadingPrinters = false);
     }
@@ -470,7 +496,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       started = true;
     });
     widget.onRunningChanged?.call(true);
-    await _attachReader();
+    try {
+      await _attachReader();
+    } catch (error, stack) {
+      // O peso manual continua disponível: a estação segue sem o leitor.
+      _reportarFalha(error, stack, 'Abrir a balança');
+    }
+    if (!mounted) return;
     machine.start();
     clock?.cancel();
     clock = Timer.periodic(const Duration(seconds: 1), (_) => _onClockTick());
@@ -586,6 +618,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           'A estação precisa estar em operação para falar com a balança.',
       };
       setState(() => errorMessage = message);
+    } catch (error, stack) {
+      _reportarFalha(error, stack, 'Pedir peso');
     } finally {
       if (mounted) setState(() => requestingWeight = false);
     }
@@ -837,6 +871,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
         recommendedAction:
             'A anotação continua na comanda. Verifique a impressora e tente de novo.',
       );
+    } catch (error, stack) {
+      _reportarFalha(error, stack, 'Reimprimir');
     } finally {
       if (mounted) setState(() => reprinting = false);
     }
@@ -1062,8 +1098,13 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   Future<void> _clearScannerBinding() async {
     final slot = scannerSlot;
     if (slot == null) return;
-    await _detachScanner();
-    await scannerBindingStore.clear(slot);
+    try {
+      await _detachScanner();
+      await scannerBindingStore.clear(slot);
+    } catch (error, stack) {
+      _reportarFalha(error, stack, 'Remover leitor');
+      return;
+    }
     if (!mounted) return;
     setState(() {
       scannerBinding = null;
@@ -1074,116 +1115,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   // --------------------------------------------------------- peso manual
 
   Future<void> _enterManualWeight() async {
-    var rawValue = '';
-    String? validationMessage;
-    final value = await showDialog<double>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          void useWeight() {
-            final parsed = double.tryParse(rawValue.replaceAll(',', '.'));
-            if (parsed == null || parsed <= 0) {
-              setDialogState(
-                () => validationMessage = 'Informe um peso maior que zero.',
-              );
-              return;
-            }
-            if (parsed > 999) {
-              setDialogState(
-                () => validationMessage = 'O peso informado é muito alto.',
-              );
-              return;
-            }
-            Navigator.pop(dialogContext, parsed);
-          }
-
-          return AppDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.touch_app_outlined),
-                SizedBox(width: 10),
-                Text('Peso manual'),
-              ],
-            ),
-            content: SizedBox(
-              width: 390,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 16,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainer,
-                      borderRadius: AppTheme.radius,
-                    ),
-                    child: Text(
-                      '${rawValue.isEmpty ? '0,000' : rawValue} kg',
-                      textAlign: TextAlign.end,
-                      style: const TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w900,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                  if (validationMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        validationMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  const SizedBox(height: 14),
-                  TouchKeypad(
-                    allowDecimal: true,
-                    onKey: (key) {
-                      setDialogState(() {
-                        validationMessage = null;
-                        rawValue = nextKeypadValue(
-                          rawValue,
-                          key,
-                          allowDecimal: true,
-                          maximumLength: 7,
-                        );
-                      });
-                    },
-                  ),
-                  TextButton.icon(
-                    onPressed: rawValue.isEmpty
-                        ? null
-                        : () => setDialogState(() {
-                            rawValue = '';
-                            validationMessage = null;
-                          }),
-                    icon: const Icon(Icons.clear),
-                    label: const Text('Limpar peso'),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton.icon(
-                onPressed: useWeight,
-                icon: const Icon(Icons.check),
-                label: const Text('Usar peso'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    final value = await showManualWeightDialog(context);
     if (!mounted || value == null || scaleId == null) return;
 
     // Um peso digitado entra na máquina como uma amostra já estável, seguindo

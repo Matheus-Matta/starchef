@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv_mobile/core/update/check_update_button.dart';
 import 'package:starchef_pdv_mobile/core/update/manual_update_action.dart';
 import 'package:starchef_pdv_mobile/core/update/mobile_update_service.dart';
 
@@ -11,6 +12,9 @@ class _UpdatedService extends MobileUpdateService {
   @override
   Future<MobileUpdateStatus> check() async =>
       const MobileUpdateStatus(phase: UpdatePhase.upToDate, installed: '1.2.2');
+
+  @override
+  Future<String> installedVersion() async => '1.2.2';
 
   @override
   void dispose() => disposed = true;
@@ -55,5 +59,32 @@ void main() {
 
     expect(find.textContaining('já está atualizado (1.2.2)'), findsOneWidget);
     expect(service.disposed, isFalse);
+  });
+
+  test('login e configuracoes mostram o botao de buscar atualizacao', () {
+    for (final path in [
+      'lib/features/auth/presentation/login_page.dart',
+      'lib/features/settings/presentation/api_settings_page.dart',
+    ]) {
+      expect(File(path).readAsStringSync(), contains('CheckUpdateButton('));
+    }
+  });
+
+  testWidgets('botao mostra a versao instalada e busca ao tocar', (
+    tester,
+  ) async {
+    final service = _UpdatedService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CheckUpdateButton(service: service)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('versão 1.2.2'), findsOneWidget);
+    await tester.tap(find.byType(CheckUpdateButton));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('já está atualizado (1.2.2)'), findsOneWidget);
   });
 }

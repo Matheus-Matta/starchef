@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import '../../../core/hardware/serial_port_release.dart';
 import '../data/scanner_binding_store.dart';
 
 class SerialScannerDevice {
@@ -143,8 +144,8 @@ class SerialScannerService {
     await _subscription?.cancel();
     _subscription = null;
     _reader.close();
-    if (_port.isOpen) _port.close();
-    _port.dispose();
+    // Mesmo defeito da balança: liberar com o leitor ativo fechava a janela.
+    releaseReadPort(_port);
     await _codes.close();
   }
 }

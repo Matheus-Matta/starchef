@@ -33,12 +33,37 @@ describe("emissão local no cadastro fiscal", () => {
     const tela = montar({}, false);
 
     expect(tela.text()).toContain("Esta conta não autoriza emissão local");
+    expect(tela.find('[data-test="local-fiscal-account-status"]').text()).toContain("Bloqueada");
   });
 
   it("some com o aviso quando a conta autoriza", () => {
     const tela = montar({}, true);
 
     expect(tela.text()).not.toContain("Esta conta não autoriza");
+    expect(tela.find('[data-test="local-fiscal-account-status"]').text()).toContain("Disponível");
+  });
+
+  it("separa os dois modos de uso sem inverter o significado", async () => {
+    const tela = montar({ local_fiscal_enabled: true }, true);
+
+    await tela.find('[data-test="local-mode-always"]').trigger("click");
+    await tela.find('[data-test="local-mode-contingency"]').trigger("click");
+
+    expect(tela.emitted("update-field")).toContainEqual([
+      "local_fiscal_contingency",
+      false,
+    ]);
+    expect(tela.emitted("update-field")).toContainEqual([
+      "local_fiscal_contingency",
+      true,
+    ]);
+  });
+
+  it("trava os modos enquanto a emissão local está desligada", () => {
+    const tela = montar({ local_fiscal_enabled: false }, true);
+
+    expect(tela.find('[data-test="local-mode-contingency"]').attributes("disabled")).toBeDefined();
+    expect(tela.find('[data-test="local-mode-always"]').attributes("disabled")).toBeDefined();
   });
 
   it("o endereço do Comunicador é editável com tudo ligado", () => {

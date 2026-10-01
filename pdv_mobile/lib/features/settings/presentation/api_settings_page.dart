@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/config/api_settings.dart';
+import '../../../core/update/check_update_button.dart';
 import '../../../core/widgets/labeled_field.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 
@@ -101,6 +102,9 @@ class _ApiSettingsPageState extends State<ApiSettingsPage> {
               : () => setState(() => _url.text = ApiSettings.defaultBaseUrl),
           child: const Text('Usar servidor padrão'),
         ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const CheckUpdateButton(),
       ],
     ),
   );

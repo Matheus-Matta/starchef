@@ -43,6 +43,7 @@ class MobilePrintAgent extends ChangeNotifier {
   String? _lastError;
   DateTime? _lastSyncAt;
   int _printedCount = 0;
+  bool _disposed = false;
 
   PrintAgentState get state => _state;
   bool get permissionGranted => _permissionGranted;
@@ -57,15 +58,17 @@ class MobilePrintAgent extends ChangeNotifier {
     if (_restaurantId == restaurantId && _timer != null) return;
     stop();
     _restaurantId = restaurantId;
-    _state = PrintAgentState.requestingPermission;
-    notifyListeners();
-    _permissionGranted = await permission.request();
-    _awaitingConfirmation.addAll(await confirmations.load());
-    await runNow();
     _timer = Timer.periodic(
       const Duration(seconds: 10),
       (_) => unawaited(runNow()),
     );
+    unawaited(_refreshPermission());
+    try {
+      _awaitingConfirmation.addAll(await confirmations.load());
+    } catch (_) {
+      // Arquivo de confirmações ilegível não pode desligar a impressão.
+    }
+    await runNow();
   }
 
   void stop() {
@@ -114,9 +117,27 @@ class MobilePrintAgent extends ChangeNotifier {
   }
 
   Future<void> requestPermissionAgain() async {
-    _permissionGranted = await permission.request();
-    notifyListeners();
+    await _refreshPermission();
     await runNow();
+  }
+
+  /// A permissão NUNCA segura a impressão.
+  ///
+  /// Socket TCP para a impressora da loja não depende dela; e o pedido ao
+  /// Android pode não voltar (tela recriada no meio do diálogo) ou voltar com
+  /// erro. Esperar por ele era o que deixava o agente parado em "Solicitando
+  /// permissão" para sempre, mesmo depois de a pessoa ter autorizado.
+  Future<void> _refreshPermission() async {
+    try {
+      _permissionGranted = await permission.request().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => _permissionGranted,
+      );
+    } catch (_) {
+      // Sem resposta do Android: segue imprimindo e deixa o botão da tela de
+      // impressão para pedir de novo.
+    }
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> openSystemSettings() => permission.openSettings();
@@ -163,6 +184,7 @@ class MobilePrintAgent extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     super.dispose();
   }

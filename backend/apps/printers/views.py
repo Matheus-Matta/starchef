@@ -294,7 +294,7 @@ class ScaleViewSet(BaseTenantViewSet):
         from apps.menu.models import Product
         from apps.orders.command_items import launch_item
         from apps.orders.serializers_command_item import CommandItemSerializer
-        from apps.printers.scale_command import weigh_into_command
+        from apps.printers.scale_command import send_weighing_to_production, weigh_into_command
         from apps.printers.services import register_command_weigh_print
         from apps.restaurants.models import Command
 
@@ -387,8 +387,8 @@ class ScaleViewSet(BaseTenantViewSet):
                     command=command,
                     user=request.user,
                     scale_reading=reading,
-                    # A etiqueta sai uma vez so, depois dos extras.
-                    do_print=False,
+                    # Etiqueta e rodada saem uma vez so, depois dos extras.
+                    do_print=False, send=False,
                 )
 
                 extra_items = []
@@ -430,7 +430,7 @@ class ScaleViewSet(BaseTenantViewSet):
                             customer_note=customer_note,
                         )
                     )
-
+                send_weighing_to_production(command=command, items=[weighed_item, *extra_items], user=request.user)
                 # Dentro da transacao de proposito: sem impressora resolvida, a
                 # pesagem inteira volta atras em vez de consumir a leitura e
                 # deixar o cliente sem a etiqueta que ele leva ao caixa.
@@ -618,8 +618,8 @@ class PrintJobViewSet(BaseTenantViewSet):
     # sempre a mesma lista concatenada.
     filterset_fields = {
         "restaurant": ["exact"],
-        "printer": ["exact"],
-        "job_type": ["exact"],
+        "printer": ["exact", "in"],
+        "job_type": ["exact", "in"],
         "status": ["exact", "in"],
     }
     ordering_fields = ["created_at", "printed_at"]

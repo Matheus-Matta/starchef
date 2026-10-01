@@ -110,12 +110,12 @@ mixin _FiscalSection on _HomePageShared {
       );
 
       if (invoice['emitted'] == false) {
-        if (!silentIfUnconfigured) {
-          // Nunca INVENTAR a causa. O texto fixo que estava aqui — "o provedor
-          // fiscal não está configurado" — aparecia em toda recusa que viesse
-          // sem `message`, e o operador lia isso com o provedor configurado e
-          // funcionando. A ordem abaixo vai do mais específico ao mais geral, e
-          // o último caso admite não saber em vez de chutar.
+        if (deveExibirRecusaFiscal(
+          invoice,
+          silenciarSemConfiguracao: silentIfUnconfigured,
+        )) {
+          // A resposta real vem primeiro: inventar "provedor não configurado"
+          // escondia recusas da Focus e mandava o operador corrigir o lugar errado.
           final motivo =
               '${invoice['message'] ?? invoice['error_message'] ?? ''}'.trim();
           showAppToast(

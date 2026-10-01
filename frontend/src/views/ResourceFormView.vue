@@ -202,6 +202,14 @@
                 >
                   <i class="pi pi-pencil" />
                 </button>
+                <button
+                  v-if="record.status !== 'received' && record.status !== 'cancelled'"
+                  type="button" class="rpro-btn rpro-btn--ghost rpro-btn--xs"
+                  title="Remover vínculo (para vincular de novo ao item certo)"
+                  @click="unlinkInboundItem(data, { onDone: reload })"
+                >
+                  <i class="pi pi-times-circle" />
+                </button>
               </div>
               <div v-else class="inbound-mapping-unlinked">
                 <button
@@ -979,6 +987,8 @@ import { getBrowserValue } from "../services/browserPersistence";
 import { normalizeApiError } from "../utils/apiError";
 import { cpfDigits } from "../utils/cpf";
 import { useToast } from "primevue/usetoast";
+import { useConfirm } from "primevue/useconfirm";
+import { useInboundItemUnlink } from "../composables/useInboundItemUnlink";
 import { detailMetaFor, resolveDetailType } from "../config/detailMeta";
 import { formatDateTime, formatMoney, formatPercent, formatQuantity, roundUpToCent } from "../utils/format";
 import { getByPath, resolveColumnValue } from "../utils/object";
@@ -1166,6 +1176,7 @@ const printing = ref(false);
 const emittingInvoice = ref(false);
 const resendingInvoice = ref(false);
 const toast = useToast();
+const { unlinkInboundItem } = useInboundItemUnlink({ confirm: useConfirm(), toast });
 
 // ── Inbound NF-e Item Mapping & Stock Receipt ────────────────────────
 const mapItemDialogVisible = ref(false);

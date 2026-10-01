@@ -101,7 +101,7 @@ def consume_command_binding(scale, *, now=None):
 
 
 @transaction.atomic
-def weigh_into_command(*, scale, command, user, scale_reading, do_print=True):
+def weigh_into_command(*, scale, command, user, scale_reading, do_print=True, send=True):
     """Anota a pesagem NA COMANDA. Nenhum pedido é aberto.
 
     Antes, a primeira pesagem abria um pedido para o cartão — e era esse gesto
@@ -125,6 +125,8 @@ def weigh_into_command(*, scale, command, user, scale_reading, do_print=True):
     # segunda anotação — o cliente pagando duas vezes pelo mesmo corte.
     scale_reading.command_item = item
     scale_reading.save(update_fields=["command_item", "updated_at"])
+    if send:
+        send_weighing_to_production(command=command, items=[item], user=user)
 
     if do_print:
         from apps.printers.services import register_command_weigh_print
@@ -133,3 +135,15 @@ def weigh_into_command(*, scale, command, user, scale_reading, do_print=True):
             command=command, item=item, scale=scale, user=user
         )
     return item
+
+
+def send_weighing_to_production(*, command, items, user):
+    """O que foi pesado já foi servido: vai direto para a produção.
+
+    Deixar o prato "a enviar" obrigava alguém a mandar à cozinha um consumo
+    que o cliente já tem na mão. Só os itens DESTA pesagem entram na rodada —
+    o que o garçom anotou no cartão e segurou continua esperando por ele.
+    """
+    from apps.orders.command_kitchen import send_command_to_kitchen
+
+    return send_command_to_kitchen(command, user, only=items)

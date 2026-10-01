@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import '../serial_port_release.dart';
+
 /// Falha ao abrir o canal com a balança.
 class ScaleTransportException implements Exception {
   const ScaleTransportException(this.message, {this.portBusy = false});
@@ -140,7 +142,9 @@ class SerialScaleTransport implements ScaleTransport {
     _writable = false;
     final port = _port;
     _port = null;
-    if (port != null) _disposePort(port);
+    // O leitor pode estar no meio de uma leitura nativa: liberar a porta
+    // agora derrubava o processo inteiro (ver `releaseReadPort`).
+    if (port != null) releaseReadPort(port);
   }
 
   static void _disposePort(SerialPort port) {

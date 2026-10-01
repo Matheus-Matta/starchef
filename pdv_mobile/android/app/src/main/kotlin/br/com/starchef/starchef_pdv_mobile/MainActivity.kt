@@ -127,10 +127,10 @@ class MainActivity : FlutterActivity() {
             result.success(true)
             return
         }
-        if (permissionResult != null) {
-            result.error("permission_in_progress", "A permissão já foi solicitada.", null)
-            return
-        }
+        // Um pedido anterior que nunca voltou (a tela foi recriada com o
+        // diálogo aberto) não pode travar os próximos: ele é encerrado como
+        // negado e este assume o lugar.
+        permissionResult?.success(false)
         permissionResult = result
         ActivityCompat.requestPermissions(this, arrayOf(permission), REQUEST_CODE)
     }

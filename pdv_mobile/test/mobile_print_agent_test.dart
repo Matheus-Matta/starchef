@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_mobile/core/network/api_client.dart';
 import 'package:starchef_pdv_mobile/core/network/api_exception.dart';
@@ -69,6 +71,42 @@ void main() {
     expect(writer.writes.single.$2, containsAllInOrder([0x1b, 0x40]));
   });
 
+  test('pede à API só comandas e cancelamentos das impressoras do celular', () async {
+    final api = _FakeApi();
+    final agent = MobilePrintAgent(
+      api: api,
+      permission: const _GrantedPermission(),
+      writer: _FakeWriter(),
+      confirmations: _MemoryConfirmations(),
+    );
+
+    await agent.start('restaurant-1');
+    agent.stop();
+
+    final query = api.queries.first;
+    expect(query['status__in'], 'pending,rendered');
+    expect('${query['job_type__in']}'.split(','), contains('kitchen_ticket'));
+    expect('${query['job_type__in']}'.split(','), isNot(contains('receipt')));
+    expect(query['printer__in'], 'printer-1');
+  });
+
+  test('imprime mesmo quando o pedido de permissão nunca responde', () async {
+    final api = _FakeApi();
+    final writer = _FakeWriter();
+    final agent = MobilePrintAgent(
+      api: api,
+      permission: const _HangingPermission(),
+      writer: writer,
+      confirmations: _MemoryConfirmations(),
+    );
+
+    await agent.start('restaurant-1');
+    agent.stop();
+
+    expect(writer.writes, hasLength(1));
+    expect(api.posts, contains('/print-jobs/job-1/mark-printed/'));
+  });
+
   test('libera a reserva quando a impressora de rede falha', () async {
     final api = _FakeApi();
     final writer = _FakeWriter(fail: true);
@@ -113,6 +151,7 @@ class _FakeApi extends ApiClient {
     : super(baseUrlProvider: () => 'https://example.test/api/v1');
 
   final posts = <String>[];
+  final queries = <Map<String, dynamic>>[];
   final bool failFirstMark;
   bool marked = false;
   bool _markFailed = false;
@@ -140,7 +179,8 @@ class _FakeApi extends ApiClient {
         ],
       };
     }
-    if (path == '/print-jobs/' && query?['status'] == 'pending') {
+    if (path == '/print-jobs/') {
+      queries.add(Map.of(query ?? const {}));
       if (marked) return {'results': <Object>[]};
       return {
         'results': [
@@ -186,6 +226,13 @@ class _FakeWriter extends NetworkPrinterWriter {
     writes.add((printer, bytes));
     if (fail) throw Exception('sem papel');
   }
+}
+
+class _HangingPermission extends NearbyPrinterPermission {
+  const _HangingPermission();
+
+  @override
+  Future<bool> request() => Completer<bool>().future;
 }
 
 class _GrantedPermission extends NearbyPrinterPermission {
