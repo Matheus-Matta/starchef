@@ -17,6 +17,7 @@ import Tooltip from "primevue/tooltip";
 import App from "./App.vue";
 import { router } from "./router";
 import { initSentry } from "./sentry";
+import { installStaleChunkReload } from "./utils/staleChunkReload";
 
 const app = createApp(App);
 
@@ -35,6 +36,9 @@ app.config.errorHandler = (error, instance, info) => {
 // Depois do errorHandler acima: o SDK do Sentry encadeia o handler existente
 // (chama o nosso depois de capturar), então a ordem de inicialização importa.
 initSentry(app, router);
+// Aba aberta antes de um deploy pede arquivos que já não existem: recarrega
+// uma vez para pegar a versão nova (ver `staleChunkReload.js`).
+installStaleChunkReload(router);
 
 app
   .use(PrimeVue, { ripple: true })

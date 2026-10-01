@@ -49,4 +49,10 @@ RUN chmod +x ./docker-entrypoint.sh
 ENV API_URL=/api/v1
 EXPOSE 8080
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["serve", "-s", "dist", "-l", "8080"]
+# SEM `-s`. Ele reescrevia TODO caminho inexistente para o index.html —
+# inclusive `/assets/HomeView-<hash-antigo>.js`. Depois de um deploy, a aba
+# aberta na versão anterior pedia o arquivo velho, recebia HTML com status 200
+# (e cache de um ano) e quebrava com "Failed to fetch dynamically imported
+# module". A reescrita agora mora no serve.json e só pega caminho SEM ponto:
+# rota do painel ("/pedidos") vira index.html; arquivo que falta dá 404.
+CMD ["serve", "dist", "-l", "8080"]
