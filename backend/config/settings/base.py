@@ -407,19 +407,25 @@ REST_FRAMEWORK = {
     # aprovação de caixa) têm limites próprios definidos nas views.
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
-        # Faixa própria (100x) para os terminais do PDV — ver apps.core.throttling.
+        # Terminal do PDV logado não tem limite — ver apps.core.throttling.
         "apps.core.throttling.TerminalAwareUserRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
         "anon": config("THROTTLE_RATE_ANON", default="60/min"),
         "user": config("THROTTLE_RATE_USER", default="2000/hour"),
+        # Login: por IP + conta (a loja inteira sai por um IP só); o teto do
+        # IP é largo e só segura varredura de muitas contas.
         "login": config("THROTTLE_RATE_LOGIN", default="10/min"),
-        "token_refresh": config("THROTTLE_RATE_TOKEN_REFRESH", default="30/min"),
+        "login_ip": config("THROTTLE_RATE_LOGIN_IP", default="120/min"),
+        # O refresh só funciona com um refresh token válido e assinado, então
+        # não há senha para adivinhar aqui; o limite é por IP, e todos os
+        # terminais da loja dividem o mesmo.
+        "token_refresh": config("THROTTLE_RATE_TOKEN_REFRESH", default="300/min"),
         "password_reset": config("THROTTLE_RATE_PASSWORD_RESET", default="5/min"),
         "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
         "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
-        # Terminais do PDV (desktop, app do garçom, PDV web): 100x o comum, e
-        # contados à parte do painel. Ver apps.core.throttling.
+        # Sem efeito hoje: o terminal logado passa direto (apps.core.throttling).
+        # Para voltar a ter teto, o mixin precisa usar terminal_scope de novo.
         "terminal_user": config("THROTTLE_RATE_TERMINAL_USER", default="200000/hour"),
         "terminal_device_poll": config("THROTTLE_RATE_TERMINAL_DEVICE_POLL", default="18000/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),

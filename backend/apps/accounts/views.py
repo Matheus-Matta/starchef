@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from apps.core.viewsets import JsonObjectBodyMixin
+from apps.core.throttling import LoginIpRateThrottle, LoginRateThrottle
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.permissions import effective_permission_codes
@@ -98,8 +99,7 @@ class CosmosConfigView(JsonObjectBodyMixin, APIView):
 
 class LoginView(JsonObjectBodyMixin, TokenObtainPairView):
     serializer_class = StarChefTokenObtainPairSerializer
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "login"
+    throttle_classes = [LoginRateThrottle, LoginIpRateThrottle]
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)

@@ -50,3 +50,36 @@ def test_terminal_sem_login_continua_limitado(monkeypatch):
         return AnonRateThrottle().allow_request(Request(request), _View())
 
     assert [tentar() for _ in range(3)] == [True, True, False]
+
+
+@pytest.mark.django_db
+def test_login_conta_por_usuario_e_nao_pela_loja_inteira(monkeypatch):
+    """Todos os terminais da loja saem pelo MESMO IP público.
+
+    Com o limite do login contado só por IP (10/min), a troca de turno — dez
+    aparelhos entrando juntos, um operador errando a senha — esgotava a cota
+    da loja inteira, e quem digitava certo recebia 429.
+    """
+    from rest_framework.request import Request
+    from rest_framework.parsers import JSONParser
+
+    from apps.core.throttling import LoginIpRateThrottle, LoginRateThrottle
+
+    monkeypatch.setattr(LoginRateThrottle, "THROTTLE_RATES", {"login": "2/min", "login_ip": "5/min"})
+    monkeypatch.setattr(LoginIpRateThrottle, "THROTTLE_RATES", {"login": "2/min", "login_ip": "5/min"})
+    cache.clear()
+    fabrica = APIRequestFactory()
+
+    def tentar(usuario):
+        request = Request(
+            fabrica.post("/api/v1/auth/login/", {"username": usuario}, format="json"),
+            parsers=[JSONParser()],
+        )
+        return all(t.allow_request(request, _View()) for t in (LoginRateThrottle(), LoginIpRateThrottle()))
+
+    # A mesma conta segue protegida contra adivinhação de senha...
+    assert [tentar("caixa1") for _ in range(3)] == [True, True, False]
+    # ...mas o colega no aparelho ao lado entra normalmente.
+    assert tentar("Caixa2") is True
+    # E o IP tem um teto próprio, mais largo, contra varredura de contas.
+    assert [tentar(f"op{i}") for i in range(3)] == [True, True, False]
