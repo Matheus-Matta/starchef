@@ -407,7 +407,8 @@ REST_FRAMEWORK = {
     # aprovação de caixa) têm limites próprios definidos nas views.
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        # Faixa própria (100x) para os terminais do PDV — ver apps.core.throttling.
+        "apps.core.throttling.TerminalAwareUserRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
         "anon": config("THROTTLE_RATE_ANON", default="60/min"),
@@ -417,6 +418,10 @@ REST_FRAMEWORK = {
         "password_reset": config("THROTTLE_RATE_PASSWORD_RESET", default="5/min"),
         "password_reset_confirm": config("THROTTLE_RATE_PASSWORD_RESET_CONFIRM", default="10/min"),
         "device_poll": config("THROTTLE_RATE_DEVICE_POLL", default="180/min"),
+        # Terminais do PDV (desktop, app do garçom, PDV web): 100x o comum, e
+        # contados à parte do painel. Ver apps.core.throttling.
+        "terminal_user": config("THROTTLE_RATE_TERMINAL_USER", default="200000/hour"),
+        "terminal_device_poll": config("THROTTLE_RATE_TERMINAL_DEVICE_POLL", default="18000/min"),
         "cash_approval": config("THROTTLE_RATE_CASH_APPROVAL", default="10/min"),
         # Matrícula de nó: aceita usuário e senha no corpo, então é alvo de
         # força bruta como qualquer login. Limite mais apertado que o do login

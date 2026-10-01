@@ -13,6 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
+from apps.core.throttling import TerminalScopeMixin
+
 from apps.core.audit import record_audit
 from apps.core.models import AuditLog
 from apps.core.numbers import MAX_WEIGHT, parse_decimal
@@ -29,8 +31,9 @@ from apps.printers.serializers import (
 from apps.printers.services import weigh_to_order
 
 
-class DevicePollingRateThrottle(UserRateThrottle):
+class DevicePollingRateThrottle(TerminalScopeMixin, UserRateThrottle):
     scope = "device_poll"
+    terminal_scope = "terminal_device_poll"
 
 
 class PrinterViewSet(BaseTenantViewSet):

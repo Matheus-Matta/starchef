@@ -70,7 +70,7 @@
     "backend/apps/printers/models.py": 358,
     "backend/apps/printers/services.py": 1245,
     "backend/apps/printers/tests/test_scale_command_weighing.py": 234,
-    "backend/apps/printers/views.py": 772,
+    "backend/apps/printers/views.py": 775,
     "backend/apps/reports/cash_movements.py": 281,
     "backend/apps/reports/order_cancellations.py": 201,
     "backend/apps/reports/views.py": 489,
