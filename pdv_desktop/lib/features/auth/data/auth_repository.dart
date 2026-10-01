@@ -4,6 +4,7 @@ import '../../../core/storage/durable_secure_store.dart';
 import '../../../core/storage/session_store.dart';
 import '../../cash/data/cash_auth_repository.dart';
 import '../domain/auth_session.dart';
+import 'session_refresher.dart';
 
 class AuthLoginResult {
   const AuthLoginResult({required this.session, required this.offline});
@@ -94,31 +95,11 @@ class AuthRepository {
     return AuthLoginResult(session: session, offline: false);
   }
 
-  /// Troca o refresh token por um novo access token.
-  Future<AuthSession> refresh(AuthSession current) async {
-    final json = await apiClient.post(
-      '/auth/refresh/',
-      body: {'refresh': current.refreshToken, 'no_cookie': true},
-    );
-    final access = '${json['access'] ?? ''}';
-    if (access.isEmpty) {
-      throw const ApiException(
-        'O servidor não devolveu um novo token de acesso.',
-        statusCode: 401,
-      );
-    }
-    final refreshed = AuthSession(
-      accessToken: access,
-      refreshToken: '${json['refresh'] ?? ''}'.isEmpty
-          ? current.refreshToken
-          : '${json['refresh']}',
-      user: current.user,
-    );
-    try {
-      await sessionStore.save(refreshed).timeout(const Duration(seconds: 5));
-    } catch (_) {}
-    return refreshed;
-  }
+  /// Troca o refresh token por um novo access token (ver `SessionRefresher`).
+  Future<AuthSession> refresh(AuthSession current) => SessionRefresher(
+    apiClient: apiClient,
+    sessionStore: sessionStore,
+  ).refresh(current);
 
   /// Restaura a sessão guardada no cofre do sistema.
   Future<AuthSession?> restoreSession() async =>

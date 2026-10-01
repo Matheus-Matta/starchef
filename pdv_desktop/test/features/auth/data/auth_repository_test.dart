@@ -112,6 +112,42 @@ void main() {
     await api.dispose();
   });
 
+  test('outro processo já renovou: adota o token guardado em vez de deslogar', () async {
+    // PDV e Balança Rápida são DOIS processos com a mesma sessão. O backend
+    // invalida o refresh antigo a cada renovação: quem ficou com o velho na
+    // memória recebia 401, achava que a sessão tinha expirado e APAGAVA o
+    // login do cofre — inclusive o que o outro processo acabara de gravar.
+    final recebidos = <String>[];
+    final api = clientWith(
+      MockClient((request) async {
+        final corpo = jsonDecode(request.body) as Map<String, dynamic>;
+        recebidos.add('${corpo['refresh']}');
+        if (corpo['refresh'] == 'refresh-do-outro-processo') {
+          return http.Response(
+            jsonEncode({'access': 'access-novo', 'refresh': 'refresh-novo'}),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({'detail': 'Token na lista de bloqueio.'}),
+          401,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+    final store = FakeSessionStore(sessionWith(refresh: 'refresh-do-outro-processo'));
+    final repository = AuthRepository(apiClient: api, sessionStore: store);
+
+    final renovada = await repository.refresh(sessionWith(refresh: 'refresh-velho-na-memoria'));
+
+    expect(renovada.accessToken, 'access-novo');
+    expect(store.stored!.refreshToken, 'refresh-novo');
+    expect(store.clears, 0);
+    expect(recebidos, ['refresh-do-outro-processo']);
+    await api.dispose();
+  });
+
   test('refresh recusado encerra a sessão e limpa o cofre', () async {
     final api = clientWith(
       MockClient(
