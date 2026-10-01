@@ -130,11 +130,17 @@ class OrderFilterSet(django_filters.FilterSet):
 class OrderViewSet(BaseTenantViewSet):
     serializer_class = OrderSerializer
     queryset = (
-        Order.objects.select_related(
-            "restaurant", "branch", "table", "command", "customer", "delivery_address", "invoice"
-        )
+        # Só a comanda vai no JOIN (a busca pelo número dela já junta a
+        # tabela). O resto vem por prefetch: nove tabelas largas num JOIN
+        # custavam ~60 ms só de PLANEJAMENTO no Postgres, a cada listagem.
+        Order.objects.select_related("command")
         .prefetch_related(
+            "restaurant", "branch", "table", "customer", "delivery_address", "invoice",
+            # `operator_label` lê o usuário responsável.
+            "responsible_user",
             "items__product",
+            # `restaurant_name` do item.
+            "items__restaurant",
             "items__addons",
             "items__batch",
             # `payments` entrou no serializer; sem o prefetch a listagem faria

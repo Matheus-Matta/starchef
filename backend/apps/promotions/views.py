@@ -16,7 +16,13 @@ class DiscountTableViewSet(BaseTenantViewSet):
         .prefetch_related(
             # As regras vêm na MESMA consulta, com os vínculos de produto: sem
             # isto, abrir uma tabela de dez regras custaria vinte idas ao banco.
-            Prefetch("rules", queryset=Promotion.objects.prefetch_related("product_links__product")),
+            # `all_objects`: montado no import, sem conta corrente, o
+            # TenantManager daria `none()` e a tabela viria sem regras.
+            Prefetch(
+                "rules",
+                queryset=Promotion.all_objects.filter(deleted_at__isnull=True)
+                .prefetch_related("product_links__product"),
+            ),
         )
         .all()
     )

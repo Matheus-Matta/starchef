@@ -221,7 +221,9 @@ class TableViewSet(ScannableCodesMixin, BaseTenantViewSet):
         if not to_table_id:
             raise ValidationError({"to_table_id": "Informe a mesa de destino."})
 
-        to_table = self.get_queryset().select_for_update().filter(pk=to_table_id).first()
+        # `of=self`: o queryset da view junta restaurante/filial/setor, e o
+        # Postgres recusa FOR UPDATE no lado anulável de um LEFT JOIN.
+        to_table = self.get_queryset().select_for_update(of=("self",)).filter(pk=to_table_id).first()
         if not to_table:
             raise ValidationError({"to_table_id": "Mesa destino não encontrada."})
 

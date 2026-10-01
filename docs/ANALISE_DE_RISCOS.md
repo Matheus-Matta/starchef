@@ -226,6 +226,50 @@ Dependência nova: `psycopg[binary,pool]`.
 produção mede o **sistema** — largura de coluna, pool, lock. As três
 correções acima são invisíveis em qualquer teste que rode em SQLite.
 
+### 2.5.5 Limite de requisições e o "minuto para concluir o pedido" (01/10/2026)
+
+Em produção o caixa levou quase um minuto para concluir pedidos. Carga com
+k6 contra o alvo de produção (8 workers, Postgres, Redis, **limites de
+produção**, 30 terminais com o mesmo usuário):
+
+| Onde | Era |
+| --- | --- |
+| Limite por usuário (2000/h) | Os terminais da loja dividiam o mesmo usuário e batiam no teto: 429 no meio da venda. Desde a v3.0.72 terminal logado (`X-Terminal-Id` + autenticado) não passa por limite nenhum. **1000 req/s, zero 429.** |
+| `apps/core/mixins.py` `TenantQuerySetMixin` | **Toda listagem fazia uma consulta por linha.** O mixin troca o queryset por `model.all_objects.all()` e descartava o `select_related`/`prefetch_related` declarado na view. Listar 10 pedidos: 125 consultas; 50 pedidos: 1 s e 187 KB, e o PDV relê essa lista a cada pedido alterado. Agora o mixin carrega as duas listas para o queryset novo: 50 pedidos em 0,35 s, mesma contagem de consultas com 2 ou 8 pedidos |
+| `apps/payments/views.py`, `apps/promotions/views.py` `Prefetch(queryset=Model.objects…)` | Escondido pelo defeito acima. O `Prefetch` no corpo da classe é montado no **import**, sem conta corrente: o TenantManager devolve `none()` e o cache nasce vazio para sempre. Com o prefetch passando a valer, o caixa apareceria sem sessão aberta e a tabela de desconto sem regras. Agora os dois usam `all_objects` (o escopo vem do pai, já filtrado pela conta), e um teste varre todas as views da API atrás de prefetch vazio |
+| `apps/kitchen/station_views.py` `apply-template-rules` | Também escondido: a ação cria colunas e validava as regras contra a lista de colunas guardada pelo prefetch, de antes delas existirem. Agora carrega a estação sem prefetch |
+| Login (10/min por IP) | Todos os aparelhos da loja saem pelo mesmo IP: na troca de turno a loja inteira dividia dez tentativas. Agora é por IP + conta (10/min), com teto largo por IP (120/min) |
+| Refresh (30/min por IP) | Sem senha a adivinhar (exige refresh token válido): 300/min |
+| `infra/reverse-proxy.example.conf` | 30 r/s e 20 conexões **por IP = por loja**. Subiu para 300 r/s e 300 conexões; `nodelay` documentado como obrigatório — sem ele o nginx segura o excedente na fila e o sintoma é exatamente o pedido demorando um minuto, sem erro |
+
+**O que a carga mostrou além do limite:** sem 429 nenhum, passar da
+capacidade dá o mesmo sintoma. A requisição espera conexão do pool, desiste
+em `POSTGRES_POOL_TIMEOUT` (10 s) com 503, e a venda leva de 20 s a 60 s.
+
+- A rota cara é `GET /orders/`, que o PDV relê a cada pedido alterado. Além
+  do N+1, a consulta juntava nove tabelas largas e o Postgres gastava ~60 ms
+  só **planejando** (15 ms executando), toda vez. Agora só a comanda vai no
+  JOIN e o resto vem por prefetch: banco de 85 ms para 25 ms por listagem.
+- Com 8 workers, 8 clientes simultâneos tiram 43 req/s de `/orders/` sem
+  erro nenhum (mediana 134 ms); 32 simultâneos, 0,8 s, ainda sem erro. Venda
+  isolada: 0,6 s.
+- O colapso de 10 s aparece quando um worker recebe mais requisições ao
+  mesmo tempo do que as 10 conexões do pool dele. Conexão persistente
+  (keep-alive) gruda num worker, então um worker afoga enquanto outro está
+  parado. É dimensionamento: `POSTGRES_POOL_MAX` por worker contra a
+  concorrência real, e `GUNICORN_WORKERS × POSTGRES_POOL_MAX` dentro do
+  `max_connections` (16 × 10 = 160 > 100 derrubou o teste com
+  `too many clients`).
+
+Também apareceu, só no Postgres: com o `select_related` passando a valer,
+`transfer-commands` fazia `select_for_update()` sobre um LEFT JOIN, e o
+Postgres recusa (500). Agora usa `of=("self",)`. O SQLite não pega isso;
+a suíte inteira foi rodada nos dois bancos.
+
+Testes: `test_listar_pedidos_custa_o_mesmo_com_2_ou_com_8`,
+`test_nenhum_prefetch_nasce_vazio_no_import`,
+`test_login_conta_por_usuario_e_nao_pela_loja_inteira`.
+
 ### 2.6 Frontend
 
 `PdvView.vue` lia `error.response.data.detail` em quatro pontos — **campo que o

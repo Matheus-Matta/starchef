@@ -90,7 +90,11 @@ class CashStationViewSet(BaseTenantViewSet):
         "operators",
         Prefetch(
             "sessions",
-            queryset=CashRegister.objects.select_related("opened_by").order_by("-opened_at"),
+            # `all_objects`: este queryset é montado no import, sem conta
+            # corrente, e o TenantManager devolveria `none()` para sempre. O
+            # escopo já vem do caixa, que o mixin filtrou pela conta.
+            queryset=CashRegister.all_objects.filter(deleted_at__isnull=True)
+            .select_related("opened_by").order_by("-opened_at"),
             to_attr="prefetched_sessions",
         ),
     ).all()

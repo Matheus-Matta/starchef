@@ -39,6 +39,10 @@ class TenantQuerySetMixin:
         include_deleted = self._wants_deleted_records()
         if hasattr(model, "all_objects"):
             queryset = model.all_objects.all()
+            # Trocar de manager descartava o select/prefetch que a view
+            # declarou, e toda listagem fazia uma consulta por linha.
+            queryset.query.select_related = base_queryset.query.select_related
+            queryset = queryset.prefetch_related(*base_queryset._prefetch_related_lookups)
             if model_has_field(model, "deleted_at") and not include_deleted:
                 queryset = queryset.filter(deleted_at__isnull=True)
         else:

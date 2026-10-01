@@ -89,7 +89,9 @@ class KdsStationViewSet(BaseTenantViewSet):
             return Response({"template": "Modelo inválido."}, status=status.HTTP_400_BAD_REQUEST)
         with transaction.atomic():
             station = self.get_object()
-            station = self.get_queryset().select_for_update().get(pk=station.pk)
+            # Sem o prefetch: esta ação cria colunas, e a validação das regras
+            # leria a lista guardada antes delas existirem.
+            station = self.get_queryset().prefetch_related(None).select_for_update().get(pk=station.pk)
             columns = list(station.columns.all().order_by("position", "id"))
             current_defaults = (
                 validate_station_rules(template_rules(columns, include_cancelled=template["key"] == "cozinha"), station)
