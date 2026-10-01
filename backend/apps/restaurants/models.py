@@ -346,9 +346,11 @@ class Command(TenantModel):
         from apps.orders.command_billing import command_has_pending_items
 
         # A anotação da listagem, quando existe, já trouxe a resposta do banco.
+        # As duas regras de baixo, já respondidas: ter o que cobrar OU estar
+        # presa a um pedido aberto (`command_listing.anotar_estado`).
         contados = getattr(self, "pendentes", None)
         if contados is not None:
-            return contados > 0
+            return contados > 0 or bool(getattr(self, "pedido_aberto", False))
         if self.pk is None:
             return False
         # A CONTA PRECISA SER A DO CARTÃO, e não a que estiver no ar.

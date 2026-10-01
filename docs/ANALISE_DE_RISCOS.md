@@ -266,7 +266,45 @@ Também apareceu, só no Postgres: com o `select_related` passando a valer,
 Postgres recusa (500). Agora usa `of=("self",)`. O SQLite não pega isso;
 a suíte inteira foi rodada nos dois bancos.
 
-Testes: `test_listar_pedidos_custa_o_mesmo_com_2_ou_com_8`,
+**O pico de produção: mais de 500 comandas abertas.** A lista de comandas
+era a rota mais cara. O `CommandViewSet` declarava a anotação que conta o
+pendente de todos os cartões numa consulta, mas o mixin também descartava o
+`annotate`: cada cartão custava quatro consultas (100 comandas, 405
+consultas, 1 s por página; a grade inteira de 520 comandas, 6 páginas,
+5,3 s). O PDV relê essa grade a cada comanda alterada, em cada terminal.
+
+A anotação nunca tinha rodado em produção, e ligada como estava ela
+**mudava a resposta**: ignorava a regra "comanda presa a um pedido aberto
+está em uso" (a comanda aparecia livre), contava item apagado e devolvia o
+total zero como `"0"` em vez de `"0.00"`. E, por virar `GROUP BY`, o Django
+ignora `Meta.ordering`: a grade saía embaralhada. Agora
+`apps/restaurants/command_listing.py` reproduz as três regras do caminho
+lento, é aplicada depois do mixin e mantém a ordem pelo número.
+`test_lista_rapida_responde_igual_ao_caminho_lento` compara os dois
+caminhos caso a caso (e falha se a regra do pedido aberto sair).
+
+Ficam três views com `annotate` no corpo da classe que também nunca rodou
+(tabela de desconto, cupom, grupo de cliente). Não foram ligadas: o caminho
+de hoje é o que está em produção.
+
+Validação contra a v3.0.72, em cópias idênticas do mesmo banco com 520
+comandas abertas: 396 leituras (toda rota, quatro perfis) e 29 escritas
+iguais campo a campo (sobram só `last_login` e a ordem dos itens de receita,
+que não tem `ordering` e já era arbitrária). Pico simulado (30 terminais
+relendo comandas/pedidos/mesas/cozinha sem parar + garçons lançando 4
+itens/s):
+
+| | v3.0.72 | agora |
+| --- | --- | --- |
+| Releitura da tela do PDV | 23 s (máx. 40 s) | 6 s (máx. 12 s) |
+| Lançar item na comanda | 3,2 s (p95 10,8 s) | 1,25 s (p95 3,4 s) |
+| Erros | 11 | 0 |
+| Grade inteira de comandas, sozinha | 5,3 s | 0,56 s |
+
+Testes: `test_listar_comandas_custa_o_mesmo_com_2_ou_com_8`,
+`test_lista_rapida_responde_igual_ao_caminho_lento`,
+`test_lista_continua_na_ordem_do_numero`,
+`test_listar_pedidos_custa_o_mesmo_com_2_ou_com_8`,
 `test_nenhum_prefetch_nasce_vazio_no_import`,
 `test_login_conta_por_usuario_e_nao_pela_loja_inteira`.
 

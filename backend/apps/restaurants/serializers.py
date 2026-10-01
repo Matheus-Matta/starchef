@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from rest_framework import serializers
 
@@ -200,7 +202,9 @@ class CommandSerializer(TenantModelSerializer):
     def get_pending_total(self, obj):
         anotado = getattr(obj, "pendente_total", None)
         if anotado is not None:
-            return str(anotado)
+            # Duas casas, como o caminho lento: o SQLite devolve o zero do
+            # Coalesce como "0".
+            return str(Decimal(anotado).quantize(Decimal("0.01")))
         from apps.orders.command_billing import total_pendente
 
         return str(total_pendente(obj.pk))

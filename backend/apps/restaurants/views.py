@@ -1,10 +1,6 @@
-from decimal import Decimal
-
 import django_filters
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Q, Sum
-from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -311,38 +307,21 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
 
     serializer_class = CommandSerializer
 
-    # "Em uso" é ter anotação PENDENTE, e a grade precisa disso em TODA linha.
-    # Contado aqui, numa consulta só, e não por cartão: uma tela com duzentas
-    # comandas faria duzentas idas ao banco só para pintar o selo de estado.
-    queryset = (
-        Command.objects.select_related("restaurant", "branch")
-        .annotate(
-            # Conta só o que TEM VALOR. Um cartão cujos pendentes são todos
-            # cortesia ou cancelados não tem conta nenhuma, e pintá-lo de
-            # ocupado manda o operador procurar o que não existe.
-            pendentes=Count(
-                "command_items",
-                filter=Q(command_items__command_status="pending")
-                & ~Q(command_items__status__in=["cancelled", "comped"]),
-                distinct=True,
-            ),
-            pendente_total=Coalesce(
-                Sum(
-                    "command_items__total_price",
-                    filter=Q(command_items__command_status="pending")
-                    & ~Q(command_items__status__in=["cancelled", "comped"]),
-                ),
-                Decimal("0.00"),
-            ),
-        )
-        .all()
-    )
+    # O estado de cada cartão vem anotado em `get_queryset`, e não aqui: o
+    # mixin de tenant remonta o queryset e descartava a anotação declarada no
+    # corpo da classe (ver apps/restaurants/command_listing.py).
+    queryset = Command.objects.select_related("restaurant", "branch", "current_table").all()
     filterset_class = CommandFilterSet
     search_fields = ["number", "code", "customer_name"]
     # `status` saiu da ordenação: não há coluna para o banco ordenar. Quem
     # quer os ocupados primeiro filtra por `status=occupied`.
     ordering_fields = ["number", "updated_at"]
     MAX_BULK_COMMANDS = 200
+
+    def get_queryset(self):
+        from .command_listing import anotar_estado
+
+        return anotar_estado(super().get_queryset())
 
     def destroy(self, request, *args, **kwargs):
         command = self.get_object()
