@@ -255,4 +255,44 @@ void main() {
     machine.addExtra('refrigerante', 0);
     expect(machine.extras.containsKey('refrigerante'), isFalse);
   });
+
+  test(
+    'depois de lançar, o prato que ficou na balança não vira pesagem nova',
+    () {
+      // A balança continua mandando o peso do prato que ainda está em cima
+      // dela. Antes o peso "voltava" na tela e, ao estabilizar, a estação
+      // capturava o MESMO prato de novo — pronto para ser lançado na próxima
+      // comanda lida.
+      machine.start();
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onLaunched();
+      machine.readyForNext();
+
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      machine.onSample(sample(0.481), pricePerKg: 50);
+
+      expect(machine.currentWeightKg, 0);
+      expect(machine.weighedItem, isNull);
+      expect(machine.state, HandsFreeState.waitingWeight);
+
+      // Prato retirado: a próxima pesagem volta a valer, mesmo do mesmo peso.
+      machine.onSample(sample(0), pricePerKg: 50);
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      expect(machine.weighedItem?.weightKg, 0.480);
+    },
+  );
+
+  test('outro prato (peso diferente) é aceito sem precisar zerar antes', () {
+    // Balança que não manda o zero ao retirar o prato não pode travar a fila.
+    machine.start();
+    machine.onSample(sample(0.480), pricePerKg: 50);
+    machine.onCommandRead('0041');
+    machine.onLaunched();
+    machine.readyForNext();
+
+    machine.onSample(sample(0.735), pricePerKg: 50);
+
+    expect(machine.weighedItem?.weightKg, 0.735);
+  });
 }

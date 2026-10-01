@@ -96,6 +96,12 @@ class HandsFreeMachine extends ChangeNotifier {
   String? _failureMessage;
   DateTime? _commandDeadline;
   double _currentWeightKg = 0;
+
+  /// Peso do prato que ACABOU de ser lançado e pode ainda estar na balança.
+  /// Enquanto ele aparecer, a tela mostra 0 e nada é capturado — senão o
+  /// mesmo prato virava pesagem nova para a próxima comanda lida.
+  double? _pesoJaLancado;
+  static const _mesmoPratoKg = 0.010;
   bool _stable = false;
 
   HandsFreeState get state => _state;
@@ -145,10 +151,19 @@ class HandsFreeMachine extends ChangeNotifier {
     ScaleSample sample, {
     required double pricePerKg,
   }) {
+    final empty = sample.weightKg <= minimumWeightKg;
+    final jaLancado = _pesoJaLancado;
+    if (_state == HandsFreeState.waitingWeight && jaLancado != null) {
+      // Zerou (prato retirado) ou chegou OUTRO peso (balança que não manda o
+      // zero): libera. O mesmo peso é o prato antigo — ignora.
+      if (!empty && (sample.weightKg - jaLancado).abs() <= _mesmoPratoKg) {
+        return const [];
+      }
+      _pesoJaLancado = null;
+    }
     _currentWeightKg = sample.weightKg;
     _stable = sample.stable == true;
     final effects = <HandsFreeEffect>[];
-    final empty = sample.weightKg <= minimumWeightKg;
 
     switch (_state) {
       case HandsFreeState.waitingWeight:
@@ -236,8 +251,10 @@ class HandsFreeMachine extends ChangeNotifier {
 
   /// Após o aviso de sucesso, volta ao Estado 1 para o próximo cliente.
   List<HandsFreeEffect> readyForNext() {
+    final lancado = _weighedItem?.weightKg;
     _state = HandsFreeState.waitingWeight;
     _resetOperation();
+    _pesoJaLancado = lancado;
     notifyListeners();
     return const [];
   }
@@ -273,5 +290,6 @@ class HandsFreeMachine extends ChangeNotifier {
     _commandDeadline = null;
     _currentWeightKg = 0;
     _stable = false;
+    _pesoJaLancado = null;
   }
 }
