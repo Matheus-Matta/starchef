@@ -494,6 +494,13 @@ class ScaleReadingViewSet(BaseTenantViewSet):
         # motivo em branco para sempre. Quem fosse investigar "por que o prato
         # deste cliente nao foi cobrado?" nao acharia resposta exatamente onde
         # a pergunta e feita.
+        # Leitura da Balança Rápida para ELA MESMA lançar (`checkout-command`):
+        # o automático daqui a consumia antes (pedido de balcão fantasma no
+        # modo balcão) e o lançamento na comanda falhava com "Leitura inválida,
+        # instável ou já utilizada". Nem o cartão aproximado é consumido.
+        if str(self.request.data.get("for_checkout", "")).lower() in ("1", "true"):
+            super().perform_create(serializer)
+            return
         comanda, recusa = self.command_mode_refusal(scale, serializer.validated_data)
         if recusa:
             serializer.validated_data["notes"] = recusa

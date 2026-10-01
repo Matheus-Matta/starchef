@@ -688,6 +688,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             'tare_kg': '0.000',
             'is_stable': true,
             'source': 'agent',
+            // Esta leitura é desta estação: o backend não dispara o lançamento
+            // automático da balança nela (consumia a leitura antes do checkout).
+            'for_checkout': true,
           },
           accessToken: widget.accessToken,
         );

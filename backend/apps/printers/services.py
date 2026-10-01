@@ -1197,6 +1197,7 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
 
     with tenant_context(command.account):
         printer = _resolve_weigh_printer(order=command, scale=scale)
+        codigo = str(command.code or command.number or "")
         linhas = [
             f"COMANDA {command.number}",
             "-" * 32,
@@ -1219,6 +1220,13 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
                 "command": str(command.id),
                 "command_number": command.number,
                 "item": str(item.id),
+                # O código da comanda no fim da etiqueta, em barras E em QR: é
+                # o papel que o cliente leva ao caixa, e o caixa lê o cartão
+                # com o leitor que tiver. O agente do PDV imprime os dois a
+                # partir do payload_version 2.
+                "payload_version": 2,
+                "barcode": {"symbology": "CODE128", "value": codigo},
+                "qr_data": codigo,
             },
             created_by=user,
             updated_by=user,
