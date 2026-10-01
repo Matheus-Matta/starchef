@@ -1,0 +1,2 @@
+# O instalador roda no Linux da loja: CRLF quebraria o `sh` na primeira linha.
+*.sh text eol=lf

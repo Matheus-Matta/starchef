@@ -1,0 +1,23 @@
+# A PORTA ÚNICA da loja: http://IP-DO-SERVIDOR/
+#
+# Tudo o que é do backend vai para ele; o resto é a retaguarda web. Mesma
+# origem para os dois é o que dispensa CORS e deixa o cookie de login
+# (SameSite=Lax) funcionar no navegador.
+#
+# Sem TLS de propósito: rede interna do restaurante, sem domínio público para
+# emitir certificado. WebSocket (/ws/) passa sem configuração extra.
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	@backend path /api/* /ws/* /admin /admin/* /static/* /media/* /health/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:8080
+	}
+}

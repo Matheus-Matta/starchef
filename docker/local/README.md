@@ -1,57 +1,103 @@
-# Backend da loja (`docker-compose.local.yml`)
+# StarChef na loja (`docker-compose.local.yml`)
 
-O servidor que roda **dentro do restaurante**. O PDV, o KDS e o app do garçom
-falam só com ele; ele fala com a nuvem por conta própria, quando dá.
+O StarChef **inteiro** rodando num servidor dentro do restaurante: retaguarda
+web, API para o PDV/KDS/garçom, banco e filas. Pronto para produção, com as
+**mesmas imagens da nuvem**: nada é compilado na loja.
 
-## A ideia em uma frase
+## Instalar em 3 passos
 
-É a **mesma imagem** do backend da nuvem, o mesmo código e as mesmas
-migrations. `SYNC_NODE_TYPE=local` é o que muda o papel — não há um "backend
-local" separado para manter.
+1. Instale o **Docker** no servidor da loja (Docker Desktop no Windows, Docker
+   Engine no Linux) e copie esta pasta para ele.
+2. Rode o instalador **nesta pasta**:
+   - Windows: `powershell -ExecutionPolicy Bypass -File .\instalar.ps1`
+   - Linux: `sh instalar.sh`
+3. Ele pergunta o **IP do servidor** na rede da loja (já sugere um) e faz o resto.
 
-A **faixa de numeração de pedido** não sai dessa variável: quem decide é o
-`SyncNode` que a matrícula grava no banco (loja a partir de 1, nuvem a partir
-de 1.000.000). A variável fica fixada no `docker-compose`, acima do
-`.env.local`, justamente para uma loja não virar nuvem por um typo no arquivo
-que o cliente edita — ver "O que roda no boot".
+No fim aparece:
 
-    PDV, KDS, garçom
-            ↓  (rede interna da loja)
-    backend  →  postgres local + outbox
-            ↑
-    sync_worker  ⇄  WSS  ⇄  nuvem
+```
+StarChef no ar.
+  Painel:       http://192.168.0.10/
+  API do PDV:   http://192.168.0.10/api/v1
+  Admin:        http://192.168.0.10/admin/
+  Primeiro acesso: abra o Admin e use o token XXXX para criar a conta e o administrador.
+```
 
-## Serviços, e por que cada um está aqui
+**O que o instalador faz por você:** cria o `.env.local` a partir do
+`.env.local.example`, gera a chave do Django, a senha do banco e os tokens,
+baixa as imagens, sobe tudo e espera o backend ficar pronto. Rodar de novo é
+seguro: ele só completa o que falta e nunca troca o que já está preenchido.
+
+## As únicas variáveis que importam
+
+Tudo fica no `.env.local`. Os quatro obrigatórios estão no topo:
+
+| Variável | O que é | Quem preenche |
+|---|---|---|
+| `STARCHEF_VERSION` | versão das imagens, ex. `3.0.62` | já vem no exemplo |
+| `STORE_HOST` | IP do servidor na rede da loja, ex. `192.168.0.10` | o instalador pergunta |
+| `DJANGO_SECRET_KEY` | chave do Django | o instalador gera |
+| `POSTGRES_PASSWORD` | senha do banco | o instalador gera |
+
+**Quer a loja conversando com a nuvem?** Mude `SYNC_ENABLED=true` e preencha
+`SYNC_ACCOUNT_ID`, `SYNC_ENROLL_USERNAME` e `SYNC_ENROLL_PASSWORD` (um
+administrador da conta). Depois rode o instalador de novo.
+
+Os endereços (`ALLOWED_HOSTS`, CORS, CSRF) saem **sozinhos** do `STORE_HOST`.
+Antes eram três listas a manter iguais à mão, e esquecer o IP numa delas dava
+"Bad Request (400)" sem pista nenhuma.
+
+## Endereços
+
+| Para | Endereço |
+|---|---|
+| Painel (navegador) | `http://IP/` |
+| PDV, KDS, app do garçom | `http://IP/api/v1` |
+| Admin do Django | `http://IP/admin/` |
+| API direta (PDVs antigos) | `http://IP:8000/api/v1` |
+
+A porta **80** é a porta única: o `proxy` (Caddy) manda `/api`, `/ws`,
+`/admin`, `/static` e `/media` para o backend e o resto para o painel. Mesma
+origem é o que dispensa CORS e deixa o cookie de login funcionar. A **8000**
+continua aberta para PDVs que já apontam para ela.
+
+Sem HTTPS de propósito: é rede interna e não há domínio público para emitir
+certificado. **Restrinja as portas 80 e 8000 no firewall** à faixa da loja.
+
+## Serviços
 
 | Serviço | Para quê |
 |---|---|
-| `postgres` | O banco da loja. A fonte da verdade local. |
-| `redis` | Cache, canal do Channels e broker do Celery. |
+| `proxy` | A porta única da loja (Caddy). |
+| `frontend` | A retaguarda web, a mesma do app.starchef.com.br. |
 | `backend` | A API que os aplicativos da loja consomem. |
 | `celery_worker` | Tarefas do domínio + retry/reconciliação da sincronização. |
 | `celery_beat` | O relógio dessas periódicas. |
-| `sync_worker` | **O processo novo:** mantém a conexão WSS com a nuvem. |
+| `sync_worker` | A conexão WSS com a nuvem. Com `SYNC_ENABLED=false` fica parado de propósito, sem erro. |
+| `postgres` | O banco da loja. A fonte da verdade local. |
+| `redis` | Cache, canal do Channels e broker do Celery. |
 
-`sync_worker` **não** é um worker Celery. Ele não consome fila de broker: ele
-abre a conexão de saída para a nuvem, envia a outbox e aplica o que chega. Todo
-o estado dele está no PostgreSQL — matar o container no meio de um lote não
-perde nada, ele retoma de onde parou.
+## Dia a dia
 
-## Subir
+Rode na pasta, trocando `dc` por
+`docker compose --env-file .env.local -f docker-compose.local.yml`:
 
-```
-cp .env.local.example .env.local
-```
+| Para | Comando |
+|---|---|
+| Ver se está tudo de pé | `dc ps` |
+| Ver o log do backend | `dc logs -f backend` |
+| Reiniciar tudo | `dc restart` |
+| Parar (os dados ficam) | `dc down` |
+| **Atualizar a versão** | troque `STARCHEF_VERSION` no `.env.local` e `dc pull && dc up -d` |
+| **Backup do banco** | `dc exec -T postgres pg_dump -U starchef starchef_local > backup.sql` |
+| Restaurar o backup | `dc exec -T postgres psql -U starchef starchef_local < backup.sql` |
 
-Preencha, no mínimo: `DJANGO_SECRET_KEY`, `POSTGRES_PASSWORD`,
-`SYNC_CLOUD_API_URL`, `SYNC_CLOUD_WSS_URL`, `SYNC_ACCOUNT_ID`,
-`SYNC_ENROLL_USERNAME`, `SYNC_ENROLL_PASSWORD` e `SYNC_ENROLL_SECRET`. Então:
+Faça o backup **antes de atualizar a versão**: as migrations rodam sozinhas
+na subida, e um backup é o único caminho de volta.
 
-```
-docker compose --env-file .env.local -f docker-compose.local.yml up -d
-```
+**Nunca use `dc down -v`**: o `-v` apaga os volumes, e com eles o banco da loja.
 
-## O que acontece na primeira subida
+## Com sincronização: o que acontece na primeira subida
 
 1. `backend` aplica as migrations no banco vazio da loja.
 2. `sync_worker` vê que não há credencial e, com `SYNC_AUTO_ENROLL=true`, se
@@ -113,9 +159,9 @@ Nada é apagado antes da confirmação do outro lado. Um evento que falhou doze
 vezes vira `DEAD` — e continua no banco, com payload e erro íntegros.
 
 ```
-docker compose -f docker-compose.local.yml exec sync_worker python manage.py sync_status
-docker compose -f docker-compose.local.yml exec sync_worker python manage.py sync_recover --requeue
-docker compose -f docker-compose.local.yml exec sync_worker python manage.py sync_recover --export /app/sync/fila.json
+docker compose --env-file .env.local -f docker-compose.local.yml exec sync_worker python manage.py sync_status
+docker compose --env-file .env.local -f docker-compose.local.yml exec sync_worker python manage.py sync_recover --requeue
+docker compose --env-file .env.local -f docker-compose.local.yml exec sync_worker python manage.py sync_recover --export /app/sync/fila.json
 ```
 
 - `sync_status` — nós, fila, o que está parado e há quanto tempo.

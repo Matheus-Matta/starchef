@@ -1,31 +1,29 @@
-# O backend da LOJA: o servidor que roda dentro do restaurante.
+# O StarChef INTEIRO dentro do restaurante, pronto para produção.
 #
-# É a MESMA imagem do backend da nuvem, o mesmo código e as mesmas migrations.
-# A única diferença é `SYNC_NODE_TYPE=local` no .env.local — o papel do nó é
-# configuração, não build. Nada aqui precisa ser recompilado por causa disso.
+# São as MESMAS imagens da nuvem (backend e frontend), o mesmo código e as
+# mesmas migrations. Nada é compilado na loja: o compose baixa as imagens da
+# versão em `STARCHEF_VERSION` e sobe. O papel de "loja" é configuração
+# (`SYNC_NODE_TYPE=local`), não build.
 #
-# Só o essencial para a loja operar sem internet:
-#
+#   proxy        a PORTA ÚNICA da loja (http://IP-DO-SERVIDOR/)
+#   frontend     a retaguarda web (o mesmo painel do app.starchef.com.br)
+#   backend      a API que o PDV, o KDS e o app do garçom consomem
+#   celery_worker tarefas do domínio + retry/reconciliação da sincronização
+#   celery_beat  o relógio dessas tarefas periódicas
+#   sync_worker  a conexão WSS com a nuvem (só faz algo com SYNC_ENABLED=true)
 #   postgres     o banco da loja (a fonte da verdade local)
 #   redis        cache, canal do Channels e broker do Celery
-#   backend      a API que o PDV, o KDS e o app do garçom consomem
-#   celery_worker as tarefas do domínio + retry/reconciliação da sincronização
-#   celery_beat  o relógio dessas tarefas periódicas
-#   sync_worker  a conexão WSS com a nuvem (o processo novo)
 #
-# `sync_worker` NÃO é um worker Celery: ele mantém a conexão de saída com a
-# nuvem, envia a outbox e aplica o que chega. Matá-lo não perde nada — o estado
-# inteiro está no PostgreSQL, e ele retoma de onde parou.
+# A loja continua vendendo sem internet: o PDV fala com este servidor, e os
+# eventos se acumulam na outbox até a nuvem voltar.
 #
-# A loja continua vendendo com o sync_worker parado, com a nuvem fora do ar ou
-# sem internet nenhuma. O que para é a sincronização, não a operação: os
-# eventos se acumulam na outbox e sobem quando a conexão voltar.
-#
-# Suba com:
+# Primeira vez: rode `instalar.ps1` (Windows) ou `instalar.sh` (Linux). Eles
+# criam o `.env.local` com as senhas geradas e sobem tudo. À mão:
 #   docker compose --env-file .env.local -f docker-compose.local.yml up -d
 #
-# TLS e proxy reverso ficam FORA deste arquivo, como no compose da raiz. Na
-# loja o acesso é pela rede interna; a saída para a nuvem é o sync_worker.
+# Sem TLS de propósito: o acesso é pela rede interna do restaurante, e não há
+# domínio público para emitir certificado. Restrinja a porta no firewall do
+# host à faixa interna da loja.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -35,27 +33,50 @@ x-logging: &default-logging
 # Backend, workers e sync_worker compartilham a MESMA configuração. Repetir
 # isso quatro vezes é como os quatro saem de sincronia sem ninguém perceber.
 x-backend-base: &backend-base
-  image: ${BACKEND_IMAGE:-ghcr.io/matheus-matta/starchef-backend:latest}
+  image: "${BACKEND_IMAGE:-ghcr.io/matheus-matta/starchef-backend:${STARCHEF_VERSION:?defina STARCHEF_VERSION no .env.local, por exemplo 3.0.62}}"
   restart: unless-stopped
   user: "1000:1000"
   logging: *default-logging
   env_file:
     - .env.local
+  # `environment` ganha do `env_file`. O que está aqui é o que NÃO deve variar
+  # de uma loja para outra, ou o que se deriva de outra variável — o cliente
+  # edita só o `.env.local`, e um typo ali não desmonta a instalação.
   environment:
+    DJANGO_ENV: production
     DJANGO_SETTINGS_MODULE: config.settings.production
     DJANGO_DEBUG: "False"
+    USE_SQLITE_DATABASE: "False"
+    USE_LOCAL_MEMORY_SERVICES: "False"
     POSTGRES_HOST: postgres
     POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:-starchef_local}
+    POSTGRES_USER: ${POSTGRES_USER:-starchef}
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/1
     CELERY_RESULT_BACKEND: redis://redis:6379/2
-    # O papel deste nó. É a única linha que difere da nuvem.
-    #
-    # Fixado AQUI, e não no `.env.local`: `environment` tem precedência sobre
-    # `env_file`, então uma loja não vira nuvem por um typo no arquivo que o
-    # cliente edita. A faixa de numeração de pedido segue o `SyncNode`
-    # provisionado, e esta linha é o que sobra para o resto da sincronização.
+    # Tudo derivado de UMA variável, o endereço do servidor na rede da loja.
+    # Antes eram três listas para manter iguais à mão; esquecer o IP numa delas
+    # era "Bad Request (400)" no navegador sem pista nenhuma do motivo.
+    DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,backend,proxy,${STORE_HOST:?STORE_HOST é obrigatório (IP ou nome do servidor na rede da loja)}"
+    DJANGO_CORS_ALLOWED_ORIGINS: http://${STORE_HOST},http://${STORE_HOST}:${HTTP_PORT:-80},http://localhost,http://localhost:${HTTP_PORT:-80}
+    DJANGO_CSRF_TRUSTED_ORIGINS: http://${STORE_HOST},http://${STORE_HOST}:${HTTP_PORT:-80},http://localhost,http://localhost:${HTTP_PORT:-80}
+    # HTTP puro na rede interna: com estes ligados o login não grava o cookie
+    # (cookie Secure só viaja em HTTPS) e o redirect para https quebra tudo.
+    # Quem puser um proxy TLS na frente liga os quatro de volta no .env.local.
+    DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-False}
+    DJANGO_SESSION_COOKIE_SECURE: ${DJANGO_SESSION_COOKIE_SECURE:-False}
+    DJANGO_CSRF_COOKIE_SECURE: ${DJANGO_CSRF_COOKIE_SECURE:-False}
+    DJANGO_AUTH_COOKIE_SECURE: ${DJANGO_AUTH_COOKIE_SECURE:-False}
+    # O papel deste nó. Fixado aqui, e não no `.env.local`, para uma loja não
+    # virar nuvem por um typo no arquivo que o cliente edita. A faixa de
+    # numeração de pedido segue o `SyncNode` provisionado; o resto da
+    # sincronização lê daqui.
     SYNC_NODE_TYPE: local
+    # A versão que a loja anuncia no HELLO é a da imagem que está rodando —
+    # nunca uma cópia à mão que envelhece (o exemplo antigo dizia 3.0.14).
+    SYNC_APP_VERSION: ${STARCHEF_VERSION}
+    SYNC_ENROLL_ENV_PATH: /app/sync/credentials.env
   volumes:
     - backend_media:/app/media
     - backend_static:/app/staticfiles
@@ -64,14 +85,13 @@ x-backend-base: &backend-base
     - sync_credentials:/app/sync
     # Os pedaços de arquivo em trânsito ficam em `media/sync_tmp/`, DENTRO do
     # volume acima — não num volume próprio. Um segundo volume montado ali
-    # nasce como root (o caminho não existe na imagem, então o Docker o cria
-    # sem herdar dono), e o container roda como uid 1000: toda gravação de
+    # nasce como root, e o container roda como uid 1000: toda gravação de
     # pedaço falhava com "Permission denied".
   depends_on:
     postgres:
       condition: service_healthy
     redis:
-      condition: service_started
+      condition: service_healthy
   networks:
     - starchef-local
 
@@ -103,8 +123,6 @@ services:
     logging: *default-logging
     # `appendonly yes` porque o Redis aqui também é broker do Celery: sem
     # persistência, reiniciar o container descartaria tarefas enfileiradas.
-    # A fila de sincronização não depende disso (ela vive no PostgreSQL), mas
-    # as tarefas do domínio, sim.
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_MAXMEMORY:-192mb}", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
@@ -119,31 +137,23 @@ services:
   backend:
     <<: *backend-base
     mem_limit: ${BACKEND_MEM_LIMIT:-1g}
-    # `sync_install_triggers` depois do migrate: é a rede de segurança do §11.2,
-    # que captura escrita feita por fora do ORM (bulk, SQL direto). É
-    # idempotente, então roda em todo boot e acompanha o catálogo sem migration.
+    # `sync_install_triggers` depois do migrate: a rede de segurança que
+    # captura escrita feita por fora do ORM. Idempotente, roda em todo boot.
     #
-    # `check` no FIM, e não no começo: os avisos de sincronização falam do
-    # banco (o nó provisionado, as triggers), então antes do migrate eles
-    # diriam meia verdade. E é a última coisa impressa antes do gunicorn — os
-    # do migrate sobem junto com centenas de linhas de migration e ninguém os
-    # lê. Um nó com o papel errado ou sem credencial aparece aqui, no fim do
-    # log, onde quem sobe a loja está olhando.
-    #
-    # NÃO derruba o boot: sincronização mal configurada degrada a
-    # sincronização, não tira a loja do ar. Daí o `|| true` — dentro de
-    # parênteses, porque `A && B || true && C` no `sh` agrupa como
-    # `((A && B) || true) && C`: o `|| true` cobriria a cadeia inteira e o
-    # gunicorn subiria mesmo com o migrate falhando.
+    # `check` no FIM, onde quem sobe a loja está olhando, e SEM derrubar o
+    # boot — daí o `|| true` entre parênteses: `A && B || true && C` agruparia
+    # como `((A && B) || true) && C`, e o gunicorn subiria com o migrate
+    # falhando.
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
              python manage.py sync_install_triggers &&
              (python manage.py check || true) &&
              gunicorn config.asgi:application -c gunicorn.conf.py"
-    # Publicado na rede da loja (não em loopback): o PDV, o KDS e os tablets
-    # do salão são outras máquinas. Restrinja pelo firewall do host à faixa
-    # interna do restaurante.
+    # A porta direta da API continua publicada: PDVs já instalados apontam
+    # para `http://IP:8000/api/v1`, e trocar o endereço de cada terminal no
+    # dia da migração é o tipo de passo que fica pela metade. Os novos podem
+    # usar a porta única do proxy (`http://IP/api/v1`).
     ports:
       - "${BACKEND_BIND:-0.0.0.0}:${BACKEND_PORT:-8000}:8000"
     healthcheck:
@@ -151,64 +161,98 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      # Sem isto, a PRIMEIRA subida de uma loja falha: migrations num banco
-      # vazio + collectstatic + instalação das triggers levam mais do que
-      # `interval × retries`, o container é marcado unhealthy antes de o
-      # gunicorn abrir a porta, e o `sync_worker` — que espera
-      # `service_healthy` — nunca começa. O backend se recupera no check
-      # seguinte, mas aí já é tarde para quem dependia dele.
-      #
-      # Durante o start_period a falha não conta; o container só fica
-      # disponível quando de fato responde.
-      start_period: 120s
+      # Primeira subida: migrations num banco vazio + collectstatic + triggers
+      # passam de `interval × retries`. Sem esta folga o container era marcado
+      # unhealthy antes de o gunicorn abrir a porta, e quem esperava por ele
+      # (sync_worker, proxy) nunca começava.
+      start_period: 180s
 
   celery_worker:
     <<: *backend-base
     mem_limit: ${CELERY_WORKER_MEM_LIMIT:-768m}
     # As filas `sync.*` entram junto com a default: numa loja não compensa um
-    # processo por fila, e o volume é baixo.
+    # processo por fila, e o volume é baixo. Fila vazia não custa nada.
     command: >
       celery -A config worker -l info
       --concurrency=${CELERY_CONCURRENCY:-2}
       -Q celery,sync.dispatch,sync.receive,sync.apply,sync.bootstrap,sync.retry,sync.reconcile,sync.cleanup
     depends_on:
-      postgres:
-        condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
 
   celery_beat:
     <<: *backend-base
     mem_limit: ${CELERY_BEAT_MEM_LIMIT:-256m}
     command: celery -A config beat -l info
     depends_on:
-      postgres:
-        condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
 
   sync_worker:
-  
     <<: *backend-base
     mem_limit: ${SYNC_WORKER_MEM_LIMIT:-512m}
-    # Espera o backend porque a primeira subida roda a matrícula, que precisa
-    # das migrations já aplicadas (quem as aplica é o comando do backend).
+    # Com a sincronização DESLIGADA o `sync_worker` aborta — e com `restart:
+    # unless-stopped` o Docker o religaria em laço para sempre, enchendo o log.
+    # Então ele só roda quando ligada; desligada, o container fica parado de
+    # propósito (dormindo), sem erro. Ligar depois é mudar o .env.local e dar
+    # `up -d`.
     command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py sync_worker --interval ${SYNC_INTERVAL:-2} --heartbeat ${SYNC_HEARTBEAT:-20}"
+      sh -c 'if [ "$${SYNC_ENABLED:-false}" = "true" ]; then
+               exec python manage.py sync_worker --interval $${SYNC_INTERVAL:-2} --heartbeat $${SYNC_HEARTBEAT:-20};
+             else
+               echo "Sincronização com a nuvem DESLIGADA (SYNC_ENABLED=false). Esta loja opera sozinha.";
+               exec sleep infinity;
+             fi'
     depends_on:
-      postgres:
-        condition: service_healthy
       backend:
         condition: service_healthy
     healthcheck:
-      # Não testa a nuvem: a loja sem internet é um estado NORMAL. O que este
-      # healthcheck responde é "o processo consegue ler a própria fila?".
-      test: ["CMD-SHELL", "python manage.py sync_status --quiet > /dev/null || exit 1"]
+      # Não testa a nuvem: loja sem internet é estado NORMAL, e um healthcheck
+      # que reprovasse isso faria o Docker acusar problema justamente quando a
+      # loja está se virando sozinha.
+      test: ["CMD-SHELL", "[ \"$${SYNC_ENABLED:-false}\" != \"true\" ] || python manage.py sync_status --quiet > /dev/null"]
       interval: 60s
       timeout: 20s
       retries: 3
       start_period: 90s
+
+  frontend:
+    image: "${FRONTEND_IMAGE:-ghcr.io/matheus-matta/starchef-frontend:${STARCHEF_VERSION}}"
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    logging: *default-logging
+    environment:
+      # Mesma origem: o navegador fala com o proxy, que manda /api para o
+      # backend. Sem CORS, e o cookie de login (SameSite=Lax) funciona.
+      API_URL: /api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - starchef-local
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: ${PROXY_MEM_LIMIT:-128m}
+    logging: *default-logging
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - starchef-local
 
 volumes:
   postgres_data:
@@ -216,6 +260,7 @@ volumes:
   backend_media:
   backend_static:
   sync_credentials:
+  caddy_data:
 
 networks:
   starchef-local:
