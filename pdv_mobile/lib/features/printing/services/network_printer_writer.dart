@@ -22,8 +22,7 @@ class NetworkPrinterWriter {
         '${printer.host}:${printer.port}: ${error.message}',
       );
     } finally {
-      await socket?.close();
-      socket?.destroy();
+      if (socket != null) await _close(socket);
     }
   }
 
@@ -45,8 +44,17 @@ class NetworkPrinterWriter {
         '${printer.host}:${printer.port}: ${error.message}',
       );
     } finally {
-      await socket?.close();
-      socket?.destroy();
+      if (socket != null) await _close(socket);
+    }
+  }
+
+  Future<void> _close(Socket socket) async {
+    try {
+      await socket.close().timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      socket.destroy();
+    } on SocketException {
+      socket.destroy();
     }
   }
 }

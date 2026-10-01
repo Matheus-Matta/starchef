@@ -161,12 +161,13 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
     return true;
   }
 
-  /// Trabalho que falhou espera mais a cada tentativa (30 s, 1, 2, 4… até
-  /// 5 min) e vai para o FIM da fila — não segura o que está chegando.
+  /// Trabalho com falha recebe espera crescente até 60 s e vai para o fim da
+  /// fila, sem segurar as comandas novas enquanto a impressora se recupera.
   void _adiar(String jobId) {
     final vezes = (_falhas[jobId] ?? 0) + 1;
     _falhas[jobId] = vezes;
-    final segundos = (30 * (1 << (vezes - 1).clamp(0, 4))).clamp(30, 300);
+    const esperasSegundos = [3, 8, 15, 30, 60];
+    final segundos = esperasSegundos[(vezes - 1).clamp(0, 4)];
     _retryAfter[jobId] = DateTime.now().add(Duration(seconds: segundos));
   }
 }

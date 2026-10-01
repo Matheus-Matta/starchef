@@ -87,7 +87,11 @@ class _StatusCard extends StatelessWidget {
           Text(_title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           Text('${agent.supportedPrinters} impressora(s) utilizável(is)'),
-          Text('${agent.printedCount} trabalho(s) impresso(s) nesta sessão'),
+          Text('${agent.printedCount} trabalho(s) enviado(s) nesta sessão'),
+          const Text(
+            'O app registra o envio ao socket TCP; a impressora não confirma '
+            'se o papel saiu.',
+          ),
           if (agent.lastError != null) ...[
             const SizedBox(height: 8),
             Text(

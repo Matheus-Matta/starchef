@@ -42,7 +42,9 @@ class MobilePrinter {
           ? '${json['host'] ?? settings['host'] ?? ''}'.trim()
           : '',
       port: _integer(json['port'] ?? settings['port'], fallback: 9100),
-      timeout: Duration(seconds: seconds.clamp(1, 120)),
+      // Uma conexão que demora tanto já está inacessível para o fluxo do
+      // salão. O teto curto evita prender a próxima comanda por minutos.
+      timeout: Duration(seconds: seconds.clamp(1, 10)),
       driver: '${json['driver_type'] ?? 'escpos'}',
       active: json['is_active'] != false,
       autoPrint: json['auto_print'] == true,
