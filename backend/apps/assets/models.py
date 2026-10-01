@@ -127,7 +127,7 @@ class Asset(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["account", "asset_code"],
-                name="unique_asset_code_by_account"
+                condition=models.Q(deleted_at__isnull=True), name="unique_asset_code_by_account"
             )
         ]
 

@@ -22,7 +22,7 @@ class CashStation(TenantBaseModel):
 
     class Meta:
         ordering = ["name"]
-        constraints = [models.UniqueConstraint(fields=["restaurant", "code"], name="unique_cash_station_code_by_restaurant")]
+        constraints = [models.UniqueConstraint(fields=["restaurant", "code"], condition=models.Q(deleted_at__isnull=True), name="unique_cash_station_code_by_restaurant")]
 
     def __str__(self):
         return f"{self.restaurant} - {self.name}"
@@ -125,7 +125,7 @@ class PaymentMethod(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_payment_method_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_payment_method_by_branch"),
         ]
 
     def __str__(self):

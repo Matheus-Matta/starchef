@@ -164,7 +164,7 @@ class Branch(TenantBaseModel):
     class Meta:
         ordering = ["restaurant__trade_name", "name"]
         constraints = [
-            models.UniqueConstraint(fields=["restaurant", "name"], name="unique_branch_name_by_restaurant"),
+            models.UniqueConstraint(fields=["restaurant", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_branch_name_by_restaurant"),
         ]
         indexes = [
             models.Index(fields=["restaurant", "is_active"]),
@@ -182,7 +182,7 @@ class TableSector(TenantModel):
     class Meta:
         ordering = ["display_order", "name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_table_sector_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_table_sector_by_branch"),
         ]
 
     def __str__(self):
@@ -218,10 +218,10 @@ class Table(TenantModel):
     class Meta:
         ordering = ["sector__display_order", "number"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "number"], name="unique_table_number_by_branch"),
+            models.UniqueConstraint(fields=["branch", "number"], condition=models.Q(deleted_at__isnull=True), name="unique_table_number_by_branch"),
             models.UniqueConstraint(
                 fields=["branch", "code"],
-                condition=models.Q(code__gt=""),
+                condition=models.Q(code__gt="") & models.Q(deleted_at__isnull=True),
                 name="unique_table_code_by_branch",
             ),
         ]
@@ -307,10 +307,10 @@ class Command(TenantModel):
     class Meta:
         ordering = ["number"]
         constraints = [
-            models.UniqueConstraint(fields=["restaurant", "number"], name="unique_command_number_by_restaurant"),
+            models.UniqueConstraint(fields=["restaurant", "number"], condition=models.Q(deleted_at__isnull=True), name="unique_command_number_by_restaurant"),
             models.UniqueConstraint(
                 fields=["restaurant", "code"],
-                condition=models.Q(code__gt=""),
+                condition=models.Q(code__gt="") & models.Q(deleted_at__isnull=True),
                 name="unique_command_code_by_restaurant",
             ),
         ]
@@ -443,7 +443,7 @@ class DeliveryZone(TenantModel):
     class Meta:
         ordering = ["min_radius_km"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_delivery_zone_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_delivery_zone_by_branch"),
         ]
 
     def __str__(self):
@@ -472,7 +472,7 @@ class Deliveryman(TenantModel):
     class Meta:
         ordering = ["name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_deliveryman_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_deliveryman_by_branch"),
         ]
 
     def __str__(self):

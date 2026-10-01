@@ -275,7 +275,7 @@ class FiscalConfig(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch"], name="unique_fiscal_config_by_branch"),
+            models.UniqueConstraint(fields=["branch"], condition=models.Q(deleted_at__isnull=True), name="unique_fiscal_config_by_branch"),
         ]
 
     def __str__(self):

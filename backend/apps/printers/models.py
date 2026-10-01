@@ -101,7 +101,7 @@ class Printer(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_printer_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_printer_by_branch"),
         ]
 
     def __str__(self):
@@ -219,7 +219,7 @@ class Scale(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_scale_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_scale_by_branch"),
         ]
 
     def __str__(self):

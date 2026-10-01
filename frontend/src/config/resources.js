@@ -103,6 +103,10 @@ export const resources = [
     // Configuração "pro" desta tela: ação primária, filtro de período e filtros rápidos.
     pro: {
       pageSize: 12,
+      // Cancela os selecionados (e as notas deles) com a regra do cancelamento
+      // de um: motivo obrigatório e senha de operação. "Selecionar todos os N"
+      // da barra pega o filtro inteiro, não só a página.
+      bulkActions: [{ key: "cancel", label: "Cancelar pedidos", type: "order-bulk-cancel", idField: "id" }],
       // Ação primária do cabeçalho — Pedidos são criados no PDV.
       primaryAction: { label: "Novo pedido", icon: "pi pi-plus", route: "pdv" },
       // Filtro de intervalo de datas → envia `opened_after` / `opened_before`.

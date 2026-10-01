@@ -55,16 +55,34 @@ def _attname(model, nome):
     return campo.attname if campo.is_relation else campo.name
 
 
+def _condicoes(model):
+    """Campos -> condição das restrições únicas PARCIAIS (`condition=`)."""
+    return {
+        tuple(_attname(model, nome) for nome in restricao.fields): restricao.condition
+        for restricao in model._meta.constraints
+        if getattr(restricao, "fields", None) and getattr(restricao, "condition", None)
+    }
+
+
 def find_local_duplicate(model, kwargs, remote_pk):
-    """A linha local que ocupa a mesma chave única do registro que chegou."""
+    """A linha local que ocupa a mesma chave única do registro que chegou.
+
+    Restrição PARCIAL só colide dentro da própria condição. "Nome único entre
+    os não excluídos" não colide com uma linha excluída — tratá-la como
+    duplicata faria a adoção apagar um registro que não disputava nada.
+    """
     gerente = getattr(model, "all_objects", model._default_manager)
+    condicoes = _condicoes(model)
     for campos in unique_field_sets(model):
         filtro = {campo: kwargs[campo] for campo in campos if campo in kwargs}
         if len(filtro) != len(campos) or not filtro:
             continue
         if any(valor is None for valor in filtro.values()):
             continue  # NULL não colide em índice único
-        existente = gerente.filter(**filtro).exclude(pk=remote_pk).first()
+        consulta = gerente.filter(**filtro)
+        if campos in condicoes:
+            consulta = consulta.filter(condicoes[campos])
+        existente = consulta.exclude(pk=remote_pk).first()
         if existente is not None:
             return existente, campos
     return None, ()

@@ -47,7 +47,7 @@ class ProductCategory(TenantModel):
     class Meta:
         ordering = ["display_order", "name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name", "parent"], name="unique_category_by_branch_parent"),
+            models.UniqueConstraint(fields=["branch", "name", "parent"], condition=models.Q(deleted_at__isnull=True), name="unique_category_by_branch_parent"),
         ]
 
     def __str__(self):
@@ -313,7 +313,7 @@ class ProductVariation(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["product", "name"], name="unique_variation_by_product"),
+            models.UniqueConstraint(fields=["product", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_variation_by_product"),
         ]
 
     def __str__(self):
@@ -351,7 +351,7 @@ class ProductUnitConversion(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["account", "product", "source_unit", "supplier_cnpj", "supplier_product_code"],
-                name="unique_unit_conversion_rule"
+                condition=models.Q(deleted_at__isnull=True), name="unique_unit_conversion_rule"
             )
         ]
 
@@ -390,7 +390,7 @@ class ProductAddon(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_addon_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_addon_by_branch"),
         ]
 
     def __str__(self):
@@ -478,7 +478,7 @@ class RecipeItem(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["recipe", "ingredient"], name="unique_ingredient_by_recipe"),
+            models.UniqueConstraint(fields=["recipe", "ingredient"], condition=models.Q(deleted_at__isnull=True), name="unique_ingredient_by_recipe"),
         ]
 
     def __str__(self):
@@ -577,7 +577,7 @@ class Menu(TenantModel):
     class Meta:
         ordering = ["name"]
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_menu_name_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_menu_name_by_branch"),
             models.UniqueConstraint(
                 fields=["account", "slug"],
                 condition=models.Q(deleted_at__isnull=True),

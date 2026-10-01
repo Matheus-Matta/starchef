@@ -28,7 +28,7 @@ class CustomerGroup(TenantModel):
         constraints = [
             # O nome e o que o operador digita e procura. Dois "VIP" na mesma
             # conta sao duas listas que ninguem consegue distinguir depois.
-            models.UniqueConstraint(fields=["account", "name"], name="unique_customer_group_per_account"),
+            models.UniqueConstraint(fields=["account", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_customer_group_per_account"),
         ]
 
     def __str__(self):

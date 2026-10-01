@@ -323,6 +323,11 @@
               :selection="selection"
               @completed="onInvoiceBulkCompleted"
             />
+            <OrderBulkCancelButton
+              v-else-if="bulkAction.type === 'order-bulk-cancel'"
+              :selection="selection" :id-field="bulkAction.idField" :label="bulkAction.label"
+              @completed="onInvoiceBulkCompleted"
+            />
             <button v-else class="rpro-btn rpro-btn--ghost rpro-btn--sm" type="button" @click="runBulkAction(bulkAction)">
               <i :class="bulkAction.icon || 'pi pi-bolt'" /> {{ bulkAction.label }}
             </button>
@@ -2438,6 +2443,7 @@ import Textarea from "primevue/textarea";
 import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
 import { useInboundItemUnlink } from "../composables/useInboundItemUnlink";
+import { importUpsert } from "../composables/importUpsert";
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
@@ -2451,6 +2457,7 @@ import { useAuthStore } from "../stores/auth";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
+import OrderBulkCancelButton from "../components/data/OrderBulkCancelButton.vue";
 import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
@@ -4545,21 +4552,16 @@ async function importRows() {
         .map(([field, value]) => [field.name, castImportedValue(value, field)]),
     )).filter((payload) => Object.keys(payload).length);
 
-    let imported = 0;
-    const errors = [];
-    for (const payload of payloads) {
-      try {
-        await service.create(payload);
-        imported += 1;
-      } catch (error) {
-        errors.push(normalizeApiError(error).message);
-      }
-    }
+    // Atualiza o que já existe (pela chave) e cria o resto: reimportar a
+    // planilha exportada não dá mais "valor duplicado" em toda linha.
+    const { created, updated, errors } = await importUpsert({
+      service, payloads, fields: exchangeFields.value, preferredKey: proCfg.value.importKey,
+    });
     toast.add({
       severity: errors.length ? "warn" : "success",
-      summary: `${imported} de ${payloads.length} itens importados`,
-      detail: errors[0] || undefined,
-      life: 5000,
+      summary: `${created + updated} de ${payloads.length} itens importados`,
+      detail: [`${created} criado(s), ${updated} atualizado(s).`, errors[0]].filter(Boolean).join(" "),
+      life: 6000,
     });
     if (!errors.length) {
       importVisible.value = false;

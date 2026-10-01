@@ -45,7 +45,7 @@ class StockLocation(TenantModel):
         verbose_name = "Local de Estoque"
         verbose_name_plural = "Locais de Estoque"
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_stock_location_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_stock_location_by_branch"),
         ]
 
     def __str__(self):
@@ -175,7 +175,7 @@ class StockLabelTemplate(TenantModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["branch", "name"], name="unique_label_template_by_branch"),
+            models.UniqueConstraint(fields=["branch", "name"], condition=models.Q(deleted_at__isnull=True), name="unique_label_template_by_branch"),
         ]
 
     def __str__(self):

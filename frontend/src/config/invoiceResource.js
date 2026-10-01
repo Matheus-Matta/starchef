@@ -15,6 +15,15 @@ export const invoiceProConfig = {
       icon: "pi pi-send",
       type: "invoice-bulk-resend",
     },
+    {
+      // A nota é do pedido: cancelar o pedido cancela a nota junto (e os
+      // pagamentos e o caixa). Cancelar só a nota deixaria uma venda viva sem
+      // documento fiscal — por isso a ação daqui é a mesma da lista de pedidos.
+      key: "cancel-orders",
+      label: "Cancelar pedidos e notas",
+      type: "order-bulk-cancel",
+      idField: "order",
+    },
   ],
 };
 

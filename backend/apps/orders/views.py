@@ -712,6 +712,32 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(PaymentSerializer(payment).data)
 
+    @action(detail=False, methods=["post"], url_path="bulk-cancel")
+    def bulk_cancel(self, request):
+        """Cancela vários pedidos (e as notas deles) — ver `bulk_cancel.py`."""
+        from apps.orders.bulk_cancel import MAXIMO, cancelar_em_massa
+
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids or len(ids) > MAXIMO:
+            return Response({"detail": f"Selecione de 1 a {MAXIMO} pedidos."}, status=status.HTTP_400_BAD_REQUEST)
+        por_restaurante = {}  # a senha é conferida uma vez por unidade, não por pedido
+
+        def autorizar(pedido):
+            if pedido.restaurant_id not in por_restaurante:
+                por_restaurante[pedido.restaurant_id] = _can_authorize_cancellation(
+                    request, pedido.restaurant, pedido.account_id
+                )
+            return por_restaurante[pedido.restaurant_id]
+
+        try:
+            resultado = cancelar_em_massa(
+                list(self.get_queryset().filter(pk__in=ids)), user=request.user,
+                reason=request.data.get("reason", ""), autorizar=autorizar,
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(resultado)
+
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         from apps.orders.services import order_is_empty
