@@ -380,6 +380,25 @@ export const resources = [
       headerActions: [
         { key: "bulk-create", label: "Cadastrar em lote", icon: "pi pi-list", type: "route", routeName: "ingredientes-lote" },
       ],
+      rowActions: [
+        {
+          // Para o insumo que deveria ter sido produto de revenda (ex.: bebida
+          // vinculada como insumo na NF-e). O insumo continua existindo.
+          key: "to-product",
+          label: "Transformar em produto",
+          icon: "pi pi-box",
+          type: "post-detail",
+          action: "to-product",
+          confirmMessage:
+            "Criar um produto com os dados deste insumo (nome, unidade, custo e estoque mínimo)? " +
+            "As notas de entrada ainda não recebidas e o vínculo do fornecedor passam para o produto novo. " +
+            "O insumo continua existindo e o saldo dele não muda.",
+          confirmAcceptLabel: "Transformar",
+          successSummary: () => "Produto criado",
+          successDetail: (data) => `"${data.name}" já está no cadastro de produtos.`,
+          errorSummary: "Não foi possível transformar em produto",
+        },
+      ],
     },
     // Compartilhados entre restaurantes (reutilizáveis) — sem vínculo obrigatório.
     sharedAcrossRestaurants: true,

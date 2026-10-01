@@ -85,3 +85,48 @@ def unlink_item(item_id, *, esquecer=True):
             invoice.status = InboundNFe.STATUS_PENDING_MAPPING
             invoice.save(update_fields=["status"])
     return item
+
+
+def liberar_vinculos_de_apagado(*, product=None, ingredient=None):
+    """Solta o que ainda aponta para um produto/insumo que foi excluído.
+
+    Excluir é só marcar `deleted_at`: a chave estrangeira continua lá. Sem
+    isto, o item seguia "Ingrediente: X" na tela, a nota contava como
+    vinculada e o recebimento dava entrada num cadastro apagado — e o
+    aprendizado do fornecedor religava a próxima nota ao mesmo apagado.
+
+    Nota já recebida fica como está: o estoque já entrou, e o vínculo é o
+    registro de onde ele foi parar.
+    """
+    alvo = {"product": product} if product is not None else {"ingredient": ingredient}
+    if not any(alvo.values()):
+        return 0
+    with transaction.atomic():
+        itens = InboundNFeItem.all_objects.filter(
+            stock_movement__isnull=True, **alvo
+        ).exclude(invoice__status=InboundNFe.STATUS_RECEIVED)
+        notas = set(itens.values_list("invoice_id", flat=True))
+        soltos = itens.update(product=None, ingredient=None, conversion_factor=1)
+        InboundNFe.all_objects.filter(
+            pk__in=notas,
+            status__in=[InboundNFe.STATUS_PENDING_RECEIPT, InboundNFe.STATUS_XML_AVAILABLE],
+        ).update(status=InboundNFe.STATUS_PENDING_MAPPING)
+        for mapping in SupplierItemMapping.all_objects.filter(**alvo):
+            models.Model.delete(mapping)
+    return soltos
+
+
+def transferir_vinculos_para_produto(ingredient, product):
+    """Passa do insumo para o produto o que ainda não entrou no estoque.
+
+    Itens de notas não recebidas e o aprendizado do fornecedor. Nota recebida
+    fica: o saldo entrou no insumo, e é ali que o vínculo diz que ele está.
+    """
+    pendentes = InboundNFeItem.all_objects.filter(
+        ingredient=ingredient, stock_movement__isnull=True
+    ).exclude(invoice__status=InboundNFe.STATUS_RECEIVED)
+    movidos = pendentes.update(ingredient=None, product=product)
+    SupplierItemMapping.all_objects.filter(ingredient=ingredient).update(
+        ingredient=None, product=product
+    )
+    return movidos

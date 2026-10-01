@@ -9,7 +9,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import Account
 from apps.inbound_nfe.models import InboundNFe, InboundNFeItem, SupplierItemMapping
-from apps.menu.models import Product, ProductCategory, ProductUnitConversion
+from apps.inbound_nfe.services.matching import apply_mapping_to_item
+from apps.menu.models import Ingredient, Product, ProductCategory, ProductUnitConversion
 from apps.restaurants.models import Restaurant
 
 User = get_user_model()
@@ -104,3 +105,82 @@ class DesvincularItemTestCase(TestCase):
         self.assertEqual(trocar.status_code, 409)
         self.item.refresh_from_db()
         self.assertEqual(self.item.product, self.errado)
+
+    def _insumo(self):
+        insumo = Ingredient.objects.create(
+            account=self.account, restaurant=self.restaurant, name="FANTA LARANJA CX24"
+        )
+        self.client.post(
+            f"/api/v1/inbound-nfe-items/{self.item.id}/map/",
+            {"ingredient_id": str(insumo.id), "conversion_factor": "24"}, format="json",
+        )
+        return insumo
+
+    def test_excluir_o_insumo_solta_a_nota_pendente_e_esquece_o_aprendizado(self):
+        """Excluir é só `deleted_at`: o item seguia "Ingrediente: X" e a próxima
+        nota do fornecedor voltava ligada ao insumo apagado."""
+        insumo = self._insumo()
+
+        insumo.delete()
+
+        self.item.refresh_from_db()
+        self.invoice.refresh_from_db()
+        self.assertIsNone(self.item.ingredient_id)
+        self.assertEqual(self.invoice.status, InboundNFe.STATUS_PENDING_MAPPING)
+        self.assertFalse(SupplierItemMapping.all_objects.filter(ingredient=insumo).exists())
+
+    def test_nota_recebida_mantem_o_vinculo_quando_o_insumo_e_excluido(self):
+        insumo = self._insumo()
+        InboundNFe.all_objects.filter(pk=self.invoice.pk).update(status=InboundNFe.STATUS_RECEIVED)
+
+        insumo.delete()
+
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.ingredient_id, insumo.id)
+
+    def test_aprendizado_que_aponta_para_insumo_excluido_nao_religa_nota_nova(self):
+        insumo = self._insumo()
+        # Exclusão por fora do sinal (dado antigo, de antes desta correção).
+        Ingredient.all_objects.filter(pk=insumo.pk).update(deleted_at=timezone.now())
+        novo = InboundNFeItem.objects.create(
+            account=self.account, invoice=self.invoice, item_number=2,
+            supplier_code="REF-01", description="REFRI COLA LT 350 CX12",
+        )
+
+        apply_mapping_to_item(novo, CNPJ_FORNECEDOR)
+
+        novo.refresh_from_db()
+        self.assertIsNone(novo.ingredient_id)
+
+    def test_migracao_reativa_o_insumo_preso_menos_quando_o_nome_ja_foi_reusado(self):
+        """O insumo apagado antes da correção volta, para ser excluído de novo
+        pelo caminho certo; o que teria o nome em conflito fica apagado."""
+        import importlib
+
+        from django.db import connection
+        from django.db.migrations.loader import MigrationLoader
+
+        migracao = importlib.import_module(
+            "apps.inbound_nfe.migrations.0010_reativa_insumos_presos_a_nfe"
+        )
+        insumo = self._insumo()
+        Ingredient.all_objects.filter(pk=insumo.pk).update(deleted_at=timezone.now())
+        outro = Ingredient.objects.create(account=self.account, name="SPRITE CX24")
+        SupplierItemMapping.all_objects.create(
+            account=self.account, restaurant=self.restaurant, supplier_cnpj=CNPJ_FORNECEDOR,
+            supplier_code="SPR-01", ingredient=outro,
+        )
+        Ingredient.all_objects.filter(pk=outro.pk).update(deleted_at=timezone.now())
+        Ingredient.objects.create(account=self.account, name="SPRITE CX24")
+
+        # Os models HISTÓRICOS, como o `migrate` entrega: os atuais filtram pela
+        # conta do contexto e enxergariam uma lista vazia.
+        estado = MigrationLoader(connection).project_state(
+            ("inbound_nfe", "0010_reativa_insumos_presos_a_nfe")
+        )
+        migracao.desfazer(estado.apps, None)
+
+        insumo.refresh_from_db()
+        outro.refresh_from_db()
+        self.assertIsNone(insumo.deleted_at)
+        self.assertIsNotNone(outro.deleted_at)

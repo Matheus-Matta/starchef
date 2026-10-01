@@ -245,6 +245,29 @@ class IngredientViewSet(BaseTenantViewSet):
                 )
         return Response(self.get_serializer(ingredients, many=True).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path="to-product")
+    def to_product(self, request, pk=None):
+        """Cria um produto com os dados do insumo (ver `services.ingredient_to_product`)."""
+        from django.core.exceptions import ValidationError
+        from apps.menu.services.ingredient_to_product import transformar_em_produto
+        from apps.restaurants.models import Restaurant
+
+        from apps.inbound_nfe.tenant_scope import restaurante_escolhido
+
+        # O do corpo, senão o da barra lateral (validado), senão o único da conta.
+        rid = request.data.get("restaurant") or restaurante_escolhido(request)
+        unidades = Restaurant.objects.filter(account=request.account)
+        restaurant = unidades.filter(pk=rid).first() if rid else None
+        if restaurant is None and unidades.count() == 1:
+            restaurant = unidades.first()
+        try:
+            produto = transformar_em_produto(self.get_object(), user=request.user, restaurant=restaurant)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        record_audit(action=AuditLog.ACTION_CREATED, instance=produto, actor=request.user,
+                     request=request, metadata={"from_ingredient": str(pk)})
+        return Response({"id": str(produto.id), "name": produto.name}, status=status.HTTP_201_CREATED)
+
 
 class RecipeViewSet(BaseTenantViewSet):
     serializer_class = RecipeSerializer

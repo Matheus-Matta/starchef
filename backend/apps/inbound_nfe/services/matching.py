@@ -2,7 +2,15 @@ import difflib
 from decimal import Decimal
 from typing import Optional, Tuple
 from apps.inbound_nfe.models import SupplierItemMapping, InboundNFeItem
+from django.db.models import Q
+
 from apps.menu.models import Ingredient, Product, RecipeItem
+
+# Aprendizado que aponta para cadastro EXCLUÍDO não vale: religaria a nota nova
+# a um produto/insumo que já não existe na tela (exclusão é só `deleted_at`).
+_ALVO_VIVO = (Q(product__isnull=True) | Q(product__deleted_at__isnull=True)) & (
+    Q(ingredient__isnull=True) | Q(ingredient__deleted_at__isnull=True)
+)
 
 
 def attempt_matching(
@@ -25,7 +33,7 @@ def attempt_matching(
             account=account,
             supplier_cnpj=clean_cnpj,
             supplier_code=item.supplier_code,
-        ).first()
+        ).filter(_ALVO_VIVO).first()
 
         if mapping:
             return mapping.ingredient, mapping.product, mapping.conversion_factor, 1.0
@@ -36,7 +44,7 @@ def attempt_matching(
             account=account,
             supplier_cnpj=clean_cnpj,
             supplier_ean=item.ean,
-        ).first()
+        ).filter(_ALVO_VIVO).first()
 
         if mapping:
             return mapping.ingredient, mapping.product, mapping.conversion_factor, 1.0
