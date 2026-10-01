@@ -18,19 +18,36 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
         'page_size': 100,
       },
     );
-    for (final job in _rows(page)) {
-      if (!MobilePrintJobPolicy.shouldAutomaticallyPrint(job)) continue;
+    // O que já falhou vai para o FIM: um trabalho problemático na frente da
+    // fila (a mais antiga primeiro) segurava todo pedido novo atrás dele.
+    final jobs = _rows(
+      page,
+    ).where(MobilePrintJobPolicy.shouldAutomaticallyPrint);
+    final ordenados = [
+      ...jobs.where((j) => !_falhas.containsKey('${j['id']}')),
+      ...jobs.where((j) => _falhas.containsKey('${j['id']}')),
+    ];
+    final semResposta = <String>{};
+    for (final job in ordenados) {
       final jobId = '${job['id'] ?? ''}';
       final printer = available['${job['printer'] ?? ''}'];
       final retryAt = _retryAfter[jobId];
       if (jobId.isEmpty || printer == null) continue;
+      if (semResposta.contains(printer.id)) continue;
       if (_awaitingConfirmation.contains(jobId)) continue;
       if (retryAt != null && retryAt.isAfter(DateTime.now())) continue;
-      if (!await _claim(jobId)) continue;
-      await _printJob(jobId, job, printer);
+      // UM trabalho com erro não interrompe o ciclo: antes a exceção subia e
+      // nenhum outro trabalho era impresso, ciclo após ciclo.
+      try {
+        if (!await _claim(jobId)) continue;
+        if (!await _printJob(jobId, job, printer)) semResposta.add(printer.id);
+      } on ApiException catch (error) {
+        if (error.isConnectivity) rethrow;
+        _adiar(jobId);
+        _lastError = error.message;
+      }
     }
   }
-
 
   Future<bool> _claim(String jobId) async {
     try {
@@ -77,5 +94,63 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
     final value = page['results'] ?? page['data'];
     if (value is! List) return const [];
     return value.whereType<Map>().map(Map<String, dynamic>.from).toList();
+  }
+
+  /// Imprime; devolve `false` quando a IMPRESSORA falhou (para o ciclo pular
+  /// os outros trabalhos dela em vez de esperar o tempo limite de cada um).
+  Future<bool> _printJob(
+    String jobId,
+    Map<String, dynamic> job,
+    MobilePrinter printer,
+  ) async {
+    final payload = job['payload'] is Map
+        ? Map<String, dynamic>.from(job['payload'] as Map)
+        : const <String, dynamic>{};
+    final text = '${payload['text_content'] ?? ''}'.trimRight();
+    if (text.isEmpty) {
+      await api.post(
+        '/print-jobs/$jobId/mark-failed/',
+        body: {'error': 'Trabalho sem text_content.'},
+      );
+      return true;
+    }
+    final barcode = payload['barcode'] is Map
+        ? '${(payload['barcode'] as Map)['value'] ?? ''}'
+        : '';
+    try {
+      await writer.write(
+        printer,
+        encoder.encode(text: text, barcode: barcode, escPos: printer.isEscPos),
+      );
+      _printedCount += 1;
+      _retryAfter.remove(jobId);
+      _falhas.remove(jobId);
+      _awaitingConfirmation.add(jobId);
+      await confirmations.add(jobId);
+      await _confirmPrintedJob(jobId);
+    } catch (error) {
+      if (_awaitingConfirmation.contains(jobId)) {
+        _lastError = 'O papel saiu, mas a confirmação ficou pendente: $error';
+        return true;
+      }
+      _adiar(jobId);
+      _lastError = '$error';
+      try {
+        await api.post('/print-jobs/$jobId/release/');
+      } catch (_) {
+        // A reserva expira sozinha no servidor; não pode travar a fila.
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /// Trabalho que falhou espera mais a cada tentativa (30 s, 1, 2, 4… até
+  /// 5 min) e vai para o FIM da fila — não segura o que está chegando.
+  void _adiar(String jobId) {
+    final vezes = (_falhas[jobId] ?? 0) + 1;
+    _falhas[jobId] = vezes;
+    final segundos = (30 * (1 << (vezes - 1).clamp(0, 4))).clamp(30, 300);
+    _retryAfter[jobId] = DateTime.now().add(Duration(seconds: segundos));
   }
 }

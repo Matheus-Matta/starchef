@@ -30,6 +30,7 @@ class MobilePrintAgent extends ChangeNotifier {
   final EscPosMobileEncoder encoder;
   final PrintConfirmationStorage confirmations;
   final Map<String, DateTime> _retryAfter = {};
+  final Map<String, int> _falhas = {};
   final Set<String> _awaitingConfirmation = {};
 
   Timer? _timer;
@@ -79,6 +80,7 @@ class MobilePrintAgent extends ChangeNotifier {
     _printers = const [];
     _printersLoadedAt = null;
     _retryAfter.clear();
+    _falhas.clear();
     _rerunRequested = false;
     notifyListeners();
   }
@@ -141,46 +143,6 @@ class MobilePrintAgent extends ChangeNotifier {
   }
 
   Future<void> openSystemSettings() => permission.openSettings();
-
-  Future<void> _printJob(
-    String jobId,
-    Map<String, dynamic> job,
-    MobilePrinter printer,
-  ) async {
-    final payload = job['payload'] is Map
-        ? Map<String, dynamic>.from(job['payload'] as Map)
-        : const <String, dynamic>{};
-    final text = '${payload['text_content'] ?? ''}'.trimRight();
-    if (text.isEmpty) {
-      await api.post(
-        '/print-jobs/$jobId/mark-failed/',
-        body: {'error': 'Trabalho sem text_content.'},
-      );
-      return;
-    }
-    final barcode = payload['barcode'] is Map
-        ? '${(payload['barcode'] as Map)['value'] ?? ''}'
-        : '';
-    try {
-      await writer.write(
-        printer,
-        encoder.encode(text: text, barcode: barcode, escPos: printer.isEscPos),
-      );
-      _printedCount += 1;
-      _retryAfter.remove(jobId);
-      _awaitingConfirmation.add(jobId);
-      await confirmations.add(jobId);
-      await _confirmPrintedJob(jobId);
-    } catch (error) {
-      if (_awaitingConfirmation.contains(jobId)) {
-        _lastError = 'O papel saiu, mas a confirmação ficou pendente: $error';
-        return;
-      }
-      _retryAfter[jobId] = DateTime.now().add(const Duration(seconds: 30));
-      await api.post('/print-jobs/$jobId/release/');
-      _lastError = '$error';
-    }
-  }
 
   @override
   void dispose() {
