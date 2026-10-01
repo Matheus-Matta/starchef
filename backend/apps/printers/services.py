@@ -1220,13 +1220,11 @@ def register_command_weigh_print(*, command, item, scale, user=None, offline_pri
                 "command": str(command.id),
                 "command_number": command.number,
                 "item": str(item.id),
-                # O código da comanda no fim da etiqueta, em barras E em QR: é
-                # o papel que o cliente leva ao caixa, e o caixa lê o cartão
-                # com o leitor que tiver. O agente do PDV imprime os dois a
-                # partir do payload_version 2.
+                # O código de barras da comanda no fim da etiqueta: é o papel
+                # que o cliente leva ao caixa, e o caixa lê o cartão sem
+                # digitar. Só o Code128 — o QR fica para o cupom fiscal.
                 "payload_version": 2,
                 "barcode": {"symbology": "CODE128", "value": codigo},
-                "qr_data": codigo,
             },
             created_by=user,
             updated_by=user,

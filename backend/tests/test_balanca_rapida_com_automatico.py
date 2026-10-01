@@ -71,7 +71,7 @@ def test_sem_a_marca_o_automatico_consome_a_leitura(admin_client, account, resta
     assert Order.all_objects.exists()
 
 
-def test_etiqueta_de_pesagem_da_comanda_sai_com_codigo_de_barras_e_qr(
+def test_etiqueta_de_pesagem_da_comanda_sai_com_codigo_de_barras_sem_qr(
     admin_client, account, restaurant, branch, balanca
 ):
     """É o papel que o cliente leva ao caixa: sem o código, o caixa digitava."""
@@ -94,4 +94,4 @@ def test_etiqueta_de_pesagem_da_comanda_sai_com_codigo_de_barras_e_qr(
     codigo = comanda.code or "33"
     assert payload["payload_version"] == 2
     assert payload["barcode"] == {"symbology": "CODE128", "value": codigo}
-    assert payload["qr_data"] == codigo
+    assert "qr_data" not in payload
