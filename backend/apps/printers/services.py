@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.core.audit import record_audit
 from apps.core.codes import barcode_data_uri
+from apps.printers.order_commands import comandas_do_pedido
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.printers.models import Printer, PrintJob
@@ -124,9 +125,10 @@ def _order_command_barcode(order):
     o pedido esta vinculado a uma comanda fisica, o codigo sai impresso pra
     permitir reler a comanda depois (reabrir, cobrar) sem digitar nada.
     """
-    value = ""
-    if order.command_id:
-        value = str(order.command.code or order.command.number or "")
+    # Conta agrupada: o agente imprime UM código por cupom; vai o da primeira
+    # comanda, e o texto do recibo lista todas.
+    comandas = comandas_do_pedido(order)
+    value = str(comandas[0].code or comandas[0].number or "") if comandas else ""
     return {
         "symbology": "CODE128",
         "value": value,
@@ -287,6 +289,10 @@ def _customer_receipt_text(order):
             if payment.change_amount:
                 lines.append(_linha_valor("Troco", payment.change_amount))
     barcode_value = _order_command_barcode(order)["value"]
+    comandas = comandas_do_pedido(order)
+    if len(comandas) > 1:
+        numeros = ", ".join(str(c.number) for c in comandas)
+        lines.extend(["-" * LARGURA_CUPOM, f"COMANDAS {numeros}"[:LARGURA_CUPOM]])
     if barcode_value:
         # So o valor: o agente local (LocalDeviceAgent) reconhece este mesmo
         # payload_version/barcode e imprime o Code128 de verdade no final do

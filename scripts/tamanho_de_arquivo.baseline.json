@@ -68,7 +68,7 @@
     "backend/apps/payments/views.py": 422,
     "backend/apps/printers/cash_documents.py": 223,
     "backend/apps/printers/models.py": 358,
-    "backend/apps/printers/services.py": 1219,
+    "backend/apps/printers/services.py": 1225,
     "backend/apps/printers/tests/test_scale_command_weighing.py": 234,
     "backend/apps/printers/views.py": 765,
     "backend/apps/reports/cash_movements.py": 281,
