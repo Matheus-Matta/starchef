@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../core/widgets/shadcn_layout.dart';
 import '../services/mobile_print_agent.dart';
+import 'printer_connection_tile.dart';
+import 'print_queue_page.dart';
 
 class PrintStatusPage extends StatelessWidget {
   const PrintStatusPage({super.key, required this.agent});
@@ -14,6 +16,15 @@ class PrintStatusPage extends StatelessWidget {
     builder: (context, _) => AppPageScaffold(
       title: 'Impressão pelo celular',
       actions: [
+        IconButton(
+          tooltip: 'Ver fila de impressão',
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => PrintQueuePage(agent: agent),
+            ),
+          ),
+          icon: const Icon(Icons.queue_outlined),
+        ),
         IconButton(
           tooltip: 'Sincronizar agora',
           onPressed: agent.state == PrintAgentState.syncing
@@ -37,6 +48,16 @@ class PrintStatusPage extends StatelessWidget {
             'conforme o roteamento definido pelo backend.',
           ),
           const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => PrintQueuePage(agent: agent),
+              ),
+            ),
+            icon: const Icon(Icons.queue_outlined),
+            label: const Text('Ver fila de impressão'),
+          ),
+          const SizedBox(height: 8),
           if (agent.printers.isEmpty)
             const ListTile(
               leading: Icon(Icons.print_disabled_outlined),
@@ -44,20 +65,7 @@ class PrintStatusPage extends StatelessWidget {
               subtitle: Text('Confira o cadastro e a permissão do usuário.'),
             ),
           for (final printer in agent.printers)
-            ListTile(
-              leading: Icon(
-                printer.supportsMobile ? Icons.print_outlined : Icons.block,
-              ),
-              title: Text(printer.name),
-              subtitle: Text(
-                printer.acceptsAutomaticJobs
-                    ? '${printer.host}:${printer.port} • '
-                          '${printer.isEscPos ? 'ESC/POS' : 'texto'}'
-                    : printer.supportsMobile
-                    ? 'Impressão automática desativada no backend'
-                    : 'Somente impressoras TCP/IP podem ser usadas no celular',
-              ),
-            ),
+            PrinterConnectionTile(printer: printer, agent: agent),
         ],
       ),
     ),

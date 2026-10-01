@@ -123,6 +123,19 @@ class MobilePrintAgent extends ChangeNotifier {
     await runNow();
   }
 
+  Future<void> testPrinterConnection(MobilePrinter printer) async {
+    _permissionGranted = await permission.request();
+    if (!_permissionGranted) {
+      notifyListeners();
+      throw Exception(
+        'Permita o acesso a dispositivos próximos para testar a impressora.',
+      );
+    }
+    await writer.testConnection(printer);
+  }
+
+  Future<List<Map<String, dynamic>>> loadQueue() => _loadQueue();
+
   /// A permissão NUNCA segura a impressão.
   ///
   /// Socket TCP para a impressora da loja não depende dela; e o pedido ao

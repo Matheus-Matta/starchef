@@ -1,6 +1,22 @@
 part of 'mobile_print_agent.dart';
 
 extension _MobilePrintAgentSupport on MobilePrintAgent {
+  Future<List<Map<String, dynamic>>> _loadQueue() async {
+    final restaurant = _restaurantId;
+    if (restaurant == null) return const [];
+    final page = await api.get(
+      '/print-jobs/',
+      query: {
+        'restaurant': restaurant,
+        'status__in': 'pending,rendered,claimed,failed',
+        'job_type__in': MobilePrintJobPolicy.queryTypes,
+        'ordering': 'created_at',
+        'page_size': 100,
+      },
+    );
+    return _rows(page);
+  }
+
   Future<void> _processJobs(String restaurant) async {
     final available = {
       for (final printer in _printers)
