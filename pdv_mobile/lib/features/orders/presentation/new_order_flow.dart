@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/errors/failure_text.dart';
+import '../../../core/sync/backend_gateway.dart';
 import '../../../core/widgets/app_toast.dart';
 import '../../menu/presentation/product_picker_sheet.dart';
 import '../data/orders_repository.dart';
@@ -9,6 +10,8 @@ import 'new_order_sheet.dart';
 import 'operator_code_sheet.dart';
 import 'order_formatters.dart';
 import 'table_picker_sheet.dart';
+
+part 'new_order_command_flow.dart';
 
 /// Abrir um pedido, da primeira pergunta ao primeiro item.
 ///
@@ -69,7 +72,9 @@ Future<String?> _codigoDoOperador(
   if (guardado.isNotEmpty) return guardado;
   final codigo = await pedirCodigoDoOperador(context, assunto: assunto);
   if (codigo == null || codigo.isEmpty) return null;
-  if (guardadoEm.isNotEmpty) repository.operatorCodes.guardar(guardadoEm, codigo);
+  if (guardadoEm.isNotEmpty) {
+    repository.operatorCodes.guardar(guardadoEm, codigo);
+  }
   return codigo;
 }
 
@@ -79,74 +84,6 @@ Future<String?> _codigoDoOperador(
 /// "informou vazio".
 Map<String, String>? _metafields(String codigo) =>
     codigo.isEmpty ? null : {OperatorCodeKeeper.chave: codigo};
-
-/// Comanda: o garçom ANOTA nela. Nenhum pedido é aberto.
-///
-/// Era `open-command`, que criava um pedido para o cartão — e era esse gesto
-/// que prendia a comanda: desistir deixava um pedido vazio que alguém tinha de
-/// cancelar, e a mesa continuava ocupada por ele.
-///
-/// Comanda ocupada é selecionável de propósito: é assim que o garçom volta a
-/// uma mesa para lançar mais.
-///
-/// Devolve a COMANDA (não um pedido), para a tela abrir o cartão.
-Future<Map<String, dynamic>?> _fromCommand(
-  BuildContext context,
-  OrdersRepository repository,
-) async {
-  final command = await showCommandPicker(context, repository);
-  if (command == null || !context.mounted) return null;
-
-  // A mesa só é perguntada quando a comanda ainda não tem uma: o vínculo é do
-  // atendimento, não a forma de lançar.
-  if (fieldText(command['current_table']).isEmpty) {
-    final table = await _chooseTable(context, repository, command);
-    if (!context.mounted) return null;
-    if (table != null) {
-      try {
-        await repository.linkTable(
-          commandId: '${command['id']}',
-          tableId: '${table['id']}',
-          tableLabel: '${table['number'] ?? ''}',
-        );
-      } catch (error) {
-        if (!context.mounted) return null;
-        showToast(context, describeFailure(error));
-        return null;
-      }
-    }
-  }
-  // O vínculo da mesa é `await`: o contexto precisa ser conferido de novo
-  // antes da folha seguinte, senão a tela pode já ter saído.
-  if (!context.mounted) return null;
-
-  final codigo = await _codigoDoOperador(
-    context,
-    repository,
-    assunto: 'Comanda ${command['number'] ?? ''}'.trim(),
-    guardadoEm: '${command['id']}',
-  );
-  if (codigo == null || !context.mounted) return null;
-
-  final item = await showProductPicker(context, repository);
-  if (item == null || !context.mounted) return null;
-  try {
-    await repository.launchCommandItem(
-      commandId: '${command['id']}',
-      productId: item.productId,
-      productName: item.productName,
-      quantity: item.quantity,
-      variationId: item.variationId,
-      addonIds: item.addonIds,
-      customerNote: item.note,
-      metafields: _metafields(codigo),
-    );
-  } catch (error) {
-    if (context.mounted) showToast(context, describeFailure(error));
-    return null;
-  }
-  return {...command, '_kind': 'command'};
-}
 
 Future<Map<String, dynamic>?> _chooseTable(
   BuildContext context,

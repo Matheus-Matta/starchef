@@ -74,13 +74,19 @@ mixin CommandsActions<T extends StatefulWidget> on CommandsLoading<T> {
         variationIds: variationIds,
         addonIds: addonIds,
       );
-      await carregarItens();
-      // A coluna da esquerda mostra o estado do cartão: o primeiro lançamento
-      // o deixa ocupado, e a lista precisa acompanhar.
-      await carregar();
     } catch (falha) {
       if (mounted) setState(() => erro = 'Falha ao lançar na comanda: $falha');
+      return;
     }
+    // LANÇAR JÁ MANDA PARA A PRODUÇÃO — o mesmo gesto do "Enviar à cozinha".
+    // Antes o item ficava só anotado e o setor não recebia ticket nenhum até
+    // alguém lembrar de apertar o botão. Recarrega antes: se o envio falhar,
+    // o item lançado ainda aparece na comanda.
+    await carregarItens();
+    await enviarACozinha();
+    // A coluna da esquerda mostra o estado do cartão: o primeiro lançamento
+    // o deixa ocupado, e a lista precisa acompanhar.
+    await carregar();
   }
 
   Future<void> configurarProduto(Map<String, dynamic> produto) async {
