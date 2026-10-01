@@ -5,6 +5,11 @@ extension _MobilePrintAgentRetry on MobilePrintAgent {
     final vezes = (_falhas[jobId] ?? 0) + 1;
     _falhas[jobId] = vezes.clamp(0, MobilePrintJobPolicy.maxAutomaticAttempts);
     _errosImpressao[jobId] = error;
+    try {
+      await attempts.save(jobId, _falhas[jobId]!);
+    } catch (_) {
+      // Falha local de disco não pode interromper a impressão dos próximos.
+    }
     if (vezes >= MobilePrintJobPolicy.maxAutomaticAttempts) {
       return _registrarFalhaFinal(jobId);
     }
@@ -35,6 +40,11 @@ extension _MobilePrintAgentRetry on MobilePrintAgent {
     _retryAfter.remove(jobId);
     _falhas.remove(jobId);
     _errosImpressao.remove(jobId);
+    try {
+      await attempts.remove(jobId);
+    } catch (_) {
+      // A fila já foi encerrada no backend; o arquivo local é só um espelho.
+    }
     _lastError = mensagem;
     return true;
   }

@@ -9,6 +9,7 @@ import '../domain/mobile_printer.dart';
 import 'escpos_mobile_encoder.dart';
 import 'nearby_printer_permission.dart';
 import 'network_printer_writer.dart';
+import 'print_attempt_store.dart';
 import 'print_confirmation_store.dart';
 
 part 'mobile_print_agent_support.dart';
@@ -23,13 +24,16 @@ class MobilePrintAgent extends ChangeNotifier {
     this.writer = const NetworkPrinterWriter(),
     this.encoder = const EscPosMobileEncoder(),
     PrintConfirmationStorage? confirmations,
-  }) : confirmations = confirmations ?? FilePrintConfirmationStore();
+    PrintAttemptStorage? attempts,
+  }) : confirmations = confirmations ?? FilePrintConfirmationStore(),
+       attempts = attempts ?? FilePrintAttemptStore();
 
   final ApiClient api;
   final NearbyPrinterPermission permission;
   final NetworkPrinterWriter writer;
   final EscPosMobileEncoder encoder;
   final PrintConfirmationStorage confirmations;
+  final PrintAttemptStorage attempts;
   final Map<String, DateTime> _retryAfter = {};
   final Map<String, int> _falhas = {};
   final Map<String, String> _errosImpressao = {};
@@ -71,6 +75,12 @@ class MobilePrintAgent extends ChangeNotifier {
     } catch (_) {
       // Arquivo de confirmações ilegível não pode desligar a impressão.
     }
+    try {
+      _falhas.addAll(await attempts.load());
+    } catch (_) {
+      // Sem contador local, a fila continua operando; o backend segue sendo a
+      // fonte do trabalho.
+    }
     await runNow();
   }
 
@@ -82,8 +92,6 @@ class MobilePrintAgent extends ChangeNotifier {
     _printers = const [];
     _printersLoadedAt = null;
     _retryAfter.clear();
-    _falhas.clear();
-    _errosImpressao.clear();
     _rerunRequested = false;
     notifyListeners();
   }

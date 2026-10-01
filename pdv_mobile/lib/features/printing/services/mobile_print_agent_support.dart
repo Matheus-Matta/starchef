@@ -146,6 +146,11 @@ extension _MobilePrintAgentSupport on MobilePrintAgent {
       _retryAfter.remove(jobId);
       _falhas.remove(jobId);
       _errosImpressao.remove(jobId);
+      try {
+        await attempts.remove(jobId);
+      } catch (_) {
+        // O trabalho já saiu da fila do backend.
+      }
       _awaitingConfirmation.add(jobId);
       await confirmations.add(jobId);
       await _confirmPrintedJob(jobId);
