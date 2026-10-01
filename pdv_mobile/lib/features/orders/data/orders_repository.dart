@@ -26,6 +26,7 @@ class OrdersRepository {
     OrderDrafts? drafts,
     OperatorCodeKeeper? operatorCodes,
     this.onPrintJobsCreated,
+    this.exigeCodigoAgora,
   }) : drafts = drafts ?? OrderDrafts(),
        operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
@@ -34,6 +35,11 @@ class OrdersRepository {
   final WaiterSession session;
   final OrderDrafts drafts;
   final void Function()? onPrintJobsCreated;
+
+  /// A exigência ATUAL da sessão. A tela de pedidos guarda este repositório
+  /// desde que abriu; ler de `session` aqui devolveria o valor do momento do
+  /// login, e não o que o servidor disse ao reler o usuário.
+  final bool Function()? exigeCodigoAgora;
 
   /// O código de quem está lançando, por atendimento.
   ///
@@ -47,7 +53,8 @@ class OrdersRepository {
   ///
   /// Vem da SESSÃO, e não de uma consulta ao cadastro: a resposta é
   /// necessária antes do primeiro item, num aparelho que lança offline.
-  bool get requiresOperatorCode => session.user.requireOperatorCode;
+  bool get requiresOperatorCode =>
+      exigeCodigoAgora?.call() ?? session.user.requireOperatorCode;
   ReadOrigin lastReadOrigin = const ReadOrigin.live();
   DateTime? _lastSyncedAt;
 

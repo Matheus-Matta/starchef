@@ -46,6 +46,11 @@ class AuthRepository {
     return generated;
   }
 
+  /// O usuário como o servidor o vê AGORA (perfil, restaurante, exigências).
+  Future<WaiterUser> fetchUser() async => WaiterUser.fromJson(
+    Map<String, dynamic>.from(await api.get('/auth/me/')),
+  );
+
   Future<void> logout() => store.clearSession();
 
   static WaiterUser _userFrom(Map<String, dynamic> json) {

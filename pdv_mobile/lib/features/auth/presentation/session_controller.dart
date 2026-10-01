@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_client.dart';
@@ -40,6 +42,31 @@ class SessionController extends ChangeNotifier {
     }
     _restoring = false;
     notifyListeners();
+    unawaited(refreshUser());
+  }
+
+  /// Relê o usuário no servidor e atualiza a sessão guardada.
+  ///
+  /// O login grava junto as EXIGÊNCIAS do restaurante (código do operador).
+  /// Sem reler, uma configuração ligada com o garçom já logado só valia depois
+  /// de sair e entrar de novo. Sem rede, segue com o que estava guardado: o
+  /// atendimento não pode parar por isso.
+  Future<void> refreshUser() async {
+    if (_session == null) return;
+    try {
+      final user = await _repository.fetchUser();
+      final atual = _session;
+      if (atual == null ||
+          user.id != atual.user.id ||
+          user.restaurantId.isEmpty) {
+        return;
+      }
+      _session = atual.withUser(user);
+      await store.saveSession(_session!);
+      notifyListeners();
+    } catch (_) {
+      // Sem rede ou servidor fora: a sessão guardada continua valendo.
+    }
   }
 
   Future<bool> login({required String username, required String password}) =>

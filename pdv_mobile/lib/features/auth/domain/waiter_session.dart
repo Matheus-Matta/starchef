@@ -12,6 +12,12 @@ class WaiterSession {
   WaiterSession withTokens(String access, String refresh) =>
       WaiterSession(accessToken: access, refreshToken: refresh, user: user);
 
+  WaiterSession withUser(WaiterUser novo) => WaiterSession(
+    accessToken: accessToken,
+    refreshToken: refreshToken,
+    user: novo,
+  );
+
   Map<String, dynamic> toJson() => {
     'access': accessToken,
     'refresh': refreshToken,

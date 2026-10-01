@@ -31,7 +31,8 @@ class PdvMobileApp extends StatefulWidget {
   State<PdvMobileApp> createState() => _PdvMobileAppState();
 }
 
-class _PdvMobileAppState extends State<PdvMobileApp> {
+class _PdvMobileAppState extends State<PdvMobileApp>
+    with WidgetsBindingObserver {
   late final ApiClient _api;
   late final BackendGateway _gateway;
   late final OrderDrafts _drafts;
@@ -48,6 +49,7 @@ class _PdvMobileAppState extends State<PdvMobileApp> {
     _controller = SessionController(api: _api, store: SecureSessionStore());
     _printAgent = MobilePrintAgent(api: _api);
     _controller.addListener(_syncSessionServices);
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_bootstrap());
   }
 
@@ -70,8 +72,18 @@ class _PdvMobileAppState extends State<PdvMobileApp> {
     }
   }
 
+  // Voltar para o app (celular desbloqueado, troca de aplicativo) relê o
+  // usuário: uma exigência ligada no painel passa a valer sem novo login.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_controller.refreshUser());
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_syncSessionServices);
     _printAgent.dispose();
     _gateway.dispose();
@@ -113,6 +125,8 @@ class _PdvMobileAppState extends State<PdvMobileApp> {
             session: _controller.session!,
             drafts: _drafts,
             onPrintJobsCreated: () => unawaited(_printAgent.runNow()),
+            exigeCodigoAgora: () =>
+                _controller.session?.user.requireOperatorCode ?? false,
           ),
         ),
       },
