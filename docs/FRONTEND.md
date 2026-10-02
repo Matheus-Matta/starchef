@@ -67,6 +67,7 @@ frontend/
 | `/relatorio-geral` | `DashboardView` | KPIs gerais |
 | `/pdv` | `PdvView` | Tela de venda (PDV) |
 | `/caixa` | `CashRegisterView` | Abertura/fechamento de caixa, sangria/suprimento — tela própria, fora do CRUD genérico |
+| `/caixa/divergencias?sessoes=a,b` | `CashDiscrepancyReportView` | Relatório de divergências de vendas das sessões marcadas no histórico do caixa |
 | `/pedidos/:id/editar-itens` | `OrderEditView` | Wrapper fino sobre `PdvView` em modo edição |
 | `/kds` | `KdsView` | Painel de cozinha ao vivo |
 | `/kds-estacoes` | `KdsStationsView` | Cadastro de estações/colunas do KDS — tela própria |
@@ -86,6 +87,7 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 - **`ReportsView.vue`** — componente único para todos os relatórios (`section: sales|orders|product|payment|waiter|restaurant`), com filtros de filial/categoria/setor, seletor de período, exportação CSV e StatCards de KPI.
 - **`HomeView.vue`** — home mobile-first, atalhos e navegação condicionados a papel do usuário e módulos habilitados na conta.
 - **`CashRegisterView.vue`** — gestão de caixa (estações, abrir/fechar sessão, sangria/suprimento e aprovação gerencial). Para uma sessão presa a uma máquina indisponível, mostra somente ao administrador a ação **Forçar liberação**, que exige justificativa, cancela a sessão sem simular conferência da gaveta e libera o caixa para outro terminal. Mão feita, fora do CRUD genérico.
+- **Divergência de vendas** — dinheiro que entrou sem venda no PDV. No histórico de sessões de `CashRegisterView.vue` as sessões têm caixa de seleção (marcar não abre o extrato) e o botão **Relatório de divergências** leva a `CashDiscrepancyReportView.vue`: vendas no PDV × divergência × recebido, por sessão e por forma de pagamento, com impressão. O extrato da sessão (`CashSessionDetailView.vue`) lista as divergências e tem **Registrar divergência** (`components/cash/SalesDiscrepancyDialog.vue`: valor por forma, somado em centavos, e motivo). `SalesDiscrepancyList.vue` analisa, regulariza (com a descrição do desfecho fiscal) e cancela; o 409 de outro gerente que decidiu antes recarrega a lista. Nada disso cria pedido ou NFC-e (ver `docs/BACKEND.md`).
 
 ### Comandas e checkout do PDV web
 

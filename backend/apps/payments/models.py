@@ -325,3 +325,7 @@ class CashMovement(TenantModel):
 
     def __str__(self):
         return f"{self.movement_type} - {self.amount}"
+
+
+# A divergência de vendas mora no próprio módulo; o import é o que a registra.
+from apps.payments.discrepancy import SalesDiscrepancy  # noqa: E402,F401

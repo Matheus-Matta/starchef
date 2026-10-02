@@ -58,6 +58,7 @@ from apps.payments.views import (
     PaymentViewSet,
     PdvTerminalViewSet,
 )
+from apps.payments.views_discrepancy import CashDiscrepancyReportViewSet, SalesDiscrepancyViewSet
 from apps.payments.views_cash_movements import CashMovementViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.cash_movements import CashMovementsReportView
@@ -157,6 +158,8 @@ router.register("payments", PaymentViewSet, basename="payments")
 router.register("cash-register", CashRegisterViewSet, basename="cash-register")
 router.register("cash-stations", CashStationViewSet, basename="cash-stations")
 router.register("cash-movements", CashMovementViewSet, basename="cash-movements")
+router.register("cash-discrepancies", SalesDiscrepancyViewSet, basename="cash-discrepancies")
+router.register("cash-discrepancy-report", CashDiscrepancyReportViewSet, basename="cash-discrepancy-report")
 router.register("pdv-terminals", PdvTerminalViewSet, basename="pdv-terminals")
 router.register("fiscal/config", FiscalConfigViewSet, basename="fiscal-config")
 router.register("fiscal/profiles", FiscalProfileViewSet, basename="fiscal-profiles")

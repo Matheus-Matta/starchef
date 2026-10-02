@@ -402,6 +402,13 @@ _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_t
 _e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="local_to_cloud",
    dependencies=("cash_register",),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
+# Divergência de vendas: registrada num lado (o gerente, no fechamento) e
+# analisada/regularizada no outro (o contador, na nuvem). `LOJA` ou `MANUAL`
+# fariam de toda análise um conflito; o status só anda para a frente
+# (aberta → analisada → regularizada/cancelada), então a versão mais nova é a
+# certa.
+_e("sales_discrepancy", "payments.SalesDiscrepancy", conflict_policy=VERSAO, flow="both",
+   dependencies=("cash_register", "user"), include_in_bootstrap=False)
 _e("payment", "payments.Payment", conflict_policy=LOJA, flow="both",
    dependencies=("order", "payment_method", "cash_register"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})

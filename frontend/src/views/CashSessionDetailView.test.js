@@ -16,6 +16,7 @@ vi.mock("vue-router", () => ({
   useRouter: () => ({ back: mocks.back }),
 }));
 vi.mock("../services/api", () => ({ api: { get: mocks.apiGet } }));
+vi.mock("../stores/auth", () => ({ useAuthStore: () => ({ user: { profile_type: "manager" } }) }));
 vi.mock("../services/cashSessionExport", () => ({
   downloadCashSessionCsv: mocks.download,
   printCashSessionStatement: mocks.print,

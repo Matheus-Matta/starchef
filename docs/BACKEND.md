@@ -152,6 +152,33 @@ PDV consulta `cash-auth` uma vez ao recebê-lo ou ao reconectar.
 
 Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusão lógica/física e relações N:N de todos os `TenantBaseModel`. Operações em lote de mesas/comandas, que não executam signals do Django, publicam um evento compacto de coleção explicitamente.
 
+### Divergência de vendas (`apps/payments/discrepancy*.py`)
+
+Num pico, pedidos passam sem lançamento: o caixa recebe, mas não existe
+pedido nem NFC-e. Criar um "pedido fictício" com o valor que falta mistura
+conciliação financeira com documento fiscal — a NFC-e emitida depois não
+regulariza a mercadoria que já circulou sem nota (a SEFAZ-RJ aponta a
+denúncia espontânea). Por isso a `SalesDiscrepancy` é um registro
+ADMINISTRATIVO: sessão de caixa, valor por forma de pagamento (o total é
+calculado no servidor), motivo e desfecho. Não cria pedido, venda nem nota.
+
+```
+POST /api/v1/cash-discrepancies/                    registra (cash.manage ou cash.approve)
+POST /api/v1/cash-discrepancies/{id}/review/        aberta → analisada (cash.approve)
+POST /api/v1/cash-discrepancies/{id}/regularize/    → regularizada, com `note` (o desfecho fiscal)
+POST /api/v1/cash-discrepancies/{id}/cancel/        → cancelada, com `reason` (não se apaga)
+GET  /api/v1/cash-discrepancy-report/?cash_registers=a,b   relatório das sessões (até 100)
+```
+
+As transições travam a linha e releem o status depois da trava: decisão
+repetida ou concorrente responde 409; faltar a nota ou o motivo, 400. O
+relatório soma, por sessão e no total, as vendas registradas no PDV
+(pagamentos aprovados da sessão), as divergências (sem as canceladas) e o
+recebido, por forma de pagamento — em LOTE: três consultas para qualquer
+número de sessões. Sincroniza nos dois sentidos com "maior versão vence": o
+status só anda para a frente, e "loja vence" faria de toda análise na nuvem
+um conflito.
+
 ## 7. Pedidos, pagamento e impressão
 
 **Ciclo de vida do `Order`** (`apps/orders/models.py`) tem três eixos independentes:

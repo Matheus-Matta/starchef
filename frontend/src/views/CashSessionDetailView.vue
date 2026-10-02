@@ -24,6 +24,11 @@
         <ul class="cash-statement__issues"><li v-for="issue in occurrences" :key="issue.key"><Tag :value="issue.kind" :severity="issue.tone" /><span>{{ issue.text }}</span></li></ul>
       </Card>
 
+      <Card title="Divergências de vendas" subtitle="Valor que entrou no caixa sem venda registrada no PDV — não gera pedido nem NFC-e">
+        <template #actions><Button class="screen-only" label="Registrar divergência" icon="pi pi-plus" size="small" outlined @click="discrepancyDialog = true" /></template>
+        <SalesDiscrepancyList :items="discrepancies" :can-decide="canDecide" @changed="loadDiscrepancies" />
+      </Card>
+
       <Card title="Entradas, saídas e suprimentos" subtitle="Clique em uma movimentação para conferir todos os campos" padding="none">
         <ReportDataTable :rows="movementRows" :columns="movementColumns" row-clickable @row-click="openMovement" />
       </Card>
@@ -41,6 +46,7 @@
       </Card>
 
       <CashMovementDetailsDialog v-model:visible="movementDialog" :movement="selectedMovement" />
+      <SalesDiscrepancyDialog v-model:visible="discrepancyDialog" :cash-register="String(route.params.id)" @saved="loadDiscrepancies" />
     </template>
   </main>
 </template>
@@ -53,15 +59,22 @@ import Tag from "primevue/tag";
 
 import CashMovementDetailsDialog from "../components/cash/CashMovementDetailsDialog.vue";
 import CashSessionSummary from "../components/cash/CashSessionSummary.vue";
+import SalesDiscrepancyDialog from "../components/cash/SalesDiscrepancyDialog.vue";
+import SalesDiscrepancyList from "../components/cash/SalesDiscrepancyList.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import Card from "../components/display/Card.vue";
 import { api } from "../services/api";
+import { listDiscrepancies } from "../services/cashDiscrepancies";
 import { downloadCashSessionCsv, printCashSessionStatement } from "../services/cashSessionExport";
+import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
 
 const route = useRoute(), router = useRouter();
 const statement = ref({}), loading = ref(true), error = ref("");
 const selectedMovement = ref(null), movementDialog = ref(false);
+const discrepancies = ref([]), discrepancyDialog = ref(false), auth = useAuthStore();
+/** Analisar/regularizar é gesto gerencial; o backend revalida (403). */
+const canDecide = computed(() => auth.user?.is_superuser || ["admin", "owner", "manager"].includes(auth.user?.profile_type));
 const session = computed(() => statement.value.session || null);
 const money = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = (value) => value ? new Date(value).toLocaleString("pt-BR") : "—";
@@ -88,7 +101,9 @@ const occurrences = computed(() => [...movementRows.value.filter((row) => row.st
 function openMovement(row) { selectedMovement.value = row; movementDialog.value = true; }
 function printStatement() { printCashSessionStatement(statement.value); }
 async function load() { loading.value = true; try { statement.value = (await api.get(`/cash-register/${route.params.id}/statement/`)).data; } catch (cause) { error.value = normalizeApiError(cause).message; } finally { loading.value = false; } }
-onMounted(load);
+/** À parte do extrato: sem permissão de ver divergências (403), o extrato abre igual. */
+async function loadDiscrepancies() { try { const { data } = await listDiscrepancies(route.params.id); discrepancies.value = Array.isArray(data?.results) ? data.results : Array.isArray(data) ? data : []; } catch { discrepancies.value = []; } }
+onMounted(() => { load(); loadDiscrepancies(); });
 </script>
 
 <style>
