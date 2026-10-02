@@ -9,7 +9,7 @@ import logging
 
 from apps.synchronization.constants import EventStatus
 from apps.synchronization.models import SyncEvent, SyncNode
-from apps.synchronization.services import apply, dispatch, inbox, nodes
+from apps.synchronization.services import apply, comanda_conflicts, dispatch, inbox, nodes
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +51,16 @@ def aplicar_recebidos(ids=None):
         consulta = consulta.filter(pk__in=ids)
 
     aplicados = []
-    for evento in consulta[:MAX_APLICAR]:
-        apply.apply_event(evento)
-        evento.refresh_from_db(fields=["status"])
-        if evento.status == EventStatus.APPLIED:
-            aplicados.append(str(evento.event_id))
+    eventos = list(consulta[:MAX_APLICAR])
+    # O conflito da comanda é conferido UMA vez para o lote inteiro: o zerar
+    # de centenas de comandas chega aqui como centenas de eventos.
+    with comanda_conflicts.lote(eventos):
+        for evento in eventos:
+            apply.apply_event(evento)
+            evento.refresh_from_db(fields=["status", "applied_at"])
+            if evento.status == EventStatus.APPLIED:
+                comanda_conflicts.anotar_aplicado(evento)
+                aplicados.append(str(evento.event_id))
     if aplicados:
         _avancar_cursor(proprio, consulta)
     return aplicados

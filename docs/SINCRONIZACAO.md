@@ -137,6 +137,23 @@ no grupo `sync.account.{account}.node.{node}`; não existe broadcast global.
 
 Dado fiscal e financeiro nunca é resolvido em silêncio por last-write-wins.
 
+### Comanda editada na nuvem (o zerar do painel)
+
+`command`, `command_item`, `command_item_addon` e `command_batch` são "loja
+vence" — e a loja recusava TODA versão mais nova da nuvem. O gerente zerava as
+comandas no painel web (nuvem), a loja abria um conflito por item, o PDV seguia
+com os itens, e a versão da loja subia e desfazia o zerar na nuvem também.
+
+"Loja vence" protege uma edição da loja que a nuvem ainda não viu. Para as
+linhas da comanda, a versão mais nova da nuvem é APLICADA quando a versão local
+é uma que a nuvem já conhece: entregue (evento de saída confirmado) ou recebida
+dela (evento de entrada aplicado). Edição da loja ainda sem confirmação segue
+sendo conflito. Pedido, pagamento e fiscal não entram na regra.
+
+A conferência é em LOTE (`services/comanda_conflicts.py`): duas consultas para o
+lote recebido inteiro, não uma por evento — o zerar de 500 comandas chega como
+centenas de eventos.
+
 ### Adoção
 
 Um caso que só aparece rodando: aplicar um `restaurant` da nuvem dispara, na
