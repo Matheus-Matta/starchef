@@ -61,6 +61,19 @@ class TestPrinter extends Printer {
   bool get queueable => false;
 }
 
+/// Etiqueta da comanda, impressa em lote ("da 10 à 100").
+class CommandLabelPrinter extends Printer {
+  CommandLabelPrinter(super.device, {super.runtime});
+
+  @override
+  PrintJobType get jobType => PrintJobType.commandLabel;
+
+  /// O lote para onde a impressora falhou e diz o número: sessenta etiquetas
+  /// saindo sozinhas meia hora depois, da fila, surpreenderiam o salão.
+  @override
+  bool get queueable => false;
+}
+
 /// Tipo de cupom que este PDV ainda não conhece.
 class GenericPrinter extends Printer {
   GenericPrinter(super.device, {super.runtime, PrintJobType? type})

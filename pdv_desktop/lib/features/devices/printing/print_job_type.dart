@@ -12,6 +12,10 @@ enum PrintJobType {
   fiscalDanfe('fiscal_danfe', []),
   printerTest('printer_test', ['test']),
 
+  /// Etiqueta da comanda (número grande, QR e código de barras), impressa
+  /// aqui mesmo para quem não tem cartão físico.
+  commandLabel('command_label', []),
+
   /// Tipo que este PDV ainda não conhece — imprime como cupom comum em vez
   /// de recusar: um `job_type` novo no backend não pode deixar de sair no
   /// papel só porque o terminal está uma versão atrás.

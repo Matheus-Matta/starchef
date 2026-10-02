@@ -7,6 +7,7 @@ import 'command_detail_view.dart';
 import 'commands_actions.dart';
 import 'commands_grid.dart';
 import 'commands_loading.dart';
+import 'commands_labels.dart';
 import 'commands_receipt.dart';
 import 'commands_table_actions.dart';
 
@@ -84,7 +85,8 @@ class _CommandsPageState extends State<CommandsPage>
         CommandsLoading<CommandsPage>,
         CommandsActions<CommandsPage>,
         CommandsTableActions<CommandsPage>,
-        CommandsReceipt<CommandsPage> {
+        CommandsReceipt<CommandsPage>,
+        CommandsLabels<CommandsPage> {
   @override
   Future<String?> Function(String motivo)? get autorizarCancelamento =>
       widget.autorizarCancelamento;
@@ -212,6 +214,11 @@ class _CommandsPageState extends State<CommandsPage>
     onBuscaMudou: () => setState(() {}),
     onLeitura: abrirPorCodigo,
     onAbrir: _abrir,
+    // Sem agente de impressão neste terminal não há como imprimir aqui.
+    onImprimirEtiquetas:
+        widget.imprimirNoTerminal == null || imprimindoEtiquetas
+        ? null
+        : imprimirEtiquetas,
   );
 
   /// A segunda: o cartão aberto, no desenho da venda.

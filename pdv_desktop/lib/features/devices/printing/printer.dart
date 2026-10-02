@@ -6,6 +6,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart';
 import '../../../core/hardware/peripheral_lock.dart';
 import '../../../core/logging/app_logger.dart';
 import '../domain/printer_endpoint.dart';
+import 'command_label_codec.dart';
 import 'escpos_codec.dart';
 import 'print_document.dart';
 import 'printer_device.dart';
@@ -111,6 +112,10 @@ abstract class Printer {
       PrintJobType.weighTicket => WeighTicketPrinter(device, runtime: runtime),
       PrintJobType.fiscalDanfe => FiscalDanfePrinter(device, runtime: runtime),
       PrintJobType.printerTest => TestPrinter(device, runtime: runtime),
+      PrintJobType.commandLabel => CommandLabelPrinter(
+        device,
+        runtime: runtime,
+      ),
       PrintJobType.other => GenericPrinter(device, runtime: runtime),
     };
   }
@@ -191,6 +196,17 @@ abstract class Printer {
 
   Future<void> _send(PrintDocument document) {
     final drawer = _drawerPulseFor(document);
+    if (document.type == PrintJobType.commandLabel) {
+      return _deliver(
+        detail: jobType.wire,
+        bytes: CommandLabelCodec.bytes(
+          number: document.content,
+          code: document.barcode ?? document.content,
+          isEscPos: target.isEscPos,
+        ),
+        logData: const {'etiqueta': true},
+      );
+    }
     return _deliver(
       detail: jobType.wire,
       bytes: EscPosCodec.rawTransportBytes(

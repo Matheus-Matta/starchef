@@ -290,6 +290,10 @@ class CommandFilterSet(django_filters.FilterSet):
     status = django_filters.ChoiceFilter(
         choices=Command.STATUS_CHOICES, method="filtra_por_uso"
     )
+    # Faixa de números (as duas pontas incluídas): o PDV imprime as etiquetas
+    # "da 10 à 100" sem baixar o cadastro inteiro.
+    number_min = django_filters.NumberFilter(field_name="number", lookup_expr="gte")
+    number_max = django_filters.NumberFilter(field_name="number", lookup_expr="lte")
 
     class Meta:
         model = Command

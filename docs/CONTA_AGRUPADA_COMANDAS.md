@@ -280,6 +280,7 @@ POST   /api/v1/orders/merges/{id}/cancel/         desfaz (antes de pagar)
 POST   /api/v1/orders/merges/{id}/refund/         estorna (depois de pagar)
 GET    /api/v1/commands/{id}/items/               o que a comanda tem (?history=1)
 POST   /api/v1/commands/{id}/receipt/             conferência da comanda (não fiscal)
+GET    /api/v1/commands/?number_min=10&number_max=100   faixa de números (etiquetas)
 GET    /api/v1/commands/{id}/history/             linha do tempo (?page, ?after/?before)
 POST   /api/v1/commands/bulk-reset/               zera várias comandas (ids, reason)
 ```
@@ -343,6 +344,28 @@ só a cópia deixava a origem "em preparo", sem motivo nem autor. Agora
 `void_order_item` leva o cancelamento à anotação (`void_command_item`) e a linha
 acompanha; o aviso à cozinha sai uma vez, pelo caminho da comanda. O prazo do
 restaurante vale igual (409 `cancel_blocked`, liberável pela senha de operação).
+
+### Etiquetas de comanda (sem cartão físico)
+
+Na tela de comandas do PDV desktop, "Imprimir etiquetas" pede a faixa ("da 10
+à 100", até 1000 por vez) e a impressora, e imprime UMA etiqueta por comanda
+cadastrada: o número grande e centralizado no topo, o QR Code e o código de
+barras — os dois com o mesmo valor do recibo da comanda (o código, ou o número
+quando ela não tem código), que é o que o leitor reconhece.
+
+- Saem uma a uma pelo agente do terminal (`imprimirNoTerminal`), em ordem.
+- Falhou no meio, o lote PARA e diz em qual comanda, para continuar dali;
+  o tipo `command_label` não entra na fila local de propósito (sessenta
+  etiquetas saindo sozinhas depois surpreenderiam o salão). "Parar" também.
+- Número sem cadastro fica de fora e aparece no aviso final.
+- O tamanho do número se ajusta aos dígitos para caber em 58 mm (até 6x).
+- Arquivos: `devices/printing/command_label_codec.dart` (bytes),
+  `commands/presentation/command_labels.dart` (regras),
+  `commands_labels.dart` (fluxo) e `command_labels_dialogs.dart`.
+
+A lista de comandas do desktop passou a seguir as páginas da API até o fim
+(`commands/data/command_listing.dart`): pedindo `page_size=200` e lendo só a
+primeira resposta, a tela mostrava só as 100 primeiras — a rota limita a 100.
 
 ## As interfaces
 

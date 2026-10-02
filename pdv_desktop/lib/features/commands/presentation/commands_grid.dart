@@ -25,6 +25,7 @@ class CommandsGrid extends StatelessWidget {
     required this.onBuscaMudou,
     required this.onLeitura,
     required this.onAbrir,
+    this.onImprimirEtiquetas,
   });
 
   final List<Map<String, dynamic>> comandas;
@@ -35,6 +36,9 @@ class CommandsGrid extends StatelessWidget {
   final VoidCallback onBuscaMudou;
   final VoidCallback onLeitura;
   final ValueChanged<Map<String, dynamic>> onAbrir;
+
+  /// Imprime etiquetas de comanda por faixa; nulo deixa o botão desabilitado.
+  final VoidCallback? onImprimirEtiquetas;
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +83,17 @@ class CommandsGrid extends StatelessWidget {
                     isDense: true,
                   ),
                   onChanged: (_) => onBuscaMudou(),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Para quem não tem cartão físico: as comandas saem como
+              // etiqueta na impressora (número grande, QR e barras).
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: OutlinedButton.icon(
+                  onPressed: onImprimirEtiquetas,
+                  icon: const Icon(Icons.qr_code_2_rounded),
+                  label: const Text('Imprimir etiquetas'),
                 ),
               ),
             ],

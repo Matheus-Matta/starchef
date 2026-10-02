@@ -420,6 +420,7 @@ class _PrintQueueDialogState extends State<PrintQueueDialog> {
         PrintJobType.weighTicket => 'Nota de pesagem',
         PrintJobType.fiscalDanfe => 'DANFE NFC-e',
         PrintJobType.printerTest => 'Nota de teste',
+        PrintJobType.commandLabel => 'Etiqueta de comanda',
         PrintJobType.other => entry.jobType,
       };
 

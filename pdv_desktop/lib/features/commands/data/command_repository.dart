@@ -1,5 +1,5 @@
 import '../../../core/network/api_client.dart';
-import '../../../core/network/api_exception.dart';
+import 'command_listing.dart';
 
 /// O que uma comanda tem — e o que ela já teve.
 ///
@@ -24,32 +24,26 @@ class CommandRepository {
   /// segurando, ou vazio. "Em fechamento" é derivado disso, nunca de um estado
   /// gravado na comanda — um terceiro estado no banco seria mais uma coisa a
   /// sincronizar e a divergir.
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) async {
-    final resposta = await _api.get(
-      '/commands/',
-      query: {
-        'page_size': 200,
-        'is_active': true,
-        if (restaurantId != null && restaurantId.isNotEmpty)
-          'restaurant': restaurantId,
-      },
-      accessToken: accessToken,
-    );
-    // `results` é a resposta paginada; `data` e a lista crua cobrem uma rota
-    // sem paginação. Nenhum dos três sendo lista, a resposta não é o que esta
-    // tela sabe ler — e devolver vazio em silêncio faria a página parecer que
-    // não tem comanda nenhuma, quando o que houve foi um formato inesperado.
-    final bruto = resposta['results'] ?? resposta['data'] ?? const [];
-    if (bruto is! List) {
-      throw ApiException(
-        'O servidor respondeu num formato que esta tela não reconhece.',
+  Future<List<Map<String, dynamic>>> list({String? restaurantId}) =>
+      listarComandas(
+        _api,
+        accessToken: accessToken,
+        restaurantId: restaurantId,
       );
-    }
-    return bruto
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
-  }
+
+  /// As comandas ativas com número de [de] a [ate] (as duas pontas incluídas),
+  /// em ordem — é o lote das etiquetas.
+  Future<List<Map<String, dynamic>>> inRange({
+    required int de,
+    required int ate,
+    String? restaurantId,
+  }) => listarComandas(
+    _api,
+    accessToken: accessToken,
+    restaurantId: restaurantId,
+    numeroMinimo: de,
+    numeroMaximo: ate,
+  );
 
   /// Itens da comanda.
   ///
