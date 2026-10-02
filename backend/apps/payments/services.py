@@ -186,12 +186,14 @@ def close_cash_register(*, cash_register, user, actual_amount, notes="", termina
         cash_register.expected_amount = expected
         cash_register.actual_amount = actual_amount
         cash_register.difference_amount = actual_amount - expected
-        cash_register.status = (
-            CashRegister.STATUS_CLOSED if cash_register.difference_amount == 0 else CashRegister.STATUS_PENDING_APPROVAL
-        )
-        cash_register.pending_operation = "" if cash_register.difference_amount == 0 else "closing"
+        # A margem do restaurante decide SE precisa de gerente; não mexe em
+        # quanto foi contado nem na diferença, que ficam gravados como são.
+        margem = cash_register.restaurant.cash_closing_tolerance
+        dentro_da_margem = abs(cash_register.difference_amount) <= margem
+        cash_register.status = CashRegister.STATUS_CLOSED if dentro_da_margem else CashRegister.STATUS_PENDING_APPROVAL
+        cash_register.pending_operation = "" if dentro_da_margem else "closing"
         cash_register.closed_by = user
-        cash_register.closed_at = timezone.now() if cash_register.difference_amount == 0 else None
+        cash_register.closed_at = timezone.now() if dentro_da_margem else None
         cash_register.closed_terminal = terminal or cash_register.opened_terminal
         cash_register.closed_terminal_label = (
             (terminal.label if terminal is not None else cash_register.opened_terminal_label) or ""
@@ -292,6 +294,9 @@ def _cash_password_proof(stored_hash, cash_register_id, nonce):
     ).hexdigest()
 
 
+# Transação PRÓPRIA: aprovar pela web vem sem `Idempotency-Key` e o
+# `select_for_update` da sessão virava 500 (ver test_trava_sem_transacao_no_web).
+@transaction.atomic
 def approve_cash_operation(
     *,
     cash_register,
@@ -658,7 +663,10 @@ def register_payment(
             order.status = Order.STATUS_PAID
             order.closed_at = order.closed_at or timezone.now()
         else:
+            # O PRIMEIRO recebimento é o que põe o pedido em pagamento: entrar
+            # na tela de pagamento (`/checkout/`) não muda o estado.
             order.payment_status = Order.PAYMENT_PARTIAL
+            order.status = Order.STATUS_AWAITING_PAYMENT
 
         order.updated_by = user
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
@@ -794,8 +802,10 @@ def cancel_payment(*, payment, user):
         paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
             "value"
         ] or Decimal("0.00")
+        # Sem nenhum recebimento o pedido volta a ABERTO — ninguém está pagando.
+        # Desconto, taxa e CPF ficam: são as escolhas da próxima tentativa.
         order.payment_status = Order.PAYMENT_PARTIAL if paid_total > 0 else Order.PAYMENT_PENDING
-        order.status = Order.STATUS_AWAITING_PAYMENT
+        order.status = Order.STATUS_AWAITING_PAYMENT if paid_total > 0 else Order.STATUS_OPEN
         order.closed_at = None
         order.updated_by = user
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])

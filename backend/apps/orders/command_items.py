@@ -102,13 +102,15 @@ def free_command_if_empty(command, *, user=None):
     # o consumo de quem esteve na mesa antes. É o vazamento que o estado
     # concluído existe para impedir.
     agora = timezone.now()
-    CommandItem.objects.filter(
+    # `save` por item, e não `QuerySet.update()`: sem sinal, o encerramento
+    # não chegava à sincronização nem ao tempo real, e o outro lado continuava
+    # vendo a anotação pendente num cartão já livre.
+    for sobra in CommandItem.objects.filter(
         command_id=command.pk, command_status=CommandItem.STATUS_PENDENTE
-    ).update(
-        command_status=CommandItem.STATUS_CANCELADO,
-        command_closed_at=agora,
-        updated_at=agora,
-    )
+    ):
+        sobra.command_status = CommandItem.STATUS_CANCELADO
+        sobra.command_closed_at = agora
+        sobra.save(update_fields=["command_status", "command_closed_at", "updated_at"])
 
     command = Command.objects.select_for_update().get(pk=command.pk)
     mesa_anterior = command.current_table_id

@@ -435,6 +435,26 @@
             />
             <small v-if="invoiceCpfError" class="pdv__cpf-error">{{ invoiceCpfError }}</small>
           </div>
+          <div v-if="cnpjDisponivel" class="pdv__fiscal-cpf">
+            <label class="pdv__service-fee-toggle">
+              <input v-model="includeCnpjOnInvoice" type="checkbox" @change="toggleInvoiceCnpj" />
+              <span>Incluir CNPJ na NFC-e</span>
+            </label>
+            <input
+              v-if="includeCnpjOnInvoice"
+              :value="invoiceCnpj"
+              class="pdv__cpf-input"
+              inputmode="text"
+              autocapitalize="characters"
+              maxlength="18"
+              autocomplete="off"
+              placeholder="00.000.000/0000-00"
+              aria-label="CNPJ para a NFC-e"
+              :aria-invalid="Boolean(invoiceCnpjError)"
+              @input="updateInvoiceCnpj"
+            />
+            <small v-if="invoiceCnpjError" class="pdv__cpf-error">{{ invoiceCnpjError }}</small>
+          </div>
           <!-- O CUPOM FICA JUNTO DO CPF porque o CPF e a IDENTIDADE dele: e por
                ele que "compra unica por cliente" e "so para o grupo VIP" sao
                conferidos. Em blocos separados, o operador digitaria o cupom,
@@ -817,6 +837,12 @@
           placeholder="Ex: cliente desistiu do item..."
           @keydown.esc="closeVoidItemDialog"
         />
+        <!-- Fora do prazo do restaurante o servidor responde 409
+             (`cancel_blocked`): o supervisor libera aqui mesmo, sem sair da venda. -->
+        <template v-if="itemVoidBlocked">
+          <p class="pdv__reason-label" role="alert">{{ itemVoidBlocked }}</p>
+          <input v-model="itemVoidPassword" class="pdv__note-input" type="password" autocomplete="off" placeholder="Senha de operação do restaurante" />
+        </template>
         <div class="pdv__modal-actions">
           <button class="pdv__btn pdv__btn--ghost" type="button" :disabled="voidingItem" @click="closeVoidItemDialog">Voltar</button>
           <button class="pdv__btn pdv__btn--danger" type="button" :disabled="!itemVoidReason.trim() || voidingItem" @click="confirmVoidItem">
@@ -854,7 +880,9 @@ import { getBrowserValue } from "../services/browserPersistence";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { useAuthStore } from "../stores/auth";
 import { normalizeApiError } from "../utils/apiError";
-import { cpfDigits, formatCpf, isValidCpf } from "../utils/cpf";
+import { useCheckoutChoices } from "../composables/useCheckoutChoices";
+import { formatCnpj } from "../utils/cnpj";
+import { formatCpf, isValidCpf } from "../utils/cpf";
 
 const route = useRoute();
 const router = useRouter();
@@ -958,6 +986,13 @@ const serviceFeeEnabled = ref(true);
 const includeCpfOnInvoice = ref(false);
 const invoiceCpf = ref("");
 const invoiceCpfError = ref("");
+// Taxa, desconto e CPF/CNPJ vivem no PEDIDO (ver `useCheckoutChoices`).
+const escolhas = useCheckoutChoices(
+  { currentOrder, discount, discountInput, serviceFeeEnabled, includeCpfOnInvoice, invoiceCpf, invoiceCpfError },
+  { onErro: (erro) => pdvError(erro, "Não foi possível salvar as escolhas do pagamento") },
+);
+const { includeCnpjOnInvoice, invoiceCnpj, invoiceCnpjError, cnpjDisponivel } = escolhas;
+watch(serviceFeeEnabled, () => escolhas.salvar());
 const sendingKitchen = ref(false);
 const creatingOrder = ref(false);
 const showCancelModal = ref(false);
@@ -965,6 +1000,8 @@ const cancelReason = ref("");
 const cancelling = ref(false);
 const itemToVoid = ref(null);
 const itemVoidReason = ref("");
+const itemVoidBlocked = ref("");
+const itemVoidPassword = ref("");
 const voidingItem = ref(false);
 const ITEM_VOID_REASONS = [
   "Cliente desistiu do item",
@@ -1139,15 +1176,32 @@ function selectType(type) {
 
 function toggleInvoiceCpf() {
   invoiceCpfError.value = "";
-  if (!includeCpfOnInvoice.value || invoiceCpf.value) return;
-  invoiceCpf.value = formatCpf(
-    selectedCustomer.value?.document || currentOrder.value?.customer_document || "",
-  );
+  escolhas.alternarDocumento("cpf");
+  if (includeCpfOnInvoice.value && !invoiceCpf.value) {
+    invoiceCpf.value = formatCpf(
+      selectedCustomer.value?.document || currentOrder.value?.customer_document || "",
+    );
+  }
+  escolhas.salvar();
 }
 
 function updateInvoiceCpf(event) {
   invoiceCpf.value = formatCpf(event.target.value);
   invoiceCpfError.value = "";
+  // Grava quando o documento fica completo e válido; no meio da digitação não.
+  if (isValidCpf(invoiceCpf.value)) escolhas.salvar();
+}
+
+function toggleInvoiceCnpj() {
+  invoiceCnpjError.value = "";
+  escolhas.alternarDocumento("cnpj");
+  escolhas.salvar();
+}
+
+function updateInvoiceCnpj(event) {
+  invoiceCnpj.value = formatCnpj(event.target.value);
+  invoiceCnpjError.value = "";
+  if (!escolhas.documento().erro) escolhas.salvar();
 }
 
 function pickCommand(command) {
@@ -1200,12 +1254,7 @@ async function startOrder() {
     const res = await api.post("/orders/", payload);
     currentOrder.value = res.data;
     cartItems.value = [];
-    discount.value = 0;
-    discountInput.value = "0.00";
-    serviceFeeEnabled.value = true;
-    includeCpfOnInvoice.value = false;
-    invoiceCpf.value = "";
-    invoiceCpfError.value = "";
+    escolhas.restaurar(res.data);
     navigateStep("order", { query: { order: currentOrder.value.id } });
   } catch (e) {
     pdvError(e, "Erro ao abrir pedido");
@@ -1498,12 +1547,7 @@ async function openWeighModal(product) {
 
 async function resumeTableOrder(order) {
   currentOrder.value = order;
-  discount.value = Number(order.discount || 0);
-  discountInput.value = discount.value.toFixed(2);
-  serviceFeeEnabled.value = order.service_fee_enabled !== false;
-  invoiceCpf.value = formatCpf(order.fiscal_customer_cpf || "");
-  includeCpfOnInvoice.value = Boolean(invoiceCpf.value);
-  invoiceCpfError.value = "";
+  escolhas.restaurar(order);
   await refreshCart();
   // Editar sempre abre a tela do PEDIDO (montar/editar itens) — inclusive quando
   // já está "aguardando pagamento". O caminho para o pagamento é o botão
@@ -1590,19 +1634,32 @@ function closeVoidItemDialog() {
   if (voidingItem.value) return;
   itemToVoid.value = null;
   itemVoidReason.value = "";
+  itemVoidBlocked.value = "";
+  itemVoidPassword.value = "";
 }
 
 async function confirmVoidItem() {
   if (!itemToVoid.value || !itemVoidReason.value.trim()) return;
   voidingItem.value = true;
   try {
+    // Item de comanda ou de balcão, o caminho é o mesmo: o servidor leva o
+    // cancelamento à origem do item (ver `void_order_item`).
+    const senha = itemVoidPassword.value ? { cash_password: itemVoidPassword.value } : {};
     await api.delete(`/orders/${currentOrder.value.id}/items/${itemToVoid.value.id}/void/`, {
-      data: { reason: itemVoidReason.value.trim() },
+      data: { reason: itemVoidReason.value.trim(), ...senha },
     });
     voidingItem.value = false;
     closeVoidItemDialog();
     await refreshCart();
   } catch (e) {
+    const erro = normalizeApiError(e);
+    if (erro.code === "cancel_blocked") {
+      itemVoidBlocked.value = itemVoidPassword.value
+        ? "Senha não confere. Peça ao supervisor para digitar de novo."
+        : erro.message;
+      itemVoidPassword.value = "";
+      return;
+    }
     pdvError(e, "Erro ao cancelar item");
   } finally {
     voidingItem.value = false;
@@ -1629,10 +1686,9 @@ async function refreshCart() {
 }
 
 async function goToClose() {
-  const fiscalCpf = cpfDigits(invoiceCpf.value);
-  if (includeCpfOnInvoice.value && !isValidCpf(fiscalCpf)) {
-    invoiceCpfError.value = "Informe um CPF válido.";
-    toast.add({ severity: "warn", summary: "CPF inválido", detail: invoiceCpfError.value, life: 3500 });
+  const { erro: erroDoDocumento } = escolhas.documento();
+  if (erroDoDocumento) {
+    toast.add({ severity: "warn", summary: "Documento inválido", detail: erroDoDocumento, life: 3500 });
     return;
   }
   await loadPaymentMethods();
@@ -1641,12 +1697,12 @@ async function goToClose() {
       sendingKitchen.value = true;
       await api.post(`/orders/${currentOrder.value.id}/send-to-kitchen/`);
     }
-    const res = await api.post(`/orders/${currentOrder.value.id}/close/`, {
-      discount: discount.value || 0,
-      service_fee_enabled: serviceFeeEnabled.value,
-      fiscal_customer_cpf: includeCpfOnInvoice.value ? fiscalCpf : "",
-      expected_total: orderPreviewTotal.value.toFixed(2),
-    });
+    // `/checkout/`, e não `/close/`: entrar no pagamento grava as escolhas
+    // sem avançar o pedido — quem avança é o primeiro recebimento.
+    const res = await api.post(
+      `/orders/${currentOrder.value.id}/checkout/`,
+      escolhas.corpo({ expected_total: orderPreviewTotal.value.toFixed(2) }),
+    );
     currentOrder.value = res.data;
   } catch (e) {
     pdvError(e, "Erro ao fechar pedido");
@@ -1817,12 +1873,7 @@ function newOrder() {
   selectedCustomer.value = null;
   currentOrder.value = null;
   cartItems.value = [];
-  discount.value = 0;
-  discountInput.value = "0.00";
-  serviceFeeEnabled.value = true;
-  includeCpfOnInvoice.value = false;
-  invoiceCpf.value = "";
-  invoiceCpfError.value = "";
+  escolhas.restaurar(null);
   selectedPaymentMethod.value = null;
   amountReceived.value = 0;
   payError.value = "";
@@ -1887,6 +1938,9 @@ async function openExistingOrder(orderId, { validateCash = false } = {}) {
       return;
     }
     currentOrder.value = order;
+    // Recarregar ou voltar pelo navegador também traz taxa, desconto e CPF —
+    // antes só a retomada pela tela de mesas trazia.
+    escolhas.restaurar(order);
     orderType.value = order.order_type;
     resolvedRestaurantId.value = order.restaurant;
     resolvedBranchId.value = null;

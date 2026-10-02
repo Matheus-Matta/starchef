@@ -154,6 +154,7 @@ class Order(TenantModel):
         max_digits=5, decimal_places=2, null=True, blank=True, default=None
     )
     fiscal_customer_cpf = models.CharField(max_length=11, blank=True, default="")
+    fiscal_customer_cnpj = models.CharField(max_length=14, blank=True, default="")
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     # O CUPOM FICA SEPARADO DO `discount` de propósito. `discount` é a decisão
     # de um gerente naquele pedido; o cupom é uma regra que o cliente exerceu, e

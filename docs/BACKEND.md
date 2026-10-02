@@ -162,11 +162,14 @@ Os signals de `apps/realtime/signals.py` cobrem criação, alteração, exclusã
 
 Regras aplicadas em `apps/orders/services.py`: pedido pago/cancelado/estornado fica bloqueado para edição de itens e fechamento; o cancelamento de pedido pago marca `payment_status=refunded`, sem estorno financeiro; cancelamento exige motivo e cancela, na mesma transação, a nota fiscal vinculada (inclusive descartando a pendente para impedir emissão posterior); retroceder um item pronto exige perfil de gerente/dono/admin; mesa ocupada não abre pedido paralelo; fechamento e pagamento usam `transaction.atomic`; pagamento aceita `Idempotency-Key`. Para cartão, `metadata.card_subtype` (`debit` ou `credit`) é obrigatório no fluxo de pedido, persistido em `Payment.card_subtype` e usado para gerar o meio de pagamento correto na NFC-e.
 
-No fechamento, `POST /orders/{id}/close/` aceita `fiscal_customer_cpf`. O CPF é
-validado, normalizado para 11 dígitos e armazenado no pedido antes do pagamento.
-A emissão automática e `POST /invoices/emit/` usam esse valor para preencher
-`recipient_cpf`; o provider Focus envia `cpf_destinatario` na NFC-e. Uma string
-vazia remove a opção do pedido.
+No fechamento, `POST /orders/{id}/close/` aceita `fiscal_customer_cpf` ou
+`fiscal_customer_cnpj`. O CPF/CNPJ é validado, normalizado para 11/14 dígitos e
+armazenado no pedido antes do pagamento. A emissão automática e
+`POST /invoices/emit/` usam o documento para preencher `recipient_cpf` ou
+`recipient_cnpj`; o provider Focus envia `cpf_destinatario` ou
+`cnpj_destinatario` na NFC-e. CPF e CNPJ são mutuamente exclusivos. Uma string
+vazia remove a identificação do pedido. O campo CNPJ aceita os formatos
+numérico e alfanumérico, com 14 caracteres e dígitos verificadores numéricos.
 
 `expected_total` é uma referência de concorrência enviada pelo PDV. Se
 divergir, o backend não recusa o fechamento: conclui com o total autoritativo
@@ -252,6 +255,9 @@ Rápida: `quick_scale_command_timeout_seconds` (10–600 s, padrão 45) e
 `quick_scale_stability_seconds` (1–30 s, padrão 3). A API envia esses campos ao
 PDV e a sincronização cloud-to-local os entrega aos terminais da loja.
 
+- `POST /api/v1/orders/{id}/checkout/` grava desconto, taxa, CPF e cupom e recalcula o total **sem avançar o pedido** (`close_order(marcar_aguardando=False)`); quem avança é o primeiro recebimento, e cancelar o último devolve o pedido a `open`. O `/close/` segue marcando `awaiting_payment` para o PDV desktop e o app. Ver `docs/FLUXO_PAGAMENTO_EMISSAO_FISCAL.md` §2.
+- `POST /api/v1/commands/bulk-reset/` zera comandas sem apagar histórico (`apps/restaurants/command_reset.py`) e `GET /api/v1/commands/{id}/history/` devolve a linha do tempo do cartão (`command_history.py`). Ver `docs/CONTA_AGRUPADA_COMANDAS.md`.
+- `Restaurant.cash_closing_tolerance` (padrão R$ 0,50, 0–100, espelhada na filial): diferença de gaveta até a margem, em falta ou sobra, fecha o caixa sem aprovação; acima, `pending_manager_approval`. Esperado, contado e diferença ficam gravados como são.
 - `POST /api/v1/cash-register/{id}/force-release/` é a recuperação administrativa de uma sessão presa a uma máquina indisponível. Somente o administrador da conta pode usá-la e a justificativa é obrigatória. A sessão e os lançamentos ainda pendentes são cancelados, o caixa fica livre e o evento é auditado; nenhum valor de conferência da gaveta é inventado.
 - `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
 - `/api/v1/stock/suppliers/` mantém os fornecedores da conta. O insumo pode apontar para um fornecedor padrão e cada linha da entrada registra o fornecedor efetivamente usado.

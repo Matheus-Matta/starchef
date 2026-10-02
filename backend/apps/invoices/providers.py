@@ -428,6 +428,13 @@ class FocusNfeProvider(FiscalProvider):
         if invoice.recipient_cpf:
             payload["cpf_destinatario"] = only_digits(invoice.recipient_cpf)
             payload["nome_destinatario"] = invoice.recipient_name
+        elif invoice.recipient_cnpj:
+            payload["cnpj_destinatario"] = "".join(
+                character
+                for character in invoice.recipient_cnpj.upper()
+                if character.isalnum()
+            )
+            payload["nome_destinatario"] = invoice.recipient_name
         return payload
 
     @staticmethod

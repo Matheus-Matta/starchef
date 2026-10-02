@@ -9,8 +9,9 @@ import 'package:starchef_pdv_desktop/core/network/realtime_client.dart';
 
 /// O cliente HTTP é o único caminho de dados deste PDV.
 ///
-/// Não há fila de saída nem cache de leitura: o que o servidor responde é o
-/// que existe, e o que ele recusa não aconteceu. O que estes testes protegem é
+/// Não há fila de saída, e o cache de leitura só abre a tela mais rápido (ver
+/// `response_cache_test.dart`): o que o servidor responde é o que existe, e o
+/// que ele recusa não aconteceu. O que estes testes protegem é
 /// a fronteira — que a requisição saia montada certo, e que toda resposta
 /// estranha vire uma mensagem que o operador consiga ler.
 void main() {

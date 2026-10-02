@@ -42,4 +42,10 @@ def test_migration_moves_focus_a1_to_canonical_fields(
         finally:
             migrated.certificate_file.close()
     finally:
-        MigrationExecutor(connection).migrate([MIGRATION_AFTER])
+        # De volta à ÚLTIMA migration de cada app, e não a `MIGRATION_AFTER`:
+        # parar na 0010 deixava o banco dos testes seguintes sem as colunas
+        # das migrations posteriores (`recipient_cnpj` da 0013), e eles
+        # quebravam com "no such column" conforme a ordem da suíte.
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(executor.loader.graph.leaf_nodes())

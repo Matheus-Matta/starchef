@@ -93,7 +93,8 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
 - **CPF na NFC-e**: no diálogo que antecede o pagamento, ao lado da escolha da
   taxa de serviço, o operador pode informar um CPF. O PDV valida os dígitos,
-  envia `fiscal_customer_cpf` no fechamento e preserva o valor no pedido local
+  envia `fiscal_customer_cpf` ou `fiscal_customer_cnpj` no fechamento e
+  preserva o documento no pedido local
   para que a emissão fiscal continue correta quando a venda começou offline.
 - **Fotos do catálogo**: cards de produto e opções de variante resolvem
   `logo_p`, com fallback para o campo legado `image`. O PDV não percorre
@@ -104,6 +105,27 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`MutationRelay`** (`core/network/mutation_relay.dart`): usado por terminais "Caixa Cliente" (secundários) para encaminhar mutações ao "Caixa Principal" pela rede local, assinado HMAC-SHA256 (método, rota, timestamp, nonce, conta, operador, filial, corpo), protegido contra replay, só aceita origem LAN. Três desfechos: sucesso; `MutationRelayUnavailable` (nunca chegou a sair — seguro enfileirar localmente); `MutationRelayUncertain` (pode ter sido entregue — **nunca** reenfileira localmente, pra não duplicar venda; tenta confirmar via `GET /v1/operations/<id>` antes de desistir).
 - **Topologia (Caixa Principal / Caixa Cliente)** (`features/topology/`): só dois papéis existem. Uma instalação nova sobe como secundária sem principal configurado e fica **bloqueada para escrita** até um humano atribuir os papéis — evita dois principais por acidente. Leituras também passam pelo principal (preferência: principal → nuvem → cache local); **escritas nunca caem para a nuvem direto** — se o principal está inalcançável, o secundário recusa a escrita em vez de arriscar divergência.
 - **Outbox / dead-letter** (`features/sync/presentation/outbox_review_dialog.dart`): tela que traduz método+rota para o que a operação significa ("Item adicionado ao pedido"), mostra o motivo da recusa e o payload completo, oferece repetir ou descartar (descarte exige confirmação e vira log `warning`).
+
+### 5.1 Cache de leitura do PDV online (`ResponseCache`)
+
+Nesta branch o `pdv_desktop/` fala direto com o servidor, sem `OfflineStore`.
+O que existe é um cache **de apresentação**, em memória, para a tela abrir na
+hora (`core/network/response_cache.dart`, dentro do `ApiClient`):
+
+- Guarda só respostas GET de listas de cadastro: `/commands/`,
+  `/menu/products/`, `/menu/categories/`, `/customers/`, `/tables/`,
+  `/payments/methods/`, `/cash-stations/`. Pedido, caixa e autenticação nunca —
+  nada do cache decide pagamento ou fechamento; o servidor valida.
+- Chave: servidor + conta + usuário (do JWT) + rota + parâmetros ordenados (o
+  restaurante vai na consulta). 120 entradas no máximo (sai a mais antiga),
+  validade de 30 min.
+- Escrita deste terminal apaga o assunto **antes** de sair (resposta perdida
+  pode esconder escrita que valeu); evento de tempo real apaga o assunto do
+  recurso; logout, troca de servidor e **reconexão** do tempo real apagam tudo.
+- `loadCatalog` (`features/home/data/pdv_catalog.dart`) devolve o catálogo
+  guardado na hora quando ele está inteiro e relê por trás se a cópia passou de
+  10 s; se o servidor mudou, emite `realtime:pdv` e a tela redesenha. A tela de
+  clientes mostra a última lista da mesma busca enquanto a leitura chega.
 
 ## 6. Hardware: balanças e impressoras
 

@@ -38,6 +38,11 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
     # auditada. Um limite de um dia seria o mesmo que desligar a regra.
     item_cancel_window_seconds = serializers.IntegerField(required=False, min_value=0, max_value=3600)
     max_commands_per_table = serializers.IntegerField(required=False, min_value=0, max_value=100)
+    # Teto de R$ 100: acima disso não é margem de erro de gaveta, é falta que
+    # precisa de gerente — e a aprovação gerencial continua existindo para ela.
+    cash_closing_tolerance = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, min_value=Decimal("0.00"), max_value=Decimal("100.00")
+    )
     quick_scale_command_timeout_seconds = serializers.IntegerField(
         required=False, min_value=10, max_value=600
     )

@@ -18,7 +18,7 @@ from apps.core.numbers import (
     parse_quantity,
 )
 from apps.core.tenant import tenant_context
-from apps.customers.validators import is_valid_cpf, strip_cpf
+from apps.customers.validators import is_valid_cnpj, is_valid_cpf, strip_cnpj, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
 from apps.orders.command_billing import conclude_items_of_order
 from apps.menu.models import ProductVariation
@@ -795,6 +795,9 @@ def set_order_item_quantity(item, user, quantity):
         return item
 
 
+# Transação PRÓPRIA: a web não manda `Idempotency-Key`, e sem ela nenhuma
+# transação envolvia a requisição — o `select_for_update` abaixo virava 500.
+@transaction.atomic
 def void_order_item(item, user, reason="", offline_printed=False, authorized=False,
                     authorized_by=None):
     """Cancela um item, com cupom de cancelamento so depois de despachado.
@@ -829,6 +832,20 @@ def void_order_item(item, user, reason="", offline_printed=False, authorized=Fal
         assert_pode_cancelar(item, authorized=authorized)
 
         was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
+        if item.command_item_id:
+            # VEIO DE COMANDA: a produção é a da anotação, então o cancelamento
+            # é dela — status, motivo, autor, auditoria e o aviso à cozinha pelo
+            # caminho por onde o prato entrou. A linha da conta só acompanha.
+            # Cancelar só a cópia deixava a origem "em preparo", sem motivo.
+            from apps.orders.command_item_void import void_command_item
+            from apps.orders.models import CommandItem
+
+            if item.command_item.status not in {CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED}:
+                void_command_item(
+                    item.command_item, user=user, reason=reason,
+                    authorized=authorized, authorized_by=authorized_by,
+                )
+            within_grace = was_dispatched = False
         item.status = OrderItem.STATUS_CANCELLED
         item.void_reason = reason
         item.voided_at = timezone.now()
@@ -970,9 +987,18 @@ def close_order(
     service_fee=None,
     service_fee_enabled=None,
     fiscal_customer_cpf=None,
+    fiscal_customer_cnpj=None,
     expected_total=None,
     coupon_code=None,
+    marcar_aguardando=True,
 ):
+    """Aplica desconto, taxa, CPF e cupom e recalcula o total.
+
+    `marcar_aguardando=False` é o checkout (`/checkout/`): grava as escolhas da
+    tela de pagamento SEM avançar o pedido — quem avança é o primeiro
+    recebimento (`register_payment`). O `/close/` do PDV desktop e do app
+    segue marcando "aguardando pagamento", como sempre.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.is_locked:
@@ -995,11 +1021,36 @@ def close_order(
             )
 
         order.discount = discount
+        # Documento é texto (ou número): lista e objeto são erro do cliente. A
+        # conversão para texto tirava os colchetes e aceitava `["123..."]` em
+        # silêncio — o mesmo valor por acaso, e um bug escondido do outro lado.
+        for campo, valor in (("CPF", fiscal_customer_cpf), ("CNPJ", fiscal_customer_cnpj)):
+            if valor is not None and not isinstance(valor, (str, int)):
+                raise ValidationError(f"Envie o {campo} da NFC-e como texto.")
+        normalized_cpf = (
+            strip_cpf(str(fiscal_customer_cpf))
+            if fiscal_customer_cpf is not None
+            else order.fiscal_customer_cpf
+        )
+        normalized_cnpj = (
+            strip_cnpj(str(fiscal_customer_cnpj))
+            if fiscal_customer_cnpj is not None
+            else order.fiscal_customer_cnpj
+        )
+        if normalized_cpf and normalized_cnpj:
+            raise ValidationError("Informe CPF ou CNPJ, não os dois, para a NFC-e.")
         if fiscal_customer_cpf is not None:
-            normalized_cpf = strip_cpf(str(fiscal_customer_cpf))
             if normalized_cpf and not is_valid_cpf(normalized_cpf):
                 raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
             order.fiscal_customer_cpf = normalized_cpf
+        if fiscal_customer_cnpj is not None:
+            if normalized_cnpj and not is_valid_cnpj(normalized_cnpj):
+                raise ValidationError("Informe um CNPJ valido para incluir na NFC-e.")
+            order.fiscal_customer_cnpj = normalized_cnpj
+        if normalized_cpf:
+            order.fiscal_customer_cnpj = ""
+        elif normalized_cnpj:
+            order.fiscal_customer_cpf = ""
         # O CUPOM ENTRA DEPOIS DO CPF, e nao antes: a regra de "um por cliente"
         # e a de grupo se resolvem pelo CPF da nota, e avaliar o cupom antes de
         # gravar o CPF recusaria quem acabou de informa-lo.
@@ -1035,10 +1086,11 @@ def close_order(
         else:
             order.service_fee_percent = order.restaurant.default_service_fee_percent or Decimal("0.00")
             order.service_fee = service_fee_for(order)
-        order.status = Order.STATUS_AWAITING_PAYMENT
-        order.closed_by = user
+        if marcar_aguardando:
+            order.status = Order.STATUS_AWAITING_PAYMENT
+            order.closed_by = user
+            order.closed_at = timezone.now()
         order.updated_by = user
-        order.closed_at = timezone.now()
         order.save(
             update_fields=[
                 "discount",
@@ -1046,6 +1098,7 @@ def close_order(
                 "service_fee_enabled",
                 "service_fee_percent",
                 "fiscal_customer_cpf",
+                "fiscal_customer_cnpj",
                 "status",
                 "closed_by",
                 "closed_at",
@@ -1089,7 +1142,10 @@ def close_order(
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID
         elif paid_total > Decimal("0.00"):
+            # Com dinheiro já recebido o pedido está em pagamento, mesmo que a
+            # chamada seja só o checkout.
             order.payment_status = Order.PAYMENT_PARTIAL
+            order.status = Order.STATUS_AWAITING_PAYMENT
         else:
             order.payment_status = Order.PAYMENT_PENDING
         order.save(update_fields=["payment_status", "status", "updated_by"])

@@ -280,6 +280,8 @@ POST   /api/v1/orders/merges/{id}/cancel/         desfaz (antes de pagar)
 POST   /api/v1/orders/merges/{id}/refund/         estorna (depois de pagar)
 GET    /api/v1/commands/{id}/items/               o que a comanda tem (?history=1)
 POST   /api/v1/commands/{id}/receipt/             conferência da comanda (não fiscal)
+GET    /api/v1/commands/{id}/history/             linha do tempo (?page, ?after/?before)
+POST   /api/v1/commands/bulk-reset/               zera várias comandas (ids, reason)
 ```
 
 Depois de `confirm`, o recebimento é a rota do destino: `POST /orders/{id}/pay/`.
@@ -297,6 +299,50 @@ ser montada de pedaços de respostas diferentes.
 
 Código novo `orders.merge`, concedido a **caixa → gerente → admin**. O garçom
 fica de fora: ele lança pelo aplicativo e não fecha conta de ninguém.
+
+## Zerar, histórico e cancelamento pela venda
+
+### Zerar comandas (`apps/restaurants/command_reset.py`)
+
+`POST /commands/bulk-reset/` com `{ids, reason, cash_password?}` (ou
+`authorization_username/authorization_password`). Zerar **não apaga**: cada
+anotação aberta sai por `void_command_item` — o mesmo cancelamento do item
+unitário, com motivo, prazo do restaurante, autorização e auditoria — e fica no
+histórico; depois `free_command_if_empty` devolve o cartão e solta a mesa.
+
+- Cada comanda numa transação própria, travada antes de ler. A resposta diz o
+  que houve com cada uma: `{"reset": [{id, number, items_removed}],
+  "skipped": [{id, number, reason}]}`.
+- **Comanda dentro de conta aberta** fica, com o número da conta no motivo:
+  cancelar ali deixaria a conta com item que a comanda diz não existir.
+- **Item fora do prazo sem autorização**: a comanda inteira volta (nenhum item
+  dela sai) e aparece em `skipped`. A autorização é conferida uma vez por
+  restaurante.
+- **Repetir é inofensivo**: comanda já livre volta em `reset` com 0 itens.
+- **Cozinha**: só é avisada do que ainda está em produção. Prato pronto ou
+  entregue não gera cupom de cancelamento no zeramento (`avisar_entregue=False`);
+  o cancelamento unitário continua avisando como antes.
+- O encerramento das sobras do cartão é por `save()` item a item — não
+  `QuerySet.update()`, que não dispara sinal e não chegava à sincronização nem
+  ao tempo real.
+
+### Histórico (`apps/restaurants/command_history.py`)
+
+`GET /commands/{id}/history/` monta a linha do tempo do que já está gravado —
+não há tabela de eventos: lançamento (autor e código do operador), envio à
+produção, preparo, pronto, entregue, cancelamento (autor e motivo), cobrança (com
+a conta), encerramento sem cobrança, conta cancelada, zeramento (auditoria) e
+vínculos de mesa (`CommandMovementLog`). Do mais novo para o mais antigo,
+paginado (`page_size` até 200), com `after`/`before` filtrando pelos itens
+lançados no período.
+
+### Cancelar, na venda, um item que veio de comanda
+
+A linha da conta é cópia da anotação, e a produção é lida da origem. Cancelar
+só a cópia deixava a origem "em preparo", sem motivo nem autor. Agora
+`void_order_item` leva o cancelamento à anotação (`void_command_item`) e a linha
+acompanha; o aviso à cozinha sai uma vez, pelo caminho da comanda. O prazo do
+restaurante vale igual (409 `cancel_blocked`, liberável pela senha de operação).
 
 ## As interfaces
 

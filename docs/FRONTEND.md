@@ -87,6 +87,22 @@ O guard global (`router.beforeEach`) valida sessão via `authStore.validateSessi
 - **`HomeView.vue`** — home mobile-first, atalhos e navegação condicionados a papel do usuário e módulos habilitados na conta.
 - **`CashRegisterView.vue`** — gestão de caixa (estações, abrir/fechar sessão, sangria/suprimento e aprovação gerencial). Para uma sessão presa a uma máquina indisponível, mostra somente ao administrador a ação **Forçar liberação**, que exige justificativa, cancela a sessão sem simular conferência da gaveta e libera o caixa para outro terminal. Mão feita, fora do CRUD genérico.
 
+### Comandas e checkout do PDV web
+
+- **Zerar comandas**: ação em lote `command-bulk-reset` na lista `comandas`
+  (`components/data/CommandBulkResetDialog.vue`) e botão "Zerar comanda" no
+  painel do PDV (`components/pdv/CommandItemsPanel.vue`). Motivo obrigatório,
+  senha de operação opcional; o resumo diz quais comandas ficaram e por quê.
+- **Histórico da comanda**: `/comandas/:id/historico` (`views/CommandHistoryView.vue`,
+  linhas montadas por `services/commandHistory.js`), pela ação "Histórico" da
+  lista e pelo link "Histórico completo" do painel do PDV.
+- **Checkout**: `composables/useCheckoutChoices.js` guarda taxa, desconto e
+  CPF/CNPJ no pedido pelo `/checkout/` e os restaura ao reabrir (inclusive pelo
+  endereço). "Fechar conta" chama `/checkout/`, não `/close/`.
+- **Excluir item da venda**: com `409 cancel_blocked` o diálogo pede a senha de
+  operação ali mesmo; item que veio de comanda é cancelado na origem pelo
+  servidor.
+
 ## 5. O sistema de CRUD genérico
 
 `src/config/resources.js` declara ~24 recursos (produtos, categorias, clientes, insumos, fichas técnicas, mesas, comandas, papéis, permissões, SLA etc.) como schema:

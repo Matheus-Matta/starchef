@@ -397,7 +397,9 @@ def test_cancel_cash_payment_reopens_order_and_removes_cash_movement(
     assert payment.status == payment.STATUS_CANCELLED
     assert not payment.cash_movements.filter(status="approved").exists()
     assert order.payment_status == Order.PAYMENT_PENDING
-    assert order.status == Order.STATUS_AWAITING_PAYMENT
+    # Sem recebimento nenhum o pedido volta a ABERTO (REQ-003): ninguém está
+    # pagando. Antes ficava "aguardando pagamento" sem um centavo recebido.
+    assert order.status == Order.STATUS_OPEN
     assert table.current_order_id == order.id
 
 

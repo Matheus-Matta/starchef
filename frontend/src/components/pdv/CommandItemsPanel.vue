@@ -5,6 +5,10 @@
         <h2 class="pdv-page__title painel__titulo">{{ titulo }}</h2>
         <p v-if="subtitulo" class="pdv-page__subtitle">{{ subtitulo }}</p>
       </div>
+      <!-- Quem lançou, quem cancelou e por quê: a linha do tempo inteira. -->
+      <RouterLink class="pdv-btn pdv-btn--ghost" :to="{ name: 'comanda-historico', params: { id: command.id } }">
+        Histórico completo
+      </RouterLink>
     </header>
 
     <p v-if="erro" class="pdv-notice pdv-notice--error" role="alert">{{ erro }}</p>
@@ -43,6 +47,10 @@
       >
         {{ imprimindo ? "Enviando…" : "Imprimir conferência" }}
       </button>
+      <button class="pdv-btn pdv-btn--ghost" type="button" :disabled="carregando || !pendentes.length" @click="zerando = true">
+        Zerar comanda
+      </button>
+      <CommandBulkResetDialog v-model:visible="zerando" :selection="[command]" @completed="aposZerar" />
       <p class="pdv-muted painel__aviso">
         Conferência não é documento fiscal — a NFC-e sai no pagamento.
       </p>
@@ -65,8 +73,9 @@
  *
  * A consulta vive em `useCommandItems`; aqui só se desenha.
  */
-import { computed, toRef } from "vue";
+import { computed, ref, toRef } from "vue";
 
+import CommandBulkResetDialog from "../data/CommandBulkResetDialog.vue";
 import CommandItemsGroups from "./CommandItemsGroups.vue";
 import CommandTableLink from "./CommandTableLink.vue";
 import { useCommandItems } from "../../composables/useCommandItems";
@@ -87,8 +96,17 @@ const {
   erro,
   total,
   totalHistorico,
+  carregar,
   imprimir: enviarConferencia,
 } = useCommandItems(toRef(props, "command"));
+const zerando = ref(false);
+
+// Zerou: o painel relê os itens (agora no histórico) e a lista ao lado relê o
+// estado do cartão, que voltou livre.
+async function aposZerar() {
+  await carregar();
+  emit("table-changed");
+}
 
 const titulo = computed(() => `Comanda ${props.command?.number ?? ""}`);
 const subtitulo = computed(() =>
@@ -120,6 +138,8 @@ function dinheiro(valor) {
   background: var(--surface-card, #fff);
   box-sizing: border-box;
 }
+
+.painel__topo a { text-decoration: none; }
 
 .painel__topo {
   display: flex;

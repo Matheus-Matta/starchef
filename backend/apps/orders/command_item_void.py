@@ -14,8 +14,13 @@ from apps.orders.models import CommandItem
 
 
 @transaction.atomic
-def void_command_item(item, *, user, reason, authorized=False, authorized_by=None):
-    """Cancela a anotação e imprime aviso se ela já foi produzida."""
+def void_command_item(item, *, user, reason, authorized=False, authorized_by=None, avisar_entregue=True):
+    """Cancela a anotação e imprime aviso se ela já foi produzida.
+
+    `avisar_entregue=False` é o zeramento em lote: prato pronto ou entregue já
+    saiu da cozinha, e um cupom de cancelamento por item, no fim do dia, só
+    enche a impressora. O que ainda está em produção continua sendo avisado.
+    """
     if not reason:
         raise ValidationError("Informe o motivo do cancelamento.")
     with tenant_context(item.account):
@@ -43,6 +48,8 @@ def void_command_item(item, *, user, reason, authorized=False, authorized_by=Non
             CommandItem.STATUS_PENDING,
             CommandItem.STATUS_QUEUED,
         }
+        if not avisar_entregue and item.status in {CommandItem.STATUS_READY, CommandItem.STATUS_DELIVERED}:
+            was_dispatched = False
         now = timezone.now()
         item.status = CommandItem.STATUS_CANCELLED
         item.void_reason = reason

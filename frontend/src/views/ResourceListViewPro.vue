@@ -341,6 +341,7 @@
         @completed="onInvoiceBulkCompleted"
       />
       <OrderBulkDeleteDialog v-model:visible="orderDeleteVisible" :selection="selection" @completed="onInvoiceBulkCompleted" />
+      <CommandBulkResetDialog v-model:visible="commandResetVisible" :selection="selection" @completed="onInvoiceBulkCompleted" />
 
       <DataTable
         v-model:selection="selection"
@@ -2465,6 +2466,7 @@ import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
 import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
 import OrderBulkDeleteDialog from "../components/data/OrderBulkDeleteDialog.vue";
+import CommandBulkResetDialog from "../components/data/CommandBulkResetDialog.vue";
 import InboundHelpButton from "../components/inbound/InboundHelpButton.vue";
 import ResourceAdvancedFiltersDialog from "../components/data/ResourceAdvancedFiltersDialog.vue";
 import ResourceDirectFilters from "../components/data/ResourceDirectFilters.vue";
@@ -4296,7 +4298,12 @@ const bulkActions = computed(() => {
 const orderBulkAction = ref(null);
 const orderCancelVisible = ref(false);
 const orderDeleteVisible = ref(false);
+const commandResetVisible = ref(false);
 function runBulkAction(bulkAction) {
+  if (bulkAction.type === "command-bulk-reset") {
+    commandResetVisible.value = true;
+    return;
+  }
   if (bulkAction.type === "order-bulk-cancel" || bulkAction.type === "order-bulk-delete") {
     orderBulkAction.value = bulkAction;
     if (bulkAction.type === "order-bulk-cancel") orderCancelVisible.value = true;

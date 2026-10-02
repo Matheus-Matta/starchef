@@ -582,17 +582,28 @@ class OrderViewSet(BaseTenantViewSet):
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(order).data)
 
+    @action(detail=True, methods=["post"], url_path="checkout")
+    def checkout(self, request, pk=None):
+        """Grava as escolhas da tela de pagamento sem avançar o pedido.
+
+        Mesmo corpo do `/close/`; o pedido continua ABERTO até o primeiro
+        recebimento. Ver `close_order(marcar_aguardando=False)`.
+        """
+        return self.close(request, pk=pk, marcar_aguardando=False)
+
     @action(detail=True, methods=["post"], url_path="close")
-    def close(self, request, pk=None):
+    def close(self, request, pk=None, marcar_aguardando=True):
         order_to_close = self.get_object()
         try:
             order = close_order(
                 order_to_close,
                 request.user,
+                marcar_aguardando=marcar_aguardando,
                 discount=request.data.get("discount", 0),
                 service_fee=request.data.get("service_fee"),
                 service_fee_enabled=request.data.get("service_fee_enabled"),
                 fiscal_customer_cpf=request.data.get("fiscal_customer_cpf"),
+                fiscal_customer_cnpj=request.data.get("fiscal_customer_cnpj"),
                 expected_total=request.data.get("expected_total"),
                 # `None` quando a chave nao vem: fechar de novo para corrigir a
                 # taxa nao pode derrubar o cupom que ja estava aplicado.
@@ -720,14 +731,18 @@ class OrderViewSet(BaseTenantViewSet):
         # (ver `bulk_delete.py`). Antes a exclusão individual não tinha trava.
         from rest_framework.exceptions import APIException
 
-        from apps.orders.bulk_delete import motivo_para_manter
+        from django.db import transaction
 
-        motivo = motivo_para_manter(instance)
-        if motivo:
-            erro = APIException(f"Pedido #{instance.sequence} {motivo}.")
-            erro.status_code = status.HTTP_409_CONFLICT
-            raise erro
-        super().perform_destroy(instance)
+        from apps.orders.bulk_delete import motivo_para_manter, travar_para_excluir
+
+        with transaction.atomic():
+            instance = travar_para_excluir(instance)
+            motivo = motivo_para_manter(instance)
+            if motivo:
+                erro = APIException(f"Pedido #{instance.sequence} {motivo}.")
+                erro.status_code = status.HTTP_409_CONFLICT
+                raise erro
+            super().perform_destroy(instance)
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):

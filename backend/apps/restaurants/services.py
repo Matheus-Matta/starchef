@@ -21,6 +21,7 @@ _MIRRORED_RESTAURANT_FIELDS = (
     "zip_code",
     "default_service_fee_percent",
     "require_open_cash_register",
+    "cash_closing_tolerance",
     "stock_deduction_timing",
     "print_settings",
     "fiscal_settings",

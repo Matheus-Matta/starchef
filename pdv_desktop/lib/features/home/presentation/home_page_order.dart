@@ -127,7 +127,6 @@ mixin _OrderSection on _HomePageShared {
     );
   }
 
-
   /// O caminho do PAGAMENTO. Pergunta só o que falta decidir.
   ///
   /// Este diálogo já foi uma revisão inteira do pedido: subtotal, taxa, total
@@ -161,6 +160,8 @@ mixin _OrderSection on _HomePageShared {
         chargeService: activeOrder?['service_fee_enabled'] != false,
         savedCpf: cpfDigits(activeOrder?['fiscal_customer_cpf']),
         customerCpf: cpfDigits(selectedCustomer?['document']),
+        savedCnpj: cnpjDigits(activeOrder?['fiscal_customer_cnpj']),
+        customerCnpj: cnpjDigits(selectedCustomer?['document']),
         serviceFeePercent: defaultServiceFeePercent,
         serviceFeeAmount: taxa,
         money: _money,
@@ -171,6 +172,7 @@ mixin _OrderSection on _HomePageShared {
     final seguir = escolha != null;
     final chargeService = escolha?.chargeService ?? true;
     final fiscalCpf = escolha?.fiscalCpf ?? '';
+    final fiscalCnpj = escolha?.fiscalCnpj ?? '';
     final couponCode = escolha?.couponCode ?? '';
     if (!seguir) return;
 
@@ -198,6 +200,7 @@ mixin _OrderSection on _HomePageShared {
           'discount': activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
           'fiscal_customer_cpf': fiscalCpf,
+          'fiscal_customer_cnpj': fiscalCnpj,
           // Sempre presente, inclusive vazio: vazio RETIRA o cupom. Omitir
           // significaria "nao mexe", e o caixa que apagou o codigo de proposito
           // — porque o cliente desistiu dele — veria o desconto continuar.
