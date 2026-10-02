@@ -25,7 +25,7 @@
         label="Senha de operação do restaurante"
         name="cash_password"
         full
-        help="Sem a senha, comandas com item fora do prazo de cancelamento ficam como estão e aparecem no resumo."
+        help="Gerente zera direto. Para os demais, a senha (ou o login de um supervisor) é obrigatória; sem ela, e para item fora do prazo, a comanda fica como está e aparece no resumo."
       >
         <Password v-model="password" :input-id="fieldId" :feedback="false" toggle-mask class="w-full" input-class="w-full" />
       </AppFormField>

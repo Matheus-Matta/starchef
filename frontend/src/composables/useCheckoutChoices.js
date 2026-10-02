@@ -68,6 +68,12 @@ export function useCheckoutChoices(estado, { onErro } = {}) {
     return { discount: discount.value || 0, service_fee_enabled: serviceFeeEnabled.value, ...doc, ...extra };
   }
 
+  // Só a resposta da ÚLTIMA gravação vale, e só para o pedido que ainda está
+  // na tela. A rede pode entregar fora de ordem (marcar e desmarcar a taxa
+  // rápido) e o operador pode trocar de pedido no meio: a resposta velha
+  // desfazia a escolha nova, ou punha o total de outro pedido na tela.
+  let ultimaGravacao = 0;
+
   /**
    * Grava as escolhas no pedido. Sem pedido, durante a restauração ou com
    * documento ainda incompleto, não chama o servidor: o operador está no meio
@@ -76,11 +82,13 @@ export function useCheckoutChoices(estado, { onErro } = {}) {
   async function salvar() {
     if (restaurando || !currentOrder.value?.id) return;
     if (documento().erro) return;
+    const minha = ++ultimaGravacao;
+    const pedidoId = currentOrder.value.id;
     try {
-      const { data } = await api.post(`/orders/${currentOrder.value.id}/checkout/`, corpo());
-      currentOrder.value = data;
+      const { data } = await api.post(`/orders/${pedidoId}/checkout/`, corpo());
+      if (minha === ultimaGravacao && currentOrder.value?.id === pedidoId) currentOrder.value = data;
     } catch (erro) {
-      onErro?.(erro);
+      if (minha === ultimaGravacao) onErro?.(erro);
     }
   }
 
