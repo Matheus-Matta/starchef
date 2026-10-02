@@ -41,10 +41,28 @@ Future<List<Map<String, dynamic>>> listarComandas(
         'O servidor respondeu num formato que esta tela não reconhece.',
       );
     }
-    todas.addAll(bruto.whereType<Map>().map(Map<String, dynamic>.from));
+    todas.addAll(
+      bruto
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .where((c) => _naFaixa(c, numeroMinimo, numeroMaximo)),
+    );
     if (bruto.isEmpty || resposta['next'] == null) break;
   }
   return todas;
+}
+
+/// A faixa conferida AQUI também, e não só no servidor.
+///
+/// Um backend anterior à v3.0.75 não conhece `number_min`/`number_max`: ignora
+/// os dois em silêncio e devolve todas as comandas. Confiando só nele, pedir
+/// as etiquetas "da 10 à 20" imprimia da 1 até a última cadastrada.
+bool _naFaixa(Map<String, dynamic> comanda, int? minimo, int? maximo) {
+  if (minimo == null && maximo == null) return true;
+  final numero = int.tryParse('${comanda['number']}');
+  if (numero == null) return false;
+  return (minimo == null || numero >= minimo) &&
+      (maximo == null || numero <= maximo);
 }
 
 /// Uma página só — é o que a rolagem pede, uma de cada vez.

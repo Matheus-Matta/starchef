@@ -123,6 +123,21 @@ void main() {
       expect(pedidos.single.queryParameters, containsPair('restaurant', 'r1'));
     });
 
+    test('servidor que ignora a faixa: o PDV corta do mesmo jeito', () async {
+      // Um backend anterior à v3.0.75 não conhece `number_min`/`number_max`,
+      // ignora os dois e devolve TODAS as comandas. Pedir "da 10 à 20"
+      // imprimia da 1 até a última cadastrada.
+      final repo = repositorio(
+        (url) => url.queryParameters['page'] == '1'
+            ? pagina(List.generate(100, (i) => i + 1), proxima: true)
+            : pagina(List.generate(50, (i) => i + 101)),
+      );
+
+      final lote = await repo.inRange(de: 10, ate: 20, restaurantId: 'r1');
+
+      expect(lote.map((c) => c['number']), List.generate(11, (i) => i + 10));
+    });
+
     test('resposta em formato desconhecido é erro, não lista vazia', () async {
       repositorio((_) => http.Response('{"results": "nada"}', 200));
 
