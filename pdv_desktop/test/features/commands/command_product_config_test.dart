@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
+import 'package:starchef_pdv_desktop/features/commands/data/command_pager.dart';
 import 'package:starchef_pdv_desktop/features/commands/data/command_repository.dart';
 import 'package:starchef_pdv_desktop/features/commands/presentation/commands_page.dart';
 
@@ -14,15 +15,23 @@ class _Repositorio extends CommandRepository {
   List<String> adicionais = const [];
 
   @override
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) async => [
-    {
-      'id': 'comanda-13',
-      'number': 13,
-      'code': 'CMD-0013',
-      'pending_items': 0,
-      'pending_total': '0.00',
-    },
-  ];
+  Future<PaginaDeComandas> page({
+    required int pagina,
+    String busca = '',
+    String? restaurantId,
+  }) async => (
+    itens: <Map<String, dynamic>>[
+      {
+        'id': 'comanda-13',
+        'number': 13,
+        'code': 'CMD-0013',
+        'pending_items': 0,
+        'pending_total': '0.00',
+      },
+    ],
+    temMais: false,
+    total: null,
+  );
 
   @override
   Future<Map<String, dynamic>> items(

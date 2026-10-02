@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../data/command_pager.dart';
 import 'commands_grid_card.dart';
+import 'commands_paged_grid.dart';
 
 /// O salão de comandas: um cartão por comanda, como o mapa de mesas.
 ///
@@ -17,8 +19,7 @@ import 'commands_grid_card.dart';
 class CommandsGrid extends StatelessWidget {
   const CommandsGrid({
     super.key,
-    required this.comandas,
-    required this.carregando,
+    required this.paginador,
     required this.controladorDaBusca,
     required this.controladorDoLeitor,
     required this.focoDoLeitor,
@@ -28,8 +29,9 @@ class CommandsGrid extends StatelessWidget {
     this.onImprimirEtiquetas,
   });
 
-  final List<Map<String, dynamic>> comandas;
-  final bool carregando;
+  /// As comandas, página a página; a busca do campo "Filtrar" vai por ele ao
+  /// servidor — filtrar só o que já desceu esconderia as que ainda não vieram.
+  final CommandPager paginador;
   final TextEditingController controladorDaBusca;
   final TextEditingController controladorDoLeitor;
   final FocusNode focoDoLeitor;
@@ -100,29 +102,19 @@ class CommandsGrid extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           Expanded(
-            child: comandas.isEmpty
-                ? Center(
-                    child: Text(
-                      carregando
-                          ? 'Carregando…'
-                          : 'Nenhuma comanda encontrada.',
-                      style: TextStyle(color: scheme.onSurfaceVariant),
-                    ),
-                  )
-                : GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 170,
-                          childAspectRatio: 1.05,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                        ),
-                    itemCount: comandas.length,
-                    itemBuilder: (_, indice) => CommandFloorCard(
-                      comanda: comandas[indice],
-                      onTap: () => onAbrir(comandas[indice]),
-                    ),
-                  ),
+            child: CommandsPagedGrid(
+              paginador: paginador,
+              vazio: (_) => Center(
+                child: Text(
+                  'Nenhuma comanda encontrada.',
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              ),
+              itemBuilder: (_, comanda) => CommandFloorCard(
+                comanda: comanda,
+                onTap: () => onAbrir(comanda),
+              ),
+            ),
           ),
         ],
       ),

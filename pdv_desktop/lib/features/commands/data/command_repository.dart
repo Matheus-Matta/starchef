@@ -1,5 +1,6 @@
 import '../../../core/network/api_client.dart';
 import 'command_listing.dart';
+import 'command_pager.dart';
 
 /// O que uma comanda tem — e o que ela já teve.
 ///
@@ -18,18 +19,18 @@ class CommandRepository {
   final ApiClient _api;
   final String? accessToken;
 
-  /// As comandas ativas do restaurante.
-  ///
-  /// Cada uma traz `closing_merge`: o id da conta agrupada que a está
-  /// segurando, ou vazio. "Em fechamento" é derivado disso, nunca de um estado
-  /// gravado na comanda — um terceiro estado no banco seria mais uma coisa a
-  /// sincronizar e a divergir.
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) =>
-      listarComandas(
-        _api,
-        accessToken: accessToken,
-        restaurantId: restaurantId,
-      );
+  /// Uma página das comandas ativas, para a lista que carrega com a rolagem.
+  Future<PaginaDeComandas> page({
+    required int pagina,
+    String busca = '',
+    String? restaurantId,
+  }) => paginaDeComandas(
+    _api,
+    pagina: pagina,
+    busca: busca,
+    accessToken: accessToken,
+    restaurantId: restaurantId,
+  );
 
   /// As comandas ativas com número de [de] a [ate] (as duas pontas incluídas),
   /// em ordem — é o lote das etiquetas.

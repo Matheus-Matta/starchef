@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/network/api_exception.dart';
+import 'package:starchef_pdv_desktop/features/commands/data/command_listing.dart';
 import 'package:starchef_pdv_desktop/features/commands/data/command_repository.dart';
 import 'package:starchef_pdv_desktop/features/commands/presentation/command_labels.dart';
 import 'package:starchef_pdv_desktop/features/devices/printing/print_document.dart';
@@ -71,19 +72,18 @@ void main() {
 
   group('lista de comandas', () {
     late List<Uri> pedidos;
+    late ApiClient api;
 
     CommandRepository repositorio(http.Response Function(Uri) servidor) {
       pedidos = [];
-      return CommandRepository(
-        ApiClient(
-          baseUrl: 'http://starchef.test/api/v1',
-          client: MockClient((request) async {
-            pedidos.add(request.url);
-            return servidor(request.url);
-          }),
-        ),
-        accessToken: 'x',
+      api = ApiClient(
+        baseUrl: 'http://starchef.test/api/v1',
+        client: MockClient((request) async {
+          pedidos.add(request.url);
+          return servidor(request.url);
+        }),
       );
+      return CommandRepository(api, accessToken: 'x');
     }
 
     http.Response pagina(List<int> numeros, {bool proxima = false}) =>
@@ -100,13 +100,13 @@ void main() {
         );
 
     test('passa das 100 primeiras: segue as páginas até o fim', () async {
-      final repo = repositorio(
+      repositorio(
         (url) => url.queryParameters['page'] == '1'
             ? pagina(List.generate(100, (i) => i + 1), proxima: true)
             : pagina([101, 102]),
       );
 
-      final todas = await repo.list(restaurantId: 'r1');
+      final todas = await listarComandas(api, restaurantId: 'r1');
 
       expect(todas, hasLength(102));
       expect(pedidos.map((u) => u.queryParameters['page']), ['1', '2']);
@@ -124,11 +124,9 @@ void main() {
     });
 
     test('resposta em formato desconhecido é erro, não lista vazia', () async {
-      final repo = repositorio(
-        (_) => http.Response('{"results": "nada"}', 200),
-      );
+      repositorio((_) => http.Response('{"results": "nada"}', 200));
 
-      await expectLater(repo.list(), throwsA(isA<ApiException>()));
+      await expectLater(listarComandas(api), throwsA(isA<ApiException>()));
     });
   });
 }

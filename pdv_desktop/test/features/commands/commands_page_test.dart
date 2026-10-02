@@ -4,6 +4,7 @@ import 'package:starchef_pdv_desktop/core/theme/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_desktop/core/network/api_client.dart';
 import 'package:starchef_pdv_desktop/core/network/api_exception.dart';
+import 'package:starchef_pdv_desktop/features/commands/data/command_pager.dart';
 import 'package:starchef_pdv_desktop/features/commands/data/command_repository.dart';
 import 'package:starchef_pdv_desktop/features/commands/presentation/commands_page.dart';
 
@@ -18,7 +19,11 @@ class _RepositorioQueFalha extends CommandRepository {
   final Object erro;
 
   @override
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) async {
+  Future<PaginaDeComandas> page({
+    required int pagina,
+    String busca = '',
+    String? restaurantId,
+  }) async {
     throw erro;
   }
 }
@@ -27,8 +32,11 @@ class _RepositorioVazio extends CommandRepository {
   _RepositorioVazio() : super(ApiClient(baseUrl: 'http://x'));
 
   @override
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) async =>
-      const [];
+  Future<PaginaDeComandas> page({
+    required int pagina,
+    String busca = '',
+    String? restaurantId,
+  }) async => (itens: <Map<String, dynamic>>[], temMais: false, total: 0);
 }
 
 // `ShadCard` exige o tema do shadcn acima dele — a tela de comandas passou a
@@ -59,7 +67,9 @@ void main() {
     testWidgets('falha da API vira recado, nao tela parada', (tester) async {
       await _montar(
         tester,
-        _tela(_RepositorioQueFalha(const ApiException('Servidor indisponível'))),
+        _tela(
+          _RepositorioQueFalha(const ApiException('Servidor indisponível')),
+        ),
       );
 
       expect(find.textContaining('Servidor indisponível'), findsOneWidget);
@@ -143,18 +153,29 @@ class _RepositorioComComanda extends CommandRepository {
   _RepositorioComComanda() : super(ApiClient(baseUrl: 'http://x'));
 
   @override
-  Future<List<Map<String, dynamic>>> list({String? restaurantId}) async => [
-    {
-      'id': 'c13',
-      'number': 13,
-      'code': 'CMD-0013',
-      'pending_items': 1,
-      'pending_total': '42.00',
-    },
-  ];
+  Future<PaginaDeComandas> page({
+    required int pagina,
+    String busca = '',
+    String? restaurantId,
+  }) async => (
+    itens: <Map<String, dynamic>>[
+      {
+        'id': 'c13',
+        'number': 13,
+        'code': 'CMD-0013',
+        'pending_items': 1,
+        'pending_total': '42.00',
+      },
+    ],
+    temMais: false,
+    total: null,
+  );
 
   @override
-  Future<Map<String, dynamic>> items(String commandId, {bool history = false}) async => {
+  Future<Map<String, dynamic>> items(
+    String commandId, {
+    bool history = false,
+  }) async => {
     'items': [
       {
         'id': 'i1',

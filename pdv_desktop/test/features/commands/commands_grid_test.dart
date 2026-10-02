@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:starchef_pdv_desktop/features/commands/data/command_pager.dart';
 import 'package:starchef_pdv_desktop/features/commands/presentation/commands_grid.dart';
 
 /// O salão de comandas: a grade e a barra de busca acima dela.
 Widget _tela(List<Map<String, dynamic>> comandas) => MaterialApp(
   home: Scaffold(
     body: CommandsGrid(
-      comandas: comandas,
-      carregando: false,
+      paginador: CommandPager(
+        ({required int pagina, String busca = ''}) async =>
+            (itens: comandas, temMais: false, total: comandas.length),
+      )..recomecar(),
       controladorDaBusca: TextEditingController(),
       controladorDoLeitor: TextEditingController(),
       focoDoLeitor: FocusNode(),

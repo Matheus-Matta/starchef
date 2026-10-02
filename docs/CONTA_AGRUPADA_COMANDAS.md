@@ -281,6 +281,7 @@ POST   /api/v1/orders/merges/{id}/refund/         estorna (depois de pagar)
 GET    /api/v1/commands/{id}/items/               o que a comanda tem (?history=1)
 POST   /api/v1/commands/{id}/receipt/             conferência da comanda (não fiscal)
 GET    /api/v1/commands/?number_min=10&number_max=100   faixa de números (etiquetas)
+GET    /api/v1/commands/?page=2&page_size=50&search=12&ordering=number   rolagem e busca
 GET    /api/v1/commands/{id}/history/             linha do tempo (?page, ?after/?before)
 POST   /api/v1/commands/bulk-reset/               zera várias comandas (ids, reason)
 ```
@@ -363,9 +364,30 @@ quando ela não tem código), que é o que o leitor reconhece.
   `commands/presentation/command_labels.dart` (regras),
   `commands_labels.dart` (fluxo) e `command_labels_dialogs.dart`.
 
-A lista de comandas do desktop passou a seguir as páginas da API até o fim
-(`commands/data/command_listing.dart`): pedindo `page_size=200` e lendo só a
-primeira resposta, a tela mostrava só as 100 primeiras — a rota limita a 100.
+### Lista de comandas por rolagem (PDV desktop)
+
+O salão de comandas e o "Selecione a comanda" da venda NÃO carregam todas as
+comandas de uma vez: a primeira página (50, por número) aparece logo, e as
+seguintes chegam quando a rolagem fica a 400 px do fim. Numa tela alta em que
+uma página não enche a grade, a próxima é pedida sozinha.
+
+- A busca vai ao **servidor** (`?search=`), depois de 300 ms sem digitar:
+  filtrar só o que já desceu diria "não encontrada" para a comanda 480.
+  Ordenada por número, a busca "12" traz a 12 antes da 112 e da 120.
+- Enter (ou o leitor de cartão) busca na hora e abre a de número ou código
+  EXATO; sem exata, só abre se sobrar uma.
+- Resposta de busca antiga é descartada (geração), comanda repetida entre
+  páginas aparece uma vez, e falha numa página mantém as anteriores com
+  "Tentar de novo" no rodapé.
+- Na venda, cada cartão mostra a versão do catálogo do PDV quando existe — é
+  ela que o tempo real mantém em dia (a comanda ocupada no outro caixa).
+- Arquivos: `commands/data/command_pager.dart` (estado e regras),
+  `command_listing.dart` (`paginaDeComandas`), `commands_paged_grid.dart`
+  (rolagem) e `command_picker.dart` (seletor da venda).
+
+As etiquetas por faixa continuam seguindo TODAS as páginas da API
+(`listarComandas`): a rota limita a página a 100, e ler só a primeira resposta
+deixava de fora tudo depois da centésima.
 
 ## As interfaces
 

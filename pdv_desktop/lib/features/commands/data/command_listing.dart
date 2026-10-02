@@ -1,5 +1,6 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import 'command_pager.dart';
 
 /// Lista de comandas, página por página até o fim.
 ///
@@ -44,4 +45,43 @@ Future<List<Map<String, dynamic>>> listarComandas(
     if (bruto.isEmpty || resposta['next'] == null) break;
   }
   return todas;
+}
+
+/// Uma página só — é o que a rolagem pede, uma de cada vez.
+///
+/// Ordenada por número: digitar "12" traz a 12 antes da 112 e da 120, porque
+/// a busca do servidor é por "contém" e a exata é sempre a de menor número.
+Future<PaginaDeComandas> paginaDeComandas(
+  ApiClient api, {
+  required int pagina,
+  String busca = '',
+  String? accessToken,
+  String? restaurantId,
+  int tamanho = 50,
+}) async {
+  final resposta = await api.get(
+    '/commands/',
+    query: {
+      'page_size': tamanho,
+      'page': pagina,
+      'is_active': true,
+      'ordering': 'number',
+      if (restaurantId != null && restaurantId.isNotEmpty)
+        'restaurant': restaurantId,
+      if (busca.trim().isNotEmpty) 'search': busca.trim(),
+    },
+    accessToken: accessToken,
+  );
+  final bruto = resposta['results'] ?? resposta['data'] ?? const [];
+  if (bruto is! List) {
+    throw ApiException(
+      'O servidor respondeu num formato que esta tela não reconhece.',
+    );
+  }
+  final total = resposta['count'];
+  return (
+    itens: bruto.whereType<Map>().map(Map<String, dynamic>.from).toList(),
+    temMais: resposta['next'] != null,
+    total: total is int ? total : null,
+  );
 }

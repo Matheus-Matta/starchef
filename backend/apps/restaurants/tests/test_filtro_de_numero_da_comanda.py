@@ -30,3 +30,21 @@ def test_so_um_dos_limites(api_client, comandas):
 @pytest.mark.parametrize("consulta", ["number_min=abc", "number_max=1.5.2"])
 def test_limite_que_nao_e_numero_e_400(api_client, comandas, consulta):
     assert api_client.get(f"/api/v1/commands/?{consulta}").status_code == 400
+
+
+def test_busca_pelo_numero_traz_a_exata_primeiro(api_client, comandas):
+    """O PDV digita "10" e abre a primeira da lista: tem que ser a 10, não a 100.
+
+    A busca é por "contém", então 10, 100 e 101 casam; a ordem por número é o
+    que garante que a exata venha antes.
+    """
+    assert _numeros(api_client, "search=10&ordering=number") == [10, 100, 101]
+
+
+def test_paginas_seguem_a_ordem_do_numero(api_client, comandas):
+    """A rolagem do PDV pede página por página; nenhuma comanda some ou repete."""
+    pagina1 = api_client.get("/api/v1/commands/?page_size=4&page=1&ordering=number").data
+    pagina2 = api_client.get("/api/v1/commands/?page_size=4&page=2&ordering=number").data
+    assert [c["number"] for c in pagina1["results"]] == [5, 10, 11, 50]
+    assert [c["number"] for c in pagina2["results"]] == [100, 101]
+    assert pagina1["count"] == 6 and pagina1["next"] and pagina2["next"] is None

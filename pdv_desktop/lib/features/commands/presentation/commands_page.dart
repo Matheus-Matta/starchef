@@ -134,18 +134,6 @@ class _CommandsPageState extends State<CommandsPage>
     super.dispose();
   }
 
-  List<Map<String, dynamic>> get _comandasVisiveis {
-    final termo = _busca.text.trim().toLowerCase();
-    if (termo.isEmpty) return comandas;
-    return comandas
-        .where(
-          (comanda) => ['number', 'code', 'customer_name']
-              .map((campo) => '${comanda[campo] ?? ''}'.toLowerCase())
-              .any((valor) => valor.contains(termo)),
-        )
-        .toList(growable: false);
-  }
-
   List<Map<String, dynamic>> get _produtosVisiveis {
     final termo = _termoDeProduto.trim().toLowerCase();
     return widget.products
@@ -206,12 +194,11 @@ class _CommandsPageState extends State<CommandsPage>
 
   /// A primeira tela: escolher o cartão.
   Widget _salao() => CommandsGrid(
-    comandas: _comandasVisiveis,
-    carregando: carregando,
+    paginador: paginador,
     controladorDaBusca: _busca,
     controladorDoLeitor: _leitor,
     focoDoLeitor: _focoDoLeitor,
-    onBuscaMudou: () => setState(() {}),
+    onBuscaMudou: () => paginador.digitar(_busca.text),
     onLeitura: abrirPorCodigo,
     onAbrir: _abrir,
     // Sem agente de impressão neste terminal não há como imprimir aqui.

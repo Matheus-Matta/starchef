@@ -41,6 +41,7 @@ import '../../orders/presentation/order_presenter.dart';
 import '../../orders/presentation/order_data_source.dart';
 import '../../orders/presentation/orders_table_metrics.dart';
 import '../../commands/data/command_repository.dart';
+import '../../commands/presentation/command_picker.dart';
 import '../../customers/data/customer_repository.dart';
 import '../../customers/presentation/customer_form_dialog.dart';
 import '../../customers/presentation/customers_page.dart';

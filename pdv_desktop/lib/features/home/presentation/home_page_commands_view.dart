@@ -145,11 +145,11 @@ mixin _CommandView on _HomePageShared {
     ),
   );
 
-  /// Comandas ativas, filtradas por número, código escaneável ou cliente.
+  /// Comandas ativas do catálogo, filtradas por número, código ou cliente.
   ///
-  /// A busca é local porque a lista inteira já veio no carregamento do PDV —
-  /// e precisa continuar respondendo sem rede, que é quando o operador mais
-  /// depende de achar a comanda pelo número impresso no cartão.
+  /// A GRADE da tela busca no servidor, página a página ([CommandPicker]).
+  /// Isto aqui atende o que chega sem passar pelo campo — o Enter global e o
+  /// leitor de cartão —, e o catálogo do PDV já tem todas as comandas.
   List<Map<String, dynamic>> get visibleCommands {
     final term = commandSearch.trim().toLowerCase();
     final active = commands.where((item) => item['is_active'] != false);
@@ -182,7 +182,6 @@ mixin _CommandView on _HomePageShared {
   }
 
   Widget _commandContextPanel() {
-    final visible = visibleCommands;
     final free = commands
         .where((item) => item['is_active'] != false && item['status'] == 'free')
         .length;
@@ -218,103 +217,18 @@ mixin _CommandView on _HomePageShared {
                 ),
               ),
               const SizedBox(height: 16),
-              TextField(
-                autofocus: true,
-                focusNode: commandSearchFocus,
-                onChanged: (value) => setState(() => commandSearch = value),
-                onSubmitted: _onCommandSearchSubmitted,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search_rounded),
-                  hintText: 'Buscar por número, código ou cliente...',
-                ),
-              ),
-              const SizedBox(height: 18),
               Expanded(
-                child: visible.isEmpty
-                    ? AppEmptyState(
-                        icon: Icons.qr_code_2_outlined,
-                        title: commands.isEmpty
-                            ? 'Nenhuma comanda cadastrada'
-                            : 'Nenhuma comanda encontrada',
-                        description: commands.isEmpty
-                            ? 'Cadastre comandas na retaguarda para iniciar atendimentos.'
-                            : 'Tente buscar por outro número, código ou cliente.',
-                      )
-                    : GridView.builder(
-                        gridDelegate:
-                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: 170,
-                              childAspectRatio: 1.05,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                            ),
-                        itemCount: visible.length,
-                        itemBuilder: (_, index) {
-                          final command = visible[index];
-                          final occupied =
-                              command['current_order_id'] != null ||
-                              command['status'] == 'occupied';
-                          final color = occupied ? Colors.orange : Colors.green;
-                          return ShadCard(
-                            padding: EdgeInsets.zero,
-                            radius: AppTheme.radius,
-                            shadows: const [],
-                            border: ShadBorder.all(color: color.shade300),
-                            columnCrossAxisAlignment:
-                                CrossAxisAlignment.stretch,
-                            child: InkWell(
-                              onTap: () => _openCommand(command),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          '${command['number']}',
-                                          style: const TextStyle(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.w900,
-                                          ),
-                                        ),
-                                        const Spacer(),
-                                        Container(
-                                          width: 9,
-                                          height: 9,
-                                          decoration: BoxDecoration(
-                                            color: color,
-                                            shape: BoxShape.circle,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      occupied ? 'Em uso' : 'Livre',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        color: color.shade800,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${command['customer_name']?.toString().trim().isNotEmpty == true ? command['customer_name'] : command['code'] ?? '—'}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                child: CommandPicker(
+                  repository: CommandRepository(api, accessToken: token),
+                  restaurantId: restaurantId,
+                  catalogo: commands,
+                  buscaInicial: commandSearch,
+                  focusNode: commandSearchFocus,
+                  // Sem setState: o texto só serve ao Enter global (ver
+                  // [visibleCommands]); redesenhar a venda a cada letra não.
+                  onBuscaMudou: (value) => commandSearch = value,
+                  onOpen: _openCommand,
+                ),
               ),
             ],
           ),

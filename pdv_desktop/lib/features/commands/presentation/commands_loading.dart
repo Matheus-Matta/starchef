@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../data/command_pager.dart';
 import '../data/command_repository.dart';
 
 /// De onde vêm as comandas desta tela: a carga da lista e o leitor de cartão.
@@ -35,30 +36,36 @@ mixin CommandsLoading<T extends StatefulWidget> on State<T> {
 
   void pararDeOuvirCodigos() => _assinaturaDeCodigos?.cancel();
 
-  List<Map<String, dynamic>> comandas = const [];
+  /// As comandas chegam por página, conforme o salão rola (ver [CommandPager]).
+  late final CommandPager paginador = CommandPager(
+    ({required int pagina, String busca = ''}) => repository.page(
+      pagina: pagina,
+      busca: busca,
+      restaurantId: restaurantId,
+    ),
+  );
+
+  /// As que já desceram — não necessariamente todas as da loja.
+  List<Map<String, dynamic>> get comandas => paginador.itens;
   Map<String, dynamic>? selecionada;
   bool carregando = false;
   String erro = '';
   String recado = '';
 
+  @override
+  void dispose() {
+    paginador.dispose();
+    super.dispose();
+  }
+
+  /// Relê do começo, mantendo o que está no campo de busca.
+  ///
+  /// A falha fica no rodapé da grade, com "Tentar de novo" — e não no recado
+  /// do topo, que é das ações (lançar, cancelar) e seria apagado pela próxima.
   Future<void> carregar() async {
-    setState(() {
-      carregando = true;
-      erro = '';
-    });
+    setState(() => carregando = true);
     try {
-      final lista = await repository.list(restaurantId: restaurantId);
-      if (mounted) setState(() => comandas = lista);
-    } on ApiException catch (falha) {
-      if (mounted) setState(() => erro = falha.message);
-    } catch (falha) {
-      // Nem toda falha é `ApiException`: um corpo que não é mapa, um
-      // `TypeError` de conversão ou uma exceção crua da rede escapavam daqui e
-      // deixavam a tela SEM lista e SEM recado — o operador via uma página
-      // parada, sem saber se ainda estava vindo ou se tinha dado errado.
-      if (mounted) {
-        setState(() => erro = 'Falha ao carregar as comandas: $falha');
-      }
+      await paginador.recomecar();
     } finally {
       if (mounted) setState(() => carregando = false);
     }
@@ -81,8 +88,9 @@ mixin CommandsLoading<T extends StatefulWidget> on State<T> {
       final comanda = await repository.byCode(lido);
       if (!mounted) return;
       setState(() => selecionada = Map<String, dynamic>.from(comanda));
-      final conhecida = comandas.any((item) => item['id'] == comanda['id']);
-      if (!conhecida) await carregar();
+      // O cartão pode ser de uma comanda que ainda não desceu na rolagem: ela
+      // abre do mesmo jeito. A que já está na grade ganha o estado novo.
+      paginador.atualizar(Map<String, dynamic>.from(comanda));
     } on ApiException catch (falha) {
       if (mounted) setState(() => erro = falha.message);
     } catch (falha) {
