@@ -51,6 +51,45 @@ def test_restaurant_accepts_district_and_mirrors_it_to_branch(admin_client, rest
     assert mirrored_branch.district == "Centro"
 
 
+def test_restaurant_saves_shared_quick_scale_timing(admin_client, restaurant):
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {
+            "quick_scale_command_timeout_seconds": 90,
+            "quick_scale_stability_seconds": 5,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    assert response.data["quick_scale_command_timeout_seconds"] == 90
+    assert response.data["quick_scale_stability_seconds"] == 5
+    restaurant.refresh_from_db()
+    assert restaurant.quick_scale_command_timeout_seconds == 90
+    assert restaurant.quick_scale_stability_seconds == 5
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quick_scale_command_timeout_seconds", 9),
+        ("quick_scale_command_timeout_seconds", 601),
+        ("quick_scale_stability_seconds", 0),
+        ("quick_scale_stability_seconds", 31),
+    ],
+)
+def test_restaurant_rejects_quick_scale_timing_out_of_range(
+    admin_client, restaurant, field, value
+):
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {field: value},
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
 def test_cash_action_password_accepts_plain_value_and_returns_only_status(admin_client, restaurant):
     response = admin_client.patch(
         f"/api/v1/restaurants/{restaurant.id}/",

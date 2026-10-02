@@ -38,6 +38,12 @@ class RestaurantSerializer(LogoImageMixin, TenantModelSerializer):
     # auditada. Um limite de um dia seria o mesmo que desligar a regra.
     item_cancel_window_seconds = serializers.IntegerField(required=False, min_value=0, max_value=3600)
     max_commands_per_table = serializers.IntegerField(required=False, min_value=0, max_value=100)
+    quick_scale_command_timeout_seconds = serializers.IntegerField(
+        required=False, min_value=10, max_value=600
+    )
+    quick_scale_stability_seconds = serializers.IntegerField(
+        required=False, min_value=1, max_value=30
+    )
     fiscal_provider = serializers.ChoiceField(
         choices=("manual", "focus_nfe"),
         required=False,

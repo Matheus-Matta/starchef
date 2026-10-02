@@ -46,6 +46,11 @@ class Restaurant(TenantBaseModel):
     # `Table.capacity` (lugares) só no PDV; agora é regra do restaurante e o
     # servidor a garante. 0 = sem limite.
     max_commands_per_table = models.PositiveIntegerField(default=4)
+    # Preferências compartilhadas por todas as estações Balança Rápida da
+    # unidade. O prazo para ler a comanda e o assentamento do peso não podem
+    # variar entre terminais do mesmo restaurante.
+    quick_scale_command_timeout_seconds = models.PositiveIntegerField(default=45)
+    quick_scale_stability_seconds = models.PositiveIntegerField(default=3)
     # Janela, em segundos, entre "enviar para a cozinha" e a comanda sair de
     # fato (KDS/impressora). Dentro dela cancelar item ou pedido não pede a
     # senha do caixa nem gera cupom de cancelamento — nada chegou à produção.

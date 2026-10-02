@@ -78,7 +78,7 @@ void main() {
       );
 
       expect(find.text('Preferências deste terminal'), findsOneWidget);
-      expect(find.text('Tempo para ler a comanda'), findsOneWidget);
+      expect(find.text('Tolerância de estabilidade'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

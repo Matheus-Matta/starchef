@@ -491,11 +491,10 @@ periódica à API para obter peso.
 
 `Scale` é a única porta de entrada da leitura de peso, no mesmo molde de
 `Printer` para a impressão. `ScaleDevice.fromJson` resolve o cadastro uma vez
-— porta, baud rate, protocolo, tempo de estabilização, limiar de zero — e é
-esse mesmo objeto que alimenta o leitor e o cartão de configuração da estação,
-para que o que a tela promete seja o que será aberto. `ScaleRuntime` carrega o
-que é do terminal (tolerância de estabilidade) e o transporte injetado dos
-testes.
+— porta, baud rate, protocolo e limiar de zero — e é esse mesmo objeto que
+alimenta o leitor e o cartão de configuração da estação. `ScaleRuntime` recebe
+o tempo de estabilização e o timeout de comanda compartilhados no cadastro do
+restaurante, além da tolerância local do terminal e do transporte injetado.
 
 O protocolo é o campo `protocol` do cadastro da balança (`settings.protocol`
 ainda é aceito como segunda opção, para registros antigos preenchidos à mão):
@@ -966,7 +965,7 @@ Cuidados que o código já toma, e por quê:
 2. Conecte a balança e valide qual porta foi atribuída (`COM3`, `/dev/ttyUSB0`, …).
 3. Para leitor dedicado, configure o equipamento em modo serial/USB-CDC, com terminador CR ou LF. Leitores em modo teclado HID não aparecem no seletor serial.
 4. Garanta que balança, leitor e impressora serial não disputem a mesma porta.
-5. Em Configurações → Preferências deste terminal, ajuste o tempo da comanda, a tolerância de estabilidade e os alertas conforme o balcão. Essa tela também lista as portas seriais detectadas, útil para conferir o passo 2.
+5. No cadastro do restaurante, ajuste o prazo para ler a comanda e o tempo de estabilização compartilhado por todas as estações. Em Configurações → Preferências deste terminal, ajuste apenas a tolerância da balança e os alertas locais. Essa tela também lista as portas seriais detectadas, útil para conferir o passo 2.
 6. **Defina o papel do terminal** em Configurações → Rede local de caixas. O primeiro terminal da loja deve ser marcado como **Caixa Principal**; até isso ser feito, ele não grava nada. Para os demais, marque **Caixa Cliente** e informe o IP e a chave de pareamento do principal (as duas aparecem na tela dele).
 
 ### 3. Aquecer o cache
@@ -992,7 +991,7 @@ Entre no PDV com rede disponível e carregue o restaurante/cardápio ao menos um
 | "Este pedido ainda não está salvo neste terminal" | o pedido não estava na página guardada. Abra a tela de Pedidos com rede ao menos uma vez; o PDV também guarda os 50 mais recentes sozinho a cada abertura |
 | "Editando com os dados salvos localmente" | aviso normal offline: o pedido veio da cópia local e pode não refletir alterações feitas em outro caixa |
 | sem leitura de peso | leia primeiro o cartão de diagnóstico: ele diz se nada chegou pela porta, se o que chega não bate com o protocolo do cadastro (mostrando uma amostra) ou se a balança só manda estado. Depois use "Pegar peso da balança": ele reabre a porta e envia `ENQ`, cobrindo equipamento em modo sob demanda e canal caído |
-| peso nunca estabiliza | tolerância (`scale_stability_tolerance_kg`), `auto_print_delay_seconds` e vibração na bancada |
+| peso nunca estabiliza | tolerância (`scale_stability_tolerance_kg`), tempo do restaurante (`quick_scale_stability_seconds`) e vibração na bancada |
 | valor lido errado por 1000× | protocolo incorreto; confira se o equipamento transmite gramas ou quilos |
 | `Porta ocupada` na balança | o cartão informa qual janela detém o equipamento; feche-a ou escolha outra balança |
 | leitor não aparece | dispositivo em modo USB-CDC/serial e driver que exponha uma COM |

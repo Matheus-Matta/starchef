@@ -247,6 +247,11 @@ Relatórios (`apps/reports`): `SalesReportView` e derivadas por seção. A seç�
 
 Configuração operacional do restaurante (`Restaurant`): `max_commands_per_table` (padrão 4, 0 = sem limite; garantido em `link-table`, `create-with-item` e `transfer-commands` via `assert_table_accepts_commands`, 409 `limit_reached`) e `cancellation_grace_seconds` (padrão 0; com valor, `send_order_to_kitchen` agenda a rodada com `dispatch_at = agora + carência`, itens ficam `queued` e `order_within_cancellation_grace` dispensa a senha no `/cancel/`; comanda já impressa no terminal (`offline_printed`) ignora a carência). A sessão de caixa (`CashRegisterSerializer`) expõe `movements` (só o que passa pela gaveta: dinheiro, troco, sangria, suprimento) e `sales` (todo recebimento da sessão, em qualquer forma, ligado pelo `metadata.cash_register` gravado em `register_payment`). Os comprovantes são montados por `apps/printers/cash_documents.py` no endpoint `/cash-register/{id}/print-document/`; o fechamento discrimina dinheiro, crédito, débito, PIX e voucher, e `opening_divergence` documenta a autorização da divergência de abertura com justificativa e assinatura.
 
+O cadastro do restaurante também guarda os tempos compartilhados da Balança
+Rápida: `quick_scale_command_timeout_seconds` (10–600 s, padrão 45) e
+`quick_scale_stability_seconds` (1–30 s, padrão 3). A API envia esses campos ao
+PDV e a sincronização cloud-to-local os entrega aos terminais da loja.
+
 - `POST /api/v1/cash-register/{id}/force-release/` é a recuperação administrativa de uma sessão presa a uma máquina indisponível. Somente o administrador da conta pode usá-la e a justificativa é obrigatória. A sessão e os lançamentos ainda pendentes são cancelados, o caixa fica livre e o evento é auditado; nenhum valor de conferência da gaveta é inventado.
 - `GET/PATCH /api/v1/integrations/cosmos/config/` configura a Cosmos da conta (somente administrador); `GET /api/v1/fiscal/profiles/cosmos-status/` e `cosmos-suggest/?query=...` sustentam o preenchimento assistido dos perfis fiscais sem gravar automaticamente.
 - `/api/v1/stock/suppliers/` mantém os fornecedores da conta. O insumo pode apontar para um fornecedor padrão e cada linha da entrada registra o fornecedor efetivamente usado.

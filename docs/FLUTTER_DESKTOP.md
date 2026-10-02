@@ -138,7 +138,7 @@ Também pode ser tudo passado via `--dart-define` no lugar do `.env` (útil pra 
 
 ## 10. Configurações por terminal vs. por conta
 
-`features/settings/presentation/terminal_preferences_dialog.dart` — o que é **do terminal** (armazenado localmente, `LocalPreferences`): timeout de comanda, tolerância de estabilidade da balança, alertas sonoros, impressão automática. O que é **do equipamento/conta** (fica no cadastro do backend, `Scale`/`Printer`, compartilhado por todos os terminais que usam aquele hardware): porta, baud rate, protocolo da balança.
+`features/settings/presentation/terminal_preferences_dialog.dart` — o que é **do terminal** (armazenado localmente, `LocalPreferences`): tolerância de estabilidade, alertas sonoros e impressão automática. O timeout para ler a comanda (`Restaurant.quick_scale_command_timeout_seconds`) e o tempo de assentamento do peso (`Restaurant.quick_scale_stability_seconds`) são **do restaurante**, compartilhados por todas as balanças e terminais. Porta, baud rate, protocolo e limiar de zero continuam no cadastro do equipamento (`Scale`).
 
 ## 11. Como rodar em desenvolvimento
 
