@@ -224,7 +224,10 @@ export const resources = [
         // comanda e o histórico dela continuam (ver backend/apps/restaurants/command_reset.py).
         { key: "reset", label: "Zerar comandas", icon: "pi pi-eraser", type: "command-bulk-reset" },
       ],
-      rowActions: [{ key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" }],
+      rowActions: [
+        { key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" },
+        { key: "history", label: "Histórico", icon: "pi pi-history", type: "route", routeName: "comanda-historico" },
+      ],
     },
     columns: [
       { key: "number", label: "Comanda" },

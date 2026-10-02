@@ -793,6 +793,13 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             )
         return Response({"updated": updated}, status=200)
 
+    @action(detail=True, methods=["get"], url_path="history")
+    def history(self, request, pk=None):
+        """Linha do tempo do cartão, paginada — ver `command_history.py`."""
+        from .command_history import pagina_do_historico
+
+        return Response(pagina_do_historico(request, self.get_object()))
+
     @action(detail=False, methods=["post"], url_path="bulk-reset")
     def bulk_reset(self, request):
         """Zera várias comandas sem apagar histórico — ver `command_reset.py`."""

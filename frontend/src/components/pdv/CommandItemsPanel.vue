@@ -5,6 +5,10 @@
         <h2 class="pdv-page__title painel__titulo">{{ titulo }}</h2>
         <p v-if="subtitulo" class="pdv-page__subtitle">{{ subtitulo }}</p>
       </div>
+      <!-- Quem lançou, quem cancelou e por quê: a linha do tempo inteira. -->
+      <RouterLink class="pdv-btn pdv-btn--ghost" :to="{ name: 'comanda-historico', params: { id: command.id } }">
+        Histórico completo
+      </RouterLink>
     </header>
 
     <p v-if="erro" class="pdv-notice pdv-notice--error" role="alert">{{ erro }}</p>
@@ -134,6 +138,8 @@ function dinheiro(valor) {
   background: var(--surface-card, #fff);
   box-sizing: border-box;
 }
+
+.painel__topo a { text-decoration: none; }
 
 .painel__topo {
   display: flex;
