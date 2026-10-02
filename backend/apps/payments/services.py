@@ -186,12 +186,14 @@ def close_cash_register(*, cash_register, user, actual_amount, notes="", termina
         cash_register.expected_amount = expected
         cash_register.actual_amount = actual_amount
         cash_register.difference_amount = actual_amount - expected
-        cash_register.status = (
-            CashRegister.STATUS_CLOSED if cash_register.difference_amount == 0 else CashRegister.STATUS_PENDING_APPROVAL
-        )
-        cash_register.pending_operation = "" if cash_register.difference_amount == 0 else "closing"
+        # A margem do restaurante decide SE precisa de gerente; não mexe em
+        # quanto foi contado nem na diferença, que ficam gravados como são.
+        margem = cash_register.restaurant.cash_closing_tolerance
+        dentro_da_margem = abs(cash_register.difference_amount) <= margem
+        cash_register.status = CashRegister.STATUS_CLOSED if dentro_da_margem else CashRegister.STATUS_PENDING_APPROVAL
+        cash_register.pending_operation = "" if dentro_da_margem else "closing"
         cash_register.closed_by = user
-        cash_register.closed_at = timezone.now() if cash_register.difference_amount == 0 else None
+        cash_register.closed_at = timezone.now() if dentro_da_margem else None
         cash_register.closed_terminal = terminal or cash_register.opened_terminal
         cash_register.closed_terminal_label = (
             (terminal.label if terminal is not None else cash_register.opened_terminal_label) or ""

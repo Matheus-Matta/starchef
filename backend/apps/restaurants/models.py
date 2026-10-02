@@ -1,5 +1,8 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.contrib.auth.hashers import PBKDF2PasswordHasher, identify_hasher
+from django.core.validators import MinValueValidator
 from django.db import models
 
 from apps.core.models import TenantBaseModel, TenantModel
@@ -35,6 +38,12 @@ class Restaurant(TenantBaseModel):
     )
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     require_open_cash_register = models.BooleanField(default=True)
+    # Diferença de gaveta que o fechamento aceita sem gerente, em falta ou em
+    # sobra: centavo de moeda caída não deve exigir aprovação. Os valores
+    # reais (esperado, contado, diferença) continuam gravados como são.
+    cash_closing_tolerance = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal("0.50"), validators=[MinValueValidator(Decimal("0.00"))]
+    )
     # Senha de autorização de ações do caixa (ex.: aprovar sangria/divergência).
     # Armazenada como PBKDF2-SHA256 — nunca em texto puro nem exposta na API.
     # O app Flutter sincroniza essa hash para autorização offline.
@@ -157,6 +166,10 @@ class Branch(TenantBaseModel):
     opening_hours = models.JSONField(default=dict, blank=True)
     default_service_fee_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     require_open_cash_register = models.BooleanField(default=True)
+    # Espelho de `Restaurant.cash_closing_tolerance` (ver `_MIRRORED_RESTAURANT_FIELDS`).
+    cash_closing_tolerance = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal("0.50"), validators=[MinValueValidator(Decimal("0.00"))]
+    )
     stock_deduction_timing = models.CharField(
         max_length=20,
         choices=STOCK_DEDUCTION_CHOICES,
