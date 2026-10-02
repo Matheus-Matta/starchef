@@ -373,9 +373,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
   late final maxAge = TextEditingController(
     text: '${widget.item?['reading_max_age_seconds'] ?? 120}',
   );
-  late final delay = TextEditingController(
-    text: '${widget.item?['auto_print_delay_seconds'] ?? 3}',
-  );
   late final baudRate = TextEditingController(
     text:
         '${(widget.item?['settings'] as Map<String, dynamic>?)?['baudrate'] ?? 9600}',
@@ -534,7 +531,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
     name.dispose();
     connection.dispose();
     maxAge.dispose();
-    delay.dispose();
     baudRate.dispose();
     host.dispose();
     networkPort.dispose();
@@ -579,7 +575,6 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
           'product': productId,
           'printer': printerId,
           'reading_max_age_seconds': int.tryParse(maxAge.text) ?? 120,
-          'auto_print_delay_seconds': int.tryParse(delay.text) ?? 3,
         },
       };
       final saved = widget.item == null
@@ -1007,15 +1002,12 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
                               suffixText: 'segundos',
                             ),
                           ),
-                          TextFormField(
-                            controller: delay,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Espera para impressão',
-                              suffixText: 'segundos',
-                            ),
-                          ),
                         ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Tempo de estabilização e prazo para ler a comanda '
+                        'são configurados no cadastro do restaurante.',
                       ),
                     ],
                     const SizedBox(height: 12),

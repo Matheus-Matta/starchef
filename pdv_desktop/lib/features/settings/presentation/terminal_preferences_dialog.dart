@@ -8,10 +8,9 @@ import '../../../core/storage/local_preferences.dart';
 
 /// Preferências que pertencem a este terminal, não à conta.
 ///
-/// Timeout da comanda, tolerância de estabilidade, alertas sonoros e impressão
-/// automática são decisões de cada balcão — dois terminais do mesmo
-/// restaurante podem precisar de valores diferentes. Por isso ficam no
-/// `preferences.json` local e não no cadastro do backend.
+/// Tolerância da balança, alertas sonoros e impressão automática são decisões
+/// de cada balcão. O timeout da comanda e o assentamento do peso pertencem ao
+/// restaurante e são configurados no cadastro central da unidade.
 class TerminalPreferencesDialog extends StatefulWidget {
   const TerminalPreferencesDialog({
     super.key,
@@ -33,10 +32,8 @@ class TerminalPreferencesDialog extends StatefulWidget {
     List<Map<String, dynamic>> printers = const [],
   }) => showDialog<void>(
     context: context,
-    builder: (_) => TerminalPreferencesDialog(
-      preferences: preferences,
-      printers: printers,
-    ),
+    builder: (_) =>
+        TerminalPreferencesDialog(preferences: preferences, printers: printers),
   );
 
   @override
@@ -45,7 +42,6 @@ class TerminalPreferencesDialog extends StatefulWidget {
 }
 
 class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
-  late int commandTimeoutSeconds = widget.preferences.commandTimeout.inSeconds;
   late double toleranceGrams = widget.preferences.stabilityToleranceKg * 1000;
   late bool audibleAlerts = widget.preferences.audibleAlerts;
   late bool autoPrint = widget.preferences.autoPrint;
@@ -64,9 +60,6 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
   Future<void> _save() async {
     final preferences = widget.preferences;
     await preferences.setTerminalName(terminalName.text);
-    await preferences.setCommandTimeout(
-      Duration(seconds: commandTimeoutSeconds),
-    );
     await preferences.setStabilityToleranceKg(toleranceGrams / 1000);
     await preferences.setAudibleAlerts(audibleAlerts);
     await preferences.setAutoPrint(autoPrint);
@@ -114,19 +107,9 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
             ),
             const SizedBox(height: 18),
             _section('Balança Rápida', scheme),
-            _slider(
-              label: 'Tempo para ler a comanda',
-              value: commandTimeoutSeconds.toDouble(),
-              min: 10,
-              max: 300,
-              divisions: 29,
-              display: '$commandTimeoutSeconds s',
-              helper:
-                  'Depois desse tempo, sem ninguém ler a comanda, a estação '
-                  'avisa e cancela a pesagem na hora — não há um segundo '
-                  'tempo de espera além deste.',
-              onChanged: (value) =>
-                  setState(() => commandTimeoutSeconds = value.round()),
+            const Text(
+              'Tempo para ler a comanda e tempo de estabilização são '
+              'configurados no cadastro do restaurante.',
             ),
             _slider(
               label: 'Tolerância de estabilidade',
@@ -173,7 +156,8 @@ class _TerminalPreferencesDialogState extends State<TerminalPreferencesDialog> {
             const SizedBox(height: 18),
             _section('Impressão', scheme),
             DropdownButtonFormField<String>(
-              initialValue: widget.printers.any(
+              initialValue:
+                  widget.printers.any(
                     (printer) => '${printer['id']}' == masterPrinterId,
                   )
                   ? masterPrinterId

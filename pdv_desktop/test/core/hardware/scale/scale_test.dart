@@ -130,6 +130,30 @@ void main() {
       expect(samples.single.weightKg, closeTo(2.845, 0.0001));
     });
 
+    test('usa o tempo de estabilização enviado pelo restaurante', () async {
+      final transport = FakeTransport();
+      final scale = Scale.fromJson(
+        registro(protocol: 'generic'),
+        runtime: ScaleRuntime(
+          transportFactory: (_) => transport,
+          settleDuration: const Duration(milliseconds: 80),
+        ),
+      );
+      addTearDown(scale.close);
+
+      final samples = <ScaleSample>[];
+      scale.samples.listen(samples.add);
+      await scale.open();
+      transport.send('1.000\r\n');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(samples.last.stable, isFalse);
+
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      transport.send('1.000\r\n');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(samples.last.stable, isTrue);
+    });
+
     test('sem porta cadastrada não abre e explica o que falta', () async {
       final scale = Scale.fromJson(registro(port: ''));
       addTearDown(scale.close);

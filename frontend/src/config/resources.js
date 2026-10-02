@@ -928,8 +928,7 @@ export const resources = [
       { name: "product", label: "Produto por kilo", type: "remote-dropdown", endpoint: "/menu/products/", optionLabel: "name", optionValue: "id", placeholder: "Nenhum produto vinculado" },
       { name: "printer", label: "Impressora da nota de pesagem", type: "remote-dropdown", endpoint: "/printers/", optionLabel: "name", optionValue: "id", placeholder: "Nenhuma impressora vinculada" },
       { name: "reading_max_age_seconds", label: "Validade da leitura (segundos)", type: "number", default: 120 },
-      { name: "auto_print", label: "Lancar e imprimir automaticamente ao estabilizar", type: "boolean", default: false },
-      { name: "auto_print_delay_seconds", label: "Atraso antes de imprimir (segundos)", type: "number", default: 3 },
+      { name: "auto_print", label: "Lançar e imprimir automaticamente ao estabilizar", type: "boolean", default: false, hint: "Usa o tempo de estabilização definido no cadastro do restaurante." },
       { name: "settings", label: "Configuracoes avancadas (JSON)", type: "json", default: {}, full: true, rows: 4, hint: "Opcional. Parametros adicionais usados pelo agente local." },
       { name: "is_active", label: "Ativa", type: "boolean", default: true },
     ],
@@ -995,6 +994,8 @@ export const resources = [
       { name: "max_commands_per_table", label: "Comandas por mesa (0 = sem limite)", type: "number", default: 4, min: 0, section: "Operacao", hint: "Quantas comandas podem ficar vinculadas à mesma mesa. O servidor barra a próxima com aviso no PDV e no app do garçom." },
       { name: "cancellation_grace_seconds", label: "Carência de cancelamento (segundos)", type: "number", default: 0, min: 0, max: 600, section: "Operacao", hint: "Tempo entre enviar para a cozinha e a comanda sair de fato. Dentro dele, cancelar não pede a senha do caixa nem imprime cupom de cancelamento. 0 desliga." },
       { name: "item_cancel_window_seconds", label: "Prazo para cancelar item na produção (segundos)", type: "number", default: 0, min: 0, max: 3600, section: "Operacao", hint: "Conta DEPOIS que o item chega à cozinha. Passado o prazo, cancelar o item exige autorização de um supervisor. 0 desliga." },
+      { name: "quick_scale_command_timeout_seconds", label: "Tempo para ler comanda na Balança Rápida (segundos)", type: "number", default: 45, min: 10, max: 600, section: "Balança Rápida", hint: "Prazo compartilhado por todos os terminais do restaurante. Ao vencer, a pesagem é cancelada." },
+      { name: "quick_scale_stability_seconds", label: "Tempo de estabilização da Balança Rápida (segundos)", type: "number", default: 3, min: 1, max: 30, section: "Balança Rápida", hint: "Quanto tempo o peso deve permanecer dentro da tolerância antes de ser aceito. Vale para todas as balanças e terminais deste restaurante." },
       // O CODIGO DE QUEM LANCOU, para aparelho compartilhado.
       //
       // Nasce desligado: uma exigencia nova que nasce ligada tranca o lancamento

@@ -79,7 +79,7 @@ class PdvSettingsMenuDialog extends StatelessWidget {
             _SettingsEntry(
               icon: Icons.tune,
               title: 'Preferências deste terminal',
-              subtitle: 'Tempo da comanda, estabilidade, alertas e impressão',
+              subtitle: 'Tolerância, alertas e impressão deste terminal',
               onTap: () => _select(context, 'preferences'),
             ),
             _SettingsEntry(

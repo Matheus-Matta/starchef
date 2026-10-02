@@ -13,6 +13,7 @@ import 'serial_scale_reader.dart';
 class ScaleRuntime {
   const ScaleRuntime({
     this.stabilityToleranceKg = 0.002,
+    this.settleDuration,
     this.silenceTimeout = const Duration(seconds: 4),
     this.role = 'balanca-rapida',
     this.transportFactory,
@@ -24,6 +25,9 @@ class ScaleRuntime {
   /// máquina para máquina (mesa firme x mesa que balança), enquanto porta,
   /// baud rate e protocolo descrevem o equipamento e ficam no cadastro.
   final double stabilityToleranceKg;
+
+  /// Tempo compartilhado pelo restaurante antes de aceitar um peso estável.
+  final Duration? settleDuration;
 
   /// Silêncio tolerado antes de avisar que o equipamento parou de transmitir.
   final Duration silenceTimeout;
@@ -73,7 +77,7 @@ class Scale {
         protocol: device.protocol,
         transportFactory: () => factory(device),
         stabilityToleranceKg: runtime.stabilityToleranceKg,
-        settleDuration: device.settleDuration,
+        settleDuration: runtime.settleDuration ?? device.settleDuration,
         zeroThresholdKg: device.zeroThresholdKg,
         silenceTimeout: runtime.silenceTimeout,
         role: runtime.role,
@@ -85,7 +89,7 @@ class Scale {
       baudRate: device.baudRate,
       protocol: device.protocol,
       stabilityToleranceKg: runtime.stabilityToleranceKg,
-      settleDuration: device.settleDuration,
+      settleDuration: runtime.settleDuration ?? device.settleDuration,
       zeroThresholdKg: device.zeroThresholdKg,
       silenceTimeout: runtime.silenceTimeout,
       role: runtime.role,

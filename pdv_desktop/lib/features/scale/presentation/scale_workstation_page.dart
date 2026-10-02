@@ -203,8 +203,34 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     return _resolvedDevice;
   }
 
-  /// Segundos de estabilidade exigidos, vindos do cadastro da balança.
-  int get settleSeconds => scaleDevice?.settleDuration.inSeconds ?? 3;
+  int _restaurantTiming(
+    List<Map<String, dynamic>> restaurants,
+    String? id,
+    String field,
+    int fallback,
+  ) {
+    final restaurant = restaurants.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id'] ?? ''}' == id,
+      orElse: () => null,
+    );
+    return int.tryParse('${restaurant?[field] ?? ''}') ?? fallback;
+  }
+
+  int get commandTimeoutSeconds => _restaurantTiming(
+    widget.restaurants,
+    widget.restaurantId,
+    'quick_scale_command_timeout_seconds',
+    widget.preferences.commandTimeout.inSeconds,
+  ).clamp(10, 600).toInt();
+
+  /// Tempo de assentamento compartilhado por todas as balanças do restaurante.
+  /// O valor por equipamento continua como fallback para APIs antigas.
+  int get settleSeconds => _restaurantTiming(
+    widget.restaurants,
+    widget.restaurantId,
+    'quick_scale_stability_seconds',
+    scaleDevice?.settleDuration.inSeconds ?? 3,
+  ).clamp(1, 30).toInt();
 
   String? get scannerSlot {
     if (widget.restaurantId == null || scaleId == null) return null;
@@ -213,8 +239,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   String get configuredPort => scaleDevice?.port ?? '';
 
-  HandsFreeMachine _buildMachine() =>
-      HandsFreeMachine(commandTimeout: widget.preferences.commandTimeout);
+  HandsFreeMachine _buildMachine() => HandsFreeMachine(
+    commandTimeout: Duration(seconds: commandTimeoutSeconds),
+  );
 
   @override
   void initState() {
@@ -230,13 +257,45 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   @override
   void didUpdateWidget(covariant ScaleWorkstationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.restaurantId != widget.restaurantId) {
+    final restaurantChanged = oldWidget.restaurantId != widget.restaurantId;
+    final timingChanged =
+        _restaurantTiming(
+              oldWidget.restaurants,
+              oldWidget.restaurantId,
+              'quick_scale_command_timeout_seconds',
+              oldWidget.preferences.commandTimeout.inSeconds,
+            ) !=
+            commandTimeoutSeconds ||
+        _restaurantTiming(
+              oldWidget.restaurants,
+              oldWidget.restaurantId,
+              'quick_scale_stability_seconds',
+              -1,
+            ) !=
+            _restaurantTiming(
+              widget.restaurants,
+              widget.restaurantId,
+              'quick_scale_stability_seconds',
+              -1,
+            );
+    if (restaurantChanged || timingChanged) {
+      unawaited(_applyRestaurantTiming(restaurantChanged: restaurantChanged));
+    }
+  }
+
+  Future<void> _applyRestaurantTiming({required bool restaurantChanged}) async {
+    await _stopStation();
+    if (!mounted) return;
+    machine.removeListener(_onMachineChanged);
+    machine.dispose();
+    machine = _buildMachine();
+    machine.addListener(_onMachineChanged);
+    if (restaurantChanged) {
       scaleId = null;
       printerId = null;
       scales = [];
       printers = [];
-      unawaited(_stopStation());
-      unawaited(_detachScanner(clearBinding: true));
+      await _detachScanner(clearBinding: true);
       _loadScales();
       _loadPrinters();
     }
@@ -565,6 +624,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       device,
       runtime: ScaleRuntime(
         stabilityToleranceKg: widget.preferences.stabilityToleranceKg,
+        settleDuration: Duration(seconds: settleSeconds),
       ),
     );
     reader = next;
@@ -1405,7 +1465,8 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
                   missingPort
                       ? 'Informe a COM e o baud rate no cadastro. Sem isso só '
                             'o peso manual funciona nesta estação.'
-                      : device!.summary,
+                      : '${device!.baudRate} baud · ${device.protocol.label} · '
+                            'estabiliza em $settleSeconds s',
                   style: TextStyle(
                     color: missingPort ? color : scheme.onSurfaceVariant,
                     fontSize: 12,
