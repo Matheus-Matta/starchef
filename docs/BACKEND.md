@@ -237,6 +237,16 @@ simples já existentes sem alterar hashes válidas.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.
 
+**KDS só mostra produto por unidade.** O produto vendido por peso
+(`Product.pricing_unit == "kg"`, o prato da balança) já está servido: no envio
+à produção — do pedido (`dispatch_kitchen_batch`) e da comanda
+(`dispatch_command_batch`) — ele sai **entregue** (`orders/weighed_production.py`),
+com `sent_to_kitchen_at` gravado (cancelar depois continua exigindo autorização).
+Assim ele não aparece no quadro nem prende o `production_status` do pedido em
+"enviado"; pedido só de peso termina `delivered`. `/kitchen/items/` também
+exclui o peso, o que tira da tela o que foi enviado antes desta regra. A
+impressão da cozinha não mudou.
+
 **KDS e estações**: `KdsStation.rules` guarda até 50 regras declarativas por
 estação. As ações são incluir, excluir e mover; as condições cobrem tipo do
 pedido, setor, status do item/pedido/pagamento/produção/entrega, mesa, comanda,

@@ -16,6 +16,8 @@ part of 'home_page.dart';
 mixin _OrderSection on _HomePageShared {
   void _leaveActiveOrder({String? except});
   Future<void> _load();
+  TypedDiscount get typedDiscount;
+  String? get _discountKey;
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
 
@@ -137,6 +139,9 @@ mixin _OrderSection on _HomePageShared {
   /// sobrou aqui são as duas escolhas da nota: taxa de serviço e CPF.
   Future<void> _finishOrder() async {
     if (!widget.controller.session!.user.canProcessPayments) return;
+    // Lido ANTES de o rascunho virar pedido: a chave dele muda de `draft` para
+    // o id, e o desconto digitado ficaria para trás.
+    final descontoDigitado = typedDiscount.valorDe(_discountKey);
     // O outro gesto que faz o pedido nascer: o caixa vai anexar um
     // recebimento, e recebimento se anexa a pedido. A permissão é conferida
     // ANTES de materializar — abrir um pedido para em seguida recusar o
@@ -145,6 +150,16 @@ mixin _OrderSection on _HomePageShared {
     if (activeOrder == null || orderItems.isEmpty) return;
     await _refreshOrder();
     if (!mounted || activeOrder == null) return;
+
+    if (descontoDigitado != null &&
+        descontoDigitado > (_number(activeOrder?['subtotal']) * 100).round()) {
+      _error(
+        const ApiException(
+          'O desconto não pode ser maior que o subtotal do pedido.',
+        ),
+      );
+      return;
+    }
 
     final taxa = defaultServiceFeePercent > 0
         ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100
@@ -197,7 +212,10 @@ mixin _OrderSection on _HomePageShared {
       final closeResult = await api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
-          'discount': activeOrder?['discount'] ?? 0,
+          // O digitado no resumo vale; sem digitar, o que o pedido já tinha.
+          'discount': descontoDigitado != null
+              ? centavosParaApi(descontoDigitado)
+              : activeOrder?['discount'] ?? 0,
           'service_fee_enabled': chargeService,
           'fiscal_customer_cpf': fiscalCpf,
           'fiscal_customer_cnpj': fiscalCnpj,

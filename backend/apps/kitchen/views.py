@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from apps.core.requests import required_field
 from apps.core.viewsets import ReadOnlyTenantViewSet
+from apps.menu.models import Product
 from apps.orders.models import Order, OrderItem
 from apps.orders.serializers import OrderItemSerializer, OrderSerializer
 from apps.orders.services import update_order_item_status
@@ -100,10 +101,15 @@ class KitchenItemViewSet(ReadOnlyTenantViewSet):
         return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
     def get_queryset(self):
+        # O KDS mostra só produto por UNIDADE: o prato por peso já está servido
+        # (ver `orders/weighed_production.py`). O filtro também tira da tela os
+        # itens por peso que já estavam "enviados" antes dessa regra.
+        return self._por_estado(super().get_queryset().exclude(product__pricing_unit=Product.PRICING_KG))
+
+    def _por_estado(self, queryset):
         # Quadros comuns ocultam cancelados. A cozinha conserva somente itens
         # que chegaram à produção para mostrar o cancelamento e seu motivo.
         # Pedidos pagos seguem visíveis enquanto a cozinha prepara o item.
-        queryset = super().get_queryset()
         station_id = self.request.query_params.get("station")
         if station_id:
             station = KdsStation.objects.filter(

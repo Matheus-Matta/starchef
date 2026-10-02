@@ -65,6 +65,7 @@ mixin _PaymentSection on _HomePageShared {
 
   Future<void> _load();
   Future<void> _refreshOrder();
+  void _resetToNewSale();
   Future<String?> _chooseSalePrinter(Map<String, dynamic> order);
   Future<void> _printSaleReceipt(
     Map<String, dynamic> order,
@@ -441,16 +442,7 @@ mixin _PaymentSection on _HomePageShared {
         ? null
         : Map<String, dynamic>.from(selectedCustomer!);
     startPaidOrderFollowUps(
-      showNextSale: () => setState(() {
-        activeOrder = null;
-        selectedTable = null;
-        selectedCommand = null;
-        selectedCustomer = null;
-        orderItems = [];
-        registeredPayments = [];
-        orderType = 'counter';
-        flowStep = 'order';
-      }),
+      showNextSale: _resetToNewSale,
       choosePrinter: () => _chooseSalePrinter(paidOrder),
       printReceipt: (printer) =>
           _printSaleReceipt(paidOrder, printer, paidInCash: paidInCash),

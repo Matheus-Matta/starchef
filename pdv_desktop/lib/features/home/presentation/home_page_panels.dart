@@ -28,6 +28,13 @@ mixin _PanelsSection on _HomePageShared {
   String? get orderType;
   String get search;
   set search(String value);
+  int get catalogSearchGeneration;
+  TypedDiscount get typedDiscount;
+
+  /// De que pedido é o desconto digitado: o aberto, ou o rascunho.
+  String? get _discountKey => activeOrder != null
+      ? '${activeOrder!['id']}'
+      : (_draftIsLive ? 'draft' : null);
   String? get selectedOrderItemId;
   bool get printingReceipt;
   bool get emittingInvoice;
@@ -62,6 +69,7 @@ mixin _PanelsSection on _HomePageShared {
       categories: categories,
       selectedCategory: category,
       search: search,
+      searchGeneration: catalogSearchGeneration,
       searchFocusNode: catalogSearchFocus,
       money: _money,
       onSearchChanged: (value) => setState(() => search = value),
@@ -120,6 +128,12 @@ mixin _PanelsSection on _HomePageShared {
         : null,
     draftCommands: _draftIsLive ? draft.commands : const [],
     draftCommandTotals: _draftIsLive ? _totaisPorComanda : const {},
+    discountCents: typedDiscount.valorDe(_discountKey),
+    onDiscountChanged:
+        widget.controller.session!.user.canApplyDiscount && _discountKey != null
+        ? (centavos) =>
+              setState(() => typedDiscount.definir(_discountKey, centavos))
+        : null,
     onVoidItem: _voidItem,
     onFinish: widget.controller.session!.user.canProcessPayments
         ? _finishOrder

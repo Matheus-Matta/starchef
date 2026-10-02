@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/data/order_item_status.dart';
+import 'order_discount_field.dart';
 import 'draft_destination_bar.dart';
 import '../../../core/theme/app_theme.dart';
 import 'cart_item_card.dart';
@@ -41,6 +42,8 @@ class OrderCartPanel extends StatelessWidget {
     this.onChooseCustomer,
     this.draftCommands = const [],
     this.draftCommandTotals = const {},
+    this.discountCents,
+    this.onDiscountChanged,
   });
 
   final Map<String, dynamic>? order;
@@ -51,21 +54,29 @@ class OrderCartPanel extends StatelessWidget {
   final List<Map<String, dynamic>> items;
   final String Function(dynamic) money;
   final ValueChanged<Map<String, dynamic>> onVoidItem;
+
   /// O total do RASCUNHO, quando ainda não existe pedido no servidor.
   ///
   /// Não dá para tirar de `order`: ele é nulo justamente porque o pedido ainda
   /// não nasceu. E é só conferência — quem soma para cobrar é o servidor, que
   /// conhece taxa de serviço, desconto e o preço em vigor no lançamento.
   final double? draftTotal;
+
   /// A barra de destino no topo. Nula quando o pedido já existe: aí o destino
   /// está decidido, e trocá-lo não é mais um gesto de tela.
   final ValueChanged<String>? onPickDraftType;
   final VoidCallback? onAttachCommand;
   final VoidCallback? onChooseCustomer;
   final ValueChanged<String>? onDetachCommand;
+
   /// Os cartões anexados ao rascunho e o que cada um já tem lançado.
   final List<Map<String, dynamic>> draftCommands;
   final Map<String, double> draftCommandTotals;
+
+  /// Desconto digitado no resumo (nulo = o que o servidor já tem). Sem
+  /// `onDiscountChanged` o campo não aparece: só gerente dá desconto.
+  final int? discountCents;
+  final ValueChanged<int>? onDiscountChanged;
 
   /// Leva ao pagamento. Nulo para quem não tem a permissão de caixa — e aí o
   /// botão aparece desligado, em vez de sumir ou de não fazer nada ao clique.
@@ -331,7 +342,13 @@ class OrderCartPanel extends StatelessWidget {
             _summaryRow(context, 'Taxa de serviço', money(serviceFee)),
           if (deliveryFee.abs() > .009)
             _summaryRow(context, 'Taxa de entrega', money(deliveryFee)),
-          if (discount.abs() > .009)
+          if (onDiscountChanged != null)
+            OrderDiscountField(
+              cents: descontoNaTela(order, discountCents),
+              maxCents: centavosDe(subtotal ?? draftTotal),
+              onChanged: onDiscountChanged!,
+            )
+          else if (discount.abs() > .009)
             _summaryRow(
               context,
               'Desconto',
@@ -349,7 +366,7 @@ class OrderCartPanel extends StatelessWidget {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
               ),
               Text(
-                money(order?['total'] ?? draftTotal),
+                money(totalComDesconto(order, draftTotal, discountCents)),
                 style: TextStyle(
                   color: scheme.primary,
                   fontSize: 25,

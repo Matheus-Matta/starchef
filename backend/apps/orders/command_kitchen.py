@@ -18,6 +18,7 @@ from django.utils import timezone
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.core.audit import record_audit
+from apps.menu.models import Product
 from apps.orders.models import CommandBatch, CommandItem
 
 
@@ -135,6 +136,16 @@ def dispatch_command_batch(batch, *, now=None):
         if batch.dispatch_at and batch.dispatch_at > agora:
             return batch
 
+        from apps.orders.weighed_production import entregar_sem_producao
+
+        # O prato pesado na balança já está servido: não vai ao KDS.
+        entregar_sem_producao(
+            CommandItem.objects.filter(
+                batch_id=batch.pk, status=CommandItem.STATUS_QUEUED,
+                product__pricing_unit=Product.PRICING_KG,
+            ).select_related("product"),
+            agora=agora,
+        )
         CommandItem.objects.filter(
             batch_id=batch.pk, status=CommandItem.STATUS_QUEUED
         ).update(

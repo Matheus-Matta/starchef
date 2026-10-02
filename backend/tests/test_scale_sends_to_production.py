@@ -48,7 +48,9 @@ def test_checkout_da_balanca_manda_so_a_pesagem_para_a_producao(
     assert response.status_code == 201, response.data
     prato = CommandItem.all_objects.get(product=buffet)
     bebida = CommandItem.all_objects.get(product=agua)
-    assert prato.status in A_CAMINHO
+    # Já servido: sai entregue e fica fora do KDS (ver orders/weighed_production.py).
+    # A bebida, por unidade, segue para a produção.
+    assert prato.status == CommandItem.STATUS_DELIVERED
     assert bebida.status in A_CAMINHO
     assert prato.batch_id == bebida.batch_id
     assert CommandBatch.all_objects.filter(command=command).count() == 1

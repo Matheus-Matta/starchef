@@ -652,6 +652,10 @@ def dispatch_kitchen_batch(batch, *, now=None):
             ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
             return batch
 
+        from apps.orders.weighed_production import entregar_sem_producao, separar
+
+        por_peso, items = separar(items)
+        entregar_sem_producao(por_peso, agora=now)
         for item in items:
             item.status = OrderItem.STATUS_SENT
             item.sent_to_kitchen_at = now
@@ -671,9 +675,13 @@ def dispatch_kitchen_batch(batch, *, now=None):
         batch.save(update_fields=["status", "sent_at", "updated_at"])
 
         order = batch.order
-        order.production_status = Order.PROD_SENT
+        # Rodada só de produto por peso: nada foi para a cozinha, e o status do
+        # pedido sai do que os itens são (entregues), não de um "enviado" fixo.
+        order.production_status = Order.PROD_SENT if items else order.production_status
         order.updated_by = batch.sent_by
         order.save(update_fields=["production_status", "updated_by", "updated_at"])
+        if not items:
+            order = sync_production_status(order)
 
         # DEPOIS DE UMA CONSOLIDACAO o lote fica na origem como historia de
         # producao, mas os itens ja pertencem ao pedido final. O quadro e o
