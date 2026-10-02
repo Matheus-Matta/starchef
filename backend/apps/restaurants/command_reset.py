@@ -34,14 +34,38 @@ def zerar_do_request(request, visiveis):
     if not isinstance(ids, list) or not ids or len(ids) > MAXIMO:
         raise ValidationError({"ids": f"Selecione de 1 a {MAXIMO} comandas."})
     ids = list(dict.fromkeys(str(i) for i in ids))
+    # Só UUID vai ao banco: `None`, número ou texto qualquer no `pk__in`
+    # estourava ValidationError do Django dentro da consulta — 500 por um id
+    # torto no meio de uma lista boa. Os tortos voltam como "não encontrada".
+    validos = [i for i in ids if _e_uuid(i)]
     por_restaurante = {}
-    for comanda_id, restaurante_id in visiveis.filter(pk__in=ids).values_list("pk", "restaurant_id"):
+    for comanda_id, restaurante_id in visiveis.filter(pk__in=validos).values_list("pk", "restaurant_id"):
         por_restaurante.setdefault(restaurante_id, []).append(str(comanda_id))
+
+    # ZERAR É CANCELAMENTO EM MASSA. Tirar UM item no prazo é gesto de quem
+    # lançou (o garçom corrige o próprio engano); esvaziar várias comandas de
+    # uma vez é perda no relatório. Sem a permissão de cancelar (gerente e
+    # admin), só com a senha de operação ou o login de um supervisor.
+    from apps.core.access import is_tenant_admin
+    from apps.core.permissions import effective_permission_codes
+    from apps.restaurants.models import Command
+
+    codigos = effective_permission_codes(request.user)
+    pode_cancelar = is_tenant_admin(request.user) or "*" in codigos or "orders.cancel" in codigos
 
     resultado = {"reset": [], "skipped": []}
     for restaurante_id, grupo in por_restaurante.items():
         restaurante = Restaurant.objects.get(pk=restaurante_id)
         autorizado, quem, _como = _can_authorize_cancellation(request, restaurante, restaurante.account_id)
+        if not (pode_cancelar or autorizado):
+            numeros = {str(pk): n for pk, n in Command.objects.filter(pk__in=grupo).values_list("pk", "number")}
+            resultado["skipped"] += [
+                {"id": i, "number": numeros.get(i), "reason": (
+                    "Zerar comandas exige gerente: informe a senha de operação ou o login de um supervisor."
+                )}
+                for i in grupo
+            ]
+            continue
         parcial = zerar_comandas(
             grupo, account=restaurante.account, user=request.user, reason=request.data.get("reason"),
             authorized=autorizado, authorized_by=quem,
@@ -55,12 +79,24 @@ def zerar_do_request(request, visiveis):
     return resultado
 
 
+def _e_uuid(valor):
+    import uuid
+
+    try:
+        uuid.UUID(str(valor))
+    except ValueError:
+        return False
+    return True
+
+
 def zerar_comandas(ids, *, account, user, reason, authorized=False, authorized_by=None):
     """Devolve `{"reset": [...], "skipped": [...]}`, um registro por id pedido."""
     from apps.orders.item_cancellation import CancelamentoBloqueado
     from apps.restaurants.models import Command
 
-    reason = str(reason or "").strip()
+    if reason is not None and not isinstance(reason, str):
+        raise ValidationError("O motivo é um texto.")
+    reason = (reason or "").strip()
     if not reason:
         raise ValidationError("Informe o motivo para zerar as comandas.")
 

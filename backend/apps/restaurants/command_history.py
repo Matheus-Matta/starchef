@@ -121,9 +121,14 @@ def pagina_do_historico(request, comanda):
     for campo in ("after", "before"):
         bruto = request.query_params.get(campo)
         if bruto:
-            datas[campo] = parse_date(bruto)
+            # `parse_date` devolve None para formato errado, mas ESTOURA para
+            # data no formato certo que não existe (mês 13): as duas são 400.
+            try:
+                datas[campo] = parse_date(bruto)
+            except ValueError:
+                datas[campo] = None
             if datas[campo] is None:
-                raise ValidationError({campo: "Use o formato AAAA-MM-DD."})
+                raise ValidationError({campo: "Use uma data válida no formato AAAA-MM-DD."})
     try:
         pagina = max(int(request.query_params.get("page") or 1), 1)
         tamanho = min(max(int(request.query_params.get("page_size") or 50), 1), 200)
