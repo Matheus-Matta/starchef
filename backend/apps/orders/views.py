@@ -723,14 +723,18 @@ class OrderViewSet(BaseTenantViewSet):
         # (ver `bulk_delete.py`). Antes a exclusão individual não tinha trava.
         from rest_framework.exceptions import APIException
 
-        from apps.orders.bulk_delete import motivo_para_manter
+        from django.db import transaction
 
-        motivo = motivo_para_manter(instance)
-        if motivo:
-            erro = APIException(f"Pedido #{instance.sequence} {motivo}.")
-            erro.status_code = status.HTTP_409_CONFLICT
-            raise erro
-        super().perform_destroy(instance)
+        from apps.orders.bulk_delete import motivo_para_manter, travar_para_excluir
+
+        with transaction.atomic():
+            instance = travar_para_excluir(instance)
+            motivo = motivo_para_manter(instance)
+            if motivo:
+                erro = APIException(f"Pedido #{instance.sequence} {motivo}.")
+                erro.status_code = status.HTTP_409_CONFLICT
+                raise erro
+            super().perform_destroy(instance)
 
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request):

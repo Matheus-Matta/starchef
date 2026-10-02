@@ -23,7 +23,24 @@ def motivo_para_manter(pedido):
         return "tem nota fiscal — cancele o pedido em vez de excluir"
     if pedido.payments.filter(status=Payment.STATUS_APPROVED).exists():
         return "tem pagamento recebido — cancele o pedido em vez de excluir"
+    # Conta aberta com consumo não é rascunho: a varredura de rascunhos do
+    # PDV apagava a conta agrupada que outro caixa acabara de encher, e as
+    # comandas dela ficavam presas a uma conta inexistente.
+    from apps.orders.models import Order, OrderItem
+
+    if (
+        pedido.status in (Order.STATUS_OPEN, Order.STATUS_AWAITING_PAYMENT)
+        and pedido.items.exclude(status=OrderItem.STATUS_CANCELLED).exists()
+    ):
+        return "tem consumo em aberto — conclua ou cancele o pedido em vez de excluir"
     return None
+
+
+def travar_para_excluir(pedido):
+    """Relê o pedido sob trava: decidir antes de travar não impede a corrida."""
+    from apps.orders.models import Order
+
+    return Order.all_objects.select_for_update(of=("self",)).get(pk=pedido.pk)
 
 
 def excluir_em_massa(pedidos, *, user):
@@ -34,6 +51,11 @@ def excluir_em_massa(pedidos, *, user):
             resultado["skipped"].append({"id": str(pedido.pk), "sequence": pedido.sequence, "reason": motivo})
             continue
         with transaction.atomic():
+            pedido = travar_para_excluir(pedido)
+            motivo = motivo_para_manter(pedido)
+            if motivo:
+                resultado["skipped"].append({"id": str(pedido.pk), "sequence": pedido.sequence, "reason": motivo})
+                continue
             pedido.updated_by = user
             pedido.save(update_fields=["updated_by", "updated_at"])
             pedido.delete()

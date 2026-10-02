@@ -499,7 +499,9 @@ def rebuild_invoice_items(invoice, order, config, *, items=None, user=None):
         approx_total += taxes["approx_tax_value"]
 
     invoice.products_total = products_total
-    invoice.discount_total = order.discount
+    # O cupom também é desconto: o total do pedido abate os dois, e a nota que
+    # registrava só um não fechava a conta — a venda com cupom ficava sem NFC-e.
+    invoice.discount_total = order.discount + order.coupon_discount
     invoice.tax_approx_total = approx_total
     invoice.total_amount = order.total
     return invoice
@@ -609,7 +611,7 @@ def emit_fiscal_invoice(order, *, cpf=None, cpf_name="", user=None):
         invoice.products_total = sum(
             (item.total_price for item in items), Decimal("0")
         )
-        invoice.discount_total = order.discount
+        invoice.discount_total = order.discount + order.coupon_discount
         invoice.save()  # precisa de pk para os itens
 
         # (Re)monta os itens fiscais com o detalhamento tributario.
