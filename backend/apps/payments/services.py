@@ -294,6 +294,9 @@ def _cash_password_proof(stored_hash, cash_register_id, nonce):
     ).hexdigest()
 
 
+# Transação PRÓPRIA: aprovar pela web vem sem `Idempotency-Key` e o
+# `select_for_update` da sessão virava 500 (ver test_trava_sem_transacao_no_web).
+@transaction.atomic
 def approve_cash_operation(
     *,
     cash_register,

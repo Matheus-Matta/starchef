@@ -795,6 +795,9 @@ def set_order_item_quantity(item, user, quantity):
         return item
 
 
+# Transação PRÓPRIA: a web não manda `Idempotency-Key`, e sem ela nenhuma
+# transação envolvia a requisição — o `select_for_update` abaixo virava 500.
+@transaction.atomic
 def void_order_item(item, user, reason="", offline_printed=False, authorized=False,
                     authorized_by=None):
     """Cancela um item, com cupom de cancelamento so depois de despachado.
