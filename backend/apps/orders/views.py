@@ -606,6 +606,7 @@ class OrderViewSet(BaseTenantViewSet):
                 service_fee=request.data.get("service_fee"),
                 service_fee_enabled=request.data.get("service_fee_enabled"),
                 fiscal_customer_cpf=request.data.get("fiscal_customer_cpf"),
+                fiscal_customer_cnpj=request.data.get("fiscal_customer_cnpj"),
                 expected_total=request.data.get("expected_total"),
                 # `None` quando a chave nao vem: fechar de novo para corrigir a
                 # taxa nao pode derrubar o cupom que ja estava aplicado.

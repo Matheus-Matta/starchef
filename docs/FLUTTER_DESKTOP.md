@@ -93,7 +93,8 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
 - **CPF na NFC-e**: no diálogo que antecede o pagamento, ao lado da escolha da
   taxa de serviço, o operador pode informar um CPF. O PDV valida os dígitos,
-  envia `fiscal_customer_cpf` no fechamento e preserva o valor no pedido local
+  envia `fiscal_customer_cpf` ou `fiscal_customer_cnpj` no fechamento e
+  preserva o documento no pedido local
   para que a emissão fiscal continue correta quando a venda começou offline.
 - **Fotos do catálogo**: cards de produto e opções de variante resolvem
   `logo_p`, com fallback para o campo legado `image`. O PDV não percorre

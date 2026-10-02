@@ -6,6 +6,7 @@ class _FinishOrderChoice {
   const _FinishOrderChoice({
     required this.chargeService,
     required this.fiscalCpf,
+    required this.fiscalCnpj,
     required this.couponCode,
   });
 
@@ -13,6 +14,7 @@ class _FinishOrderChoice {
 
   /// Só dígitos, ou vazio quando o CPF não vai na nota.
   final String fiscalCpf;
+  final String fiscalCnpj;
 
   /// O código do cupom, ou vazio para RETIRAR o cupom deste pedido.
   ///
@@ -21,7 +23,7 @@ class _FinishOrderChoice {
   final String couponCode;
 }
 
-/// As duas escolhas da nota: taxa de serviço e CPF.
+/// As escolhas da nota: taxa de serviço e identificação por CPF ou CNPJ.
 ///
 /// É um widget com estado porque ele é DONO do `TextEditingController` — ver
 /// `_MovementApprovalForm` para o defeito que isso evita.
@@ -30,6 +32,8 @@ class _FinishOrderForm extends StatefulWidget {
     required this.chargeService,
     required this.savedCpf,
     required this.customerCpf,
+    required this.savedCnpj,
+    required this.customerCnpj,
     required this.serviceFeePercent,
     required this.serviceFeeAmount,
     required this.money,
@@ -40,6 +44,8 @@ class _FinishOrderForm extends StatefulWidget {
   final bool chargeService;
   final String savedCpf;
   final String customerCpf;
+  final String savedCnpj;
+  final String customerCnpj;
 
   /// O cupom que JÁ está no pedido, e o quanto ele está abatendo agora.
   ///
@@ -57,32 +63,55 @@ class _FinishOrderForm extends StatefulWidget {
 
 class _FinishOrderFormState extends State<_FinishOrderForm> {
   late var _chargeService = widget.chargeService;
-  late var _includeCpf = widget.savedCpf.isNotEmpty;
+  late var _includeRecipient =
+      widget.savedCpf.isNotEmpty || widget.savedCnpj.isNotEmpty;
+  late var _documentType =
+      widget.savedCnpj.isNotEmpty ||
+          (widget.savedCpf.isEmpty && widget.customerCnpj.isNotEmpty)
+      ? 'cnpj'
+      : 'cpf';
   late final _cpf = TextEditingController(
     text: formatCpf(
       widget.savedCpf.isNotEmpty ? widget.savedCpf : widget.customerCpf,
     ),
   );
   late final _cupom = TextEditingController(text: widget.savedCoupon);
+  late final _cnpj = TextEditingController(
+    text: formatCnpj(
+      widget.savedCnpj.isNotEmpty ? widget.savedCnpj : widget.customerCnpj,
+    ),
+  );
   String? _cpfError;
 
   @override
   void dispose() {
     _cpf.dispose();
+    _cnpj.dispose();
     _cupom.dispose();
     super.dispose();
   }
 
   void _confirm() {
-    if (_includeCpf && !isValidCpf(_cpf.text)) {
-      setState(() => _cpfError = 'Informe um CPF válido.');
-      return;
+    if (_includeRecipient) {
+      if (_documentType == 'cpf' && !isValidCpf(_cpf.text)) {
+        setState(() => _cpfError = 'Informe um CPF válido.');
+        return;
+      }
+      if (_documentType == 'cnpj' && !isValidCnpj(_cnpj.text)) {
+        setState(() => _cpfError = 'Informe um CNPJ válido.');
+        return;
+      }
     }
     Navigator.pop(
       context,
       _FinishOrderChoice(
         chargeService: _chargeService,
-        fiscalCpf: _includeCpf ? cpfDigits(_cpf.text) : '',
+        fiscalCpf: _includeRecipient && _documentType == 'cpf'
+            ? cpfDigits(_cpf.text)
+            : '',
+        fiscalCnpj: _includeRecipient && _documentType == 'cnpj'
+            ? cnpjDigits(_cnpj.text)
+            : '',
         couponCode: _cupom.text.trim().toUpperCase(),
       ),
     );
@@ -116,19 +145,42 @@ class _FinishOrderFormState extends State<_FinishOrderForm> {
           ),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
-            value: _includeCpf,
+            value: _includeRecipient,
             onChanged: (value) => setState(() {
-              _includeCpf = value ?? false;
+              _includeRecipient = value ?? false;
               _cpfError = null;
-              if (_includeCpf && _cpf.text.isEmpty) {
+              if (_includeRecipient &&
+                  _documentType == 'cpf' &&
+                  _cpf.text.isEmpty) {
                 _cpf.text = formatCpf(widget.customerCpf);
               }
+              if (_includeRecipient &&
+                  _documentType == 'cnpj' &&
+                  _cnpj.text.isEmpty) {
+                _cnpj.text = formatCnpj(widget.customerCnpj);
+              }
             }),
-            title: const Text('Incluir CPF na NFC-e'),
+            title: const Text('Identificar destinatário na NFC-e'),
             subtitle: const Text(
-              'O CPF será enviado como destinatário da nota fiscal.',
+              'Informe CPF para pessoa física ou CNPJ para empresa.',
             ),
           ),
+          if (_includeRecipient)
+            DropdownButtonFormField<String>(
+              initialValue: _documentType,
+              decoration: const InputDecoration(labelText: 'Tipo de documento'),
+              items: const [
+                DropdownMenuItem(
+                  value: 'cpf',
+                  child: Text('CPF — pessoa física'),
+                ),
+                DropdownMenuItem(value: 'cnpj', child: Text('CNPJ — empresa')),
+              ],
+              onChanged: (value) => setState(() {
+                _documentType = value ?? 'cpf';
+                _cpfError = null;
+              }),
+            ),
           // O CUPOM FICA JUNTO DO CPF, e não numa tela própria: o CPF é a
           // IDENTIDADE do cupom — é por ele que "compra única por cliente" e
           // "só para o grupo VIP" são conferidos. Separar os dois campos faria
@@ -152,7 +204,7 @@ class _FinishOrderFormState extends State<_FinishOrderForm> {
                   : 'Deixe em branco para não usar cupom.',
             ),
           ),
-          if (_includeCpf)
+          if (_includeRecipient && _documentType == 'cpf')
             TextField(
               key: const Key('fiscal-cpf'),
               controller: _cpf,
@@ -163,6 +215,22 @@ class _FinishOrderFormState extends State<_FinishOrderForm> {
                 hintText: '000.000.000-00',
                 errorText: _cpfError,
                 prefixIcon: const Icon(Icons.badge_outlined),
+              ),
+              onChanged: (_) {
+                if (_cpfError != null) setState(() => _cpfError = null);
+              },
+            ),
+          if (_includeRecipient && _documentType == 'cnpj')
+            TextField(
+              key: const Key('fiscal-cnpj'),
+              controller: _cnpj,
+              keyboardType: TextInputType.number,
+              inputFormatters: [CnpjInputFormatter()],
+              decoration: InputDecoration(
+                labelText: 'CNPJ para a NFC-e',
+                hintText: '00.000.000/0000-00',
+                errorText: _cpfError,
+                prefixIcon: const Icon(Icons.business_outlined),
               ),
               onChanged: (_) {
                 if (_cpfError != null) setState(() => _cpfError = null);

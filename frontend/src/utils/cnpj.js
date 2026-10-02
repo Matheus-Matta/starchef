@@ -1,22 +1,29 @@
-/** CNPJ para a NFC-e: só dígitos, máscara e dígito verificador. */
+/**
+ * CNPJ para a NFC-e: caracteres úteis, máscara e dígito verificador.
+ *
+ * Aceita o CNPJ alfanumérico da Receita (letras nas 12 primeiras posições; os
+ * dois verificadores continuam números). A conta é a mesma do backend
+ * (`customers/validators.py`) e do PDV desktop: cada caractere vale o código
+ * dele menos 48, então os dígitos valem o que sempre valeram.
+ */
 export function cnpjDigits(value) {
-  return String(value || "").replace(/\D/g, "").slice(0, 14);
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 14);
 }
 
 export function formatCnpj(value) {
   return cnpjDigits(value)
-    .replace(/^(\d{2})(\d)/, "$1.$2")
-    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
-    .replace(/\.(\d{3})(\d)/, ".$1/$2")
-    .replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+    .replace(/^(\w{2})(\w)/, "$1.$2")
+    .replace(/^(\w{2})\.(\w{3})(\w)/, "$1.$2.$3")
+    .replace(/\.(\w{3})(\w)/, ".$1/$2")
+    .replace(/(\w{4})(\w{1,2})$/, "$1-$2");
 }
 
 export function isValidCnpj(value) {
   const cnpj = cnpjDigits(value);
-  if (cnpj.length !== 14 || /^(\d)\1{13}$/.test(cnpj)) return false;
+  if (cnpj.length !== 14 || /^(\w)\1{13}$/.test(cnpj) || !/^\d{2}$/.test(cnpj.slice(12))) return false;
   const digito = (base) => {
     const pesos = base.length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-    const soma = base.split("").reduce((total, d, i) => total + Number(d) * pesos[i], 0);
+    const soma = base.split("").reduce((total, c, i) => total + (c.charCodeAt(0) - 48) * pesos[i], 0);
     const resto = soma % 11;
     return resto < 2 ? 0 : 11 - resto;
   };

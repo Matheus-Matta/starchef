@@ -68,13 +68,20 @@ mixin _FiscalSection on _HomePageShared {
       Map<String, dynamic>? invoice;
       try {
         final fiscalCpf = cpfDigits(order['fiscal_customer_cpf']);
+        final fiscalCnpj = cnpjDigits(order['fiscal_customer_cnpj']);
         final fiscalCustomer = customer ?? selectedCustomer;
         final selectedCpf = cpfDigits(fiscalCustomer?['document']);
+        final selectedCnpj = cnpjDigits(fiscalCustomer?['document']);
         invoice = await api.post(
           '/invoices/emit/',
           body: {
             'order': order['id'],
             if (fiscalCpf.isNotEmpty) 'cpf': fiscalCpf,
+            if (fiscalCnpj.isNotEmpty) 'cnpj': fiscalCnpj,
+            if (fiscalCnpj.isNotEmpty &&
+                fiscalCnpj == selectedCnpj &&
+                fiscalCustomer?['name'] != null)
+              'cnpj_name': fiscalCustomer!['name'],
             if (fiscalCpf.isNotEmpty &&
                 fiscalCpf == selectedCpf &&
                 fiscalCustomer?['name'] != null)

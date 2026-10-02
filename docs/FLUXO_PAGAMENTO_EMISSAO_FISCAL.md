@@ -396,11 +396,15 @@ Content-Type: application/json
 {
   "order": "UUID_DO_PEDIDO",
   "cpf": "12345678909",
-  "cpf_name": "Nome do consumidor"
+  "cpf_name": "Nome do consumidor",
+  "cnpj": "11222333000181",
+  "cnpj_name": "Empresa Consumidora Ltda"
 }
 ```
 
-`cpf` e `cpf_name` são opcionais. O endpoint valida o tenant e procura o pedido.
+`cpf`/`cpf_name` e `cnpj`/`cnpj_name` são opcionais e mutuamente exclusivos. O
+endpoint valida o tenant e procura o pedido. O CNPJ pode conter letras nos 12
+primeiros caracteres e mantém dois dígitos verificadores numéricos.
 Depois chama `fiscal_emission_unavailable_reason`.
 
 | Situação | HTTP | Resultado |

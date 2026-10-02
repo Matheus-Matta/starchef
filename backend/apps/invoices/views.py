@@ -278,7 +278,7 @@ class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
 
     @action(detail=False, methods=["post"], url_path="emit")
     def emit(self, request):
-        """Emite (monta) a nota fiscal de um pedido: POST { order, cpf?, cpf_name? }."""
+        """Emite a nota fiscal: POST { order, cpf?, cpf_name?, cnpj?, cnpj_name? }."""
         from apps.orders.models import Order
 
         orders = Order.objects.all()
@@ -330,6 +330,8 @@ class InvoiceViewSet(InvoiceBulkResendMixin, BaseTenantViewSet):
                 order,
                 cpf=request.data.get("cpf"),
                 cpf_name=request.data.get("cpf_name", ""),
+                cnpj=request.data.get("cnpj"),
+                cnpj_name=request.data.get("cnpj_name", ""),
                 user=request.user,
             )
         except ValidationError as exc:

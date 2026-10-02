@@ -20,6 +20,28 @@ def is_valid_cpf(value):
     return True
 
 
+def strip_cnpj(value):
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def is_valid_cnpj(value):
+    cnpj = strip_cnpj(value)
+    if len(cnpj) != 14 or len(set(cnpj)) == 1 or not cnpj[-2:].isdigit():
+        return False
+    weights = (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
+    for length in (12, 13):
+        total = sum(
+            (ord(char) - 48) * weight
+            for char, weight in zip(cnpj[:length], weights[-length:], strict=True)
+        )
+        remainder = total % 11
+        expected = 0 if remainder < 2 else 11 - remainder
+        if int(cnpj[length]) != expected:
+            return False
+        weights = (6, *weights)
+    return True
+
+
 def _check_digit(digits):
     weight = len(digits) + 1
     total = sum(int(d) * (weight - i) for i, d in enumerate(digits))

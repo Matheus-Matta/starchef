@@ -334,6 +334,7 @@ class Invoice(TenantModel):
 
     # Destinatario / consumidor (NFC-e permite "nao identificado")
     recipient_cpf = models.CharField(max_length=14, blank=True)
+    recipient_cnpj = models.CharField(max_length=18, blank=True)
     recipient_name = models.CharField(max_length=180, blank=True)
 
     # Totais

@@ -18,7 +18,7 @@ from apps.core.numbers import (
     parse_quantity,
 )
 from apps.core.tenant import tenant_context
-from apps.customers.validators import is_valid_cpf, strip_cpf
+from apps.customers.validators import is_valid_cnpj, is_valid_cpf, strip_cnpj, strip_cpf
 from apps.orders.events import broadcast_kitchen_event
 from apps.orders.command_billing import conclude_items_of_order
 from apps.menu.models import ProductVariation
@@ -987,6 +987,7 @@ def close_order(
     service_fee=None,
     service_fee_enabled=None,
     fiscal_customer_cpf=None,
+    fiscal_customer_cnpj=None,
     expected_total=None,
     coupon_code=None,
     marcar_aguardando=True,
@@ -1020,11 +1021,36 @@ def close_order(
             )
 
         order.discount = discount
+        # Documento é texto (ou número): lista e objeto são erro do cliente. A
+        # conversão para texto tirava os colchetes e aceitava `["123..."]` em
+        # silêncio — o mesmo valor por acaso, e um bug escondido do outro lado.
+        for campo, valor in (("CPF", fiscal_customer_cpf), ("CNPJ", fiscal_customer_cnpj)):
+            if valor is not None and not isinstance(valor, (str, int)):
+                raise ValidationError(f"Envie o {campo} da NFC-e como texto.")
+        normalized_cpf = (
+            strip_cpf(str(fiscal_customer_cpf))
+            if fiscal_customer_cpf is not None
+            else order.fiscal_customer_cpf
+        )
+        normalized_cnpj = (
+            strip_cnpj(str(fiscal_customer_cnpj))
+            if fiscal_customer_cnpj is not None
+            else order.fiscal_customer_cnpj
+        )
+        if normalized_cpf and normalized_cnpj:
+            raise ValidationError("Informe CPF ou CNPJ, não os dois, para a NFC-e.")
         if fiscal_customer_cpf is not None:
-            normalized_cpf = strip_cpf(str(fiscal_customer_cpf))
             if normalized_cpf and not is_valid_cpf(normalized_cpf):
                 raise ValidationError("Informe um CPF valido para incluir na NFC-e.")
             order.fiscal_customer_cpf = normalized_cpf
+        if fiscal_customer_cnpj is not None:
+            if normalized_cnpj and not is_valid_cnpj(normalized_cnpj):
+                raise ValidationError("Informe um CNPJ valido para incluir na NFC-e.")
+            order.fiscal_customer_cnpj = normalized_cnpj
+        if normalized_cpf:
+            order.fiscal_customer_cnpj = ""
+        elif normalized_cnpj:
+            order.fiscal_customer_cpf = ""
         # O CUPOM ENTRA DEPOIS DO CPF, e nao antes: a regra de "um por cliente"
         # e a de grupo se resolvem pelo CPF da nota, e avaliar o cupom antes de
         # gravar o CPF recusaria quem acabou de informa-lo.
@@ -1072,6 +1098,7 @@ def close_order(
                 "service_fee_enabled",
                 "service_fee_percent",
                 "fiscal_customer_cpf",
+                "fiscal_customer_cnpj",
                 "status",
                 "closed_by",
                 "closed_at",

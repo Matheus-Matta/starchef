@@ -125,6 +125,7 @@
   <div class="line"></div>
   <p class="center">
     {% if invoice.recipient_cpf %}CONSUMIDOR - CPF: {{ invoice.recipient_cpf }}{% if invoice.recipient_name %}<br>{{ invoice.recipient_name|upper }}{% endif %}
+    {% elif invoice.recipient_cnpj %}CONSUMIDOR - CNPJ: {{ invoice.recipient_cnpj }}{% if invoice.recipient_name %}<br>{{ invoice.recipient_name|upper }}{% endif %}
     {% else %}CONSUMIDOR NÃO IDENTIFICADO{% endif %}
   </p>
   <div class="line"></div>

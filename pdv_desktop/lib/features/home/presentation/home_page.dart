@@ -21,6 +21,7 @@ import '../../../core/errors/notification_bell.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/formatters/cpf_formatter.dart';
+import '../../../core/formatters/cnpj_formatter.dart';
 import '../../../core/formatters/value_formatters.dart';
 import '../../../core/storage/local_preferences.dart';
 import '../../../core/theme/app_theme.dart';
