@@ -124,7 +124,12 @@ def test_segredo_curto_continua_recusado(como_nuvem, conta, superusuario):
 
 
 def test_codigo_desconhecido_nao_vira_bilhete(conta):
-    """Nada de criar bilhete por acidente ao consultar um código qualquer."""
+    """Nada de criar bilhete por acidente ao consultar um código qualquer.
+
+    Um código no formato do bilhete (`sc-`) que não existe é RECUSADO — não
+    cai no segredo compartilhado antigo, que não tem uso único.
+    """
     antes = SyncEnrollmentTicket.objects.count()
-    assert enrollment._consumir_bilhete("sc-" + uuid.uuid4().hex, conta, None) is None
+    with pytest.raises(enrollment.EnrollmentRefused):
+        enrollment._consumir_bilhete("sc-" + uuid.uuid4().hex, conta, None)
     assert SyncEnrollmentTicket.objects.count() == antes

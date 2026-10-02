@@ -14,7 +14,9 @@ import logging
 from django.db import IntegrityError, connection, transaction
 
 from apps.synchronization.constants import EventStatus, Operation
-from apps.synchronization.services import adoption, conflicts, outbox, retry, serialization
+from apps.synchronization.services import (
+    adoption, conflicts, outbox, retry, serialization, timestamps,
+)
 from apps.synchronization.services.registry import registry
 from django.utils import timezone
 
@@ -340,7 +342,7 @@ def _inserir(model, kwargs, event):
         with transaction.atomic():
             instancia = model(pk=event.entity_id, **kwargs)
             _senha_honesta(instancia)
-            instancia.save(force_insert=True)
+            timestamps.inserir_preservando_horarios_de_origem(instancia, kwargs)
         return True
     except IntegrityError as erro:
         # Se a identidade JÁ existe, inserir nunca foi a operação certa —

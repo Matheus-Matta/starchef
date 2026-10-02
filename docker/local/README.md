@@ -11,7 +11,8 @@ web, API para o PDV/KDS/garçom, banco e filas. Pronto para produção, com as
 2. Rode o instalador **nesta pasta**:
    - Windows: `powershell -ExecutionPolicy Bypass -File .\instalar.ps1`
    - Linux: `sh instalar.sh`
-3. Ele pergunta o **IP do servidor** na rede da loja (já sugere um) e faz o resto.
+3. Ele pergunta o **IP do servidor** na rede da loja (já sugere um), os dados
+   da conta na nuvem e o **nome da loja** que aparecerá no painel de sincronização.
 
 No fim aparece:
 
@@ -23,10 +24,15 @@ StarChef no ar.
   Primeiro acesso: abra o Admin e use o token XXXX para criar a conta e o administrador.
 ```
 
-**O que o instalador faz por você:** cria o `.env.local` a partir do
-`.env.local.example`, gera a chave do Django, a senha do banco e os tokens,
-baixa as imagens, sobe tudo e espera o backend ficar pronto. Rodar de novo é
-seguro: ele só completa o que falta e nunca troca o que já está preenchido.
+**O que o instalador faz por você:** cria e preenche o `.env.local` diretamente,
+sem copiar `.env.local.example`. A sincronização com a nuvem é obrigatória:
+informa o nome da loja, UUID da conta, credenciais de um administrador e um
+ticket de matrícula de uso único. O UUID do restaurante é opcional; sem ele,
+sincroniza a conta inteira. Endereços da nuvem já vêm preenchidos para produção,
+mas podem ser trocados. O instalador aplica os demais padrões de produção, gera
+segredos aleatórios, baixa as imagens, sobe os serviços e espera o backend ficar
+pronto. Mostra no terminal as chaves locais para você guardá-las. Rodar de novo
+preserva os valores já preenchidos, inclusive as senhas do banco.
 
 ## As únicas variáveis que importam
 
@@ -39,9 +45,12 @@ Tudo fica no `.env.local`. Os quatro obrigatórios estão no topo:
 | `DJANGO_SECRET_KEY` | chave do Django | o instalador gera |
 | `POSTGRES_PASSWORD` | senha do banco | o instalador gera |
 
-**Quer a loja conversando com a nuvem?** Mude `SYNC_ENABLED=true` e preencha
-`SYNC_ACCOUNT_ID`, `SYNC_ENROLL_USERNAME` e `SYNC_ENROLL_PASSWORD` (um
-administrador da conta). Depois rode o instalador de novo.
+O instalador configura `SYNC_ENABLED=true` e pergunta os dados necessários.
+`SYNC_NODE_NAME` recebe o nome da loja que você informar. Gere o ticket
+temporário no Admin da nuvem: **Sincronização → Bilhetes de matrícula →
+Adicionar**. Escolha a conta e, se quiser, o restaurante; use o nome da loja
+como identificação. Depois de salvar, copie o código mostrado na confirmação
+e cole no instalador. Ele vale por 30 minutos e uma matrícula.
 
 Os endereços (`ALLOWED_HOSTS`, CORS, CSRF) saem **sozinhos** do `STORE_HOST`.
 Antes eram três listas a manter iguais à mão, e esquecer o IP numa delas dava
@@ -73,7 +82,7 @@ certificado. **Restrinja as portas 80 e 8000 no firewall** à faixa da loja.
 | `backend` | A API que os aplicativos da loja consomem. |
 | `celery_worker` | Tarefas do domínio + retry/reconciliação da sincronização. |
 | `celery_beat` | O relógio dessas periódicas. |
-| `sync_worker` | A conexão WSS com a nuvem. Com `SYNC_ENABLED=false` fica parado de propósito, sem erro. |
+| `sync_worker` | A conexão WSS com a nuvem, sempre habilitada pelo instalador. |
 | `postgres` | O banco da loja. A fonte da verdade local. |
 | `redis` | Cache, canal do Channels e broker do Celery. |
 
@@ -99,15 +108,17 @@ na subida, e um backup é o único caminho de volta.
 
 ## Com sincronização: o que acontece na primeira subida
 
-1. `backend` aplica as migrations no banco vazio da loja.
-2. `sync_worker` vê que não há credencial e, com `SYNC_AUTO_ENROLL=true`, se
+1. Na nuvem, emita no Admin um bilhete para a conta/restaurante da loja. Não é
+   necessário acessar o servidor da nuvem por SSH.
+2. `backend` aplica as migrations no banco vazio da loja.
+3. `sync_worker` vê que não há credencial e, com `SYNC_AUTO_ENROLL=true`, se
    **matricula**: apresenta usuário, senha, conta e o segredo de matrícula.
-3. A nuvem autentica, provisiona o nó e devolve o pacote de credenciais
+4. A nuvem autentica, provisiona o nó e devolve o pacote de credenciais
    **cifrado com esse segredo**. Ele é gravado em `SYNC_ENROLL_ENV_PATH`
    (volume `sync_credentials`) — sem isso, reiniciar o container perderia o
    token.
-4. A nuvem já enfileira a **carga total** para este nó.
-5. `sync_worker` conecta e a carga desce: conta, lojas, fiscal, usuários,
+5. A nuvem já enfileira a **carga total** para este nó.
+6. `sync_worker` conecta e a carga desce: conta, lojas, fiscal, usuários,
    cardápio, impressoras, mesas — na ordem de dependência.
 
 O segredo de matrícula **não** é a chave de sincronização. Ele só protege o

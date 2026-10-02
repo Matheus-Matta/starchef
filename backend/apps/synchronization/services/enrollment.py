@@ -139,6 +139,10 @@ def _consumir_bilhete(segredo, conta, client_ip):
     hash_do_codigo = crypto.hash_token(segredo)
     bilhete = SyncEnrollmentTicket.objects.filter(code_hash=hash_do_codigo).first()
     if bilhete is None:
+        # `sc-` é o namespace dos bilhetes emitidos pelo Admin/CLI. Não deixe
+        # um código inventado cair no segredo legado, que não tem uso único.
+        if segredo.startswith("sc-"):
+            raise EnrollmentRefused("Bilhete inválido. Emita um novo no Admin da nuvem.")
         return None
 
     bloqueado = (

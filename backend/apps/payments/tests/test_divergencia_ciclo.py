@@ -77,6 +77,11 @@ def test_dois_gerentes_ao_mesmo_tempo_so_um_decide(api_client, divergencia):
 
     from django.db import connection
 
+    if connection.vendor != "postgresql":
+        # No SQLite a segunda escrita espera o arquivo e pode sair 503 (banco
+        # ocupado): a corrida que importa é a do Postgres, onde roda a nuvem.
+        pytest.skip("A corrida só é real no Postgres.")
+
     respostas = []
     barreira = threading.Barrier(2)
 
