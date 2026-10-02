@@ -47,6 +47,7 @@ import '../../commands/presentation/commands_page.dart';
 import '../../orders/presentation/order_cart_panel.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
 import '../../orders/presentation/product_config_dialog.dart';
+import '../../orders/presentation/weighed_product_dialog.dart';
 import '../../scale/presentation/scale_workstation_page.dart';
 import '../../settings/presentation/api_url_settings_dialog.dart';
 import '../../settings/presentation/terminal_preferences_dialog.dart';

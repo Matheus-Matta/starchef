@@ -17,6 +17,7 @@ from apps.core.access import is_tenant_admin
 from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
 from apps.orders.command_billing import attach_commands_to_order, detach_commands_from_order
+from apps.orders.create_with_item_payload import build_first_item_data
 from apps.orders.item_cancellation import CancelamentoBloqueado
 from apps.orders.models import Order, OrderBatch, OrderItem
 from apps.printers.models import ScaleReading
@@ -331,18 +332,14 @@ class OrderViewSet(BaseTenantViewSet):
         if product is None:
             return Response({"item": "O produto selecionado não está disponível."}, status=status.HTTP_400_BAD_REQUEST)
 
-        item_data = {
-            "quantity": raw_item.get("quantity"),
-            "variations": raw_item.get("variations", []),
-            "addons": raw_item.get("addons", []),
-            "customer_note": raw_item.get("customer_note", ""),
-            "expected_unit_price": raw_item.get("expected_unit_price"),
-            # O CODIGO DE QUEM LANCOU. Aceito no item e tambem no corpo: o app
-            # manda um pedido com vários itens de uma vez, e nesse caso o codigo
-            # e o mesmo para todos — repeti-lo em cada item seria o app copiando
-            # o proprio estado N vezes.
-            "metafields": raw_item.get("metafields") or request.data.get("metafields"),
-        }
+        try:
+            item_data = build_first_item_data(
+                raw_item=raw_item,
+                request_data=request.data,
+                account=restaurant.account,
+            )
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
         # A comanda ja tem pedido aberto: o item entra NELE.
         #
