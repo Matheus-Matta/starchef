@@ -136,8 +136,23 @@ existirem itens pendentes, eles são enviados à cozinha primeiro. Em seguida o
 cliente chama:
 
 ```text
-POST /api/v1/orders/{order_id}/close/
+POST /api/v1/orders/{order_id}/close/       PDV desktop e app do garçom
+POST /api/v1/orders/{order_id}/checkout/    PDV web
 ```
+
+**Entrar no pagamento não avança o pedido.** `/checkout/` recebe o mesmo corpo
+do `/close/` (desconto, `service_fee_enabled`, `fiscal_customer_cpf`, cupom,
+`expected_total`) e roda o mesmo `close_order` com `marcar_aguardando=False`:
+grava as escolhas e recalcula o total com o pedido **aberto**. O PDV web chama
+`/checkout/` também a cada escolha (marcar a taxa, completar um CPF válido), e
+reabrir o pedido — pela tela de mesas ou pelo endereço — restaura taxa,
+desconto e documento. CPF e CNPJ são um ou outro; o campo de CNPJ só aparece
+quando o pedido traz `fiscal_customer_cnpj`.
+
+O estado muda com o dinheiro: o **primeiro recebimento** leva o pedido a
+`awaiting_payment` + `partial` (ou direto a `paid`); **cancelar o último**
+devolve `open` + `pending`, sem apagar taxa e documento. Checkout com
+recebimento parcial já registrado mantém `awaiting_payment`.
 
 O backend executa `close_order` dentro de uma transação:
 
@@ -149,7 +164,7 @@ O backend executa `close_order` dentro de uma transação:
 6. quando recebido, registra `expected_total` como conferência — divergência
    não recusa o fechamento, o total do servidor prevalece e a resposta traz
    `total_reconciled`;
-7. muda o pedido para `awaiting_payment`;
+7. no `/close/`, muda o pedido para `awaiting_payment` (o `/checkout/` não muda);
 8. recalcula `payment_status` considerando pagamentos já aprovados.
 
 Se o pedido já estiver integralmente pago após o recálculo, ele passa direto
@@ -176,7 +191,8 @@ idempotência. O backend `register_payment`:
 7. permite valor recebido acima do saldo somente em dinheiro;
 8. grava separadamente o valor aplicado e o troco;
 9. cria movimento de venda no caixa para pagamento em dinheiro;
-10. muda o pedido para `partial` ou `paid`.
+10. muda o pedido para `partial` (e `awaiting_payment`, se ainda estava
+    aberto) ou `paid`.
 
 Quando o total é quitado:
 

@@ -105,6 +105,27 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 - **Topologia (Caixa Principal / Caixa Cliente)** (`features/topology/`): só dois papéis existem. Uma instalação nova sobe como secundária sem principal configurado e fica **bloqueada para escrita** até um humano atribuir os papéis — evita dois principais por acidente. Leituras também passam pelo principal (preferência: principal → nuvem → cache local); **escritas nunca caem para a nuvem direto** — se o principal está inalcançável, o secundário recusa a escrita em vez de arriscar divergência.
 - **Outbox / dead-letter** (`features/sync/presentation/outbox_review_dialog.dart`): tela que traduz método+rota para o que a operação significa ("Item adicionado ao pedido"), mostra o motivo da recusa e o payload completo, oferece repetir ou descartar (descarte exige confirmação e vira log `warning`).
 
+### 5.1 Cache de leitura do PDV online (`ResponseCache`)
+
+Nesta branch o `pdv_desktop/` fala direto com o servidor, sem `OfflineStore`.
+O que existe é um cache **de apresentação**, em memória, para a tela abrir na
+hora (`core/network/response_cache.dart`, dentro do `ApiClient`):
+
+- Guarda só respostas GET de listas de cadastro: `/commands/`,
+  `/menu/products/`, `/menu/categories/`, `/customers/`, `/tables/`,
+  `/payments/methods/`, `/cash-stations/`. Pedido, caixa e autenticação nunca —
+  nada do cache decide pagamento ou fechamento; o servidor valida.
+- Chave: servidor + conta + usuário (do JWT) + rota + parâmetros ordenados (o
+  restaurante vai na consulta). 120 entradas no máximo (sai a mais antiga),
+  validade de 30 min.
+- Escrita deste terminal apaga o assunto **antes** de sair (resposta perdida
+  pode esconder escrita que valeu); evento de tempo real apaga o assunto do
+  recurso; logout, troca de servidor e **reconexão** do tempo real apagam tudo.
+- `loadCatalog` (`features/home/data/pdv_catalog.dart`) devolve o catálogo
+  guardado na hora quando ele está inteiro e relê por trás se a cópia passou de
+  10 s; se o servidor mudou, emite `realtime:pdv` e a tela redesenha. A tela de
+  clientes mostra a última lista da mesma busca enquanto a leitura chega.
+
 ## 6. Hardware: balanças e impressoras
 
 **Balanças** (`core/hardware/scale/`): `ScaleProtocol` decodifica o protocolo de quatro fabricantes — genérico (último número da linha), Toledo (STX…ETX), Filizola (gramas terminado em CR) e Urano (`+00.500kg`). Transporte via `flutter_libserialport` (`ScaleTransport`/`SerialScaleTransport`). `SerialScaleReader` resolve estabilidade (tolerância + tempo de assentamento + flag de movimento do protocolo), com watchdog de 4s e reconexão com backoff.
