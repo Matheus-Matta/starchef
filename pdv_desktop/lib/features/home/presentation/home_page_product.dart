@@ -141,251 +141,23 @@ mixin _ProductSection on _HomePageShared {
       query: {'restaurant': restaurantId, 'is_active': true, 'page_size': 100},
     );
     if (!mounted) return;
-    String? scaleId = scales.length == 1 ? '${scales.first['id']}' : null;
-    Map<String, dynamic>? reading;
-    double weight = 0;
-    bool readingScale = false;
-    String readingMessage = scales.isEmpty
-        ? 'Nenhuma balança ativa cadastrada.'
-        : 'Selecione a balança e solicite a leitura.';
-    final manualWeight = TextEditingController();
-    final note = TextEditingController();
-    final accepted = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => CallbackShortcuts(
-          bindings: {
-            // Enter lança o item pesado, a mesma condição do botão. O atalho
-            // precisa do nó de foco abaixo dele: senão o foco fica no escopo
-            // da rota e a tecla passa por cima sem tocar em nada.
-            for (final key in const [
-              LogicalKeyboardKey.enter,
-              LogicalKeyboardKey.numpadEnter,
-            ])
-              SingleActivator(key): () {
-                if (weight > 0) Navigator.pop(context, true);
-              },
-          },
-          child: Focus(
-            autofocus: true,
-            child: AppDialog(
-              title: Row(
-                children: [
-                  const Icon(Icons.scale_outlined),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '${product['name']} · ${_money(product['current_price'])}/kg',
-                    ),
-                  ),
-                ],
-              ),
-              content: SizedBox(
-                width: 460,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String?>(
-                      initialValue: scaleId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Balança',
-                        helperText:
-                            'Selecione o equipamento que realizará a pesagem.',
-                      ),
-                      items: scales
-                          .map(
-                            (scale) => DropdownMenuItem(
-                              value: '${scale['id']}',
-                              child: Text(
-                                '${scale['name']} · ${scale['port'] ?? scale['protocol'] ?? ''}',
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) => update(() {
-                        scaleId = value;
-                        reading = null;
-                        weight = 0;
-                        readingMessage =
-                            'Clique em “Ler balança” para buscar o peso.';
-                      }),
-                    ),
-                    const SizedBox(height: 18),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 22),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainer,
-                        borderRadius: AppTheme.radius,
-                        border: Border.all(
-                          color: weight > 0
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).dividerColor,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            weight.toStringAsFixed(3),
-                            style: TextStyle(
-                              fontSize: 42,
-                              fontWeight: FontWeight.w900,
-                              color: weight > 0
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const Text(
-                            'kg',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      readingMessage,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: scaleId == null || readingScale
-                                ? null
-                                : () async {
-                                    update(() => readingScale = true);
-                                    try {
-                                      final result = await api.get(
-                                        '/scales/$scaleId/latest-reading/',
-                                        accessToken: token,
-                                      );
-                                      final value = _number(
-                                        result['net_weight_kg'] ??
-                                            result['weight_kg'],
-                                      );
-                                      update(() {
-                                        reading = result;
-                                        weight = value;
-                                        manualWeight.clear();
-                                        readingMessage =
-                                            result['is_stable'] == false
-                                            ? 'Leitura recebida, mas ainda instável.'
-                                            : 'Leitura estável recebida da balança.';
-                                      });
-                                    } on ApiException catch (error) {
-                                      update(
-                                        () => readingMessage = error.message,
-                                      );
-                                      if (mounted) {
-                                        showAppError(this.context, error);
-                                      }
-                                    } finally {
-                                      update(() => readingScale = false);
-                                    }
-                                  },
-                            icon: readingScale
-                                ? const SizedBox(
-                                    width: 17,
-                                    height: 17,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.refresh),
-                            label: Text(
-                              readingScale ? 'Lendo...' : 'Ler balança',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: manualWeight,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: const InputDecoration(
-                              labelText: 'Peso manual',
-                              suffixText: 'kg',
-                            ),
-                            onChanged: (value) => update(() {
-                              reading = null;
-                              weight =
-                                  double.tryParse(value.replaceAll(',', '.')) ??
-                                  0;
-                              readingMessage = weight > 0
-                                  ? 'Peso informado manualmente.'
-                                  : 'Leia a balança ou informe o peso.';
-                            }),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: note,
-                      maxLines: 2,
-                      decoration: const InputDecoration(
-                        labelText: 'Observação',
-                        hintText: 'Ex.: retirar excesso de gordura',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total estimado',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        Text(
-                          _money(weight * _number(product['current_price'])),
-                          style: const TextStyle(
-                            fontSize: 21,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancelar'),
-                ),
-                FilledButton(
-                  onPressed: weight > 0
-                      ? () => Navigator.pop(context, true)
-                      : null,
-                  child: const Text('Adicionar ao pedido (Enter)'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    final selected = await showWeighedProductDialog(
+      context,
+      product: product,
+      scales: scales,
+      initialScaleId: scales.length == 1 ? '${scales.first['id']}' : null,
+      readScale: (id) =>
+          api.get('/scales/$id/latest-reading/', accessToken: token),
     );
-    if (accepted != true) return;
+    if (selected == null) return;
+
+    final weight = selected.weightKg;
+    final reading = selected.scaleReading;
     if (_draftIsLive) {
-      // A pesagem já aconteceu e a leitura já existe no servidor: o que fica
-      // adiado é só o PEDIDO. A linha guarda o id da leitura, e a
-      // materialização a consome como sempre.
       _addLineToDraft(
         product,
         quantity: weight,
-        customerNote: note.text.trim(),
+        customerNote: selected.note,
         weightKg: weight,
         scaleReadingId: reading?['id'] == null ? null : '${reading!['id']}',
       );
@@ -398,10 +170,10 @@ mixin _ProductSection on _HomePageShared {
         body: {
           'product': product['id'],
           if (reading != null)
-            'scale_reading': reading!['id']
+            'scale_reading': reading['id']
           else
             'weight_kg': weight.toStringAsFixed(3),
-          'customer_note': note.text.trim(),
+          'customer_note': selected.note,
           'variations': [],
           'addons': [],
         },
