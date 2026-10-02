@@ -793,6 +793,13 @@ class CommandViewSet(ScannableCodesMixin, BaseTenantViewSet):
             )
         return Response({"updated": updated}, status=200)
 
+    @action(detail=False, methods=["post"], url_path="bulk-reset")
+    def bulk_reset(self, request):
+        """Zera várias comandas sem apagar histórico — ver `command_reset.py`."""
+        from .command_reset import zerar_do_request
+
+        return Response(zerar_do_request(request, self.get_queryset()), status=200)
+
 
 class DeliveryZoneViewSet(BaseTenantViewSet):
     required_module = MODULE_ENTREGA  # gestao logistica de delivery

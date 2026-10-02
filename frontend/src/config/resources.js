@@ -218,7 +218,12 @@ export const resources = [
       bulkDeleteEndpoint: "/commands/bulk-delete/",
       bulkUpdateEndpoint: "/commands/bulk-update/",
       headerActions: [{ key: "bulk", label: "Criar em lote", icon: "pi pi-clone", type: "bulk-create", bulkType: "commands" }],
-      bulkActions: [{ key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" }],
+      bulkActions: [
+        { key: "print-codes", label: "Imprimir etiquetas", icon: "pi pi-print", type: "print-codes" },
+        // Zerar ≠ Excluir: retira o que está aberto e libera o cartão, mas a
+        // comanda e o histórico dela continuam (ver backend/apps/restaurants/command_reset.py).
+        { key: "reset", label: "Zerar comandas", icon: "pi pi-eraser", type: "command-bulk-reset" },
+      ],
       rowActions: [{ key: "codes", label: "Ver códigos", icon: "pi pi-qrcode", type: "codes" }],
     },
     columns: [
