@@ -24,6 +24,7 @@ import '../data/scanner_binding_store.dart';
 import '../domain/hands_free_machine.dart';
 import '../services/serial_scanner_service.dart';
 import 'manual_weight_dialog.dart';
+import 'retained_weight_notice.dart';
 
 class ScaleWorkstationPage extends StatefulWidget {
   const ScaleWorkstationPage({
@@ -216,21 +217,35 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
     return int.tryParse('${restaurant?[field] ?? ''}') ?? fallback;
   }
 
-  int get commandTimeoutSeconds => _restaurantTiming(
-    widget.restaurants,
-    widget.restaurantId,
-    'quick_scale_command_timeout_seconds',
-    widget.preferences.commandTimeout.inSeconds,
-  ).clamp(10, 600).toInt();
+  /// Os tempos EFETIVOS (já limitados) que [w] pede.
+  ///
+  /// As duas pontas da comparação em [didUpdateWidget] passam por aqui: antes
+  /// uma era limitada e a outra não, e qualquer diferença parava a estação.
+  ({int prazo, int estabilidade}) _temposDe(ScaleWorkstationPage w) => (
+    prazo: _restaurantTiming(
+      w.restaurants,
+      w.restaurantId,
+      'quick_scale_command_timeout_seconds',
+      w.preferences.commandTimeout.inSeconds,
+    ).clamp(10, 600).toInt(),
+    // Compartilhado por todas as balanças do restaurante; o valor por
+    // equipamento continua como reserva para APIs antigas.
+    estabilidade: _restaurantTiming(
+      w.restaurants,
+      w.restaurantId,
+      'quick_scale_stability_seconds',
+      scaleDevice?.settleDuration.inSeconds ?? 3,
+    ).clamp(1, 30).toInt(),
+  );
+
+  int get commandTimeoutSeconds => _temposDe(widget).prazo;
 
   /// Tempo de assentamento compartilhado por todas as balanças do restaurante.
-  /// O valor por equipamento continua como fallback para APIs antigas.
-  int get settleSeconds => _restaurantTiming(
-    widget.restaurants,
-    widget.restaurantId,
-    'quick_scale_stability_seconds',
-    scaleDevice?.settleDuration.inSeconds ?? 3,
-  ).clamp(1, 30).toInt();
+  int get settleSeconds => _temposDe(widget).estabilidade;
+
+  /// Tempo novo do restaurante esperando a estação ficar livre para valer.
+  bool _temposPendentes = false;
+  bool _aplicandoTempos = false;
 
   String? get scannerSlot {
     if (widget.restaurantId == null || scaleId == null) return null;
@@ -258,28 +273,34 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   void didUpdateWidget(covariant ScaleWorkstationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     final restaurantChanged = oldWidget.restaurantId != widget.restaurantId;
-    final timingChanged =
-        _restaurantTiming(
-              oldWidget.restaurants,
-              oldWidget.restaurantId,
-              'quick_scale_command_timeout_seconds',
-              oldWidget.preferences.commandTimeout.inSeconds,
-            ) !=
-            commandTimeoutSeconds ||
-        _restaurantTiming(
-              oldWidget.restaurants,
-              oldWidget.restaurantId,
-              'quick_scale_stability_seconds',
-              -1,
-            ) !=
-            _restaurantTiming(
-              widget.restaurants,
-              widget.restaurantId,
-              'quick_scale_stability_seconds',
-              -1,
-            );
-    if (restaurantChanged || timingChanged) {
-      unawaited(_applyRestaurantTiming(restaurantChanged: restaurantChanged));
+    if (restaurantChanged) {
+      _temposPendentes = false;
+      unawaited(_applyRestaurantTiming(restaurantChanged: true));
+    } else if (_temposDe(oldWidget) != _temposDe(widget)) {
+      _temposPendentes = true;
+      unawaited(_aplicarTemposQuandoLivre());
+    }
+  }
+
+  /// Aplica o tempo novo do restaurante sem derrubar uma pesagem em curso.
+  ///
+  /// Antes a estação PARAVA a cada mudança — inclusive no meio de uma
+  /// pesagem — e só voltava se alguém apertasse "Iniciar". Agora a troca
+  /// espera o prato vazio da vez (Estado 1, sem item) e religa sozinha.
+  Future<void> _aplicarTemposQuandoLivre() async {
+    if (!_temposPendentes || _aplicandoTempos || !mounted) return;
+    final livre =
+        machine.state == HandsFreeState.waitingWeight &&
+        machine.weighedItem == null;
+    if (started && !livre) return;
+    _aplicandoTempos = true;
+    _temposPendentes = false;
+    try {
+      final estavaLigada = started;
+      await _applyRestaurantTiming(restaurantChanged: false);
+      if (estavaLigada && mounted) await _startStation();
+    } finally {
+      _aplicandoTempos = false;
     }
   }
 
@@ -320,6 +341,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   void _onMachineChanged() {
     if (!mounted) return;
     setState(() {});
+    if (_temposPendentes) unawaited(_aplicarTemposQuandoLivre());
     if (_acceptsCommandInput) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _acceptsCommandInput) commandFocusNode.requestFocus();
@@ -2006,13 +2028,20 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              machine.isStable
-                  ? 'Peso estável.'
-                  : 'Aguardando leitura estável por $settleSeconds s...',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-            ),
+            if (machine.aguardandoRetirada)
+              RetainedWeightNotice(
+                pesoKg: machine.pesoRetido,
+                onPesarDeNovo: () =>
+                    _runEffects(machine.pesarDeNovo(pricePerKg: pricePerKg)),
+              )
+            else
+              Text(
+                machine.isStable
+                    ? 'Peso estável.'
+                    : 'Aguardando leitura estável por $settleSeconds s...',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
           ],
         ],
       ),

@@ -479,6 +479,8 @@ como uma amostra já estável e percorre exatamente o mesmo caminho.
 
 - **Timeout da comanda.** Configurável em `preferences.json` (padrão 45 s, faixa aceita de 10 s a 600 s). Ao esgotar, a estação emite alerta sonoro e visual e entra em `commandOverdue`, com 10 segundos de confirmação. Ler a comanda nesse intervalo ainda conclui a venda; passado o prazo, a operação temporária é descartada e o fluxo volta ao Estado 1.
 - **Peso zerado.** Retirar o prato **não** cancela a operação por padrão. Retirar o prato logo após a pesagem é o comportamento normal do cliente, e cancelar aí descartaria vendas legítimas; o abandono real é tratado pelo timeout. A política estrita existe (`cancelOnZeroDuringCommand`) para quem preferir o cancelamento imediato.
+- **Prato já lançado.** Depois de lançar, o mesmo peso (10 g de tolerância) é ignorado para o prato que ficou na balança não ser cobrado de novo; a tela mostra 0 e avisa "o mesmo peso do prato já lançado". O filtro só é armado se o prato ainda estava na balança no fim do lançamento — o zero recebido DURANTE o "Pedido lançado" conta (balança que só transmite quando o peso muda manda o zero uma vez, e antes esse zero se perdia e travava a fila). "Pesar de novo" solta o filtro quando o peso parecido é outro prato.
+- **Tempos do restaurante.** Mudar `quick_scale_command_timeout_seconds`/`quick_scale_stability_seconds` não derruba a estação: a troca espera o Estado 1 sem item e religa sozinha.
 - **Falha no lançamento.** A pesagem é preservada e o operador pode reler a comanda. A venda nunca é descartada por uma recusa do servidor ou da impressora.
 - **Leitura fora de etapa.** Um código lido enquanto a estação espera peso é ignorado com alerta sonoro, em vez de ser lançado em uma operação inexistente.
 

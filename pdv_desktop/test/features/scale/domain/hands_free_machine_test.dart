@@ -295,4 +295,91 @@ void main() {
 
     expect(machine.weighedItem?.weightKg, 0.735);
   });
+
+  group('a fila nunca trava depois de lançar', () {
+    test('prato retirado DURANTE o "pedido lançado" libera a próxima', () {
+      // O defeito da loja: o cliente tira o prato nos 2 s de "Pedido lançado"
+      // e a balança manda o zero UMA vez (só transmite quando o peso muda).
+      // O filtro do prato lançado era armado depois desse zero e nunca mais
+      // soltava: o próximo prato de peso parecido ficava em 0 para sempre,
+      // com "Peso estável" embaixo.
+      machine.start();
+      machine.onSample(sample(1.000), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onLaunched();
+      machine.onSample(
+        sample(0),
+        pricePerKg: 50,
+      ); // retirado, ainda em "lançado"
+      machine.readyForNext();
+
+      machine.onSample(sample(1.000), pricePerKg: 50);
+
+      expect(machine.weighedItem?.weightKg, 1.000);
+      expect(machine.state, HandsFreeState.waitingCommand);
+    });
+
+    test('prato retirado enquanto lança também conta', () {
+      machine.start();
+      machine.onSample(sample(0.600), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onSample(sample(0), pricePerKg: 50); // retirado em "launching"
+      machine.onLaunched();
+      machine.readyForNext();
+
+      machine.onSample(sample(0.600), pricePerKg: 50);
+
+      expect(machine.weighedItem?.weightKg, 0.600);
+    });
+
+    test('prato retirado e DEVOLVIDO antes do fim continua protegido', () {
+      // Tirou e pôs de volta: o prato lançado está na balança de novo, e
+      // capturá-lo seria cobrar duas vezes o mesmo prato.
+      machine.start();
+      machine.onSample(sample(0.700), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onSample(sample(0), pricePerKg: 50);
+      machine.onSample(sample(0.701), pricePerKg: 50);
+      machine.onLaunched();
+      machine.readyForNext();
+
+      machine.onSample(sample(0.700), pricePerKg: 50);
+
+      expect(machine.weighedItem, isNull);
+      expect(machine.aguardandoRetirada, isTrue);
+    });
+
+    test('"Pesar de novo" solta o mesmo peso parado na balança', () {
+      // Balança que não manda zero nenhum e o mesmo peso de volta: sem esta
+      // saída a estação ficava presa até alguém reiniciar o PDV.
+      machine.start();
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onLaunched();
+      machine.readyForNext();
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      expect(machine.aguardandoRetirada, isTrue);
+      expect(machine.pesoRetido, 0.480);
+
+      final efeitos = machine.pesarDeNovo(pricePerKg: 50);
+
+      expect(machine.aguardandoRetirada, isFalse);
+      expect(machine.weighedItem?.weightKg, 0.480);
+      expect(efeitos, contains(HandsFreeEffect.successSound));
+    });
+
+    test('"Pesar de novo" sem amostra retida só solta o filtro', () {
+      machine.start();
+      machine.onSample(sample(0.480), pricePerKg: 50);
+      machine.onCommandRead('0041');
+      machine.onLaunched();
+      machine.readyForNext();
+
+      machine.pesarDeNovo(pricePerKg: 50);
+      expect(machine.aguardandoRetirada, isFalse);
+      machine.onSample(sample(0.480), pricePerKg: 50);
+
+      expect(machine.weighedItem?.weightKg, 0.480);
+    });
+  });
 }

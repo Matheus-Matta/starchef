@@ -104,6 +104,25 @@ class HandsFreeMachine extends ChangeNotifier {
   static const _mesmoPratoKg = 0.010;
   bool _stable = false;
 
+  /// O prato saiu da balança em algum momento depois de pesado.
+  ///
+  /// Balança que só transmite quando o peso MUDA manda o zero uma vez — e o
+  /// cliente costuma tirar o prato durante o "Pedido lançado". Sem lembrar
+  /// desse zero, o filtro do prato lançado era armado depois dele e nunca
+  /// mais soltava: o próximo prato de peso parecido ficava em 0 para sempre.
+  bool _retiradoDepoisDaPesagem = false;
+
+  /// A última amostra descartada pelo filtro, para o "Pesar de novo".
+  ScaleSample? _amostraRetida;
+
+  /// A tela está em 0 porque o peso na balança é o do prato já lançado.
+  bool get aguardandoRetirada =>
+      _state == HandsFreeState.waitingWeight && _pesoJaLancado != null;
+
+  /// O peso que está sendo ignorado (o do prato lançado), para a tela dizer.
+  double? get pesoRetido =>
+      aguardandoRetirada ? _amostraRetida?.weightKg : null;
+
   HandsFreeState get state => _state;
   WeighedItem? get weighedItem => _weighedItem;
   Map<String, int> get extras => Map.unmodifiable(_extras);
@@ -152,14 +171,28 @@ class HandsFreeMachine extends ChangeNotifier {
     required double pricePerKg,
   }) {
     final empty = sample.weightKg <= minimumWeightKg;
+    final pesado = _weighedItem?.weightKg;
+    if (pesado != null) {
+      // "Fora da balança AGORA": zerou, ou há outro peso nela. Devolvido o
+      // mesmo prato, volta a valer o filtro — senão ele seria cobrado de novo.
+      _retiradoDepoisDaPesagem =
+          empty || (sample.weightKg - pesado).abs() > _mesmoPratoKg;
+    }
     final jaLancado = _pesoJaLancado;
     if (_state == HandsFreeState.waitingWeight && jaLancado != null) {
       // Zerou (prato retirado) ou chegou OUTRO peso (balança que não manda o
       // zero): libera. O mesmo peso é o prato antigo — ignora.
       if (!empty && (sample.weightKg - jaLancado).abs() <= _mesmoPratoKg) {
+        if (_amostraRetida == null) {
+          _amostraRetida = sample;
+          notifyListeners();
+        } else {
+          _amostraRetida = sample;
+        }
         return const [];
       }
       _pesoJaLancado = null;
+      _amostraRetida = null;
     }
     _currentWeightKg = sample.weightKg;
     _stable = sample.stable == true;
@@ -176,6 +209,7 @@ class HandsFreeMachine extends ChangeNotifier {
             raw: sample.raw,
           );
           _state = HandsFreeState.waitingCommand;
+          _retiradoDepoisDaPesagem = false;
           _commandDeadline = sample.at.add(commandTimeout);
           effects.add(HandsFreeEffect.successSound);
         }
@@ -201,10 +235,7 @@ class HandsFreeMachine extends ChangeNotifier {
     if (_state != HandsFreeState.waitingCommand) return const [];
     final deadline = _commandDeadline;
     if (deadline == null || now.isBefore(deadline)) return const [];
-    final effects = [
-      HandsFreeEffect.alertSound,
-      ..._cancelToWaiting(),
-    ];
+    final effects = [HandsFreeEffect.alertSound, ..._cancelToWaiting()];
     notifyListeners();
     return effects;
   }
@@ -228,7 +259,10 @@ class HandsFreeMachine extends ChangeNotifier {
     _state = HandsFreeState.launching;
     _commandDeadline = null;
     notifyListeners();
-    return const [HandsFreeEffect.successSound, HandsFreeEffect.launchIntoCommand];
+    return const [
+      HandsFreeEffect.successSound,
+      HandsFreeEffect.launchIntoCommand,
+    ];
   }
 
   /// A anotação entrou na comanda e a etiqueta foi despachada.
@@ -251,12 +285,31 @@ class HandsFreeMachine extends ChangeNotifier {
 
   /// Após o aviso de sucesso, volta ao Estado 1 para o próximo cliente.
   List<HandsFreeEffect> readyForNext() {
-    final lancado = _weighedItem?.weightKg;
+    // Prato já retirado (o zero chegou enquanto lançava): nada a proteger.
+    final lancado = _retiradoDepoisDaPesagem ? null : _weighedItem?.weightKg;
     _state = HandsFreeState.waitingWeight;
     _resetOperation();
     _pesoJaLancado = lancado;
     notifyListeners();
     return const [];
+  }
+
+  /// O operador confirma que o peso na balança é um prato NOVO.
+  ///
+  /// Saída para a balança que não manda zero nenhum e recebe outro prato do
+  /// mesmo peso: sem ela, a estação ficava presa até reiniciar o PDV. A
+  /// amostra retida é reprocessada na hora — a balança que só transmite
+  /// quando muda não mandaria outra.
+  List<HandsFreeEffect> pesarDeNovo({required double pricePerKg}) {
+    if (!aguardandoRetirada) return const [];
+    final retida = _amostraRetida;
+    _pesoJaLancado = null;
+    _amostraRetida = null;
+    if (retida == null) {
+      notifyListeners();
+      return const [];
+    }
+    return onSample(retida, pricePerKg: pricePerKg);
   }
 
   /// Cancelamento explícito pelo operador.
@@ -291,5 +344,7 @@ class HandsFreeMachine extends ChangeNotifier {
     _currentWeightKg = 0;
     _stable = false;
     _pesoJaLancado = null;
+    _retiradoDepoisDaPesagem = false;
+    _amostraRetida = null;
   }
 }
