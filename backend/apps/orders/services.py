@@ -986,7 +986,15 @@ def close_order(
     fiscal_customer_cpf=None,
     expected_total=None,
     coupon_code=None,
+    marcar_aguardando=True,
 ):
+    """Aplica desconto, taxa, CPF e cupom e recalcula o total.
+
+    `marcar_aguardando=False` é o checkout (`/checkout/`): grava as escolhas da
+    tela de pagamento SEM avançar o pedido — quem avança é o primeiro
+    recebimento (`register_payment`). O `/close/` do PDV desktop e do app
+    segue marcando "aguardando pagamento", como sempre.
+    """
     with tenant_context(order.account):
         order = Order.objects.select_for_update().get(pk=order.pk)
         if order.is_locked:
@@ -1049,10 +1057,11 @@ def close_order(
         else:
             order.service_fee_percent = order.restaurant.default_service_fee_percent or Decimal("0.00")
             order.service_fee = service_fee_for(order)
-        order.status = Order.STATUS_AWAITING_PAYMENT
-        order.closed_by = user
+        if marcar_aguardando:
+            order.status = Order.STATUS_AWAITING_PAYMENT
+            order.closed_by = user
+            order.closed_at = timezone.now()
         order.updated_by = user
-        order.closed_at = timezone.now()
         order.save(
             update_fields=[
                 "discount",
@@ -1103,7 +1112,10 @@ def close_order(
             order.payment_status = Order.PAYMENT_PAID
             order.status = Order.STATUS_PAID
         elif paid_total > Decimal("0.00"):
+            # Com dinheiro já recebido o pedido está em pagamento, mesmo que a
+            # chamada seja só o checkout.
             order.payment_status = Order.PAYMENT_PARTIAL
+            order.status = Order.STATUS_AWAITING_PAYMENT
         else:
             order.payment_status = Order.PAYMENT_PENDING
         order.save(update_fields=["payment_status", "status", "updated_by"])

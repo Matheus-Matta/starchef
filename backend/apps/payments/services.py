@@ -660,7 +660,10 @@ def register_payment(
             order.status = Order.STATUS_PAID
             order.closed_at = order.closed_at or timezone.now()
         else:
+            # O PRIMEIRO recebimento é o que põe o pedido em pagamento: entrar
+            # na tela de pagamento (`/checkout/`) não muda o estado.
             order.payment_status = Order.PAYMENT_PARTIAL
+            order.status = Order.STATUS_AWAITING_PAYMENT
 
         order.updated_by = user
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
@@ -796,8 +799,10 @@ def cancel_payment(*, payment, user):
         paid_total = order.payments.filter(status=Payment.STATUS_APPROVED).aggregate(value=Sum("amount"))[
             "value"
         ] or Decimal("0.00")
+        # Sem nenhum recebimento o pedido volta a ABERTO — ninguém está pagando.
+        # Desconto, taxa e CPF ficam: são as escolhas da próxima tentativa.
         order.payment_status = Order.PAYMENT_PARTIAL if paid_total > 0 else Order.PAYMENT_PENDING
-        order.status = Order.STATUS_AWAITING_PAYMENT
+        order.status = Order.STATUS_AWAITING_PAYMENT if paid_total > 0 else Order.STATUS_OPEN
         order.closed_at = None
         order.updated_by = user
         order.save(update_fields=["payment_status", "status", "closed_at", "updated_by", "updated_at"])
