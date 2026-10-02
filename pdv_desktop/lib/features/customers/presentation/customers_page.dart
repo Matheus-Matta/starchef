@@ -19,11 +19,7 @@ import 'customer_tile.dart';
 /// memória do terminal, e filtrar só a página carregada diria "não existe"
 /// para quem está na página seguinte.
 class CustomersPage extends StatefulWidget {
-  const CustomersPage({
-    super.key,
-    required this.repository,
-    this.restaurantId,
-  });
+  const CustomersPage({super.key, required this.repository, this.restaurantId});
 
   final CustomerRepository repository;
   final String? restaurantId;
@@ -54,8 +50,14 @@ class _CustomersPageState extends State<CustomersPage> {
   }
 
   Future<void> _carregar() async {
+    // A última lista desta busca aparece na hora; a do servidor substitui.
+    final guardados = widget.repository.cached(
+      restaurantId: widget.restaurantId,
+      busca: _busca.text,
+    );
     setState(() {
-      _carregando = true;
+      if (guardados != null) _clientes = guardados;
+      _carregando = guardados == null;
       _erro = '';
     });
     try {

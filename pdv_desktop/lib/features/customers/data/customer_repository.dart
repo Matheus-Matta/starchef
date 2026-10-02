@@ -20,14 +20,39 @@ class CustomerRepository {
   }) async {
     final resposta = await _api.get(
       '/customers/',
-      query: {
-        'restaurant': ?restaurantId,
-        if (busca.trim().isNotEmpty) 'search': busca.trim(),
-        'ordering': 'name',
-        'page_size': pageSize,
-      },
+      query: _consulta(restaurantId, busca, pageSize),
       accessToken: accessToken,
     );
+    return _resultados(resposta);
+  }
+
+  /// A última resposta desta MESMA busca, para a lista aparecer na hora — ou
+  /// `null`. A leitura de [list] vem logo depois e substitui.
+  List<Map<String, dynamic>>? cached({
+    String? restaurantId,
+    String busca = '',
+    int pageSize = 50,
+  }) {
+    final resposta = _api.peek(
+      '/customers/',
+      query: _consulta(restaurantId, busca, pageSize),
+      accessToken: accessToken,
+    );
+    return resposta == null ? null : _resultados(resposta);
+  }
+
+  Map<String, dynamic> _consulta(
+    String? restaurantId,
+    String busca,
+    int pageSize,
+  ) => {
+    'restaurant': ?restaurantId,
+    if (busca.trim().isNotEmpty) 'search': busca.trim(),
+    'ordering': 'name',
+    'page_size': pageSize,
+  };
+
+  List<Map<String, dynamic>> _resultados(Map<String, dynamic> resposta) {
     final resultados = resposta['results'] ?? resposta['data'];
     if (resultados is! List) return const [];
     return resultados

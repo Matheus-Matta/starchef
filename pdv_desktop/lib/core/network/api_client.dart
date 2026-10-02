@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'api_exception.dart';
 import 'cloud_fallback.dart';
 import 'data_signals.dart';
+import 'response_cache.dart';
 import 'realtime_client.dart';
 
 part 'api_client_fallback.dart';
@@ -81,8 +82,10 @@ class ApiClient {
     http.Client? client,
     this.requestTimeout = const Duration(seconds: 20),
     CloudFallback? cloudFallback,
+    ResponseCache? cache,
   }) : _baseUrl = baseUrl,
        cloudFallback = cloudFallback ?? CloudFallback(),
+       cache = cache ?? ResponseCache(),
        _client = client ?? http.Client();
 
   /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.
@@ -108,6 +111,28 @@ class ApiClient {
   final Duration requestTimeout;
 
   final DataSignals signals = DataSignals();
+
+  /// Última resposta das listas de catálogo — só para a tela abrir na hora.
+  /// Ver [ResponseCache]: nada aqui autoriza escrita.
+  final ResponseCache cache;
+
+  String _cacheScopeFor(String? token) => '$baseUrl|${_tokenScope(token)}';
+
+  /// A última lista guardada para esta consulta, ou `null`.
+  Map<String, dynamic>? peek(
+    String path, {
+    Map<String, dynamic>? query,
+    String? accessToken,
+  }) =>
+      cache.peek(_cacheScopeFor(accessToken ?? _lastAccessToken), path, query);
+
+  /// Idade da lista guardada para esta consulta, ou `null`.
+  Duration? cacheAge(
+    String path, {
+    Map<String, dynamic>? query,
+    String? accessToken,
+  }) =>
+      cache.ageOf(_cacheScopeFor(accessToken ?? _lastAccessToken), path, query);
   final _statusController = StreamController<NetworkStatus>.broadcast();
 
   String? _lastAccessToken;
@@ -172,6 +197,7 @@ class ApiClient {
     _baseUrl = normalized;
     _lastAccessToken = null;
     _activeScope = null;
+    cache.clear();
     // Outro servidor é outro mundo: a fila da impressora do servidor anterior
     // não pode continuar visível aqui.
     _terminalScope = null;
@@ -213,6 +239,7 @@ class ApiClient {
     final eventRestaurant = '${event.payload['restaurant_id'] ?? ''}';
     if (eventRestaurant.isNotEmpty && eventRestaurant != restaurantId) return;
     final resource = '${event.payload['resource'] ?? ''}';
+    cache.invalidateForResource(resource);
     for (final topic in DataSignals.topicsForRealtimeResource(resource)) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
@@ -223,7 +250,9 @@ class ApiClient {
     _realtimeConnected = true;
     _publishStatus(NetworkPhase.online);
     // Reconectar significa que o terminal pode ter perdido eventos enquanto
-    // esteve mudo: tudo que a tela mostra é relido.
+    // esteve mudo: tudo que a tela mostra é relido — e nada guardado do
+    // período mudo pode ser servido como atual.
+    cache.clear();
     for (final topic in DataSignals.realtimeSnapshotTopics) {
       signals.emit('realtime:$topic');
       signals.emit(topic);
@@ -293,6 +322,9 @@ class ApiClient {
     String? accessToken,
   }) async {
     _rememberSession(accessToken);
+    // A escrita apaga a lista que ela pode ter mudado ANTES de sair, e não só
+    // no sucesso: uma resposta perdida pode esconder uma escrita que valeu.
+    if (method != 'GET') cache.invalidateForWrite(path);
     // Toda escrita leva chave de idempotência. A requisição pode ter chegado
     // ao servidor e a resposta ter se perdido no caminho; quando o operador
     // repete o gesto, o backend reconhece a mesma chave e não duplica a venda.
@@ -313,7 +345,14 @@ class ApiClient {
         operationId: operationId,
       ),
     );
-    if (method != 'GET') _signal(path);
+    if (method == 'GET') {
+      // Só o que veio do servidor da loja: o plano B (nuvem) pode estar atrás.
+      if (lastServerOrigin == ServerOrigin.loja) {
+        cache.store(_cacheScopeFor(accessToken), path, query, result);
+      }
+    } else {
+      _signal(path);
+    }
     return result;
   }
 
@@ -546,6 +585,7 @@ class ApiClient {
   Future<void> clearSession() async {
     _lastAccessToken = null;
     _activeScope = null;
+    cache.clear();
     // `_terminalScope` NÃO é limpo: o logout não pode esconder da fila um
     // cupom que ainda está esperando a impressora. Ele só muda quando outra
     // conta entra neste computador.
