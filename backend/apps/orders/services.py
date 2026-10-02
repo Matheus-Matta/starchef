@@ -829,6 +829,20 @@ def void_order_item(item, user, reason="", offline_printed=False, authorized=Fal
         assert_pode_cancelar(item, authorized=authorized)
 
         was_dispatched = item.status not in {OrderItem.STATUS_PENDING, OrderItem.STATUS_QUEUED}
+        if item.command_item_id:
+            # VEIO DE COMANDA: a produção é a da anotação, então o cancelamento
+            # é dela — status, motivo, autor, auditoria e o aviso à cozinha pelo
+            # caminho por onde o prato entrou. A linha da conta só acompanha.
+            # Cancelar só a cópia deixava a origem "em preparo", sem motivo.
+            from apps.orders.command_item_void import void_command_item
+            from apps.orders.models import CommandItem
+
+            if item.command_item.status not in {CommandItem.STATUS_CANCELLED, CommandItem.STATUS_COMPED}:
+                void_command_item(
+                    item.command_item, user=user, reason=reason,
+                    authorized=authorized, authorized_by=authorized_by,
+                )
+            within_grace = was_dispatched = False
         item.status = OrderItem.STATUS_CANCELLED
         item.void_reason = reason
         item.voided_at = timezone.now()

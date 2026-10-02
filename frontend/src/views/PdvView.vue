@@ -817,6 +817,12 @@
           placeholder="Ex: cliente desistiu do item..."
           @keydown.esc="closeVoidItemDialog"
         />
+        <!-- Fora do prazo do restaurante o servidor responde 409
+             (`cancel_blocked`): o supervisor libera aqui mesmo, sem sair da venda. -->
+        <template v-if="itemVoidBlocked">
+          <p class="pdv__reason-label" role="alert">{{ itemVoidBlocked }}</p>
+          <input v-model="itemVoidPassword" class="pdv__note-input" type="password" autocomplete="off" placeholder="Senha de operação do restaurante" />
+        </template>
         <div class="pdv__modal-actions">
           <button class="pdv__btn pdv__btn--ghost" type="button" :disabled="voidingItem" @click="closeVoidItemDialog">Voltar</button>
           <button class="pdv__btn pdv__btn--danger" type="button" :disabled="!itemVoidReason.trim() || voidingItem" @click="confirmVoidItem">
@@ -965,6 +971,8 @@ const cancelReason = ref("");
 const cancelling = ref(false);
 const itemToVoid = ref(null);
 const itemVoidReason = ref("");
+const itemVoidBlocked = ref("");
+const itemVoidPassword = ref("");
 const voidingItem = ref(false);
 const ITEM_VOID_REASONS = [
   "Cliente desistiu do item",
@@ -1590,19 +1598,32 @@ function closeVoidItemDialog() {
   if (voidingItem.value) return;
   itemToVoid.value = null;
   itemVoidReason.value = "";
+  itemVoidBlocked.value = "";
+  itemVoidPassword.value = "";
 }
 
 async function confirmVoidItem() {
   if (!itemToVoid.value || !itemVoidReason.value.trim()) return;
   voidingItem.value = true;
   try {
+    // Item de comanda ou de balcão, o caminho é o mesmo: o servidor leva o
+    // cancelamento à origem do item (ver `void_order_item`).
+    const senha = itemVoidPassword.value ? { cash_password: itemVoidPassword.value } : {};
     await api.delete(`/orders/${currentOrder.value.id}/items/${itemToVoid.value.id}/void/`, {
-      data: { reason: itemVoidReason.value.trim() },
+      data: { reason: itemVoidReason.value.trim(), ...senha },
     });
     voidingItem.value = false;
     closeVoidItemDialog();
     await refreshCart();
   } catch (e) {
+    const erro = normalizeApiError(e);
+    if (erro.code === "cancel_blocked") {
+      itemVoidBlocked.value = itemVoidPassword.value
+        ? "Senha não confere. Peça ao supervisor para digitar de novo."
+        : erro.message;
+      itemVoidPassword.value = "";
+      return;
+    }
     pdvError(e, "Erro ao cancelar item");
   } finally {
     voidingItem.value = false;
