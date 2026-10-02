@@ -47,13 +47,6 @@ class AuthUser {
   final bool isSuperuser;
   final List<String> permissions;
 
-  /// O backend exige cargo de gerente para desconto; o PDV nem oferece o
-  /// campo a quem seria recusado no fechamento.
-  bool get canApplyDiscount =>
-      isSuperuser ||
-      const {'manager', 'admin', 'owner'}.contains(profileType) ||
-      permissions.contains('*');
-
   bool get canManageDevices =>
       isSuperuser ||
       profileType == 'admin' ||

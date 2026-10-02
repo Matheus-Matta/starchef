@@ -130,7 +130,10 @@ mixin _PanelsSection on _HomePageShared {
     draftCommandTotals: _draftIsLive ? _totaisPorComanda : const {},
     discountCents: typedDiscount.valorDe(_discountKey),
     onDiscountChanged:
-        widget.controller.session!.user.canApplyDiscount && _discountKey != null
+        // Qualquer operador que cobra DIGITA; quem não é gerente precisa da
+        // aprovação (senha de ações do caixa) ao fechar.
+        widget.controller.session!.user.canProcessPayments &&
+            _discountKey != null
         ? (centavos) =>
               setState(() => typedDiscount.definir(_discountKey, centavos))
         : null,

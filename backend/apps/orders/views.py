@@ -1,3 +1,4 @@
+from functools import partial
 from decimal import InvalidOperation
 
 import django_filters
@@ -16,6 +17,7 @@ from apps.core.viewsets import BaseTenantViewSet
 from apps.core.access import is_tenant_admin
 from apps.core.permissions import effective_permission_codes
 from apps.menu.models import Product
+from apps.orders.discount_approval import PERMISSAO as DISCOUNT_PERMISSION
 from apps.orders.command_billing import attach_commands_to_order, detach_commands_from_order
 from apps.orders.create_with_item_payload import build_first_item_data
 from apps.orders.item_cancellation import CancelamentoBloqueado
@@ -40,7 +42,7 @@ from apps.restaurants.models import Command
 User = get_user_model()
 
 
-def _can_authorize_cancellation(request, restaurant, account_id):
+def _can_authorize_cancellation(request, restaurant, account_id, permission="orders.cancel"):
     """Valida a autorização no mesmo request que altera o pedido.
 
     A senha nunca entra na fila offline: cancelamento exige resposta imediata
@@ -102,7 +104,8 @@ def _can_authorize_cancellation(request, restaurant, account_id):
     if not profile or not profile.is_active or profile.account_id != account_id:
         return False, None, ""
     codes = effective_permission_codes(authorizer)
-    approved = is_tenant_admin(authorizer) or "*" in codes or "orders.cancel" in codes
+    # O DESCONTO usa a mesma porta com outra permissão (`cash.approve`).
+    approved = is_tenant_admin(authorizer) or "*" in codes or permission in codes
     return approved, (authorizer if approved else None), Order.AUTHORIZATION_DELEGATED
 
 
@@ -608,6 +611,13 @@ class OrderViewSet(BaseTenantViewSet):
                 # `None` quando a chave nao vem: fechar de novo para corrigir a
                 # taxa nao pode derrubar o cupom que ja estava aplicado.
                 coupon_code=request.data.get("coupon_code"),
+                # Chamada só se o desconto mudou e o operador não é gerente:
+                # a senha de ações do caixa (ou o login de quem libera) vem
+                # neste mesmo corpo, e a aprovação morre com este request.
+                authorize_discount=partial(
+                    _can_authorize_cancellation, request, order_to_close.restaurant,
+                    order_to_close.account_id, permission=DISCOUNT_PERMISSION,
+                ),
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)

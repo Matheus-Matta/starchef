@@ -198,6 +198,19 @@ armazenado no pedido antes do pagamento. A emissão automática e
 vazia remove a identificação do pedido. O campo CNPJ aceita os formatos
 numérico e alfanumérico, com 14 caracteres e dígitos verificadores numéricos.
 
+**Desconto manual aprovado** (`apps/orders/discount_approval.py`): o `discount`
+do `/close/` que MUDA precisa de aprovação. Gerente aprova pelo cargo
+(`own`); os demais, no mesmo corpo, com `cash_password` (senha de ações do
+caixa) ou `authorization_username`/`authorization_password` de quem tem
+`cash.approve` (`delegated`) — sem isso, **403**. O pedido grava
+`discount_authorized_by`, `discount_authorization` e `discount_authorized_at`
+(sincronizados), e a auditoria `order_discount_approved` guarda de quanto para
+quanto. Desconto inalterado não pede de novo; zerar limpa o registro. Desconto
++ cupom não passam do subtotal (400). Na NFC-e, o desconto é rateado por item
+sem que nenhum receba mais que o próprio valor (`_allocate_discount`): o rateio
+antigo jogava a sobra no último item e, com um item barato no fim, gerava
+`vDesc > vProd` — rejeição da SEFAZ.
+
 `expected_total` é uma referência de concorrência enviada pelo PDV. Se
 divergir, o backend não recusa o fechamento: conclui com o total autoritativo
 recalculado sob lock e devolve `total_reconciled`, `client_expected_total` e

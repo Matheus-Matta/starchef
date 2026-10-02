@@ -17,6 +17,7 @@ mixin _OrderSection on _HomePageShared {
   void _leaveActiveOrder({String? except});
   Future<void> _load();
   TypedDiscount get typedDiscount;
+  Future<String?> _autorizarDesconto(String motivo);
   String? get _discountKey;
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
@@ -209,7 +210,7 @@ mixin _OrderSection on _HomePageShared {
       // O fechamento (taxa de serviço, desconto, total) é aplicado pelo
       // `OrderRepository` com a MESMA conta usada aqui — `expected_total`
       // acompanha para o servidor conferir quando a operação subir.
-      final closeResult = await api.post(
+      Future<Map<String, dynamic>> fechar({String? senha}) => api.post(
         '/orders/${activeOrder!['id']}/close/',
         body: {
           // O digitado no resumo vale; sem digitar, o que o pedido já tinha.
@@ -223,9 +224,25 @@ mixin _OrderSection on _HomePageShared {
           // significaria "nao mexe", e o caixa que apagou o codigo de proposito
           // — porque o cliente desistiu dele — veria o desconto continuar.
           'coupon_code': couponCode,
+          // A senha de ações do caixa só vai quando o servidor pediu a
+          // aprovação do desconto — e só neste request.
+          'cash_password': ?senha,
         },
         accessToken: token,
       );
+
+      Map<String, dynamic> closeResult;
+      try {
+        closeResult = await fechar();
+      } on ApiException catch (erro) {
+        // 403 com desconto digitado: o servidor quer a APROVAÇÃO de um
+        // gerente. Quem é gerente nunca chega aqui (o cargo aprova); os demais
+        // liberam com a senha de ações do caixa, como no cancelamento.
+        if (erro.statusCode != 403 || (descontoDigitado ?? 0) <= 0) rethrow;
+        final senha = await _autorizarDesconto(erro.message);
+        if (senha == null) rethrow;
+        closeResult = await fechar(senha: senha);
+      }
       // O fechamento já foi confirmado pelo servidor: `api.patch` só retorna
       // depois que ele respondeu. O teclado de pagamento abre sobre um pedido
       // que existe fechado do outro lado.

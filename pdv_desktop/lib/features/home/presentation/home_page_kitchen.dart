@@ -109,14 +109,32 @@ mixin _KitchenSection on _HomePageShared {
   /// é conferida aqui contra o hash já sincronizado E enviada ao servidor, que
   /// é quem de fato decide — conferir só no terminal seria uma tranca que
   /// qualquer cliente desatualizado contorna.
-  Future<String?> _autorizarCancelamentoDeItem(String motivo) async {
+  Future<String?> _autorizarCancelamentoDeItem(String motivo) =>
+      _pedirSenhaDoCaixa(
+        title: 'Autorizar cancelamento',
+        description: '$motivo Informe a senha de ações do caixa para liberar.',
+        confirmLabel: 'Liberar cancelamento',
+      );
+
+  /// O desconto digitado por quem não é gerente: o servidor pede aprovação, e
+  /// quem libera é a senha de ações do caixa (registrada no pedido).
+  Future<String?> _autorizarDesconto(String motivo) => _pedirSenhaDoCaixa(
+    title: 'Aprovar desconto',
+    description: motivo,
+    confirmLabel: 'Aprovar desconto',
+  );
+
+  Future<String?> _pedirSenhaDoCaixa({
+    required String title,
+    required String description,
+    required String confirmLabel,
+  }) async {
     String? senha;
     final autorizado = await showSupervisorCloseDialog(
       context: context,
-      title: 'Autorizar cancelamento',
-      description:
-          '$motivo Informe a senha de ações do caixa para liberar.',
-      confirmLabel: 'Liberar cancelamento',
+      title: title,
+      description: description,
+      confirmLabel: confirmLabel,
       cancelLabel: 'Voltar',
       confirmIcon: Icons.lock_open_outlined,
       verifyPassword: (password) async {

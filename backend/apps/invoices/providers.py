@@ -7,6 +7,7 @@ from django.utils.dateparse import parse_datetime
 from apps.accounts.models import FocusNfeConfig
 from apps.invoices.fiscal import only_digits
 from apps.invoices.focus_emission_errors import detail_from_focus, is_company_configuration_error
+from apps.invoices.discount_allocation import ratear_desconto
 from apps.invoices.models import FiscalConfig, Invoice
 
 _REGISTRY = {}
@@ -279,6 +280,9 @@ class FocusNfeProvider(FiscalProvider):
         allocations[items[-1].pk] = total - allocated
         return allocations
 
+    # O desconto tem teto por item (ver `discount_allocation.py`).
+    _allocate_discount = staticmethod(ratear_desconto)
+
     @staticmethod
     def _validate_totals(invoice, items):
         """Valida e devolve despesas que explicam o total da NF-e."""
@@ -380,7 +384,7 @@ class FocusNfeProvider(FiscalProvider):
         if not items:
             raise FiscalRejection("Focus NFe: a nota nao possui itens fiscais.")
         other_expenses = self._validate_totals(invoice, items)
-        discounts_by_item = self._allocate_total(items, invoice.discount_total)
+        discounts_by_item = self._allocate_discount(items, invoice.discount_total)
         expenses_by_item = self._allocate_total(items, other_expenses)
         payments = self._build_payments(invoice)
         change_total = sum(
