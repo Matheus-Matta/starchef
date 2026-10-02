@@ -308,6 +308,26 @@ Testes: `test_listar_comandas_custa_o_mesmo_com_2_ou_com_8`,
 `test_nenhum_prefetch_nasce_vazio_no_import`,
 `test_login_conta_por_usuario_e_nao_pela_loja_inteira`.
 
+### 2.5.6 As notificações do pico (01/10/2026)
+
+O que o PDV mostrou no dia, além do 429 (seção anterior):
+
+| Notificação | Causa e correção |
+| --- | --- |
+| "A comanda 98 já está na conta **,** que continua aberta" — número da conta em branco | Ao sair de um pedido o PDV varre os abertos e apaga os que vê vazios. O caixa A abre a conta agrupada, o terminal B a lista vazia, A anexa as comandas, B manda o DELETE — e o servidor só recusava exclusão com nota ou pagamento. A conta sumia cheia, e a comanda ficava presa a uma conta excluída (a trava achava a conta pelos itens; o número, no manager que esconde os excluídos). Com o 429 segurando cada chamada por até 46 s, a janela da corrida ficou enorme. Agora: conta aberta com consumo não se exclui (409); exclusão e inclusão travam a linha do pedido e releem; conta excluída não segura cartão, e a linha dela solta a anotação — as comandas já presas se soltam sozinhas |
+| "Nota fiscal não emitida: total fiscal inconsistente" — "às vezes ia, às vezes não" | Falhava em toda venda com cupom. O total abate `discount` e `coupon_discount`; a nota registrava só o primeiro, e a conferência anterior à Focus recusava. Agora o desconto da nota é a soma dos dois — e sai como DESCONTO no DANFE |
+
+Corrida reproduzida contra servidor de produção (Postgres, gunicorn), anexar
+e excluir ao mesmo tempo, 40 rodadas: v3.0.73 deixou **9 comandas presas**,
+com a mensagem de produção; a correção, **nenhuma**. Apontada para o banco
+que a versão antiga deixou com comandas presas, a correção as cobrou numa
+conta nova, com o item e o valor certos.
+
+Testes: `test_excluir_conta_aberta_com_consumo_e_recusado`,
+`test_anexar_comanda_a_conta_ja_excluida_e_recusado`,
+`test_conta_excluida_nao_prende_a_comanda`,
+`test_nota_com_cupom_passa_na_conferencia_da_focus`.
+
 ### 2.6 Frontend
 
 `PdvView.vue` lia `error.response.data.detail` em quatro pontos — **campo que o

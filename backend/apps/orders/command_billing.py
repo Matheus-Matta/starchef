@@ -127,6 +127,14 @@ def attach_commands_to_order(*, order, command_ids, user):
         raise ValidationError("Este pedido já foi encerrado e não recebe comandas.")
 
     with tenant_context(order.account), transaction.atomic():
+        # A CONTA ANTES DOS CARTÕES, e relida depois da trava. A varredura de
+        # rascunhos do PDV apaga pedido que viu vazio; sem esta trava, o
+        # DELETE e a inclusão se cruzavam e a conta sumia já com as comandas
+        # dentro — que ficavam presas a uma conta inexistente.
+        if not Order.all_objects.select_for_update(of=("self",)).filter(
+            pk=order.pk, deleted_at__isnull=True
+        ).exists():
+            raise ValidationError("Esta conta foi excluída. Abra outra para cobrar as comandas.")
         comandas = lock_commands(ids)
         faltando = [i for i in ids if i not in comandas]
         if faltando:
@@ -150,9 +158,21 @@ def attach_commands_to_order(*, order, command_ids, user):
         # linha de R$ 0,00 que ninguém sabe explicar — ele é encerrado junto
         # com o cartão, na liberação.
         pendentes = list(billable_items_of(ids).select_for_update(of=("self",)))
+        # A linha de uma conta EXCLUÍDA não é consumo de ninguém, mas ocupava a
+        # vaga única da anotação (`unique_order_item_per_command_item`): o
+        # cartão não entrava em conta nenhuma. Ela solta a anotação e fica
+        # como histórico. `save`, e não `update`, para os sinais saírem.
+        for orfa in OrderItem.all_objects.filter(
+            command_item_id__in=[p.pk for p in pendentes], order__deleted_at__isnull=False
+        ):
+            orfa.command_item = None
+            orfa.save(update_fields=["command_item", "updated_at"])
         ja_em_pedido = list(
             OrderItem.objects.filter(
-                command_item_id__in=[p.pk for p in pendentes]
+                command_item_id__in=[p.pk for p in pendentes],
+                # Conta excluída não segura cartão: era o que deixava a
+                # comanda presa a "conta , que continua aberta", sem número.
+                order__deleted_at__isnull=True,
             ).values_list("command_item_id", "order_id", "order__status")
         )
         ja_cobrados = {item for item, _, _ in ja_em_pedido}
