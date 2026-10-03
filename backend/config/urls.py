@@ -71,6 +71,7 @@ from apps.reports.views import (
     SalesReportView,
     WaitersReportView,
 )
+from apps.reports.product_details import ProductSalesDetailView
 from apps.restaurants.views import (
     BranchViewSet,
     CommandViewSet,
@@ -205,6 +206,7 @@ urlpatterns = [
     path("api/v1/reports/sales/", SalesReportView.as_view(), name="sales-report"),
     path("api/v1/reports/orders/", OrdersReportView.as_view(), name="orders-report"),
     path("api/v1/reports/products/", ProductsReportView.as_view(), name="products-report"),
+    path("api/v1/reports/products/<uuid:product_id>/sales/", ProductSalesDetailView.as_view(), name="product-sales-detail-report"),
     path("api/v1/reports/payments/", PaymentsReportView.as_view(), name="payments-report"),
     path("api/v1/reports/waiters/", WaitersReportView.as_view(), name="waiters-report"),
     path("api/v1/reports/restaurants/", RestaurantsReportView.as_view(), name="restaurants-report"),

@@ -16,8 +16,16 @@ export const reportService = {
       // O DataTable pagina de 10 em 10 no cliente. Para produtos, carregamos o
       // conjunto consolidado para que ordenar por quantidade não considere
       // apenas os 10 primeiros por faturamento.
-      params: { page: 1, page_size: section === "product" ? 100 : 10, ...filters },
+      params: {
+        page: 1,
+        page_size: ["product", "waiter", "sales"].includes(section) ? 100 : 10,
+        ...filters,
+      },
     });
+    return response.data || {};
+  },
+  async getProductSales(productId, filters = {}) {
+    const response = await api.get(`/reports/products/${productId}/sales/`, { params: filters });
     return response.data || {};
   },
 };

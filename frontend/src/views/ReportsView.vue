@@ -176,7 +176,7 @@
         <div class="report-chart report-chart--wide"><Chart type="bar" :data="productChartData" :options="barOptions" /></div>
       </Card>
       <Card title="Vendas por produto" padding="none">
-        <ReportDataTable :rows="productRows" :columns="productColumns" />
+        <ReportDataTable :rows="productRows" :columns="productColumns" row-clickable @row-click="openProductSales" />
       </Card>
     </div>
 
@@ -231,6 +231,7 @@
 
 <script setup>
 import { computed, inject, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import Chart from "primevue/chart";
 
 import AppIcon from "../components/AppIcon.vue";
@@ -245,10 +246,12 @@ import { getBrowserValue } from "../services/browserPersistence";
 import { endpoints, reportService } from "../services/reportService";
 import { useRealtimeResource } from "../composables/useRealtimeResource";
 import { currentMonthRange } from "../utils/dateRange";
+import { productRowsFrom, productSalesRoute, waiterRowsFrom } from "../utils/reportRows";
 
 const props = defineProps({
   section: { type: String, default: "sales" },
 });
+const router = useRouter();
 useRealtimeResource(
   ["orders.order", "orders.orderitem", "payments.payment", "payments.cashmovement", "payments.cashregister"],
   () => loadReport(),
@@ -326,9 +329,11 @@ const cancellationReasonColumns = [
   { key: "value", label: "Valor impactado", align: "right", type: "money" },
 ];
 const waiterColumns = [
-  { key: "name", label: "Garcom" },
-  { key: "username", label: "Usuario" },
+  { key: "name", label: "Operador / garçom" },
+  { key: "username", label: "Login no app" },
+  { key: "operator_code", label: "Código informado" },
   { key: "count", label: "Pedidos" },
+  { key: "items", label: "Itens lançados" },
   { key: "total", label: "Total", align: "right", type: "money" },
 ];
 const productColumns = [
@@ -353,27 +358,17 @@ const restaurantRows = computed(() =>
     average_ticket: row.average_ticket,
   })),
 );
-const waiterRows = computed(() =>
-  (report.value.by_waiter || []).map((row) => {
-    const first = row.responsible_user__first_name || "";
-    const last = row.responsible_user__last_name || "";
-    const fullName = `${first} ${last}`.trim() || "Nao identificado";
-    return {
-      name: fullName,
-      username: row.responsible_user__username || "-",
-      count: row.count,
-      total: row.total,
-    };
-  }),
-);
-const productRows = computed(() =>
-  (report.value.by_product || []).map((row) => ({
-    name: row.product__name || "Produto removido",
-    quantity: row.quantity,
-    total: row.total,
-    average_unit_price: row.average_unit_price,
-  })),
-);
+const waiterRows = computed(() => waiterRowsFrom(report.value));
+const productRows = computed(() => productRowsFrom(report.value));
+
+function openProductSales(row) {
+  const target = productSalesRoute(row, {
+    dateFrom: dateFrom.value,
+    dateTo: dateTo.value,
+    restaurantId: selectedRestaurantId.value,
+  });
+  if (target) router.push(target);
+}
 const orderStatusLabels = {
   open: "Aberto",
   awaiting_payment: "Aguardando pagamento",

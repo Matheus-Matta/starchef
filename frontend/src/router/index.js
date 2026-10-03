@@ -20,6 +20,7 @@ const CashSessionDetailView = () => import("../views/CashSessionDetailView.vue")
 const CashDiscrepancyReportView = () => import("../views/CashDiscrepancyReportView.vue");
 const CommandHistoryView = () => import("../views/CommandHistoryView.vue");
 const ReportsView = () => import("../views/ReportsView.vue");
+const ProductSalesDetailView = () => import("../views/ProductSalesDetailView.vue");
 const KdsStationsView = () => import("../views/KdsStationsView.vue");
 const CosmosConfigView = () => import("../views/CosmosConfigView.vue");
 const FocusNfeConfigView = () => import("../views/FocusNfeConfigView.vue");
@@ -202,6 +203,7 @@ export const router = createRouter({
         { path: "relatorios/vendas", name: "relatorio-vendas", component: ReportsView, props: { section: "sales" }, meta: { requiresAuth: true, title: "Relatório de vendas", nav: "relatorio-vendas" } },
         { path: "relatorios/pedidos", name: "relatorio-pedidos", component: ReportsView, props: { section: "orders" }, meta: { requiresAuth: true, title: "Relatório de pedidos", nav: "relatorio-pedidos" } },
         { path: "relatorios/produtos", name: "relatorio-produtos", component: ReportsView, props: { section: "product" }, meta: { requiresAuth: true, title: "Relatório de produtos", nav: "relatorio-produtos" } },
+        { path: "relatorios/produtos/:productId/vendas", name: "relatorio-produto-detalhe", component: ProductSalesDetailView, props: true, meta: { requiresAuth: true, title: "Vendas do produto", nav: "relatorio-produtos" } },
         { path: "relatorios/pagamentos", name: "relatorio-pagamentos", component: ReportsView, props: { section: "payment" }, meta: { requiresAuth: true, title: "Relatório de pagamentos", nav: "relatorio-pagamentos" } },
         { path: "relatorios/garcons", name: "relatorio-garcons", component: ReportsView, props: { section: "waiter" }, meta: { requiresAuth: true, title: "Relatório de garçons", nav: "relatorio-garcons" } },
         { path: "relatorios/restaurantes", name: "relatorio-restaurantes", component: ReportsView, props: { section: "restaurant" }, meta: { requiresAuth: true, title: "Relatório por restaurante", nav: "relatorio-restaurantes" } },

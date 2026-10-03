@@ -14,6 +14,7 @@ from apps.core.access import is_tenant_admin
 from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment
 from apps.stock.models import StockMovement
+from apps.reports.waiter_sales import sales_by_waiter
 
 
 class TenantReportMixin:
@@ -220,16 +221,8 @@ class SalesReportView(TenantReportMixin, APIView):
             .annotate(average_ticket=Avg("total"), total=Sum("total"), count=Count("id"))
             .order_by("-total")
         )
-        by_waiter = (
-            queryset.values(
-                "responsible_user__id",
-                "responsible_user__first_name",
-                "responsible_user__last_name",
-                "responsible_user__username",
-            )
-            .annotate(total=Sum("total"), count=Count("id"))
-            .order_by("-total")
-        )
+        # O caixa que fechou o pedido nao substitui quem lancou cada item.
+        by_waiter = sales_by_waiter(queryset, self.tenant_manager)
         item_filters = {
             key: value
             for key, value in filters.items()
@@ -249,7 +242,7 @@ class SalesReportView(TenantReportMixin, APIView):
             self.tenant_manager(OrderItem)
             .filter(order__in=queryset, **product_dimension_filters)
             .exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED])
-            .values("product__name")
+            .values("product__id", "product__name")
             .annotate(quantity=Sum("quantity"), total=Sum("total_price"), average_unit_price=Avg("unit_price"))
             .order_by("-total")
         )
@@ -450,10 +443,16 @@ class SalesReportView(TenantReportMixin, APIView):
         writer.writerow([])
 
         writer.writerow(["By Waiter"])
-        writer.writerow(["Name", "Username", "Total", "Orders"])
+        writer.writerow(["Operator code", "Name", "Username", "Total", "Orders", "Items"])
         for row in data["by_waiter"]:
-            full_name = f"{row['responsible_user__first_name']} {row['responsible_user__last_name']}".strip()
-            writer.writerow([full_name or "—", row["responsible_user__username"] or "—", row["total"], row["count"]])
+            writer.writerow([
+                row.get("operator_code") or "—",
+                row.get("operator_name") or "—",
+                row.get("operator_username") or "—",
+                row["total"],
+                row["count"],
+                row["items"],
+            ])
         writer.writerow([])
 
         writer.writerow(["By Product"])

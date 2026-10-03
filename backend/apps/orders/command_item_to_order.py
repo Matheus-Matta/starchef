@@ -22,6 +22,9 @@ def to_order_item(annotation, *, order, user):
         preparation_started_at=annotation.preparation_started_at,
         ready_at=annotation.ready_at,
         delivered_at=annotation.delivered_at,
+        # O código foi digitado no atendimento da comanda. Copiá-lo é o que
+        # mantém a autoria do garçom quando o caixa transforma a anotação em venda.
+        metafields=annotation.metafields,
         launched_by=annotation.launched_by,
         created_by=user,
         updated_by=user,
