@@ -2,11 +2,21 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db.models import TextField
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.menu.models import Product, ProductCategory
 from apps.orders.models import CommandItem, Order, OrderItem
 from apps.restaurants.models import Command
+from apps.reports.waiter_sales import sales_by_waiter
+
+
+def test_codigo_do_garcom_e_extraido_como_texto_antes_do_coalesce():
+    """Uma chave JSON ausente deve virar SQL NULL, sem tentar converter texto vazio em JSON."""
+    consulta = sales_by_waiter(Order.objects.none(), lambda model: model.objects.all()).query
+    componentes = consulta.annotations["operator_code"].get_source_expressions()
+
+    assert all(isinstance(componente.output_field, TextField) for componente in componentes[:2])
 
 
 @pytest.fixture

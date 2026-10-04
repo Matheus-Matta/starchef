@@ -1,4 +1,5 @@
 from django.db.models import Case, CharField, Count, F, Sum, Value, When
+from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Coalesce
 
 from apps.orders.models import OrderItem
@@ -13,8 +14,8 @@ def sales_by_waiter(orders, tenant_manager):
         .exclude(status__in=[OrderItem.STATUS_CANCELLED, OrderItem.STATUS_COMPED])
         .annotate(
             operator_code=Coalesce(
-                F(f"metafields__{CHAVE}"),
-                F(f"command_item__metafields__{CHAVE}"),
+                KeyTextTransform(CHAVE, "metafields"),
+                KeyTextTransform(CHAVE, "command_item__metafields"),
                 Value(""),
                 output_field=CharField(),
             ),
