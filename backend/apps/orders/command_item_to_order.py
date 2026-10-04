@@ -1,6 +1,25 @@
 from apps.orders.models import OrderItem, OrderItemAddon
 
 
+def copy_items_to_order(annotations, *, order, user):
+    """Copia itens e adicionais, registrando os eventos na transação atual."""
+    items = OrderItem.objects.bulk_create(
+        [to_order_item(annotation, order=order, user=user) for annotation in annotations]
+    )
+
+    # `bulk_create` pula `post_save`; sem a outbox explícita, a nuvem recebe o
+    # pedido sem as linhas que formam o total. Tudo permanece na transação da cobrança.
+    from apps.synchronization.services import outbox
+
+    for item in items:
+        outbox.record(item)
+
+    addons = copy_addons(annotations, items, order=order, user=user)
+    for addon in addons:
+        outbox.record(addon)
+    return items
+
+
 def to_order_item(annotation, *, order, user):
     """Copia preço e produção do consumo, sem reler o cadastro atual."""
     return OrderItem(
@@ -33,21 +52,20 @@ def to_order_item(annotation, *, order, user):
 
 def copy_addons(annotations, items, *, order, user):
     """Mantém no pedido os adicionais escolhidos enquanto estavam na comanda."""
-    OrderItemAddon.objects.bulk_create(
-        [
-            OrderItemAddon(
-                account=order.account,
-                restaurant=order.restaurant,
-                branch=order.branch,
-                item=item,
-                addon_id=addon.addon_id,
-                quantity=addon.quantity,
-                unit_price=addon.unit_price,
-                total_price=addon.total_price,
-                created_by=user,
-                updated_by=user,
-            )
-            for annotation, item in zip(annotations, items, strict=True)
-            for addon in annotation.addons.all()
-        ]
-    )
+    adicionais = [
+        OrderItemAddon(
+            account=order.account,
+            restaurant=order.restaurant,
+            branch=order.branch,
+            item=item,
+            addon_id=addon.addon_id,
+            quantity=addon.quantity,
+            unit_price=addon.unit_price,
+            total_price=addon.total_price,
+            created_by=user,
+            updated_by=user,
+        )
+        for annotation, item in zip(annotations, items, strict=True)
+        for addon in annotation.addons.all()
+    ]
+    return OrderItemAddon.objects.bulk_create(adicionais)

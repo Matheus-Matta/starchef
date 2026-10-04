@@ -22,7 +22,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.core.tenant import tenant_context
-from apps.orders.command_item_to_order import copy_addons, to_order_item
+from apps.orders.command_item_to_order import copy_items_to_order
 from apps.orders.models import CommandItem, Order, OrderItem
 
 #: Teto por chamada. Não é o limite do desenho — é o limite do GESTO: um caixa
@@ -239,10 +239,7 @@ def attach_commands_to_order(*, order, command_ids, user):
                 else "Nada a cobrar: nenhuma das comandas tem item pendente."
             )
 
-        criados = OrderItem.objects.bulk_create(
-            [to_order_item(anotacao, order=order, user=user) for anotacao in novos]
-        )
-        copy_addons(novos, criados, order=order, user=user)
+        criados = copy_items_to_order(novos, order=order, user=user)
         # `bulk_create` não dispara signal, então o total do pedido não se
         # move sozinho: o caixa puxava quatro cartões e via R$ 0,00.
         #
