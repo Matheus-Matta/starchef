@@ -39,6 +39,13 @@ class ApiException implements Exception {
   /// deu prazo: aí quem recebe decide o próprio.
   final Duration? retryAfter;
 
+  /// O servidor recusou a CREDENCIAL — só isso justifica apagar o login.
+  ///
+  /// 429 e 5xx dizem que o servidor não pôde atender agora, não que o token é
+  /// ruim. Depois de reiniciar o PC o PDV abre antes de o backend terminar de
+  /// subir, e tratar o 502 do proxy como recusa obrigava a logar de novo.
+  bool get isCredentialRefused => statusCode == 401;
+
   @override
   String toString() => message;
 }

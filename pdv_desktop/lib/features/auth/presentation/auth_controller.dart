@@ -56,10 +56,10 @@ class AuthController extends ChangeNotifier {
         'auth_refresh_failed',
         data: {'status': error.statusCode},
       );
-      // Sem resposta do servidor a sessão continua válida: quem falhou foi a
-      // renovação, e a operação offline não pode ser interrompida por isso.
-      // Uma recusa explícita, ao contrário, encerra a sessão.
-      if (error.statusCode != null) _handleSessionExpired();
+      // Sem resposta, ou com o servidor ocupado/subindo (429, 5xx), a sessão
+      // continua válida: quem falhou foi a renovação. Só a recusa do token
+      // encerra a sessão.
+      if (error.isCredentialRefused) _handleSessionExpired();
       return null;
     }
   }

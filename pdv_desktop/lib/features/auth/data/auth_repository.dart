@@ -136,7 +136,7 @@ class AuthRepository {
           );
         }
       } on ApiException catch (refreshError) {
-        if (refreshError.statusCode == null) {
+        if (!refreshError.isCredentialRefused) {
           return AuthLoginResult(session: stored, offline: true);
         }
         // Recusa definitiva: a credencial guardada não serve mais.
