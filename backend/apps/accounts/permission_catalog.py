@@ -120,6 +120,8 @@ PERMISSION_GROUPS = [
         MODULE_BASE,
         [
             ("devices.manage", "Impressoras e balanças", "Configurar impressoras e balanças."),
+            # Operar não é configurar: trocar a impressora da balança é `devices.manage`.
+            ("scale.operate", "Operar a Balança Rápida", "Pesar e lançar o prato na comanda pela estação de balança."),
             (
                 "topology.manage",
                 "Rede local de caixas",

@@ -47,6 +47,12 @@ class AuthUser {
   final bool isSuperuser;
   final List<String> permissions;
 
+  /// O perfil "Balança": entra direto na Balança Rápida e não vê o PDV.
+  ///
+  /// É pelo PERFIL, e não pela permissão `scale.operate`: o caixa também a
+  /// tem, e para ele a balança é uma das telas do PDV, não a única.
+  bool get isScaleOperator => profileType == 'scale';
+
   bool get canManageDevices =>
       isSuperuser ||
       profileType == 'admin' ||
