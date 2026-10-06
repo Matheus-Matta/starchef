@@ -299,12 +299,12 @@ def test_a_carga_gera_evento_de_caixa_aberto(como_nuvem, no_loja, conta, cenario
     )
 
 
-def test_fora_da_carga_a_nuvem_nao_empurra_caixa_para_baixo(como_nuvem, no_loja, conta,
-                                                            cenario):
-    """A semeadura vale SÓ no SNAPSHOT.
+def test_fora_da_carga_o_caixa_editado_na_nuvem_desce(como_nuvem, no_loja, conta, cenario):
+    """O painel da nuvem aprova, transfere e libera a sessão: isso desce.
 
-    No dia a dia a nuvem empurrando sessão de caixa para a loja brigaria com o
-    que a loja está escrevendo naquele instante.
+    Antes não descia, com o medo de brigar com o que a loja está escrevendo.
+    Quem impede a briga é `comanda_conflicts`: edição da loja que a nuvem
+    ainda não viu continua conflito (`test_caixa_e_terminal_sincronizam.py`).
     """
     from django.contrib.auth import get_user_model
 
@@ -325,7 +325,7 @@ def test_fora_da_carga_a_nuvem_nao_empurra_caixa_para_baixo(como_nuvem, no_loja,
     outbox.record(sessao)  # operação normal, não SNAPSHOT
     depois = SyncEvent.objects.filter(entity_type="cash_register").count()
 
-    assert depois == antes, "fora da carga, caixa só sobe — nunca desce"
+    assert depois == antes + 1, "a edição do caixa na nuvem não gerou evento para a loja"
 
 
 def test_a_nota_do_pedido_aberto_desce_junto(como_nuvem, no_loja, conta, cenario):

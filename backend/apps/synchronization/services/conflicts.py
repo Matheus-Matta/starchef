@@ -44,7 +44,7 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
         return APLICAR
     if remote_version < local_version:
         return _decidir_versao_antiga(entity_type, receiving_node_type)
-    if comanda_conflicts.nuvem_ja_conhece_a_versao_local(  # o zerar do painel na nuvem
+    if comanda_conflicts.outro_lado_ja_conhece_a_versao_local(  # painel, pedido da nuvem, terminal
             entity_type, receiving_node_type, local_instance, local_version):
         return APLICAR
     return _decidir_versao_nova(entity_type, receiving_node_type)

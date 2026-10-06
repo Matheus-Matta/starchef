@@ -189,14 +189,15 @@ def test_evento_velho_nao_reescreve_o_movimento(
     )
 
 
-def test_o_movimento_continua_subindo_so_da_loja():
-    """Mão única: a nuvem nunca empurra movimento de caixa para baixo.
+def test_o_movimento_sobe_e_desce_sem_ser_append_only():
+    """A sangria aprovada no painel da NUVEM precisa descer à loja.
 
-    É metade da razão de tirar o `immutable` ser seguro — a outra metade é a
-    ordem de versão, provada acima.
+    Era mão única (`local_to_cloud`), e o PDV ficava "aguardando aprovação" de
+    algo já aprovado. O que impede reescrita é a ordem de versão, provada
+    acima, e a regra de `comanda_conflicts` na loja.
     """
     entrada = registry.require("cash_movement")
-    assert entrada.flow == "local_to_cloud"
+    assert entrada.flow == "both"
     assert not entrada.immutable, (
         "o movimento de caixa tem ciclo de vida (pending → approved → "
         "cancelled); declará-lo append-only faz a nuvem parar na primeira etapa"

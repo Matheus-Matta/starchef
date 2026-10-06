@@ -143,6 +143,10 @@ _e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to
 # caixa à pessoa errada.
 _e("cash_station", "payments.CashStation", conflict_policy=CLOUD, dependencies=("restaurant", "user"),
    m2m_fields={"operators": "username"})
+# O terminal é `CLOUD` porque revogar é decisão do painel; a conexão (nome,
+# papel, `last_seen_at`) quem vê é a loja, e ela sobe pela regra de
+# `comanda_conflicts`. O id é derivado da instalação (`payments/terminals.py`):
+# loja e nuvem cadastram o MESMO terminal com o MESMO id.
 _e("pdv_terminal", "payments.PdvTerminal", conflict_policy=CLOUD, dependencies=("restaurant",))
 
 # 6-7. Cardápio, preços e fichas técnicas.
@@ -372,8 +376,17 @@ _e("idempotency_record", "core.IdempotencyRecord", conflict_policy=LOJA,
    # Não desce na carga inicial: uma loja nova não tem operação pendente para
    # deduplicar, e o histórico de chaves é grande e sem uso lá.
    seed_to_local=False)
-_e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("restaurant", "cash_station"),
+# O CAIXA DESCE TAMBÉM. Ele nasce na loja, mas o gerente aprova a sangria,
+# transfere e libera a sessão pelo painel da NUVEM — e com `local_to_cloud` a
+# nuvem nem gerava o evento: o PDV ficava "aguardando aprovação" de algo já
+# aprovado, e a próxima gravação da loja desfazia a aprovação lá em cima. Quem
+# decide se a versão da nuvem entra é `comanda_conflicts`: só quando a loja não
+# tem edição que a nuvem ainda não viu.
+#
+# `pdv_terminal` é dependência porque `opened_terminal`/`closed_terminal`
+# apontam para ele: sem o terminal do outro lado, a abertura não aplica.
+_e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="both",
+   dependencies=("restaurant", "cash_station", "pdv_terminal"),
    seed_to_local=True, essential_filter={"status__in": CAIXA_VIVO})
 # O movimento de caixa NÃO é append-only, e dizer que era custava dinheiro.
 #
@@ -392,14 +405,14 @@ _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="local_t
 # (dinheiro a mais de novo).
 #
 # O que protege contra reescrita não é o `immutable`, é a ordem de versão:
-# `conflicts.decide` IGNORA um evento cuja versão seja anterior à local, e a
-# entidade é de mão única (`local_to_cloud`), então a nuvem nunca empurra nada
-# para baixo. Um evento atrasado não ressuscita um movimento cancelado — há
-# teste para isso em `test_movimento_de_caixa_sincroniza.py`.
+# `conflicts.decide` IGNORA um evento cuja versão seja anterior à local. Um
+# evento atrasado não ressuscita um movimento cancelado — há teste para isso em
+# `test_movimento_de_caixa_sincroniza.py`. Ele desce como a sessão (a sangria
+# aprovada no painel da nuvem), pela mesma regra de `comanda_conflicts`.
 #
 # Ele desce junto da sessão porque o saldo do caixa aberto é a soma deles —
 # sem os movimentos, a sangria e o suprimento do turno sumiriam da conferência.
-_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="local_to_cloud",
+_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="both",
    dependencies=("cash_register",),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
 # Divergência de vendas: registrada num lado (o gerente, no fechamento) e
