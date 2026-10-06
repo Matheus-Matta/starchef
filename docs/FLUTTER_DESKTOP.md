@@ -114,7 +114,8 @@ hora (`core/network/response_cache.dart`, dentro do `ApiClient`):
 
 - Guarda só respostas GET de listas de cadastro: `/commands/`,
   `/menu/products/`, `/menu/categories/`, `/customers/`, `/tables/`,
-  `/payments/methods/`, `/cash-stations/`. Pedido, caixa e autenticação nunca —
+  `/payments/methods/`, `/cash-stations/`, `/printers/`. Pedido, caixa e
+  autenticação nunca —
   nada do cache decide pagamento ou fechamento; o servidor valida.
 - Chave: servidor + conta + usuário (do JWT) + rota + parâmetros ordenados (o
   restaurante vai na consulta). 120 entradas no máximo (sai a mais antiga),
@@ -126,6 +127,25 @@ hora (`core/network/response_cache.dart`, dentro do `ApiClient`):
   guardado na hora quando ele está inteiro e relê por trás se a cópia passou de
   10 s; se o servidor mudou, emite `realtime:pdv` e a tela redesenha. A tela de
   clientes mostra a última lista da mesma busca enquanto a leitura chega.
+- Faltando só PARTE do catálogo, busca só o que falta: a venda apaga comandas e
+  mesas, e depois dela sobem essas duas listas — não as seis, cardápio incluso.
+- A escolha da impressora do recibo lê `/printers/` pelo cache
+  (`PdvRepository.listCached`). Evento de `printers.printjob` (um por cupom)
+  não apaga nada; antes caía em "recurso desconhecido" e apagava o cache todo.
+- Requisição que leva 500 ms ou mais vai para o `pdv.log` como `api_lenta`
+  (método, rota, tempo, loja/nuvem): é a medida para a próxima otimização.
+
+### 5.2 Leitura do cartão da comanda
+
+Comanda só abre por casamento EXATO de código ou número, ignorando zeros à
+esquerda (`0017` é a 17, e só ela — `core/input/command_code_match.dart`). A aba
+Comandas abria "a única comanda que sobrou na lista filtrada" quando nada casava
+exato; com um texto antigo na busca, o cartão 17 abriu a 107. Antes de abrir, a
+comanda achada é conferida com o código lido; não batendo, o PDV avisa e não
+abre, e cada leitura vai ao `pdv.log` (`comanda_lida`). Nas telas que só leem
+comanda, o número lido aparece em letras grandes enquanto ela carrega
+(`core/widgets/scanned_command_overlay.dart`); na venda e na lista de pedidos,
+onde o leitor também lê produto, só depois de saber que é comanda.
 
 ## 6. Hardware: balanças e impressoras
 

@@ -61,6 +61,7 @@ mixin _PaymentSection on _HomePageShared {
 
   set cashSession(Map<String, dynamic>? value);
   String? get selectedRestaurantId;
+  Map<String, dynamic>? get selectedRestaurant;
   LocalDeviceAgent get deviceAgent;
 
   Future<void> _load();
@@ -462,6 +463,7 @@ mixin _PaymentSection on _HomePageShared {
         automatic: true,
       ),
       refreshCatalog: _load,
+      autoPrintReceipt: selectedRestaurant?['auto_print_receipt'] != false,
     );
   }
 }

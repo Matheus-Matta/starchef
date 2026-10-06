@@ -8,6 +8,7 @@ export const endpoints = {
   payment: "/reports/payments/",
   waiter: "/reports/waiters/",
   restaurant: "/reports/restaurants/",
+  coupon: "/reports/coupons/",
 };
 
 export const reportService = {
@@ -22,6 +23,10 @@ export const reportService = {
         ...filters,
       },
     });
+    return response.data || {};
+  },
+  async getCouponRedemptions(couponId, filters = {}) {
+    const response = await api.get(endpoints.coupon, { params: { ...filters, coupon: couponId } });
     return response.data || {};
   },
   async getProductSales(productId, filters = {}) {

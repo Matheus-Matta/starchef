@@ -99,6 +99,38 @@ void main() {
     expect(leituras.length, greaterThan(antes));
   });
 
+  test(
+    'depois de uma venda, só comandas e mesas vão ao servidor de novo',
+    () async {
+      // A venda mexe em comanda e mesa, e só elas saem do cache. Antes, faltar
+      // UMA lista fazia o PDV baixar as seis — o cardápio inteiro a cada venda.
+      final repo = repositorio();
+      await repo.loadCatalog('r1');
+      await repo.post('/orders/o1/pay/', const {'amount': 10});
+      leituras.clear();
+
+      final catalogo = await repo.loadCatalog('r1');
+
+      expect(leituras.toSet(), {
+        'GET /api/v1/tables/',
+        'GET /api/v1/commands/',
+      });
+      expect(catalogo.products.single['name'], 'X-Burger');
+    },
+  );
+
+  test('a lista de impressoras da venda seguinte vem do cache', () async {
+    final repo = repositorio();
+    final query = {'restaurant': 'r1', 'is_active': true, 'page_size': 100};
+    await repo.listCached('/printers/', query: query);
+    leituras.clear();
+
+    final impressoras = await repo.listCached('/printers/', query: query);
+
+    expect(leituras, isEmpty);
+    expect(impressoras, hasLength(1));
+  });
+
   test('outro restaurante não aproveita o catálogo deste', () async {
     final repo = repositorio();
     await repo.loadCatalog('r1');

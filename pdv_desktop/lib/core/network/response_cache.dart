@@ -8,7 +8,8 @@ import 'dart:convert';
 /// leitura nova substitui. Por isso:
 ///
 /// * só listas de cadastro entram (comandas, produtos, categorias, clientes,
-///   mesas, formas de pagamento, estações); pedido, caixa e autenticação,
+///   mesas, formas de pagamento, estações, impressoras); pedido, caixa e
+///   autenticação,
 ///   nunca — nada aqui decide pagamento nem fechamento;
 /// * a chave leva servidor, conta, usuário, rota e parâmetros (o restaurante
 ///   vai na consulta): outra conta no mesmo computador nunca vê a lista desta;
@@ -39,6 +40,8 @@ class ResponseCache {
     '/tables/': 'tables',
     '/payments/methods/': 'payments',
     '/cash-stations/': 'cash',
+    // A escolha da impressora do recibo lia esta lista a cada venda.
+    '/printers/': 'printers',
   };
 
   /// O que uma escrita em cada rota pode ter mudado. Pedido mexe em comanda
@@ -52,6 +55,7 @@ class ResponseCache {
     'payments': {'payments'},
     'cash-stations': {'cash'},
     'cash-register': {'cash'},
+    'printers': {'printers'},
   };
 
   static String? assuntoDe(String path) => _assuntos[path];
@@ -115,6 +119,13 @@ class ResponseCache {
   void invalidateForResource(String resource) {
     final app = resource.split('.').first;
     final modelo = resource.contains('.') ? resource.split('.').last : '';
+    if (app == 'printers') {
+      // Trabalho de impressão chega a CADA cupom. Caindo em "desconhecido",
+      // ele apagava o cache inteiro e o próximo gesto rebaixava o catálogo.
+      // Só o cadastro da impressora muda a lista.
+      if (modelo == 'printer') invalidate({'printers'});
+      return;
+    }
     final assuntos = <String>{
       if (app == 'orders') ...{'commands', 'tables'},
       if (app == 'menu') 'menu',

@@ -17,11 +17,37 @@ extension CatalogoDoPdv on PdvRepository {
   /// depois de uma mudança a leitura vai ao servidor.
   Future<PdvCatalog> loadCatalog(String restaurantId) async {
     final guardado = cachedCatalog(restaurantId);
-    if (guardado == null) return _loadCatalogFromServer(restaurantId);
+    if (guardado == null) return _completarDoServidor(restaurantId);
     if (_idadeDoCatalogo(restaurantId) > catalogRevalidateAfter) {
       unawaited(_revalidar(restaurantId, guardado));
     }
     return guardado;
+  }
+
+  /// Busca só as listas que faltam no cache; as outras vêm de lá.
+  ///
+  /// Uma venda apaga comandas e mesas, e nada mais. Exigir o catálogo inteiro
+  /// fazia o PDV baixar as seis listas — o cardápio inclusive — depois de
+  /// TODA venda. Agora sobem duas.
+  Future<PdvCatalog> _completarDoServidor(String restaurantId) async {
+    final consultas = _consultasDoCatalogo(restaurantId);
+    final guardadas = [
+      for (final (path, query, paginada) in consultas)
+        paginada ? _peekAll(path, query) : _peekOne(path, query),
+    ];
+    if (guardadas.every((lista) => lista == null)) {
+      return _loadCatalogFromServer(restaurantId);
+    }
+    final listas = await Future.wait([
+      for (var i = 0; i < consultas.length; i++)
+        if (guardadas[i] case final lista?)
+          Future.value(lista)
+        else if (consultas[i].$3)
+          listAll(consultas[i].$1, query: consultas[i].$2)
+        else
+          list(consultas[i].$1, query: consultas[i].$2),
+    ]);
+    return PdvCatalog.fromLists(listas);
   }
 
   Future<void> _revalidar(String restaurantId, PdvCatalog mostrado) async {

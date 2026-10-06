@@ -7,12 +7,13 @@ part of 'home_page.dart';
 /// Escolhe uma impressora uma vez para os dois documentos da venda paga.
 mixin _PaidReceiptSection on _HomePageShared {
   LocalDeviceAgent get deviceAgent;
+  PdvRepository get repository;
 
   Future<String?> _chooseSalePrinter(Map<String, dynamic> order) async {
     final saleRestaurantId = restaurantId;
     final masterId = widget.preferences.masterPrinterId;
     try {
-      final printers = await _list(
+      final printers = await repository.listCached(
         '/printers/',
         query: {
           'restaurant': saleRestaurantId,

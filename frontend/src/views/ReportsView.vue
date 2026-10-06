@@ -80,6 +80,7 @@
     </div>
 
     <CashMovementsReport v-if="section === 'cash'" :report="report" :bar-options="barOptions" />
+    <CouponsReport v-if="section === 'coupon'" :report="report" :filters="{ date_from: dateFrom, date_to: dateTo, restaurant: selectedRestaurantId }" />
 
     <div v-if="section === 'sales'" class="responsive-kpi-grid">
       <StatCard label="Total vendido" :value="money(report.total)" tone="success" caption="Periodo selecionado">
@@ -240,6 +241,7 @@ import Card from "../components/display/Card.vue";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import CashMovementsReport from "../components/reports/CashMovementsReport.vue";
+import CouponsReport from "../components/reports/CouponsReport.vue";
 import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
 import { api, API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";

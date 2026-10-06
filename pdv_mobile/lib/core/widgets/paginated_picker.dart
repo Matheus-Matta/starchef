@@ -22,6 +22,8 @@ class PaginatedPicker extends StatefulWidget {
     required this.itemBuilder,
     required this.searchHint,
     this.emptyMessage = 'Nada encontrado.',
+    this.header,
+    this.filterKey,
   });
 
   final PageFetcher fetch;
@@ -29,6 +31,13 @@ class PaginatedPicker extends StatefulWidget {
   itemBuilder;
   final String searchHint;
   final String emptyMessage;
+
+  /// Entre a busca e a lista (os chips de categoria, por exemplo).
+  final Widget? header;
+
+  /// Um filtro de fora da busca. Mudou, a lista recomeça da página 1 — e o
+  /// texto digitado continua valendo dentro do filtro novo.
+  final Object? filterKey;
 
   @override
   State<PaginatedPicker> createState() => _PaginatedPickerState();
@@ -50,6 +59,22 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
     super.initState();
     _scroll.addListener(_onScroll);
     _load(reset: true);
+  }
+
+  @override
+  void didUpdateWidget(PaginatedPicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filterKey != widget.filterKey) _reloadWhenIdle();
+  }
+
+  /// Uma página do filtro anterior pode estar a caminho: recomeçar só depois
+  /// dela, senão as linhas antigas entrariam na lista nova.
+  Future<void> _reloadWhenIdle() async {
+    while (_loading) {
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      if (!mounted) return;
+    }
+    await _load(reset: true);
   }
 
   @override
@@ -139,6 +164,7 @@ class _PaginatedPickerState extends State<PaginatedPicker> {
             ),
           ),
         ),
+        ?widget.header,
         Expanded(
           child: Container(
             // Fundo próprio atrás da lista: os cartões ficam em `surface` e o

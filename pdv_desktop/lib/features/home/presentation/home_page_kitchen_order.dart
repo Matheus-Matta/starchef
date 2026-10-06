@@ -97,8 +97,37 @@ mixin _KitchenOrderSection on _HomePageShared {
     }
     if (!mounted || cancelled == null) return;
 
-    if (!mounted) return;
+    unawaited(_printCancellationReceipt(cancelled));
     await _goHome();
+  }
+
+  /// O comprovante que o servidor montou, quando o restaurante o liga.
+  ///
+  /// Não segura a volta para a tela inicial: o pedido JÁ está cancelado, e a
+  /// falha do papel vira alerta com o caminho para reimprimir.
+  Future<void> _printCancellationReceipt(Map<String, dynamic> cancelled) async {
+    final semPapel = '${cancelled['cancellation_print_error'] ?? ''}';
+    final job = cancelled['cancellation_print'];
+    try {
+      if (semPapel.isNotEmpty) throw ApiException(semPapel);
+      if (job is! Map) return;
+      final printJob = Map<String, dynamic>.from(job);
+      final printer = printJob['printer'];
+      if (printer is! Map) {
+        throw const ApiException('O comprovante voltou sem impressora.');
+      }
+      await deviceAgent.printJobManually(
+        printJob,
+        Map<String, dynamic>.from(printer),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _error(
+        error,
+        title: 'O pedido foi cancelado, mas o comprovante não saiu',
+        action: 'Confira a impressora e reimprima pela tela de Pedidos.',
+      );
+    }
   }
 
   /// Envia os itens pendentes para produção.

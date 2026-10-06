@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/input/command_code_match.dart';
+import '../../../core/logging/app_logger.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/widgets/scanned_command_overlay.dart';
 import '../data/command_pager.dart';
 import '../data/command_repository.dart';
 
@@ -85,8 +88,30 @@ mixin CommandsLoading<T extends StatefulWidget> on State<T> {
       recado = '';
     });
     try {
-      final comanda = await repository.byCode(lido);
+      final comanda = await mostrandoComandaLida(
+        context,
+        lido,
+        () => repository.byCode(lido),
+      );
       if (!mounted) return;
+      final confere = comandaCasaComLido(comanda, lido);
+      AppLogger.instance.info(
+        'comanda_lida',
+        data: {
+          'lido': lido,
+          'numero': '${comanda['number'] ?? ''}',
+          'confere': confere,
+        },
+      );
+      if (!confere) {
+        // A última trava: abrir a comanda errada é lançar na conta de outro.
+        setState(
+          () => erro =
+              'O leitor leu ${numeroLidoParaExibir(lido)}, mas a comanda '
+              'encontrada é a ${comanda['number'] ?? '?'}. Passe o cartão de novo.',
+        );
+        return;
+      }
       setState(() => selecionada = Map<String, dynamic>.from(comanda));
       // O cartão pode ser de uma comanda que ainda não desceu na rolagem: ela
       // abre do mesmo jeito. A que já está na grade ganha o estado novo.

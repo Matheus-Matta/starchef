@@ -43,6 +43,97 @@ mixin _ScanSection on _HomePageShared {
     return codeLookup ??= CodeLookupService(api, accessToken: token);
   }
 
+  /// A aba Comandas: abre o cartão lido — livre ou ocupado — e SÓ ele.
+  ///
+  /// Antes caía na busca em memória, que abria "a única comanda que sobrou na
+  /// lista filtrada" quando nada casava exato: com a busca guardando um texto
+  /// antigo, o cartão 17 abriu a comanda 107.
+  Future<void> _openCommandFromCode(String lido) =>
+      mostrandoComandaLida(context, lido, () async {
+        final ativas = commands.where((item) => item['is_active'] != false);
+        var comanda = comandaLidaNaLista(ativas, lido);
+        if (comanda == null) {
+          // A lista pode não ter descido inteira: o servidor responde.
+          final lookup = _codeLookup;
+          if (lookup == null) return;
+          comanda = (await lookup.findCommand(lido)).command;
+        }
+        if (!mounted || comanda == null) return;
+        if (!_conferirComandaLida(lido, comanda)) return;
+        await _openCommand(comanda);
+      });
+
+  /// A comanda achada é mesmo a do cartão lido? Senão, avisa e NÃO abre.
+  ///
+  /// A última trava antes de lançar na conta de alguém. As buscas já casam
+  /// exato, mas uma rota nova que esqueça disso não pode abrir a 107 quando o
+  /// cartão é o 17. A leitura crua vai para o log: é ela que diz, depois, se o
+  /// leitor trocou dígitos ou se o casamento falhou.
+  bool _conferirComandaLida(String lido, Map<String, dynamic> comanda) {
+    final confere = comandaCasaComLido(comanda, lido);
+    AppLogger.instance.info(
+      'comanda_lida',
+      data: {
+        'lido': lido,
+        'numero': '${comanda['number'] ?? ''}',
+        'codigo': '${comanda['code'] ?? ''}',
+        'confere': confere,
+      },
+    );
+    if (confere) return true;
+    _error(
+      ApiException(
+        'O leitor leu ${numeroLidoParaExibir(lido)}, mas a comanda encontrada '
+        'é a ${comanda['number'] ?? '?'}. Nada foi aberto: passe o cartão de '
+        'novo.',
+      ),
+    );
+    return false;
+  }
+
+  /// O cartão lido vira o DESTINO do que está na tela.
+  ///
+  /// Com rascunho no ar, anexa — sem tocar no servidor e sem perder o que já
+  /// foi passado. Com pedido aberto, abre o pedido daquele cartão, que é o que
+  /// a leitura sempre fez nas outras telas: o operador está dizendo "agora é
+  /// esta comanda".
+  void _useCommandFromCode(Map<String, dynamic> comanda) {
+    // Cartão LIVRE não entra: não há consumo a cobrar.
+    //
+    // A mesma regra que a conta agrupada já aplica no servidor
+    // (`_assert_source_is_mergeable`), e de propósito com a mesma frase — a
+    // recusa precisa ser a mesma nos dois lugares, senão o operador aprende
+    // duas explicações para o mesmo "não".
+    //
+    // Sem isto, passar um cartão vazio por engano prendia um pedido novo a um
+    // cartão que ninguém estava usando, e alguém tinha de cancelar depois.
+    if (!comandaTemContaAberta(comanda)) {
+      _error(
+        ApiException(
+          'A comanda ${comanda['number'] ?? ''} não tem um pedido aberto: '
+          'não há nada a cobrar nela.',
+        ),
+      );
+      return;
+    }
+    // A cópia da lista local traz os campos que a tela já carregou (a mesa
+    // vinculada, entre eles); a do servidor é o retrato mais novo. Preferir a
+    // local mantém o cartão idêntico ao que está desenhado ao lado.
+    final local = commands.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => '${item?['id']}' == '${comanda['id']}',
+      orElse: () => null,
+    );
+    final escolhida = local ?? comanda;
+
+    if (_draftIsLive) {
+      _attachCommandToDraftDirectly(escolhida);
+      return;
+    }
+    // Pedido já aberto: o cartão lido é "agora é esta comanda", que é o que a
+    // leitura sempre fez nas outras telas.
+    unawaited(_openCommand(escolhida));
+  }
+
   /// Um código chegou — de onde quer que tenha vindo.
   Future<void> _onCodeScanned(ScannedCode scanned) async {
     switch (_currentScreen) {
@@ -55,7 +146,7 @@ mixin _ScanSection on _HomePageShared {
         // campo de busca nenhum, então usa a mesma consulta ao banco local
         // que a tela inicial usa — robusta mesmo com `commands` desatualizado.
         if (orderType == 'command') {
-          _onCommandSearchSubmitted(scanned.value);
+          await _openCommandFromCode(scanned.value);
         } else {
           await _openOrderFromCommandCode(scanned.value);
         }

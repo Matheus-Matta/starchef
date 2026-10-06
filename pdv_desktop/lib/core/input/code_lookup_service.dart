@@ -1,4 +1,5 @@
 import '../network/api_client.dart';
+import 'command_code_match.dart';
 import '../network/api_exception.dart';
 import 'code_resolution.dart';
 
@@ -75,10 +76,16 @@ class CodeLookupService {
     for (final raw in (search['results'] as List? ?? const [])) {
       if (raw is! Map) continue;
       final command = Map<String, dynamic>.from(raw);
-      for (final field in const ['code', 'number']) {
-        if ('${command[field] ?? ''}'.trim() == normalized) {
-          return CodeResolution.command(command, field: field);
-        }
+      // `0017` digitado ou lido é a comanda 17 — e só ela (a busca do
+      // servidor é por "contém", e devolve a 117 e a 170 também).
+      if (comandaCasaComLido(command, normalized)) {
+        final porCodigo = comandaCasaComLido({
+          'code': command['code'],
+        }, normalized);
+        return CodeResolution.command(
+          command,
+          field: porCodigo ? 'code' : 'number',
+        );
       }
     }
     return const CodeResolution.none();

@@ -814,6 +814,7 @@ class OrderViewSet(BaseTenantViewSet):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
+        vazio = order_is_empty(order)
         try:
             order = cancel_order(
                 order,
@@ -825,7 +826,13 @@ class OrderViewSet(BaseTenantViewSet):
             )
         except ValidationError as exc:
             return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(self.get_serializer(order).data)
+        data = dict(self.get_serializer(order).data)
+        # O comprovante sai para QUEM cancelou; pedido vazio nunca.
+        if order.restaurant.print_cancellation_receipt and not vazio:
+            from apps.printers.cancellation_receipt import cancellation_print_response
+
+            data.update(cancellation_print_response(order=order, user=request.user))
+        return Response(data)
 
 
     @action(detail=True, methods=["post"], url_path="print")

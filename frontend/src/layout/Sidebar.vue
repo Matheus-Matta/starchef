@@ -345,6 +345,7 @@ const groups = computed(() =>
             { id: "relatorio-produtos", label: "Produtos" },
             { id: "relatorio-pagamentos", label: "Pagamentos" },
             { id: "relatorio-caixa", label: "Caixa" },
+            { id: "relatorio-cupons", label: "Cupons" },
             { id: "relatorio-garcons", label: "Garçons" },
             { id: "relatorio-restaurantes", label: "Restaurantes" },
           ],

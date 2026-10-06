@@ -88,7 +88,11 @@ extension OrdersQueries on OrdersRepository {
     return ResourcePage.from(response);
   }
 
-  Future<ResourcePage> products({int page = 1, String search = ''}) async {
+  Future<ResourcePage> products({
+    int page = 1,
+    String search = '',
+    String? categoryId,
+  }) async {
     final response = await read(
       '/menu/products/',
       query: {
@@ -98,10 +102,24 @@ extension OrdersQueries on OrdersRepository {
         'page': page,
         'page_size': _pageSize,
         if (search.trim().isNotEmpty) 'search': search.trim(),
+        'category': ?categoryId,
       },
     );
     return ResourcePage.from(response);
   }
+
+  /// As categorias ativas, na ordem do cadastro — a mesma do cardápio.
+  Future<List<Map<String, dynamic>>> productCategories() async => _rows(
+    await read(
+      '/menu/categories/',
+      query: {
+        'restaurant': session.user.restaurantId,
+        'is_active': true,
+        'ordering': 'display_order,name',
+        'page_size': 100,
+      },
+    ),
+  );
 
   Future<List<Map<String, dynamic>>> paymentMethods() async => _rows(
     await read(

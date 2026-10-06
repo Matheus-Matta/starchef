@@ -85,6 +85,35 @@ void main() {
       },
     );
 
+    test('impressoras entram; só evento ou escrita de impressora as apaga', () {
+      // A escolha da impressora do recibo buscava a lista a CADA venda.
+      final cache = ResponseCache()
+        ..store(escopo, '/printers/', {'restaurant': 'r1'}, lista('Caixa'));
+      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNotNull);
+
+      cache.invalidateForWrite('/orders/abc/pay/');
+      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNotNull);
+
+      cache.invalidateForResource('printers.printer');
+      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNull);
+
+      cache
+        ..store(escopo, '/printers/', {'restaurant': 'r1'}, lista('Caixa'))
+        ..invalidateForWrite('/printers/p1/');
+      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNull);
+    });
+
+    test('o cupom impresso não apaga o cache do catálogo', () {
+      final cache = ResponseCache()
+        ..store(escopo, '/menu/products/', null, lista('p'))
+        ..store(escopo, '/printers/', null, lista('Caixa'));
+
+      cache.invalidateForResource('printers.printjob');
+
+      expect(cache.peek(escopo, '/menu/products/', null), isNotNull);
+      expect(cache.peek(escopo, '/printers/', null), isNotNull);
+    });
+
     test('limite de entradas tira a mais antiga', () {
       final cache = ResponseCache(maxEntries: 2)
         ..store(escopo, '/commands/', {'p': 1}, lista('1'))

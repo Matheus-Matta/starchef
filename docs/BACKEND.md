@@ -282,6 +282,23 @@ Rápida: `quick_scale_command_timeout_seconds` (10–600 s, padrão 45) e
 `quick_scale_stability_seconds` (1–30 s, padrão 3). A API envia esses campos ao
 PDV e a sincronização cloud-to-local os entrega aos terminais da loja.
 
+Duas chaves de impressão no cadastro do restaurante, também sincronizadas:
+`auto_print_receipt` (padrão ligado) decide se o PDV imprime o recibo sozinho
+ao concluir a venda — o botão "Imprimir recibo" e a NFC-e não dependem dela —
+e `print_cancellation_receipt` (padrão desligado) faz o `POST /orders/{id}/cancel/`
+gerar o comprovante do pedido cancelado (`apps/printers/cancellation_receipt.py`,
+`PrintJob.TYPE_ORDER_CANCEL`) e devolvê-lo em `cancellation_print` para o
+terminal imprimir. Pedido vazio descartado nunca gera comprovante, e a falta de
+impressora não derruba o cancelamento: vem em `cancellation_print_error`. O
+mesmo comprovante é reimpresso por `POST /orders/{id}/print/` com
+`job_type=order_cancellation`, com a chave ligada ou não.
+
+`GET /api/v1/reports/coupons/` (`apps/reports/coupons.py`) é o relatório por
+cupom: usos, `discount` (soma dos resgates), `net` (o que os pedidos cobraram) e
+`gross` (`net + discount`, somando valores já arredondados), mais `totals`.
+Só pedido pago entra. `?coupon=<id>` devolve cada uso com o CPF mascarado;
+`export=csv` exporta. Período e escopo seguem os outros relatórios.
+
 - `POST /api/v1/orders/{id}/checkout/` grava desconto, taxa, CPF e cupom e recalcula o total **sem avançar o pedido** (`close_order(marcar_aguardando=False)`); quem avança é o primeiro recebimento, e cancelar o último devolve o pedido a `open`. O `/close/` segue marcando `awaiting_payment` para o PDV desktop e o app. Ver `docs/FLUXO_PAGAMENTO_EMISSAO_FISCAL.md` §2.
 - `POST /api/v1/commands/bulk-reset/` zera comandas sem apagar histórico (`apps/restaurants/command_reset.py`) e `GET /api/v1/commands/{id}/history/` devolve a linha do tempo do cartão (`command_history.py`). Ver `docs/CONTA_AGRUPADA_COMANDAS.md`.
 - `Restaurant.cash_closing_tolerance` (padrão R$ 0,50, 0–100, espelhada na filial): diferença de gaveta até a margem, em falta ou sobra, fecha o caixa sem aprovação; acima, `pending_manager_approval`. Esperado, contado e diferença ficam gravados como são.
