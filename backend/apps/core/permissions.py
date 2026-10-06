@@ -115,8 +115,10 @@ class CanUseOrManageDevices(BasePermission):
         codes = effective_permission_codes(request.user)
         if "*" in codes or "devices.manage" in codes:
             return True
+        # A estação de balança LÊ balanças e impressoras para operar; mudar
+        # a configuração delas continua pedindo `devices.manage`.
         return request.method in {"GET", "HEAD", "OPTIONS"} and bool(
-            {"orders.view", "orders.manage", "payments.manage"} & codes
+            {"orders.view", "orders.manage", "payments.manage", "scale.operate"} & codes
         )
 
 
@@ -128,5 +130,5 @@ class CanOperateScale(BasePermission):
             return True
         codes = effective_permission_codes(request.user)
         return "*" in codes or bool(
-            {"orders.manage", "payments.manage", "devices.manage"} & codes
+            {"orders.manage", "payments.manage", "devices.manage", "scale.operate"} & codes
         )

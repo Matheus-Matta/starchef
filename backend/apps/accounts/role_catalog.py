@@ -19,6 +19,7 @@ CODE_CASHIER = "cashier"
 CODE_MANAGER = "manager"
 CODE_ADMIN = "admin"
 CODE_ECOMMERCE = "ecommerce"
+CODE_SCALE = "scale"
 
 # Garçom: abrir, editar e acompanhar os próprios pedidos e as mesas/comandas.
 _WAITER_CODES = [
@@ -47,6 +48,9 @@ _CASHIER_CODES = _WAITER_CODES + [
     "cash.withdrawal",
     "cash.supply",
     "payments.manage",
+    # O caixa já operava a balança pelo nível do perfil; o código deixa isso
+    # explícito no catálogo, igual ao perfil Balança.
+    "scale.operate",
 ]
 
 # Gerente: tudo do caixa + controle da operação (cardápio, equipamentos,
@@ -79,6 +83,17 @@ _ECOMMERCE_CODES = [
     "storefront.edit",
     "storefront.publish",
     "storefront.assets",
+]
+
+
+# Balança: o operador da estação de pesagem do self-service. Passa o cartão, o
+# prato é pesado e o peso entra na comanda — e só. Como o E-commerce, é uma
+# especialidade fora da escada do salão: não vê pedido, não abre caixa, não
+# cancela, não configura equipamento. `menu.view` porque a estação mostra os
+# produtos por quilo e os adicionais.
+_SCALE_CODES = [
+    "scale.operate",
+    "menu.view",
 ]
 
 
@@ -129,6 +144,15 @@ SYSTEM_ROLES = [
         "name": "E-commerce",
         "rank": 5,
         "permissions": _dedupe(_ECOMMERCE_CODES),
+        "max_discount_percent": 0,
+        "is_account_admin": False,
+    },
+    {
+        "code": CODE_SCALE,
+        "name": "Balança",
+        # Abaixo do garçom: nenhuma regra de "pelo menos garçom" vale para ele.
+        "rank": 4,
+        "permissions": _dedupe(_SCALE_CODES),
         "max_discount_percent": 0,
         "is_account_admin": False,
     },

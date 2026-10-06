@@ -19,6 +19,7 @@ import '../features/auth/data/auth_repository.dart';
 import '../features/auth/presentation/auth_controller.dart';
 import '../features/auth/presentation/login_page.dart';
 import '../features/home/presentation/home_page.dart';
+import '../features/scale/presentation/scale_window_page.dart';
 
 class StarChefApp extends StatefulWidget {
   const StarChefApp({
@@ -183,6 +184,14 @@ class _StarChefAppState extends State<StarChefApp> with WindowListener {
         if (!_auth.initialized) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        // O perfil Balança não passa pelo PDV: abre direto na estação.
+        if (_auth.session?.user.isScaleOperator == true) {
+          return ScaleWindowPage(
+            controller: _auth,
+            preferences: widget.preferences,
+            onClose: onWindowClose,
           );
         }
         return _auth.isAuthenticated
