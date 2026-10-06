@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.payments.models import CashRegister, PdvTerminal
+from apps.payments.terminal_identity import terminal_id
 
 
 class CashSessionConflict(ValidationError):
@@ -118,6 +119,7 @@ def resolve_terminal(
     ).first()
     if terminal is None:
         terminal = PdvTerminal(
+            id=terminal_id(account, installation_id),
             account=account,
             installation_id=installation_id,
             name=str(name or "").strip()[:120],

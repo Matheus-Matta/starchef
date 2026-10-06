@@ -143,20 +143,18 @@ def test_a_venda_desce_para_a_loja(como_nuvem, conta, no_loja):
         assert registry.flows_to_cloud(entidade)
 
 
-def test_fiscal_e_caixa_NAO_descem(como_nuvem, conta, no_loja):
-    """E não é esquecimento: eles não desviam, então não há o que descer.
+def test_fiscal_NAO_desce(como_nuvem, conta, no_loja):
+    """E não é esquecimento: a nota não desvia, então não há o que descer.
 
-    Nota fiscal e sessão de caixa nunca são gravadas na nuvem pelo terminal
+    Nota fiscal nunca é gravada na nuvem pelo terminal
     (`CloudFallback.caminhosQueNuncaDesviam`), porque dois emissores de número
-    de nota ou duas sessões no mesmo turno não se resolvem com sincronização.
+    de nota não se resolvem com sincronização.
     """
     from apps.synchronization.services.registry import registry
 
-    for entidade in ["invoice", "cash_register"]:
-        if registry.get(entidade) is None:
-            continue
-        assert not registry.flows_to_local(entidade), (
-            f"`{entidade}` não deve descer: ela nunca nasce na nuvem"
+    if registry.get("invoice") is not None:
+        assert not registry.flows_to_local("invoice"), (
+            "`invoice` não deve descer: ela nunca nasce na nuvem"
         )
 
 

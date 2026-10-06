@@ -42,7 +42,7 @@ def test_retrato_do_lote_custa_duas_consultas_para_centenas_de_eventos(
     with django_assert_num_queries(2):
         with comanda_conflicts.lote(eventos):
             respostas = {
-                comanda_conflicts.nuvem_ja_conhece_a_versao_local(
+                comanda_conflicts.outro_lado_ja_conhece_a_versao_local(
                     "command_item", NodeType.LOCAL, linha, local)
                 for linha in linhas
             }

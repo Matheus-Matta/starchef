@@ -148,7 +148,35 @@ com os itens, e a versão da loja subia e desfazia o zerar na nuvem também.
 linhas da comanda, a versão mais nova da nuvem é APLICADA quando a versão local
 é uma que a nuvem já conhece: entregue (evento de saída confirmado) ou recebida
 dela (evento de entrada aplicado). Edição da loja ainda sem confirmação segue
-sendo conflito. Pedido, pagamento e fiscal não entram na regra.
+sendo conflito. Pagamento e fiscal não entram na regra.
+
+A mesma regra vale, com um recorte, para outras três famílias:
+
+| Linhas | Quem recebe | Quando a versão do outro lado entra |
+|---|---|---|
+| Comanda (`command*`) | loja | este nó não tem edição que o outro não viu |
+| Pedido (`order`, `order_item`, `order_item_addon`, `order_batch`) | loja | idem, **e** a linha veio da nuvem |
+| Caixa (`cash_register`, `cash_movement`) | loja | idem |
+| Terminal (`pdv_terminal`) | nuvem | idem |
+
+- **Pedido.** O PDV abre o pedido na nuvem com a loja fora. Ele nasce vazio e
+  ganha o total no primeiro item; a atualização com o total virava conflito e a
+  loja mostrava R$ 0,00. Pedido que nunca desceu da nuvem continua conflito.
+- **Caixa.** Abre e fecha na loja, mas o painel da nuvem aprova a sangria,
+  transfere e libera a sessão. As duas entidades eram `local_to_cloud` e a
+  nuvem nem gerava o evento: o PDV esperava uma aprovação já dada. Agora são
+  `both`.
+- **Terminal.** É "nuvem vence" porque revogar é decisão do painel, mas quem o
+  vê conectar é a loja, e cada conexão virava conflito na nuvem. Uma revogação
+  que a loja ainda não confirmou continua protegida. O id do terminal é
+  derivado da instalação (`payments/terminal_identity.py`): loja e nuvem
+  cadastram o mesmo terminal com o mesmo id, em vez de dois `uuid4` que o
+  índice único (conta, instalação) recusava, travando a sessão de caixa que
+  apontava para ele.
+
+Um evento que já virou conflito não volta sozinho para a fila. O pedido que
+ficou com total zerado se conserta com
+`manage.py repair_order_totals --order <id> --apply`, na loja.
 
 A conferência é em LOTE (`services/comanda_conflicts.py`): duas consultas para o
 lote recebido inteiro, não uma por evento — o zerar de 500 comandas chega como
