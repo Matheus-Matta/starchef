@@ -20,6 +20,7 @@ mixin _KitchenOrderSection on _HomePageShared {
 
   Map<String, dynamic>? get activeOrder;
   set activeOrder(Map<String, dynamic>? value);
+  Map<String, dynamic>? get selectedRestaurant;
   List<Map<String, dynamic>> get orderItems;
 
   Future<void> _goHome();
@@ -51,7 +52,8 @@ mixin _KitchenOrderSection on _HomePageShared {
       cancelled = await _work(
         () => api.post(
           '/orders/${order['id']}/cancel/',
-          body: {'reason': reason},
+          // Este terminal imprime o comprovante (ver `_printCancellationReceipt`).
+          body: {'reason': reason, 'print_on_terminal': true},
           accessToken: token,
         ),
         errorTitle: 'Não foi possível cancelar o pedido',
@@ -89,7 +91,11 @@ mixin _KitchenOrderSection on _HomePageShared {
       cancelled = await _work(
         () => api.post(
           '/orders/${order['id']}/cancel/',
-          body: {'reason': reason, 'cash_password': ?cashPassword},
+          body: {
+            'reason': reason,
+            'cash_password': ?cashPassword,
+            'print_on_terminal': true,
+          },
           accessToken: token,
         ),
         errorTitle: 'Não foi possível cancelar o pedido',
@@ -110,7 +116,21 @@ mixin _KitchenOrderSection on _HomePageShared {
     final job = cancelled['cancellation_print'];
     try {
       if (semPapel.isNotEmpty) throw ApiException(semPapel);
-      if (job is! Map) return;
+      if (job is! Map) {
+        // O servidor não mandou comprovante: a opção está desligada NO
+        // servidor que este terminal usa (ou ele é anterior a ela). O log diz
+        // qual, para não depender de adivinhar na loja.
+        AppLogger.instance.info(
+          'comprovante_cancelamento_nao_veio',
+          data: {
+            'pedido': '${cancelled['id']}',
+            'opcao_no_restaurante':
+                '${selectedRestaurant?['print_cancellation_receipt']}',
+            'servidor': api.baseUrl,
+          },
+        );
+        return;
+      }
       final printJob = Map<String, dynamic>.from(job);
       final printer = printJob['printer'];
       if (printer is! Map) {

@@ -831,7 +831,10 @@ class OrderViewSet(BaseTenantViewSet):
         if order.restaurant.print_cancellation_receipt and not vazio:
             from apps.printers.cancellation_receipt import cancellation_print_response
 
-            data.update(cancellation_print_response(order=order, user=request.user))
+            data.update(cancellation_print_response(
+                order=order, user=request.user,
+                terminal_prints=bool(request.data.get("print_on_terminal")),
+            ))
         return Response(data)
 
 

@@ -443,6 +443,19 @@ class ApiClient {
   /// o aplicativo parar de falar com a API. Percent-encoding em vez de tirar
   /// os acentos: o servidor desfaz (`unquote`) e o nome chega inteiro no
   /// cadastro do terminal.
+  /// Quem é este terminal — na loja E na nuvem.
+  ///
+  /// O desvio para a nuvem mandava só o token, e lá o pagamento chegava "sem
+  /// terminal": o servidor imprimia o recibo sozinho e a sessão de caixa não
+  /// reconhecia a máquina.
+  void _addTerminalHeaders(Map<String, String> headers) {
+    final installation = installationId ?? '';
+    if (installation.isEmpty) return;
+    headers['X-Terminal-Id'] = installation;
+    final label = terminalLabel ?? '';
+    if (label.isNotEmpty) headers['X-Terminal-Name'] = _headerSafe(label);
+  }
+
   static String _headerSafe(String value) {
     final needsEncoding = value.codeUnits.any((unit) => unit > 127);
     return needsEncoding ? Uri.encodeComponent(value) : value;
@@ -465,14 +478,7 @@ class ApiClient {
         headers['Authorization'] = 'Bearer $accessToken';
       }
       if (operationId != null) headers['Idempotency-Key'] = operationId;
-      final installation = installationId ?? '';
-      if (installation.isNotEmpty) {
-        headers['X-Terminal-Id'] = installation;
-        final label = terminalLabel ?? '';
-        if (label.isNotEmpty) {
-          headers['X-Terminal-Name'] = _headerSafe(label);
-        }
-      }
+      _addTerminalHeaders(headers);
       final request = http.Request(method, uri)..headers.addAll(headers);
       if (body != null) request.body = jsonEncode(body);
       final streamed = await _client.send(request).timeout(requestTimeout);

@@ -91,6 +91,7 @@ extension ApiClientFallback on ApiClient {
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (accessToken != null) headers['Authorization'] = 'Bearer $accessToken';
     if (operationId != null) headers['Idempotency-Key'] = operationId;
+    _addTerminalHeaders(headers);
     try {
       final pedido = http.Request(method, uri)..headers.addAll(headers);
       if (body != null) pedido.body = jsonEncode(body);

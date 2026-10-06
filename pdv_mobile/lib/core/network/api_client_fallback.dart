@@ -64,9 +64,7 @@ extension ApiClientFallback on ApiClient {
       final uri = Uri.parse(
         '${baseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '')}/health/',
       );
-      final resposta = await _http
-          .get(uri)
-          .timeout(const Duration(seconds: 3));
+      final resposta = await _http.get(uri).timeout(const Duration(seconds: 3));
       return resposta.statusCode >= 200 && resposta.statusCode < 500;
     } catch (_) {
       return false;
@@ -88,6 +86,7 @@ extension ApiClientFallback on ApiClient {
     if (accessToken?.isNotEmpty ?? false) {
       pedido.headers['authorization'] = 'Bearer $accessToken';
     }
+    _addTerminalHeaders(pedido);
     if (idempotencyKey?.isNotEmpty ?? false) {
       pedido.headers['Idempotency-Key'] = idempotencyKey!;
     }

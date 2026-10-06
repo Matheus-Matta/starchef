@@ -59,10 +59,7 @@ extension ApiClientTransport on ApiClient {
     if (token?.isNotEmpty ?? false) {
       request.headers['authorization'] = 'Bearer $token';
     }
-    if (_terminalId?.isNotEmpty ?? false) {
-      request.headers['X-Terminal-Id'] = _terminalId!;
-      request.headers['X-Terminal-Name'] = 'PDV Mobile';
-    }
+    _addTerminalHeaders(request);
     if (idempotencyKey?.isNotEmpty ?? false) {
       request.headers['Idempotency-Key'] = idempotencyKey!;
     }

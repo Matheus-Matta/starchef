@@ -65,8 +65,13 @@ def cancellation_receipt_text(order):
     return "\n".join(lines)
 
 
-def register_cancellation_receipt(*, order, user, printer=None):
-    """Cria o job do comprovante. Quem imprime é o terminal que pediu."""
+def register_cancellation_receipt(*, order, user, printer=None, terminal_prints=True):
+    """Cria o job do comprovante.
+
+    `terminal_prints=True`: o terminal que pediu imprime (e o agente pula o
+    job). `False`: ninguém do outro lado imprime — painel web, app —, então o
+    job vai para a fila automática do agente da loja.
+    """
     with tenant_context(order.account):
         if printer is None:
             printer = resolve_printer_for(order, PrintJob.TYPE_RECEIPT)
@@ -83,7 +88,7 @@ def register_cancellation_receipt(*, order, user, printer=None):
                 "account_id": str(order.account_id),
                 "order_id": str(order.id),
                 "sequence": order.sequence,
-                "manual_only": True,
+                "manual_only": terminal_prints,
                 "text_content": texto,
             },
             html_content=f"<pre>{texto}</pre>",
@@ -98,17 +103,22 @@ def register_cancellation_receipt(*, order, user, printer=None):
         return job
 
 
-def cancellation_print_response(*, order, user):
+def cancellation_print_response(*, order, user, terminal_prints=True):
     """O que a resposta do `/cancel/` leva: o job para o terminal imprimir.
+
+    Sem terminal que imprima, o job vai para a fila do agente e a resposta
+    não o devolve — senão um cliente antigo imprimiria a segunda via.
 
     A falta de impressora vira `cancellation_print_error`, nunca erro da
     requisição: o cancelamento JÁ valeu, e um 400 faria o PDV ler "não
     cancelou" num pedido cancelado.
     """
     try:
-        job = register_cancellation_receipt(order=order, user=user)
+        job = register_cancellation_receipt(order=order, user=user, terminal_prints=terminal_prints)
     except ValidationError as exc:
         return {"cancellation_print_error": " ".join(exc.messages)}
+    if not terminal_prints:
+        return {}
     return {
         "cancellation_print": {
             "print_job_id": str(job.id),

@@ -48,6 +48,15 @@ class ApiClient {
     _onTokensChanged = onTokensChanged;
   }
 
+  /// Quem é este aparelho — na loja E na nuvem. O desvio mandava só o
+  /// token, e o pagamento chegava à nuvem "sem terminal": o servidor
+  /// imprimia o recibo sozinho.
+  void _addTerminalHeaders(http.BaseRequest request) {
+    if (!(_terminalId?.isNotEmpty ?? false)) return;
+    request.headers['X-Terminal-Id'] = _terminalId!;
+    request.headers['X-Terminal-Name'] = 'PDV Mobile';
+  }
+
   void clearSession() {
     _accessToken = null;
     _refreshToken = null;

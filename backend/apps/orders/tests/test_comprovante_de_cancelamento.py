@@ -45,12 +45,11 @@ def pedido_com_item(account, restaurant, branch, admin_user):
     return pedido
 
 
-def _cancelar(cliente, pedido, motivo="Cliente desistiu"):
-    return cliente.post(
-        f"/api/v1/orders/{pedido.id}/cancel/",
-        {"reason": motivo, "cash_password": "4321"},
-        format="json",
-    )
+def _cancelar(cliente, pedido, motivo="Cliente desistiu", *, terminal_imprime=True):
+    corpo = {"reason": motivo, "cash_password": "4321"}
+    if terminal_imprime:
+        corpo["print_on_terminal"] = True
+    return cliente.post(f"/api/v1/orders/{pedido.id}/cancel/", corpo, format="json")
 
 
 def test_restaurante_ligado_cancelar_gera_o_comprovante(
@@ -70,6 +69,8 @@ def test_restaurante_ligado_cancelar_gera_o_comprovante(
     assert "Cliente desistiu" in texto
     job = PrintJob._base_manager.get(pk=impressao["print_job_id"])
     assert job.job_type == PrintJob.TYPE_ORDER_CANCEL
+    # O terminal imprime: o agente não pode pegar o mesmo comprovante.
+    assert job.payload["manual_only"] is True
 
 
 def test_padrao_desligado_nao_gera_papel(pedido_com_item, admin_client):
@@ -123,3 +124,21 @@ def test_sem_impressora_o_cancelamento_vale_e_responde_200(restaurant, pedido_co
     assert resposta.data["status"] == Order.STATUS_CANCELLED
     assert resposta.data.get("cancellation_print") is None
     assert "impressora" in resposta.data["cancellation_print_error"].lower()
+
+
+def test_cancelado_fora_do_pdv_vai_para_a_fila_automatica(
+    restaurant, impressora, pedido_com_item, admin_client
+):
+    """Painel web e app não imprimem: o comprovante ficava marcado como "o
+    terminal imprime" e nunca saía. Sem o aviso do terminal, quem imprime é o
+    agente da loja."""
+    restaurant.print_cancellation_receipt = True
+    restaurant.save(update_fields=["print_cancellation_receipt"])
+
+    resposta = _cancelar(admin_client, pedido_com_item, terminal_imprime=False)
+
+    assert resposta.status_code == 200, resposta.data
+    assert resposta.data.get("cancellation_print") is None
+    job = PrintJob._base_manager.get(job_type=PrintJob.TYPE_ORDER_CANCEL)
+    assert job.payload["manual_only"] is False
+    assert job.printer_id == impressora.pk

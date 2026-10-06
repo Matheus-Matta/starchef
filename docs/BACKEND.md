@@ -289,8 +289,14 @@ ao concluir a venda — o botão "Imprimir recibo" e a NFC-e não dependem dela 
 e `print_cancellation_receipt` (padrão desligado) faz o `POST /orders/{id}/cancel/`
 gerar o comprovante do pedido cancelado (`apps/printers/cancellation_receipt.py`,
 `PrintJob.TYPE_ORDER_CANCEL`) e devolvê-lo em `cancellation_print` para o
-terminal imprimir. Pedido vazio descartado nunca gera comprovante, e a falta de
+terminal imprimir — quando o terminal avisa que imprime (`print_on_terminal`,
+mandado pelo PDV desktop). Sem esse aviso (painel web, app), o comprovante vai
+para a fila automática do agente da loja (`manual_only=False`) e não volta na
+resposta. Pedido vazio descartado nunca gera comprovante, e a falta de
 impressora não derruba o cancelamento: vem em `cancellation_print_error`. O
+recibo que o próprio servidor imprime no pagamento sem terminal identificado
+(`print_sale_documents`) também obedece a `auto_print_receipt`; o DANFE não.
+PDV desktop e app mandam `X-Terminal-Id` também quando desviam para a nuvem. O
 mesmo comprovante é reimpresso por `POST /orders/{id}/print/` com
 `job_type=order_cancellation`, com a chave ligada ou não.
 

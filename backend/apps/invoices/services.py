@@ -1366,7 +1366,10 @@ def print_sale_documents(order, *, invoice=None, user=None):
 
     jobs = []
     printer = resolve_printer_for(order, PrintJob.TYPE_RECEIPT)
-    if not _already_printed(order, PrintJob.TYPE_RECEIPT):
+    # O restaurante pode ter desligado o recibo automático. O DANFE não
+    # depende disso: é documento fiscal, não preferência da loja.
+    recibo_ligado = order.restaurant.auto_print_receipt
+    if recibo_ligado and not _already_printed(order, PrintJob.TYPE_RECEIPT):
         jobs.append(register_print_job(order=order, user=user, job_type=PrintJob.TYPE_RECEIPT, printer=printer))
     # Nota ainda nao autorizada nao gera DANFE: o recibo da venda sai, o cupom
     # fiscal sai quando (e se) a autorizacao chegar. Ver `is_fiscally_printable`.
