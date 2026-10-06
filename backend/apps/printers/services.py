@@ -451,6 +451,9 @@ def register_print_job(
         # Compatibilidade com clientes antigos; novos jobs persistem um unico tipo.
         if job_type == "payment_receipt":
             job_type = PrintJob.TYPE_RECEIPT
+        if job_type == PrintJob.TYPE_ORDER_CANCEL:  # reimpressão do comprovante
+            from apps.printers.cancellation_receipt import register_cancellation_receipt
+            return register_cancellation_receipt(order=order, user=user, printer=printer)
         if printer and printer.account_id != order.account_id:
             raise ValueError("Printer does not belong to the order account.")
         if printer is None:

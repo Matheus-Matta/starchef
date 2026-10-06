@@ -60,6 +60,12 @@ class Restaurant(TenantBaseModel):
     # variar entre terminais do mesmo restaurante.
     quick_scale_command_timeout_seconds = models.PositiveIntegerField(default=45)
     quick_scale_stability_seconds = models.PositiveIntegerField(default=3)
+    # Recibo da venda sai sozinho ao concluir o pagamento. Ligado por padrão
+    # (era o único comportamento); o botão "Imprimir recibo" vale sempre.
+    auto_print_receipt = models.BooleanField(default=True)
+    # Comprovante do pedido CANCELADO. Nasce desligado: papel novo saindo sem
+    # ninguém ter pedido é desperdício e confusão no balcão.
+    print_cancellation_receipt = models.BooleanField(default=False)
     # Janela, em segundos, entre "enviar para a cozinha" e a comanda sair de
     # fato (KDS/impressora). Dentro dela cancelar item ou pedido não pede a
     # senha do caixa nem gera cupom de cancelamento — nada chegou à produção.

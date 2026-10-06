@@ -21,6 +21,7 @@ part of 'home_page.dart';
 mixin _ReceiptSection on _HomePageShared {
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
+  PdvRepository get repository;
 
   Map<String, dynamic>? get activeOrder;
   Map<String, dynamic>? get selectedTable;
@@ -40,9 +41,12 @@ mixin _ReceiptSection on _HomePageShared {
   ]) async {
     final order = selectedOrder ?? activeOrder;
     if (order == null || printingReceipt) return;
+    // Pedido cancelado reimprime o COMPROVANTE do cancelamento: o recibo de
+    // venda de uma venda desfeita só confundiria quem o recebe.
+    final cancelado = '${order['status']}' == 'cancelled';
     setState(() => printingReceipt = true);
     try {
-      final printers = await _list(
+      final printers = await repository.listCached(
         '/printers/',
         query: {
           'restaurant': restaurantId,
@@ -67,7 +71,9 @@ mixin _ReceiptSection on _HomePageShared {
               context: context,
               builder: (_) => PrinterSelectionDialog(
                 printers: printers,
-                title: 'Imprimir recibo de venda',
+                title: cancelado
+                    ? 'Imprimir comprovante de cancelamento'
+                    : 'Imprimir recibo de venda',
                 summary:
                     'Pedido #${order['sequence']} · ${_money(order['total'])}',
                 description:
@@ -82,7 +88,7 @@ mixin _ReceiptSection on _HomePageShared {
       final printJob = await api.post(
         '/orders/${order['id']}/print/',
         body: {
-          'job_type': 'receipt',
+          'job_type': cancelado ? 'order_cancellation' : 'receipt',
           'printer': printerId,
           'manual_only': true,
         },

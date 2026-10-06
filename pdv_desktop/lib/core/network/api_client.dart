@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import '../logging/app_logger.dart';
 import 'api_exception.dart';
 import 'cloud_fallback.dart';
 import 'data_signals.dart';
@@ -280,8 +281,7 @@ class ApiClient {
       final response = await _client
           .get(Uri.parse(healthEndpoint))
           .timeout(timeout);
-      final reachable =
-          response.statusCode >= 200 && response.statusCode < 500;
+      final reachable = response.statusCode >= 200 && response.statusCode < 500;
       _publishStatus(reachable ? NetworkPhase.online : NetworkPhase.degraded);
       return reachable;
     } catch (_) {
@@ -329,6 +329,7 @@ class ApiClient {
     // ao servidor e a resposta ter se perdido no caminho; quando o operador
     // repete o gesto, o backend reconhece a mesma chave e não duplica a venda.
     final operationId = method == 'GET' ? null : _nextOperationId();
+    final relogio = Stopwatch()..start();
     final result = await _comPlanoB(
       method,
       path,
@@ -345,6 +346,7 @@ class ApiClient {
         operationId: operationId,
       ),
     );
+    _registrarSeLenta(method, path, relogio.elapsedMilliseconds);
     if (method == 'GET') {
       // Só o que veio do servidor da loja: o plano B (nuvem) pode estar atrás.
       if (lastServerOrigin == ServerOrigin.loja) {
@@ -354,6 +356,21 @@ class ApiClient {
       _signal(path);
     }
     return result;
+  }
+
+  /// Requisição lenta vai para o `pdv.log`: é a medida que diz o que cortar
+  /// (rede, servidor ou excesso de idas) em vez de chutar.
+  void _registrarSeLenta(String method, String path, int ms) {
+    if (ms < 500) return;
+    AppLogger.instance.warning(
+      'api_lenta',
+      data: {
+        'metodo': method,
+        'rota': path,
+        'ms': ms,
+        'origem': lastServerOrigin.name,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> _requestWithSessionRecovery(

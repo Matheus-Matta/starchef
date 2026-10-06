@@ -47,4 +47,29 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'restaurante com recibo automático desligado não imprime, mas emite a NFC-e',
+    () async {
+      // O restaurante desligou o recibo no painel. O PDV imprimia assim mesmo:
+      // `printReceipt` era chamado sem condição nenhuma.
+      final events = <String>[];
+      final invoiceDone = Completer<void>();
+
+      startPaidOrderFollowUps(
+        showNextSale: () => events.add('nova venda'),
+        choosePrinter: () async => 'printer-1',
+        printReceipt: (_) async => events.add('recibo'),
+        emitInvoice: (printer) async {
+          events.add('danfe na ${await printer}');
+          invoiceDone.complete();
+        },
+        refreshCatalog: () async {},
+        autoPrintReceipt: false,
+      );
+
+      await invoiceDone.future;
+      expect(events, ['nova venda', 'danfe na printer-1']);
+    },
+  );
 }

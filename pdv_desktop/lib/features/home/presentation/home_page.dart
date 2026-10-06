@@ -55,6 +55,8 @@ import '../../settings/presentation/api_url_settings_dialog.dart';
 import '../../settings/presentation/terminal_preferences_dialog.dart';
 import '../../scale/services/scale_window_launcher.dart';
 import '../../../core/input/code_lookup_service.dart';
+import '../../../core/input/command_code_match.dart';
+import '../../../core/widgets/scanned_command_overlay.dart';
 import '../../../core/input/pdv_input_router.dart';
 import '../../../core/input/pdv_screen.dart';
 import '../../../core/input/pdv_shortcuts.dart';
@@ -325,6 +327,7 @@ class _HomePageState extends State<HomePage>
   @override
   late final LocalDeviceAgent deviceAgent;
   PrinterAvailabilityPhase lastPrinterPhase = PrinterAvailabilityPhase.checking;
+  @override
   late final PdvRepository repository;
   late final PdvPresenter presenter;
   @override

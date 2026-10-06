@@ -62,6 +62,7 @@ from apps.payments.views_discrepancy import CashDiscrepancyReportViewSet, SalesD
 from apps.payments.views_cash_movements import CashMovementViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
 from apps.reports.cash_movements import CashMovementsReportView
+from apps.reports.coupons import CouponsReportView
 from apps.reports.views import (
     DashboardReportView,
     OrdersReportView,
@@ -212,6 +213,7 @@ urlpatterns = [
     path("api/v1/reports/restaurants/", RestaurantsReportView.as_view(), name="restaurants-report"),
     path("api/v1/reports/dashboard/", DashboardReportView.as_view(), name="dashboard-report"),
     path("api/v1/reports/cash-movements/", CashMovementsReportView.as_view(), name="cash-movements-report"),
+    path("api/v1/reports/coupons/", CouponsReportView.as_view(), name="coupons-report"),
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
     path("api/v1/stock/alerts/", StockAlertView.as_view(), name="stock-alerts"),

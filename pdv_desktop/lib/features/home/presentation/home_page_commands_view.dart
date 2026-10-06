@@ -27,6 +27,7 @@ mixin _CommandView on _HomePageShared {
   Future<void> _load();
   Future<void> _openTable(Map<String, dynamic> table);
   Future<void> _openCommand(Map<String, dynamic> command);
+  Future<void> _openCommandFromCode(String lido);
   Future<void> _transferCommandDialog(Map<String, dynamic> command);
   Future<void> _transferAllCommandsDialog();
   Future<void> _unlinkCommand(Map<String, dynamic> command);
@@ -163,20 +164,21 @@ mixin _CommandView on _HomePageShared {
     }).toList();
   }
 
-  /// Abre a comanda direto quando o leitor bipa o código e envia Enter.
+  /// Enter no campo de busca — digitado, ou o leitor com o campo focado.
   ///
-  /// Prioriza um match exato de número/código: com a lista já filtrada por
-  /// [visibleCommands], vários cartões podem compartilhar prefixo (comanda 1
-  /// e 10, por exemplo) e o texto digitado por um humano nunca dispara Enter.
+  /// NÚMERO só abre por casamento exato (`0017` é a 17, e só ela). Antes,
+  /// sem casamento exato, abria "a única comanda que sobrou na lista
+  /// filtrada": com um texto antigo na busca, o cartão 17 abriu a 107. A
+  /// sobra única continua valendo para NOME, que é como uma pessoa procura.
   void _onCommandSearchSubmitted(String value) {
     final term = value.trim();
     if (term.isEmpty) return;
+    if (RegExp(r'^\d+$').hasMatch(term)) {
+      unawaited(_openCommandFromCode(term));
+      return;
+    }
+    final exact = comandaLidaNaLista(visibleCommands, term);
     final matches = visibleCommands;
-    final exact = matches.cast<Map<String, dynamic>?>().firstWhere(
-      (item) =>
-          '${item?['number']}' == term || '${item?['code'] ?? ''}' == term,
-      orElse: () => null,
-    );
     final command = exact ?? (matches.length == 1 ? matches.first : null);
     if (command != null) _openCommand(command);
   }

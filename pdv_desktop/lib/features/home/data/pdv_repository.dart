@@ -23,6 +23,22 @@ class PdvRepository {
     return ((response['results'] ?? const []) as List).cast<JsonMap>();
   }
 
+  /// A lista guardada no cache quando há; senão, do servidor.
+  ///
+  /// Para cadastros que mudam pouco e são lidos a cada venda (as
+  /// impressoras). Escrita e evento do assunto apagam a entrada, então a
+  /// mudança aparece na próxima leitura.
+  Future<List<JsonMap>> listCached(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    final guardada = api.peek(path, query: query, accessToken: accessToken);
+    if (guardada != null) {
+      return ((guardada['results'] ?? const []) as List).cast<JsonMap>();
+    }
+    return list(path, query: query);
+  }
+
   /// Teto de registros que uma coleção inteira pode trazer para a tela.
   ///
   /// Não é limite de negócio: é a rede de segurança para um cadastro com

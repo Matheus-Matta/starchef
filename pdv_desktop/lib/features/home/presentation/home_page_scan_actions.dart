@@ -19,6 +19,8 @@ mixin _ScanActionsSection on _HomePageShared {
 
   Future<void> _openCommand(Map<String, dynamic> command);
   Future<void> _configureProduct(Map<String, dynamic> product);
+  bool _conferirComandaLida(String lido, Map<String, dynamic> comanda);
+  void _useCommandFromCode(Map<String, dynamic> comanda);
 
   /// Acha a comanda pelo código lido e abre o pedido em aberto dela.
   ///
@@ -33,6 +35,22 @@ mixin _ScanActionsSection on _HomePageShared {
   Future<void> _openOrderFromCommandCode(
     String code, {
     VoidCallback? onNotFound,
+  }) async {
+    // Onde o leitor só lê comanda, o número aparece já na leitura. Onde ele
+    // também lê produto e pedido, só depois de saber que é uma comanda.
+    if (onNotFound == null) {
+      return mostrandoComandaLida(
+        context,
+        code,
+        () => _resolveAndOpenCommandOrder(code, onNotFound: null),
+      );
+    }
+    return _resolveAndOpenCommandOrder(code, onNotFound: onNotFound);
+  }
+
+  Future<void> _resolveAndOpenCommandOrder(
+    String code, {
+    required VoidCallback? onNotFound,
   }) async {
     final lookup = _codeLookup;
     if (lookup == null) {
@@ -50,11 +68,21 @@ mixin _ScanActionsSection on _HomePageShared {
       onNotFound?.call();
       return;
     }
+    if (!_conferirComandaLida(code, command)) return;
     final local = commands.cast<Map<String, dynamic>?>().firstWhere(
       (item) => '${item?['id']}' == '${command['id']}',
       orElse: () => null,
     );
-    await _openCommand(local ?? command);
+    if (onNotFound == null) {
+      await _openCommand(local ?? command);
+      return;
+    }
+    if (!mounted) return;
+    await mostrandoComandaLida(
+      context,
+      code,
+      () => _openCommand(local ?? command),
+    );
   }
 
   /// A tela de venda: primeiro produto, depois comanda.
@@ -89,50 +117,12 @@ mixin _ScanActionsSection on _HomePageShared {
       return;
     }
     final comanda = achado.command;
-    if (comanda != null) _useCommandFromCode(comanda);
-  }
-
-  /// O cartão lido vira o DESTINO do que está na tela.
-  ///
-  /// Com rascunho no ar, anexa — sem tocar no servidor e sem perder o que já
-  /// foi passado. Com pedido aberto, abre o pedido daquele cartão, que é o que
-  /// a leitura sempre fez nas outras telas: o operador está dizendo "agora é
-  /// esta comanda".
-  void _useCommandFromCode(Map<String, dynamic> comanda) {
-    // Cartão LIVRE não entra: não há consumo a cobrar.
-    //
-    // A mesma regra que a conta agrupada já aplica no servidor
-    // (`_assert_source_is_mergeable`), e de propósito com a mesma frase — a
-    // recusa precisa ser a mesma nos dois lugares, senão o operador aprende
-    // duas explicações para o mesmo "não".
-    //
-    // Sem isto, passar um cartão vazio por engano prendia um pedido novo a um
-    // cartão que ninguém estava usando, e alguém tinha de cancelar depois.
-    if (!comandaTemContaAberta(comanda)) {
-      _error(
-        ApiException(
-          'A comanda ${comanda['number'] ?? ''} não tem um pedido aberto: '
-          'não há nada a cobrar nela.',
-        ),
-      );
-      return;
-    }
-    // A cópia da lista local traz os campos que a tela já carregou (a mesa
-    // vinculada, entre eles); a do servidor é o retrato mais novo. Preferir a
-    // local mantém o cartão idêntico ao que está desenhado ao lado.
-    final local = commands.cast<Map<String, dynamic>?>().firstWhere(
-      (item) => '${item?['id']}' == '${comanda['id']}',
-      orElse: () => null,
+    if (comanda == null || !_conferirComandaLida(code, comanda)) return;
+    await mostrandoComandaLida(
+      context,
+      code,
+      () async => _useCommandFromCode(comanda),
     );
-    final escolhida = local ?? comanda;
-
-    if (_draftIsLive) {
-      _attachCommandToDraftDirectly(escolhida);
-      return;
-    }
-    // Pedido já aberto: o cartão lido é "agora é esta comanda", que é o que a
-    // leitura sempre fez nas outras telas.
-    unawaited(_openCommand(escolhida));
   }
 
   /// Edição do pedido: acha o produto e abre a configuração dele.

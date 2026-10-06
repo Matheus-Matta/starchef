@@ -69,6 +69,19 @@ def test_restaurant_saves_shared_quick_scale_timing(admin_client, restaurant):
     assert restaurant.quick_scale_stability_seconds == 5
 
 
+def test_restaurant_saves_receipt_switches(admin_client, restaurant):
+    response = admin_client.patch(
+        f"/api/v1/restaurants/{restaurant.id}/",
+        {"auto_print_receipt": False, "print_cancellation_receipt": True},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.data
+    restaurant.refresh_from_db()
+    assert restaurant.auto_print_receipt is False
+    assert restaurant.print_cancellation_receipt is True
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

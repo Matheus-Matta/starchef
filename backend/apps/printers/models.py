@@ -285,6 +285,9 @@ class PrintJob(TenantModel):
     TYPE_KITCHEN = "kitchen_ticket"
     TYPE_BAR = "bar_ticket"
     TYPE_KITCHEN_CANCEL = "kitchen_cancellation"
+    # Comprovante do pedido cancelado, para o cliente/caixa — não é o aviso da
+    # cozinha acima, que só diz o que tirar da fila.
+    TYPE_ORDER_CANCEL = "order_cancellation"
     TYPE_TABLE_BILL = "table_bill"
     TYPE_RECEIPT = "receipt"
     # Recibo e comprovante de pagamento sao o mesmo documento do cliente.
