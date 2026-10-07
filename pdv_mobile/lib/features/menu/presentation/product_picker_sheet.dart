@@ -10,6 +10,7 @@ import 'category_chips_bar.dart';
 import 'product_config_view.dart';
 import 'product_thumbnail.dart';
 import 'product_price_text.dart';
+import 'product_quick_add.dart';
 
 export '../domain/product_options.dart' show ProductChoice;
 
@@ -18,30 +19,40 @@ export '../domain/product_options.dart' show ProductChoice;
 /// Duas etapas na mesma folha: escolher o produto e dizer como ele vai. A
 /// altura é fixa de propósito — a lista carrega páginas conforme o garçom
 /// rola, e uma folha que cresce a cada página "pula" debaixo do dedo.
+///
+/// Com [onChoose], o cardápio FICA ABERTO: cada item confirmado entra no
+/// pedido e a lista volta com a mesma busca e categoria. Lançar a mesa inteira
+/// era abrir, escolher, confirmar, fechar — uma vez por prato. Produto sem
+/// variação nem adicional entra com um toque; segurar abre a configuração
+/// (quantidade, observação).
 Future<ProductChoice?> showProductPicker(
   BuildContext context,
-  OrdersRepository repository,
-) => showAppSheet<ProductChoice>(
+  OrdersRepository repository, {
+  Future<void> Function(ProductChoice choice)? onChoose,
+}) => showAppSheet<ProductChoice>(
   context,
   heightFactor: .85,
-  builder: (context) => _ProductPicker(repository: repository),
+  builder: (context) =>
+      ProductPicker(repository: repository, onChoose: onChoose),
 );
 
-class _ProductPicker extends StatefulWidget {
-  const _ProductPicker({required this.repository});
+class ProductPicker extends StatefulWidget {
+  const ProductPicker({super.key, required this.repository, this.onChoose});
 
   final OrdersRepository repository;
+  final Future<void> Function(ProductChoice choice)? onChoose;
 
   @override
-  State<_ProductPicker> createState() => _ProductPickerState();
+  State<ProductPicker> createState() => _ProductPickerState();
 }
 
 /// A última categoria escolhida, enquanto o app estiver aberto: o garçom que
 /// lança três bebidas seguidas não toca em "Bebidas" três vezes.
 String? _ultimaCategoria;
 
-class _ProductPickerState extends State<_ProductPicker> {
+class _ProductPickerState extends State<ProductPicker> {
   Map<String, dynamic>? _selected;
+  int _added = 0;
   List<Map<String, dynamic>> _categorias = const [];
   String? _categoria = _ultimaCategoria;
 
@@ -71,19 +82,60 @@ class _ProductPickerState extends State<_ProductPicker> {
     setState(() => _categoria = _ultimaCategoria = id);
   }
 
+  Future<void> _confirm(ProductChoice choice) async {
+    final onChoose = widget.onChoose;
+    if (onChoose == null) {
+      Navigator.of(context).pop(choice);
+      return;
+    }
+    await onChoose(choice);
+    if (!mounted) return;
+    setState(() {
+      _added += choice.quantity;
+      _selected = null;
+    });
+    avisarAdicionado(context, choice);
+  }
+
+  void _tap(Map<String, dynamic> product) {
+    if (widget.onChoose != null && entraComUmToque(product)) {
+      _confirm(escolhaSimples(product));
+      return;
+    }
+    setState(() => _selected = product);
+  }
+
   @override
   Widget build(BuildContext context) {
     final selected = _selected;
-    if (selected != null) {
-      return ProductConfigView(
-        product: selected,
-        onBack: () => setState(() => _selected = null),
-        onConfirm: (choice) => Navigator.of(context).pop(choice),
-      );
-    }
+    // A lista fica VIVA por baixo da configuração: ao voltar, a busca digitada
+    // e a rolagem continuam onde estavam.
+    return Stack(
+      children: [
+        Offstage(offstage: selected != null, child: _lista()),
+        if (selected != null)
+          ProductConfigView(
+            product: selected,
+            onBack: () => setState(() => _selected = null),
+            onConfirm: _confirm,
+          ),
+      ],
+    );
+  }
+
+  Widget _lista() {
     return Column(
       children: [
-        const AppSheetHeader(title: 'Adicionar item'),
+        AppSheetHeader(
+          title: 'Adicionar item',
+          subtitle: _added > 0 ? '$_added item(ns) adicionado(s)' : null,
+          trailing: widget.onChoose == null
+              ? null
+              : FilledButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(_added > 0 ? 'Concluir' : 'Fechar'),
+                ),
+        ),
         Expanded(
           child: PaginatedPicker(
             searchHint: 'Buscar produto',
@@ -105,7 +157,8 @@ class _ProductPickerState extends State<_ProductPicker> {
               subtitle: _subtitle(product),
               leading: ProductThumbnail(product: product),
               trailing: ProductPriceText(product: product),
-              onTap: () => setState(() => _selected = product),
+              onTap: () => _tap(product),
+              onLongPress: () => setState(() => _selected = product),
             ),
           ),
         ),

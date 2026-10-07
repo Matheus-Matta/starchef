@@ -12,6 +12,7 @@ class PickerTile extends StatelessWidget {
     this.trailing,
     this.leading,
     this.enabled = true,
+    this.onLongPress,
   });
 
   final String title;
@@ -19,6 +20,7 @@ class PickerTile extends StatelessWidget {
   final Widget? trailing;
   final Widget? leading;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final bool enabled;
 
   @override
@@ -29,6 +31,7 @@ class PickerTile extends StatelessWidget {
       borderRadius: AppTheme.radius,
       child: InkWell(
         onTap: enabled ? onTap : null,
+        onLongPress: enabled ? onLongPress : null,
         borderRadius: AppTheme.radius,
         child: Container(
           constraints: const BoxConstraints(minHeight: AppTheme.controlHeight),
