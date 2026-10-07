@@ -1,5 +1,6 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/read_cache.dart';
 import '../../../core/network/resource_page.dart';
 import '../../../core/sync/backend_gateway.dart';
 import '../../../core/sync/operation_id.dart';
@@ -27,6 +28,7 @@ class OrdersRepository {
     OperatorCodeKeeper? operatorCodes,
     this.onPrintJobsCreated,
     this.exigeCodigoAgora,
+    this.catalogCache,
   }) : drafts = drafts ?? OrderDrafts(),
        operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
@@ -35,6 +37,11 @@ class OrdersRepository {
   final WaiterSession session;
   final OrderDrafts drafts;
   final void Function()? onPrintJobsCreated;
+
+  /// Cardápio e formas de pagamento abrem com a última cópia (ver
+  /// [ReadCache]). Mora no app, e não aqui: este repositório é recriado a
+  /// cada redesenho da tela inicial.
+  final ReadCache? catalogCache;
 
   /// A exigência ATUAL da sessão. A tela de pedidos guarda este repositório
   /// desde que abriu; ler de `session` aqui devolveria o valor do momento do
@@ -74,6 +81,26 @@ class OrdersRepository {
     _lastSyncedAt = DateTime.now();
     lastReadOrigin = const ReadOrigin.live();
     return response;
+  }
+
+  /// Leitura de CATÁLOGO: com cache, a cópia recente aparece na hora.
+  ///
+  /// A chave leva usuário e restaurante: outra sessão no mesmo aparelho nunca
+  /// vê a lista desta. Sem cache configurado, é uma leitura comum.
+  Future<Map<String, dynamic>> readCatalog(
+    String path, {
+    Map<String, dynamic>? query,
+  }) {
+    final cache = catalogCache;
+    if (cache == null) return read(path, query: query);
+    final params =
+        (query ?? const <String, dynamic>{}).entries
+            .map((entry) => '${entry.key}=${entry.value}')
+            .toList()
+          ..sort();
+    final key =
+        '${session.user.id}|${session.user.restaurantId}|$path?${params.join('&')}';
+    return cache.read(key, () => read(path, query: query));
   }
 
   Future<Map<String, dynamic>> mutate({

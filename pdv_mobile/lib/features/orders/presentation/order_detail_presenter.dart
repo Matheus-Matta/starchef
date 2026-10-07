@@ -34,9 +34,11 @@ class OrderDetailPresenter extends ChangeNotifier {
 
   final OrdersRepository repository;
   final OperatorCodeKeeper? _operatorCodesOverride;
+
   /// Guarda o código de quem está lançando, por atendimento.
   OperatorCodeKeeper get operatorCodes =>
       _operatorCodesOverride ?? repository.operatorCodes;
+
   /// Este restaurante exige o código antes do lançamento?
   ///
   /// Vem da SESSÃO, e não de uma consulta: a resposta é necessária antes do
@@ -310,8 +312,14 @@ class OrderDetailPresenter extends ChangeNotifier {
   /// aceitam) e só então vem o envio à produção, que é o que imprime. Um item
   /// recusado não impede os outros: ele fica na lista de erros, com o motivo,
   /// para o garçom reenviar ou remover.
+  /// A última rodada saiu (ou ficou salva para sair sem rede): a tela pode
+  /// voltar ao início. Com recusa, o garçom fica no pedido para resolver.
+  bool get roundSent => _roundSent;
+  bool _roundSent = false;
+
   Future<String?> sendToKitchen() async {
     if (_working) return null;
+    _roundSent = false;
     final pending = draftItems;
     _working = true;
     _notify();
@@ -349,6 +357,7 @@ class OrderDetailPresenter extends ChangeNotifier {
         queued++;
       }
       if (!_adoptIfOrder(confirmed)) await load();
+      _roundSent = true;
       return queued == 0
           ? 'Pedido enviado para produção e impressão.'
           : 'Sem conexão: $sent de ${pending.length} itens foram entregues. '
@@ -400,8 +409,6 @@ class OrderDetailPresenter extends ChangeNotifier {
     () => repository.unlinkTable(commandId: commandId),
     'Comanda desvinculada da mesa.',
   );
-
-
 
   void _notify() {
     if (!_disposed) notifyListeners();

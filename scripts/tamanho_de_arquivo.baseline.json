@@ -189,8 +189,8 @@
     "pdv_mobile/lib/core/theme/app_theme.dart": 282,
     "pdv_mobile/lib/core/widgets/paginated_picker.dart": 229,
     "pdv_mobile/lib/features/menu/presentation/product_config_view.dart": 248,
-    "pdv_mobile/lib/features/orders/presentation/order_detail_page.dart": 292,
-    "pdv_mobile/lib/features/orders/presentation/order_detail_presenter.dart": 409,
+    "pdv_mobile/lib/features/orders/presentation/order_detail_page.dart": 305,
+    "pdv_mobile/lib/features/orders/presentation/order_detail_presenter.dart": 416,
     "pdv_mobile/lib/features/orders/presentation/order_dialogs.dart": 205,
     "pdv_mobile/lib/features/orders/presentation/order_item_tiles.dart": 268,
     "pdv_mobile/lib/features/orders/presentation/payment_sheet.dart": 211

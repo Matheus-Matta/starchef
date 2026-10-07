@@ -122,8 +122,12 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
     // de um codigo que ele talvez nao saiba — com o cliente esperando.
     if (!await _garantirCodigo()) return;
     if (!mounted) return;
-    final choice = await showProductPicker(context, widget.repository);
-    if (choice != null) await _presenter.addDraft(choice);
+    // O cardápio fica aberto: cada item confirmado já entra na lista "a enviar".
+    await showProductPicker(
+      context,
+      widget.repository,
+      onChoose: _presenter.addDraft,
+    );
   }
 
   /// Pede o codigo quando o restaurante exige e ele ainda nao foi informado.
@@ -188,6 +192,15 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
 
   void _report(String? message) => reportOutcome(context, message);
 
+  /// Enviou, volta para a tela inicial: o próximo atendimento começa de lá.
+  /// O aviso aparece por cima da tela inicial, então o garçom vê que saiu.
+  Future<void> _sendAndGoHome() async {
+    final message = await _presenter.sendToKitchen();
+    if (!mounted) return;
+    _report(message);
+    if (_presenter.roundSent) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: _presenter,
@@ -242,7 +255,7 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
       queued: _presenter.sendQueued,
       onAdd: _addItem,
       onSend: (_presenter.pendingToSend > 0 && !_presenter.sendQueued)
-          ? () async => _report(await _presenter.sendToKitchen())
+          ? _sendAndGoHome
           : null,
       // Comanda não se cobra aqui, e a checagem é explícita: `awaitingPayment`
       // já seria falso para ela, mas depender disso deixaria o botão a uma

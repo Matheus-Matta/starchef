@@ -93,7 +93,7 @@ extension OrdersQueries on OrdersRepository {
     String search = '',
     String? categoryId,
   }) async {
-    final response = await read(
+    final response = await readCatalog(
       '/menu/products/',
       query: {
         'restaurant': session.user.restaurantId,
@@ -110,7 +110,7 @@ extension OrdersQueries on OrdersRepository {
 
   /// As categorias ativas, na ordem do cadastro — a mesma do cardápio.
   Future<List<Map<String, dynamic>>> productCategories() async => _rows(
-    await read(
+    await readCatalog(
       '/menu/categories/',
       query: {
         'restaurant': session.user.restaurantId,
@@ -122,7 +122,7 @@ extension OrdersQueries on OrdersRepository {
   );
 
   Future<List<Map<String, dynamic>>> paymentMethods() async => _rows(
-    await read(
+    await readCatalog(
       '/payments/methods/',
       query: {
         'restaurant': session.user.restaurantId,

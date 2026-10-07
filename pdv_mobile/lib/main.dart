@@ -5,6 +5,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 
 import 'core/config/api_settings.dart';
 import 'core/network/api_client.dart';
+import 'core/network/read_cache.dart';
 import 'core/storage/offline_queue_store.dart';
 import 'core/storage/session_store.dart';
 import 'core/sync/backend_gateway.dart';
@@ -38,6 +39,7 @@ class _PdvMobileAppState extends State<PdvMobileApp>
   late final OrderDrafts _drafts;
   late final SessionController _controller;
   late final MobilePrintAgent _printAgent;
+  final _catalogCache = ReadCache();
   String? _activeRestaurantId;
 
   @override
@@ -64,6 +66,8 @@ class _PdvMobileAppState extends State<PdvMobileApp>
     final session = _controller.session;
     _gateway.setAuthenticated(session != null);
     if (session == null) {
+      // Saiu: a próxima sessão não herda o cardápio desta.
+      _catalogCache.clear();
       if (_activeRestaurantId != null) _printAgent.stop();
       _activeRestaurantId = null;
     } else if (_activeRestaurantId != session.user.restaurantId) {
@@ -124,6 +128,7 @@ class _PdvMobileAppState extends State<PdvMobileApp>
             gateway: _gateway,
             session: _controller.session!,
             drafts: _drafts,
+            catalogCache: _catalogCache,
             onPrintJobsCreated: () => unawaited(_printAgent.runNow()),
             exigeCodigoAgora: () =>
                 _controller.session?.user.requireOperatorCode ?? false,
