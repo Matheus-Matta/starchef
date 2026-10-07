@@ -25,6 +25,7 @@ import '../domain/hands_free_machine.dart';
 import '../services/serial_scanner_service.dart';
 import 'manual_weight_dialog.dart';
 import 'retained_weight_notice.dart';
+import 'scale_command_highlight.dart';
 
 class ScaleWorkstationPage extends StatefulWidget {
   const ScaleWorkstationPage({
@@ -1744,10 +1745,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
   /// pesado) e total. As ações de peso ficam no corpo rolável — ver
   /// [_itemsPanel] — porque um botão ali faria o rodapé variar de altura e
   /// desalinhar da coluna ao lado.
-  Widget _itemsFooter() {
-    final scheme = Theme.of(context).colorScheme;
-    final item = machine.weighedItem;
-    var total = item?.total ?? 0;
+  /// Peso cobrado mais os extras — o mesmo número no rodapé e na comanda.
+  double _cartTotal() {
+    var total = machine.weighedItem?.total ?? 0;
     for (final entry in machine.extras.entries) {
       if (entry.value <= 0) continue;
       final product = widget.products.cast<Map<String, dynamic>?>().firstWhere(
@@ -1756,6 +1756,12 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       );
       total += ValueFormatters.number(product?['current_price']) * entry.value;
     }
+    return total;
+  }
+
+  Widget _itemsFooter() {
+    final scheme = Theme.of(context).colorScheme;
+    final total = _cartTotal();
     final productName = weighedProduct?['name'] as String?;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1783,7 +1789,7 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
             ),
             Text(
               ValueFormatters.money(total),
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900),
             ),
           ],
         ),
@@ -1902,38 +1908,37 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
 
   Widget _commandBody() {
     switch (machine.state) {
+      // Comanda lida: o número e o total GRANDES, para conferir de longe.
       case HandsFreeState.launching:
-        return const Padding(
-          padding: EdgeInsets.symmetric(vertical: 24),
-          child: Column(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 10),
-              Text(
-                'Finalizando o pedido. Não retire a comanda.',
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+        return ScaleCommandHighlight(
+          commandCode: machine.commandCode,
+          totalLabel: ValueFormatters.money(_cartTotal()),
+          status: 'Finalizando o pedido. Não retire a comanda.',
+          statusIcon: const Center(child: CircularProgressIndicator()),
         );
       case HandsFreeState.completed:
-        return const Padding(
-          padding: EdgeInsets.symmetric(vertical: 24),
-          child: Column(
-            children: [
-              Icon(Icons.check_circle, size: 64, color: Colors.green),
-              SizedBox(height: 8),
-              Text(
-                'Pedido lançado com sucesso.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ],
+        return ScaleCommandHighlight(
+          commandCode: machine.commandCode,
+          totalLabel: ValueFormatters.money(_cartTotal()),
+          status: 'Pedido lançado com sucesso.',
+          statusIcon: const Icon(
+            Icons.check_circle,
+            size: 56,
+            color: Colors.green,
           ),
         );
       case HandsFreeState.waitingCommand:
       case HandsFreeState.failed:
-        return _commandInput();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ScaleCommandHighlight(
+              totalLabel: ValueFormatters.money(_cartTotal()),
+            ),
+            const SizedBox(height: 16),
+            _commandInput(),
+          ],
+        );
       case HandsFreeState.idle:
       case HandsFreeState.waitingWeight:
         return _commandPlaceholder();
