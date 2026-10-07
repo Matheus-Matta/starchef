@@ -9,6 +9,7 @@ export const endpoints = {
   waiter: "/reports/waiters/",
   restaurant: "/reports/restaurants/",
   coupon: "/reports/coupons/",
+  cost: "/reports/product-costs/",
 };
 
 export const reportService = {

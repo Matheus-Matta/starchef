@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "apps.integrations",
     "apps.sla",
     "apps.notifications",
+    "apps.imports",
     "apps.realtime",
     "apps.synchronization",
     "apps.inbound_nfe",

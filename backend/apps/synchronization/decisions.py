@@ -46,6 +46,7 @@ EXCLUDED = {
     "accounts.CosmosConfig": "Credencial de integração: canal próprio, cifrado.",
     # Efêmero ou derivado: reconstruído no destino, não vale a banda.
     "notifications.Notification": "Aviso de tela, efêmero e por instalação.",
+    "imports.ImportJob": "Fila de processamento da importação, local ao nó que a recebeu; o que ela grava sincroniza pelos próprios models.",
     "stock.StockEntry": "Documento de rascunho; o que vale é stock.StockMovement.",
     "stock.StockEntryItem": "Item de rascunho de entrada.",
     "stock.StockExit": "Documento de rascunho; o que vale é stock.StockMovement.",

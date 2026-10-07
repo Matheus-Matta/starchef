@@ -34,6 +34,8 @@
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
 
+import { formatReportCell } from "../../utils/reportCell";
+
 const props = defineProps({
   rows: { type: Array, required: true },
   columns: { type: Array, required: true },
@@ -50,13 +52,7 @@ function handleRowClick(event) {
 }
 
 function formatValue(value, column) {
-  if (column.type === "money") {
-    return Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  }
-  if (column.type === "decimal") {
-    return Number(value || 0).toLocaleString("pt-BR", { maximumFractionDigits: 3 });
-  }
-  return value ?? "—";
+  return formatReportCell(value, column);
 }
 </script>
 

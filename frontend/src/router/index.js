@@ -30,6 +30,7 @@ const ResourceListViewPro = () => import("../views/ResourceListViewPro.vue");
 const StockEntryFormView = () => import("../views/StockEntryFormView.vue");
 const StockExitFormView = () => import("../views/StockExitFormView.vue");
 const StockPositionView = () => import("../views/StockPositionView.vue");
+const StockBulkAdjustView = () => import("../views/StockBulkAdjustView.vue");
 const StockExitPickingView = () => import("../views/StockExitPickingView.vue");
 const StockSettingsView = () => import("../views/StockSettingsView.vue");
 const IngredientBulkFormView = () => import("../views/IngredientBulkFormView.vue");
@@ -193,6 +194,7 @@ export const router = createRouter({
         { path: "restaurantes/:id/fiscal", name: "restaurante-fiscal", component: RestaurantFiscalConfigView, props: true, meta: { requiresAuth: true, title: "Configuração fiscal do restaurante", nav: "restaurantes", module: "financeiro" } },
         { path: "ingredientes/lote", name: "ingredientes-lote", component: IngredientBulkFormView, meta: { requiresAuth: true, title: "Cadastro de insumos em lote", nav: "ingredientes" } },
         { path: "estoque-posicao", name: "estoque-posicao", component: StockPositionView, meta: { requiresAuth: true, title: "Posição de estoque", nav: "estoque-posicao", module: "logistica" } },
+        { path: "estoque-ajuste", name: "estoque-ajuste", component: StockBulkAdjustView, meta: { requiresAuth: true, title: "Ajuste de estoque", nav: "estoque-ajuste", module: "logistica" } },
         { path: "estoque-entradas/nova", name: "estoque-entrada-nova", component: StockEntryFormView, meta: { requiresAuth: true, title: "Nova entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
         { path: "estoque-entradas/:id", name: "estoque-entrada-documento", component: StockEntryFormView, props: true, meta: { requiresAuth: true, title: "Entrada de estoque", nav: "estoque-entradas", module: "logistica" } },
         { path: "estoque-saidas/nova", name: "estoque-saida-nova", component: StockExitFormView, meta: { requiresAuth: true, title: "Nova saída de estoque", nav: "estoque-saidas", module: "logistica" } },
@@ -207,6 +209,7 @@ export const router = createRouter({
         { path: "relatorios/pagamentos", name: "relatorio-pagamentos", component: ReportsView, props: { section: "payment" }, meta: { requiresAuth: true, title: "Relatório de pagamentos", nav: "relatorio-pagamentos" } },
         { path: "relatorios/garcons", name: "relatorio-garcons", component: ReportsView, props: { section: "waiter" }, meta: { requiresAuth: true, title: "Relatório de garçons", nav: "relatorio-garcons" } },
         { path: "relatorios/restaurantes", name: "relatorio-restaurantes", component: ReportsView, props: { section: "restaurant" }, meta: { requiresAuth: true, title: "Relatório por restaurante", nav: "relatorio-restaurantes" } },
+        { path: "relatorios/custos", name: "relatorio-custos", component: ReportsView, props: { section: "cost" }, meta: { requiresAuth: true, title: "Custo × venda por produto", nav: "relatorio-custos" } },
         { path: "relatorios/cupons", name: "relatorio-cupons", component: ReportsView, props: { section: "coupon" }, meta: { requiresAuth: true, title: "Relatório de cupons", nav: "relatorio-cupons" } },
         { path: "relatorios/caixa", name: "relatorio-caixa", component: ReportsView, props: { section: "cash" }, meta: { requiresAuth: true, title: "Relatório de caixa", nav: "relatorio-caixa" } },
         { path: "relatorios/filiais", redirect: { name: "relatorio-restaurantes" } },

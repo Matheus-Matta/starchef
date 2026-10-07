@@ -7,7 +7,7 @@
       </span>
     </div>
     <div class="sc-stat-card__value-row">
-      <span class="num sc-stat-card__value">{{ value }}</span>
+      <span :key="riseKey" class="num sc-stat-card__value" :class="{ 'sc-stat-card__value--rise': rising }">{{ value }}</span>
       <span v-if="delta != null" class="sc-stat-card__delta" :style="deltaStyle">
         <span class="sc-stat-card__delta-arrow">{{ deltaDir === "up" ? "▲" : "▼" }}</span>{{ delta }}
       </span>
@@ -17,7 +17,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, inject, ref, watch } from "vue";
 
 const props = defineProps({
   label: { type: String, required: true },
@@ -27,6 +27,18 @@ const props = defineProps({
   deltaDir: { type: String, default: "up" },
   caption: { type: String, default: "" },
   style: { type: Object, default: () => ({}) },
+});
+
+// O valor que mudou pelo TEMPO REAL sobe na tela. Só nesse caso: trocar o
+// filtro também muda o número, e ali a animação seria ruído. Quem decide é a
+// página, que liga `statCardLive` enquanto aplica a releitura silenciosa.
+const live = inject("statCardLive", ref(false));
+const rising = ref(false);
+const riseKey = ref(0);
+watch(() => props.value, (novo, antigo) => {
+  if (!live.value || novo === antigo) return;
+  rising.value = true;
+  riseKey.value += 1; // recria o elemento: a animação recomeça a cada mudança
 });
 
 const tones = {
@@ -101,6 +113,21 @@ const deltaStyle = computed(() => {
   font: var(--weight-extra) var(--text-3xl) / 1 var(--font-sans);
   color: var(--text-strong);
   letter-spacing: var(--tracking-tight);
+}
+
+.sc-stat-card__value--rise {
+  display: inline-block;
+  animation: stat-value-rise 900ms var(--motion-spring) both;
+}
+
+@keyframes stat-value-rise {
+  0% { transform: translateY(60%); opacity: 0; color: var(--success); }
+  45% { opacity: 1; color: var(--success); }
+  100% { transform: translateY(0); color: var(--text-strong); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-stat-card__value--rise { animation: none; }
 }
 
 .sc-stat-card__delta {

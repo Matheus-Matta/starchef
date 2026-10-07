@@ -97,7 +97,7 @@ const cancelledRows = computed(() =>
 const voidedColumns = [
   { key: "order_sequence", label: "Pedido", align: "right" },
   { key: "product_name", label: "Produto" },
-  { key: "quantity", label: "Qtd", align: "right", type: "decimal" },
+  { key: "quantity", label: "Qtd", align: "right", type: "decimal", digits: 3 },
   { key: "total_price", label: "Valor", align: "right", type: "money" },
   { key: "kind", label: "Tipo" },
   { key: "reason", label: "Motivo" },

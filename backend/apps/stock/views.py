@@ -1,8 +1,10 @@
 from collections import defaultdict
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Max, Min, Q, Sum
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,6 +14,7 @@ from apps.core.codes import barcode_data_uri, qr_data_uri
 from apps.core.modules import MODULE_LOGISTICA
 from apps.core.viewsets import BaseTenantViewSet, ReadOnlyTenantViewSet
 from apps.menu.models import Ingredient
+from apps.stock.position_report import csv_da_posicao, dados_extras, filtrar_insumos
 from apps.stock.lots import (
     cancel_stock_entry,
     post_stock_entry,
@@ -312,6 +315,26 @@ class StockMovementViewSet(BaseTenantViewSet):
     ordering_fields = ["created_at", "quantity", "total_cost"]
     ordering = ["-created_at"]
 
+    @action(detail=False, methods=["post"], url_path="bulk-adjust")
+    def bulk_adjust(self, request):
+        """Ajuste em lote (ver `services/bulk_adjustment.py`)."""
+        from apps.stock.services.bulk_adjustment import apply_bulk_adjustment
+
+        local = StockLocation.objects.filter(pk=request.data.get("location")).first()
+        if local is None:
+            return Response({"detail": "Escolha o local do estoque."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            criados = apply_bulk_adjustment(
+                location=local, user=request.user, reason=request.data.get("reason"),
+                items=request.data.get("items"),
+            )
+        except ValidationError as exc:
+            return Response({"detail": " ".join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"created": len(criados), "movements": self.get_serializer(criados, many=True).data},
+            status=status.HTTP_201_CREATED,
+        )
+
     def perform_create(self, serializer):
         instance = serializer.save()
         # Atualização de custo médio para produto
@@ -489,7 +512,8 @@ class StockPositionView(APIView):
         }
 
         rows = []
-        for ingredient in scoped_ingredients(filters).order_by("name"):
+        insumos = filtrar_insumos(scoped_ingredients(filters), request.query_params)
+        for ingredient in insumos.order_by("name"):
             movement = balances.get(ingredient.id) or {}
             balance = movement.get("balance") or Decimal("0")
             # Insumo inativo so aparece enquanto ainda houver saldo dele: ele
@@ -520,6 +544,7 @@ class StockPositionView(APIView):
                     "next_expiry": next_expiry,
                     "expired": bool(next_expiry and next_expiry < today),
                     "last_movement_at": movement.get("last_movement_at"),
+                    **dados_extras(ingredient),
                 }
             )
 
@@ -530,4 +555,6 @@ class StockPositionView(APIView):
             "expired": sum(1 for row in rows if row["expired"]),
             "stock_value": sum((row["stock_value"] for row in rows), Decimal("0")),
         }
+        if request.query_params.get("export") == "csv":
+            return csv_da_posicao(rows)
         return Response({"positions": rows, "totals": totals, "count": len(rows)})

@@ -11,6 +11,7 @@
       </div>
       <div class="stock-doc__head-actions">
         <Button label="Atualizar" icon="pi pi-refresh" text :loading="loading" @click="load" />
+        <Button label="Exportar CSV" icon="pi pi-download" text :disabled="loading" @click="exportCsv" />
         <Button label="Novo insumo" icon="pi pi-plus" @click="newIngredient" />
       </div>
     </header>
@@ -52,6 +53,20 @@
           />
         </label>
         <label class="stock-field">
+          <span>Fornecedor</span>
+          <Select
+            v-model="supplierId" :options="suppliers" option-label="name" option-value="id"
+            placeholder="Todos" show-clear filter fluid @change="load"
+          />
+        </label>
+        <label class="stock-field">
+          <span>Categoria</span>
+          <Select
+            v-model="categoryId" :options="categories" option-label="name" option-value="id"
+            placeholder="Todas" show-clear filter fluid @change="load"
+          />
+        </label>
+        <label class="stock-field">
           <span>Situação</span>
           <Select
             v-model="situation"
@@ -87,6 +102,9 @@
         removable-sort
       >
         <Column expander style="width: 42px" />
+        <Column field="code" header="Código" sortable>
+          <template #body="{ data }">{{ data.code || "—" }}</template>
+        </Column>
         <Column field="ingredient_name" header="Insumo" sortable>
           <template #body="{ data }">
             <div class="stock-pos__name">
@@ -94,6 +112,9 @@
               <small v-if="!data.is_active">Inativo — ainda com saldo</small>
             </div>
           </template>
+        </Column>
+        <Column field="supplier_name" header="Fornecedor" sortable>
+          <template #body="{ data }">{{ data.supplier_name || "—" }}</template>
         </Column>
         <Column field="balance" header="Saldo" sortable>
           <template #body="{ data }">
@@ -185,6 +206,7 @@ import Skeleton from "primevue/skeleton";
 import Tag from "primevue/tag";
 
 import { api } from "../services/api";
+import { useStockPositionFilters } from "../composables/useStockPositionFilters";
 import { normalizeApiError } from "../utils/apiError";
 import { formatDateTime, formatMoney, formatQuantity } from "../utils/format";
 
@@ -284,7 +306,8 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const params = locationId.value ? { location: locationId.value } : {};
+    const params = positionParams();
+    if (!suppliers.value.length) loadFilterOptions();
     const [positionsResponse, locationsResponse] = await Promise.all([
       api.get("/stock/positions/", { params }),
       // A lista de locais não muda com o filtro — só vale buscar na 1ª carga.
@@ -301,6 +324,9 @@ async function load() {
     loading.value = false;
   }
 }
+
+const { supplierId, categoryId, suppliers, categories, params: positionParams, loadFilterOptions, exportCsv } =
+  useStockPositionFilters(() => ({ location: locationId.value }));
 
 onMounted(load);
 </script>

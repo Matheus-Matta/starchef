@@ -152,8 +152,18 @@ class OrderSerializer(TenantModelSerializer):
     table_number = serializers.CharField(source="table.number", read_only=True, default=None)
     command_number = serializers.IntegerField(source="command.number", read_only=True, default=None)
     command_code = serializers.CharField(source="command.code", read_only=True, default=None)
+    # As comandas do pedido, para a lista: "17, 107". O pedido que nasce no
+    # caixa não tem `command` — as comandas entram pelos itens.
+    command_label = serializers.SerializerMethodField()
     customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
     customer_document = serializers.CharField(source="customer.document", read_only=True, default=None)
+
+    def get_command_label(self, obj):
+        if obj.command_id:
+            return str(obj.command.number)
+        # `items__command` vem prefetchado: nenhuma consulta por linha.
+        numeros = {item.command.number for item in obj.items.all() if item.command_id}
+        return ", ".join(str(n) for n in sorted(numeros))
 
     def get_fiscal(self, obj):
         """Situacao da NFC-e deste pedido, ou `None` quando ainda nao ha nota.

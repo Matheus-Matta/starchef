@@ -80,6 +80,7 @@
     </div>
 
     <CashMovementsReport v-if="section === 'cash'" :report="report" :bar-options="barOptions" />
+    <ProductCostsReport v-if="section === 'cost'" :report="report" />
     <CouponsReport v-if="section === 'coupon'" :report="report" :filters="{ date_from: dateFrom, date_to: dateTo, restaurant: selectedRestaurantId }" />
 
     <div v-if="section === 'sales'" class="responsive-kpi-grid">
@@ -231,7 +232,7 @@
 </template>
 
 <script setup>
-import { computed, inject, onMounted, reactive, ref } from "vue";
+import { computed, inject, nextTick, onMounted, provide, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import Chart from "primevue/chart";
 
@@ -242,6 +243,7 @@ import AppDateRange from "../components/form/AppDateRange.vue";
 import ReportDataTable from "../components/data/ReportDataTable.vue";
 import CashMovementsReport from "../components/reports/CashMovementsReport.vue";
 import CouponsReport from "../components/reports/CouponsReport.vue";
+import ProductCostsReport from "../components/reports/ProductCostsReport.vue";
 import OrdersCancellationsPanel from "../components/reports/OrdersCancellationsPanel.vue";
 import { api, API_BASE_URL } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
@@ -254,9 +256,14 @@ const props = defineProps({
   section: { type: String, default: "sales" },
 });
 const router = useRouter();
+// Relatório é SOMA: o número novo vem do servidor. Mas a releitura do tempo
+// real é silenciosa (sem tela de carregamento), só acontece sem filtro, e o
+// cartão que mudou anima o valor subindo (`StatCard`, via `statCardLive`).
+const statCardLive = ref(false);
+provide("statCardLive", statCardLive);
 useRealtimeResource(
   ["orders.order", "orders.orderitem", "payments.payment", "payments.cashmovement", "payments.cashregister"],
-  () => loadReport(),
+  () => refreshLive(),
   { debounce: 300 },
 );
 
@@ -486,20 +493,42 @@ const barOptions = computed(() => ({
   },
 }));
 
+/** Sem filtro: o período padrão (mês atual) e nada escolhido na seção. */
+const reportAtRest = computed(() => {
+  const [inicio, fim] = currentMonthRange(new Date());
+  const padrao = dateFrom.value === ymd(inicio) && dateTo.value === ymd(fim);
+  const secao = { product: productFilters, cash: cashFilters, orders: ordersFilters }[props.section] || {};
+  return padrao && Object.values(secao).every((value) => !value);
+});
+
+async function refreshLive() {
+  if (loading.value || !reportAtRest.value) return;
+  const novo = await fetchReport();
+  if (!reportAtRest.value) return; // filtrou enquanto a leitura corria
+  statCardLive.value = true;
+  report.value = novo;
+  await nextTick();
+  statCardLive.value = false;
+}
+
 async function loadReport() {
   loading.value = true;
   try {
-    report.value = await reportService.get(props.section, {
+    report.value = await fetchReport();
+  } finally {
+    loading.value = false;
+  }
+}
+
+function fetchReport() {
+  return reportService.get(props.section, {
       date_from: dateFrom.value,
       date_to: dateTo.value,
       restaurant: selectedRestaurantId.value,
       ...(props.section === "product" ? productFilters : {}),
       ...(props.section === "cash" ? { ...cashFilters, page_size: 200 } : {}),
       ...(props.section === "orders" ? { ...ordersFilters, page_size: 200 } : {}),
-    });
-  } finally {
-    loading.value = false;
-  }
+  });
 }
 
 async function loadProductFilterOptions() {

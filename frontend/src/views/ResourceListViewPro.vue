@@ -2450,7 +2450,7 @@ import Textarea from "primevue/textarea";
 import { useToast } from "primevue/usetoast";
 import { useConfirm } from "primevue/useconfirm";
 import { useInboundItemUnlink } from "../composables/useInboundItemUnlink";
-import { importUpsert } from "../composables/importUpsert";
+import { enviarImportacao } from "../composables/importUpsert";
 import { useResourceList } from "../composables/useResourceList";
 import { api } from "../services/api";
 import { getBrowserValue } from "../services/browserPersistence";
@@ -2461,7 +2461,7 @@ import { resolveColumnValue } from "../utils/object";
 import { normalizeApiError } from "../utils/apiError";
 import { buildBulkPayload, createBulkForm, missingBulkScope } from "../utils/bulkCreate";
 import { useAuthStore } from "../stores/auth";
-import { useRealtimeResource } from "../composables/useRealtimeResource";
+import { useRealtimeRows } from "../composables/useRealtimeRows";
 import AppDateRange from "../components/form/AppDateRange.vue";
 import InvoiceBulkResendButton from "../components/data/InvoiceBulkResendButton.vue";
 import OrderBulkCancelDialog from "../components/data/OrderBulkCancelDialog.vue";
@@ -2688,10 +2688,25 @@ const realtimeModelByEndpoint = {
   "/stock/items/": "stock.stockitem",
   "/inbound-nfe/": "inbound_nfe.inboundnfe",
 };
-useRealtimeResource(realtimeModelByEndpoint[props.endpoint] || "*", (payload) => {
-  // Unknown endpoint mappings still remain live; mapped lists only react to their model.
-  if (realtimeModelByEndpoint[props.endpoint] || payload.resource) reload();
-}, { debounce: 180 });
+// Listas cuja ordem padrão é "mais recente primeiro": nelas o registro
+// alterado que não estava na página sobe para o topo.
+const recencyOrderedEndpoints = new Set(["/orders/", "/payments/", "/inbound-nfe/"]);
+const realtimeFilterCount = computed(() =>
+  activeFilterCount.value
+  + activeLinkFilters.value.length
+  + Number(props.endpoint === "/inbound-nfe/" && inboundStatusFilter.value !== "all"),
+);
+
+if (realtimeModelByEndpoint[props.endpoint]) {
+  useRealtimeRows({
+    resource: realtimeModelByEndpoint[props.endpoint],
+    service, rows, total, page, rowsPerPage, ordering,
+    filterCount: realtimeFilterCount,
+    fixedParams: props.defaultParams,
+    recencyOrdered: recencyOrderedEndpoints.has(props.endpoint),
+    onBurst: reload,
+  });
+}
 const activeFilterCount = computed(() =>
   Number(Boolean(search.value?.trim()))
   + Number(Boolean(dateRange.value?.length))
@@ -4575,24 +4590,22 @@ async function importRows() {
         .map(([field, value]) => [field.name, castImportedValue(value, field)]),
     )).filter((payload) => Object.keys(payload).length);
 
-    // Atualiza o que já existe (pela chave) e cria o resto: reimportar a
-    // planilha exportada não dá mais "valor duplicado" em toda linha.
-    const { created, updated, errors, warnings } = await importUpsert({
-      service, payloads, fields: exchangeFields.value, preferredKey: proCfg.value.importKey,
+    // O lote vai ao servidor numa chamada só e o worker grava (atualiza pela
+    // chave, cria o resto). A tela não fica presa: o resultado chega pelo sino.
+    const { warnings } = await enviarImportacao({
+      api, endpoint: props.endpoint, payloads, fields: exchangeFields.value, preferredKey: proCfg.value.importKey,
       servicoPara: (campo) => new ResourceService({ endpoint: campo.endpoint, globalScope: campo.globalScope }),
     });
     toast.add({
-      severity: errors.length || warnings.length ? "warn" : "success",
-      summary: `${created + updated} de ${payloads.length} itens importados`,
-      detail: [`${created} criado(s), ${updated} atualizado(s).`, errors[0], warnings[0],
-        warnings.length > 1 ? `(+${warnings.length - 1} aviso(s))` : ""].filter(Boolean).join(" "),
-      life: errors.length || warnings.length ? 12000 : 6000,
+      severity: warnings.length ? "warn" : "success",
+      summary: "Importação enviada",
+      detail: [`Sua importação de ${payloads.length} linha(s) foi enviada e está sendo processada em segundo plano. `
+        + "Você recebe o resultado no sino de notificações.", warnings[0],
+      warnings.length > 1 ? `(+${warnings.length - 1} aviso(s))` : ""].filter(Boolean).join(" "),
+      life: 8000,
     });
-    if (!errors.length) {
-      importVisible.value = false;
-      importFile.value = null;
-    }
-    reload();
+    importVisible.value = false;
+    importFile.value = null;
   } catch (error) {
     toast.add({ severity: "error", summary: "Não foi possível importar", detail: normalizeApiError(error).message, life: 5000 });
   } finally {

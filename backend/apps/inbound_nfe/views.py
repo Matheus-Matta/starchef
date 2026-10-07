@@ -20,6 +20,7 @@ from apps.inbound_nfe.serializers import (
     ReceiveInvoiceRequestSerializer,
     DFeDistributionDocumentSerializer,
 )
+from apps.inbound_nfe.services.matching import guardar_ean_da_nota
 from apps.inbound_nfe.services.receiving import receive_invoice
 from apps.inbound_nfe.services.manifestation import manifest_nfe
 from apps.inbound_nfe.services.unlink import VinculoTravado, assert_item_editable, unlink_item
@@ -967,6 +968,8 @@ class InboundNFeItemViewSet(BaseTenantViewSet):
             item.product = product
             item.conversion_factor = conversion_factor
             item.save(update_fields=["ingredient", "product", "conversion_factor"])
+            if product is not None:
+                guardar_ean_da_nota(product, item.ean)
 
             # Checar se a NF mudou status para pronta para recebimento
             unmapped_exists = item.invoice.items.filter(is_ignored=False, product__isnull=True, ingredient__isnull=True).exists()

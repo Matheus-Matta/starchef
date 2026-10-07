@@ -188,6 +188,16 @@ Dois canais WebSocket independentes, ambos same-origin (`/ws/...`, proxiado pelo
 - **`stores/notifications.js`** conecta em `/ws/notifications/` — sino de notificações, reconecta sozinho após 4s se cair. Mensagens: `{event:"notification", payload}` (nova notificação) e `{event:"connected", payload:{unread}}` (sync inicial do contador).
 - **`services/realtimeService.js`** (singleton) conecta em `/ws/realtime/` — canal genérico de eventos de modelo do backend (`apps/realtime`, ver [`BACKEND.md`](BACKEND.md#6-websocket--tempo-real)). Reconecta com backoff exponencial, heartbeat de 25s, pub/sub por `event` com wildcard `"*"`. A URL do socket é derivada da **origem da API** (`RUNTIME_CONFIG.API_URL`), não da origem da página: com a API num subdomínio próprio (`api.dominio`), o `/ws/` só existe atrás do proxy dela. `RUNTIME_CONFIG.WS_URL` sobrescreve quando o WebSocket fica num host à parte. Consumido via `useRealtimeResource.js`, que filtra por nome de recurso e faz debounce (120ms padrão) antes de disparar um refresh de lista/board.
 
+As **listas** (`ResourceListViewPro`) não relêem a página quando chega um evento: `useRealtimeRows.js` busca só o registro do evento (`GET /recurso/{id}/`) e mexe na linha (`utils/realtimeRows.js`). Item novo entra no topo e, com a página cheia, o último sai — a paginação continua com o mesmo tamanho; alterado troca no lugar; excluído (ou que saiu do escopo, 404, ou não bate os `defaultParams` da tela) sai. Só a "tela inicial" reage: página 1, sem filtro/busca/filtro de URL e na ordem padrão — com qualquer um deles, o evento é ignorado. Em lista ordenada por nome/número, um alterado que não está na página não sobe para o topo. Sem debounce (`debounce: 0` entrega cada evento): dois pedidos no mesmo instante entram os dois.
+
+Numa **rajada** (mais de 20 eventos em 1,5 s — uma importação em massa) a lista para de buscar linha a linha e relê a página uma vez quando a rajada termina.
+
+**Importação de planilha** (`enviarImportacao` em `composables/importUpsert.js`): resolve as relações no navegador e manda o lote inteiro para `POST /imports/` numa chamada; a tela mostra "enviada e está sendo processada em segundo plano" na hora e o resultado chega pelo sino.
+
+Células de relatório (`utils/reportCell.js`): número decimal sai com no máximo 2 casas (`digits` na coluna pede mais, ex.: peso em kg); dinheiro em reais.
+
+Os **relatórios** são soma, então relêem — mas em silêncio (sem tela de carregamento), só no período padrão (mês atual) sem filtro da seção, e o `StatCard` cujo valor mudou anima subindo (`provide("statCardLive")`; trocar filtro não anima).
+
 ## 7. Autenticação no frontend
 
 - **Login**: `LoginScreen.vue` → `authStore.login()` → `services/api.js` (o backend grava os cookies httpOnly); a store então chama `fetchMe()` para popular `user`. Esse `fetchMe()` é também a prova de que o navegador guardou os cookies: se der 401 logo após o 200 do login (Domain que não cobre o host da API, Secure em HTTP), a store lança `SESSION_COOKIE_REJECTED` e a tela de login explica, em vez de entrar no painel e voltar. A store grava a flag `sc_session` no origin do frontend (`tokenStorage.markSession()`), porque com a API em outro host a flag que o backend grava fica lá e `hasSession()` nunca a veria.

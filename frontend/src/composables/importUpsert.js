@@ -1,5 +1,3 @@
-import { normalizeApiError } from "../utils/apiError";
-
 /**
  * Importar CSV: atualiza o que já existe, cria só o que falta.
  *
@@ -20,20 +18,6 @@ export function importKeyFor(fields, preferred) {
 }
 
 const normalizar = (value) => String(value ?? "").trim().toLowerCase();
-
-async function existentesPorChave(service, key) {
-  const porChave = new Map();
-  let page = await service.list({ page_size: 500 });
-  for (;;) {
-    for (const row of page?.results || []) {
-      const valor = normalizar(row[key]);
-      if (valor && !porChave.has(valor)) porChave.set(valor, row.id);
-    }
-    if (!page?.next) break;
-    page = await service.listByUrl(page.next);
-  }
-  return porChave;
-}
 
 async function todasAsLinhas(servico) {
   const linhas = [];
@@ -82,27 +66,17 @@ async function resolverRelacoes({ fields, payloads, servicoPara }) {
   return avisos;
 }
 
-export async function importUpsert({ service, payloads, fields, preferredKey, servicoPara }) {
+/**
+ * Importação em SEGUNDO PLANO: resolve as relações aqui (leituras rápidas) e
+ * entrega o lote inteiro ao servidor numa chamada só.
+ *
+ * O `importUpsert` acima gravava linha a linha do navegador e a tela ficava
+ * presa até a última. Agora o `POST /imports/` responde na hora e o worker
+ * processa; o resultado chega pelo sino de notificações.
+ */
+export async function enviarImportacao({ api, endpoint, payloads, fields, preferredKey, servicoPara }) {
   const key = importKeyFor(fields, preferredKey);
-  const avisos = servicoPara ? await resolverRelacoes({ fields, payloads, servicoPara }) : [];
-  const existentes = key ? await existentesPorChave(service, key) : new Map();
-  const resultado = { created: 0, updated: 0, errors: [], warnings: avisos };
-  for (const [index, payload] of payloads.entries()) {
-    const id = key ? existentes.get(normalizar(payload[key])) : null;
-    try {
-      if (id) {
-        await service.update(id, payload);
-        resultado.updated += 1;
-      } else {
-        const criado = await service.create(payload);
-        resultado.created += 1;
-        // Duas linhas com a mesma chave na planilha: a segunda atualiza a
-        // primeira em vez de tentar criar de novo.
-        if (key && criado?.id) existentes.set(normalizar(payload[key]), criado.id);
-      }
-    } catch (error) {
-      resultado.errors.push(`Linha ${index + 2}: ${normalizeApiError(error).message}`);
-    }
-  }
-  return resultado;
+  const warnings = servicoPara ? await resolverRelacoes({ fields, payloads, servicoPara }) : [];
+  const { data } = await api.post("/imports/", { endpoint, key, rows: payloads });
+  return { job: data, warnings };
 }

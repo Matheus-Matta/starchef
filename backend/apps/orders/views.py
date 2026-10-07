@@ -144,6 +144,8 @@ class OrderViewSet(BaseTenantViewSet):
             "items__restaurant",
             "items__addons",
             "items__batch",
+            # `command_label` lê a comanda de cada item.
+            "items__command",
             # `payments` entrou no serializer; sem o prefetch a listagem faria
             # uma consulta por pedido.
             "payments__payment_method",

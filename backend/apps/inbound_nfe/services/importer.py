@@ -8,6 +8,7 @@ from apps.inbound_nfe.models import (
     DFeDistributionDocument,
 )
 from apps.inbound_nfe.services.xml_parser import parse_nfe_xml
+from apps.inbound_nfe.services.suppliers import ensure_supplier_from_nfe
 from apps.inbound_nfe.services.matching import apply_mapping_to_item
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,8 @@ def process_uploaded_xml(
         if not restaurant:
             from apps.restaurants.models import Restaurant
             restaurant = getattr(invoice, "restaurant", None) or Restaurant.all_objects.filter(account=account).first()
+        # Fornecedor achado (ou cadastrado) pelo CNPJ/CPF do emitente.
+        ensure_supplier_from_nfe(parsed, account=account, restaurant=restaurant)
 
         meta = (manifest_meta or {}).get(parsed.access_key, {})
         existing_doc = DFeDistributionDocument.all_objects.filter(

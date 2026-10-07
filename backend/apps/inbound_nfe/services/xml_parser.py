@@ -77,6 +77,8 @@ class ParsedNFe:
     nat_op: str = ""                    # Natureza da operação
     supplier_trade_name: str = ""       # xFant do emitente
     supplier_ie: str = ""               # IE do emitente
+    supplier_cpf: str = ""              # emitente pessoa física
+    supplier_address: dict = field(default_factory=dict)  # enderEmit
     items: List[ParsedNFeItem] = field(default_factory=list)
 
 
@@ -184,6 +186,15 @@ def _parse_nfe_proc(root: ET.Element) -> ParsedNFe:
     supplier_name = extract_text(emit, 'nfe:xNome')
     supplier_trade_name = extract_text(emit, 'nfe:xFant')
     supplier_ie = extract_text(emit, 'nfe:IE')
+    supplier_cpf = extract_text(emit, 'nfe:CPF')
+    ender = emit.find('nfe:enderEmit', NAMESPACES) if emit is not None else None
+    supplier_address = {
+        campo: extract_text(ender, f'nfe:{tag}')
+        for campo, tag in (
+            ("street", "xLgr"), ("number", "nro"), ("district", "xBairro"),
+            ("city", "xMun"), ("state", "UF"), ("zip_code", "CEP"), ("phone", "fone"),
+        )
+    }
 
     # Totais
     total = inf_nfe.find('nfe:total/nfe:ICMSTot', NAMESPACES)
@@ -266,6 +277,8 @@ def _parse_nfe_proc(root: ET.Element) -> ParsedNFe:
         nat_op=nat_op,
         supplier_trade_name=supplier_trade_name,
         supplier_ie=supplier_ie,
+        supplier_cpf=supplier_cpf,
+        supplier_address=supplier_address,
         items=parsed_items
     )
 

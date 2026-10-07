@@ -61,8 +61,10 @@ from apps.payments.views import (
 from apps.payments.views_discrepancy import CashDiscrepancyReportViewSet, SalesDiscrepancyViewSet
 from apps.payments.views_cash_movements import CashMovementViewSet
 from apps.printers.views import PrinterViewSet, PrintJobViewSet, ScaleReadingViewSet, ScaleViewSet
+from apps.imports.views import ImportJobViewSet
 from apps.reports.cash_movements import CashMovementsReportView
 from apps.reports.coupons import CouponsReportView
+from apps.reports.product_costs import ProductCostsReportView
 from apps.reports.views import (
     DashboardReportView,
     OrdersReportView,
@@ -116,6 +118,7 @@ def api_index(_request):
 
 
 router = DefaultRouter()
+router.register("imports", ImportJobViewSet, basename="imports")
 router.register("accounts", AccountViewSet, basename="accounts")
 router.register("plans", PlanViewSet, basename="plans")
 router.register("subscriptions", SubscriptionViewSet, basename="subscriptions")
@@ -213,6 +216,7 @@ urlpatterns = [
     path("api/v1/reports/restaurants/", RestaurantsReportView.as_view(), name="restaurants-report"),
     path("api/v1/reports/dashboard/", DashboardReportView.as_view(), name="dashboard-report"),
     path("api/v1/reports/cash-movements/", CashMovementsReportView.as_view(), name="cash-movements-report"),
+    path("api/v1/reports/product-costs/", ProductCostsReportView.as_view(), name="product-costs-report"),
     path("api/v1/reports/coupons/", CouponsReportView.as_view(), name="coupons-report"),
     path("api/v1/data-exchange/export/", CsvExportView.as_view(), name="data-exchange-export"),
     path("api/v1/data-exchange/parse/", CsvParseView.as_view(), name="data-exchange-parse"),
