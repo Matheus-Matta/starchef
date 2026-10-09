@@ -6,9 +6,10 @@ itens, mesmo saindo e voltando da tela. `command` e `command_item` são
 `LOJA` ("a loja vence"), e a loja RECUSAVA toda versão mais nova vinda da
 nuvem, abrindo um conflito por item. Só uma queda da loja abria exceção.
 
-"A loja vence" existe para proteger uma edição da loja que a nuvem ainda não
-viu. Se a loja já entregou tudo o que fez naquela linha, a edição da nuvem foi
-feita EM CIMA da versão da loja: não há duas edições disputando, há uma só.
+Hoje a regra é uma só, para toda entidade: a versão mais nova vence, e a mais
+antiga não muda nada (`conflicts.py`). Inclusive quando a loja tem uma edição
+ainda a caminho da nuvem — se ela é mais velha, perde; se é mais nova, a
+versão da nuvem é que será ignorada quando chegar.
 """
 import uuid
 
@@ -17,8 +18,8 @@ from django.utils import timezone
 
 import apps.synchronization.catalog  # noqa: F401 — registra o catálogo
 from apps.synchronization.constants import Direction, EventStatus, NodeType, Operation
-from apps.synchronization.models import SyncEvent, SyncNode
-from apps.synchronization.services import conflicts, crypto, nodes
+from apps.synchronization.models import SyncEvent
+from apps.synchronization.services import conflicts, crypto
 
 pytestmark = pytest.mark.django_db
 
@@ -35,10 +36,8 @@ def _agora():
 
 
 @pytest.fixture(autouse=True)
-def _loja_sem_queda(como_loja, no_loja):
-    """Loja conectada: a exceção da queda NÃO pode ser o que decide aqui."""
-    SyncNode.objects.filter(pk=no_loja.pk).update(offline_since=None)
-    nodes.invalidate_cache()
+def _na_loja(como_loja):
+    """Estas decisões são tomadas pela LOJA, recebendo da nuvem."""
 
 
 _sequencia = iter(range(1, 10_000))
@@ -89,39 +88,35 @@ def test_linha_que_veio_da_nuvem_e_nunca_foi_mexida_na_loja_tambem_aplica(conta)
     [EventStatus.PENDING, EventStatus.PROCESSING, EventStatus.SENT,
      EventStatus.FAILED, EventStatus.DEAD],
 )
-def test_edicao_da_loja_que_a_nuvem_ainda_nao_viu_continua_conflito(
+def test_edicao_da_loja_a_caminho_perde_para_a_mais_nova_da_nuvem(
     conta, no_loja, no_nuvem, status
 ):
-    """A proteção que não pode cair junto: o garçom lançou na loja, isso ainda
-    não chegou à nuvem, e a nuvem manda outra versão — são duas edições."""
+    """O garçom lançou na loja e isso ainda não chegou à nuvem; a nuvem manda
+    uma versão MAIS NOVA. Antes virava conflito e a loja ficava com a velha."""
     linha = _Linha(uuid.uuid4())
     local = _agora() - 1000
     _subiu(conta, no_loja, no_nuvem, "command_item", linha, versao=local, status=status)
 
-    assert _decidir("command_item", linha, local=local, remoto=_agora()) == conflicts.CONFLITO
+    assert _decidir("command_item", linha, local=local, remoto=_agora()) == conflicts.APLICAR
 
 
-def test_versao_local_mais_nova_que_a_entregue_continua_conflito(conta, no_loja, no_nuvem):
-    """A nuvem confirmou uma versão ANTERIOR; a loja mexeu de novo depois (e a
-    gravação ainda nem virou evento). A edição nova da loja é protegida."""
+def test_versao_da_nuvem_mais_velha_que_a_edicao_da_loja_nao_muda_nada(conta, no_loja, no_nuvem):
     linha = _Linha(uuid.uuid4())
-    entregue = _agora() - 60_000_000
-    _subiu(conta, no_loja, no_nuvem, "command_item", linha, versao=entregue,
+    agora = _agora()
+    _subiu(conta, no_loja, no_nuvem, "command_item", linha, versao=agora,
            status=EventStatus.ACKNOWLEDGED)
 
-    assert _decidir(
-        "command_item", linha, local=entregue + 5_000_000, remoto=_agora()
-    ) == conflicts.CONFLITO
+    assert _decidir("command_item", linha, local=agora, remoto=agora - 1000) == conflicts.IGNORAR
 
 
 @pytest.mark.parametrize("entidade", ["order", "order_item", "payment"])
-def test_pedido_e_pagamento_nao_entram_na_regra(conta, entidade):
-    """Dinheiro segue como estava: divergência sem queda é decisão de gente."""
+def test_pedido_e_pagamento_seguem_a_mesma_regra(conta, entidade):
+    """Com o terminal alternando entre os servidores, o mesmo pedido é editado
+    nos dois: a edição mais nova é a que vale."""
     linha = _Linha(uuid.uuid4())
 
-    assert _decidir(entidade, linha, local=_agora() - 1000, remoto=_agora()) == conflicts.CONFLITO
+    assert _decidir(entidade, linha, local=_agora() - 1000, remoto=_agora()) == conflicts.APLICAR
 
 
-def test_sem_a_linha_local_nada_muda(conta):
-    """Quem chama sem a instância (como os testes antigos) decide como antes."""
-    assert _decidir("command", None, local=_agora() - 1000, remoto=_agora()) == conflicts.CONFLITO
+def test_sem_a_linha_local_a_mais_nova_tambem_vence(conta):
+    assert _decidir("command", None, local=_agora() - 1000, remoto=_agora()) == conflicts.APLICAR

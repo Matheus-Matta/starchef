@@ -94,7 +94,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 40s
+      # As migrações de um banco zerado passam de 3 min no Docker do Windows;
+      # com 40 s a dependência dava "unhealthy" e o resto do par não subia.
+      start_period: 300s
 
   # O CELERY DA NUVEM. Sem ele o par sobe, matricula e nao sincroniza NADA.
   #
@@ -184,7 +186,48 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 40s
+      # As migrações de um banco zerado passam de 3 min no Docker do Windows;
+      # com 40 s a dependência dava "unhealthy" e o resto do par não subia.
+      start_period: 300s
+
+  # O CELERY DA LOJA, como na instalação real (`docker/local`). Sem ele a loja
+  # recebe e aplica o que chega pelo worker, mas a RETENTATIVA não roda: o
+  # evento que falhou (pai ainda não chegou) só era reaplicado pelo beat
+  # (`sync.apply_pending_events`, a cada 15s) — e o par mostrava "dado faltando"
+  # que a loja de verdade não teria.
+  celery_worker_store:
+    <<: *base
+    command: >
+      celery -A config worker -l info --concurrency=2
+      -Q celery,sync.dispatch,sync.receive,sync.apply,sync.bootstrap,sync.retry,sync.reconcile,sync.cleanup
+    environment: &store-celery-env
+      <<: *base-env
+      POSTGRES_DB: starchef_store
+      POSTGRES_HOST: pg-store
+      REDIS_URL: redis://redis-store:6379/0
+      CELERY_BROKER_URL: redis://redis-store:6379/1
+      CELERY_RESULT_BACKEND: redis://redis-store:6379/2
+      SYNC_NODE_TYPE: local
+      SYNC_CLOUD_API_URL: http://backend-cloud:8000
+      SYNC_CLOUD_WSS_URL: ws://backend-cloud:8000/ws/sync/v1/
+      SYNC_ACCOUNT_ID: ${SYNC_ACCOUNT_ID:-}
+    networks: [starchef-syncpair]
+    volumes:
+      - pair_sync_credentials:/app/sync
+    depends_on:
+      backend-store:
+        condition: service_healthy
+
+  celery_beat_store:
+    <<: *base
+    command: celery -A config beat -l info
+    environment: *store-celery-env
+    networks: [starchef-syncpair]
+    volumes:
+      - pair_sync_credentials:/app/sync
+    depends_on:
+      backend-store:
+        condition: service_healthy
 
   # O processo que MANTÉM a conexão com a nuvem. Sem ele os dois bancos ficam
   # parados olhando um para o outro: a loja grava na outbox e nada sai.

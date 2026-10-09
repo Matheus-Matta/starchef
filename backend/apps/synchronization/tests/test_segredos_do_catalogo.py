@@ -123,4 +123,8 @@ def test_a_lista_de_segredos_liberados_e_esta_e_nenhuma_outra():
         "fiscal_config.certificate_valid_until",
         "fiscal_config.certificate_cnpj",
         "fiscal_config.certificate_name",
+        # Também NÃO é segredo: é a etiqueta QR colada no bem do patrimônio,
+        # barrada só porque o nome contém "token". Sem ela o bem chega sem
+        # etiqueta, e a chave única do token vazio recusa o segundo bem.
+        "asset.qr_code_token",
     }, f"liberação de segredo não declarada neste teste: {liberados}"

@@ -121,7 +121,16 @@ class SyncNode(TimeStampedModel):
         return f"sync.account.{self.account_id}.node.{self.id}"
 
     def next_sequence(self):
-        """Reserva a próxima sequência deste nó. Use dentro de uma transação."""
+        """Reserva a próxima sequência deste nó. Use dentro de uma transação.
+
+        No PostgreSQL vem de uma sequence, sem travar a linha do nó: a trava
+        durava a transação inteira e fechava círculo com as outras gravações
+        (`services/sequencia_pg.py`).
+        """
+        from apps.synchronization.services import sequencia_pg
+
+        if sequencia_pg.disponivel():
+            return sequencia_pg.proxima()
         updated = SyncNode.objects.filter(pk=self.pk).update(
             sequence_counter=models.F("sequence_counter") + 1
         )

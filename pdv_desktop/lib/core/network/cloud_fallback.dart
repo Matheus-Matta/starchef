@@ -1,4 +1,5 @@
 import 'api_exception.dart';
+import 'veredito_da_loja.dart';
 
 /// A nuvem como SEGUNDO SERVIDOR, quando o backend da loja não responde.
 ///
@@ -47,8 +48,12 @@ import 'api_exception.dart';
 ///   nasceu durante uma queda.
 /// * **fiscal e caixa** — não desviam. Ver [caminhosQueNuncaDesviam].
 class CloudFallback {
-  CloudFallback({String? baseUrl, this.enabled = true})
-    : baseUrl = baseUrl ?? enderecoDaNuvem;
+  CloudFallback({
+    String? baseUrl,
+    this.enabled = true,
+    VereditoDaLoja? veredito,
+  }) : baseUrl = baseUrl ?? enderecoDaNuvem,
+       veredito = veredito ?? VereditoDaLoja();
 
   /// O endereço da nuvem, fixo em COMPILAÇÃO.
   ///
@@ -96,31 +101,33 @@ class CloudFallback {
   /// o servidor está de pé, e o problema é da rota.
   static const statusSemBackend = {502, 503, 504};
 
-  /// Há quanto tempo o veredito de "a loja está fora" vale sem reconferir.
+  /// A janela INICIAL do veredito de "a loja está fora". Ela cresce quando a
+  /// loja recai logo depois de voltar — ver [VereditoDaLoja].
   ///
   /// Confirmado que caiu, as requisições seguintes vão direto para a nuvem: ir
   /// bater na loja morta a cada chamada custaria o tempo do `timeout` em cada
   /// gesto do operador. Vencida a janela, confere de novo — é assim que o
   /// terminal VOLTA sozinho quando a loja sobe.
-  static const janelaDoVeredito = Duration(seconds: 30);
+  static const janelaDoVeredito = VereditoDaLoja.janelaBase;
 
-  DateTime? _confirmadoForaEm;
+  /// Quanto tempo o terminal fica na nuvem depois de a loja cair.
+  final VereditoDaLoja veredito;
 
   /// A loja está confirmadamente fora AGORA?
-  bool get localForaDoAr {
-    final quando = _confirmadoForaEm;
-    if (quando == null) return false;
-    if (DateTime.now().difference(quando) > janelaDoVeredito) {
-      _confirmadoForaEm = null;
-      return false;
-    }
-    return true;
-  }
+  bool get localForaDoAr => veredito.localForaDoAr;
 
   /// A loja respondeu. Esquece o veredito e volta a atender por ela.
-  void localRespondeu() => _confirmadoForaEm = null;
+  void localRespondeu() => veredito.localRespondeu();
 
-  void _marcarForaDoAr() => _confirmadoForaEm = DateTime.now();
+  /// Com a loja confirmadamente fora, esta requisição vai DIRETO à nuvem?
+  ///
+  /// Fiscal e caixa nunca desviam; fechar comanda tenta a loja antes — a loja
+  /// sem internet já tinha cobrado o cartão e a nuvem cobrava de novo.
+  bool irDiretoParaANuvem(String path) =>
+      enabled &&
+      localForaDoAr &&
+      !nuncaDesvia(path) &&
+      !path.endsWith('/attach-commands/');
 
   /// Esta falha justifica tentar a nuvem?
   ///
@@ -138,8 +145,7 @@ class CloudFallback {
   }
 
   /// Esta rota está na lista do que nunca sai da loja?
-  bool nuncaDesvia(String path) =>
-      caminhosQueNuncaDesviam.any(path.startsWith);
+  bool nuncaDesvia(String path) => caminhosQueNuncaDesviam.any(path.startsWith);
 
   /// A loja está REALMENTE fora, ou foi uma falha isolada?
   ///
@@ -152,7 +158,7 @@ class CloudFallback {
   /// espera o `timeout` inteiro, porque a pergunta é "tem alguém aí?", não
   /// "processe isto".
   ///
-  /// Confirmado que caiu, o veredito vale por [janelaDoVeredito] — as
+  /// Confirmado que caiu, o veredito vale por [VereditoDaLoja.janela] — as
   /// requisições seguintes vão direto, sem sondar de novo.
   Future<bool> confirmarQuedaDoLocal(Future<bool> Function() sonda) async {
     if (localForaDoAr) return true;
@@ -161,7 +167,7 @@ class CloudFallback {
       localRespondeu();
       return false;
     }
-    _marcarForaDoAr();
+    veredito.marcarForaDoAr();
     return true;
   }
 

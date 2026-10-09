@@ -53,15 +53,16 @@ def test_a_primeira_chegada_tambem_aplica(tipo):
 
 
 @pytest.mark.parametrize("tipo", ["invoice", "invoice_item"])
-def test_a_LOJA_recusa_a_nuvem_mexer_na_nota_dela(tipo):
-    """O §15 continua de pé — no lado que importa.
+def test_a_LOJA_aplica_a_nota_mais_nova_que_vem_da_nuvem(tipo):
+    """A nota emitida na nuvem (pagamento com a loja fora) precisa descer.
 
-    A loja é a autora. A nuvem mandando uma versão da nota de volta é o caso
-    que precisa de gente olhando, e não de uma sobrescrita silenciosa.
+    Antes a loja recusava e abria conflito: ela via o pedido pago e sem nota,
+    e o operador emitia a segunda NFC-e da mesma venda. A versão só anda para
+    a frente (`error` → `pending` → `issued`): a mais nova é a certa.
     """
     decisao = _decidir(tipo, recebedor=NodeType.LOCAL, remota=200, local=100)
 
-    assert decisao == conflicts.CONFLITO
+    assert decisao == conflicts.APLICAR
 
 
 @pytest.mark.parametrize("tipo", ["invoice", "invoice_item"])
@@ -73,29 +74,16 @@ def test_evento_atrasado_da_loja_nao_desfaz_o_que_ja_subiu(tipo):
 
 
 @pytest.mark.parametrize("tipo", ["invoice", "invoice_item"])
-def test_a_queda_de_conexao_NAO_autoriza_a_nuvem_a_sobrescrever(tipo, monkeypatch):
-    """A exceção da atualização perdida não vale para documento fiscal.
+def test_a_nota_nunca_e_tratada_como_esqueleto(tipo):
+    """Uma nota local sem história de sincronização NÃO aceita versão mais velha.
 
-    Para o resto do catálogo, uma linha que a loja não tocou enquanto esteve
-    fora aceita o que a nuvem traz — é o que faz o desvio para a nuvem valer.
-    A nota não: o PDV nunca desvia o fiscal, então divergência aqui não nasceu
-    de queda nenhuma.
-
-    A proteção era amarrada à política `MANUAL`. Trocá-la por `LOJA` teria
-    desligado isto em silêncio, e é este teste que prende o contrário.
+    O esqueleto (a conta criada na matrícula) aceita o dado verdadeiro mesmo
+    "mais velho". A nota não: para documento fiscal a versão decide sempre.
     """
-    from django.utils import timezone
+    class _Nota:
+        pk = "nota-local"
 
-    class _NoFalso:
-        offline_since = timezone.now()
-
-    monkeypatch.setattr(
-        "apps.synchronization.services.nodes.self_node_or_none",
-        lambda: _NoFalso(),
-    )
-    # Versão local ANTERIOR à queda: para qualquer outra entidade isto seria
-    # "atualização que perdemos" e entraria.
-    assert conflicts._so_perdemos_a_atualizacao(tipo, NodeType.LOCAL, 1) is False
+    assert conflicts._linha_local_nunca_sincronizou(tipo, _Nota()) is False
 
 
 @pytest.mark.parametrize("tipo", ["invoice", "invoice_item"])
@@ -116,7 +104,7 @@ def test_a_nuvem_NUNCA_apaga_uma_nota_para_dar_lugar_a_outra(tipo):
 
 def test_a_lista_de_entidades_fiscais_e_esta_e_nenhuma_outra():
     """Uma entrada a mais aqui isenta a entidade de DUAS regras de uma vez:
-    a atualização perdida e a adoção.
+    o esqueleto e a adoção.
 
     Nomear a lista num teste é o que torna essa isenção uma decisão visível no
     diff, e não um efeito colateral de mexer no catálogo.

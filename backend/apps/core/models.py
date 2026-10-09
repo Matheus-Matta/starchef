@@ -212,8 +212,14 @@ class IdempotencyRecord(models.Model):
 
     O registro é gravado dentro da mesma transação da operação, então ou os
     dois existem, ou nenhum dos dois.
+
+    O id é DERIVADO de (conta, chave), não sorteado nem sequencial: a mesma
+    operação tentada na loja e na nuvem gera o mesmo id nos dois bancos. Com o
+    inteiro sequencial de antes, o registro 5 da loja e o 5 da nuvem eram
+    operações diferentes com o mesmo id — sincronizar um apagaria o outro.
     """
 
+    id = models.UUIDField(primary_key=True, editable=False)
     key = models.CharField(max_length=200)
     account = models.ForeignKey(
         "accounts.Account",
@@ -229,10 +235,20 @@ class IdempotencyRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
+        # Tabela nova na troca do id para UUID: a antiga foi renomeada e
+        # apagada na migração, e reusar o nome colidiria com os índices dela.
+        db_table = "core_idempotency_record"
         constraints = [
             models.UniqueConstraint(fields=["account", "key"], name="idempotency_unique_key_per_account"),
         ]
-        indexes = [models.Index(fields=["created_at"])]
+        indexes = [models.Index(fields=["created_at"], name="core_idempotency_created_idx")]
+
+    def save(self, *args, **kwargs):
+        if self.id is None:
+            from apps.core.idempotency_id import idempotency_record_id
+
+            self.id = idempotency_record_id(self.account_id, self.key)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.method} {self.path} ({self.key})"

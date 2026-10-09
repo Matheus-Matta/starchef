@@ -39,18 +39,6 @@ def _na_nuvem(entidade, linha, *, local, remoto):
     )
 
 
-def _pendente_na_nuvem(conta, no_nuvem, no_loja, entidade, linha, versao):
-    """A nuvem gravou a linha e o evento ainda não foi confirmado pela loja."""
-    payload = {"fields": {}}
-    SyncEvent.objects.create(
-        account=conta, source_node=no_nuvem, target_node=no_loja,
-        direction=Direction.OUTBOUND, sequence=next(_sequencia), entity_type=entidade,
-        entity_id=str(linha.pk), operation=Operation.UPSERT, entity_version=versao,
-        payload=payload, payload_checksum=crypto.checksum(payload),
-        status=EventStatus.PENDING,
-    )
-
-
 @pytest.mark.parametrize("entidade", ["cash_register", "cash_movement"])
 def test_aprovacao_do_painel_da_nuvem_chega_a_loja(como_loja, conta, no_loja, no_nuvem, entidade):
     """A loja abriu e subiu; a nuvem confirmou; o gerente aprovou no painel."""
@@ -63,16 +51,17 @@ def test_aprovacao_do_painel_da_nuvem_chega_a_loja(como_loja, conta, no_loja, no
 
 
 @pytest.mark.parametrize("entidade", ["cash_register", "cash_movement"])
-def test_edicao_do_caixa_que_a_nuvem_nao_viu_continua_conflito(
+def test_no_caixa_tambem_vence_a_edicao_mais_nova(
     como_loja, conta, no_loja, no_nuvem, entidade
 ):
-    """O PDV fechou o caixa e isso ainda não subiu: são duas edições do dinheiro."""
+    """O PDV fechou o caixa e isso ainda não subiu; a nuvem mexeu DEPOIS: vence
+    a da nuvem. A edição da loja, mais velha, será ignorada lá ao chegar."""
     linha = _Linha(uuid.uuid4())
     fechado = _agora() - 1000
     _subiu(conta, no_loja, no_nuvem, entidade, linha, versao=fechado,
            status=EventStatus.PENDING)
 
-    assert _decidir(entidade, linha, local=fechado, remoto=_agora()) == conflicts.CONFLITO
+    assert _decidir(entidade, linha, local=fechado, remoto=_agora()) == conflicts.APLICAR
 
 
 def test_conexao_do_terminal_na_loja_e_aplicada_na_nuvem(conta, no_loja, no_nuvem):
@@ -83,15 +72,48 @@ def test_conexao_do_terminal_na_loja_e_aplicada_na_nuvem(conta, no_loja, no_nuve
                      remoto=_agora()) == conflicts.APLICAR
 
 
-def test_revogacao_ainda_nao_entregue_nao_e_desfeita_pela_loja(conta, no_loja, no_nuvem):
-    """O painel revogou o terminal e a loja ainda não recebeu: a conexão que
-    ela manda agora (ainda "ativo") não pode desfazer a revogação."""
-    linha = _Linha(uuid.uuid4())
-    revogado = _agora() - 1000
-    _pendente_na_nuvem(conta, no_nuvem, no_loja, "pdv_terminal", linha, revogado)
+def test_conexao_mais_nova_da_loja_nao_desfaz_a_revogacao_do_painel(
+    como_nuvem, conta, no_loja, no_nuvem
+):
+    """O painel revogou às 10:00; a loja, sem saber, mandou às 10:01 a conexão
+    do mesmo terminal ainda ativo. A conexão entra; a revogação fica."""
+    from datetime import timedelta
 
-    assert _na_nuvem("pdv_terminal", linha, local=revogado,
-                     remoto=_agora()) == conflicts.CONFLITO
+    from apps.core.tenant import tenant_context
+    from apps.payments.models import PdvTerminal
+    from apps.restaurants.models import Restaurant
+    from apps.synchronization.services import apply, serialization
+    from apps.synchronization.services.registry import registry
+
+    restaurante = Restaurant.objects.create(account=conta, legal_name="T LTDA", trade_name="T")
+    with tenant_context(conta):
+        terminal = PdvTerminal.objects.create(
+            account=conta, restaurant=restaurante, installation_id="inst-1", name="Balcão",
+            is_active=False, revoked_at=timezone.now(), revoked_reason="perdido",
+        )
+
+    visto = timezone.now() + timedelta(minutes=1)
+    da_loja = PdvTerminal(
+        id=terminal.id, account=conta, restaurant=restaurante, installation_id="inst-1",
+        name="Balcão", is_active=True, revoked_at=None, last_seen_at=visto,
+        created_at=terminal.created_at, updated_at=visto,
+    )
+    payload = serialization.build_payload(
+        da_loja, registry.require("pdv_terminal"), origin_node_id=no_loja.id
+    )
+    evento = SyncEvent.objects.create(
+        account=conta, source_node=no_loja, target_node=no_nuvem,
+        direction=Direction.INBOUND, sequence=next(_sequencia), entity_type="pdv_terminal",
+        entity_id=str(terminal.id), operation=Operation.UPSERT,
+        entity_version=payload["entity_version"], payload=payload,
+        payload_checksum=crypto.checksum(payload), status=EventStatus.RECEIVED,
+    )
+    apply.apply_event(evento)
+
+    terminal = PdvTerminal.all_objects.get(pk=terminal.id)
+    assert terminal.last_seen_at == visto
+    assert terminal.is_active is False
+    assert terminal.revoked_reason == "perdido"
 
 
 def test_o_mesmo_terminal_tem_o_mesmo_id_nos_dois_nos(conta):

@@ -58,3 +58,6 @@ teste_nfe_sefaz.py
 backend/celerybeat-schedule*
 *.sqlite3-journal
 docker-compose.override.yml
+
+# Relatório da simulação do dia a dia (gerado a cada rodada).
+loadtest/dia_a_dia/resultado/

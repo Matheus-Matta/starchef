@@ -116,6 +116,10 @@ def merge(origem, destino, *, dry_run=False):
                     destino.last_received_cursor, origem.last_received_cursor
                 ),
             )
+            from apps.synchronization.services import sequencia_pg
+
+            if sequencia_pg.disponivel():
+                sequencia_pg.garantir_acima_de(maior)
             SyncNode.objects.filter(pk=origem.pk).delete()
             logger.warning(
                 "sync: nó %s fundido em %s (%s eventos reapontados)",

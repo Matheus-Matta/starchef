@@ -48,7 +48,12 @@ def sync_all_inbound_nfe():
     Agendador principal (Celery Beat, ~5h).
     Busca todos os FiscalConfig com certificado e enfileira sync por estado.
     """
+    from apps.inbound_nfe.services.sefaz_na_nuvem import esta_instalacao_fala_com_a_sefaz
     from apps.invoices.models import FiscalConfig
+
+    if not esta_instalacao_fala_com_a_sefaz():
+        # Loja sincronizada: as notas descem da nuvem (`sefaz_na_nuvem.py`).
+        return
 
     for config in FiscalConfig.all_objects.filter(is_active=True, deleted_at__isnull=True):
         if not (config.certificate_file or config.certificate_ref):

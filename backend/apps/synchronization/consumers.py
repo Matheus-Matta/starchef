@@ -109,6 +109,7 @@ class SyncConsumer(HandlerMixin, AsyncWebsocketConsumer):
             correlation_id=correlation_id,
             sequence_start=sequence_start,
             sequence_end=sequence_end,
+            comprimir=getattr(self, "comprimir", False),
         )
         await self.send(text_data=json.dumps(envelope, default=str))
 

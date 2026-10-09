@@ -30,6 +30,11 @@ from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
 
+#: Dinheiro nunca cede o lugar em silêncio (ver `origin_is_authority`).
+ENTIDADES_DE_DINHEIRO = frozenset({
+    "order", "order_item", "order_item_addon", "payment", "cash_register", "cash_movement",
+})
+
 
 def unique_field_sets(model):
     """Todos os conjuntos de campos que o banco exige únicos, deste model."""
@@ -111,6 +116,12 @@ def origin_is_authority(entity_type, receiving_node_type):
     """A origem manda nesta entidade, neste sentido?"""
     entrada = registry.get(entity_type)
     if entrada is None:
+        return False
+    if entity_type in ENTIDADES_DE_DINHEIRO:
+        # Colisão aqui é a mesma comanda cobrada nos dois lados durante uma
+        # queda. Adotar apagava os itens do pedido de um lado e deixava um
+        # pedido pago sem item: o dinheiro em dobro sumia da vista. Fica como
+        # conflito aberto, para alguém estornar.
         return False
     if entity_type in ENTIDADES_FISCAIS:
         # Adotar APAGA a linha local. Documento fiscal em duplicidade não se

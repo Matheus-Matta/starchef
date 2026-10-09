@@ -24,19 +24,19 @@ pytestmark = pytest.mark.django_db
 
 
 def _evento_de_entrada(conta, origem, destino, *, entity_id, fields, sequence=1,
-                       status=EventStatus.RECEIVED, operation=Operation.UPSERT):
+                       status=EventStatus.RECEIVED, operation=Operation.UPSERT, versao=10):
     payload = {
         "schema_version": 1,
         "entity_type": "restaurant",
         "entity_id": str(entity_id),
-        "entity_version": 10,
+        "entity_version": versao,
         "origin_node_id": str(origem.id),
         "fields": fields,
     }
     return SyncEvent.objects.create(
         account=conta, source_node=origem, target_node=destino,
         direction=Direction.INBOUND, sequence=sequence, entity_type="restaurant",
-        entity_id=str(entity_id), operation=operation, entity_version=10,
+        entity_id=str(entity_id), operation=operation, entity_version=versao,
         payload=payload, payload_checksum=crypto.checksum(payload), status=status,
     )
 
@@ -72,9 +72,11 @@ def test_delete_ja_aplicado_nao_apaga_o_registro_recriado(
     restaurante = Restaurant.objects.create(
         account=conta, legal_name="Some LTDA", trade_name="Some"
     )
+    # A versão de um DELETE é o MOMENTO da exclusão (`outbox.record`).
     evento = _evento_de_entrada(
         conta, no_nuvem, no_loja, entity_id=restaurante.id,
         fields={}, operation=Operation.DELETE,
+        versao=int(timezone.now().timestamp() * 1_000_000),
     )
     assert apply.apply_event(evento) is True
 

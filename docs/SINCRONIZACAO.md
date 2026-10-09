@@ -50,14 +50,19 @@ três juntas:
    já viu aquele id responde ACK sem tocar no domínio.
 
 O que falhou doze vezes vira `DEAD` — e continua no banco, com payload e erro
-íntegros, esperando `sync_recover --requeue`.
+íntegros, esperando `sync_recover --requeue`. **Menos a falta de registro-pai**
+("aponta para X, que ainda não existe aqui"): esse evento espera o pai por até
+3 dias (`retry.JANELA_DA_DEPENDENCIA`), e é retentado NA HORA sempre que chega
+dado novo (`retry.acordar_quem_espera_dependencia`). Antes ele morria em cerca
+de uma hora e o dado nunca chegava, nem quando o pai aparecia depois.
 
 ## Estrutura
 
 ```
 backend/apps/synchronization/
-├── catalog.py              # Os 52 models que sincronizam, e como
-├── decisions.py            # Os 27 que NÃO sincronizam, e por quê
+├── catalog.py              # Os models que sincronizam, e como
+├── catalog_clone.py        # Estoque detalhado, nota de entrada e patrimônio
+├── decisions.py            # Os que NÃO sincronizam (só técnicos), e por quê
 ├── constants.py            # O vocabulário do protocolo (v1)
 ├── models/                 # SyncNode, SyncEvent, SyncRun, SyncConflict
 ├── services/
@@ -124,63 +129,113 @@ conexão autenticada.** Um evento cujo `account_id` ou `target_node_id` não
 bate com o da conexão é rejeitado e auditado, nunca aplicado. Cada conexão vive
 no grupo `sync.account.{account}.node.{node}`; não existe broadcast global.
 
-## Conflitos
+## A loja é um clone: tudo nos dois sentidos
 
-| Domínio | Regra |
-|---|---|
-| Produtos, preços, usuários, fiscal | Nuvem vence |
-| Vendas, pagamentos, caixa, pedidos | Loja vence |
-| Estoque, auditoria, leituras | Append-only (imutável) |
-| Clientes | Maior versão; empate vai para revisão |
-| Impressoras e balanças | Nuvem, menos IP/porta (`local_only_fields`) |
-| Notas fiscais | **Sempre** revisão manual |
+Não existe mais entidade de mão única. O terminal alterna entre a loja e a
+nuvem quando a loja oscila, e o que ele gravou em qualquer um dos dois precisa
+chegar ao outro. Fica fora só o que é técnico de cada instalação — sessão,
+token, filas e cursores da própria sincronização, o coletor da SEFAZ, a
+credencial de emissor (canal próprio, cifrado) — e o que é da plataforma e não
+pertence a uma conta (plano, assinatura). `decisions.py` diz o motivo de cada um.
 
-Dado fiscal e financeiro nunca é resolvido em silêncio por last-write-wins.
+## Conflitos: vence a versão mais nova
 
-### Comanda editada na nuvem (o zerar do painel)
+Uma regra só, para toda entidade e nos dois sentidos:
 
-`command`, `command_item`, `command_item_addon` e `command_batch` são "loja
-vence" — e a loja recusava TODA versão mais nova da nuvem. O gerente zerava as
-comandas no painel web (nuvem), a loja abria um conflito por item, o PDV seguia
-com os itens, e a versão da loja subia e desfazia o zerar na nuvem também.
+> **A versão é o `updated_at` de ORIGEM, em microssegundos. A mais nova entra;
+> a mais antiga não muda nada** (`services/conflicts.py`).
 
-"Loja vence" protege uma edição da loja que a nuvem ainda não viu. Para as
-linhas da comanda, a versão mais nova da nuvem é APLICADA quando a versão local
-é uma que a nuvem já conhece: entregue (evento de saída confirmado) ou recebida
-dela (evento de entrada aplicado). Edição da loja ainda sem confirmação segue
-sendo conflito. Pagamento e fiscal não entram na regra.
+Exemplo: a nuvem edita o pedido às 10:00:03 e a loja às 10:00:05. Não importa a
+ordem em que os eventos chegam — os dois lados terminam com a de 10:00:05.
 
-A mesma regra vale, com um recorte, para outras três famílias:
+Ela substituiu a política por dono ("loja vence", "nuvem vence"), que recusava
+a versão mais nova do outro lado e abria conflito. Com o terminal alternando, o
+mesmo pedido era editado nos dois servidores com segundos de diferença: cada
+edição virava conflito e a loja ficava com o total antigo. A política do
+catálogo continua existindo, mas só para a **adoção** (abaixo).
 
-| Linhas | Quem recebe | Quando a versão do outro lado entra |
-|---|---|---|
-| Comanda (`command*`) | loja | este nó não tem edição que o outro não viu |
-| Pedido (`order`, `order_item`, `order_item_addon`, `order_batch`) | loja | idem, **e** a linha veio da nuvem |
-| Caixa (`cash_register`, `cash_movement`) | loja | idem |
-| Terminal (`pdv_terminal`) | nuvem | idem |
+O que sustenta a regra:
 
-- **Pedido.** O PDV abre o pedido na nuvem com a loja fora. Ele nasce vazio e
-  ganha o total no primeiro item; a atualização com o total virava conflito e a
-  loja mostrava R$ 0,00. Pedido que nunca desceu da nuvem continua conflito.
-- **Caixa.** Abre e fecha na loja, mas o painel da nuvem aprova a sangria,
-  transfere e libera a sessão. As duas entidades eram `local_to_cloud` e a
-  nuvem nem gerava o evento: o PDV esperava uma aprovação já dada. Agora são
-  `both`.
-- **Terminal.** É "nuvem vence" porque revogar é decisão do painel, mas quem o
-  vê conectar é a loja, e cada conexão virava conflito na nuvem. Uma revogação
-  que a loja ainda não confirmou continua protegida. O id do terminal é
-  derivado da instalação (`payments/terminal_identity.py`): loja e nuvem
-  cadastram o mesmo terminal com o mesmo id, em vez de dois `uuid4` que o
-  índice único (conta, instalação) recusava, travando a sessão de caixa que
-  apontava para ele.
+- **A aplicação guarda o horário de origem** (`timestamps.py`), também na
+  atualização. Antes o `save()` dava à linha o horário "agora", e uma edição
+  da nuvem feita às 10:00:03 que chegasse depois de a de 10:00:00 ter sido
+  aplicada às 10:00:05 parecia mais velha e era descartada.
+- **A exclusão também obedece.** O DELETE carrega o MOMENTO da exclusão como
+  versão; um DELETE mais velho que a última edição daqui não apaga, e uma
+  versão mais velha que a exclusão não ressuscita a linha (a "lápide" é o
+  próprio evento DELETE — `apply._apagada_depois`).
+- **O esqueleto.** A linha local que nunca entrou na sincronização (nenhum
+  evento de saída, nenhum de entrada aplicado) aceita a versão do outro lado
+  mesmo "mais velha" — é a conta criada na matrícula. O fiscal nunca é
+  esqueleto.
+- **Campos que só a nuvem decide** (`cloud_owned_fields`). A revogação do
+  terminal é do painel; a conexão que a loja manda o tempo todo, com
+  `is_active=True`, não a desfaz.
+- **O relógio.** Com "vence o mais novo", o relógio de quem grava decide. O
+  aperto de mão mede o relógio da loja contra o da nuvem; acima de 2 s o worker
+  registra erro no log e o desvio aparece em `estado_da_fila`
+  (`services/relogio.py`). **Acerte a hora do servidor da loja (NTP).**
+- `MANUAL` continua indo para revisão de gente; hoje nenhuma entrada usa.
 
-Um evento que já virou conflito não volta sozinho para a fila. O pedido que
-ficou com total zerado se conserta com
+A NOTA FISCAL entra na mesma regra e desce também: o pagamento feito na nuvem
+com a loja fora dispara a NFC-e lá, e de mão única a loja via o pedido pago e
+sem nota — e o operador emitia a segunda. O número não colide: quem numera é o
+provedor, com um contador só.
+
+A NOTA DE ENTRADA (SEFAZ) é baixada só pela nuvem quando há sincronização
+(`inbound_nfe/services/sefaz_na_nuvem.py`): com os dois consultando, a mesma
+nota nasceria duas vezes, com ids diferentes. Na loja sincronizada, consulta e
+manifestação respondem "faça no painel da nuvem".
+
+A CHAVE DE IDEMPOTÊNCIA atravessa os nós com id DERIVADO de (conta, chave)
+(`core.IdempotencyRecord`, migração `core/0002`): a mesma operação tem o mesmo
+id na loja e na nuvem. O id era inteiro sequencial e o catálogo dizia
+`flow="bidirectional"`, um valor que nenhum portão conhecia — ela nunca
+sincronizou.
+
+O pedido que ficou com total zerado por um conflito antigo se conserta com
 `manage.py repair_order_totals --order <id> --apply`, na loja.
 
-A conferência é em LOTE (`services/comanda_conflicts.py`): duas consultas para o
-lote recebido inteiro, não uma por evento — o zerar de 500 comandas chega como
-centenas de eventos.
+## O que a simulação do dia a dia achou
+
+`loadtest/dia_a_dia` (ver `docs/TESTE_CARGA.md` §3.9) roda um salão inteiro
+contra o par nuvem + loja derrubando a rede no meio. Cada defeito abaixo tem
+teste que falha sem a correção.
+
+| Defeito | Efeito no salão | Correção |
+|---|---|---|
+| O número do evento vinha de um `UPDATE` na linha do nó, travada até o fim da transação | `deadlock detected` com 3 caixas e 5 garçons: 500 ao abrir o caixa | SEQUENCE do PostgreSQL (`services/sequencia_pg.py`, migração `0011`) |
+| O signal engolia a falha da captura dentro de um savepoint | o item da comanda gravado SEM evento; nunca chegava à nuvem | a rede de segurança agora pega (abaixo) |
+| A rede de segurança encerrava a marca em qualquer erro, até deadlock | a última chance do dado se perdia | erro passageiro (`OperationalError`) fica para a próxima passada |
+| "Coberto" = existe evento criado depois da marca, e a marca leva o início da transação | o status de cozinha (`QuerySet.update`) nunca viajava | coberto = evento com versão ≥ a da linha (`dirty._ja_tem_evento`) |
+| Usuário gravado antes do perfil não tinha conta: evento descartado | garçom cadastrado na nuvem não entrava na loja | o perfil registra o usuário antes dele (`signals._usuario_antes_do_perfil`) |
+| Leitura de balança `immutable` | na nuvem nenhuma leitura tinha o item da comanda | deixou de ser append-only |
+| "Rodada 2" da mesma comanda criada nos dois lados | 205 conflitos; itens, pedido e estoque travados atrás | id menor fica com o número (`services/renumeracao.py`, `renumber_on_collision`) |
+| O "apliquei" só saía para o que entrava na chegada do lote | eventos RECEIVED para sempre na origem | varredura periódica (`services/confirmacao.py`) |
+| A loja não reenviava o SENT na reconexão | o que saiu no instante da queda esperava 5 min | `worker_steps.ao_reconectar` |
+| O pagamento preferia a chave do cabeçalho (muda a cada chamada) à do corpo | repetir o recebimento cobrava duas vezes | a chave do corpo primeiro (`orders/views.py`) |
+| Duas chamadas com a mesma chave ao mesmo tempo: o middleware ignorava o erro | as duas gravações ficavam | desfaz a segunda e devolve a resposta da primeira (`core/idempotency.py`) |
+| Escrita com tempo esgotado ia direto para o operador | o gesto repetido com chave nova duplicava o item | os dois PDVs repetem UMA vez com a mesma chave |
+| Pedido aberto na nuvem, terminal de volta à loja antes do sync | "404 pedido não encontrado" no recebimento | `afinidade_com_a_nuvem.dart` nos dois PDVs |
+| Mudar só o vínculo (`operators.set`) não salva o pai: sem evento | os três caixas recusados na loja ("operador não vinculado") | `m2m_changed` dos vínculos declarados gera o evento do pai, com a versão adiantada |
+| Operador repete o gesto depois do Wi-Fi cair: chave nova | quando a rede volta, as duas tentativas gravam (item e pesagem em dobro) | repetição IDÊNTICA em até 2 min reaproveita a chave (`chaves_de_repeticao.dart`) |
+| O "apliquei" perdido na rede: a origem não reenviava o RECEIVED e o destino não confirmava de novo | 172 eventos presos na loja depois das quedas | a origem reenvia o RECEIVED antigo (`reconcile_nodes`) e o destino volta a confirmar o que já aplicou (`inbox._gravar`) |
+| Três caixas pagando juntos, pedido sem filial: três locais "Principal" (filial NULA escapa da trava única) | `MultipleObjectsReturned` e TODO recebimento seguinte com 500 | o mais antigo vale, e a criação é serializada (`stock/services/order_stock._default_location`) |
+| A mesma comanda fechada na loja e, um minuto depois, na nuvem (caixa ainda na janela do veredito) | o cartão cobrado DUAS vezes (R$ 495,17 e R$ 505,17) | com a loja no ar (pulso do sync < 60 s) a nuvem recusa `attach-commands` com 409 `cobrar_na_loja`, e os PDVs voltam para a loja (`loja_no_ar.py`, `CobrarNaLoja`) |
+| Atualização que leva a rodada a um número ocupado | retentativa eterna | a mesma renumeração da inserção (`renumeracao.resolver_atualizacao`) |
+| Loja de pé e sem internet: cobrou o cartão; um caixa ainda na janela da nuvem cobrou de novo (a nuvem não via o pulso da loja) | R$ 1.495,07 cobrados em dobro em 10 min de caos | fechar comanda tenta a loja ANTES, mesmo na janela (`CloudFallback.irDiretoParaANuvem`) |
+| A adoção apagava os itens do pedido de um lado para dar lugar aos do outro | pedido pago sem item: o dinheiro em dobro sumia da vista | dinheiro (pedido, item, pagamento, caixa) nunca é adotado: vira conflito aberto para estorno (`adoption.ENTIDADES_DE_DINHEIRO`) |
+
+## O lote viaja comprimido
+
+O payload sai cifrado (AES-GCM) e dado cifrado não comprime — nem pela
+compressão do WebSocket. Agora o JSON é comprimido com zlib ANTES de cifrar
+(`compression: "zlib"` no envelope), o que reduz o lote várias vezes.
+
+Loja e nuvem atualizam em momentos diferentes, então cada lado só comprime
+quando o outro anunciou `"capabilities": ["zlib"]` no aperto de mão (HELLO da
+loja, AUTHENTICATED da nuvem). Quem não anuncia recebe sem compressão, como
+antes.
 
 ### Adoção
 
@@ -192,7 +247,9 @@ chega com o mesmo (restaurante, nome) e outro UUID, e o índice único recusa
 `services/adoption.py` resolve: a linha local que nasceu de efeito colateral e
 nunca foi tocada pela sincronização cede o lugar à identidade da origem. Duas
 travas — só adota quem nasceu aqui, e só quando a origem é a autoridade
-daquela entidade. Fora disso, vira `SyncConflict` em vez de bater na fila.
+daquela entidade pela política do catálogo (é para isso que ela ainda existe).
+Fora disso, vira `SyncConflict` em vez de bater na fila. Nota fiscal nunca é
+adotada.
 
 ## Permissões
 
@@ -525,8 +582,10 @@ id do usuário é inteiro sequencial e os dois bancos numeram independentemente
 — casar por ele ligaria o caixa à pessoa errada, e ninguém descobriria
 olhando a tela, porque haveria um nome ali.
 
-**Depois de subir a correção, os vínculos que faltam NÃO se consertam
-sozinhos.** Nada dispara reenvio: os registros já existem dos dois lados e
+**Mudar o vínculo agora gera evento sozinho** (`signals.capturar_vinculo`):
+`.set()`/`.add()`/`.remove()` não salvam o pai, e antes disso o vínculo novo
+nunca saía. **Os vínculos que já estavam errados antes da correção NÃO se
+consertam sozinhos.** Nada dispara reenvio: os registros já existem dos dois lados e
 nenhum deles mudou. Para cada loja, use **"Sincronizar tudo"** no Admin da
 nuvem (ou toque nos registros de origem) para regenerar a fila. Conferir
 depois, no banco da loja:

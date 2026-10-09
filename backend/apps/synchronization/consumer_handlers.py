@@ -12,7 +12,9 @@ from django.utils import timezone
 
 from apps.synchronization.constants import CloseCode, MessageType, PROTOCOL_VERSION, SCHEMA_VERSION
 from apps.synchronization.worker_steps import aplicar_recebidos
-from apps.synchronization.services import authentication, dispatch, inbox, nodes
+from apps.synchronization.services import (
+    authentication, confirmacao, dispatch, inbox, nodes, protocol,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,8 @@ class HandlerMixin:
             return
 
         self.node = no
+        # A loja lê lote comprimido? Loja antiga não anuncia e recebe sem.
+        self.comprimir = protocol.COMPRESSAO in (payload.get("capabilities") or [])
         # `self.key` já foi definida no `connect` — ela é do ambiente, não do
         # nó, e o HELLO que acabou de ser lido já veio cifrado com ela.
         self.group = no.group_name
@@ -75,6 +79,7 @@ class HandlerMixin:
                 "environment": no.environment,
                 "last_received_cursor": no.last_received_cursor,
                 "last_sent_cursor": no.last_sent_cursor,
+                "capabilities": [protocol.COMPRESSAO],
             },
             correlation_id=envelope.get("message_id"),
         )
@@ -179,6 +184,19 @@ class HandlerMixin:
             # de "perdido". Quem olhava a fila não tinha como saber qual dos
             # dois era.
             await self.send_envelope(MessageType.ACK, {"acknowledged": aplicados})
+            await database_sync_to_async(confirmacao.marcar_confirmados)(self.node, aplicados)
+        await self._confirmar_aplicados_depois()
+
+    async def _confirmar_aplicados_depois(self):
+        """Confirma à loja o que entrou depois do lote (retentativa, beat).
+
+        Sem isto a loja guardava esses eventos em RECEIVED para sempre
+        (`services/confirmacao.py`). Roda também a cada pedido da loja.
+        """
+        pendentes = await database_sync_to_async(confirmacao.aplicados_sem_confirmacao)(self.node)
+        if pendentes:
+            await self.send_envelope(MessageType.ACK, {"acknowledged": pendentes})
+            await database_sync_to_async(confirmacao.marcar_confirmados)(self.node, pendentes)
 
     async def handle_ack(self, _envelope, payload):
         proprio = await database_sync_to_async(nodes.self_node)()
@@ -190,6 +208,7 @@ class HandlerMixin:
 
     async def handle_pull_request(self, envelope, _payload):
         """O nó local pediu o que houver para ele. Envia um lote e para."""
+        await self._confirmar_aplicados_depois()
         proprio = await database_sync_to_async(nodes.self_node)()
         lote, _bytes = await database_sync_to_async(dispatch.collect_batch)(proprio, self.node)
         if not lote:

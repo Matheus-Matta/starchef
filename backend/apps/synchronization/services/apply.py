@@ -13,9 +13,9 @@ import logging
 
 from django.db import IntegrityError, connection, transaction
 
-from apps.synchronization.constants import EventStatus, Operation
+from apps.synchronization.constants import EventStatus, NodeType, Operation
 from apps.synchronization.services import (
-    adoption, conflicts, outbox, retry, serialization, timestamps,
+    adoption, conflicts, lapide, outbox, renumeracao, retry, serialization, timestamps,
 )
 from apps.synchronization.services.registry import registry
 from django.utils import timezone
@@ -60,7 +60,7 @@ def apply_event(event):
             _marcar_aplicado(travado)
         return mexeu
     except DependencyMissing as erro:
-        retry.mark_failure(event, erro)
+        retry.mark_failure(event, erro, dependencia=True)
         return False
     except IntegrityRejected as erro:
         # Retentar não conserta violação de schema: quem decide é uma pessoa.
@@ -122,7 +122,12 @@ def _aplicar(event, entrada):
     existente = _encontrar(model, event.entity_id)
 
     if event.operation == Operation.DELETE:
+        if lapide.edicao_mais_nova_que_a_exclusao(existente, remote_version):
+            return False
         return _apagar(existente)
+    if existente is None and lapide.apagada_depois(entrada.entity_type, event.entity_id,
+                                                   remote_version):
+        return False
 
     decisao = conflicts.decide(
         event.entity_type,
@@ -131,7 +136,7 @@ def _aplicar(event, entrada):
         receiving_node_type=event.target_node.node_type,
         local_exists=existente is not None,
         # A instância vai junto porque a decisão depende de ELA ter nascido
-        # aqui ou ter vindo da sincronização — ver `_origem_vence_a_versao`.
+        # aqui sem nunca ter sincronizado — ver `_linha_local_nunca_sincronizou`.
         local_instance=existente,
     )
     if decisao == conflicts.IGNORAR:
@@ -202,12 +207,26 @@ def _gravar(model, entrada, event, fields, existente):
         kwargs.pop(campo, None)
         kwargs.pop(f"{campo}_id", None)
 
+    if event.target_node.node_type == NodeType.CLOUD:
+        for campo in entrada.cloud_owned_fields:
+            kwargs.pop(campo, None)
+            kwargs.pop(f"{campo}_id", None)
+
     _validar_dependencias(model, kwargs)
 
     if existente is None:
         mexeu = _inserir(model, kwargs, event)
     else:
-        mexeu = _atualizar(existente, kwargs)
+        try:
+            with transaction.atomic():
+                mexeu = _atualizar(existente, kwargs)
+        except IntegrityError:
+            # O número novo (da outra ponta) está ocupado aqui por outra linha.
+            if not renumeracao.resolver_atualizacao(
+                model, entrada, existente, kwargs, lambda k: _atualizar(existente, k)
+            ):
+                raise
+            mexeu = True
 
     return _aplicar_m2m(model, entrada, event, fields) or mexeu
 
@@ -314,7 +333,7 @@ def _atualizar(instancia, kwargs):
 
     for nome in mudou:
         setattr(instancia, nome, kwargs[nome])
-    instancia.save()
+    timestamps.atualizar_preservando_horarios_de_origem(instancia, kwargs)
     return True
 
 
@@ -361,11 +380,19 @@ def _inserir(model, kwargs, event):
             )
             return mexeu
 
+        entrada = registry.for_model(model)
+        if renumeracao.resolver(model, entrada, kwargs, event, lambda k: _inserir_cru(model, k, event)):
+            return True
         adotou, motivo = adoption.try_adopt(model, kwargs, event)
         if not adotou:
             raise IntegrityRejected(f"{erro} — {motivo}") from erro
         model(pk=event.entity_id, **kwargs).save(force_insert=True)
         return True
+
+
+def _inserir_cru(model, kwargs, event):
+    instancia = model(pk=event.entity_id, **kwargs)
+    timestamps.inserir_preservando_horarios_de_origem(instancia, kwargs)
 
 
 def _senha_honesta(instancia):

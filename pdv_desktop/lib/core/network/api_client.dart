@@ -7,12 +7,15 @@ import 'package:http/http.dart' as http;
 
 import '../logging/app_logger.dart';
 import 'api_exception.dart';
+import 'afinidade_com_a_nuvem.dart';
+import 'chaves_de_repeticao.dart';
 import 'cloud_fallback.dart';
 import 'data_signals.dart';
 import 'response_cache.dart';
 import 'realtime_client.dart';
 
 part 'api_client_fallback.dart';
+part 'api_client_repeticao.dart';
 
 /// Estado da ligação com o backend.
 ///
@@ -97,6 +100,12 @@ class ApiClient {
   /// idempotência que a loja consumiu a nuvem nunca viu. Ver `CloudFallback`,
   /// onde cada regra tem um teste.
   final CloudFallback cloudFallback;
+
+  /// Ids que a nuvem criou ou devolveu com a loja fora (`afinidade_com_a_nuvem`).
+  final AfinidadeComANuvem afinidade = AfinidadeComANuvem();
+
+  /// Chave da escrita que falhou na rede, para a repetição idêntica.
+  final ChavesDeRepeticao repeticoes = ChavesDeRepeticao();
 
   /// De onde veio a ÚLTIMA leitura que chegou à tela.
   ///
@@ -328,22 +337,34 @@ class ApiClient {
     // Toda escrita leva chave de idempotência. A requisição pode ter chegado
     // ao servidor e a resposta ter se perdido no caminho; quando o operador
     // repete o gesto, o backend reconhece a mesma chave e não duplica a venda.
-    final operationId = method == 'GET' ? null : _nextOperationId();
+    final assinatura = method == 'GET'
+        ? null
+        : ChavesDeRepeticao.assinatura(method, path, body);
+    final operationId = assinatura == null
+        ? null
+        : (repeticoes.chaveDe(assinatura) ?? _nextOperationId());
     final relogio = Stopwatch()..start();
-    final result = await _comPlanoB(
-      method,
-      path,
-      query: query,
-      body: body,
-      accessToken: accessToken,
-      operationId: operationId,
-      original: () => _requestWithSessionRecovery(
+    final result = await _comChaveLembrada(
+      assinatura,
+      operationId,
+      () => _comPlanoB(
         method,
         path,
         query: query,
         body: body,
         accessToken: accessToken,
         operationId: operationId,
+        original: () => _repetirSeAPerdeu(
+          method,
+          () => _requestWithSessionRecovery(
+            method,
+            path,
+            query: query,
+            body: body,
+            accessToken: accessToken,
+            operationId: operationId,
+          ),
+        ),
       ),
     );
     _registrarSeLenta(method, path, relogio.elapsedMilliseconds);

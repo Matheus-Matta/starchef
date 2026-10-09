@@ -1,14 +1,24 @@
-"""Quem vence quando os dois lados mexeram no mesmo registro.
+"""Quem vence quando os dois lados mexeram no mesmo registro: o MAIS NOVO.
 
-O princípio do §15: sincronização bidirecional NÃO autoriza sobrescrita
-irrestrita. Dado financeiro e fiscal nunca é resolvido em silêncio por
-last-write-wins — ele vira um SyncConflict e espera decisão humana.
+A loja é um clone da nuvem e as duas escrevem — o terminal alterna entre elas
+quando a loja oscila. A regra é uma só, para toda entidade e nos dois
+sentidos: a versão é o `updated_at` de ORIGEM em microssegundos; a mais nova
+entra, a mais antiga não muda nada.
+
+Ela substituiu a política por dono ("a loja vence", "a nuvem vence"), que
+recusava a versão mais nova do outro lado e abria conflito. Com o terminal
+alternando, o mesmo pedido era editado nos dois servidores com segundos de
+diferença: cada edição virava um conflito, a loja ficava com o total antigo e
+alguém precisava resolver à mão o que a ordem dos horários já respondia.
+
+Só `MANUAL` continua indo para revisão de gente — hoje nenhuma entrada usa.
+A política do catálogo segue valendo para a ADOÇÃO (`adoption.py`): quem
+cede a linha quando os dois criaram o mesmo registro com ids diferentes.
 """
 import logging
 
 from apps.synchronization.constants import (
-    ENTIDADES_FISCAIS, ConflictResolution, ConflictStatus, NodeType)
-from apps.synchronization.services import comanda_conflicts
+    ENTIDADES_FISCAIS, ConflictResolution, ConflictStatus, Direction, EventStatus)
 from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -19,14 +29,13 @@ IGNORAR = "ignore"
 CONFLITO = "conflict"
 
 
-
 def decide(entity_type, *, local_version, remote_version, receiving_node_type, local_exists,
            local_instance=None):
     """`APLICAR`, `IGNORAR` ou `CONFLITO` para uma versão que acabou de chegar.
 
     Registro que ainda não existe aqui é sempre aplicado: não há o que
-    conflitar. Versão já aplicada é ignorada (a origem recebe ACK do mesmo
-    jeito — reenvio depois de timeout não pode duplicar nada).
+    conflitar. Versão igual é a mesma já aplicada (reenvio depois de timeout),
+    e a origem recebe ACK do mesmo jeito.
     """
     if not local_exists:
         return APLICAR
@@ -38,125 +47,51 @@ def decide(entity_type, *, local_version, remote_version, receiving_node_type, l
 
         if serialization.tem_fonte_de_versao(local_instance):
             return IGNORAR
-    if _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
+    if _politica(entity_type) == ConflictResolution.MANUAL:
+        return CONFLITO
+    if remote_version > local_version:
         return APLICAR
-    if _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
+    if _linha_local_nunca_sincronizou(entity_type, local_instance):
         return APLICAR
     if remote_version < local_version:
-        return _decidir_versao_antiga(entity_type, receiving_node_type)
-    if comanda_conflicts.outro_lado_ja_conhece_a_versao_local(  # painel, pedido da nuvem, terminal
-            entity_type, receiving_node_type, local_instance, local_version):
-        return APLICAR
-    return _decidir_versao_nova(entity_type, receiving_node_type)
+        return IGNORAR
+    return APLICAR
 
 
-def _origem_vence_a_versao(entity_type, receiving_node_type, local_instance):
-    """A origem manda mesmo trazendo versão mais antiga?
+def _linha_local_nunca_sincronizou(entity_type, local_instance):
+    """A linha daqui é um esqueleto, sem edição nenhuma a proteger?
 
-    Só em UM caso: a entidade é de mão única, quem recebe está do lado que
-    nunca a edita, E a linha local NASCEU AQUI — nunca foi alvo de um evento
-    de sincronização aplicado.
+    A matrícula cria um esqueleto de `Account` para segurar as chaves
+    estrangeiras, e ele nasce com `updated_at` de AGORA — sempre "mais novo"
+    que o registro real da nuvem, que pode não ser editado há meses. Sem esta
+    exceção a loja descartava o dado verdadeiro e a conta seguia chamando
+    "(aguardando sincronização)", inativa.
 
-    O defeito que isto corrige: a matrícula cria um esqueleto de `Account` para
-    segurar as chaves estrangeiras, e esse esqueleto nasce com `updated_at` de
-    AGORA. Como a versão de um registro é o `updated_at` em microssegundos, o
-    esqueleto recém-criado é sempre "mais novo" que o registro real da nuvem —
-    que pode não ser editado há meses. A loja então descartava o dado
-    verdadeiro por considerá-lo velho: evento marcado APPLIED, sem erro, sem
-    conflito, e a conta seguia chamando "(aguardando sincronização)" com o nome
-    certo parado dentro do payload.
+    Esqueleto é a linha que nunca entrou na sincronização: nenhum evento de
+    saída (toda edição daqui vira um) e nenhum de entrada aplicado. Uma linha
+    com qualquer um dos dois tem história, e aí a versão decide.
 
-    A exigência de ter nascido aqui é a mais importante: sem ela um evento
-    ATRASADO sobrescreveria um mais novo da mesma origem. Se a linha veio da
-    sincronização, a versão decide como sempre decidiu.
-
-    O fiscal fica de fora: para ele a VERSÃO decide sempre, e um evento
-    atrasado da loja não sobrescreve um retrato mais novo só porque a linha do
-    outro lado nasceu lá.
+    O fiscal fica de fora: para ele a versão decide sempre.
     """
-    from apps.synchronization.services import adoption
+    from django.db.models import Q
 
-    entrada = registry.get(entity_type)
-    if entrada is None or entrada.conflict_policy == ConflictResolution.MANUAL:
+    from apps.synchronization.models import SyncEvent
+
+    if local_instance is None or entity_type in ENTIDADES_FISCAIS:
         return False
-    if entity_type in ENTIDADES_FISCAIS:
-        return False
-
-    if entrada.flow == "cloud_to_local":
-        lado_certo = receiving_node_type == NodeType.LOCAL
-    elif entrada.flow == "local_to_cloud":
-        lado_certo = receiving_node_type == NodeType.CLOUD
-    else:
-        return False
-
-    if not lado_certo or local_instance is None:
-        return False
-    return adoption.born_locally(entrada.model, local_instance)
-
-
-def _so_perdemos_a_atualizacao(entity_type, receiving_node_type, local_version):
-    """Este nó ficou fora e NÃO tocou nesta linha enquanto isso?
-
-    Então o que chegou não é edição concorrente — é atualização que ele
-    perdeu, e recusá-la seria guardar um retrato velho de propósito.
-
-    É a regra que faz o desvio para a nuvem valer a pena: com a loja fora, o
-    terminal vende pela nuvem, e a linha que já existe na loja — a comanda que
-    passou a estar ocupada, o pedido que ganhou item — voltava como conflito e
-    nunca era aplicada.
-
-    A pergunta que autoriza é estreita de propósito: *a loja mexeu nisto
-    enquanto esteve fora?* Se a versão local é anterior ao último contato com
-    o outro lado, ela não mexeu — e então não existe edição da loja para
-    proteger, que é a única coisa que LOCAL_WINS existe para defender. Mexeu
-    depois? Volta a ser conflito, e alguém decide.
-    """
-    from apps.synchronization.services import nodes
-
-    # Fiscal e MANUAL ficam de fora: o PDV nunca desvia o fiscal para a nuvem,
-    # então uma divergência aqui não nasceu de queda nenhuma. A checagem é pela
-    # ENTIDADE e não só pela política porque a nota virou `LOJA` — amarrá-la à
-    # política desligaria esta proteção sem nada no diff dizendo isso.
-    if entity_type in ENTIDADES_FISCAIS or _politica(entity_type) == ConflictResolution.MANUAL:
-        return False
-    if receiving_node_type != NodeType.LOCAL:
-        return False
-    proprio = nodes.self_node_or_none()
-    inicio = getattr(proprio, "offline_since", None) if proprio else None
-    if inicio is None or not local_version:
-        return False
-    return local_version < _em_microssegundos(inicio)
-
-
-def _em_microssegundos(momento):
-    """A mesma escala de `entity_version`: `updated_at` em microssegundos."""
-    return int(momento.timestamp() * 1_000_000)
+    # O evento que está sendo aplicado agora também é desta linha: só conta a
+    # entrada que JÁ foi aplicada.
+    return not SyncEvent.objects.filter(
+        Q(direction=Direction.OUTBOUND)
+        | Q(direction=Direction.INBOUND,
+            status__in=[EventStatus.APPLIED, EventStatus.ACKNOWLEDGED]),
+        entity_type=entity_type, entity_id=str(local_instance.pk),
+    ).exists()
 
 
 def _politica(entity_type):
     entrada = registry.get(entity_type)
     return entrada.conflict_policy if entrada else ConflictResolution.MANUAL
-
-
-def _decidir_versao_nova(entity_type, receiving_node_type):
-    """Chegou algo mais novo que o daqui. Normalmente aplica — menos no fiscal."""
-    politica = _politica(entity_type)
-    if politica == ConflictResolution.MANUAL:
-        return CONFLITO
-    if politica == ConflictResolution.CLOUD_WINS and receiving_node_type == NodeType.CLOUD:
-        # A nuvem manda nesta entidade e alguém alterou na loja: revisão.
-        return CONFLITO
-    if politica == ConflictResolution.LOCAL_WINS and receiving_node_type == NodeType.LOCAL:
-        # A loja manda e a nuvem tentou mexer: a loja não aceita.
-        return CONFLITO
-    return APLICAR
-
-
-def _decidir_versao_antiga(entity_type, receiving_node_type):
-    """Chegou algo mais velho que o daqui: ignorar é o certo quase sempre."""
-    if _politica(entity_type) == ConflictResolution.MANUAL:
-        return CONFLITO
-    return IGNORAR
 
 
 def register(event, *, local_instance, remote_payload, local_version, remote_version):

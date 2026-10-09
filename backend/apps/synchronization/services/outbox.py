@@ -62,6 +62,14 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
         return []
 
     payload = serialization.build_payload(instance, entry, origin_node_id=origem.id)
+    if operation == Operation.DELETE:
+        # A versão da exclusão é o MOMENTO em que ela aconteceu, não o da última
+        # edição: apagado às 15:00 um registro editado às 10:00, a versão
+        # "10:00" deixaria qualquer edição feita entre os dois vencer a
+        # exclusão — e ressuscitar o que foi apagado.
+        from django.utils import timezone
+
+        payload["entity_version"] = int(timezone.now().timestamp() * 1_000_000)
     return [
         _criar_evento(origem, destino, account_id, entry, payload, operation, run)
         for destino in destinos

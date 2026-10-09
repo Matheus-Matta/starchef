@@ -405,6 +405,34 @@ Duas verificações valem mais que as outras:
 > O par fala HTTP e WS **sem TLS**, com segredos fixos no compose e bancos
 > zerados. Não é ambiente de produção, e o `docker-compose.yml` da raiz não é
 > tocado por ele.
+### 3.9 O dia a dia no par, com queda de rede (`loadtest/dia_a_dia`)
+
+Um salão de verdade contra o par: **2 balanças** pesando nas comandas, **5
+garçons** anotando consumo e **3 caixas** fechando a conta e recebendo (Pix,
+cartão, dinheiro, às vezes em duas formas). Cada terminal falso decide como o
+PDV real (`cliente.py` espelha `cloud_fallback.dart`, `veredito_da_loja.dart`,
+`afinidade_com_a_nuvem.dart` e a repetição com a mesma chave).
+
+```bash
+bash loadtest/scripts/start_sync_pair.sh
+python loadtest/dia_a_dia/simular.py --minutos 10     # --sem-caos para depurar
+```
+
+Enquanto o salão roda, `caos.py` derruba de verdade os containers: loja fora da
+rede, loja reiniciando, loja oscilando, nuvem fora e a internet da loja (o
+`sync_worker` congelado). No fim a validação (`conferir.py`):
+
+- espera a fila assentar nos dois lados;
+- compara **linha a linha** pedido, item da comanda, item do pedido,
+  recebimento, sessão e movimento de caixa e leitura de balança nos dois bancos;
+- conta no banco cada **intenção** (observação única do item, peso único da
+  pesagem, marca do recebimento em `metadata`): mais de uma é DUPLICADO; zero
+  com o cliente tendo recebido sucesso é PERDIDO;
+- confere que o recebido aprovado de cada pedido fecha com o total.
+
+O relatório vai para `loadtest/dia_a_dia/resultado/ultimo.json` (não versionar).
+O que as primeiras rodadas acharam está em `docs/SINCRONIZACAO.md`, seção
+"O que a simulação do dia a dia achou".
 
 ---
 

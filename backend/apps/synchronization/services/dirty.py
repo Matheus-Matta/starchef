@@ -12,7 +12,7 @@ continua existindo, e esta tarefa só recolhe o que escapou.
 """
 import logging
 
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.utils import timezone
 
 from apps.synchronization.constants import Operation
@@ -41,6 +41,12 @@ def process(limite=MAX_POR_EXECUCAO):
     for marca in pendentes:
         try:
             criou = _converter(marca, catalogo)
+        except OperationalError as erro:
+            # Deadlock, banco ocupado, conexão caída: passa sozinho. A marca é a
+            # última chance desta gravação chegar ao outro lado — encerrá-la
+            # aqui perdia o dado para sempre. Fica para a próxima passada.
+            logger.warning("sync-dirty: %s fica para a próxima passada (%s)", marca.id, erro)
+            continue
         except Exception as erro:  # noqa: BLE001 — uma marca ruim não para a fila
             logger.exception("sync-dirty: falha ao converter %s", marca.id)
             marca.error = str(erro)[:2000]
@@ -61,17 +67,17 @@ def _converter(marca, catalogo):
     if entrada is None:
         return _encerrar(marca, "tabela não está no catálogo")
 
-    if _ja_tem_evento(entrada.entity_type, marca):
-        # O signal já pegou esta mesma gravação. O caminho normal e a rede de
-        # segurança se sobrepõem de propósito; o que não pode é gerar dois
-        # eventos para a mesma mudança.
-        return _encerrar(marca, "já coberto pelo signal")
-
     model = entrada.model
     gerente = getattr(model, "all_objects", model._default_manager)
     instancia = gerente.filter(pk=marca.row_id).first()
     if instancia is None:
         return _encerrar(marca, "linha não existe mais")
+
+    if _ja_tem_evento(entrada.entity_type, instancia):
+        # O signal já pegou esta mesma gravação. O caminho normal e a rede de
+        # segurança se sobrepõem de propósito; o que não pode é gerar dois
+        # eventos para a mesma mudança.
+        return _encerrar(marca, "já coberto pelo signal")
 
     operacao = marca.operation if marca.operation in dict(Operation.CHOICES) else Operation.UPSERT
     with transaction.atomic():
@@ -82,14 +88,25 @@ def _converter(marca, catalogo):
     return bool(eventos)
 
 
-def _ja_tem_evento(entity_type, marca):
-    """Existe evento para esta linha criado depois da marca?"""
+def _ja_tem_evento(entity_type, instancia):
+    """Já saiu um evento com a versão ATUAL (ou mais nova) desta linha?
+
+    A pergunta era "existe evento criado depois da marca?" — e a marca leva o
+    horário do INÍCIO da transação (`now()` do PostgreSQL). O evento de criação
+    de um item nasce depois desse instante; um `QuerySet.update` na mesma
+    transação (o envio para a cozinha faz isso) era dado como coberto por ele,
+    e o status novo nunca viajava. A versão da linha é o que diz se o evento
+    que saiu já contém esta mudança.
+    """
+    from apps.synchronization.constants import Direction
     from apps.synchronization.models import SyncEvent
+    from apps.synchronization.services import serialization
 
     return SyncEvent.objects.filter(
+        direction=Direction.OUTBOUND,
         entity_type=entity_type,
-        entity_id=str(marca.row_id),
-        created_at__gte=marca.changed_at,
+        entity_id=str(instancia.pk),
+        entity_version__gte=serialization.entity_version(instancia),
     ).exists()
 
 

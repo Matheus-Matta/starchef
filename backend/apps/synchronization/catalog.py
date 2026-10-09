@@ -7,6 +7,13 @@ carga é a topológica das `dependencies`; esta lista é a que um humano lê.
 Mexeu num model do domínio? Ou ele entra aqui, ou entra em `EXCLUDED` com o
 motivo (ver `decisions.py`). `manage.py sync_check_registry` não deixa passar
 um terceiro caminho.
+
+**A loja é um CLONE da nuvem, e tudo viaja nos dois sentidos.** Não há mais
+entidade de mão única: o terminal alterna entre os dois servidores quando a
+loja oscila, e o que ele gravou em qualquer um precisa chegar ao outro. Quem
+vence é a versão mais nova (`conflicts.py`); a política de cada entrada só
+decide a ADOÇÃO, quando os dois lados criaram o mesmo registro com ids
+diferentes (`adoption.py`).
 """
 from apps.synchronization.constants import ConflictResolution as CR
 from apps.synchronization.services.registry import SyncEntry, registry
@@ -28,8 +35,7 @@ def _e(entity_type, model_label, **kwargs):
 #
 # O campo é nulável, então a loja fica com `plan=None`, que é exatamente o que
 # "a loja não opera planos" quer dizer.
-_e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local",
-   exclude_fields=("plan",))
+_e("account", "accounts.Account", conflict_policy=CLOUD, exclude_fields=("plan",))
 # `cash_action_password` é o hash da senha de operação do caixa. O filtro
 # global de segredos já o barrava; declarar aqui é o que torna isso uma DECISÃO
 # em vez de um efeito colateral do nome do campo.
@@ -46,16 +52,12 @@ _e("account", "accounts.Account", conflict_policy=CLOUD, flow="cloud_to_local",
 #
 # O texto puro continua sem existir em lugar nenhum: `set_cash_action_password`
 # codifica antes de gravar.
-_e("restaurant", "restaurants.Restaurant", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account",), allow_fields=("cash_action_password",))
-_e("branch", "restaurants.Branch", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",))
+_e("restaurant", "restaurants.Restaurant", conflict_policy=CLOUD, dependencies=("account",), allow_fields=("cash_action_password",))
+_e("branch", "restaurants.Branch", conflict_policy=CLOUD, dependencies=("restaurant",))
 
 # 3. Perfis fiscais e regras tributárias.
-_e("fiscal_profile", "invoices.FiscalProfile", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account",))
-_e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",),
+_e("fiscal_profile", "invoices.FiscalProfile", conflict_policy=CLOUD, dependencies=("account",))
+_e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, dependencies=("restaurant",),
    # Segredo de emissão: o CSC vai por canal próprio, cifrado (ver a memória
    # "CSC no terminal"). Ele NUNCA viaja no payload de sincronização.
    # Estes nomes precisam EXISTIR no model — havia dois aqui
@@ -98,8 +100,7 @@ _e("fiscal_config", "invoices.FiscalConfig", conflict_policy=CLOUD, flow="cloud_
 # O que precisa viajar é o VÍNCULO: sem `m2m_fields`, o perfil de acesso
 # chegava na loja sem permissão nenhuma, porque a serialização só olhava
 # campos concretos e ManyToMany não é um deles.
-_e("role", "accounts.Role", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account",), m2m_fields={"permissions": "code"})
+_e("role", "accounts.Role", conflict_policy=CLOUD, dependencies=("account",), m2m_fields={"permissions": "code"})
 # O HASH da senha viaja, e só ele entre os segredos. Sem isso a loja recebia os
 # usuários com o campo vazio e ninguém entrava no backend local — derrubando a
 # razão de ele existir, que é operar quando a nuvem cai.
@@ -120,15 +121,13 @@ _e("role", "accounts.Role", conflict_policy=CLOUD, flow="cloud_to_local",
 # `exclude_fields` para a checagem de M2M não declarado passar por DECISÃO, e
 # não por esquecimento — a diferença entre as duas é invisível no código sem
 # isto escrito.
-_e("user", "auth.User", conflict_policy=CLOUD, flow="cloud_to_local",
-   exclude_fields=("last_login", "groups", "user_permissions"),
+_e("user", "auth.User", conflict_policy=CLOUD, exclude_fields=("last_login", "groups", "user_permissions"),
    allow_fields=("password",))
 # `specific_permissions` é acesso de verdade: permissão dada a UMA pessoa além
 # das do perfil dela. Sem viajar, quem recebeu uma permissão extra na nuvem
 # simplesmente não a tem na loja — e o sintoma é "o sistema não deixa", sem
 # nada que explique por quê.
-_e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("user", "role", "restaurant"),
+_e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, dependencies=("user", "role", "restaurant"),
    m2m_fields={"specific_permissions": "code"})
 
 # 5. Terminais, caixas e operação.
@@ -143,37 +142,30 @@ _e("user_profile", "accounts.UserProfile", conflict_policy=CLOUD, flow="cloud_to
 # caixa à pessoa errada.
 _e("cash_station", "payments.CashStation", conflict_policy=CLOUD, dependencies=("restaurant", "user"),
    m2m_fields={"operators": "username"})
-# O terminal é `CLOUD` porque revogar é decisão do painel; a conexão (nome,
-# papel, `last_seen_at`) quem vê é a loja, e ela sobe pela regra de
-# `comanda_conflicts`. O id é derivado da instalação (`payments/terminals.py`):
+# O terminal: revogar é decisão do painel e a conexão (nome, papel,
+# `last_seen_at`) quem vê é a loja; vence a edição mais nova. O id é derivado
+# da instalação (`payments/terminals.py`):
 # loja e nuvem cadastram o MESMO terminal com o MESMO id.
-_e("pdv_terminal", "payments.PdvTerminal", conflict_policy=CLOUD, dependencies=("restaurant",))
+# A revogação é do painel da nuvem: a conexão que a loja manda o tempo todo
+# não a desfaz (`cloud_owned_fields`).
+_e("pdv_terminal", "payments.PdvTerminal", conflict_policy=CLOUD, dependencies=("restaurant",),
+   cloud_owned_fields=("is_active", "revoked_at", "revoked_reason"))
 
 # 6-7. Cardápio, preços e fichas técnicas.
-_e("product_category", "menu.ProductCategory", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",))
+_e("product_category", "menu.ProductCategory", conflict_policy=CLOUD, dependencies=("restaurant",))
 # `restaurants` decide em QUAIS lojas o produto existe. Sem viajar, o produto
 # desce e não aparece em loja nenhuma.
-_e("product", "menu.Product", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product_category", "restaurant"),
+_e("product", "menu.Product", conflict_policy=CLOUD, dependencies=("product_category", "restaurant"),
    m2m_fields={"restaurants": "id"})
-_e("product_unit_conversion", "menu.ProductUnitConversion", conflict_policy=CLOUD,
-   flow="cloud_to_local", dependencies=("product",))
-_e("product_variation", "menu.ProductVariation", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product",))
-_e("product_addon", "menu.ProductAddon", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product",),
+_e("product_unit_conversion", "menu.ProductUnitConversion", conflict_policy=CLOUD, dependencies=("product",))
+_e("product_variation", "menu.ProductVariation", conflict_policy=CLOUD, dependencies=("product",))
+_e("product_addon", "menu.ProductAddon", conflict_policy=CLOUD, dependencies=("product",),
    m2m_fields={"products": "id"})
-_e("ingredient", "menu.Ingredient", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",), include_in_bootstrap=False)
-_e("recipe", "menu.Recipe", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("product",), include_in_bootstrap=False)
-_e("recipe_item", "menu.RecipeItem", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("recipe", "ingredient"), include_in_bootstrap=False)
-_e("menu_catalog", "menu.Menu", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",), include_in_bootstrap=False)
-_e("menu_item", "menu.MenuItem", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("menu_catalog", "product"), include_in_bootstrap=False)
+_e("ingredient", "menu.Ingredient", conflict_policy=CLOUD, dependencies=("restaurant",), include_in_bootstrap=False)
+_e("recipe", "menu.Recipe", conflict_policy=CLOUD, dependencies=("product",), include_in_bootstrap=False)
+_e("recipe_item", "menu.RecipeItem", conflict_policy=CLOUD, dependencies=("recipe", "ingredient"), include_in_bootstrap=False)
+_e("menu_catalog", "menu.Menu", conflict_policy=CLOUD, dependencies=("restaurant",), include_in_bootstrap=False)
+_e("menu_item", "menu.MenuItem", conflict_policy=CLOUD, dependencies=("menu_catalog", "product"), include_in_bootstrap=False)
 
 # 8-9. Impressoras, balanças e periféricos. `local_only_fields` protege o que
 # só a loja sabe: o IP da impressora e a porta da balança mudam na loja.
@@ -198,8 +190,7 @@ _e("scale", "printers.Scale", conflict_policy=CLOUD, dependencies=("restaurant",
                       "agent_lease_expires_at"))
 _e("kds_station", "kitchen.KdsStation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("kds_column", "kitchen.KdsColumn", conflict_policy=CLOUD, dependencies=("kds_station",))
-_e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA,
-   flow="local_to_cloud", dependencies=("kds_station", "kds_column", "order_item"),
+_e("kds_item_position", "kitchen.KdsItemPosition", conflict_policy=LOJA, dependencies=("kds_station", "kds_column", "order_item"),
    include_in_bootstrap=False)
 # Os três M2M são o ESCOPO do acordo: sem eles o SLA desce valendo para nada.
 _e("sla", "sla.ServiceLevelAgreement", conflict_policy=CLOUD,
@@ -234,55 +225,46 @@ _e("customer_address", "customers.CustomerAddress", conflict_policy=VERSAO,
    dependencies=("customer",))
 
 # 11-b. Promocoes e cupons. O PRECO E DECISAO DO ESCRITORIO: quem cadastra
-# tabela de desconto e cupom e a nuvem, e a loja recebe. `cloud_to_local` nao e
-# economia de trafego — e o que impede uma loja de inventar desconto proprio e a
-# rede descobrir no fechamento do mes.
+# tabela de desconto e cupom e a nuvem. Elas viajam nos dois sentidos como o
+# resto do clone; quem restringe quem cadastra desconto e a permissao do
+# perfil, nao a direcao da sincronizacao.
 #
 # A ORDEM AQUI E A ORDEM DE CARGA, e ela importa: a regra aponta a tabela, o
 # vinculo aponta a regra e o produto, e o pedido aponta o cupom. Um filho que
 # chega antes do pai fica em "ainda nao existe aqui" em retentativa eterna.
-_e("discount_table", "promotions.DiscountTable", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("restaurant",))
+_e("discount_table", "promotions.DiscountTable", conflict_policy=CLOUD, dependencies=("restaurant",))
 # `products` NAO viaja como m2m: ele passa por `PromotionProduct`, que tem
 # campos proprios (o "de" e o "por" do encarte). Sincronizar o m2m gravaria o
 # vinculo SEM esses valores — a promocao chegaria na loja apontando o produto
 # certo com preco vazio, e o caixa cobraria o preco cheio.
-_e("promotion", "promotions.Promotion", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("discount_table", "product_category"),
+_e("promotion", "promotions.Promotion", conflict_policy=CLOUD, dependencies=("discount_table", "product_category"),
    exclude_fields=("products",),
    m2m_fields={"categories": "id", "sectors": "id"})
-_e("promotion_product", "promotions.PromotionProduct", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("promotion", "product"))
-_e("coupon", "promotions.Coupon", conflict_policy=CLOUD, flow="cloud_to_local",
-   dependencies=("account", "customer_group", "customer"),
+_e("promotion_product", "promotions.PromotionProduct", conflict_policy=CLOUD, dependencies=("promotion", "product"))
+_e("coupon", "promotions.Coupon", conflict_policy=CLOUD, dependencies=("account", "customer_group", "customer"),
    m2m_fields={"customer_groups": "id", "customers": "id"})
 
 # 12. Estoque. Movimento é imutável: o destino insere e nunca reescreve.
 _e("stock_location", "stock.StockLocation", conflict_policy=CLOUD, dependencies=("restaurant",))
 _e("stock_supplier", "stock.Supplier", conflict_policy=CLOUD, dependencies=("account",),
    include_in_bootstrap=False)
-# `default_label_template` sai do payload: `StockLabelTemplate` é modelo de
-# etiqueta da impressora daquela loja e não sincroniza. Mandar a chave sem o
-# alvo travaria o evento em "ainda não existe aqui", para sempre.
+# O modelo de etiqueta, as entradas, saídas, lotes, recebimentos e a nota de
+# entrada entraram no clone (`catalog_clone.py`): as chaves que o movimento e
+# a configuração apontam para eles viajam inteiras.
 _e("stock_settings", "stock.StockSettings", conflict_policy=CLOUD,
-   dependencies=("restaurant",), exclude_fields=("default_label_template",))
-# `lot`, `entry` e `exit` saem do payload. Os três apontam para modelos que
-# `decisions.py` exclui de propósito — lote é derivado dos próprios movimentos,
-# e entrada/saída são documentos de rascunho. Como o movimento sobe para a
-# NUVEM, mandar essas chaves fazia a nuvem falhar ao aplicar e o movimento de
-# estoque da loja nunca chegar lá. Os três aceitam nulo, e o que importa —
-# produto, local e quantidade — continua viajando.
-_e("stock_movement", "stock.StockMovement", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("stock_location", "product"), include_in_bootstrap=False, immutable=True,
-   exclude_fields=("lot", "entry", "exit", "nfe", "nfe_item", "receipt",
-                   "receipt_item", "inventory_lot"))
+   dependencies=("restaurant", "stock_label_template"))
+_e("stock_movement", "stock.StockMovement", conflict_policy=LOJA,
+   dependencies=("stock_location", "product", "stock_lot", "stock_entry", "stock_exit",
+                 "inbound_nfe", "inbound_nfe_item", "goods_receipt", "goods_receipt_item",
+                 "inventory_lot"),
+   include_in_bootstrap=False, immutable=True)
 
-# 13-14. Pedidos, vendas e pagamentos. Nascem na loja e sobem.
+# 13-14. Pedidos, vendas e pagamentos.
 _e("payment_method", "payments.PaymentMethod", conflict_policy=CLOUD, dependencies=("restaurant",))
-# Estas entidades nascem na loja e sobem no dia a dia (`local_to_cloud`), mas
-# uma loja que está ASSUMINDO a operação começa com o banco vazio: sem descer,
-# ela herda as mesas ocupadas sem nenhuma comanda para atender e os terminais
-# sem a sessão de caixa que já está em turno. `seed_to_local` abre essa exceção.
+# Uma loja que está ASSUMINDO a operação começa com o banco vazio: sem a carga
+# inicial, ela herdaria as mesas ocupadas sem nenhuma comanda para atender e os
+# terminais sem a sessão de caixa que já está em turno. `seed_to_local` põe
+# essas entidades na carga.
 #
 # `essential_filter` separa as duas cargas:
 #   • "Dados essenciais" leva só o que está ABERTO — o suficiente para atender.
@@ -293,38 +275,26 @@ CAIXA_VIVO = ["pending_opening", "open", "blocked",
 
 # ── A VENDA VIAJA NOS DOIS SENTIDOS ────────────────────────────────────────
 #
-# Estas entidades eram de mão única (`local_to_cloud`), e estava certo: só a
-# loja atendia, então a venda nascia lá e subia para a nuvem ver. Não havia
-# caminho de volta porque não havia venda nascendo na nuvem.
-#
-# Deixou de ser verdade. O terminal agora desvia para a nuvem quando a loja
-# está comprovadamente fora (`CloudFallback` nos dois PDVs), e o que ele grava
-# lá precisa DESCER quando a loja voltar. Sem isto o evento nem é gerado — o
-# portão de `outbox._deve_gerar` recusa na origem —, e a venda fica presa na
-# nuvem para sempre: o salão volta e nunca vê aquele pedido.
-#
-# O conflito não fica mais frouxo por causa disso. Os dois nós nunca escrevem o
-# mesmo registro ao mesmo tempo (quando a nuvem escreve, a loja está fora), e
-# as faixas de numeração (`orders/sequence_ranges.py`) garantem que os
-# registros dos dois lados não colidem em número. `LOJA` continua sendo o
-# desempate quando as versões empatam.
-#
-# Fiscal e caixa NÃO entram aqui, e não é esquecimento: eles não desviam
-# (`CloudFallback.caminhosQueNuncaDesviam`), então não há o que descer.
-_e("order", "orders.Order", conflict_policy=LOJA, flow="both",
-   dependencies=("restaurant", "table", "customer", "coupon"),
+# O terminal desvia para a nuvem quando a loja está fora (`CloudFallback` nos
+# dois PDVs), e o que ele grava lá precisa DESCER quando a loja voltar. Com a
+# loja oscilando, o mesmo pedido é editado nos dois servidores com segundos de
+# diferença: vence a edição mais nova, e as faixas de numeração
+# (`orders/sequence_ranges.py`) garantem que os pedidos dos dois lados não
+# colidem em número.
+_e("order", "orders.Order", conflict_policy=LOJA, dependencies=("restaurant", "table", "customer", "coupon"),
    seed_to_local=True, essential_filter={"status__in": ABERTOS})
-_e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, flow="both",
-   dependencies=("order",),
+# A rodada é numerada por pai (`max + 1`) dos dois lados: na colisão, o id
+# menor fica com o número (`services/renumeracao.py`).
+_e("order_batch", "orders.OrderBatch", conflict_policy=LOJA, dependencies=("order",),
+   renumber_on_collision=("order_id", "batch_number"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
-_e("order_item", "orders.OrderItem", conflict_policy=LOJA, flow="both",
-   # `command` é a comanda de onde o item veio, copiada no lançamento: um
-   # pedido que paga 200 cartões responde "quais estão nesta conta" sem visitar
-   # 200 anotações.
+# `command` é a comanda de onde o item veio, copiada no lançamento: um pedido
+# que paga 200 cartões responde "quais estão nesta conta" sem visitar 200
+# anotações.
+_e("order_item", "orders.OrderItem", conflict_policy=LOJA,
    dependencies=("order", "product", "command"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
-_e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="both",
-   dependencies=("order_item", "product_addon"),
+_e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, dependencies=("order_item", "product_addon"),
    seed_to_local=True, essential_filter={"item__order__status__in": ABERTOS})
 # O RESGATE SOBE. Ele nasce no pagamento, e o pagamento acontece na loja: sem
 # `local_to_cloud` no `both`, um cupom de compra unica usado no balcao ficaria
@@ -332,8 +302,7 @@ _e("order_item_addon", "orders.OrderItemAddon", conflict_policy=LOJA, flow="both
 # na carga essencial porque a loja nao precisa do historico de resgate de
 # ninguem para atender — ela precisa saber se ESTE CPF ja usou, e isso ela
 # pergunta no momento da venda.
-_e("coupon_redemption", "promotions.CouponRedemption", conflict_policy=LOJA, flow="both",
-   dependencies=("coupon", "order", "customer"), include_in_bootstrap=False)
+_e("coupon_redemption", "promotions.CouponRedemption", conflict_policy=LOJA, dependencies=("coupon", "order", "customer"), include_in_bootstrap=False)
 # A COMANDA COMO BLOCO DE NOTAS. Ela anota o consumo sem pedido nenhum, e o
 # pedido só nasce no caixa — então a anotação precisa descer na carga
 # essencial por conta própria: uma loja que assume a operação herda cartões
@@ -344,16 +313,14 @@ PENDENTE_NA_COMANDA = {"command_status": "pending"}
 # ORDEM DE CARGA: `command_batch` depende de `command`; `command_item` das duas.
 # Errar a ordem não quebra teste nenhum — quebra a carga inicial de uma
 # loja nova, com "ainda não existe aqui" em retentativa eterna.
-_e("command_batch", "orders.CommandBatch", conflict_policy=LOJA, flow="both",
-   dependencies=("command",), seed_to_local=True,
+_e("command_batch", "orders.CommandBatch", conflict_policy=LOJA,
+   renumber_on_collision=("command_id", "batch_number"), dependencies=("command",), seed_to_local=True,
    essential_filter={"items__command_status": "pending"})
-_e("command_item", "orders.CommandItem", conflict_policy=LOJA, flow="both",
-   # `table` é o retrato de onde o item foi consumido, e a comanda anda pelo
+_e("command_item", "orders.CommandItem", conflict_policy=LOJA, # `table` é o retrato de onde o item foi consumido, e a comanda anda pelo
    # salão: a dependência é real, não decorativa.
    dependencies=("command", "product", "command_batch", "table"),
    seed_to_local=True, essential_filter=PENDENTE_NA_COMANDA)
-_e("command_item_addon", "orders.CommandItemAddon", conflict_policy=LOJA, flow="both",
-   dependencies=("command_item", "product_addon"), seed_to_local=True,
+_e("command_item_addon", "orders.CommandItemAddon", conflict_policy=LOJA, dependencies=("command_item", "product_addon"), seed_to_local=True,
    essential_filter={"item__command_status": "pending"})
 # A CHAVE DE IDEMPOTÊNCIA ATRAVESSA OS NÓS.
 #
@@ -371,22 +338,19 @@ _e("command_item_addon", "orders.CommandItemAddon", conflict_policy=LOJA, flow="
 #
 # `immutable` porque o registro nasce pronto e nunca muda: ele é a resposta já
 # produzida. Reescrevê-lo seria trocar a resposta de uma operação encerrada.
-_e("idempotency_record", "core.IdempotencyRecord", conflict_policy=LOJA,
-   flow="bidirectional", dependencies=("account",), immutable=True,
+_e("idempotency_record", "core.IdempotencyRecord", conflict_policy=LOJA, dependencies=("account",), immutable=True,
    # Não desce na carga inicial: uma loja nova não tem operação pendente para
    # deduplicar, e o histórico de chaves é grande e sem uso lá.
    seed_to_local=False)
 # O CAIXA DESCE TAMBÉM. Ele nasce na loja, mas o gerente aprova a sangria,
 # transfere e libera a sessão pelo painel da NUVEM — e com `local_to_cloud` a
 # nuvem nem gerava o evento: o PDV ficava "aguardando aprovação" de algo já
-# aprovado, e a próxima gravação da loja desfazia a aprovação lá em cima. Quem
-# decide se a versão da nuvem entra é `comanda_conflicts`: só quando a loja não
-# tem edição que a nuvem ainda não viu.
+# aprovado, e a próxima gravação da loja desfazia a aprovação lá em cima. Vence
+# a edição mais nova.
 #
 # `pdv_terminal` é dependência porque `opened_terminal`/`closed_terminal`
 # apontam para ele: sem o terminal do outro lado, a abertura não aplica.
-_e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="both",
-   dependencies=("restaurant", "cash_station", "pdv_terminal"),
+_e("cash_register", "payments.CashRegister", conflict_policy=LOJA, dependencies=("restaurant", "cash_station", "pdv_terminal"),
    seed_to_local=True, essential_filter={"status__in": CAIXA_VIVO})
 # O movimento de caixa NÃO é append-only, e dizer que era custava dinheiro.
 #
@@ -408,68 +372,55 @@ _e("cash_register", "payments.CashRegister", conflict_policy=LOJA, flow="both",
 # `conflicts.decide` IGNORA um evento cuja versão seja anterior à local. Um
 # evento atrasado não ressuscita um movimento cancelado — há teste para isso em
 # `test_movimento_de_caixa_sincroniza.py`. Ele desce como a sessão (a sangria
-# aprovada no painel da nuvem), pela mesma regra de `comanda_conflicts`.
+# aprovada no painel da nuvem).
 #
 # Ele desce junto da sessão porque o saldo do caixa aberto é a soma deles —
 # sem os movimentos, a sangria e o suprimento do turno sumiriam da conferência.
-_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, flow="both",
-   dependencies=("cash_register",),
+_e("cash_movement", "payments.CashMovement", conflict_policy=LOJA, dependencies=("cash_register",),
    seed_to_local=True, essential_filter={"cash_register__status__in": CAIXA_VIVO})
 # Divergência de vendas: registrada num lado (o gerente, no fechamento) e
 # analisada/regularizada no outro (o contador, na nuvem). `LOJA` ou `MANUAL`
 # fariam de toda análise um conflito; o status só anda para a frente
 # (aberta → analisada → regularizada/cancelada), então a versão mais nova é a
 # certa.
-_e("sales_discrepancy", "payments.SalesDiscrepancy", conflict_policy=VERSAO, flow="both",
-   dependencies=("cash_register", "user"), include_in_bootstrap=False)
-_e("payment", "payments.Payment", conflict_policy=LOJA, flow="both",
-   dependencies=("order", "payment_method", "cash_register"),
+_e("sales_discrepancy", "payments.SalesDiscrepancy", conflict_policy=VERSAO, dependencies=("cash_register", "user"), include_in_bootstrap=False)
+_e("payment", "payments.Payment", conflict_policy=LOJA, dependencies=("order", "payment_method", "cash_register"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
 
-# 15. Documentos fiscais. Conflito aqui nunca é resolvido em silêncio.
-# A NOTA dos pedidos abertos desce junto com eles, e a razão é mais forte que
-# imprimir o DANFE: é NÃO EMITIR DUAS VEZES. Se a loja assume um pedido que já
-# teve NFC-e emitida na nuvem e não sabe disso, ela emite outra — e documento
-# fiscal em duplicidade não se apaga, só se cancela, um a um, dentro do prazo.
+# 15. Documentos fiscais.
+# A NOTA desce e sobe, e a razão é mais forte que imprimir o DANFE: é NÃO EMITIR
+# DUAS VEZES. O pagamento feito na nuvem com a loja fora dispara a emissão LÁ
+# (`invoices/signals.py`); de mão única, essa nota nunca chegava à loja, que
+# via o pedido pago e sem nota — e o operador emitia a segunda NFC-e da mesma
+# venda. Documento fiscal em duplicidade não se apaga, só se cancela.
 #
-# A POLÍTICA É `LOJA`, e `MANUAL` estava errado aqui — não por rigor demais,
-# por rigor no lado errado.
-#
-# A nota é de MÃO ÚNICA: a loja emite, a nuvem espelha. Com `MANUAL`, só a
-# PRIMEIRA chegada era aplicada (a linha ainda não existia lá); toda alteração
-# seguinte caía em `_decidir_versao_nova` e virava SyncConflict. E alteração é
-# a vida inteira do documento: `error` → `pending` → `issued`, o protocolo de
-# autorização, a chave, o XML, a URL do DANFE.
-#
-# O resultado era invisível do lado de cá — a loja recebia ACK e zerava a
-# fila — enquanto a nuvem acumulava conflitos e guardava para sempre o
-# primeiro retrato da nota, normalmente o de ERRO.
-#
-# `LOJA` diz o que de fato vale: a autora é a loja, e a nuvem aceita o que ela
-# manda. O §15 continua respeitado no lado que importa — a nuvem tentando
-# sobrescrever a nota da loja segue virando CONFLITO, e `ENTIDADES_FISCAIS`
-# em `conflicts.py` impede que até uma queda de conexão autorize isso.
-_e("invoice", "invoices.Invoice", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("order", "fiscal_profile"),
+# O número não colide: quem numera é o provedor, com um contador só (a loja
+# transmite pela nuvem, `invoices/relay_client.py`). Entre duas versões da
+# mesma nota vence a mais nova — `error` → `pending` → `issued` só anda para a
+# frente —, e o fiscal nunca é adotado nem tratado como esqueleto.
+_e("invoice", "invoices.Invoice", conflict_policy=LOJA, dependencies=("order", "fiscal_profile"),
    seed_to_local=True, essential_filter={"order__status__in": ABERTOS})
-_e("invoice_item", "invoices.InvoiceItem", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("invoice",),
+_e("invoice_item", "invoices.InvoiceItem", conflict_policy=LOJA, dependencies=("invoice",),
    seed_to_local=True, essential_filter={"invoice__order__status__in": ABERTOS})
 
 # 16. Produção e periféricos em uso.
-_e("print_job", "printers.PrintJob", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("printer",), include_in_bootstrap=False)
-_e("scale_reading", "printers.ScaleReading", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("scale",), include_in_bootstrap=False, immutable=True)
+_e("print_job", "printers.PrintJob", conflict_policy=LOJA, dependencies=("printer",), include_in_bootstrap=False)
+# A leitura NÃO é append-only: ela nasce e depois recebe o item da comanda em
+# que virou (`command_item`). Com `immutable` o destino ignorava essa segunda
+# gravação, e na nuvem toda leitura ficava sem item — achado pela simulação do
+# dia a dia. Atualização atrasada não estraga nada: a versão decide.
+_e("scale_reading", "printers.ScaleReading", conflict_policy=LOJA, dependencies=("scale",),
+   include_in_bootstrap=False)
 
 # 17. Auditoria: append-only.
-_e("audit_log", "core.AuditLog", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("account",), include_in_bootstrap=False, immutable=True)
-_e("command_log", "restaurants.CommandMovementLog", conflict_policy=LOJA, flow="local_to_cloud",
-   dependencies=("command",), include_in_bootstrap=False, immutable=True)
+_e("audit_log", "core.AuditLog", conflict_policy=LOJA, dependencies=("account",), include_in_bootstrap=False, immutable=True)
+_e("command_log", "restaurants.CommandMovementLog", conflict_policy=LOJA, dependencies=("command",), include_in_bootstrap=False, immutable=True)
 
 # 18. Metadados de anexo. O binário vai por HTTPS em chunks (ver services/files.py).
 _e("image", "images.Image", conflict_policy=CLOUD, dependencies=("account",),
    include_in_bootstrap=False)
 _e("product_image", "images.ProductImage", conflict_policy=CLOUD,
    dependencies=("image", "product"), include_in_bootstrap=False)
+
+# 19. O resto do clone: estoque detalhado, nota de entrada e patrimônio.
+from apps.synchronization import catalog_clone  # noqa: E402,F401

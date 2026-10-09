@@ -9,7 +9,7 @@ import logging
 
 from apps.synchronization.constants import EventStatus
 from apps.synchronization.models import SyncEvent, SyncNode
-from apps.synchronization.services import apply, comanda_conflicts, dispatch, inbox, nodes
+from apps.synchronization.services import apply, confirmacao, dispatch, inbox, nodes, relogio, retry
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +51,44 @@ def aplicar_recebidos(ids=None):
         consulta = consulta.filter(pk__in=ids)
 
     aplicados = []
-    eventos = list(consulta[:MAX_APLICAR])
-    # O conflito da comanda é conferido UMA vez para o lote inteiro: o zerar
-    # de centenas de comandas chega aqui como centenas de eventos.
-    with comanda_conflicts.lote(eventos):
-        for evento in eventos:
-            apply.apply_event(evento)
-            evento.refresh_from_db(fields=["status", "applied_at"])
-            if evento.status == EventStatus.APPLIED:
-                comanda_conflicts.anotar_aplicado(evento)
-                aplicados.append(str(evento.event_id))
+    for evento in list(consulta[:MAX_APLICAR]):
+        apply.apply_event(evento)
+        evento.refresh_from_db(fields=["status"])
+        if evento.status == EventStatus.APPLIED:
+            aplicados.append(str(evento.event_id))
     if aplicados:
         _avancar_cursor(proprio, consulta)
+        # O que acabou de entrar pode ser o pai que alguém esperava.
+        retry.acordar_quem_espera_dependencia(proprio)
     return aplicados
+
+
+def ao_reconectar():
+    """Fecha a janela de queda e reenvia o que saiu sem confirmação.
+
+    O lote transmitido no instante em que a rede caiu fica SENT para sempre —
+    ou até `reconcile_nodes`, que só pega o que está assim há 5 minutos. A
+    nuvem já reenfileira o dela no aperto de mão; a loja passa a fazer igual.
+    Reenviar é seguro: o `event_id` é o mesmo e o destino ignora o que já viu.
+    """
+    nodes.registrar_reconexao()
+    return dispatch.resend_unconfirmed(nodes.self_node())
+
+
+def confirmacoes_pendentes(peer_node_id):
+    """O que esta loja aplicou DEPOIS do lote e ainda não confirmou à nuvem."""
+    proprio = nodes.self_node()
+    par = SyncNode.objects.filter(pk=peer_node_id).first() or nodes.peer_of(proprio)
+    return (par, confirmacao.aplicados_sem_confirmacao(par)) if par else (None, [])
+
+
+def marcar_confirmados(par, event_ids):
+    return confirmacao.marcar_confirmados(par, event_ids) if par else 0
 
 
 def _avancar_cursor(proprio, consulta):
     ultimo = consulta.model.objects.filter(
-        target_node=proprio, status=EventStatus.APPLIED
+        target_node=proprio, status__in=[EventStatus.APPLIED, EventStatus.ACKNOWLEDGED]
     ).order_by("-sequence").values_list("sequence", flat=True).first()
     if ultimo and ultimo > proprio.last_received_cursor:
         SyncNode.objects.filter(pk=proprio.pk).update(last_received_cursor=ultimo)
@@ -97,4 +117,5 @@ def estado_da_fila():
         "mortos": SyncEvent.objects.filter(status=EventStatus.DEAD).count(),
         "cursor_enviado": proprio.last_sent_cursor,
         "cursor_recebido": proprio.last_received_cursor,
+        "desvio_do_relogio_s": relogio.desvio_conhecido(),
     }

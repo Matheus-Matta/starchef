@@ -102,7 +102,7 @@ echo "conta da nuvem: $SYNC_ACCOUNT_ID"
 
 # 4) A loja, já com a identidade. `up` (e não `restart`) porque `environment` é
 #    lido na CRIAÇÃO do container.
-compose up -d backend-store sync_worker
+compose up -d backend-store sync_worker celery_worker_store celery_beat_store
 echo -n "aguardando a loja em 127.0.0.1:${STORE_PORT}"
 for _ in $(seq 1 150); do
   if curl -fsS "http://127.0.0.1:${STORE_PORT}/health/" >/dev/null 2>&1; then echo " ok"; break; fi
