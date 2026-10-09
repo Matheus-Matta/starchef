@@ -37,13 +37,14 @@ def nuvem_com_loja(settings, account, restaurant):
     nodes.invalidate_cache()
 
 
-def _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto, manager_user):
+def _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto, manager_user,
+            **cabecalhos):
     comanda = Command.objects.create(account=account, restaurant=restaurant, branch=branch,
                                      number=903)
     launch_item(command=comanda, product=produto, user=manager_user, quantity=1)
     pedido = criar_vazio(api_client, restaurant=restaurant, tipo="command").json()
     return api_client.post(f"/api/v1/orders/{pedido['id']}/attach-commands/",
-                           {"commands": [str(comanda.pk)]}, format="json")
+                           {"commands": [str(comanda.pk)]}, format="json", **cabecalhos)
 
 
 def test_loja_no_ar_a_nuvem_recusa_e_manda_cobrar_na_loja(
@@ -52,7 +53,7 @@ def test_loja_no_ar_a_nuvem_recusa_e_manda_cobrar_na_loja(
     SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(last_seen_at=timezone.now())
 
     resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
-                       manager_user)
+                       manager_user, HTTP_X_DESVIO_DA_LOJA="janela")
 
     assert resposta.status_code == 409
     assert resposta.json()["error"]["code"] == "cobrar_na_loja"
@@ -64,6 +65,24 @@ def test_loja_fora_a_nuvem_cobra(
     SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(
         last_seen_at=timezone.now() - timedelta(minutes=5)
     )
+
+    resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
+                       manager_user)
+
+    assert resposta.status_code == 200, resposta.content
+
+
+def test_terminal_na_nuvem_cobra_mesmo_com_a_loja_no_ar(
+    nuvem_com_loja, api_client, contexto_tenant, account, restaurant, branch, produto, manager_user
+):
+    """O impasse da v3.0.86: comanda que não fechava em lugar nenhum.
+
+    O sinal de vida é do `sync_worker` da loja, não prova que o terminal a
+    alcança. PDV configurado direto na nuvem (ou sem rota até a loja) era
+    mandado de volta para uma loja que ele não usa: "não consigo finalizar
+    pedido com comanda". Só quem vem pela janela do veredito é recusado.
+    """
+    SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(last_seen_at=timezone.now())
 
     resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
                        manager_user)

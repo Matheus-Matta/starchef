@@ -39,6 +39,7 @@ extension ApiClientFallback on ApiClient {
           body: body,
           accessToken: accessToken,
           operationId: operationId,
+          naJanela: true,
         );
         lastServerOrigin = ServerOrigin.nuvem;
         _publishStatus(NetworkPhase.cloud);
@@ -127,9 +128,15 @@ extension ApiClientFallback on ApiClient {
     Map<String, dynamic>? body,
     String? accessToken,
     String? operationId,
+    bool naJanela = false,
   }) async {
     final uri = cloudFallback.enderecoPara(path, query);
     final headers = <String, String>{'Content-Type': 'application/json'};
+    // Direto à nuvem pela janela do veredito, SEM ter tentado a loja agora: a
+    // nuvem pode mandar a comanda de volta (`cobrar_na_loja`). Só este caso é
+    // recusado — o terminal configurado na nuvem, ou que acabou de ver a loja
+    // falhar, fecha a comanda lá (a v3.0.86 travava os dois).
+    if (naJanela) headers['X-Desvio-Da-Loja'] = 'janela';
     if (accessToken != null) headers['Authorization'] = 'Bearer $accessToken';
     if (operationId != null) headers['Idempotency-Key'] = operationId;
     _addTerminalHeaders(headers);

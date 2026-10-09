@@ -204,7 +204,7 @@ class OrderViewSet(BaseTenantViewSet):
         from apps.synchronization.services import loja_no_ar
 
         order = self.get_object()
-        if loja_no_ar.loja_no_ar(order.restaurant):
+        if loja_no_ar.recusar_fechamento(request, order.restaurant):
             # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
             # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
             return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
@@ -239,7 +239,7 @@ class OrderViewSet(BaseTenantViewSet):
         from apps.synchronization.services import loja_no_ar
 
         order = self.get_object()
-        if loja_no_ar.loja_no_ar(order.restaurant):
+        if loja_no_ar.recusar_fechamento(request, order.restaurant):
             # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
             # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
             return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
