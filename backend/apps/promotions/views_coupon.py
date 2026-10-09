@@ -5,7 +5,8 @@ tem — CONFERIR. O caixa precisa saber se aquele código vale para AQUELE pedid
 antes de cobrar, e essa pergunta não existe numa promoção de vitrine.
 """
 
-from django.db.models import Count
+from django.db.models import Count, Q
+from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -25,7 +26,25 @@ class CouponViewSet(BaseTenantViewSet):
     )
     filterset_fields = ["is_enabled", "discount_kind", "customer_groups"]
     search_fields = ["code", "name", "description"]
-    ordering_fields = ["code", "created_at", "ends_at"]
+    # `total_resgates`: as sugestões do pagamento mostram os mais usados.
+    ordering_fields = ["code", "created_at", "ends_at", "total_resgates"]
+
+    def get_queryset(self):
+        # A contagem entra AQUI: o mixin de tenant remonta a consulta a partir
+        # do model e descarta o `annotate` declarado na classe — ordenar por
+        # `total_resgates` dava 500 ("Cannot resolve keyword").
+        consulta = super().get_queryset().annotate(
+            total_resgates=Count("redemptions", distinct=True)
+        )
+        # `vigentes=1`: só o que o caixa pode aplicar agora — ligado e dentro do
+        # prazo. Sugerir um vencido seria um toque para ouvir uma recusa.
+        if self.request.query_params.get("vigentes") in ("1", "true"):
+            agora = timezone.now()
+            consulta = consulta.filter(is_enabled=True).filter(
+                Q(starts_at__isnull=True) | Q(starts_at__lte=agora),
+                Q(ends_at__isnull=True) | Q(ends_at__gte=agora),
+            )
+        return consulta
 
     @action(detail=False, methods=["post"], url_path="validate")
     def validate_code(self, request):

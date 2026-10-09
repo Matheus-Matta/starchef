@@ -54,7 +54,7 @@ class OrdersPresenter extends ChangeNotifier {
       // tela é pior que tela nenhuma — o garçom veria o salão sem as comandas
       // e concluiria que ninguém lançou nada.
       if (_disposed) return;
-      _orders = orders;
+      _orders = pedidosComConteudo(orders);
       _commands = commands;
       _origin = repository.lastReadOrigin;
     } catch (error) {
@@ -100,3 +100,22 @@ class OrdersPresenter extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// Os pedidos que têm o que mostrar: pelo menos um item que não foi cancelado
+/// nem virou cortesia.
+///
+/// "Pedidos abertos" listava também o pedido sem nada — aberto e abandonado,
+/// ou com todos os itens cancelados. Para o garçom, era um pedido que não
+/// existe. Sem a lista de itens na resposta, o pedido continua aparecendo:
+/// esconder um de verdade seria pior do que mostrar um a mais.
+List<Map<String, dynamic>> pedidosComConteudo(
+  List<Map<String, dynamic>> pedidos,
+) => [
+  for (final pedido in pedidos)
+    if (pedido['items'] is! List ||
+        (pedido['items'] as List).whereType<Map>().any(
+          (item) =>
+              !const {'cancelled', 'comped'}.contains('${item['status']}'),
+        ))
+      pedido,
+];

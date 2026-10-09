@@ -95,16 +95,33 @@ mixin _PaymentCouponSection on _HomePageShared {
   /// porque é a parte que dá para verificar sozinha.
   Widget _couponControl(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: PaymentCouponInput(
-      controller: couponCode,
-      applied: _appliedCoupon,
-      busy: couponBusy,
-      error: couponError,
-      onSubmit: _aplicarCupom,
-      onRemove: () {
-        couponCode.clear();
-        _aplicarCupom('');
-      },
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PaymentCouponInput(
+          controller: couponCode,
+          applied: _appliedCoupon,
+          busy: couponBusy,
+          error: couponError,
+          onSubmit: _aplicarCupom,
+          onRemove: () {
+            couponCode.clear();
+            _aplicarCupom('');
+          },
+        ),
+        // Os mais usados como botões, e a busca enquanto digita. Com cupom
+        // aplicado somem: aí o gesto é trocar ou retirar, logo acima.
+        if (_appliedCoupon.isEmpty && !couponBusy)
+          CouponSuggestions(
+            api: api,
+            accessToken: token,
+            controller: couponCode,
+            onPick: (codigo) {
+              couponCode.text = codigo;
+              _aplicarCupom(codigo);
+            },
+          ),
+      ],
     ),
   );
 

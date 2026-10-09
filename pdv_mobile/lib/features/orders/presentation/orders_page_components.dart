@@ -113,9 +113,13 @@ class _AccountMenu extends StatelessWidget {
     required this.onPrinting,
     required this.onCustomers,
     required this.onUpdates,
+    required this.settings,
   });
 
   final SessionController controller;
+
+  /// Lido quando o menu ABRE: o ✓ de "Perguntar mesa" sai sempre atual.
+  final ApiSettings settings;
   final VoidCallback onApiSettings;
   final VoidCallback onPrinting;
   final VoidCallback onCustomers;
@@ -131,6 +135,7 @@ class _AccountMenu extends StatelessWidget {
         'api' => onApiSettings(),
         'printing' => onPrinting(),
         'updates' => onUpdates(),
+        'mesa' => alternarPerguntarMesa(context, settings),
         'sair' => controller.logout(),
         _ => null,
       },
@@ -144,6 +149,13 @@ class _AccountMenu extends StatelessWidget {
         const PopupMenuItem(
           value: 'printing',
           child: Text('Impressoras e fila'),
+        ),
+        // Liga e desliga com um toque, aqui mesmo: é uma escolha da casa
+        // (trabalha com mesa ou não), e uma tela só para ela seria demais.
+        CheckedPopupMenuItem(
+          value: 'mesa',
+          checked: settings.askTable,
+          child: const Text('Perguntar mesa'),
         ),
         const PopupMenuItem(value: 'api', child: Text('Servidor da API')),
         const PopupMenuItem(

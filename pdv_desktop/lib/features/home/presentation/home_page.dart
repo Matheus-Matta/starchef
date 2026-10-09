@@ -77,6 +77,7 @@ import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
 import 'payment_coupon_input.dart';
+import 'coupon_suggestions.dart';
 import 'table_details_panel.dart';
 import 'table_occupancy.dart';
 import '../../orders/data/order_draft.dart';

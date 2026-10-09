@@ -129,6 +129,7 @@ class _PdvMobileAppState extends State<PdvMobileApp>
             session: _controller.session!,
             drafts: _drafts,
             catalogCache: _catalogCache,
+            perguntarMesa: () => widget.settings.askTable,
             onPrintJobsCreated: () => unawaited(_printAgent.runNow()),
             exigeCodigoAgora: () =>
                 _controller.session?.user.requireOperatorCode ?? false,

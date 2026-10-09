@@ -1,5 +1,5 @@
 <template>
-  <div class="coupons-report">
+  <div class="coupons-report report-panel">
     <div class="responsive-kpi-grid">
       <StatCard label="Usos de cupom" :value="String(totals.uses || 0)" tone="brand" caption="Pedidos pagos com cupom">
         <template #icon><AppIcon name="ticket" :size="19" /></template>

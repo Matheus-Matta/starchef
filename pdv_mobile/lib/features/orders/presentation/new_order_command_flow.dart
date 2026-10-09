@@ -19,7 +19,8 @@ Future<Map<String, dynamic>?> _fromCommand(
 
   // A mesa só é perguntada quando a comanda ainda não tem uma: o vínculo é do
   // atendimento, não a forma de lançar.
-  if (fieldText(command['current_table']).isEmpty) {
+  // Desligado em "Perguntar mesa", segue direto para o cardápio.
+  if (repository.askTable && fieldText(command['current_table']).isEmpty) {
     final table = await _chooseTable(context, repository, command);
     if (!context.mounted) return null;
     if (table != null) {

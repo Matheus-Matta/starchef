@@ -209,6 +209,9 @@ export const router = createRouter({
         { path: "relatorios/pagamentos", name: "relatorio-pagamentos", component: ReportsView, props: { section: "payment" }, meta: { requiresAuth: true, title: "Relatório de pagamentos", nav: "relatorio-pagamentos" } },
         { path: "relatorios/garcons", name: "relatorio-garcons", component: ReportsView, props: { section: "waiter" }, meta: { requiresAuth: true, title: "Relatório de garçons", nav: "relatorio-garcons" } },
         { path: "relatorios/restaurantes", name: "relatorio-restaurantes", component: ReportsView, props: { section: "restaurant" }, meta: { requiresAuth: true, title: "Relatório por restaurante", nav: "relatorio-restaurantes" } },
+        // Atalho em Relatórios para a mesma tela de Estoque › Posição: quem
+        // procura relatório não olha no menu de estoque.
+        { path: "relatorios/estoque", name: "relatorio-estoque", component: StockPositionView, meta: { requiresAuth: true, title: "Relatório de estoque", nav: "relatorio-estoque", module: "logistica" } },
         { path: "relatorios/custos", name: "relatorio-custos", component: ReportsView, props: { section: "cost" }, meta: { requiresAuth: true, title: "Custo × venda por produto", nav: "relatorio-custos" } },
         { path: "relatorios/cupons", name: "relatorio-cupons", component: ReportsView, props: { section: "coupon" }, meta: { requiresAuth: true, title: "Relatório de cupons", nav: "relatorio-cupons" } },
         { path: "relatorios/caixa", name: "relatorio-caixa", component: ReportsView, props: { section: "cash" }, meta: { requiresAuth: true, title: "Relatório de caixa", nav: "relatorio-caixa" } },

@@ -1,5 +1,5 @@
 <template>
-  <div class="product-costs-report">
+  <div class="product-costs-report report-panel">
     <div class="responsive-kpi-grid">
       <StatCard label="Vendido" :value="money(totals.revenue)" tone="success" caption="Receita dos itens no período">
         <template #icon><AppIcon name="dollar-sign" :size="19" /></template>

@@ -99,7 +99,12 @@ class _OrderDetailPageState extends State<OrderDetailPage> {
   /// vinculação continua disponível no mesmo botão de sempre.
   void _maybeSuggestTable() {
     if (_suggestedTable || !mounted) return;
-    if (!shouldSuggestTable(_presenter.order)) return;
+    if (!shouldSuggestTable(
+      _presenter.order,
+      perguntar: widget.repository.askTable,
+    )) {
+      return;
+    }
     _suggestedTable = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
