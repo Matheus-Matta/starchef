@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../customers/presentation/customers_page.dart';
 import '../data/orders_repository.dart';
 import 'new_order_flow.dart';
 import 'order_detail_page.dart';
@@ -32,6 +33,17 @@ mixin OrdersPageNavigation<T extends StatefulWidget> on State<T> {
       ),
     );
     // Relê ao voltar: o atendimento pode ter mudado, e a lista mostra estado.
+    if (mounted) await presenter.load();
+  }
+
+  /// O cadastro de clientes, pelo menu da conta. Relê ao voltar: um cliente
+  /// novo pode ter sido vinculado a um pedido aberto.
+  Future<void> openCustomers() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CustomersPage(repository: repository),
+      ),
+    );
     if (mounted) await presenter.load();
   }
 

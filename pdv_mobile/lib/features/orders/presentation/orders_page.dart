@@ -8,11 +8,11 @@ import '../../../core/update/manual_update_action.dart';
 import '../../../core/update/update_banner.dart';
 import '../../../core/widgets/shadcn_layout.dart';
 import '../../auth/presentation/session_controller.dart';
-import '../../customers/presentation/customers_page.dart';
 import '../../printing/presentation/print_status_page.dart';
 import '../../printing/services/mobile_print_agent.dart';
 import '../../settings/presentation/api_settings_page.dart';
 import '../data/orders_repository.dart';
+import 'ask_table_toggle.dart';
 import 'orders_page_navigation.dart';
 import 'order_card.dart';
 import 'orders_presenter.dart';
@@ -66,15 +66,6 @@ class _OrdersPageState extends State<OrdersPage>
 
   /// A lista de clientes. Ao voltar, a lista do salão é relida: o garçom pode
   /// ter cadastrado alguém que já entra no próximo pedido.
-  Future<void> _openCustomers() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CustomersPage(repository: widget.repository),
-      ),
-    );
-    if (mounted) await _presenter.load();
-  }
-
   Future<void> _openApiSettings() async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
@@ -117,8 +108,9 @@ class _OrdersPageState extends State<OrdersPage>
         _AccountMenu(
           controller: widget.controller,
           onApiSettings: _openApiSettings,
+          settings: widget.settings,
           onPrinting: _openPrinting,
-          onCustomers: _openCustomers,
+          onCustomers: openCustomers,
           onUpdates: _checkUpdates,
         ),
       ],

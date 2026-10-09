@@ -7,6 +7,8 @@ import '../../../core/widgets/app_toast.dart';
 import '../data/orders_repository.dart';
 import 'order_detail_presenter.dart';
 import 'order_formatters.dart';
+
+export 'void_reason_dialog.dart' show askVoidReason;
 import 'table_picker_sheet.dart';
 
 /// As perguntas que a tela do pedido faz antes de gravar alguma coisa.
@@ -14,42 +16,6 @@ import 'table_picker_sheet.dart';
 /// Ficam fora da página porque são conversas curtas e independentes: cada uma
 /// abre, pergunta uma coisa e devolve a resposta. Misturadas ao `State` elas
 /// engordavam a tela e escondiam o fluxo principal — lançar item e enviar.
-
-/// Por que este item está sendo cancelado.
-///
-/// O motivo é obrigatório: o cancelamento vira registro no caixa, e "sem
-/// motivo" não explica nada a quem confere o fechamento no fim do turno.
-Future<String?> askVoidReason(BuildContext context, Map<String, dynamic> item) {
-  final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text('Cancelar ${item['product_name'] ?? 'item'}?'),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        decoration: const InputDecoration(
-          labelText: 'Motivo',
-          hintText: 'Ex.: cliente desistiu',
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Voltar'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final reason = controller.text.trim();
-            if (reason.isEmpty) return;
-            Navigator.of(context).pop(reason);
-          },
-          child: const Text('Cancelar item'),
-        ),
-      ],
-    ),
-  );
-}
 
 /// Apagar deste aparelho uma operação que o backend recusou.
 Future<bool> confirmDiscardFailed(
@@ -133,8 +99,8 @@ Future<String?> manageOrderTable(
 ///
 /// Só comanda tem mesa para vincular (é o contrato de [manageOrderTable]), e
 /// só faz sentido sugerir para quem ainda não tem uma.
-bool shouldSuggestTable(Map<String, dynamic>? order) {
-  if (order == null) return false;
+bool shouldSuggestTable(Map<String, dynamic>? order, {bool perguntar = true}) {
+  if (!perguntar || order == null) return false;
   if (fieldText(order['command']).isEmpty) return false;
   return fieldText(order['table']).isEmpty;
 }

@@ -29,6 +29,7 @@ class OrdersRepository {
     this.onPrintJobsCreated,
     this.exigeCodigoAgora,
     this.catalogCache,
+    this.perguntarMesa,
   }) : drafts = drafts ?? OrderDrafts(),
        operatorCodes = operatorCodes ?? OperatorCodeKeeper();
 
@@ -42,6 +43,11 @@ class OrdersRepository {
   /// [ReadCache]). Mora no app, e não aqui: este repositório é recriado a
   /// cada redesenho da tela inicial.
   final ReadCache? catalogCache;
+
+  /// A configuração "Perguntar mesa" deste aparelho (lida na hora: o garçom
+  /// pode trocar pelo menu com a tela aberta).
+  final bool Function()? perguntarMesa;
+  bool get askTable => perguntarMesa?.call() ?? true;
 
   /// A exigência ATUAL da sessão. A tela de pedidos guarda este repositório
   /// desde que abriu; ler de `session` aqui devolveria o valor do momento do

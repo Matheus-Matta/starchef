@@ -101,4 +101,23 @@ describe("ritmo vertical do layout", () => {
       /\.rpage__footer\s*\{[^}]*justify-content:\s*flex-end/s,
     );
   });
+
+  it("espaça os cartões empilhados dentro dos painéis de relatório", () => {
+    // Global: o estilo "scoped" da ReportsView não chegava nos painéis, que são
+    // componentes próprios — os cartões ficavam colados um no outro.
+    expect(layoutStyles).toMatch(/\.responsive-one-col\s*\{[^}]*gap:/s);
+    expect(layoutStyles).toMatch(/\.report-panel\s*\{[^}]*gap:\s*var\(--page-section-gap\)/s);
+    expect(reportsView).not.toMatch(/^\.responsive-one-col\s*\{/m);
+    for (const painel of ["CouponsReport", "ProductCostsReport"]) {
+      const fonte = readFileSync(resolve(`src/components/reports/${painel}.vue`), "utf8");
+      expect(fonte).toMatch(/class="[^"]* report-panel"/);
+    }
+  });
+
+  it("Relatórios tem o atalho para o estoque", () => {
+    const rotas = readFileSync(resolve("src/router/index.js"), "utf8");
+    const menu = readFileSync(resolve("src/layout/Sidebar.vue"), "utf8");
+    expect(rotas).toMatch(/name: "relatorio-estoque", component: StockPositionView/);
+    expect(menu).toMatch(/id: "relatorio-estoque"/);
+  });
 });

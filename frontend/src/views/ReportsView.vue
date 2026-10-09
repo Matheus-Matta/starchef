@@ -716,12 +716,6 @@ onMounted(async () => {
   border-bottom-color: var(--brand);
 }
 
-.responsive-one-col {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
 .reports-view__restaurant-filter {
   display: flex;
   align-items: center;

@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 from django.db.models import TextField
 from rest_framework_simplejwt.tokens import AccessToken
 
+from apps.accounts.models import UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.menu.models import Product, ProductCategory
 from apps.orders.models import CommandItem, Order, OrderItem
 from apps.restaurants.models import Command
@@ -57,6 +59,8 @@ def test_waiter_report_uses_code_from_command_item_not_cashier_login(
     )
     command = Command.objects.create(account=account, restaurant=restaurant, branch=branch)
     waiter = get_user_model().objects.create_user(username="waiter-lancador", password="secret123")
+    UserProfile.objects.create(account=account, user=waiter, role=ensure_system_roles(account)["waiter"],
+                               restaurant=restaurant, branch=branch)
     annotation = CommandItem.objects.create(
         account=account,
         restaurant=restaurant,

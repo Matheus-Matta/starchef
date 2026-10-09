@@ -118,6 +118,27 @@ select:not([multiple]) {
   gap: 16px;
 }
 
+/* GLOBAL, e não no estilo da página: os painéis de relatório são componentes
+   próprios, e o estilo "scoped" da ReportsView não chegava neles — os cartões
+   empilhados dentro do painel ficavam colados um no outro. */
+.responsive-one-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* A raiz de um painel com várias seções (números, tabelas, gráficos): o mesmo
+   espaço entre elas que a página tem entre as suas. */
+.report-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--page-section-gap);
+}
+
+@media (max-width: 720px) {
+  .report-panel { gap: var(--space-4); }
+}
+
 .kds-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));

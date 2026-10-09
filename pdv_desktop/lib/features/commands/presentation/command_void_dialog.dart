@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/widgets/app_dialog.dart';
+import '../../orders/presentation/item_void_reason_dialog.dart';
 
 /// Cancelar uma anotação da comanda pede MOTIVO e deixa registro.
 ///
@@ -40,6 +41,10 @@ class _CommandVoidDialog extends StatefulWidget {
 class _CommandVoidDialogState extends State<_CommandVoidDialog> {
   final _motivo = TextEditingController();
 
+  /// O motivo escolhido nos botões. "Outro" abre o campo para digitar.
+  String? _escolhido;
+  bool get _digitando => _escolhido == 'Outro';
+
   @override
   void dispose() {
     _motivo.dispose();
@@ -48,7 +53,10 @@ class _CommandVoidDialogState extends State<_CommandVoidDialog> {
 
   bool get _naCozinha => '${widget.item['status'] ?? ''}' != 'pending';
 
-  void _confirmar() => Navigator.pop(context, _motivo.text.trim());
+  void _confirmar() => Navigator.pop(
+    context,
+    _digitando ? _motivo.text.trim() : (_escolhido ?? ''),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -72,12 +80,29 @@ class _CommandVoidDialogState extends State<_CommandVoidDialog> {
               ),
             ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _motivo,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Motivo'),
-            onSubmitted: (_) => _confirmar(),
+          // A mesma lista do cancelamento de item do pedido: o motivo é um
+          // toque, e o relatório de cancelamentos agrupa pelo mesmo texto.
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final motivo in ItemVoidReasonDialog.reasons)
+                ChoiceChip(
+                  label: Text(motivo),
+                  selected: _escolhido == motivo,
+                  onSelected: (_) => setState(() => _escolhido = motivo),
+                ),
+            ],
           ),
+          if (_digitando) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _motivo,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Descreva o motivo'),
+              onSubmitted: (_) => _confirmar(),
+            ),
+          ],
         ],
       ),
       actions: [

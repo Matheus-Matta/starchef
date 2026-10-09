@@ -9,6 +9,10 @@ from decimal import Decimal
 import pytest
 from rest_framework_simplejwt.tokens import AccessToken
 
+from django.contrib.auth.models import User
+
+from apps.accounts.models import UserProfile
+from apps.accounts.role_catalog import ensure_system_roles
 from apps.orders.models import CommandItem, Order, OrderItem
 from apps.reports.tests.test_waiter_sales_report import product  # noqa: F401 — fixture
 from apps.restaurants.models import Command
@@ -35,13 +39,16 @@ def _item(pedido, produto, status, **extra):  # noqa: F811
 def test_so_itens_lancados_entram_no_relatorio_do_garcom(
     api_client, account, restaurant, branch, manager_user, product,  # noqa: F811
 ):
-    pedido = _pedido_pago(account, restaurant, branch, manager_user, 900)
+    garcom = User.objects.create_user(username="garcom-relatorio", password="x")
+    UserProfile.objects.create(account=account, user=garcom, role=ensure_system_roles(account)["waiter"],
+                               restaurant=restaurant, branch=branch)
+    pedido = _pedido_pago(account, restaurant, branch, garcom, 900)
     _item(pedido, product, OrderItem.STATUS_DELIVERED)  # saiu para a produção: conta
     _item(pedido, product, OrderItem.STATUS_PENDING)  # nunca lançado: não conta
     comanda = Command.objects.create(account=account, restaurant=restaurant, branch=branch)
     anotacao = CommandItem.objects.create(
         account=account, restaurant=restaurant, branch=branch, command=comanda, product=product,
-        quantity="1.000", unit_price="25.00", total_price="25.00", launched_by=manager_user,
+        quantity="1.000", unit_price="25.00", total_price="25.00", launched_by=garcom,
     )
     # veio da anotação do garçom: conta, mesmo sem setor de produção
     _item(pedido, product, OrderItem.STATUS_PENDING, command=comanda, command_item=anotacao)
