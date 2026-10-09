@@ -104,10 +104,13 @@ def test_colisao_insoluvel_vira_conflito_e_sai_da_fila(como_loja, conta, no_nuve
 
 
 def test_a_nuvem_nao_adota_registro_que_nasceu_na_loja(como_nuvem, conta, no_nuvem, no_loja):
-    """`order` é LOCAL_WINS: a loja manda. A nuvem nunca apaga por conta própria."""
+    """A nuvem nunca apaga por conta própria; e DINHEIRO (pedido, pagamento,
+    caixa) não é adotado em sentido nenhum — colisão nele é a mesma comanda
+    cobrada nos dois lados, e vira conflito (`test_dinheiro_nunca_e_adotado`)."""
     assert adoption.origin_is_authority("product", NodeType.LOCAL) is True
     assert adoption.origin_is_authority("product", NodeType.CLOUD) is False
-    assert adoption.origin_is_authority("order", NodeType.CLOUD) is True
+    assert adoption.origin_is_authority("command", NodeType.CLOUD) is True
+    assert adoption.origin_is_authority("order", NodeType.CLOUD) is False
     assert adoption.origin_is_authority("order", NodeType.LOCAL) is False
     # Documento fiscal nunca adota, em sentido nenhum — e agora por ser
     # FISCAL, não por ser MANUAL. A nota virou LOCAL_WINS para a nuvem aceitar

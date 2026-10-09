@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import zlib
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -79,17 +80,22 @@ def checksum(data):
     return hashlib.sha256(fonte).hexdigest()
 
 
-def encrypt(payload, encoded_key, associated_data=None):
+def encrypt(payload, encoded_key, associated_data=None, *, comprimir=False):
     """Cifra o payload. Devolve `(nonce_b64, ciphertext_b64)`.
 
     O nonce é sorteado a cada chamada — reutilizar nonce com a mesma chave em
     GCM quebra a cifra inteira, não só a mensagem repetida. `associated_data`
     (o envelope) entra na autenticação sem ser cifrada: trocar o destinatário
     no envelope invalida a tag.
+
+    `comprimir` aplica zlib ANTES de cifrar: depois da cifra o dado é ruído e
+    não comprime mais — nem pela compressão do WebSocket.
     """
     chave = load_key(encoded_key)
     nonce = secrets.token_bytes(NONCE_BYTES)
     claro = canonical_json(payload).encode("utf-8")
+    if comprimir:
+        claro = zlib.compress(claro, 6)
     cifrado = AESGCM(chave).encrypt(nonce, claro, associated_data)
     return (
         base64.b64encode(nonce).decode("ascii"),
@@ -97,10 +103,13 @@ def encrypt(payload, encoded_key, associated_data=None):
     )
 
 
-def decrypt(nonce_b64, ciphertext_b64, encoded_key, associated_data=None):
+def decrypt(nonce_b64, ciphertext_b64, encoded_key, associated_data=None, *,
+            comprimido=False):
     """Decifra e devolve o objeto. Tag inválida levanta — nunca devolve lixo."""
     chave = load_key(encoded_key)
     nonce = base64.b64decode(nonce_b64)
     cifrado = base64.b64decode(ciphertext_b64)
     claro = AESGCM(chave).decrypt(nonce, cifrado, associated_data)
+    if comprimido:
+        claro = zlib.decompress(claro)
     return json.loads(claro.decode("utf-8"))

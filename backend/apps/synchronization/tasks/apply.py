@@ -5,7 +5,7 @@ from celery import shared_task
 
 from apps.core.rls import trabalho_de_plataforma
 from apps.synchronization.models import SyncEvent
-from apps.synchronization.services import apply, guard, nodes
+from apps.synchronization.services import apply, guard, nodes, retry
 
 logger = logging.getLogger(__name__)
 
@@ -37,4 +37,6 @@ def apply_pending_events(event_pks=None):
             aplicados += 1
     if aplicados:
         logger.info("sync: %s evento(s) aplicados", aplicados)
+        # O que acabou de entrar pode ser o pai que alguém esperava.
+        retry.acordar_quem_espera_dependencia(proprio)
     return aplicados

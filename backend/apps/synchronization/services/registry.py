@@ -35,6 +35,18 @@ class SyncEntry:
     exclude_fields: tuple = ()
     #: Campos que o destino NUNCA sobrescreve (ex.: ajuste local de impressora).
     local_only_fields: tuple = ()
+    #: Campos que só a NUVEM decide: ela não os aceita vindos da loja.
+    #:
+    #: A regra do clone é "vence a versão mais nova", linha inteira. Para a
+    #: revogação do terminal isso não serve: o painel revoga às 10:00, a loja
+    #: (sem saber) grava a conexão do mesmo terminal às 10:01 com
+    #: `is_active=True`, e a versão mais nova desfaria a revogação — quase
+    #: sempre, porque a conexão é gravada o tempo todo.
+    cloud_owned_fields: tuple = ()
+    #: `(campo do pai, campo do número)` de um número sequencial por pai que os
+    #: dois lados podem dar ao mesmo tempo (a "rodada 2" da comanda). Na
+    #: colisão, o id menor fica com o número — ver `services/renumeracao.py`.
+    renumber_on_collision: tuple = ()
     #: Append-only: o destino insere, mas nunca atualiza nem apaga.
     immutable: bool = False
     #: Entra na carga para a LOJA mesmo sendo `local_to_cloud`.

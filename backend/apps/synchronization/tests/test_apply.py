@@ -127,15 +127,18 @@ def test_entidade_desconhecida_nao_derruba_nada(como_loja, conta, no_nuvem, no_l
     assert "não registrada" in evento.last_error
 
 
-def test_dado_fiscal_divergente_vira_conflito(como_loja, conta, no_nuvem, no_loja, settings):
-    """Nota fiscal nunca é resolvida em silêncio por last-write-wins (§15)."""
+def test_nota_fiscal_mais_velha_nunca_sobrescreve_a_mais_nova(como_loja, conta, no_nuvem, no_loja):
+    """A nota só anda para a frente: a versão mais nova entra, a velha não."""
     from apps.synchronization.services import conflicts
 
-    decisao = conflicts.decide(
-        "invoice", local_version=5, remote_version=9,
-        receiving_node_type="LOCAL", local_exists=True,
-    )
-    assert decisao == conflicts.CONFLITO
+    def decidir(remota):
+        return conflicts.decide(
+            "invoice", local_version=5, remote_version=remota,
+            receiving_node_type="LOCAL", local_exists=True,
+        )
+
+    assert decidir(9) == conflicts.APLICAR
+    assert decidir(3) == conflicts.IGNORAR
 
 
 def test_conflito_registrado_guarda_as_duas_versoes(como_loja, conta, no_nuvem, no_loja):

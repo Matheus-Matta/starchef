@@ -17,13 +17,16 @@ extension ApiClientTransport on ApiClient {
   }) async {
     final explicitToken = accessToken != null;
     try {
-      return await _send(
-        method,
-        path,
-        query: query,
-        body: body,
-        token: accessToken ?? _accessToken,
-        idempotencyKey: idempotencyKey,
+      return await _repetirSeAPerdeu(
+        idempotencyKey,
+        () => _send(
+          method,
+          path,
+          query: query,
+          body: body,
+          token: accessToken ?? _accessToken,
+          idempotencyKey: idempotencyKey,
+        ),
       );
     } on ApiException catch (error) {
       final canRefresh =
@@ -40,6 +43,26 @@ extension ApiClientTransport on ApiClient {
         token: _accessToken,
         idempotencyKey: idempotencyKey,
       );
+    }
+  }
+
+  /// A escrita cuja resposta se perdeu é repetida UMA vez, com a MESMA chave.
+  ///
+  /// Tempo esgotado é o caso em que o servidor PODE ter gravado. Devolver o
+  /// erro fazia o garçom repetir o gesto com chave nova — o item lançado duas
+  /// vezes, achado pela simulação do dia a dia. Com a mesma chave, o servidor
+  /// devolve a resposta que já deu. Só com a loja respondendo ao `/health/`.
+  /// Igual ao PDV desktop (`api_client_fallback.dart`).
+  Future<Map<String, dynamic>> _repetirSeAPerdeu(
+    String? idempotencyKey,
+    Future<Map<String, dynamic>> Function() tentativa,
+  ) async {
+    try {
+      return await tentativa();
+    } on ApiException catch (erro) {
+      if ((idempotencyKey?.isEmpty ?? true) || !erro.reachedServer) rethrow;
+      if (!await _lojaResponde()) rethrow;
+      return tentativa();
     }
   }
 

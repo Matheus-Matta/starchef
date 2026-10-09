@@ -345,20 +345,17 @@ def test_a_nota_do_pedido_aberto_desce_junto(como_nuvem, no_loja, conta, cenario
         )
 
 
-def test_a_nota_e_da_LOJA_e_a_nuvem_espelha(como_nuvem):
-    """A nota é de mão única, e a política precisa dizer isso.
+def test_a_nota_viaja_nos_dois_sentidos_e_nunca_e_adotada(como_nuvem):
+    """A nota emitida na nuvem (loja fora) desce; a da loja sobe.
 
-    Era `MANUAL`, e o rigor estava no lado errado: só a PRIMEIRA chegada era
-    aplicada na nuvem; `error` → `issued`, o protocolo e a chave viravam
-    conflito e nunca subiam. `LOJA` aceita o que a autora manda — e continua
-    recusando a nuvem tentar sobrescrever a nota da loja.
+    O que continua proibido é a ADOÇÃO: uma colisão de chave única nunca apaga
+    uma nota para dar lugar a outra (`adoption.origin_is_authority`).
     """
-    from apps.synchronization.constants import ConflictResolution
+    from apps.synchronization.constants import NodeType
+    from apps.synchronization.services import adoption
     from apps.synchronization.services.registry import registry
 
     for tipo in ("invoice", "invoice_item"):
-        entrada = registry.require(tipo)
-        assert entrada.conflict_policy == ConflictResolution.LOCAL_WINS
-        assert entrada.flow == "local_to_cloud", (
-            "a política LOJA só é segura porque a nuvem nunca é autora da nota"
-        )
+        assert registry.flows_to_local(tipo) and registry.flows_to_cloud(tipo)
+        assert adoption.origin_is_authority(tipo, NodeType.LOCAL) is False
+        assert adoption.origin_is_authority(tipo, NodeType.CLOUD) is False

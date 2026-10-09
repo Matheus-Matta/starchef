@@ -40,6 +40,10 @@ def realinhar_contador(origem):
     maior = SyncEvent.objects.filter(
         source_node=origem, direction=Direction.OUTBOUND
     ).aggregate(valor=Max("sequence"))["valor"] or 0
+    from apps.synchronization.services import sequencia_pg
+
+    if sequencia_pg.disponivel():
+        sequencia_pg.garantir_acima_de(maior)
     SyncNode.objects.filter(pk=origem.pk, sequence_counter__lt=maior).update(
         sequence_counter=maior
     )

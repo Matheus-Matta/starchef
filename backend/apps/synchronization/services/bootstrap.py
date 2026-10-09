@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.synchronization.constants import Operation, RunStatus, RunType
 from apps.synchronization.models import SyncRun
-from apps.synchronization.services import guard, nodes, outbox
+from apps.synchronization.services import guard, nodes, outbox, sequencia_pg
 from apps.synchronization.services.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def start_run(*, target_node, run_type=RunType.BOOTSTRAP, user=None, ip=None, re
         target_node=target_node,
         run_type=run_type,
         status=RunStatus.PENDING,
-        snapshot_cursor=origem.sequence_counter,
+        snapshot_cursor=sequencia_pg.contador_atual(origem),
         initiated_by=user,
         initiated_ip=ip,
         reason=reason[:255],

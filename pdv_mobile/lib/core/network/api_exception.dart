@@ -33,3 +33,14 @@ class ApiException implements Exception {
   @override
   String toString() => message;
 }
+
+/// A nuvem recusou fechar a conta da comanda porque a LOJA está no ar.
+///
+/// Cobrar o mesmo cartão nos dois servidores é dinheiro em dobro (simulação do
+/// dia a dia, `loadtest/dia_a_dia`). O desvio para a nuvem lê esta recusa e
+/// manda a chamada para a loja.
+class CobrarNaLoja extends ApiException {
+  const CobrarNaLoja(super.message) : super(statusCode: 409);
+
+  static const codigo = 'cobrar_na_loja';
+}

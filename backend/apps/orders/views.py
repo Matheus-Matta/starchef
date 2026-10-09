@@ -201,7 +201,14 @@ class OrderViewSet(BaseTenantViewSet):
         tem pedido: ela anota, e o pedido do caixa recebe as anotações
         pendentes.
         """
+        from apps.synchronization.services import loja_no_ar
+
         order = self.get_object()
+        if loja_no_ar.loja_no_ar(order.restaurant):
+            # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
+            # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
+            return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
+                            status=status.HTTP_409_CONFLICT)
         referencias = request.data.get("commands") or []
         if not isinstance(referencias, list) or not referencias:
             return Response(
@@ -229,7 +236,14 @@ class OrderViewSet(BaseTenantViewSet):
         o que cobrar — cancelar a conta inteira para corrigir uma inclusão
         seria caro demais para um engano de um toque.
         """
+        from apps.synchronization.services import loja_no_ar
+
         order = self.get_object()
+        if loja_no_ar.loja_no_ar(order.restaurant):
+            # Fechar comanda na nuvem com a loja no ar cobraria o cartão duas
+            # vezes (ver `loja_no_ar.py`). O PDV lê o código e volta à loja.
+            return Response({"code": loja_no_ar.CODIGO, "message": loja_no_ar.MENSAGEM},
+                            status=status.HTTP_409_CONFLICT)
         referencias = request.data.get("commands") or []
         if not isinstance(referencias, list) or not referencias:
             return Response(
@@ -686,7 +700,11 @@ class OrderViewSet(BaseTenantViewSet):
                 user=request.user,
                 payment_method_id=request.data["payment_method"],
                 amount=request.data["amount"],
-                idempotency_key=request.headers.get("Idempotency-Key") or request.data.get("idempotency_key"),
+                # A chave do CORPO primeiro: o PDV a gera quando o recebimento
+                # entra na tela e a repete em toda tentativa. A do cabeçalho
+                # muda a cada chamada, e com ela a repetição do operador depois
+                # de uma falha de rede virava um segundo pagamento.
+                idempotency_key=request.data.get("idempotency_key") or request.headers.get("Idempotency-Key"),
                 metadata=payment_metadata,
                 cash_register_id=request.data.get("cash_register"),
                 # O dinheiro entra na gaveta de UM terminal: o recebimento

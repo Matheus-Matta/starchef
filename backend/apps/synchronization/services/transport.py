@@ -13,7 +13,7 @@ import random
 import websockets
 
 from apps.synchronization.constants import MessageType, PROTOCOL_VERSION, SCHEMA_VERSION
-from apps.synchronization.services import protocol
+from apps.synchronization.services import protocol, relogio
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,10 @@ class CloudConnection:
         self.socket = None
         self.peer_node_id = None
         self.authenticated = asyncio.Event()
+        # Só comprime depois de a nuvem anunciar que lê (`_ler_capacidades`).
+        self.comprimir = False
+        # Segundos que o relógio desta loja está à frente da nuvem.
+        self.desvio_do_relogio = None
 
     @property
     def is_open(self):
@@ -83,7 +87,13 @@ class CloudConnection:
             "protocol_version": PROTOCOL_VERSION,
             "schema_version": SCHEMA_VERSION,
             "app_version": self.app_version,
+            # Esta loja lê lote comprimido. Nuvem antiga ignora a chave.
+            "capabilities": [protocol.COMPRESSAO],
         }
+
+    def _ler_capacidades(self, payload):
+        """A nuvem lê compressão? Só então esta loja passa a comprimir."""
+        self.comprimir = protocol.COMPRESSAO in (payload.get("capabilities") or [])
 
     async def send(self, message_type, payload, **kwargs):
         envelope = protocol.build(
@@ -94,6 +104,7 @@ class CloudConnection:
             payload=payload,
             key=self.key,
             key_id=self.key_id,
+            comprimir=self.comprimir,
             **kwargs,
         )
         await self.socket.send(json.dumps(envelope, default=str))
@@ -112,6 +123,8 @@ class CloudConnection:
         payload = protocol.parse(envelope, self.key)
         if tipo == MessageType.AUTHENTICATED:
             self.peer_node_id = payload.get("peer_node_id")
+            self._ler_capacidades(payload)
+            self.desvio_do_relogio = relogio.registrar_desvio(envelope.get("sent_at"))
             self.authenticated.set()
         return tipo, envelope, payload
 

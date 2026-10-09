@@ -25,7 +25,7 @@ from apps.synchronization.tests.test_comanda_zerada_na_nuvem import (  # noqa: F
     _agora,
     _decidir,
     _Linha,
-    _loja_sem_queda,
+    _na_loja,
     _subiu,
 )
 
@@ -108,23 +108,23 @@ def test_linha_do_pedido_vinda_da_nuvem_e_editada_por_ela_aplica(
     assert _decidir(entidade, linha, local=local, remoto=_agora() + 1) == conflicts.APLICAR
 
 
-def test_pedido_que_a_loja_editou_e_a_nuvem_nao_viu_continua_conflito(conta, no_loja, no_nuvem):
-    """Veio da nuvem, MAS a loja mexeu depois e isso ainda não subiu: são duas
-    edições de dinheiro disputando, e quem decide é uma pessoa."""
+def test_pedido_que_a_loja_editou_antes_perde_para_a_versao_mais_nova(conta, no_loja, no_nuvem):
+    """A loja mexeu e isso ainda não subiu, mas a nuvem mexeu DEPOIS: vence a
+    da nuvem. Antes virava conflito e o pedido ficava com o total antigo."""
     linha = _Linha(uuid.uuid4())
     _veio_da_nuvem(conta, no_loja, no_nuvem, "order", linha,
                    timezone.now() - timedelta(minutes=1))
     local = _agora() - 1000
     _subiu(conta, no_loja, no_nuvem, "order", linha, versao=local, status=EventStatus.PENDING)
 
-    assert _decidir("order", linha, local=local, remoto=_agora()) == conflicts.CONFLITO
+    assert _decidir("order", linha, local=local, remoto=_agora()) == conflicts.APLICAR
 
 
-def test_pagamento_vindo_da_nuvem_continua_fora_da_regra(conta, no_loja, no_nuvem):
-    """Pagamento não desvia para a nuvem; uma divergência nele não nasceu de queda."""
+def test_pagamento_mais_novo_vindo_da_nuvem_tambem_entra(conta, no_loja, no_nuvem):
+    """O pagamento feito na nuvem com a loja fora precisa chegar à loja."""
     linha = _Linha(uuid.uuid4())
     aplicado = timezone.now()
     _veio_da_nuvem(conta, no_loja, no_nuvem, "payment", linha, aplicado)
     local = int(aplicado.timestamp() * 1_000_000) - 1000
 
-    assert _decidir("payment", linha, local=local, remoto=_agora() + 1) == conflicts.CONFLITO
+    assert _decidir("payment", linha, local=local, remoto=_agora() + 1) == conflicts.APLICAR

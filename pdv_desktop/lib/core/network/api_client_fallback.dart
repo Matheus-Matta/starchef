@@ -30,12 +30,50 @@ extension ApiClientFallback on ApiClient {
     String? accessToken,
     String? operationId,
   }) async {
+    if (cloudFallback.irDiretoParaANuvem(path)) {
+      try {
+        final resposta = await _naNuvem(
+          method,
+          path,
+          query: query,
+          body: body,
+          accessToken: accessToken,
+          operationId: operationId,
+        );
+        lastServerOrigin = ServerOrigin.nuvem;
+        _publishStatus(NetworkPhase.cloud);
+        afinidade.lembrar(resposta);
+        return resposta;
+      } on CobrarNaLoja {
+        // A loja está no ar (a nuvem sabe pelo sync): a janela acabou.
+        cloudFallback.localRespondeu();
+      } on ApiException catch (erroDaNuvem) {
+        // A nuvem também não atende: a loja pode ter voltado. Segue o caminho
+        // normal, que tenta a loja primeiro.
+        if (!erroDaNuvem.isConnectivity) rethrow;
+      }
+    }
     try {
       final resposta = await original();
       lastServerOrigin = ServerOrigin.loja;
       cloudFallback.localRespondeu();
       return resposta;
     } on ApiException catch (erro) {
+      if (erro.statusCode == 404 &&
+          !cloudFallback.nuncaDesvia(path) &&
+          afinidade.tocaNaNuvem(path)) {
+        // Nasceu na nuvem e ainda não desceu: a loja não executou nada.
+        final resposta = await _naNuvem(
+          method,
+          path,
+          query: query,
+          body: body,
+          accessToken: accessToken,
+          operationId: operationId,
+        );
+        lastServerOrigin = ServerOrigin.nuvem;
+        return resposta;
+      }
       if (!cloudFallback.deveTentar(method, path, erro)) rethrow;
       // CONFIRMA que a loja está fora antes de desviar. Um pacote perdido ou
       // um reinício de dois segundos do serviço não podem mudar o servidor do
@@ -55,7 +93,10 @@ extension ApiClientFallback on ApiClient {
         );
         lastServerOrigin = ServerOrigin.nuvem;
         _publishStatus(NetworkPhase.cloud);
+        afinidade.lembrar(resposta);
         return resposta;
+      } on CobrarNaLoja {
+        rethrow;
       } on ApiException {
         // A nuvem também não atendeu. Propaga o erro DA LOJA, não o da nuvem:
         // é na loja que o operador pode agir (a máquina, o cabo, o serviço), e
@@ -101,6 +142,13 @@ extension ApiClientFallback on ApiClient {
           ? ''
           : utf8.decode(resposta.bodyBytes, allowMalformed: true);
       final decodificado = ApiClient._decodeBody(texto);
+      if (resposta.statusCode == 409 && texto.contains(CobrarNaLoja.codigo)) {
+        throw CobrarNaLoja(
+          decodificado == null
+              ? 'Feche a conta pela loja.'
+              : _messageFor(409, decodificado),
+        );
+      }
       if (resposta.statusCode < 200 || resposta.statusCode >= 300) {
         throw ApiException(
           decodificado == null

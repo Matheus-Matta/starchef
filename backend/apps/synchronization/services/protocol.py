@@ -25,6 +25,10 @@ HEADER_FIELDS = (
 )
 
 
+#: A única compressão conhecida. Quem a anuncia em `capabilities` sabe ler.
+COMPRESSAO = "zlib"
+
+
 class ProtocolError(ValueError):
     """Envelope malformado, incompatível ou com checksum divergente."""
 
@@ -45,11 +49,14 @@ def associated_data(envelope):
 
 def build(message_type, *, source_node_id, target_node_id, account_id, payload,
           key=None, key_id="", correlation_id=None, sequence_start=None,
-          sequence_end=None, message_id=None):
+          sequence_end=None, message_id=None, comprimir=False):
     """Monta o envelope. Com `key`, o payload vai cifrado; sem, vai em claro.
 
     Sem chave o transporte continua obrigatoriamente WSS — o AES-GCM é uma
     camada ADICIONAL, e o modo em claro existe para depuração local.
+
+    `comprimir` só vale com chave, e só deve ser pedido quando o outro lado
+    anunciou que lê compressão (`capabilities` no aperto de mão).
     """
     if message_type not in MessageType.ALL:
         raise ProtocolError(f"Tipo de mensagem desconhecido: {message_type}")
@@ -69,7 +76,11 @@ def build(message_type, *, source_node_id, target_node_id, account_id, payload,
     }
     envelope["checksum"] = crypto.checksum(payload)
     if key:
-        nonce, ciphertext = crypto.encrypt(payload, key, associated_data(envelope))
+        if comprimir:
+            envelope["compression"] = COMPRESSAO
+        nonce, ciphertext = crypto.encrypt(
+            payload, key, associated_data(envelope), comprimir=comprimir
+        )
         envelope["nonce"] = nonce
         envelope["ciphertext"] = ciphertext
     else:
@@ -96,12 +107,16 @@ def parse(envelope, key=None):
         # Evento desconhecido não derruba a conexão (§17): quem chama decide.
         raise ProtocolError(f"Tipo de mensagem desconhecido: {tipo}")
 
+    compressao = envelope.get("compression")
+    if compressao not in (None, COMPRESSAO):
+        raise ProtocolError(f"Compressão desconhecida: {compressao}")
     if envelope.get("ciphertext"):
         if not key:
             raise ProtocolError("Mensagem cifrada recebida sem chave configurada.")
         try:
             payload = crypto.decrypt(
-                envelope.get("nonce"), envelope["ciphertext"], key, associated_data(envelope)
+                envelope.get("nonce"), envelope["ciphertext"], key, associated_data(envelope),
+                comprimido=compressao == COMPRESSAO,
             )
         except Exception as erro:  # noqa: BLE001 — qualquer falha aqui é a mesma coisa
             raise ProtocolError(f"Falha ao decifrar o payload: {erro}") from erro

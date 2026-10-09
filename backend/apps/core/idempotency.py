@@ -38,6 +38,10 @@ def _fingerprint(request, body: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+class _OutraTentativaVenceu(Exception):
+    """A mesma chave foi gravada por outra tentativa no meio desta."""
+
+
 class IdempotencyMiddleware:
     """Garante que uma chave execute a operação uma única vez por conta."""
 
@@ -64,7 +68,7 @@ class IdempotencyMiddleware:
 
         from apps.core.models import IdempotencyRecord
 
-        stored = IdempotencyRecord.objects.filter(account=account, key=key).first()
+        stored = self._gravada(account, key)
         if stored is not None:
             if stored.request_fingerprint != fingerprint:
                 # A mesma chave para outra requisição indica erro de cliente;
@@ -79,26 +83,41 @@ class IdempotencyMiddleware:
                 )
             return self._replay(stored)
 
-        with transaction.atomic():
-            response = self.get_response(request)
-            if not self._should_record(response):
-                return response
-            try:
-                IdempotencyRecord.objects.create(
-                    account=account,
-                    key=key,
-                    method=request.method,
-                    path=request.path[:500],
-                    request_fingerprint=fingerprint,
-                    status_code=response.status_code,
-                    response_body=self._decode(response),
-                )
-            except IntegrityError:
-                # Duas tentativas simultâneas com a mesma chave: a outra venceu
-                # a corrida e já gravou. Manter esta resposta é seguro porque
-                # ambas descrevem a mesma operação.
-                pass
+        try:
+            with transaction.atomic():
+                response = self.get_response(request)
+                if not self._should_record(response):
+                    return response
+                try:
+                    with transaction.atomic():
+                        IdempotencyRecord.objects.create(
+                            account=account,
+                            key=key,
+                            method=request.method,
+                            path=request.path[:500],
+                            request_fingerprint=fingerprint,
+                            status_code=response.status_code,
+                            response_body=self._decode(response),
+                        )
+                except IntegrityError:
+                    raise _OutraTentativaVenceu from None
+        except _OutraTentativaVenceu:
+            # Duas tentativas com a mesma chave ao mesmo tempo (o terminal
+            # repetiu porque a resposta se perdeu): as duas executaram, e a
+            # outra gravou a chave primeiro. Ignorar o erro mantinha as DUAS
+            # gravações — o segundo item, o segundo recebimento. O que esta
+            # fez é desfeito acima, e a resposta é a que a outra deu.
+            stored = IdempotencyRecord.objects.filter(account=account, key=key).first()
+            if stored is None:
+                raise
+            return self._replay(stored)
         return response
+
+    @staticmethod
+    def _gravada(account, key):
+        from apps.core.models import IdempotencyRecord
+
+        return IdempotencyRecord.objects.filter(account=account, key=key).first()
 
     @staticmethod
     def _should_record(response) -> bool:

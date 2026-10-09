@@ -7,8 +7,15 @@ from cryptography.hazmat.primitives import serialization
 # Em produção, a senha pode vir de um Secret Manager ou variável segura.
 
 def get_pfx_bytes_and_password(account, restaurant_id=None) -> tuple[bytes, bytes]:
-    """Retorna os bytes do arquivo PFX e a senha em bytes."""
+    """Retorna os bytes do arquivo PFX e a senha em bytes.
+
+    É a porta por onde toda chamada à SEFAZ passa (consulta, manifestação,
+    situação), e por isso é aqui que a loja sincronizada é barrada.
+    """
+    from apps.inbound_nfe.services.sefaz_na_nuvem import exigir_que_fale_com_a_sefaz
     from apps.invoices.models import FiscalConfig
+
+    exigir_que_fale_com_a_sefaz()
 
     qs = FiscalConfig.all_objects.filter(account=account)
     if restaurant_id:

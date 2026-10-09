@@ -49,17 +49,32 @@ class StockComponent:
 
 
 def _default_location(order, user):
-    location, _ = StockLocation.objects.get_or_create(
-        restaurant=order.restaurant,
-        branch=order.branch,
-        name="Principal",
-        defaults={
-            "account": order.account,
-            "created_by": user,
-            "updated_by": user,
-        },
-    )
-    return location
+    """O local "Principal" do pedido — um só, mesmo com vários caixas juntos.
+
+    Era `get_or_create`. Pedido sem filial escapa da trava única do local
+    (filial, nome): no PostgreSQL filial NULA não colide, e três caixas pagando
+    no mesmo instante criaram três "Principal". Dali em diante o
+    `get_or_create` levantava `MultipleObjectsReturned` e TODO recebimento dava
+    500 (simulação do dia a dia, `loadtest/dia_a_dia`).
+
+    Agora usa o mais antigo, e a criação é serializada na linha do
+    restaurante. `no_key` porque a trava comum bloquearia toda gravação que só
+    APONTA para o restaurante (a checagem da chave estrangeira).
+    """
+    from apps.restaurants.models import Restaurant
+
+    filtro = {"restaurant": order.restaurant, "branch": order.branch, "name": "Principal"}
+    existente = StockLocation.objects.filter(**filtro).order_by("created_at").first()
+    if existente is not None:
+        return existente
+    with transaction.atomic():
+        Restaurant.all_objects.select_for_update(no_key=True).filter(pk=order.restaurant_id).first()
+        existente = StockLocation.objects.filter(**filtro).order_by("created_at").first()
+        if existente is not None:
+            return existente
+        return StockLocation.objects.create(
+            account=order.account, created_by=user, updated_by=user, **filtro
+        )
 
 
 def _converted(quantity, from_unit, to_unit):

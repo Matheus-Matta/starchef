@@ -109,12 +109,16 @@ def test_sequencia_e_crescente_e_unica_por_origem(como_nuvem, conta):
     assert len(set(sequencias)) == len(sequencias)
 
 
-def test_entidade_que_so_sobe_nao_desce(como_nuvem, conta, no_loja):
-    """Catálogo de conta é de mão única: a loja não edita, então não sobe."""
+def test_cadastro_editado_na_loja_sobe(como_nuvem, conta, no_loja):
+    """A loja é um clone: o restaurante editado no painel da loja chega à nuvem.
+
+    Era de mão única, e a edição feita na loja ficava só lá — até a próxima
+    alteração da nuvem apagá-la sem aviso.
+    """
     from apps.synchronization.services.registry import registry
 
     assert registry.flows_to_local("restaurant")
-    assert not registry.flows_to_cloud("restaurant")
+    assert registry.flows_to_cloud("restaurant")
 
 
 def test_a_venda_desce_para_a_loja(como_nuvem, conta, no_loja):
@@ -143,19 +147,16 @@ def test_a_venda_desce_para_a_loja(como_nuvem, conta, no_loja):
         assert registry.flows_to_cloud(entidade)
 
 
-def test_fiscal_NAO_desce(como_nuvem, conta, no_loja):
-    """E não é esquecimento: a nota não desvia, então não há o que descer.
+def test_a_nota_emitida_na_nuvem_desce(como_nuvem, conta, no_loja):
+    """O pagamento feito na nuvem com a loja fora dispara a NFC-e lá.
 
-    Nota fiscal nunca é gravada na nuvem pelo terminal
-    (`CloudFallback.caminhosQueNuncaDesviam`), porque dois emissores de número
-    de nota não se resolvem com sincronização.
+    De mão única, essa nota nunca chegava à loja: o pedido aparecia pago e sem
+    nota, e o operador emitia a segunda NFC-e da mesma venda.
     """
     from apps.synchronization.services.registry import registry
 
-    if registry.get("invoice") is not None:
-        assert not registry.flows_to_local("invoice"), (
-            "`invoice` não deve descer: ela nunca nasce na nuvem"
-        )
+    assert registry.flows_to_local("invoice")
+    assert registry.flows_to_local("invoice_item")
 
 
 def test_delete_vira_evento_de_exclusao(como_nuvem, conta):
@@ -165,34 +166,3 @@ def test_delete_vira_evento_de_exclusao(como_nuvem, conta):
     # Restaurant usa soft delete: a exclusão chega como UPDATE do deleted_at.
     evento = SyncEvent.objects.filter(entity_type="restaurant").latest("created_at")
     assert evento.operation in (Operation.UPDATE, Operation.DELETE)
-
-
-def test_contador_atrasado_se_realinha_em_vez_de_travar_a_loja(como_nuvem, conta):
-    """O banco restaurado de um backup mais velho que os eventos.
-
-    O contador do no e os eventos sao duas fontes para o MESMO numero, e saem
-    de sincronia sem ninguem reclamar: restauracao, no recriado, importacao
-    com sequencia explicita.
-
-    A partir dai TODA escrita sincronizada do no colide — abrir um pedido,
-    lancar um item, receber um pagamento. O operador via "ja existe um
-    registro com estes dados" em cima de um gesto que nao tinha nada de
-    duplicado, nada indicava onde procurar, e o erro NAO passava sozinho.
-    """
-    _restaurante(conta, "Antes da restauracao")
-    evento = SyncEvent.objects.get(entity_type="restaurant")
-
-    # O backup volta com o contador atras dos eventos que ja existem.
-    no = como_nuvem
-    no.sequence_counter = evento.sequence - 1
-    no.save(update_fields=["sequence_counter"])
-
-    # A proxima venda nao pode encontrar a loja travada.
-    _restaurante(conta, "Depois da restauracao")
-
-    novo = SyncEvent.objects.get(payload__fields__trade_name="Depois da restauracao")
-    assert novo.sequence > evento.sequence
-
-    # E o conserto e DEFINITIVO: o contador ficou acima de tudo que existe.
-    no.refresh_from_db(fields=["sequence_counter"])
-    assert no.sequence_counter >= novo.sequence

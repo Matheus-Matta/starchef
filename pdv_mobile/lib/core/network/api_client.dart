@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import 'afinidade_com_a_nuvem.dart';
+import 'chaves_de_repeticao.dart';
 import 'api_exception.dart';
 import 'cloud_fallback.dart';
 import 'api_response.dart';
@@ -22,6 +24,12 @@ class ApiClient {
 
   /// A nuvem como SEGUNDO servidor, quando o backend da loja não responde.
   final CloudFallback cloudFallback = CloudFallback();
+
+  /// Ids que a nuvem criou ou devolveu com a loja fora (`afinidade_com_a_nuvem`).
+  final AfinidadeComANuvem afinidade = AfinidadeComANuvem();
+
+  /// Chave da escrita que falhou na rede, para a repetição idêntica.
+  final ChavesDeRepeticao repeticoes = ChavesDeRepeticao();
 
   /// De onde veio a última resposta que chegou à tela.
   ServerOrigin lastServerOrigin = ServerOrigin.loja;
@@ -102,14 +110,31 @@ class ApiClient {
     String? accessToken,
     String? idempotencyKey,
   }) async {
-    return _comPlanoB(
-      method,
-      path,
-      query: query,
-      body: body,
-      accessToken: accessToken,
-      idempotencyKey: idempotencyKey,
-    );
+    // A repetição idêntica de uma escrita que falhou na rede leva a MESMA
+    // chave (`chaves_de_repeticao.dart`), senão o item sai em dobro.
+    final assinatura = (idempotencyKey?.isEmpty ?? true)
+        ? null
+        : ChavesDeRepeticao.assinatura(method, path, body);
+    final chave = assinatura == null
+        ? idempotencyKey
+        : (repeticoes.chaveDe(assinatura) ?? idempotencyKey);
+    try {
+      final resposta = await _comPlanoB(
+        method,
+        path,
+        query: query,
+        body: body,
+        accessToken: accessToken,
+        idempotencyKey: chave,
+      );
+      if (assinatura != null) repeticoes.esquecer(assinatura);
+      return resposta;
+    } on ApiException catch (erro) {
+      if (assinatura != null && (erro.isConnectivity || erro.reachedServer)) {
+        repeticoes.guardar(assinatura, chave!);
+      }
+      rethrow;
+    }
   }
 
   Future<bool> _refresh() {

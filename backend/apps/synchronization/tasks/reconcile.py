@@ -25,6 +25,9 @@ def reconcile_nodes():
     socket some, ninguém recebe `disconnect`, e os eventos ficariam em SENT
     para sempre. Aqui eles voltam para PENDING — com o mesmo `event_id`, então
     reenviar é seguro.
+
+    RECEIVED antigo também volta: é o evento cujo "apliquei" se perdeu na rede.
+    Reenviado, o destino o reconhece e confirma de novo (`inbox._gravar`).
     """
     if not guard.is_enabled():
         return {}
@@ -42,7 +45,7 @@ def reconcile_nodes():
             SyncEvent.objects.filter(
                 direction=Direction.OUTBOUND,
                 source_node=proprio,
-                status=EventStatus.SENT,
+                status__in=[EventStatus.SENT, EventStatus.RECEIVED],
                 sent_at__lt=corte,
             ).update(status=EventStatus.PENDING, next_attempt_at=None)
         )

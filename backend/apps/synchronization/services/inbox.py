@@ -87,6 +87,11 @@ def _gravar(SyncEvent, bruto, origem, destino, account_id, run):
 
     existente = SyncEvent.objects.filter(event_id=bruto["event_id"]).first()
     if existente is not None:
+        if existente.status == EventStatus.ACKNOWLEDGED:
+            # Já aplicado e confirmado — e a origem mandou de novo: o "apliquei"
+            # se perdeu na rede. Volta para a fila de confirmação
+            # (`services/confirmacao.py`), sem aplicar nada outra vez.
+            SyncEvent.objects.filter(pk=existente.pk).update(status=EventStatus.APPLIED)
         return None
 
     try:

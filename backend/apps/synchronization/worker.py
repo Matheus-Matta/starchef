@@ -17,7 +17,10 @@ from apps.synchronization.constants import MessageType
 from apps.synchronization.services import dispatch, nodes, transport
 from apps.synchronization.worker_steps import (
     aplicar_recebidos,
+    ao_reconectar,
+    confirmacoes_pendentes,
     enviar_pendentes,
+    marcar_confirmados,
     registrar_lote_recebido,
     tratar_ack,
 )
@@ -53,7 +56,7 @@ class LocalSyncWorker:
                 # que chegar em seguida é justamente o que aconteceu enquanto
                 # este nó esteve fora, e a decisão de conflito precisa saber
                 # disso para não recusar o que a loja apenas perdeu.
-                await sync_to_async(nodes.registrar_reconexao)()
+                await sync_to_async(ao_reconectar)()
                 logger.info("sync: autenticado na nuvem (nó %s)", conexao.node_id)
                 tentativa = 0
                 await self._sessao(conexao)
@@ -111,6 +114,7 @@ class LocalSyncWorker:
             aplicados = await sync_to_async(aplicar_recebidos)(ids)
             if aplicados:
                 await conexao.send(MessageType.ACK, {"acknowledged": aplicados})
+                await self._confirmar(conexao, ja_confirmados=aplicados)
             # A nuvem manda UM lote por pedido. Pedir o próximo aqui é o que
             # faz uma carga de centenas de eventos descer de uma vez, em vez
             # de um lote a cada intervalo.
@@ -164,6 +168,23 @@ class LocalSyncWorker:
             await asyncio.sleep(self.heartbeat)
             await conexao.send(MessageType.HEARTBEAT, {})
             await sync_to_async(nodes.registrar_contato)()
+            await self._confirmar(conexao)
+
+    async def _confirmar(self, conexao, ja_confirmados=None):
+        """Confirma à nuvem o que entrou depois do lote (retentativa, beat).
+
+        Sem isto ela guardava esses eventos em RECEIVED para sempre
+        (`services/confirmacao.py`). O que entrou na hora já foi confirmado no
+        ACK acima e cai aqui também — marcá-lo é o que impede de confirmar de
+        novo a cada pulso.
+        """
+        par, pendentes = await sync_to_async(confirmacoes_pendentes)(conexao.peer_node_id)
+        if ja_confirmados:
+            await sync_to_async(marcar_confirmados)(par, ja_confirmados)
+            pendentes = [i for i in pendentes if i not in set(ja_confirmados)]
+        if pendentes:
+            await conexao.send(MessageType.ACK, {"acknowledged": pendentes})
+            await sync_to_async(marcar_confirmados)(par, pendentes)
 
     def stop(self):
         self.parar.set()
