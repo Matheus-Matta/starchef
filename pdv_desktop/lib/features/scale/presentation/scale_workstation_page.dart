@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/data/local_id.dart';
 import '../../../core/errors/app_error_host.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/formatters/value_formatters.dart';
@@ -738,6 +739,23 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
           extraConfigs.clear();
           reader?.resetStability();
           AppLogger.instance.info('scale_operation_cancelled');
+        case HandsFreeEffect.fetchWeight:
+          // Silencioso: o botão "Pedir peso" é quem explica falhas. "Sem
+          // resposta" ENTRA: é o estado da balança que só transmite quando o
+          // peso muda, com o prato parado — justamente o caso. Porta fora do
+          // ar ou ocupada não: a reconexão já tem o seu próprio ciclo.
+          final atual = reader;
+          final estado = linkStatus.state;
+          if (atual != null &&
+              !requestingWeight &&
+              (estado == ScaleLinkState.connected ||
+                  estado == ScaleLinkState.noResponse)) {
+            unawaited(
+              atual.requestWeight().catchError(
+                (_) => ScaleWeightRequest.unavailable,
+              ),
+            );
+          }
       }
     }
   }
@@ -790,6 +808,9 @@ class _ScaleWorkstationPageState extends State<ScaleWorkstationPage> {
       final result = await widget.api.post(
         '/scales/$scaleId/checkout-command/',
         body: {
+          // O UUID desta pesagem: se a loja gravar e cair antes de responder,
+          // o desvio para a nuvem é a MESMA pesagem (`pesagem_por_uuid.py`).
+          'id': LocalId.uuid(),
           'command_code': code,
           if (reading != null)
             'scale_reading': reading['id']

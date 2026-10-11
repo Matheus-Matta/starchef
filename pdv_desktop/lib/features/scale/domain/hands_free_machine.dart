@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../../core/hardware/scale/scale_sample.dart';
+import 'busca_de_peso.dart';
 
 /// Etapas do fluxo automatizado da Balança Rápida.
 enum HandsFreeState {
@@ -36,6 +37,9 @@ enum HandsFreeEffect {
 
   /// A operação temporária foi descartada.
   operationCancelled,
+
+  /// A tela está em 0 sem leitura nova: pedir o peso à balança.
+  fetchWeight,
 }
 
 /// Item pesado que aguarda a comanda.
@@ -115,6 +119,8 @@ class HandsFreeMachine extends ChangeNotifier {
   /// A última amostra descartada pelo filtro, para o "Pesar de novo".
   ScaleSample? _amostraRetida;
 
+  final _buscaDePeso = BuscaDePeso();
+
   /// A tela está em 0 porque o peso na balança é o do prato já lançado.
   bool get aguardandoRetirada =>
       _state == HandsFreeState.waitingWeight && _pesoJaLancado != null;
@@ -183,6 +189,7 @@ class HandsFreeMachine extends ChangeNotifier {
       // Zerou (prato retirado) ou chegou OUTRO peso (balança que não manda o
       // zero): libera. O mesmo peso é o prato antigo — ignora.
       if (!empty && (sample.weightKg - jaLancado).abs() <= _mesmoPratoKg) {
+        _buscaDePeso.amostra(sample.at, conhecido: true);
         if (_amostraRetida == null) {
           _amostraRetida = sample;
           notifyListeners();
@@ -196,6 +203,7 @@ class HandsFreeMachine extends ChangeNotifier {
     }
     _currentWeightKg = sample.weightKg;
     _stable = sample.stable == true;
+    _buscaDePeso.amostra(sample.at, conhecido: empty || _stable);
     final effects = <HandsFreeEffect>[];
 
     switch (_state) {
@@ -230,8 +238,14 @@ class HandsFreeMachine extends ChangeNotifier {
   /// Avança o relógio da máquina; a interface chama a cada segundo.
   ///
   /// Um único prazo: esgotado o tempo de comanda, cancela na hora — sem um
-  /// segundo período de espera por trás.
+  /// segundo período de espera por trás. Esperando peso, pede a leitura à
+  /// balança quando a tela ficou em 0 sem amostra nova ([BuscaDePeso]).
   List<HandsFreeEffect> tick(DateTime now) {
+    if (_state == HandsFreeState.waitingWeight) {
+      return _buscaDePeso.devePedir(now)
+          ? const [HandsFreeEffect.fetchWeight]
+          : const [];
+    }
     if (_state != HandsFreeState.waitingCommand) return const [];
     final deadline = _commandDeadline;
     if (deadline == null || now.isBefore(deadline)) return const [];
@@ -346,5 +360,6 @@ class HandsFreeMachine extends ChangeNotifier {
     _pesoJaLancado = null;
     _retiradoDepoisDaPesagem = false;
     _amostraRetida = null;
+    _buscaDePeso.recomecar();
   }
 }
