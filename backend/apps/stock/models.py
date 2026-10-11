@@ -872,6 +872,19 @@ class StockMovement(TenantModel):
             models.Index(fields=["branch", "movement_type", "created_at"]),
         ]
 
+    def save(self, *args, **kwargs):
+        # A mesma baixa feita na loja e na nuvem é UM movimento: com
+        # `source_key`, o id é calculado dela (`movement_ids.py`).
+        # Ocupado por um movimento excluído (sem ser apagado), fica o sorteado:
+        # a baixa refeita não pode bater na chave da que foi desfeita.
+        if self._state.adding and self.source_key and self.account_id:
+            from apps.stock.movement_ids import id_do_movimento
+
+            calculado = id_do_movimento(self.account_id, self.source_key)
+            if not type(self).all_objects.filter(pk=calculado).exists():
+                self.id = calculado
+        super().save(*args, **kwargs)
+
     def __str__(self):
         item_name = self.product.name if self.product else (self.ingredient.name if self.ingredient else "Item")
         return f"{self.movement_type} - {item_name}: {self.quantity} {self.stock_unit}"

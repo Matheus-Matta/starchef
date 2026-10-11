@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -47,16 +49,23 @@ void main() {
       );
     });
 
-    test('pedido, caixa e autenticação nunca entram', () {
-      final cache = ResponseCache()
-        ..store(escopo, '/orders/', null, lista('o'))
-        ..store(escopo, '/cash-register/current/', null, lista('x'))
-        ..store(escopo, '/auth/me/', null, lista('u'));
+    test(
+      'caixa, autenticacao e o pedido aberto nunca entram; a LISTA de pedidos entra',
+      () {
+        final cache = ResponseCache()
+          ..store(escopo, '/cash-register/current/', null, lista('x'))
+          ..store(escopo, '/auth/me/', null, lista('u'))
+          ..store(escopo, '/orders/o1/', null, lista('o'));
+        expect(cache.length, 0);
 
-      expect(cache.length, 0);
-    });
+        cache.store(escopo, '/orders/', null, lista('o'));
+        expect(cache.peek(escopo, '/orders/', null), isNotNull);
+      },
+    );
 
-    test('escrita em pedido apaga comandas e mesas, mas não o cardápio', () {
+    test('escrita em pedido deixa comandas e mesas VELHAS, sem apagar', () {
+      // Apagar fazia o próximo gesto esperar o servidor com tela de
+      // carregando; velha, a tela mostra o que tem e relê em silêncio.
       final cache = ResponseCache()
         ..store(escopo, '/commands/', null, lista('c'))
         ..store(escopo, '/tables/', null, lista('t'))
@@ -64,9 +73,14 @@ void main() {
 
       cache.invalidateForWrite('/orders/abc/pay/');
 
-      expect(cache.peek(escopo, '/commands/', null), isNull);
-      expect(cache.peek(escopo, '/tables/', null), isNull);
-      expect(cache.peek(escopo, '/menu/products/', null), isNotNull);
+      expect(cache.peek(escopo, '/commands/', null), isNotNull);
+      expect(cache.estaVelha(escopo, '/commands/', null), isTrue);
+      expect(cache.estaVelha(escopo, '/tables/', null), isTrue);
+      expect(cache.estaVelha(escopo, '/menu/products/', null), isFalse);
+      expect(
+        cache.ageOf(escopo, '/commands/', null),
+        ResponseCache.idadeDaVelha,
+      );
     });
 
     test(
@@ -77,11 +91,11 @@ void main() {
           ..store(escopo, '/menu/products/', null, lista('p'));
 
         cache.invalidateForResource('menu.product');
-        expect(cache.peek(escopo, '/menu/products/', null), isNull);
-        expect(cache.peek(escopo, '/commands/', null), isNotNull);
+        expect(cache.estaVelha(escopo, '/menu/products/', null), isTrue);
+        expect(cache.estaVelha(escopo, '/commands/', null), isFalse);
 
         cache.invalidateForResource('algo.novo');
-        expect(cache.length, 0);
+        expect(cache.estaVelha(escopo, '/commands/', null), isTrue);
       },
     );
 
@@ -92,15 +106,24 @@ void main() {
       expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNotNull);
 
       cache.invalidateForWrite('/orders/abc/pay/');
-      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNotNull);
+      expect(
+        cache.estaVelha(escopo, '/printers/', {'restaurant': 'r1'}),
+        isFalse,
+      );
 
       cache.invalidateForResource('printers.printer');
-      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNull);
+      expect(
+        cache.estaVelha(escopo, '/printers/', {'restaurant': 'r1'}),
+        isTrue,
+      );
 
       cache
         ..store(escopo, '/printers/', {'restaurant': 'r1'}, lista('Caixa'))
         ..invalidateForWrite('/printers/p1/');
-      expect(cache.peek(escopo, '/printers/', {'restaurant': 'r1'}), isNull);
+      expect(
+        cache.estaVelha(escopo, '/printers/', {'restaurant': 'r1'}),
+        isTrue,
+      );
     });
 
     test('o cupom impresso não apaga o cache do catálogo', () {
@@ -110,8 +133,8 @@ void main() {
 
       cache.invalidateForResource('printers.printjob');
 
-      expect(cache.peek(escopo, '/menu/products/', null), isNotNull);
-      expect(cache.peek(escopo, '/printers/', null), isNotNull);
+      expect(cache.estaVelha(escopo, '/menu/products/', null), isFalse);
+      expect(cache.estaVelha(escopo, '/printers/', null), isFalse);
     });
 
     test('limite de entradas tira a mais antiga', () {
@@ -157,7 +180,7 @@ void main() {
     }
 
     test(
-      'GET de catálogo fica guardado; escrita de pedido apaga a comanda',
+      'GET de catálogo fica guardado; escrita de pedido deixa a comanda velha',
       () async {
         final api = cliente();
         await api.get(
@@ -181,12 +204,12 @@ void main() {
         );
 
         expect(
-          api.peek(
+          api.cacheVelho(
             '/commands/',
             query: {'restaurant': 'r1'},
             accessToken: token,
           ),
-          isNull,
+          isTrue,
         );
       },
     );
@@ -202,7 +225,7 @@ void main() {
     });
 
     test(
-      'logout, troca de servidor e reconexão do tempo real limpam tudo',
+      'logout e troca de servidor limpam; a reconexao deixa tudo velho',
       () async {
         final api = cliente();
         Future<void> encher() => api.get('/menu/products/', accessToken: token);
@@ -217,11 +240,12 @@ void main() {
 
         await encher();
         api.notifyRealtimeConnected();
-        expect(api.cache.length, 0);
+        expect(api.cache.length, 1);
+        expect(api.cacheVelho('/menu/products/', accessToken: token), isTrue);
       },
     );
 
-    test('evento de comanda apaga a lista de comandas', () async {
+    test('evento de comanda deixa a lista de comandas velha', () async {
       final api = cliente();
       await api.get('/commands/', accessToken: token);
 
@@ -232,7 +256,35 @@ void main() {
         restaurantId: 'r1',
       );
 
-      expect(api.peek('/commands/', accessToken: token), isNull);
+      expect(api.cacheVelho('/commands/', accessToken: token), isTrue);
+    });
+  });
+
+  group('no disco', () {
+    test('o PDV reiniciado abre com a lista, VELHA para ser relida', () async {
+      final pasta = Directory.systemTemp.createTempSync('cache_pdv');
+      final arquivo = File('${pasta.path}/cache_de_listas.json');
+      ResponseCache(
+        arquivo: arquivo,
+      ).store(escopo, '/menu/products/', null, lista('X-Burger'));
+      await Future<void>.delayed(const Duration(milliseconds: 2300));
+
+      final reaberto = ResponseCache(arquivo: arquivo);
+
+      expect(reaberto.peek(escopo, '/menu/products/', null)?['results'], [
+        {'name': 'X-Burger'},
+      ]);
+      expect(reaberto.estaVelha(escopo, '/menu/products/', null), isTrue);
+      pasta.deleteSync(recursive: true);
+    });
+
+    test('arquivo corrompido nao derruba: comeca vazio', () {
+      final pasta = Directory.systemTemp.createTempSync('cache_pdv');
+      final arquivo = File('${pasta.path}/cache_de_listas.json')
+        ..writeAsStringSync('{nao e json');
+
+      expect(ResponseCache(arquivo: arquivo).length, 0);
+      pasta.deleteSync(recursive: true);
     });
   });
 }

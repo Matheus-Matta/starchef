@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/data/local_id.dart';
 import '../../../core/errors/app_error.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../../core/errors/app_error_host.dart';
@@ -84,6 +85,7 @@ import '../../orders/data/order_draft.dart';
 import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';
 import '../../orders/data/order_draft_commands.dart';
+import '../../orders/data/conflito_da_venda.dart';
 import '../../orders/data/order_draft_materializer.dart';
 import '../../orders/presentation/command_attach_dialog.dart';
 
@@ -112,6 +114,8 @@ part 'home_page_payment_coupon.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
 part 'home_page_shared.dart';
+part 'home_page_venda_inteira.dart';
+part 'home_page_conflitos.dart';
 part 'home_page_shell.dart';
 part 'home_page_sidebar.dart';
 part 'home_page_fiscal.dart';
@@ -164,6 +168,8 @@ class _HomePageState extends State<HomePage>
         _CustomerSection,
         _DraftSection,
         _DraftFlowSection,
+        _VendaInteiraSection,
+        _ConflitosSection,
         _DraftCommandItemsSection,
         _KitchenSection,
         _KitchenOrderSection,
@@ -1208,6 +1214,11 @@ class _HomePageState extends State<HomePage>
   /// reaberto — retomar a própria comanda não é sair dela.
   @override
   void _leaveActiveOrder({String? except}) {
+    // Venda simulada não existe no servidor: não há o que descartar lá.
+    if (draft.simulada) {
+      _desfazerSimulacao();
+      return;
+    }
     final current = activeOrder;
     if (current == null) return;
     if (except != null && '${current['id']}' == except) return;
@@ -1340,7 +1351,10 @@ class _HomePageState extends State<HomePage>
         unawaited(_confirmLeavingPayment());
         return;
       }
-      setState(() => flowStep = 'order');
+      setState(() {
+        _desfazerSimulacao();
+        flowStep = 'order';
+      });
     } else if (flowStep == 'table_details') {
       setState(() => flowStep = 'context');
     } else if (flowStep == 'context') {

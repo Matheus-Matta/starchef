@@ -105,6 +105,9 @@ class OrderDraftLine {
 
   /// O corpo de `POST /orders/<id>/items/`.
   Map<String, dynamic> toItemPayload() => {
+    // O UUID da linha: o reenvio da venda é reconhecido pelo servidor, que
+    // não lança de novo um item que já tem (`orders/venda_inteira.py`).
+    'id': id,
     'product': productId,
     if (isWeighed) ...{
       if (scaleReadingId != null)

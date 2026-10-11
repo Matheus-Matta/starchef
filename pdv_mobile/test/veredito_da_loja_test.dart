@@ -2,83 +2,91 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:starchef_pdv_mobile/core/network/cloud_fallback.dart';
 import 'package:starchef_pdv_mobile/core/network/veredito_da_loja.dart';
 
-/// A loja instável não pode arrastar o terminal de um servidor para o outro.
+/// Caiu para a nuvem, FICA na nuvem por 5 minutos — e só volta depois de um
+/// ping confirmar que a loja está de pé.
 ///
-/// Com a janela fixa de 30 s, a loja que reiniciava a cada minuto fazia a tela
-/// piscar "loja"/"nuvem" e o mesmo pedido ser editado nos dois servidores.
+/// A janela começava em 30 s e qualquer resposta da loja a desfazia (fechar
+/// comanda tentava a loja primeiro): o terminal pulava de servidor no meio de
+/// uma venda, e metade dela ia para cada lado.
 void main() {
   late DateTime agora;
   late VereditoDaLoja veredito;
+  late CloudFallback fallback;
 
   setUp(() {
-    agora = DateTime(2026, 10, 8, 12);
+    agora = DateTime(2026, 10, 10, 12);
     veredito = VereditoDaLoja(relogio: () => agora);
+    fallback = CloudFallback(veredito: veredito);
   });
 
   void passa(Duration tempo) => agora = agora.add(tempo);
 
-  test('a primeira queda segura o terminal na nuvem por 30 segundos', () {
+  test('fica na nuvem 5 minutos, mesmo que a loja responda no meio', () {
     veredito.marcarForaDoAr();
-    passa(const Duration(seconds: 29));
+    passa(const Duration(minutes: 4, seconds: 59));
+    veredito.localRespondeu(); // ex.: a nota fiscal, que nunca desvia
     expect(veredito.localForaDoAr, isTrue);
-    passa(const Duration(seconds: 2));
+    expect(veredito.precisaConferir, isFalse);
+  });
+
+  test('vencidos os 5 minutos, o ping decide: loja de pe volta', () async {
+    veredito.marcarForaDoAr();
+    passa(VereditoDaLoja.janela);
+    expect(veredito.precisaConferir, isTrue);
+
+    await fallback.conferirSeVenceu(() async => true);
+
     expect(veredito.localForaDoAr, isFalse);
   });
 
-  test('cair de novo logo depois de voltar dobra a janela, ate 5 minutos', () {
-    final janelas = <Duration>[];
-    for (var i = 0; i < 6; i++) {
+  test(
+    'vencidos os 5 minutos, loja ainda fora: mais 5 minutos na nuvem',
+    () async {
       veredito.marcarForaDoAr();
-      janelas.add(veredito.janela);
-      passa(veredito.janela + const Duration(seconds: 1));
-      expect(veredito.localForaDoAr, isFalse);
-      veredito.localRespondeu();
-      passa(const Duration(seconds: 20));
-    }
-    expect(janelas.map((j) => j.inSeconds), [30, 60, 120, 240, 300, 300]);
-  });
+      passa(VereditoDaLoja.janela);
 
-  test('a loja que fica de pe por 5 minutos zera a contagem', () {
-    veredito.marcarForaDoAr();
-    passa(const Duration(seconds: 31));
-    veredito.localRespondeu();
-    passa(const Duration(seconds: 10));
-    veredito.marcarForaDoAr();
-    expect(veredito.janela, const Duration(minutes: 1));
+      await fallback.conferirSeVenceu(() async => false);
 
+      expect(veredito.localForaDoAr, isTrue);
+      expect(veredito.precisaConferir, isFalse);
+      passa(VereditoDaLoja.janela);
+      expect(veredito.precisaConferir, isTrue);
+    },
+  );
+
+  test('dentro da janela nao gasta ping', () async {
+    var pings = 0;
+    veredito.marcarForaDoAr();
     passa(const Duration(minutes: 2));
-    veredito.localRespondeu();
-    passa(VereditoDaLoja.estabilidade + const Duration(seconds: 1));
-    veredito.marcarForaDoAr();
-    expect(veredito.janela, VereditoDaLoja.janelaBase);
+    await fallback.conferirSeVenceu(() async {
+      pings++;
+      return true;
+    });
+    expect(pings, 0);
+    expect(veredito.localForaDoAr, isTrue);
   });
 
   group('com a loja fora, vai direto para a nuvem', () {
-    test('leitura e escrita comuns vao direto', () {
-      final fallback = CloudFallback(veredito: veredito);
+    test('leitura, escrita e fechar comanda vao direto', () {
       veredito.marcarForaDoAr();
       expect(fallback.irDiretoParaANuvem('/orders/'), isTrue);
       expect(fallback.irDiretoParaANuvem('/commands/'), isTrue);
-    });
-
-    test('fechar comanda tenta a loja antes (cobranca em dobro)', () {
-      final fallback = CloudFallback(veredito: veredito);
-      veredito.marcarForaDoAr();
-      expect(fallback.irDiretoParaANuvem('/orders/p1/attach-commands/'), isFalse);
+      // O restaurante inteiro está de um lado: fechar a comanda na loja no
+      // meio da janela era o que espalhava a venda pelos dois servidores.
+      expect(
+        fallback.irDiretoParaANuvem('/orders/p1/attach-commands/'),
+        isTrue,
+      );
     });
 
     test('fiscal e caixa continuam na loja', () {
-      final fallback = CloudFallback(veredito: veredito);
       veredito.marcarForaDoAr();
       expect(fallback.irDiretoParaANuvem('/invoices/1/emit/'), isFalse);
       expect(fallback.irDiretoParaANuvem('/cash-register/open/'), isFalse);
     });
 
     test('loja de pe ou desvio desligado nao desviam', () {
-      expect(
-        CloudFallback(veredito: veredito).irDiretoParaANuvem('/orders/'),
-        isFalse,
-      );
+      expect(fallback.irDiretoParaANuvem('/orders/'), isFalse);
       veredito.marcarForaDoAr();
       expect(
         CloudFallback(

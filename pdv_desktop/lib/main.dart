@@ -13,6 +13,7 @@ import 'core/errors/app_error.dart';
 import 'core/errors/error_center.dart';
 import 'core/logging/app_logger.dart';
 import 'core/network/api_client.dart';
+import 'core/network/response_cache.dart';
 import 'core/storage/app_paths.dart';
 import 'core/storage/durable_secure_store.dart';
 import 'core/storage/local_preferences.dart';
@@ -97,13 +98,21 @@ Future<void> main(List<String> arguments) async {
     await windowManager.setFullScreen(true);
   });
 
-  final apiClient = ApiClient(baseUrl: config.apiBaseUrl)
-    // A identidade do terminal viaja em TODA requisição: é por ela que o
-    // backend sabe que a sessão de caixa aberta aqui é desta máquina, e a
-    // checagem vale para receber, sangrar, suprir e fechar — não só para
-    // abrir.
-    ..installationId = preferences.terminalInstallationId
-    ..terminalLabel = preferences.terminalName;
+  final apiClient =
+      ApiClient(
+          baseUrl: config.apiBaseUrl,
+          // O catálogo guardado em disco: o PDV reiniciado abre com a tela pronta e
+          // relê em segundo plano, em vez de esperar o servidor (response_cache.dart).
+          cache: ResponseCache(
+            arquivo: AppPaths.dataFile('cache_de_listas.json'),
+          ),
+        )
+        // A identidade do terminal viaja em TODA requisição: é por ela que o
+        // backend sabe que a sessão de caixa aberta aqui é desta máquina, e a
+        // checagem vale para receber, sangrar, suprir e fechar — não só para
+        // abrir.
+        ..installationId = preferences.terminalInstallationId
+        ..terminalLabel = preferences.terminalName;
 
   // Credenciais guardadas nas camadas duráveis que existirem.
   //

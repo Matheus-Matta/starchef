@@ -1,9 +1,11 @@
-"""Com a loja no ar, a nuvem não fecha conta de comanda.
+"""Loja e nuvem fecham conta de comanda — mesmo com a outra no ar.
 
-Dois caixas — um na loja, outro grudado na nuvem — cobraram o MESMO cartão
-com um minuto de diferença, antes de a sincronização contar à nuvem a primeira
-cobrança (simulação do dia a dia, `loadtest/dia_a_dia`). A nuvem só cobra
-comanda com a loja sem sinal de vida (`synchronization/services/loja_no_ar.py`).
+A v3.0.86 recusava na nuvem (409 `cobrar_na_loja`) com a loja dando sinal de
+vida, e a v3.0.87 ainda recusava quem vinha pela janela do veredito. Mas o
+sinal de vida é do `sync_worker`, não prova que o PDV alcança a loja, e o
+operador pode PREFERIR a nuvem com a loja de reserva: a comanda não fechava
+em lugar nenhum. Nenhum servidor recusa; o que impede cobrar duas vezes é a
+identidade do recebimento (`payments/recebimento_por_uuid.py`).
 """
 from datetime import timedelta
 
@@ -47,42 +49,25 @@ def _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto, m
                            {"commands": [str(comanda.pk)]}, format="json", **cabecalhos)
 
 
-def test_loja_no_ar_a_nuvem_recusa_e_manda_cobrar_na_loja(
-    nuvem_com_loja, api_client, contexto_tenant, account, restaurant, branch, produto, manager_user
+@pytest.mark.parametrize("cabecalhos", [{}, {"HTTP_X_DESVIO_DA_LOJA": "janela"}])
+def test_nuvem_fecha_comanda_com_a_loja_no_ar(
+    nuvem_com_loja, api_client, contexto_tenant, account, restaurant, branch, produto,
+    manager_user, cabecalhos
 ):
     SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(last_seen_at=timezone.now())
 
     resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
-                       manager_user, HTTP_X_DESVIO_DA_LOJA="janela")
+                       manager_user, **cabecalhos)
 
-    assert resposta.status_code == 409
-    assert resposta.json()["error"]["code"] == "cobrar_na_loja"
+    assert resposta.status_code == 200, resposta.content
 
 
-def test_loja_fora_a_nuvem_cobra(
+def test_nuvem_fecha_comanda_com_a_loja_fora(
     nuvem_com_loja, api_client, contexto_tenant, account, restaurant, branch, produto, manager_user
 ):
     SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(
         last_seen_at=timezone.now() - timedelta(minutes=5)
     )
-
-    resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
-                       manager_user)
-
-    assert resposta.status_code == 200, resposta.content
-
-
-def test_terminal_na_nuvem_cobra_mesmo_com_a_loja_no_ar(
-    nuvem_com_loja, api_client, contexto_tenant, account, restaurant, branch, produto, manager_user
-):
-    """O impasse da v3.0.86: comanda que não fechava em lugar nenhum.
-
-    O sinal de vida é do `sync_worker` da loja, não prova que o terminal a
-    alcança. PDV configurado direto na nuvem (ou sem rota até a loja) era
-    mandado de volta para uma loja que ele não usa: "não consigo finalizar
-    pedido com comanda". Só quem vem pela janela do veredito é recusado.
-    """
-    SyncNode.objects.filter(pk=nuvem_com_loja.pk).update(last_seen_at=timezone.now())
 
     resposta = _cobrar(api_client, contexto_tenant, account, restaurant, branch, produto,
                        manager_user)

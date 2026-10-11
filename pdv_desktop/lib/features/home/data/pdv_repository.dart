@@ -26,14 +26,15 @@ class PdvRepository {
   /// A lista guardada no cache quando há; senão, do servidor.
   ///
   /// Para cadastros que mudam pouco e são lidos a cada venda (as
-  /// impressoras). Escrita e evento do assunto apagam a entrada, então a
-  /// mudança aparece na próxima leitura.
+  /// impressoras). Escrita e evento do assunto deixam a entrada VELHA, e a
+  /// velha é relida: a mudança aparece na próxima leitura.
   Future<List<JsonMap>> listCached(
     String path, {
     Map<String, dynamic>? query,
   }) async {
     final guardada = api.peek(path, query: query, accessToken: accessToken);
-    if (guardada != null) {
+    if (guardada != null &&
+        !api.cacheVelho(path, query: query, accessToken: accessToken)) {
       return ((guardada['results'] ?? const []) as List).cast<JsonMap>();
     }
     return list(path, query: query);

@@ -1,11 +1,30 @@
+import uuid
+
 from apps.orders.models import OrderItem, OrderItemAddon
+
+# O UUID do item que nasce de uma anotação é CALCULADO, não sorteado: a mesma
+# venda (mesmo pedido, mesma anotação) feita na loja e na nuvem — o PDV que
+# reenviou depois de uma troca de servidor — gera o MESMO item nos dois, e a
+# sincronização os junta pelo id em vez de somar dois.
+_ESPACO = uuid.UUID("6f7c1b4e-2d0a-4c55-9a3e-5b1d2c3e4f60")
+
+
+def id_do_item_da_anotacao(order_id, annotation_id):
+    return uuid.uuid5(_ESPACO, f"{order_id}:{annotation_id}")
 
 
 def copy_items_to_order(annotations, *, order, user):
     """Copia itens e adicionais, registrando os eventos na transação atual."""
-    items = OrderItem.objects.bulk_create(
-        [to_order_item(annotation, order=order, user=user) for annotation in annotations]
-    )
+    novos = [to_order_item(annotation, order=order, user=user) for annotation in annotations]
+    # O UUID calculado já ocupado por uma linha que ficou para trás (excluída
+    # sem ser apagada) derrubaria o lote inteiro. Esse item ganha um sorteado:
+    # perde só a junção automática entre loja e nuvem, que ali não se aplica.
+    ocupados = set(OrderItem.all_objects.filter(pk__in=[i.pk for i in novos])
+                   .values_list("pk", flat=True))
+    for item in novos:
+        if item.pk in ocupados:
+            item.pk = uuid.uuid4()
+    items = OrderItem.objects.bulk_create(novos)
 
     # `bulk_create` pula `post_save`; sem a outbox explícita, a nuvem recebe o
     # pedido sem as linhas que formam o total. Tudo permanece na transação da cobrança.
@@ -23,6 +42,7 @@ def copy_items_to_order(annotations, *, order, user):
 def to_order_item(annotation, *, order, user):
     """Copia preço e produção do consumo, sem reler o cadastro atual."""
     return OrderItem(
+        id=id_do_item_da_anotacao(order.pk, annotation.pk),
         account=order.account,
         restaurant=order.restaurant,
         branch=order.branch,
@@ -54,6 +74,7 @@ def copy_addons(annotations, items, *, order, user):
     """Mantém no pedido os adicionais escolhidos enquanto estavam na comanda."""
     adicionais = [
         OrderItemAddon(
+            id=uuid.uuid5(_ESPACO, f"{item.pk}:{addon.pk}"),
             account=order.account,
             restaurant=order.restaurant,
             branch=order.branch,

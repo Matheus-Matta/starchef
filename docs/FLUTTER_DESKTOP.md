@@ -109,31 +109,75 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 ### 5.1 Cache de leitura do PDV online (`ResponseCache`)
 
 Nesta branch o `pdv_desktop/` fala direto com o servidor, sem `OfflineStore`.
-O que existe é um cache **de apresentação**, em memória, para a tela abrir na
-hora (`core/network/response_cache.dart`, dentro do `ApiClient`):
+O que existe é um cache **de apresentação**, para a tela abrir na hora
+(`core/network/response_cache.dart`, dentro do `ApiClient`):
 
-- Guarda só respostas GET de listas de cadastro: `/commands/`,
-  `/menu/products/`, `/menu/categories/`, `/customers/`, `/tables/`,
-  `/payments/methods/`, `/cash-stations/`, `/printers/`. Pedido, caixa e
-  autenticação nunca —
-  nada do cache decide pagamento ou fechamento; o servidor valida.
-- Chave: servidor + conta + usuário (do JWT) + rota + parâmetros ordenados (o
-  restaurante vai na consulta). 120 entradas no máximo (sai a mais antiga),
-  validade de 30 min.
-- Escrita deste terminal apaga o assunto **antes** de sair (resposta perdida
-  pode esconder escrita que valeu); evento de tempo real apaga o assunto do
-  recurso; logout, troca de servidor e **reconexão** do tempo real apagam tudo.
-- `loadCatalog` (`features/home/data/pdv_catalog.dart`) devolve o catálogo
-  guardado na hora quando ele está inteiro e relê por trás se a cópia passou de
-  10 s; se o servidor mudou, emite `realtime:pdv` e a tela redesenha. A tela de
-  clientes mostra a última lista da mesma busca enquanto a leitura chega.
-- Faltando só PARTE do catálogo, busca só o que falta: a venda apaga comandas e
-  mesas, e depois dela sobem essas duas listas — não as seis, cardápio incluso.
-- A escolha da impressora do recibo lê `/printers/` pelo cache
-  (`PdvRepository.listCached`). Evento de `printers.printjob` (um por cupom)
-  não apaga nada; antes caía em "recurso desconhecido" e apagava o cache todo.
-- Requisição que leva 500 ms ou mais vai para o `pdv.log` como `api_lenta`
-  (método, rota, tempo, loja/nuvem): é a medida para a próxima otimização.
+- Guarda respostas GET de listas de cadastro (`/commands/`, `/menu/products/`,
+  `/menu/categories/`, `/customers/`, `/tables/`, `/payments/methods/`,
+  `/cash-stations/`, `/printers/`) e a **lista** de pedidos (`/orders/`, só
+  para exibir). Caixa, autenticação e o pedido aberto nunca — nada do cache
+  decide pagamento ou fechamento; o servidor valida.
+- Chave: servidor + conta + usuário (do JWT) + rota + parâmetros ordenados.
+  120 entradas no máximo (sai a mais antiga), validade de 24 h.
+- **Gravado em disco** (`cache_de_listas.json`, `response_cache_disco.dart`): o
+  PDV reiniciado abre com o catálogo na tela. O que volta do disco vem VELHO.
+- Escrita, evento de tempo real e **reconexão** NÃO apagam: marcam o assunto
+  como **velho**. A tela continua mostrando e relê em silêncio — apagar fazia o
+  próximo gesto esperar o servidor, com tela de carregando, a cada venda e a
+  cada oscilação da rede. Logout e troca de servidor apagam tudo.
+- `loadCatalog` (`features/home/data/pdv_catalog.dart`) devolve o guardado na
+  hora e relê por trás SÓ as listas velhas ou com mais de 10 s: depois de uma
+  venda, comandas e mesas — não as seis. Se o servidor mudou, emite
+  `realtime:pdv` e a tela redesenha. A tela de pedidos abre com a última lista.
+- `PdvRepository.listCached` (impressoras) relê a lista VELHA antes de usá-la.
+- Requisição que leva 500 ms ou mais vai para o `pdv.log` como `api_lenta`.
+
+### 5.1.1 Desvio para a nuvem: 5 minutos, depois ping
+
+`core/network/veredito_da_loja.dart` (igual no `pdv_mobile/`). A loja
+confirmadamente fora manda o terminal para a nuvem por **5 minutos fixos**, e
+nenhuma resposta da loja no meio desfaz (fiscal e caixa, que nunca desviam,
+falam com ela). Fechar comanda também vai direto: o restaurante inteiro de um
+lado só. Vencida a janela, a próxima requisição faz um **ping** na loja
+(`CloudFallback.conferirSeVenceu`): respondeu, volta; não, mais 5 minutos.
+Antes a janela começava em 30 s e qualquer resposta da loja a desfazia — o
+terminal pulava de servidor no meio de uma venda.
+
+### 5.1.2 A venda num envio só (`/orders/submit/`)
+
+O pedido vive no rascunho do PDV até precisar existir, e então sai num payload
+(`features/orders/data/order_draft_materializer.dart` →
+`backend/apps/orders/venda_inteira.py`), numa transação: entra inteiro ou não
+entra. Tudo leva o UUID do PDV (`draft.orderId`, o id de cada linha, o de cada
+recebimento), então o reenvio é a MESMA venda.
+
+- **F9 / cozinha** (o "pagar depois"): pedido + itens + comandas + produção.
+- **Ir para o pagamento**: NÃO cria nada. `simular` devolve o total oficial
+  (taxa, promoção, cupom) e a tela abre sobre ele (`draft.simulada`). Sair sem
+  pagar não deixa nada no servidor.
+- **Concluir**: pedido + itens + comandas + produção + fechamento (taxa, CPF,
+  cupom) + recebimentos, num envio (`home_page_venda_inteira.dart`). Leva só
+  as anotações que a simulação trouxe (`draft.anotacoesVistas` →
+  `command_items`): o que o garçom lança enquanto o cliente paga fica para a
+  próxima conta, em vez de fechar com total maior que o recebido. Leva também
+  o total mostrado (`expected_total`): mudou no servidor, a venda é recusada
+  sem gravar e a tela simula de novo, mostrando a conta de agora.
+- Pedido que já existia (F9 antes): os recebimentos vão juntos num envio.
+
+### 5.1.3 Recusa que leva ao lugar certo (`home_page_conflitos.dart`)
+
+A recusa do servidor traz `code` e o pedido de destino
+(`backend/apps/orders/conflitos.py` → `error.code`, `error.order_id`), e o PDV
+age em vez de mostrar o erro — a decisão é `ConflitoDaVenda.decidir`
+(`features/orders/data/conflito_da_venda.dart`, testada):
+
+| Recusa | O PDV faz |
+|---|---|
+| `comanda_em_outra_conta` | abre a conta #42; itens passados no rascunho vão para ela num envio, e o "ir para o pagamento" segue com ela |
+| `comanda_ja_cobrada` / `pedido_ja_pago` | abre o pedido pago; com itens novos no rascunho, só tira a comanda paga e segue com os itens |
+| `total_mudou` | recalcula sozinho e diz em que pedido o resto foi cobrado |
+
+Cada ação deixa um recado curto (barra inferior), não um alerta de erro.
 
 ### 5.2 Leitura do cartão da comanda
 

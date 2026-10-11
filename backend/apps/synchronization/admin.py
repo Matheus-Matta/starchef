@@ -145,3 +145,4 @@ class SyncConflictAdmin(ModelAdmin):
 
 
 from apps.synchronization import admin_tickets  # noqa: E402,F401
+from apps.synchronization import admin_discards  # noqa: E402,F401

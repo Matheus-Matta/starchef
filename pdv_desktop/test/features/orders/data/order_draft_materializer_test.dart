@@ -9,12 +9,12 @@ import 'package:starchef_pdv_desktop/features/orders/data/order_draft.dart';
 import 'package:starchef_pdv_desktop/features/orders/data/order_draft_cart.dart';
 import 'package:starchef_pdv_desktop/features/orders/data/order_draft_materializer.dart';
 
-/// A hora em que o rascunho vira pedido de verdade.
+/// A venda sai do PDV num envio só (`POST /orders/submit/`).
 ///
-/// O caso que faltava era o CENTRAL do modelo novo: a mesa com dois cartões
-/// que chega no caixa para pagar. O operador não tem nada para passar — o
-/// consumo já está anotado nos cartões —, e o PDV recusava com "Não há itens
-/// para abrir o pedido". A conta simplesmente não abria.
+/// Antes eram uma chamada para criar o pedido, uma por item, uma para anexar
+/// as comandas e uma por recebimento: uma troca loja/nuvem no meio deixava
+/// metade da venda em cada servidor. Agora o rascunho inteiro — com os
+/// recebimentos, quando há — vai num payload, e tudo leva o UUID do PDV.
 void main() {
   late List<({String caminho, Map<String, dynamic> corpo})> enviados;
 
@@ -25,91 +25,138 @@ void main() {
       client: MockClient((request) async {
         enviados.add((
           caminho: request.url.path.replaceFirst('/api/v1', ''),
-          corpo: request.body.isEmpty
-              ? <String, dynamic>{}
-              : Map<String, dynamic>.from(jsonDecode(request.body) as Map),
+          corpo: Map<String, dynamic>.from(jsonDecode(request.body) as Map),
         ));
-        return http.Response('{"id": "order-1", "items": []}', 200);
+        return http.Response(
+          '{"order": {"id": "order-1", "items": []}, "payments": [], "created": true}',
+          201,
+        );
       }),
     );
     return OrderDraftMaterializer(api, accessToken: 'token');
   }
 
-  OrderDraftLine linha() => const OrderDraftLine(
-    id: 'l-1',
-    productId: 'p1',
-    productName: 'Coxinha',
-    quantity: 1,
-    unitPrice: 6,
-  );
-
-  OrderDraftCart comComandas(List<String> ids) {
+  OrderDraftCart rascunho({List<String> comandas = const [], int linhas = 0}) {
     final draft = OrderDraftCart();
-    for (final id in ids) {
+    for (final id in comandas) {
       draft.commands.add({'id': id, 'number': id});
+    }
+    for (var i = 0; i < linhas; i++) {
+      draft.add(
+        OrderDraftLine(
+          id: '',
+          productId: 'p$i',
+          productName: 'Produto $i',
+          quantity: 1,
+          unitPrice: 6,
+        ),
+      );
     }
     return draft;
   }
 
-  test('SO comandas abre a conta, sem exigir item novo', () async {
+  test(
+    'itens e comandas vao num envio so, com o UUID do pedido e das linhas',
+    () async {
+      final alvo = materializador();
+      final draft = rascunho(comandas: ['c-1', 'c-2'], linhas: 2);
+
+      await alvo.materialize(draft, restaurantId: 'rest-1', cozinha: true);
+
+      expect(enviados.map((e) => e.caminho).toList(), ['/orders/submit/']);
+      final corpo = enviados.single.corpo;
+      expect(corpo['id'], draft.orderId);
+      expect(corpo['order_type'], 'command');
+      expect(corpo['commands'], ['c-1', 'c-2']);
+      expect(corpo['kitchen'], isA<Map>());
+      final idsDasLinhas = [
+        for (final l in corpo['items'] as List) (l as Map)['id'],
+      ];
+      expect(idsDasLinhas, [for (final l in draft.lines) l.id]);
+      expect(
+        idsDasLinhas.every((id) => RegExp(r'^[0-9a-f-]{36}$').hasMatch('$id')),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'o reenvio leva o MESMO id: o servidor reconhece a mesma venda',
+    () async {
+      final alvo = materializador();
+      final draft = rascunho(linhas: 1);
+
+      await alvo.materialize(draft, restaurantId: 'rest-1');
+      await alvo.materialize(draft, restaurantId: 'rest-1');
+
+      expect(enviados[0].corpo['id'], enviados[1].corpo['id']);
+      expect(enviados[0].corpo['items'], enviados[1].corpo['items']);
+    },
+  );
+
+  test('simular pede o total com o fechamento, sem gravar', () async {
     final alvo = materializador();
 
-    await alvo.materialize(comComandas(['c-1', 'c-2']), restaurantId: 'rest-1');
+    await alvo.simular(
+      rascunho(linhas: 1),
+      restaurantId: 'rest-1',
+      fechamento: {'service_fee_enabled': true},
+    );
 
-    expect(enviados.map((e) => e.caminho).toList(), [
-      '/orders/',
-      '/orders/order-1/attach-commands/',
-    ]);
-    expect(enviados.first.corpo['order_type'], 'command');
-    expect(enviados.first.corpo['restaurant'], 'rest-1');
-    expect(enviados.last.corpo['commands'], ['c-1', 'c-2']);
+    final corpo = enviados.single.corpo;
+    expect(corpo['simular'], isTrue);
+    expect(corpo['close'], {'service_fee_enabled': true});
+    expect(corpo.containsKey('payments'), isFalse);
   });
 
-  test('so comandas NAO passa por create-with-item', () async {
-    // `create-with-item` é atômico porque LEVA um item. Sem item ele não tem
-    // o que criar, e chamá-lo assim seria pedir 400 ao servidor.
+  test('concluir manda pedido, fechamento e recebimentos juntos', () async {
+    final alvo = materializador();
+    final draft = rascunho(comandas: ['c-1']);
+
+    final resposta = await alvo.concluir(
+      draft,
+      restaurantId: 'rest-1',
+      fechamento: {'fiscal_customer_cpf': '52998224725'},
+      recebimentos: [
+        {'id': 'pg-1', 'payment_method': 'pix', 'amount': '10.00'},
+      ],
+    );
+
+    final corpo = enviados.single.corpo;
+    expect(corpo['payments'], [
+      {'id': 'pg-1', 'payment_method': 'pix', 'amount': '10.00'},
+    ]);
+    expect(corpo['close'], {'fiscal_customer_cpf': '52998224725'});
+    expect(corpo['kitchen'], isA<Map>());
+    expect(resposta['order']['id'], 'order-1');
+  });
+
+  test('a conclusao leva so as anotacoes que o caixa viu', () async {
+    // O garçom lançou na comanda enquanto o cliente pagava: sem a lista, a
+    // conta fechava com um total maior que o recebido.
+    final alvo = materializador();
+    final draft = rascunho(comandas: ['c-1'])..anotacoesVistas = ['a-1'];
+
+    await alvo.concluir(draft, restaurantId: 'rest-1', recebimentos: const []);
+
+    expect(enviados.single.corpo['command_items'], ['a-1']);
+  });
+
+  test('sem simular, nao restringe as anotacoes', () async {
     final alvo = materializador();
 
-    await alvo.materialize(comComandas(['c-1']), restaurantId: 'rest-1');
+    await alvo.materialize(rascunho(comandas: ['c-1']), restaurantId: 'rest-1');
+
+    expect(enviados.single.corpo.containsKey('command_items'), isFalse);
+  });
+
+  test('sem item e sem comanda nao ha o que abrir', () async {
+    final alvo = materializador();
 
     expect(
-      enviados.map((e) => e.caminho),
-      isNot(contains('/orders/create-with-item/')),
-    );
-  });
-
-  test('rascunho vazio de TUDO continua sendo recusado', () async {
-    // Sem item e sem comanda não existe conta para abrir, e criar um pedido
-    // vazio aqui encheria o banco do que ninguém vai pagar.
-    final alvo = materializador();
-
-    await expectLater(
-      alvo.materialize(OrderDraftCart(), restaurantId: 'rest-1'),
+      () => alvo.materialize(OrderDraftCart(), restaurantId: 'rest-1'),
       throwsA(isA<ApiException>()),
     );
     expect(enviados, isEmpty);
-  });
-
-  test('com item o pedido nasce COM ele, numa transacao so', () async {
-    final alvo = materializador();
-    final draft = OrderDraftCart()..add(linha());
-
-    await alvo.materialize(draft, restaurantId: 'rest-1');
-
-    expect(enviados.single.caminho, '/orders/create-with-item/');
-    expect(enviados.single.corpo['order_type'], 'counter');
-  });
-
-  test('item MAIS comanda grava o pedido como de comanda', () async {
-    // Os dois PDVs precisam gravar o mesmo formato: um pedido com tipo
-    // diferente conforme o caixa em que foi aberto quebra qualquer relatório
-    // que agrupe por tipo.
-    final alvo = materializador();
-    final draft = comComandas(['c-1'])..add(linha());
-
-    await alvo.materialize(draft, restaurantId: 'rest-1');
-
-    expect(enviados.first.caminho, '/orders/create-with-item/');
-    expect(enviados.first.corpo['order_type'], 'command');
   });
 }

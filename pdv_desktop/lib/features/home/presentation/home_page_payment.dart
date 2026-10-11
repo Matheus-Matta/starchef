@@ -123,8 +123,15 @@ mixin _PaymentSection on _HomePageShared {
     // três idas ao armazenamento (e, no primeiro acesso de cada uma, três
     // idas à rede) antes de a tela aparecer. O identificador do pedido não
     // muda no meio, então lê-las juntas é seguro.
+    // Venda simulada: o pedido ainda não existe no servidor — não há o que
+    // recarregar nem recebimento gravado; só as formas de pagamento.
+    final simulada = draft.simulada;
     final resultados = await Future.wait([
-      _refreshOrder().then<Object?>((_) => null).catchError((Object _) => null),
+      simulada
+          ? Future<Object?>.value()
+          : _refreshOrder()
+                .then<Object?>((_) => null)
+                .catchError((Object _) => null),
       _list(
         '/payments/methods/',
         query: {
@@ -136,7 +143,9 @@ mixin _PaymentSection on _HomePageShared {
       // Sem rede e sem cópia guardada, o pedido simplesmente ainda não tem
       // pagamentos — tratar isso como falha impediria de receber offline, que
       // é exatamente quando o operador mais precisa concluir a venda.
-      _loadRegisteredPayments(),
+      simulada
+          ? Future.value(<Map<String, dynamic>>[])
+          : _loadRegisteredPayments(),
     ]);
     paymentMethods = resultados[1] as List<Map<String, dynamic>>;
     registeredPayments = resultados[2] as List<Map<String, dynamic>>;
@@ -268,6 +277,13 @@ mixin _PaymentSection on _HomePageShared {
         // recebimento.
         'idempotency_key':
             'flutter-${activeOrder!['id']}-${DateTime.now().microsecondsSinceEpoch}',
+        // A IDENTIDADE do recebimento, dada aqui. Loja e nuvem aceitam receber
+        // (o terminal escolhe, e desvia quando um cai): enviado aos dois, o
+        // mesmo UUID vira UMA linha quando a sincronização os junta, e um
+        // envio atrasado com horário mais velho não sobrescreve nada
+        // (`payments/recebimento_por_uuid.py`).
+        'id': LocalId.uuid(),
+        'client_updated_at': DateTime.now().toUtc().toIso8601String(),
         'metadata': {
           'card_subtype': method['method_type'] == 'card'
               ? _cardSubtypeFor(method)
@@ -299,47 +315,35 @@ mixin _PaymentSection on _HomePageShared {
   /// empilharia recusas do mesmo motivo.
   Future<bool> _commitStagedPayments() async {
     final staged = stagedPayments;
-    if (staged.isEmpty) return true;
-    final pending = <Map<String, dynamic>>[];
-    var touchedCash = false;
-    var stop = false;
-    for (final payment in staged) {
-      if (stop) {
-        pending.add(payment);
-        continue;
-      }
-      final result = await _work(
-        () => api.post(
-          '/orders/${activeOrder!['id']}/pay/',
-          body: payment['_staged_body'] as Map<String, dynamic>,
-          accessToken: token,
+    if (staged.isEmpty && !draft.simulada) return true;
+    final corpos = [
+      for (final pagamento in staged)
+        Map<String, dynamic>.from(pagamento['_staged_body'] as Map),
+    ];
+    final touchedCash = staged.any(_isCashPayment);
+    if (draft.simulada) {
+      // A venda inteira num envio: pedido, cozinha, fechamento e recebimentos.
+      if (!await _concluirVendaSimulada(corpos)) return false;
+    } else {
+      // Pedido que já existia (F9 antes): os recebimentos num envio só, não
+      // um por chamada — tudo ou nada, com o UUID de cada um.
+      final feito = await _workResolvendo(
+        () => OrderDraftMaterializer(api, accessToken: token).receber(
+          orderId: '${activeOrder!['id']}',
+          restaurantId: restaurantId,
+          recebimentos: corpos,
         ),
+        errorTitle: 'Não foi possível registrar os recebimentos',
       );
-      if (result == null) {
-        pending.add(payment);
-        stop = true;
-        continue;
-      }
-      touchedCash = touchedCash || _isCashPayment(payment);
+      if (feito == null) return false;
+      await _refreshOrder();
+      registeredPayments = await _loadRegisteredPayments();
     }
-    // Cada `pay` só retorna depois que o servidor confirmou, então quando se
-    // chega aqui o pedido já está quitado LÁ. É o que a emissão fiscal exige:
-    // uma nota emitida antes dos recebimentos sairia com o DANFE sem as
-    // formas de pagamento — justamente o que o cliente confere.
-    await _refreshOrder();
-    final confirmed = await _loadRegisteredPayments();
-    registeredPayments = [...confirmed, ...pending];
     if (touchedCash) await _refreshCashSession();
     if (mounted) setState(() {});
-    return pending.isEmpty;
+    return true;
   }
 
-  /// O recebimento saiu da gaveta?
-  ///
-  /// O lançamento criado aqui guarda `method_type`; o que vem do servidor usa
-  /// `payment_method_type` (ver `PaymentSerializer`). A mesma lista mistura os
-  /// dois, e olhar só um dos nomes deixava o saldo do caixa parado depois de
-  /// remover um recebimento já sincronizado.
   static bool _isCashPayment(Map<String, dynamic> payment) =>
       '${payment['method_type'] ?? payment['payment_method_type'] ?? ''}' ==
       'cash';

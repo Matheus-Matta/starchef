@@ -1,3 +1,4 @@
+import '../../../core/data/local_id.dart';
 import '../../../core/network/api_client.dart';
 import 'command_listing.dart';
 import 'command_pager.dart';
@@ -74,6 +75,10 @@ class CommandRepository {
   }) => _api.post(
     '/commands/$commandId/items/',
     body: {
+      // O UUID da anotação, dado aqui: se a loja gravar e cair antes de
+      // responder, o desvio para a nuvem leva o MESMO id, e a sincronização
+      // junta as duas numa só (`core/uuid_do_aparelho.py`).
+      'id': LocalId.uuid(),
       'product': productId,
       'quantity': quantity,
       'customer_note': customerNote,

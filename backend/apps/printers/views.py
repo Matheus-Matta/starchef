@@ -297,6 +297,9 @@ class ScaleViewSet(BaseTenantViewSet):
         from apps.menu.models import Product
         from apps.orders.command_items import launch_item
         from apps.orders.serializers_command_item import CommandItemSerializer
+        from apps.core import uuid_do_aparelho
+        from apps.orders.models import CommandItem as CommandItemModel
+        from apps.printers import pesagem_por_uuid
         from apps.printers.scale_command import send_weighing_to_production, weigh_into_command
         from apps.printers.services import register_command_weigh_print
         from apps.restaurants.models import Command
@@ -337,6 +340,22 @@ class ScaleViewSet(BaseTenantViewSet):
                 if command is None:
                     raise ValidationError("Comanda nao encontrada para o restaurante selecionado.")
 
+                # O UUID que o aparelho deu à pesagem: o reenvio (a loja gravou e
+                # caiu antes de responder) é a MESMA pesagem (`pesagem_por_uuid.py`).
+                pesagem_id = uuid_do_aparelho.ler(request.data.get("id"), "pesagem")
+                ja_pesada = pesagem_por_uuid.ja_pesada(scale, pesagem_id)
+                if ja_pesada is not None:
+                    pesagem_por_uuid.guardar_reenvio(ja_pesada, request.user, request.data)
+                    adicionais = CommandItemModel.all_objects.filter(pk__in=[
+                        pesagem_por_uuid.id_do_adicional(pesagem_id, n) for n in range(len(extras))])
+                    return Response({
+                        "command": {"id": str(command.id), "number": command.number,
+                                    "code": command.code, "status": command.status},
+                        "weighed_item": CommandItemSerializer(ja_pesada.command_item).data,
+                        "extra_items": CommandItemSerializer(adicionais, many=True).data,
+                        "print_job": None,
+                    }, status=status.HTTP_200_OK)
+
                 if reading_id:
                     reading = (
                         ScaleReading.objects.select_for_update()
@@ -364,6 +383,7 @@ class ScaleViewSet(BaseTenantViewSet):
                     if peso <= 0:
                         raise ValidationError("O peso precisa ser maior que zero.")
                     reading = ScaleReading.objects.create(
+                        **({"id": pesagem_id} if pesagem_id else {}),
                         account=scale.account,
                         restaurant=scale.restaurant,
                         branch=scale.branch,
@@ -392,10 +412,11 @@ class ScaleViewSet(BaseTenantViewSet):
                     scale_reading=reading,
                     # Etiqueta e rodada saem uma vez so, depois dos extras.
                     do_print=False, send=False,
+                    item_id=pesagem_por_uuid.id_da_anotacao(pesagem_id) if pesagem_id else None,
                 )
 
                 extra_items = []
-                for entry in extras:
+                for posicao, entry in enumerate(extras):
                     if not isinstance(entry, dict):
                         raise ValidationError("Produto adicional invalido.")
                     try:
@@ -431,9 +452,14 @@ class ScaleViewSet(BaseTenantViewSet):
                             variations=variations,
                             addons=addons,
                             customer_note=customer_note,
+                            item_id=(pesagem_por_uuid.id_do_adicional(pesagem_id, posicao)
+                                     if pesagem_id else None),
                         )
                     )
-                send_weighing_to_production(command=command, items=[weighed_item, *extra_items], user=request.user)
+                send_weighing_to_production(
+                    command=command, items=[weighed_item, *extra_items], user=request.user,
+                    client_batch_serial=pesagem_por_uuid.serial_do_lote(pesagem_id) if pesagem_id else None,
+                )
                 # Dentro da transacao de proposito: sem impressora resolvida, a
                 # pesagem inteira volta atras em vez de consumir a leitura e
                 # deixar o cliente sem a etiqueta que ele leva ao caixa.

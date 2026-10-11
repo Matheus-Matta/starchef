@@ -14,8 +14,10 @@ import logging
 from django.db import IntegrityError, connection, transaction
 
 from apps.synchronization.constants import EventStatus, NodeType, Operation
+from apps.synchronization.models import SyncDiscard
 from apps.synchronization.services import (
-    adoption, conflicts, lapide, outbox, renumeracao, retry, serialization, timestamps,
+    adoption, anotacao_disputada, conflicts, descartes, lapide, outbox, renumeracao, retry,
+    serialization, timestamps,
 )
 from apps.synchronization.services.registry import registry
 from django.utils import timezone
@@ -119,14 +121,21 @@ def _aplicar(event, entrada):
     fields = payload.get("fields", {})
     remote_version = int(payload.get("entity_version") or event.entity_version or 1)
 
+    # A trava vem ANTES da leitura: dois workers aplicando versões da mesma
+    # entidade decidiam "sou a mais nova" com o que cada um tinha lido, e a
+    # mais velha sobrescrevia a nova (test_aplicacao_trava_a_entidade).
+    trava_da_entidade(event.entity_type, event.entity_id)
     existente = _encontrar(model, event.entity_id)
 
     if event.operation == Operation.DELETE:
         if lapide.edicao_mais_nova_que_a_exclusao(existente, remote_version):
+            descartes.do_evento(event, SyncDiscard.MOTIVO_EXCLUSAO_MAIS_VELHA,
+                                versao_local=serialization.entity_version(existente))
             return False
         return _apagar(existente)
     if existente is None and lapide.apagada_depois(entrada.entity_type, event.entity_id,
                                                    remote_version):
+        descartes.do_evento(event, SyncDiscard.MOTIVO_APAGADO_DEPOIS)
         return False
 
     decisao = conflicts.decide(
@@ -140,6 +149,12 @@ def _aplicar(event, entrada):
         local_instance=existente,
     )
     if decisao == conflicts.IGNORAR:
+        # Ignorado, mas guardado. A versão IGUAL é o mesmo dado voltando (eco):
+        # não há nada a recuperar nela.
+        versao_local = serialization.entity_version(existente) if existente else 0
+        if remote_version < versao_local:
+            descartes.do_evento(event, SyncDiscard.MOTIVO_VERSAO_MAIS_VELHA,
+                                versao_local=versao_local)
         return False
     if decisao == conflicts.CONFLITO:
         conflicts.register(
@@ -156,6 +171,20 @@ def _aplicar(event, entrada):
         return False
 
     return _gravar(model, entrada, event, fields, existente)
+
+
+def trava_da_entidade(entity_type, entity_id):
+    """Serializa, até o fim da transação, quem aplica esta entidade.
+
+    `pg_advisory_xact_lock` vale até para a linha que ainda não existe (dois
+    INSERTs da mesma identidade). Fora do PostgreSQL não há o que travar aqui:
+    o SQLite do desenvolvimento já escreve um por vez.
+    """
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                       [f"sync:{entity_type}:{entity_id}"])
 
 
 def _encontrar(model, pk):
@@ -221,9 +250,15 @@ def _gravar(model, entrada, event, fields, existente):
             with transaction.atomic():
                 mexeu = _atualizar(existente, kwargs)
         except IntegrityError:
-            # O número novo (da outra ponta) está ocupado aqui por outra linha.
-            if not renumeracao.resolver_atualizacao(
-                model, entrada, existente, kwargs, lambda k: _atualizar(existente, k)
+            # O número novo (da outra ponta) está ocupado aqui por outra linha,
+            # ou a anotação da comanda que ela traz está com outro item daqui.
+            if not (
+                renumeracao.resolver_atualizacao(
+                    model, entrada, existente, kwargs, lambda k: _atualizar(existente, k)
+                )
+                or anotacao_disputada.resolver(
+                    model, kwargs, event, lambda k: _atualizar(existente, k)
+                )
             ):
                 raise
             mexeu = True
@@ -234,7 +269,8 @@ def _gravar(model, entrada, event, fields, existente):
 def _aplicar_m2m(model, entrada, event, fields):
     """Refaz os ManyToMany declarados, casando pela chave natural.
 
-    Um código que não existe aqui é IGNORADO, não é erro. O catálogo de
+    O que SINCRONIZA e falta aqui está a caminho: o evento espera (retenta).
+    Um código de catálogo que NÃO sincroniza e não existe aqui é IGNORADO. O catálogo de
     permissões é provisionado por código nos dois lados; uma nuvem mais nova
     pode conhecer permissões que esta loja ainda não tem, e recusar o evento
     inteiro por causa disso deixaria o perfil sem vínculo NENHUM — pior que
@@ -266,6 +302,15 @@ def _aplicar_m2m(model, entrada, event, fields):
         encontrados = list(alvo)
 
         faltando = set(desejados) - {str(getattr(o, chave)) for o in encontrados}
+        if faltando and registry.for_model(relacao.model) is not None:
+            # Quem SINCRONIZA (usuário, restaurante, produto) e falta aqui está
+            # a caminho: o evento volta para a fila. Ignorar perdia o vínculo
+            # para sempre — a estação chegava antes do operador, e o caixa
+            # ficava "não vinculado" (test_vinculo_espera_quem_falta).
+            raise DependencyMissing(
+                f"{entrada.entity_type}.{campo} aponta para {len(faltando)} registro(s) que "
+                f"ainda não existe(m) aqui: {', '.join(sorted(faltando))[:200]}"
+            )
         if faltando:
             logger.warning(
                 "sync: %s %s — %s valor(es) de `%s` desconhecidos aqui e "
@@ -382,6 +427,8 @@ def _inserir(model, kwargs, event):
 
         entrada = registry.for_model(model)
         if renumeracao.resolver(model, entrada, kwargs, event, lambda k: _inserir_cru(model, k, event)):
+            return True
+        if anotacao_disputada.resolver(model, kwargs, event, lambda k: _inserir_cru(model, k, event)):
             return True
         adotou, motivo = adoption.try_adopt(model, kwargs, event)
         if not adotou:

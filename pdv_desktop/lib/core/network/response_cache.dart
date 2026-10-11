@@ -1,35 +1,50 @@
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 
-/// Última resposta das LISTAS do catálogo, para a tela abrir na hora.
+import 'response_cache_disco.dart';
+
+/// Última resposta das LISTAS, para a tela abrir na hora.
 ///
-/// Não é fonte de verdade — o servidor continua sendo. Serve para a primeira
-/// renderização: o PDV mostra o que tinha da última vez e, em seguida, a
-/// leitura nova substitui. Por isso:
+/// Não é fonte de verdade — o servidor continua sendo. A tela mostra o que
+/// tinha e relê em silêncio; a leitura nova substitui. Por isso:
 ///
-/// * só listas de cadastro entram (comandas, produtos, categorias, clientes,
-///   mesas, formas de pagamento, estações, impressoras); pedido, caixa e
-///   autenticação,
-///   nunca — nada aqui decide pagamento nem fechamento;
-/// * a chave leva servidor, conta, usuário, rota e parâmetros (o restaurante
-///   vai na consulta): outra conta no mesmo computador nunca vê a lista desta;
-/// * qualquer escrita ou evento de tempo real do assunto apaga as entradas
-///   dele, e logout/troca de servidor apagam tudo;
-/// * memória limitada ([maxEntries], a mais antiga sai) e validade
-///   ([maxAge]): passado disso a entrada não é servida.
+/// * entram listas de cadastro (comandas, produtos, categorias, clientes,
+///   mesas, formas de pagamento, estações, impressoras) e a LISTA de pedidos,
+///   só para exibir; caixa, autenticação e o pedido aberto, nunca — nada aqui
+///   decide pagamento nem fechamento;
+/// * a chave leva servidor, conta, usuário, rota e parâmetros: outra conta no
+///   mesmo computador nunca vê a lista desta;
+/// * escrita, evento de tempo real e reconexão NÃO apagam: marcam como VELHA
+///   ([estaVelha]). A tela continua mostrando e quem lê relê em segundo plano
+///   — apagar fazia o próximo gesto esperar o servidor, com tela de carregando;
+/// * logout e troca de servidor apagam tudo; com [arquivo], sobrevive a
+///   reiniciar o PDV (volta VELHO); limite [maxEntries] e validade [maxAge].
 class ResponseCache {
   ResponseCache({
     this.maxEntries = 120,
-    this.maxAge = const Duration(minutes: 30),
+    this.maxAge = const Duration(hours: 24),
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+    File? arquivo,
+  }) : _clock = clock ?? DateTime.now,
+       _disco = arquivo == null ? null : DiscoDoCache(arquivo) {
+    _disco?.carregar(
+      _entries,
+      (assunto, resposta, quando) =>
+          EntradaDoCache(assunto, resposta, quando, velha: true),
+    );
+  }
 
   final int maxEntries;
   final Duration maxAge;
   final DateTime Function() _clock;
+  final DiscoDoCache? _disco;
   // Literal de mapa do Dart guarda a ordem de inserção: a primeira chave é a
   // mais antiga, e é ela que sai quando o limite estoura.
-  final _entries = <String, _Entry>{};
+  final _entries = <String, EntradaDoCache>{};
+
+  /// A idade de uma VELHA: maior que qualquer janela de revalidação.
+  static const idadeDaVelha = Duration(days: 3650);
 
   /// Rotas que entram, e o assunto de cada uma.
   static const _assuntos = {
@@ -42,13 +57,15 @@ class ResponseCache {
     '/cash-stations/': 'cash',
     // A escolha da impressora do recibo lia esta lista a cada venda.
     '/printers/': 'printers',
+    // A tela de pedidos abria vazia, carregando, a cada visita.
+    '/orders/': 'orders',
   };
 
   /// O que uma escrita em cada rota pode ter mudado. Pedido mexe em comanda
-  /// (anexar, cobrar, liberar) e em mesa; caixa mexe na estação.
+  /// (anexar, cobrar, liberar), em mesa e na lista de pedidos.
   static const _escritaAfeta = {
     'commands': {'commands', 'tables'},
-    'orders': {'commands', 'tables'},
+    'orders': {'commands', 'tables', 'orders'},
     'menu': {'menu'},
     'customers': {'customers'},
     'tables': {'tables', 'commands'},
@@ -69,7 +86,7 @@ class ResponseCache {
     return '$escopo|$path?${jsonEncode(ordenada)}';
   }
 
-  /// Guarda a resposta, se a rota for de catálogo.
+  /// Guarda a resposta, se a rota entra no cache.
   void store(
     String escopo,
     String path,
@@ -80,13 +97,14 @@ class ResponseCache {
     if (assunto == null) return;
     final k = chave(escopo, path, query);
     _entries.remove(k);
-    _entries[k] = _Entry(assunto, resposta, _clock());
+    _entries[k] = EntradaDoCache(assunto, resposta, _clock());
     while (_entries.length > maxEntries) {
       _entries.remove(_entries.keys.first);
     }
+    _salvar();
   }
 
-  /// A última resposta guardada, ou `null` se não há ou venceu.
+  /// A última resposta guardada (mesmo VELHA), ou `null` se não há ou venceu.
   Map<String, dynamic>? peek(
     String escopo,
     String path,
@@ -102,13 +120,19 @@ class ResponseCache {
     return entrada.resposta;
   }
 
-  /// Há quanto tempo a resposta foi guardada, ou `null` se não há.
+  /// Há quanto tempo foi guardada — [idadeDaVelha] se ficou velha.
   Duration? ageOf(String escopo, String path, Map<String, dynamic>? query) {
     final entrada = _entries[chave(escopo, path, query)];
-    return entrada == null ? null : _clock().difference(entrada.guardadaEm);
+    if (entrada == null) return null;
+    if (entrada.velha) return idadeDaVelha;
+    return _clock().difference(entrada.guardadaEm);
   }
 
-  /// Uma escrita deste terminal: apaga o que ela pode ter mudado.
+  /// Algo pode ter mudado desde que foi guardada: quem lê deve reler.
+  bool estaVelha(String escopo, String path, Map<String, dynamic>? query) =>
+      _entries[chave(escopo, path, query)]?.velha ?? false;
+
+  /// Uma escrita deste terminal: marca como velho o que ela pode ter mudado.
   void invalidateForWrite(String path) {
     final segmentos = path.split('/').where((s) => s.isNotEmpty).toList();
     if (segmentos.isEmpty) return;
@@ -120,17 +144,16 @@ class ResponseCache {
     final app = resource.split('.').first;
     final modelo = resource.contains('.') ? resource.split('.').last : '';
     if (app == 'printers') {
-      // Trabalho de impressão chega a CADA cupom. Caindo em "desconhecido",
-      // ele apagava o cache inteiro e o próximo gesto rebaixava o catálogo.
-      // Só o cadastro da impressora muda a lista.
+      // Trabalho de impressão chega a CADA cupom. Só o cadastro da impressora
+      // muda a lista.
       if (modelo == 'printer') invalidate({'printers'});
       return;
     }
     final assuntos = <String>{
-      if (app == 'orders') ...{'commands', 'tables'},
+      if (app == 'orders') ...{'commands', 'tables', 'orders'},
       if (app == 'menu') 'menu',
       if (app == 'customers') 'customers',
-      if (app == 'payments') ...{'payments', 'cash'},
+      if (app == 'payments') ...{'payments', 'cash', 'orders'},
       if (app == 'restaurants') ...{'commands', 'tables'},
       if (app == 'restaurants' && modelo == 'restaurant') ...{
         'menu',
@@ -142,17 +165,22 @@ class ResponseCache {
     invalidate(assuntos.isEmpty ? _assuntos.values.toSet() : assuntos);
   }
 
+  /// Marca como VELHO (não apaga): a tela segue mostrando e relê.
   void invalidate(Set<String> assuntos) {
-    _entries.removeWhere((_, entrada) => assuntos.contains(entrada.assunto));
+    for (final entrada in _entries.values) {
+      if (assuntos.contains(entrada.assunto)) entrada.velha = true;
+    }
+    _salvar();
   }
 
-  void clear() => _entries.clear();
-}
+  /// Tudo velho — a reconexão do tempo real: eventos podem ter se perdido.
+  void envelhecer() => invalidate(_assuntos.values.toSet());
 
-class _Entry {
-  _Entry(this.assunto, this.resposta, this.guardadaEm);
+  /// Logout e troca de servidor: outro mundo, nada daqui serve.
+  void clear() {
+    _entries.clear();
+    _salvar();
+  }
 
-  final String assunto;
-  final Map<String, dynamic> resposta;
-  final DateTime guardadaEm;
+  void _salvar() => _disco?.salvar(_entries, (entrada) => entrada.toJson());
 }

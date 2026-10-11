@@ -61,7 +61,8 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
     if not destinos:
         return []
 
-    payload = serialization.build_payload(instance, entry, origin_node_id=origem.id)
+    payload = serialization.build_payload(_do_banco(instance, operation), entry,
+                                          origin_node_id=origem.id)
     if operation == Operation.DELETE:
         # A versão da exclusão é o MOMENTO em que ela aconteceu, não o da última
         # edição: apagado às 15:00 um registro editado às 10:00, a versão
@@ -74,6 +75,19 @@ def record(instance, operation=Operation.UPSERT, *, run=None, force=False):
         _criar_evento(origem, destino, account_id, entry, payload, operation, run)
         for destino in destinos
     ]
+
+
+def _do_banco(instance, operation):
+    """A linha como ESTÁ no banco, nesta transação — não a cópia da memória.
+
+    Um `save(update_fields=[...])` de uma cópia lida antes de outra mudança
+    grava só aqueles campos, mas o evento era montado da cópia inteira: o
+    pedido pago saía "aberto" com versão NOVA, e o outro lado o aplicava
+    (test_evento_le_o_banco). Exclusão leva o que havia: a linha já se foi.
+    """
+    if operation == Operation.DELETE or instance.pk is None:
+        return instance
+    return type(instance)._base_manager.filter(pk=instance.pk).first() or instance
 
 
 def _direcao_permitida(entry, origem, *, operation=Operation.UPSERT):

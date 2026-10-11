@@ -250,6 +250,7 @@ mixin _InputSection on _HomePageShared {
       registeredPayments = registeredPayments
           .where((payment) => payment['_staged'] != true)
           .toList();
+      _desfazerSimulacao();
       flowStep = 'order';
     });
   }
@@ -567,7 +568,7 @@ mixin _InputSection on _HomePageShared {
     // Primeiro dos dois gestos que fazem o pedido NASCER: a cozinha vai
     // imprimir um ticket, e não dá para imprimir o ticket de um pedido que
     // não existe. Falhando aqui, o rascunho fica intacto e nada é enviado.
-    if (_draftIsLive && !await _materializeDraft()) return;
+    if (_draftIsLive && !await _materializeDraft(cozinha: true)) return;
     if (activeOrder == null) return;
     final pending = orderItems
         .where((item) => item['status'] == 'pending')

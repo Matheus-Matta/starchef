@@ -49,7 +49,10 @@ def test_conta_paga_nao_recebe_de_novo(conta, api_client, dinheiro):
 
     outra_vez = pagar(api_client, conta, dinheiro, "50.00")
 
-    assert outra_vez.status_code == 400
+    # 409, não 400: o corpo está certo, o ESTADO (já paga) é que não aceita — e
+    # a recusa diz qual pedido, para o PDV abrir a venda paga (`conflitos.py`).
+    assert outra_vez.status_code == 409
+    assert outra_vez.json()["error"]["code"] == "pedido_ja_pago"
 
 
 def test_conta_paga_nao_aceita_mais_cartoes(

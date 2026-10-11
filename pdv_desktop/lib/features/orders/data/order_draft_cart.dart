@@ -1,3 +1,4 @@
+import '../../../core/data/local_id.dart';
 import 'order_draft.dart';
 
 /// O rascunho inteiro: para onde vai e o que tem dentro.
@@ -8,8 +9,27 @@ import 'order_draft.dart';
 class OrderDraftCart {
   OrderDraftCart();
 
+  /// O UUID do pedido que este rascunho vai virar, dado AQUI: todo envio da
+  /// venda (F9, conclusão, o reenvio depois de uma falha) leva o mesmo, e o
+  /// servidor reconhece a mesma venda. Rascunho novo, UUID novo.
+  String get orderId => _orderId ??= LocalId.uuid();
+  String? _orderId;
+
+  /// A tela de pagamento mostra o pedido que o servidor CALCULOU (`simular`),
+  /// mas ele ainda não existe: só nasce na conclusão, com os recebimentos.
+  bool simulada = false;
+
+  /// Taxa, desconto, CPF/CNPJ e cupom escolhidos antes de pagar: vão no mesmo
+  /// envio da conclusão.
+  Map<String, dynamic>? fechamento;
+
+  /// As anotações de comanda que a SIMULAÇÃO trouxe — as que o caixa viu na
+  /// tela de pagamento. A conclusão leva só elas: o que o garçom lançar
+  /// enquanto o cliente paga fica para a próxima conta, em vez de entrar num
+  /// total maior que o recebido. `null` = ainda não simulou (leva todas).
+  List<String>? anotacoesVistas;
+
   final List<OrderDraftLine> _lines = [];
-  int _sequence = 0;
 
   /// Para onde este rascunho vai: `counter`, `command`, `takeaway`,
   /// `delivery`. É o que a barra no topo do carrinho escolhe.
@@ -40,8 +60,7 @@ class OrderDraftCart {
   /// Ela tem um papel próprio na conta agrupada: é a origem com que a
   /// consolidação é ABERTA, e as outras entram depois. Fora isso, o cabeçalho
   /// do carrinho usa este valor quando há só uma.
-  Map<String, dynamic>? get command =>
-      commands.isEmpty ? null : commands.first;
+  Map<String, dynamic>? get command => commands.isEmpty ? null : commands.first;
 
   bool get temVariasComandas => commands.length > 1;
 
@@ -79,8 +98,7 @@ class OrderDraftCart {
   /// Os itens já lançados, de TODAS as comandas anexadas, na ordem em que os
   /// cartões entraram.
   List<Map<String, dynamic>> get itensJaLancados => [
-    for (final comanda in commands)
-      ...?commandItems['${comanda['id']}'],
+    for (final comanda in commands) ...?commandItems['${comanda['id']}'],
   ];
 
   /// O que as comandas já tinham, em dinheiro.
@@ -119,7 +137,7 @@ class OrderDraftCart {
   void add(OrderDraftLine line) {
     final pronta = line.id.isEmpty
         ? OrderDraftLine(
-            id: 'rascunho-${++_sequence}',
+            id: LocalId.uuid(),
             productId: line.productId,
             productName: line.productName,
             quantity: line.quantity,
@@ -165,6 +183,10 @@ class OrderDraftCart {
   /// antes custaria o carrinho inteiro se a tela seguinte falhasse ao carregar
   /// — e o operador teria de digitar tudo de novo com o cliente na frente.
   void clear() {
+    _orderId = null;
+    simulada = false;
+    fechamento = null;
+    anotacoesVistas = null;
     _lines.clear();
     orderType = 'counter';
     commands.clear();

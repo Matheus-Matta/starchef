@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from apps.orders.production_ids import id_do_lote
 from apps.core.models import AuditLog
 from apps.core.tenant import tenant_context
 from apps.core.audit import record_audit
@@ -78,7 +79,8 @@ def send_command_to_kitchen(command, user, *, client_batch_serial=None, offline_
             sent_by=user,
             created_by=user,
             updated_by=user,
-            **({"serial": serial} if serial else {}),
+            # Com o serial do PDV, o id é calculado dele (`production_ids.py`).
+            **({"serial": serial, "id": id_do_lote(serial)} if serial else {}),
         )
 
         CommandItem.objects.filter(pk__in=[i.pk for i in itens]).update(
@@ -166,7 +168,10 @@ def dispatch_due_command_batches(*, account_id=None, restaurant_id=None, now=Non
         due = due.filter(account_id=account_id)
     if restaurant_id:
         due = due.filter(restaurant_id=restaurant_id)
-    batch_ids = list(due.values_list("id", flat=True)[:500])
+    # Só quem tem a cozinha libera, e nunca a rodada imediata (`producao_da_loja`).
+    from apps.orders.producao_da_loja import a_liberar_aqui
+
+    batch_ids = list(a_liberar_aqui(due).values_list("id", flat=True)[:500])
     for batch_id in batch_ids:
         batch = CommandBatch.all_objects.select_related("account").get(pk=batch_id)
         dispatch_command_batch(batch, now=now)

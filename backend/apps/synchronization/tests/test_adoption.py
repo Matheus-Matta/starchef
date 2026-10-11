@@ -37,8 +37,13 @@ def test_branch_criada_por_signal_cede_lugar(como_loja, conta, no_nuvem, no_loja
         fields={"account_id": str(conta.id), "legal_name": "A LTDA",
                 "trade_name": "Rest A", "is_active": True}))
 
-    # O signal do domínio criou a Branch espelho, com UUID local.
-    local = Branch.all_objects.get(restaurant_id=restaurante_id)
+    # A Branch espelho com UUID local: o apply não a deriva mais
+    # (test_restaurante_chegado_nao_deriva_filial), mas a loja matriculada
+    # antes disso, ou o backfill `sync_restaurant_branches`, ainda a tem.
+    from apps.restaurants.models import Restaurant
+    from apps.restaurants.services import sync_branch_for_restaurant
+
+    local = sync_branch_for_restaurant(Restaurant.all_objects.get(pk=restaurante_id))
     id_da_nuvem = uuid.uuid4()
     assert local.pk != id_da_nuvem
 

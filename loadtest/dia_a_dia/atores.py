@@ -42,7 +42,8 @@ def garcom(terminal, dados, salao, registro, parar):
             try:
                 resposta, origem, tentativas = gesto(
                     terminal, "POST", f"/commands/{comanda['id']}/items/",
-                    {"product": produto["id"], "quantity": qtd, "customer_note": marca},
+                    {"product": produto["id"], "quantity": qtd, "customer_note": marca,
+                     "id": str(uuid.uuid4())},  # como o app: o UUID nasce com a anotação
                 )
                 item.update(ok=True, origem=origem, tentativas=tentativas)
                 if str(resposta.get("product")) != produto["id"] or \
@@ -68,7 +69,8 @@ def balanca(terminal, dados, salao, registro, parar, balanca_id, contador):
         try:
             _, origem, tentativas = gesto(
                 terminal, "POST", f"/scales/{balanca_id}/checkout-command/",
-                {"command_code": comanda["codigo"] or str(comanda["numero"]), "weight_kg": str(peso)},
+                {"command_code": comanda["codigo"] or str(comanda["numero"]), "weight_kg": str(peso),
+                 "id": str(uuid.uuid4())},  # como o PDV: a pesagem tem a identidade dela
             )
             pesagem.update(ok=True, origem=origem, tentativas=tentativas)
             salao.lancou(comanda["id"])

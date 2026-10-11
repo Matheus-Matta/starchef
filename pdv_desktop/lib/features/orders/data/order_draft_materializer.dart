@@ -1,130 +1,135 @@
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
-import 'order_draft.dart';
+import '../presentation/order_presenter.dart';
 import 'order_draft_cart.dart';
 
-/// Materializar um rascunho: a hora em que o pedido precisa passar a EXISTIR.
+/// A venda sai do PDV num envio só: `POST /orders/submit/`.
 ///
 /// Até aqui o carrinho vive só na memória da tela — como num PDV de mercado,
 /// onde passar produtos não abre nada em lugar nenhum. O pedido nasce quando
-/// alguém de fora precisa dele:
+/// alguém de fora precisa dele: a COZINHA (F9, que é também o "pagar depois")
+/// ou a CONCLUSÃO da venda, que leva os recebimentos junto.
 ///
-/// * a **cozinha**, que vai imprimir um ticket e produzir;
-/// * o **caixa**, que vai anexar um recebimento.
-///
-/// Criar antes disso enche o banco de pedidos vazios e prende comandas que
-/// ninguém está usando. Este arquivo é o irmão de `orderDraftService.js` da
-/// web, e as duas telas mandam o mesmo corpo para os mesmos endpoints — uma
-/// divergência aqui viraria um pedido com formato diferente conforme o caixa
-/// em que foi aberto.
+/// Antes eram uma chamada para criar o pedido, uma por item, uma para anexar
+/// as comandas e uma por recebimento — e uma troca loja/nuvem no meio deixava
+/// metade da venda em cada servidor. Agora é um payload, gravado numa
+/// transação no servidor (`orders/venda_inteira.py`): entra inteiro ou não
+/// entra. Tudo leva o UUID do PDV (`draft.orderId`, o id de cada linha), então
+/// o reenvio depois de uma falha de rede é reconhecido como a MESMA venda.
 class OrderDraftMaterializer {
   const OrderDraftMaterializer(this.api, {required this.accessToken});
 
   final ApiClient api;
   final String accessToken;
 
-  /// Cria (ou retoma) o pedido e põe todos os itens do rascunho dentro dele.
+  static const caminho = '/orders/submit/';
+
+  /// Faz o pedido EXISTIR com tudo o que está no rascunho. Devolve o pedido.
   ///
-  /// Devolve o pedido do servidor e propaga a exceção da API para quem chamou
-  /// decidir: o rascunho fica intacto na tela, então uma falha de rede não
-  /// custa ao operador o que ele já digitou.
+  /// `cozinha` manda à produção no mesmo envio (o F9). O rascunho fica
+  /// intacto em caso de falha: o operador não perde o que digitou.
   Future<Map<String, dynamic>> materialize(
     OrderDraftCart draft, {
     required String? restaurantId,
+    bool cozinha = false,
   }) async {
-    // Sem item E sem comanda não há o que abrir. Com um dos dois, há.
-    //
-    // Exigir um item mesmo cobrando só comandas quebrava o caso CENTRAL do
-    // modelo novo: a mesa com dois cartões que chega no caixa para pagar. O
-    // operador não tem nada para passar — o consumo já está anotado nos
-    // cartões —, e a conta simplesmente não abria.
-    if (draft.isEmpty) {
-      throw const ApiException('Não há itens nem comandas para abrir o pedido.');
-    }
-
-    // `create-with-item` é atômico: uma falha no meio não deixa pedido vazio.
-    // Sem item nenhum ele não serve, e aí o pedido nasce vazio mesmo — o que
-    // o enche em seguida são as anotações das comandas.
-    final pedido = draft.semLinhasNovas
-        ? await _criarParaComandas(draft, restaurantId: restaurantId)
-        : await _criarComPrimeiroItem(draft, restaurantId: restaurantId);
-    for (final linha in draft.lines.skip(1)) {
-      await api.post(
-        '/orders/${pedido['id']}/items/',
-        body: linha.toItemPayload(),
-        accessToken: accessToken,
-      );
-    }
-
-    if (draft.commands.isEmpty) return pedido;
-    return _puxarComandas(draft, pedido: pedido);
+    final resposta = await api.post(
+      caminho,
+      body: corpo(draft, restaurantId: restaurantId, cozinha: cozinha),
+      accessToken: accessToken,
+    );
+    return Map<String, dynamic>.from(resposta['order'] as Map);
   }
 
-  /// A mesa com quatro cartões que paga junto.
-  ///
-  /// A comanda não abre pedido — ela ANOTA. O pedido do caixa puxa as
-  /// anotações PENDENTES dos cartões, e isso é UMA chamada, não uma por
-  /// cartão: duzentas idas ao servidor com o cliente esperando.
-  ///
-  /// Quem decide se um cartão pode entrar é o SERVIDOR: sem item pendente ele
-  /// recusa. A tela filtra o caso óbvio para dar a recusa na hora, mas a regra
-  /// mora lá — e é lá que ela resiste a dois caixas fechando a mesma mesa ao
-  /// mesmo tempo.
-  Future<Map<String, dynamic>> _puxarComandas(
-    OrderDraftCart draft, {
-    required Map<String, dynamic> pedido,
-  }) => api.post(
-    '/orders/${pedido['id']}/attach-commands/',
-    body: {
-      'commands': [for (final comanda in draft.commands) '${comanda['id']}'],
-    },
-    accessToken: accessToken,
-  );
-
-  /// Só comandas: o pedido nasce VAZIO e as anotações o preenchem.
-  ///
-  /// É o caminho da mesa que chega no caixa sem nada novo para passar. O
-  /// `create-with-item` não serve aqui porque não há item; o pedido vazio dura
-  /// o tempo de uma chamada, até `attach-commands` puxar o que os cartões
-  /// anotaram.
-  ///
-  /// `order_type` é `command` — igual ao que a tela web manda no mesmo caso.
-  /// Os dois PDVs precisam gravar o mesmo formato: um pedido com tipo
-  /// diferente conforme o caixa em que foi aberto quebra qualquer relatório
-  /// que agrupe por tipo.
-  Future<Map<String, dynamic>> _criarParaComandas(
+  /// O total OFICIAL (taxa, promoção, cupom) sem gravar nada — para a tela de
+  /// pagamento, enquanto o pedido ainda vive só no PDV.
+  Future<Map<String, dynamic>> simular(
     OrderDraftCart draft, {
     required String? restaurantId,
-  }) => api.post(
-    '/orders/',
-    body: {
-      'order_type': 'command',
-      'restaurant': restaurantId,
-      if (draft.customer != null) 'customer': draft.customer!['id'],
-    },
-    accessToken: accessToken,
-  );
-
-  /// Balcão, entrega e retirada: o pedido nasce COM o primeiro item.
-  ///
-  /// `create-with-item` é atômico — pedido e item na mesma transação. É o que
-  /// garante que uma falha no meio não deixe um pedido vazio para trás.
-  Future<Map<String, dynamic>> _criarComPrimeiroItem(
-    OrderDraftCart draft, {
-    required String? restaurantId,
+    Map<String, dynamic>? fechamento,
   }) async {
-    final OrderDraftLine primeiro = draft.lines.first;
-    return await api.post(
-      '/orders/create-with-item/',
+    final resposta = await api.post(
+      caminho,
       body: {
-        // Com cartão anexado o pedido é de comanda, mesmo que o operador tenha
-        // passado itens novos junto. É o que a tela web já fazia.
-        'order_type': draft.commands.isEmpty ? draft.orderType : 'command',
-        'restaurant': restaurantId,
-        if (draft.customer != null) 'customer': draft.customer!['id'],
-        'item': primeiro.toItemPayload(),
+        ...corpo(draft, restaurantId: restaurantId, fechamento: fechamento),
+        'simular': true,
       },
       accessToken: accessToken,
     );
+    return Map<String, dynamic>.from(resposta['order'] as Map);
+  }
+
+  /// Conclui a venda: pedido, cozinha, fechamento e recebimentos num envio.
+  ///
+  /// Devolve `{order, payments}` do servidor.
+  Future<Map<String, dynamic>> concluir(
+    OrderDraftCart draft, {
+    required String? restaurantId,
+    Map<String, dynamic>? fechamento,
+    required List<Map<String, dynamic>> recebimentos,
+    String? totalMostrado,
+  }) => api.post(
+    caminho,
+    body: {
+      ...corpo(
+        draft,
+        restaurantId: restaurantId,
+        cozinha: true,
+        fechamento: fechamento,
+      ),
+      'payments': recebimentos,
+      // O total que o cliente viu: mudou no servidor (parte da comanda foi
+      // cobrada em outra conta), a venda é recusada sem gravar nada.
+      'expected_total': ?totalMostrado,
+    },
+    accessToken: accessToken,
+  );
+
+  /// Os recebimentos de um pedido que JÁ existe, todos num envio só.
+  Future<Map<String, dynamic>> receber({
+    required String orderId,
+    required String? restaurantId,
+    required List<Map<String, dynamic>> recebimentos,
+  }) => api.post(
+    caminho,
+    body: {
+      'id': orderId,
+      'restaurant': restaurantId,
+      'items': const <Map<String, dynamic>>[],
+      'payments': recebimentos,
+    },
+    accessToken: accessToken,
+  );
+
+  /// O corpo da venda inteira, a partir do rascunho.
+  Map<String, dynamic> corpo(
+    OrderDraftCart draft, {
+    required String? restaurantId,
+    bool cozinha = false,
+    Map<String, dynamic>? fechamento,
+  }) {
+    // Sem item E sem comanda não há o que abrir. Com um dos dois, há: a mesa
+    // com dois cartões que chega no caixa não tem nada novo para passar.
+    if (draft.isEmpty) {
+      throw const ApiException(
+        'Não há itens nem comandas para abrir o pedido.',
+      );
+    }
+    return {
+      'id': draft.orderId,
+      // Com cartão anexado o pedido é de comanda, mesmo com itens novos junto:
+      // é o que a tela web grava, e o relatório agrupa por tipo.
+      'order_type': draft.commands.isEmpty ? draft.orderType : 'command',
+      'restaurant': restaurantId,
+      if (draft.customer != null) 'customer': draft.customer!['id'],
+      'items': [for (final linha in draft.lines) linha.toItemPayload()],
+      'commands': [for (final comanda in draft.commands) '${comanda['id']}'],
+      'command_items': ?draft.anotacoesVistas,
+      if (cozinha)
+        'kitchen': {
+          'client_batch_serial': OrderPresenter.generateBatchSerial(),
+        },
+      'close': ?fechamento,
+    };
   }
 }
