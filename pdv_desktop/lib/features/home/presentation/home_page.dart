@@ -48,6 +48,7 @@ import '../../customers/presentation/customer_form_dialog.dart';
 import '../../customers/presentation/customers_page.dart';
 import '../../commands/presentation/commands_page.dart';
 import '../../orders/presentation/order_cart_panel.dart';
+import '../../orders/presentation/order_discount_field.dart';
 import '../../orders/presentation/item_void_reason_dialog.dart';
 import '../../orders/presentation/product_config_dialog.dart';
 import '../../orders/presentation/weighed_product_dialog.dart';
@@ -224,6 +225,15 @@ class _HomePageState extends State<HomePage>
   String? orderType = 'counter';
   @override
   String search = '';
+
+  /// Muda a cada venda nova: recria o campo de busca do catálogo vazio (ele
+  /// não tem controlador, e zerar só `search` deixava o texto antigo à vista).
+  @override
+  int catalogSearchGeneration = 0;
+
+  /// O desconto digitado no resumo, preso ao pedido em que foi digitado.
+  @override
+  final typedDiscount = TypedDiscount();
   @override
   String? category;
   @override
@@ -1328,17 +1338,40 @@ class _HomePageState extends State<HomePage>
   Future<void> _goHome() async {
     _leaveActiveOrder();
     _discardDraft();
+    _resetToNewSale();
+    unawaited(_load());
+  }
+
+  /// A tela de venda NOVA, zerada — a mesma depois de pagar e de "Nova venda".
+  ///
+  /// Eram duas listas à mão (aqui e no fim do pagamento), e as duas esqueciam
+  /// o valor digitado, a forma escolhida, o cupom e a busca do catálogo: a
+  /// próxima venda abria com sobras da anterior.
+  @override
+  void _resetToNewSale() {
+    draft.clear();
+    typedDiscount.limpar();
+    paymentReference.clear();
+    paymentAmount.clear();
+    couponCode.clear();
     setState(() {
       activeOrder = null;
       selectedTable = null;
       selectedCommand = null;
       selectedCustomer = null;
+      selectedOrderItemId = null;
       orderItems = [];
       registeredPayments = [];
+      selectedPaymentMethod = null;
+      paymentDigits = '0';
+      couponError = '';
+      search = '';
+      category = null;
+      catalogSearchGeneration++;
       orderType = 'counter';
       flowStep = 'order';
     });
-    unawaited(_load());
+    catalogSearchFocus.requestFocus();
   }
 
   @override

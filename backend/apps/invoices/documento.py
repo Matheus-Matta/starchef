@@ -70,7 +70,7 @@ class DocumentoFiscal(DocumentoRegras):
         if not items:
             raise FiscalRejection(f"{cls.rotulo}: a nota nao possui itens fiscais.")
         other_expenses = self._validate_totals(invoice, items)
-        discounts_by_item = self._allocate_total(items, invoice.discount_total)
+        discounts_by_item = self._allocate_discount(items, invoice.discount_total)
         expenses_by_item = self._allocate_total(items, other_expenses)
         payments = self._build_payments(invoice)
         change_total = sum(

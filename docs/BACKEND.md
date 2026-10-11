@@ -199,6 +199,19 @@ armazenado no pedido antes do pagamento. A emissão automática e
 vazia remove a identificação do pedido. O campo CNPJ aceita os formatos
 numérico e alfanumérico, com 14 caracteres e dígitos verificadores numéricos.
 
+**Desconto manual aprovado** (`apps/orders/discount_approval.py`): o `discount`
+do `/close/` que MUDA precisa de aprovação. Gerente aprova pelo cargo
+(`own`); os demais, no mesmo corpo, com `cash_password` (senha de ações do
+caixa) ou `authorization_username`/`authorization_password` de quem tem
+`cash.approve` (`delegated`) — sem isso, **403**. O pedido grava
+`discount_authorized_by`, `discount_authorization` e `discount_authorized_at`
+(sincronizados), e a auditoria `order_discount_approved` guarda de quanto para
+quanto. Desconto inalterado não pede de novo; zerar limpa o registro. Desconto
++ cupom não passam do subtotal (400). Na NFC-e, o desconto é rateado por item
+sem que nenhum receba mais que o próprio valor (`_allocate_discount`): o rateio
+antigo jogava a sobra no último item e, com um item barato no fim, gerava
+`vDesc > vProd` — rejeição da SEFAZ.
+
 `expected_total` é uma referência de concorrência enviada pelo PDV. Se
 divergir, o backend não recusa o fechamento: conclui com o total autoritativo
 recalculado sob lock e devolve `total_reconciled`, `client_expected_total` e
@@ -237,6 +250,16 @@ simples já existentes sem alterar hashes válidas.
 **Impressão** (`apps/printers/services.py`): o backend **não** gera ESC/POS. `register_print_job` renderiza um template HTML (`apps/printers/templates/printers/{receipt,weigh_ticket}.html` etc. conforme o tipo) e grava em `PrintJob.html_content`, mais um payload de texto monoespaçado 48 colunas com código de barras Code128. Quem entrega fisicamente é o **agente local do desktop Flutter** (`local_device_agent.dart`, ver [`FLUTTER_DESKTOP.md`](FLUTTER_DESKTOP.md)). O agente recebe a criação do `PrintJob` pelo WebSocket do PDV, busca a fila pendente pela API e imprime via rede/serial/spool do SO; também reconcilia a fila uma vez ao conectar ou reconectar, sem polling periódico.
 
 **Balanças**: `Scale` representa a balança física (porta, protocolo Toledo/Filizola/Urano/genérico), com `agent_instance_id` + `agent_lease_expires_at` — um lease de posse exclusiva por um agente desktop, para dois terminais não disputarem a mesma balança. `ScaleReading` é o peso reportado (pelo agente ou digitado manualmente no PDV), e quando vinculado a um `order_item` alimenta a precificação por quilo.
+
+**KDS só mostra produto por unidade.** O produto vendido por peso
+(`Product.pricing_unit == "kg"`, o prato da balança) já está servido: no envio
+à produção — do pedido (`dispatch_kitchen_batch`) e da comanda
+(`dispatch_command_batch`) — ele sai **entregue** (`orders/weighed_production.py`),
+com `sent_to_kitchen_at` gravado (cancelar depois continua exigindo autorização).
+Assim ele não aparece no quadro nem prende o `production_status` do pedido em
+"enviado"; pedido só de peso termina `delivered`. `/kitchen/items/` também
+exclui o peso, o que tira da tela o que foi enviado antes desta regra. A
+impressão da cozinha não mudou.
 
 **KDS e estações**: `KdsStation.rules` guarda até 50 regras declarativas por
 estação. As ações são incluir, excluir e mover; as condições cobrem tipo do

@@ -215,6 +215,13 @@ class Order(TenantModel):
         settings.AUTH_USER_MODEL, null=True, blank=True, related_name="orders_cancel_authorized", on_delete=models.SET_NULL
     )
     cancel_authorization = models.CharField(max_length=20, choices=AUTHORIZATION_CHOICES, blank=True, default="")
+    # Quem APROVOU o desconto manual, como e quando. O desconto é perda no
+    # faturamento e vai na NFC-e: "quem liberou?" precisa de resposta.
+    discount_authorized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, related_name="orders_discount_authorized", on_delete=models.SET_NULL
+    )
+    discount_authorization = models.CharField(max_length=20, choices=AUTHORIZATION_CHOICES, blank=True, default="")
+    discount_authorized_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-updated_at"]

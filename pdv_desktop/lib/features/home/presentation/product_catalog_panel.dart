@@ -17,6 +17,7 @@ class ProductCatalogPanel extends StatelessWidget {
     required this.onCategoryChanged,
     required this.onProductPressed,
     this.searchFocusNode,
+    this.searchGeneration = 0,
   });
 
   final List<Map<String, dynamic>> products;
@@ -29,6 +30,9 @@ class ProductCatalogPanel extends StatelessWidget {
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<Map<String, dynamic>> onProductPressed;
   final FocusNode? searchFocusNode;
+
+  /// Muda a cada venda nova: o campo é recriado vazio (ver `_resetToNewSale`).
+  final int searchGeneration;
 
   Map<String, int> get _categoryCounts {
     final result = <String, int>{};
@@ -71,6 +75,7 @@ class ProductCatalogPanel extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
+                    key: ValueKey('catalog-search-$searchGeneration'),
                     focusNode: searchFocusNode,
                     onChanged: onSearchChanged,
                     onSubmitted: (_) {

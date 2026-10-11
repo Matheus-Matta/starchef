@@ -663,6 +663,10 @@ def dispatch_kitchen_batch(batch, *, now=None):
             ).update(status=PrintJob.STATUS_CANCELLED, updated_at=now)
             return batch
 
+        from apps.orders.weighed_production import entregar_sem_producao, separar
+
+        por_peso, items = separar(items)
+        entregar_sem_producao(por_peso, agora=now)
         for item in items:
             item.status = OrderItem.STATUS_SENT
             item.sent_to_kitchen_at = now
@@ -682,9 +686,13 @@ def dispatch_kitchen_batch(batch, *, now=None):
         batch.save(update_fields=["status", "sent_at", "updated_at"])
 
         order = batch.order
-        order.production_status = Order.PROD_SENT
+        # Rodada só de produto por peso: nada foi para a cozinha, e o status do
+        # pedido sai do que os itens são (entregues), não de um "enviado" fixo.
+        order.production_status = Order.PROD_SENT if items else order.production_status
         order.updated_by = batch.sent_by
         order.save(update_fields=["production_status", "updated_by", "updated_at"])
+        if not items:
+            order = sync_production_status(order)
 
         # DEPOIS DE UMA CONSOLIDACAO o lote fica na origem como historia de
         # producao, mas os itens ja pertencem ao pedido final. O quadro e o
@@ -1005,6 +1013,7 @@ def close_order(
     expected_total=None,
     coupon_code=None,
     marcar_aguardando=True,
+    authorize_discount=None,
 ):
     """Aplica desconto, taxa, CPF e cupom e recalcula o total.
 
@@ -1022,9 +1031,8 @@ def close_order(
         # era `> 0`, então um desconto de -50 passava direto e AUMENTAVA o total
         # do pedido, sem exigir gerente e sem aparecer em lugar nenhum.
         discount = parse_money(discount, field="discount", default=0)
-        if discount > Decimal("0.00"):
-            if not has_role_at_least(user, "manager"):
-                raise ValidationError("Aplicar desconto exige permissão de gerente.")
+        if discount < Decimal("0.00"):
+            raise ValidationError({"discount": "O desconto não pode ser negativo."})
         # Desconto maior que a mercadoria era aceito e o total ia a zero pelo
         # `max(0)` do recálculo: a venda ficava registrada com um desconto que
         # nunca existiu, e o relatório de descontos deixava de fechar com o
@@ -1034,6 +1042,11 @@ def close_order(
                 {"discount": "O desconto não pode ser maior que o subtotal do pedido."}
             )
 
+        from apps.orders.discount_approval import aprovar
+
+        # Aprovação conferida com o pedido TRAVADO e relido: o "desconto que
+        # mudou" é medido contra o valor gravado agora, não o lido antes.
+        aprovar(order, discount, user=user, autorizar=authorize_discount, agora=timezone.now())
         order.discount = discount
         # Documento é texto (ou número): lista e objeto são erro do cliente. A
         # conversão para texto tirava os colchetes e aceitava `["123..."]` em
@@ -1100,6 +1113,13 @@ def close_order(
         else:
             order.service_fee_percent = order.restaurant.default_service_fee_percent or Decimal("0.00")
             order.service_fee = service_fee_for(order)
+        # Desconto e cupom são conferidos um a um; a SOMA também precisa caber.
+        # Passando do subtotal, o pedido fechava com total zero e a NFC-e era
+        # recusada (desconto maior que os produtos) depois de o cliente pagar.
+        if order.discount + (order.coupon_discount or Decimal("0.00")) > order.subtotal:
+            raise ValidationError(
+                {"discount": "Desconto e cupom juntos passam do subtotal do pedido."}
+            )
         if marcar_aguardando:
             order.status = Order.STATUS_AWAITING_PAYMENT
             order.closed_by = user
@@ -1108,6 +1128,9 @@ def close_order(
         order.save(
             update_fields=[
                 "discount",
+                "discount_authorized_by",
+                "discount_authorization",
+                "discount_authorized_at",
                 "service_fee",
                 "service_fee_enabled",
                 "service_fee_percent",

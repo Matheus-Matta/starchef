@@ -6,6 +6,7 @@ ver `documento.py`. `rotulo` é o nome do emissor nas mensagens de recusa.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
+from apps.invoices.discount_allocation import ratear_desconto
 from apps.invoices.models import FiscalConfig
 from apps.invoices.providers_erros import FiscalRejection
 
@@ -42,6 +43,10 @@ class DocumentoRegras:
                 paid_value += payment.change_amount
             result.append({"forma_pagamento": self._payment_code(payment), "valor_pagamento": str(paid_value)})
         return result or [{"forma_pagamento": "90", "valor_pagamento": "0.00"}]
+
+    # O desconto tem teto por item (ver `discount_allocation.py`): o rateio
+    # comum jogava a sobra no último item, e a SEFAZ rejeita vDesc > vProd.
+    _allocate_discount = staticmethod(ratear_desconto)
 
     @classmethod
     def _allocate_total(cls, items, total):

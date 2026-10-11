@@ -137,6 +137,9 @@ def dispatch_command_batch(batch, *, now=None):
         if batch.dispatch_at and batch.dispatch_at > agora:
             return batch
 
+        from apps.orders.weighed_production import entregar_pesados_do_lote
+
+        entregar_pesados_do_lote(batch.pk, agora=agora)  # o prato pesado não vai ao KDS
         CommandItem.objects.filter(
             batch_id=batch.pk, status=CommandItem.STATUS_QUEUED
         ).update(
