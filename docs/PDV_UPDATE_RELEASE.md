@@ -325,6 +325,8 @@ Configure no repositório:
 | Secret | `GARCOM_KEYSTORE_PASSWORD` | não | senha do keystore Android |
 | Secret | `GARCOM_KEY_ALIAS` | não | alias da chave de assinatura |
 | Secret | `GARCOM_KEY_PASSWORD` | não | senha da chave de assinatura |
+| Secret | `ACBRLIB_SO_URL` | não | link da `libacbrnfe64.so` que o `fiscal_acbr.yml` embute na imagem do emissor (docs/FISCAL_ACBRLIB.md) |
+| Variable | `ACBRLIB_SO_SHA256` | não | SHA-256 esperado dessa lib; sem ele o download não é conferido |
 
 Sem `PDV_UPDATE_MANIFEST_URL`, o Actions calcula automaticamente:
 

@@ -4,9 +4,21 @@ name: fiscal-acbr
 # do backend.yml: testa em PR, publica imagem só em tag vX.Y.Z e só reconstrói
 # quando fiscal_acbr/ mudou desde a tag anterior — senão re-etiqueta.
 #
-# A imagem NÃO leva a libacbrnfe64.so (distribuída pelo Projeto ACBr): ela é
-# montada em /app/libs na loja e na nuvem.
+# Gera a imagem `ghcr.io/<dono>/starchef-fiscal-acbr` no nosso GHCR:
+#
+# * tag vX.Y.Z: publica `X.Y.Z`, `X.Y` e `latest` (o compose da loja usa a
+#   versão; o da nuvem, `latest`);
+# * botão "Run workflow" (workflow_dispatch): gera na hora, SEM tag, com as
+#   etiquetas `manual` e `sha-<commit>` — nunca mexe no `latest` nem na versão
+#   que as lojas usam.
+#
+# A libacbrnfe64.so (Projeto ACBr, licença própria) não é versionada. Com o
+# Secret `ACBRLIB_SO_URL` (e, recomendado, a Variable `ACBRLIB_SO_SHA256`), a
+# Action a baixa, confere o SHA-256 e a EMBUTE em /opt/acbr: a loja deixa de
+# copiar o arquivo à mão. Sem o Secret, a imagem sai sem a lib e cada
+# instalação monta a sua em /app/libs — que, existindo, tem precedência.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     tags: ["v*.*.*"]
@@ -42,7 +54,7 @@ jobs:
 
   build-and-push-image:
     needs: test
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,12 +69,45 @@ jobs:
       # working-directory padrão (fiscal_acbr/) o pathspec viraria
       # `fiscal_acbr/fiscal_acbr`, o diff sairia sempre vazio e a imagem nunca
       # seria reconstruída.
+      # Antes do "decidir": com a lib embutida a imagem é SEMPRE reconstruída
+      # — a .so pode ter mudado sem nenhum arquivo do repositório mudar.
+      - name: Embutir a libacbrnfe64.so (opcional)
+        id: lib
+        shell: bash
+        env:
+          ACBRLIB_SO_URL: ${{ secrets.ACBRLIB_SO_URL }}
+          ACBRLIB_SO_SHA256: ${{ vars.ACBRLIB_SO_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ACBRLIB_SO_URL:-}" ]]; then
+            echo "embutida=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sem o Secret ACBRLIB_SO_URL: imagem sem a lib (cada instalação monta a sua em /app/libs)."
+            exit 0
+          fi
+          curl -fsSL --retry 3 -o embutida/libacbrnfe64.so "$ACBRLIB_SO_URL"
+          if [[ -n "${ACBRLIB_SO_SHA256:-}" ]]; then
+            echo "${ACBRLIB_SO_SHA256}  embutida/libacbrnfe64.so" | sha256sum -c -
+          else
+            echo "::warning::Sem a Variable ACBRLIB_SO_SHA256: a lib baixada não foi conferida."
+          fi
+          # Uma .so de verdade começa com o cabeçalho ELF; uma página de erro
+          # HTML baixada no lugar dela não começa.
+          [[ "$(head -c 4 embutida/libacbrnfe64.so | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]] || { echo "::error::O arquivo baixado não é uma .so (cabeçalho ELF ausente)."; exit 1; }
+          echo "embutida=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::libacbrnfe64.so embutida ($(sha256sum embutida/libacbrnfe64.so | cut -c1-16)...)."
+
       - name: Decidir se a imagem precisa ser reconstruida
         id: changed
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          EMBUTIDA: ${{ steps.lib.outputs.embutida }}
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || "$EMBUTIDA" == "true" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           previous="$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vFx "$GITHUB_REF_NAME" | head -n1 || true)"
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/starchef-fiscal-acbr"
           if [[ -z "$previous" ]]; then
@@ -99,7 +144,8 @@ jobs:
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=manual,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build e push
         if: steps.changed.outputs.changed == 'true'
