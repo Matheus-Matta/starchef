@@ -109,6 +109,29 @@ void main() {
     expect(corpo.containsKey('payments'), isFalse);
   });
 
+  // A senha de ações do caixa aprova o desconto de quem não é gerente. Ia
+  // só no `/close/`; na venda nova o caixa ficava sem como dar desconto.
+  test(
+    'a senha que aprova o desconto vai na simulacao e na conclusao',
+    () async {
+      final alvo = materializador();
+      final draft = rascunho(linhas: 1);
+
+      await alvo.simular(draft, restaurantId: 'r', senhaDoCaixa: '1234');
+      await alvo.concluir(
+        draft,
+        restaurantId: 'r',
+        recebimentos: const [],
+        senhaDoCaixa: '1234',
+      );
+      await alvo.simular(draft, restaurantId: 'r');
+
+      expect(enviados[0].corpo['cash_password'], '1234');
+      expect(enviados[1].corpo['cash_password'], '1234');
+      expect(enviados[2].corpo.containsKey('cash_password'), isFalse);
+    },
+  );
+
   test('concluir manda pedido, fechamento e recebimentos juntos', () async {
     final alvo = materializador();
     final draft = rascunho(comandas: ['c-1']);

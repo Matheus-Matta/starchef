@@ -18,6 +18,10 @@ mixin _OrderSection on _HomePageShared {
   Future<void> _load();
   TypedDiscount get typedDiscount;
   Future<String?> _autorizarDesconto(String motivo);
+  Future<void> _ajustarFechamento(
+    Map<String, dynamic> mudanca, {
+    String? senha,
+  });
   String? get _discountKey;
   // ── fornecido por `_HomePageState` ──────────────────────────────────────
   LocalDeviceAgent get deviceAgent;
@@ -131,14 +135,13 @@ mixin _OrderSection on _HomePageShared {
     );
   }
 
-  /// O caminho do PAGAMENTO. Pergunta só o que falta decidir.
+  /// O caminho do PAGAMENTO: leva direto à tela de pagamento.
   ///
-  /// Este diálogo já foi uma revisão inteira do pedido: subtotal, taxa, total
-  /// estimado e três saídas — voltar, "pagar depois" e ir para o pagamento.
-  /// Mas "pagar depois" era mandar para a cozinha, escondido atrás de um botão
-  /// que fala de dinheiro, e o resumo repetia número por número o que o painel
-  /// do pedido mostra ao lado. O envio à produção virou botão próprio, e o que
-  /// sobrou aqui são as duas escolhas da nota: taxa de serviço e CPF.
+  /// Aqui já houve um diálogo — primeiro uma revisão inteira do pedido, depois
+  /// só as escolhas da nota (taxa de serviço, CPF/CNPJ e cupom). Ele saiu: as
+  /// três ficam na própria tela de pagamento (`_PaymentAdjustSection` e
+  /// `_PaymentCouponSection`), onde o caixa decide vendo o total, e muda
+  /// depois sem voltar.
   Future<void> _finishOrder() async {
     if (!widget.controller.session!.user.canProcessPayments) return;
     // Lido ANTES de o rascunho virar pedido: a chave dele muda de `draft` para
@@ -179,38 +182,15 @@ mixin _OrderSection on _HomePageShared {
       return;
     }
 
-    final taxa = defaultServiceFeePercent > 0
-        ? _number(activeOrder?['subtotal']) * defaultServiceFeePercent / 100
-        : 0.0;
-
-    // O diálogo é dono do controlador de CPF e o descarta no `dispose` do seu
-    // `State` — que só roda depois que a rota termina de sair. Criá-lo aqui e
-    // descartá-lo logo após o `await` descarta cedo demais: o `await showDialog`
-    // volta com a animação de saída ainda rodando.
-    final escolha = await showDialog<_FinishOrderChoice>(
-      context: context,
-      builder: (_) => _FinishOrderForm(
-        chargeService: activeOrder?['service_fee_enabled'] != false,
-        savedCpf: cpfDigits(activeOrder?['fiscal_customer_cpf']),
-        customerCpf: cpfDigits(selectedCustomer?['document']),
-        savedCnpj: cnpjDigits(activeOrder?['fiscal_customer_cnpj']),
-        customerCnpj: cnpjDigits(selectedCustomer?['document']),
-        serviceFeePercent: defaultServiceFeePercent,
-        serviceFeeAmount: taxa,
-        money: _money,
-        savedCoupon: '${activeOrder?['coupon_code'] ?? ''}',
-        couponDiscount: _number(activeOrder?['coupon_discount']),
-      ),
-    );
-    final seguir = escolha != null;
-    final chargeService = escolha?.chargeService ?? true;
-    final fiscalCpf = escolha?.fiscalCpf ?? '';
-    final fiscalCnpj = escolha?.fiscalCnpj ?? '';
-    final couponCode = escolha?.couponCode ?? '';
-    if (!seguir) {
-      if (simulando) setState(_desfazerSimulacao);
-      return;
-    }
+    // SEM MODAL. Taxa, CPF/CNPJ e desconto ficam na TELA DE PAGAMENTO
+    // (`_PaymentAdjustSection`), onde o caixa vê o total enquanto decide —
+    // antes eram escolhidos aqui, num diálogo, sem ver o número. Entram os
+    // valores de partida que o diálogo já trazia marcados: a taxa do pedido,
+    // o documento já gravado nele e o cupom que ele tinha.
+    final chargeService = activeOrder?['service_fee_enabled'] != false;
+    final fiscalCpf = cpfDigits(activeOrder?['fiscal_customer_cpf']);
+    final fiscalCnpj = cnpjDigits(activeOrder?['fiscal_customer_cnpj']);
+    final couponCode = '${activeOrder?['coupon_code'] ?? ''}'.trim();
     if (simulando) {
       // Taxa, CPF e cupom vão no envio da conclusão; aqui o servidor só
       // recalcula o total com eles, ainda sem gravar.
@@ -223,6 +203,13 @@ mixin _OrderSection on _HomePageShared {
       };
       if (!await _simularVenda()) return;
       await _paymentDialog();
+      // O desconto digitado no resumo entra já na tela de pagamento: é lá
+      // que a aprovação (senha do caixa) é pedida, quando precisa.
+      if (descontoDigitado != null && descontoDigitado > 0 && mounted) {
+        await _ajustarFechamento({
+          'discount': centavosParaApi(descontoDigitado),
+        });
+      }
       return;
     }
 
@@ -292,5 +279,3 @@ mixin _OrderSection on _HomePageShared {
     await _paymentDialog();
   }
 }
-
-/// O que o operador decidiu no diálogo de "ir para o pagamento".

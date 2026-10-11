@@ -93,11 +93,16 @@ apagado no boot da janela filha. O argumento nunca contém a sessão.
 
 - **`OfflineStore`** (`core/network/offline_store.dart`, `sqlite_async`): cache de respostas GET (até 300 entradas, sem TTL — offline sempre entrega a última resposta conhecida) + uma **outbox transacional** de mutações pendentes, com retry, lease e mapeamento de ID temporário→real. Escopado por `origem-da-API | conta | usuário` (com fallback se claims do JWT faltarem).
 - **`local_order_store.dart`** (em `features/orders/data/`) é separado do cache HTTP: guarda o pedido em edição para sobreviver a navegação sem ser sobrescrito por um GET em cache desatualizado.
-- **CPF na NFC-e**: no diálogo que antecede o pagamento, ao lado da escolha da
-  taxa de serviço, o operador pode informar um CPF. O PDV valida os dígitos,
-  envia `fiscal_customer_cpf` ou `fiscal_customer_cnpj` no fechamento e
-  preserva o documento no pedido local
-  para que a emissão fiscal continue correta quando a venda começou offline.
+- **Taxa, CPF/CNPJ e desconto na tela de pagamento** (sem modal antes dela):
+  chave da taxa de serviço, um campo só para CPF ou CNPJ (reconhecido pelo
+  tamanho e validado no PDV) e o desconto em R$, logo abaixo do cupom
+  (`payment_adjustments.dart` + `home_page_payment_ajustes.dart`). Cada
+  mudança vai ao servidor na hora e o total se redesenha: na venda nova o
+  servidor recalcula a prévia (`simular`), no pedido existente o `/close/`
+  roda de novo. Desconto que pede aprovação abre a senha de ações do caixa,
+  que segue com a conclusão da venda (`cash_password`). Com pagamento já
+  lançado os três ficam travados: mudar o total deixaria o recebido diferente
+  da conta.
 - **Fotos do catálogo**: cards de produto e opções de variante resolvem
   `logo_p`, com fallback para o campo legado `image`. O PDV não percorre
   `photo_list`. Sem URL, sem rede ou com
@@ -154,9 +159,11 @@ entra. Tudo leva o UUID do PDV (`draft.orderId`, o id de cada linha, o de cada
 recebimento), então o reenvio é a MESMA venda.
 
 - **F9 / cozinha** (o "pagar depois"): pedido + itens + comandas + produção.
-- **Ir para o pagamento**: NÃO cria nada. `simular` devolve o total oficial
-  (taxa, promoção, cupom) e a tela abre sobre ele (`draft.simulada`). Sair sem
-  pagar não deixa nada no servidor.
+- **Ir para o pagamento**: NÃO cria nada e não pergunta nada. `simular`
+  devolve o total oficial (taxa, promoção, cupom) e a tela abre sobre ele
+  (`draft.simulada`); taxa, documento e desconto se ajustam nela. Sair sem
+  pagar não deixa nada no servidor. Enquanto a prévia está na tela, o tempo
+  real não a relê (`pedido_na_tela.dart`): ela não existe no servidor.
 - **Concluir**: pedido + itens + comandas + produção + fechamento (taxa, CPF,
   cupom) + recebimentos, num envio (`home_page_venda_inteira.dart`). Leva só
   as anotações que a simulação trouxe (`draft.anotacoesVistas` →

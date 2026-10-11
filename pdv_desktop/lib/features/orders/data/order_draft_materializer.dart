@@ -47,12 +47,15 @@ class OrderDraftMaterializer {
     OrderDraftCart draft, {
     required String? restaurantId,
     Map<String, dynamic>? fechamento,
+    String? senhaDoCaixa,
   }) async {
     final resposta = await api.post(
       caminho,
       body: {
         ...corpo(draft, restaurantId: restaurantId, fechamento: fechamento),
         'simular': true,
+        // Aprova o desconto de quem não é gerente, como no `/close/`.
+        'cash_password': ?senhaDoCaixa,
       },
       accessToken: accessToken,
     );
@@ -68,6 +71,7 @@ class OrderDraftMaterializer {
     Map<String, dynamic>? fechamento,
     required List<Map<String, dynamic>> recebimentos,
     String? totalMostrado,
+    String? senhaDoCaixa,
   }) => api.post(
     caminho,
     body: {
@@ -81,6 +85,7 @@ class OrderDraftMaterializer {
       // O total que o cliente viu: mudou no servidor (parte da comanda foi
       // cobrada em outra conta), a venda é recusada sem gravar nada.
       'expected_total': ?totalMostrado,
+      'cash_password': ?senhaDoCaixa,
     },
     accessToken: accessToken,
   );

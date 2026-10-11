@@ -78,6 +78,7 @@ import 'fiscal_refusal_visibility.dart';
 import 'orders_date_range_menu.dart';
 import 'product_catalog_panel.dart';
 import 'paid_order_follow_ups.dart';
+import 'payment_adjustments.dart';
 import 'payment_coupon_input.dart';
 import 'coupon_suggestions.dart';
 import 'table_details_panel.dart';
@@ -105,7 +106,6 @@ part 'home_page_draft.dart';
 part 'home_page_draft_flow.dart';
 part 'home_page_draft_items.dart';
 part 'home_page_order.dart';
-part 'home_page_finish_order.dart';
 part 'home_page_product.dart';
 part 'home_page_orders.dart';
 part 'home_page_orders_view.dart';
@@ -113,6 +113,7 @@ part 'home_page_payment.dart';
 part 'home_page_paid_receipt.dart';
 part 'home_page_payment_view.dart';
 part 'home_page_payment_coupon.dart';
+part 'home_page_payment_ajustes.dart';
 part 'home_page_receipt.dart';
 part 'home_page_panels.dart';
 part 'home_page_shared.dart';
@@ -182,6 +183,7 @@ class _HomePageState extends State<HomePage>
         _PaymentSection,
         _PaidReceiptSection,
         _PaymentCouponSection,
+        _PaymentAdjustSection,
         _PaymentView,
         _ReceiptSection,
         _ShellSection,
@@ -340,6 +342,13 @@ class _HomePageState extends State<HomePage>
   var couponError = '';
   @override
   var couponBusy = false;
+  // Taxa, CPF/CNPJ e desconto na tela de pagamento (`_PaymentAdjustSection`).
+  @override
+  var adjustBusy = false;
+  @override
+  var adjustError = '';
+  @override
+  String? discountPassword;
   @override
   String? selectedRestaurantId;
   @override
@@ -1351,6 +1360,8 @@ class _HomePageState extends State<HomePage>
   @override
   void _resetToNewSale() {
     draft.clear();
+    discountPassword = null;
+    adjustError = '';
     typedDiscount.limpar();
     paymentReference.clear();
     paymentAmount.clear();

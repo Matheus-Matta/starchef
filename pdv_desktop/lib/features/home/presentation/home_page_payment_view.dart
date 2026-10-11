@@ -36,6 +36,7 @@ mixin _PaymentView on _HomePageShared {
   set flowStep(String value);
   Map<String, dynamic>? get selectedMethod;
   Widget _couponControl(BuildContext context);
+  Widget _ajustesControl(BuildContext context);
   Widget _couponSummaryRow();
   void _goBack();
   void _pressPaymentKey(String key);
@@ -97,6 +98,9 @@ mixin _PaymentView on _HomePageShared {
                       children: [
                         // Abre o cupom antes do resumo; o abatimento fica nele.
                         _couponControl(context),
+                        // Taxa, CPF/CNPJ e desconto: eram um modal ANTES desta
+                        // tela, decididos sem ver o total.
+                        _ajustesControl(context),
                         // QUEM LANCOU, com o codigo quando houver: "Maria - 4821".
                         //
                         // O caixa confere a conta de um atendimento que nao foi

@@ -52,7 +52,7 @@ double totalComDesconto(
   return DecimalMoney.asNumber(total < 0 ? 0 : total);
 }
 
-class _CentavosFormatter extends TextInputFormatter {
+class CentavosFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue antigo,
@@ -140,7 +140,7 @@ class _OrderDiscountFieldState extends State<OrderDiscountField> {
             controller: _controle,
             textAlign: TextAlign.right,
             keyboardType: TextInputType.number,
-            inputFormatters: [_CentavosFormatter()],
+            inputFormatters: [CentavosFormatter()],
             decoration: InputDecoration(
               isDense: true,
               prefixText: '- R\$ ',
