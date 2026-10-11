@@ -85,6 +85,7 @@ import 'table_occupancy.dart';
 import '../../orders/data/order_draft.dart';
 import '../../orders/data/order_exit.dart';
 import '../../orders/data/order_draft_cart.dart';
+import '../../orders/data/pedido_na_tela.dart';
 import '../../orders/data/order_draft_commands.dart';
 import '../../orders/data/conflito_da_venda.dart';
 import '../../orders/data/order_draft_materializer.dart';

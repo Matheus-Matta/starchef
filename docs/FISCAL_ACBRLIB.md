@@ -215,6 +215,26 @@ Prazo: a NFC-e em contingência tem de ser transmitida em até 24 h. A
 retransmissão roda a cada 2 minutos; uma nota pendente há mais de 12 h aparece
 como alerta no painel fiscal.
 
+## Toda falha deixa a nota gravada
+
+Qualquer falha da emissão grava a nota em `error`, com o motivo em
+`error_message`, para corrigir e **reenviar** (botão Reenviar, ou emitir de novo
+pelo PDV). Isso vale para o que falha na SEFAZ, no comunicador e no cadastro do
+emitente, e também para o que falha ANTES de a nota ser montada
+(`invoices/nota_com_erro.py`):
+
+| Falha | O que fica gravado |
+| --- | --- |
+| pedido sem item faturável (todos cancelados ou cortesia) | nota em erro, "Pedido sem itens faturaveis" |
+| CPF/CNPJ do cliente inválido, ou os dois juntos | nota em erro com o motivo; emitir de novo com o documento certo reaproveita a mesma nota |
+| exceção no meio da montagem | a montagem é desfeita inteira e a nota fica em erro com a exceção |
+
+A nota que falhou antes de ser montada fica **sem número e sem chave**: o
+número só é gasto quando a montagem dá certo (um buraco na série exigiria
+inutilização). O reenvio dela passa pela emissão inteira, que a reaproveita.
+Continuam recusando sem gravar só o que não é nota: pedido cancelado,
+restaurante sem configuração fiscal e documento enviado com tipo errado pela API.
+
 ## Numeração e sincronização
 
 - A nota sincroniza nos dois sentidos (`catalog.py`): a emitida na loja sobe; a

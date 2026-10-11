@@ -302,15 +302,20 @@ class TestFullEmissionFlow:
         assert resp.data["emission_type"] == Invoice.EMISSION_NORMAL
         assert resp.data["recipient_cpf"] == "12345678909"
 
-    def test_emit_rejects_an_invalid_cpf(self):
+    def test_emit_with_an_invalid_cpf_records_the_invoice_in_error(self):
+        """CPF inválido é dado a corrigir: a nota fica gravada com o motivo
+        (test_nota_com_erro_antes_da_sefaz), em vez de um 400 sem registro."""
         resp = self.client.post(
             "/api/v1/invoices/emit/",
             {"order": str(self.order.id), "cpf": "111.111.111-11"},
             format="json",
         )
 
-        assert resp.status_code == 400
-        assert not Invoice.all_objects.filter(order=self.order).exists()
+        assert resp.status_code == 201, resp.data
+        assert resp.data["emitted"] is False
+        assert resp.data["status"] == Invoice.STATUS_ERROR
+        assert "CPF" in resp.data["error_message"]
+        assert Invoice.all_objects.filter(order=self.order).count() == 1
 
     def test_emit_twice_for_same_order_returns_the_same_invoice(self):
         # Emitir e idempotente por pedido: com a emissao automatica do

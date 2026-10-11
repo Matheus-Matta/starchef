@@ -96,7 +96,8 @@ mixin _OrderSection on _HomePageShared {
   /// É a única fonte: total, taxa de serviço e desconto são calculados lá, e
   /// um item pode ter sido lançado em outro caixa desde a última leitura.
   Future<void> _refreshOrder() async {
-    if (activeOrder == null) return;
+    // A prévia da tela de pagamento ainda não existe no servidor.
+    if (!draft.pedidoExisteNoServidor(activeOrder)) return;
     activeOrder = await api.get(
       '/orders/${activeOrder!['id']}/',
       accessToken: token,

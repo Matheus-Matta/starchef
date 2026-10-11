@@ -139,15 +139,17 @@ def test_nota_leva_o_cnpj_alfanumerico_ate_a_focus_e_ao_danfe(api_client, emitiv
     assert f"CNPJ: {CNPJ_ALFA}" in danfe
 
 
-def test_emitir_com_cnpj_invalido_e_recusado_sem_criar_nota(emitivel, manager_user):
-    from django.core.exceptions import ValidationError
-
+def test_emitir_com_cnpj_invalido_grava_a_nota_com_o_erro(emitivel, manager_user):
+    """CNPJ inválido é dado a corrigir: a nota fica gravada com o motivo, e
+    emitir de novo com o CNPJ certo a aproveita (test_nota_com_erro_antes_da_sefaz)."""
     from apps.invoices.services import emit_fiscal_invoice
 
     with tenant_context(emitivel.account):
-        with pytest.raises(ValidationError):
-            emit_fiscal_invoice(emitivel, cnpj="11222333000182", user=manager_user)
-        assert not Invoice.all_objects.filter(order=emitivel).exists()
+        nota = emit_fiscal_invoice(emitivel, cnpj="11222333000182", user=manager_user)
+
+    assert nota.status == Invoice.STATUS_ERROR
+    assert "CNPJ" in nota.error_message
+    assert not nota.number  # o número não é gasto numa nota que nem foi montada
 
 
 @pytest.mark.parametrize("campo", ["cpf", "cnpj"])
